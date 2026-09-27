@@ -1,15 +1,36 @@
 # 139 — Version History, Edit Management, Restore, and Diff PRD
 
-**Status:** Accepted product requirements. **The durable local storage half of VH-1 and
-VH-2 is implemented** — version store, capture trigger, naming and pinning, retention with
-its configuration, and atomic restore, in `webapp/src/version_history.mjs` on the schema-v3
-draft database. It is **not yet reachable from the product**: there is no panel, no menu
-entry and no wired command, so no requirement below may be quoted as shipped user-facing
-behaviour. Everything else here — preview, copy/download, diff, attribution, collaboration —
-remains proposed.
+**Status:** Accepted product requirements. **VH-1 and VH-2 are implemented and reachable.**
+The store, capture trigger, naming, pinning, retention and atomic restore are in
+`webapp/src/version_history.mjs` on the schema-v3 draft database (ADR-038); the SURFACE — a
+right-hand panel, two durable entry points, the day-grouped timeline, read-only preview,
+naming, pinning, deletion, the retention disclosure and a confirmed non-destructive restore —
+is in `webapp/src/version_panel.mjs` and `webapp/src/version_policy.mjs` (**ADR-040**). What
+is **not** built, and may not be quoted as shipped: **version diff** (VH-008, VH-009 — all of
+§9), **Make a copy and Download a version** (VH-007), **per-change attribution and Show
+editors** (VH-016, all of §10.4), restore as one Undo step (VH-015), and collaboration
+(§13). Where the panel offers one of those, it offers it **disabled with that as the reason**;
+where it does not, this document is the place that says so rather than the panel implying it.
 
-**Opened:** 2026-09-27. Retention and the questions in §18 settled by **ADR-038**
-(2026-09-28).
+**Opened:** 2026-09-27. Retention and the §18 questions settled by **ADR-038** (2026-09-28);
+question 6 settled by **ADR-040** (2026-09-28), which is also the record of what the interface
+decided that the store could not.
+
+### What the interface turned out to be, against §8
+
+Written here because the design is the thing a reader checks first, and three of these differ
+from what §8 sketched.
+
+| §8 | As built | Why it differs |
+| --- | --- | --- |
+| 8.1 "the editor opens a right-side panel without changing the document" | as specified | — |
+| 8.1 entry points: File, the last-saved status, the palette, the host API | File ▸ Version history, the **View band's panel toggle**, the palette, **⌘⌥⇧H**, and the host API through the same command id | The last-saved status pill is `display: none` below 620px and is the first thing a narrow window sheds, so it cannot be a durable second surface. A View-band button is beside the editor's other two panel toggles and is present at every width the ribbon is. ⌘⌥⇧H is Google Docs' own chord. |
+| 8.1 each row shows author(s) | each row shows time, origin and size; the **author is stored and not displayed** | Version-level actor only, which §17 VH-1 requires ("no per-change attribution claim yet"). The local browser profile has exactly one actor, so a column reading "You" on every row would be noise pretending to be information. It appears the moment a second actor can exist. |
+| 8.2 a group can be expanded to show its constituent points | day groups only; **no within-day collapsing**, so nothing needs expanding | Grouping that hides rows behind a count nobody can expand is worse than no grouping. Within-day session grouping arrives with the commit log (§17 VH-4), which is what can tell one session from another. |
+| 8.3 Name this version | as specified, through a real dialog | — |
+| 8.4 preview shows Compare, Make a copy, Download | preview shows **Back to current** and **Restore this version**; Compare and the two copies are **present-and-disabled** or absent, per the status note above | — |
+| 8.5 restore contract, all eight steps | steps 1-7 as specified; step 8 (Undo treats Restore as one action) **not built** | The pre-restore version IS stored, which is what makes both in-session Undo and after-reload reversal possible later. Today, reversing a restore means restoring the pre-restore version — which is in the timeline, named "Before a restore". |
+| 8.7 a visible **Clear version history** control reporting the freed size | as specified, in the panel's footer | — |
 
 **Related:** docs 24, 27, 68, 71, 79, 82, 86, 105 OO-004/OO-007,
 107, 112, 125, and 140.
@@ -565,8 +586,13 @@ here rather than only in the ADR because this is the document a reader checks fi
    the pin makes it durable, and they are separable operations.
 5. **Settled: yes**, a pin limit of 15 against the count cap of 25. It exists so that pins can
    never fill the store and leave automatic capture permanently refused.
-6. Whether Restore requires a modal confirmation every time or may skip it when current is
-   already checkpointed and unchanged.
+6. **Settled: it confirms, every time** (ADR-040). Not out of caution — the confirmation is
+   the only place the reader is TOLD that their current work becomes a version of its own,
+   which is the whole of what makes restore legible as non-destructive. Google Docs does not
+   ask and can afford not to: its restore is an undoable edit to a server-side document. Here
+   it replaces the document in the tab, so the sentence has to be read before it happens
+   rather than after. The card also states that the restored document is unsaved until it is
+   written to a file.
 7. Which diff families form the first public completeness claim.
 8. Whether session Undo survives a clean reload once durable commits exist.
 9. How anonymous/local actors are labelled across devices without implying verified identity.

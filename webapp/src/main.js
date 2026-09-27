@@ -39,6 +39,11 @@ import { downloadBytes, populateSaveFormats, showCompatibilityFindings } from ".
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
 import { createCompactToolbar } from "./compact_toolbar.mjs";
+import { createConfirmDialog } from "./confirm_dialog.mjs";
+import { createPropertiesDialog } from "./document_metadata.mjs";
+import { createNamePrompt } from "./name_dialog.mjs";
+import { createVersionHistory } from "./version_panel.mjs";
+import { CAPTURE_REASON } from "./version_history.mjs";
 import {
   MAX_SCROLL_PX,
   PAGE_GAP_PX,
@@ -773,119 +778,33 @@ function reflectParagraphStyle(name) {
 // definition so every paragraph using it reflows; "Create a style" adds a new
 // paragraph style (based on the current one) and applies it. Both rebuild the
 // gallery previews and dropdowns from the (now changed) style registry.
-const styleNameDialog = document.getElementById("styleNameDialog");
-const styleNameInput = document.getElementById("styleNameInput");
-const styleNameConfirm = document.getElementById("styleNameConfirm");
-const styleNameCancel = document.getElementById("styleNameCancel");
-const styleNameClose = document.getElementById("styleNameClose");
-let styleNameResolve = null;
-
-/** The name the dialog will resolve with when it closes. Escape and the
- *  backdrop go through the primitive, which knows nothing about our promise, so
- *  the result is staged here and read back in onClose — a dismissal that skipped
- *  our own close path used to leave promptStyleName pending forever. */
-let styleNameResult = null;
-
-const styleNameModal = styleNameDialog
-  ? registerModal(styleNameDialog, {
-      initialFocus: () => styleNameInput,
-      fallbackFocus: () => pagesEl,
-      defaultAction: () => finishStyleName(styleNameInput.value.trim()),
-      onClose: () => {
-        const resolve = styleNameResolve;
-        const result = styleNameResult;
-        styleNameResolve = null;
-        styleNameResult = null;
-        if (resolve) resolve(result);
-      },
-    })
-  : null;
-
-function finishStyleName(result) {
-  styleNameResult = result;
-  styleNameModal?.close();
-}
-
-/** Opens the create-style dialog and resolves to the entered name, or null if
- *  cancelled. A single in-flight prompt at a time. */
-function promptStyleName() {
-  if (!styleNameModal) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    styleNameResolve = resolve;
-    styleNameResult = null;
-    styleNameInput.value = "";
-    styleNameModal.open();
-  });
-}
-
-if (styleNameDialog) {
-  styleNameConfirm.addEventListener("click", () => finishStyleName(styleNameInput.value.trim()));
-  styleNameCancel.addEventListener("click", () => finishStyleName(null));
-  styleNameClose.addEventListener("click", () => finishStyleName(null));
-}
-
-// ---- Confirmation ----------------------------------------------------------
-// The application's single yes/no question. `window.alert`/`confirm`/`prompt`
-// are barred in this editor: they cannot be styled or labelled, they freeze the
-// wasm engine's event loop while they are up, and browsers increasingly refuse
-// them outright — so a "confirmation" the user never sees would silently read
-// as cancelled. This card goes through the same modal contract as every other
-// dialog, which means Escape and the backdrop already answer it (as "no").
-const confirmDialog = document.getElementById("confirmDialog");
-const confirmTitleEl = document.getElementById("confirmTitle");
-const confirmDescriptionEl = document.getElementById("confirmDescription");
-const confirmNoteEl = document.getElementById("confirmNote");
-const confirmIconEl = document.getElementById("confirmIcon");
-const confirmAcceptBtn = document.getElementById("confirmAccept");
-const confirmCancelBtn = document.getElementById("confirmCancel");
-const confirmCloseBtn = document.getElementById("confirmClose");
-let confirmResolve = null;
-let confirmAnswer = false;
-
-const confirmModalController = registerModal(confirmDialog, {
-  // Cancel holds focus, so Enter and Space answer "no". Every question this
-  // card asks is asked because the alternative destroys something; the safe
-  // answer is the one a reflexive keypress lands on.
-  initialFocus: () => confirmCancelBtn,
+// Both name cards go through ONE contract (`name_dialog.mjs`): the staged-result
+// dance that keeps Escape from leaving the promise pending is subtle enough that
+// a second copy of it is a second place for that bug to live.
+const styleNamePrompt = createNamePrompt({
+  registerModal,
   fallbackFocus: () => pagesEl,
-  defaultAction: () => finishConfirm(true),
-  onClose: () => {
-    const resolve = confirmResolve;
-    const answer = confirmAnswer;
-    confirmResolve = null;
-    confirmAnswer = false;
-    // Escape, the backdrop and ✕ never set an answer, so they resolve false —
-    // dismissal is a refusal, not a silent yes.
-    if (resolve) resolve(answer);
+  ids: {
+    dialog: "styleNameDialog",
+    input: "styleNameInput",
+    confirm: "styleNameConfirm",
+    cancel: "styleNameCancel",
+    close: "styleNameClose",
   },
 });
 
-function finishConfirm(answer) {
-  confirmAnswer = answer;
-  confirmModalController.close();
+/** Opens the create-style dialog and resolves to the entered name, or null if
+ *  cancelled. */
+function promptStyleName() {
+  return styleNamePrompt.prompt("");
 }
 
-/** Asks one yes/no question and resolves to the user's answer. Resolves false
- *  for every form of dismissal. A second call while one is open resolves the
- *  first as refused rather than stacking two questions. */
-function confirmModal({ title, message, confirmLabel = "OK", cancelLabel = "Cancel", note = "", icon = "help" }) {
-  if (confirmModalController.isOpen) finishConfirm(false);
-  confirmTitleEl.textContent = title;
-  confirmDescriptionEl.textContent = message;
-  confirmNoteEl.textContent = note;
-  confirmIconEl.textContent = icon;
-  confirmAcceptBtn.textContent = confirmLabel;
-  confirmCancelBtn.textContent = cancelLabel;
-  return new Promise((resolve) => {
-    confirmResolve = resolve;
-    confirmAnswer = false;
-    confirmModalController.open();
-  });
-}
-
-confirmAcceptBtn.addEventListener("click", () => finishConfirm(true));
-confirmCancelBtn.addEventListener("click", () => finishConfirm(false));
-confirmCloseBtn.addEventListener("click", () => finishConfirm(false));
+// ---- Confirmation ----------------------------------------------------------
+// The application's single yes/no question, in `confirm_dialog.mjs`. Why it is
+// never `window.confirm`, and why the answer is staged rather than resolved
+// directly, are both recorded there.
+const confirmDialogUi = createConfirmDialog({ registerModal, fallbackFocus: () => pagesEl });
+const confirmModal = (options) => confirmDialogUi.ask(options);
 
 /** Gate for anything that replaces the open document. Returns true when it is
  *  safe to proceed. Reads `documentIsDirty()` — the engine revision watermark,
@@ -1344,10 +1263,15 @@ const HOST_MODE = editingModeFor(HOST_CAPS);
  *  same URL the capability set came from, applied BEFORE first paint, and a
  *  different question from the capability set: a withheld region is a
  *  presentation decision, a withheld capability is a permission. */
-const HOST_REGIONS = applyRegions({
+const HOST_REGIONS = hostRegions();
+// `applyRegions` RETURNS the withheld ids, which is the opposite of the set above
+// — reading its return value as the shown set threw a `TypeError` on the first
+// registry build and killed boot outright. The return value is not wanted here,
+// so it is not bound.
+applyRegions({
   body: document.body,
   root: document,
-  regions: hostRegions(),
+  regions: HOST_REGIONS,
   selectBand: (band) => selectRibbonTab(band),
 });
 /** The host contract (`docs/126` phase 2), built at the END of this file because
@@ -3006,6 +2930,10 @@ async function boot() {
   // reads the store rather than the engine, so nothing above waits on it
   // (HF-011, docs/112 §4.6).
   await startDrafts();
+  // Last of all: a restore a killed tab left prepared, and the age window. Both
+  // are boot-time work by nature (`docs/140` §7.5) and neither blocks anything
+  // above — a timeline is not what the user is waiting for.
+  versionHistory.resume();
 }
 
 // Curated `?demo=<kind>` presets for the editor. `?demo=1` — used by the Home
@@ -3180,6 +3108,10 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // The identity a draft records, computed from the bytes the document was
     // opened from. O(1) in document size — see `documentKey`.
     adoptDraftDocument(name, bytes);
+    // And the timeline this document rejoins: `adopt` mints or finds the lineage
+    // and records the import baseline (`docs/140` §7.5). See `activatingRestore`
+    // for why a restore skips it.
+    if (!activatingRestore) void versionHistory.adopt();
     // Ignored words and cached paragraphs belong to the document that is being
     // replaced; the personal dictionary and the fetched word lists do not, and
     // are kept. Reading the personal words is one IndexedDB round trip and
@@ -3196,6 +3128,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
     railOutline.disabled = false;
     railPages.disabled = false;
+    versionHistory.reflect();
     populateStyles();
     populateTableStyles();
     dropEl.hidden = true;
@@ -8446,10 +8379,12 @@ let currentRevision = 0;
 let savedName = "";
 let revisionUnreadable = false;
 // A third axis, and the only one that is not about editing: a document restored
-// from a crash draft has never been written out ANYWHERE. Its revision starts
-// at the open-time baseline and its name matches, so both axes above would call
-// it clean — which would re-arm, one level up, exactly the data loss the draft
-// exists to prevent. Cleared by the same two places that clear the others.
+// from a crash draft — or from a version in the timeline (`docs/139` §8.5 step
+// 7) — has never been written out ANYWHERE. Its revision starts at the open-time
+// baseline and its name matches, so both axes above would call it clean — which
+// would re-arm, one level up, exactly the data loss the draft exists to prevent.
+// Both restores set it for the same reason, which is why it is one flag and not
+// two. Cleared by the same two places that clear the others.
 let restoredFromDraft = false;
 
 /** The engine's post-edit revision, or null if it cannot be read. Never throws:
@@ -8517,6 +8452,13 @@ function markDocumentSaved() {
   revisionUnreadable = false;
   restoredFromDraft = false;
   setDocumentState("downloaded");
+  // An explicit Save is ALWAYS a version (ADR-038 / `docs/139` §18 question 3):
+  // it is the point a user recognises in a timeline, and because checkpoints are
+  // content-addressed a Save whose bytes are identical to the last version costs
+  // one ~300-byte row rather than a second copy of the document. This takes its
+  // own snapshot in the document's own format — the download may have been a PDF,
+  // and a checkpoint has to be fidelity-capable whatever was handed over.
+  versionHistory.capture(CAPTURE_REASON.SAVE);
   // The user has the bytes, so the draft has nothing left to protect. Keeping
   // it would mean offering back, after the next crash, work that is already on
   // disk — and the offer would look like the save had not happened.
@@ -12079,7 +12021,35 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => showDraftRecovery(),
     },
     { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", enabled: HOST_CAPS.has("print"), disabledReason: t("capability.notGranted"), run: () => printDocument(doc) },
-    { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
+    { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => propertiesUi.toggle(true) },
+    // Version history. `docs/139` §8.1's first entry point, and the primary one:
+    // File is where Docs, ONLYOFFICE and Word all keep it, and a File row costs
+    // no ribbon width at all. The View band carries the second durable surface.
+    //
+    // NEVER a dead control: with no document, with the preference off, with
+    // autosave off, in a framed editor or with a store the browser refused, this
+    // row is present and DISABLED WITH THE REASON — which is a different sentence
+    // in each of those five cases, because the way out of each one is different.
+    //
+    // A WITHHELD REGION is the one case that is silent instead, and that is the
+    // distinction `docs/126` draws: "never, for you" is composition and says
+    // nothing, "not right now" is state and explains itself. Taking the row out
+    // of the REGISTRY rather than hiding a button is what makes the composition
+    // complete — the palette and the ⌘⌥⇧H chord read the registry, and neither
+    // belongs to a region CSS could reach.
+    ...(HOST_REGIONS.has("history")
+      ? [
+          {
+            id: "file.versionHistory",
+            label: t("versionHistory.command"),
+            group: "File",
+            kw: "version history timeline earlier previous restore revert named checkpoint past revision",
+            enabled: !!doc && versionHistory.available(),
+            disabledReason: versionHistory.unavailableReason(),
+            run: () => void versionHistory.toggle(),
+          },
+        ]
+      : []),
     {
       id: "edit.undo",
       label: doc?.undoLabel ? `Undo ${doc.undoLabel}` : "Undo",
@@ -12657,11 +12627,7 @@ function renderFilePage() {
         input?.focus();
       }
       if (pane === "about") toggleAbout.stampVersion?.(); else if (pane === "pageSetup") pageSetup.reflect?.();
-      if (pane === "properties" && doc) {
-        const current = JSON.parse(doc.documentProperties());
-        for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";
-        reflectDocumentMetadata();
-      }
+      if (pane === "properties") propertiesUi.fill();
     },
   });
   // The rail lists every File command, but three kinds of them are rendered as
@@ -15723,6 +15689,13 @@ async function writeDraft(reason) {
   }
 
   ownSlotHasDraft = true;
+  // The version capture rides HERE and nowhere else, with the SAME bytes: the
+  // artifact is already exported and already verified at this point, so a
+  // version costs one hash and one IndexedDB transaction rather than a second
+  // export of the document (`docs/140` §6.2, §7.5). The decision itself —
+  // `VersionCapturePolicy.shouldCapture` — is O(1) in both document size and
+  // stored-version count and is all the editing path ever pays.
+  versionHistory.capture(reason, snapshot);
   setDraftStatus(
     `Draft saved ${clockTime(now)}`,
     "saved",
@@ -16136,6 +16109,131 @@ function saveSettings() {
   savePrefObject("opendoc.settings", settings);
 }
 
+// ---- Version history (docs/139, docs/140, ADR-038/ADR-040; HF-068 / OO-004) --
+//
+// Everything about the timeline — the store handle, the panel, the keyboard
+// contract, the retention disclosure and the restore state machine — is in
+// `version_panel.mjs`. What is left here is the four seams it cannot own:
+// parsing bytes, putting a document on the canvas, taking it off again, and
+// reporting. Placed AFTER `settings`, because the capture interval is read from
+// it at construction.
+//
+// The read-only enforcement is deliberately NOT a new mechanism. A preview sets
+// `readOnlyReason` and `viewing` mode, which is the editor's existing fail-closed
+// choke point: `blockMutationInViewing()` refuses every mutation route — typing,
+// paste, toolbar, tables, review decisions, the SDK and the host bridge — and
+// `editRefusalMessage` already prefers `readOnlyReason` over every other
+// sentence, so a preview refuses an edit by SAYING it is a preview.
+const versionNamePrompt = createNamePrompt({
+  registerModal,
+  fallbackFocus: () => pagesEl,
+  ids: {
+    dialog: "versionNameDialog",
+    input: "versionNameInput",
+    confirm: "versionNameConfirm",
+    cancel: "versionNameCancel",
+    close: "versionNameClose",
+  },
+});
+
+/** The live document and the chrome state a preview borrowed, or null. */
+let versionPreviewHome = null;
+
+/**
+ * Swaps the canvas onto a version preview, or (with `null`) back to the live
+ * document.
+ *
+ * O(preview document) for the render, once per preview, and it never touches the
+ * live document's model. The live wrapper is KEPT, not freed: it is the document
+ * the user is editing and the only copy of their unsaved work.
+ */
+async function showVersionPreview(previewDoc) {
+  if (previewDoc) {
+    if (!versionPreviewHome) {
+      versionPreviewHome = { doc, selection, reviewMode, readOnlyReason };
+    }
+    doc = previewDoc;
+    readOnlyReason = t("versionHistory.preview.readOnly");
+  } else {
+    if (!versionPreviewHome) return;
+    ({ doc, selection, readOnlyReason } = versionPreviewHome);
+    const home = versionPreviewHome;
+    versionPreviewHome = null;
+    setReviewMode(home.reviewMode);
+  }
+  // A different document, so every answer cached about the last one is wrong: the
+  // remembered object presence, any table selection, the review card geometry,
+  // and the background measure ticker (which captures `doc`, so a late tick from
+  // the old one is already a no-op).
+  objectPresence.forget();
+  tableSelection = null;
+  reviewLayout = [];
+  reviewCardCache.clear();
+  if (previewDoc) {
+    const start = doc.firstPosition();
+    selection = {
+      anchor: { node: start.node, offset: start.offset },
+      focus: { node: start.node, offset: start.offset },
+    };
+    start.free();
+    setReviewMode("viewing");
+  }
+  armBackgroundMeasure();
+  await renderAll();
+  drawSelection();
+  updateToolbar();
+}
+
+/** Set while a restore is activating, so the open path does not ALSO record an
+ *  import baseline on top of the restore version that just committed — one user
+ *  action, one point in the timeline. */
+let activatingRestore = false;
+
+const versionHistory = createVersionHistory({
+  parse: (bytes) => open(bytes),
+  showPreview: (previewDoc) => showVersionPreview(previewDoc),
+  // Through the ORDINARY open path, so a restored document is indistinguishable
+  // from an opened one: same admission limits, dirty tracking and loss reporting.
+  activateRestored: async (bytes, name) => {
+    activatingRestore = true;
+    try {
+      await openBytes(bytes, name);
+    } finally {
+      activatingRestore = false;
+    }
+    // Edited/Unsaved until the host saves it (`docs/139` §8.5 step 7):
+    // `openBytes` re-baselines dirty tracking onto the bytes it opened, and for a
+    // restore that baseline is a lie — the file on disk is still the old one.
+    // Same flag as a recovered draft, because it is the same fact.
+    restoredFromDraft = true;
+    setDocumentState("edited");
+  },
+  snapshot: () => (doc ? takeDraftSnapshot() : null),
+  documentInfo: () => ({
+    name: currentName,
+    docKey: draftDocKey,
+    revision: revisionUnreadable ? null : currentRevision,
+    // Only with a document, and that guard is load-bearing: `applySettings` asks
+    // this for `unavailableReason` at module init, BEFORE `boot()` has awaited
+    // `init()`, and `engineVersion()` on an uninstantiated wasm module throws
+    // `__wbindgen_add_to_stack_pointer` of undefined and kills boot outright.
+    engine: doc ? engineVersion() : "",
+    actor: settings.authorName.trim(),
+    hasDocument: Boolean(doc),
+  }),
+  settings: () => settings,
+  hostAllows: () => AUTOSAVE_ALLOWED_HERE,
+  publish: (text, kind) => statusChannel.publish(text, kind),
+  confirm: (options) => confirmModal(options),
+  promptName: (current) => versionNamePrompt.prompt(current),
+  onOpenChange: (isOpen) => {
+    // The timeline and the comments sidebar are both on the right, so they are
+    // mutually exclusive for the reason Outline and Pages are: the canvas is
+    // never squeezed from both sides at once.
+    if (isOpen && !reviewSidebar.hidden) toggleReview(false);
+  },
+});
+
 /**
  * Pushes the host's reviewer identity into the open document through the
  * explicit `setActiveAuthor` seam (see docs/68 "Host identity seam" and
@@ -16185,6 +16283,10 @@ function applySettings() {
       : "Autosave is off in an embedded editor — the page that embeds it owns saving.";
   }
   if (draftsClearBtn) draftsClearBtn.disabled = !AUTOSAVE_ALLOWED_HERE;
+  // Version history rides on the autosave switch (ADR-038 / `docs/139` §18
+  // question 2: one switch must not promise what the other has stopped doing),
+  // so both switches and the retention numbers change what this entry says.
+  versionHistory.reflect();
   if (spellCheckToggle) spellCheckToggle.checked = settings.spellCheck !== false;
   if (grammarCheckToggle) grammarCheckToggle.checked = settings.grammarCheck !== false;
   applyActiveAuthorToDocument();
@@ -16202,6 +16304,10 @@ autosaveToggle?.addEventListener("change", () => {
     void clearAllDrafts({ confirm: false });
     setDraftStatus("Autosave off", "off", "Autosave is off. Turn it back on in Settings ▸ Autosave.");
   }
+  // Version history rides this switch (ADR-038). Stored VERSIONS are left alone:
+  // `clear()` above empties the draft slots only, and deleting a timeline as a
+  // side effect of a switch is a destruction nobody asked for.
+  versionHistory.reflect();
 });
 draftsClearBtn?.addEventListener("click", () => void clearAllDrafts());
 spellCheckToggle?.addEventListener("change", () => setSpellCheckEnabled(spellCheckToggle.checked));
@@ -16297,120 +16403,19 @@ void startLocalisation({
     // Every relabel re-introduces ⌘ from the catalogue (`105` UX-009, #599).
     localizeShortcutGlyphs(document.body, EDITOR_KEYBOARD_PLATFORM);
     if (doc) updateStats();
+    // The timeline's rows, day headings and disclosure are all script-built from
+    // locale-shaped values, and the View entry's disabled reason is a sentence —
+    // so this panel is one of the surfaces a relabel has to reach.
+    versionHistory.reflect();
   },
 });
 
 // ---- Document properties (docProps/core.xml — title, author, subject, …) ----
-const propertiesBtn = document.getElementById("propertiesBtn");
-const propertiesPanel = document.getElementById("propertiesPanel");
-const propTitle = document.getElementById("propTitle");
-const propCreator = document.getElementById("propCreator");
-const propSubject = document.getElementById("propSubject");
-const propCategory = document.getElementById("propCategory");
-const propKeywords = document.getElementById("propKeywords");
-const propDescription = document.getElementById("propDescription");
-const propertiesApplyBtn = document.getElementById("propertiesApply");
-const propertiesCancelBtn = document.getElementById("propertiesCancel");
-const propertiesCloseBtn = document.getElementById("propertiesClose");
-const metaCreated = document.getElementById("metaCreated");
-const metaModified = document.getElementById("metaModified");
-const metaLastModifiedBy = document.getElementById("metaLastModifiedBy");
-const metaLastPrinted = document.getElementById("metaLastPrinted");
-const metaRevision = document.getElementById("metaRevision");
-const metaLanguage = document.getElementById("metaLanguage");
-const metaContentStatus = document.getElementById("metaContentStatus");
-const metaVersion = document.getElementById("metaVersion");
-const metaApplication = document.getElementById("metaApplication");
-const metaAppVersion = document.getElementById("metaAppVersion");
-const metaTemplate = document.getElementById("metaTemplate");
-const metaCompany = document.getElementById("metaCompany");
-const metaManager = document.getElementById("metaManager");
-const metaTotalTime = document.getElementById("metaTotalTime");
-const metaSavedStats = document.getElementById("metaSavedStats");
-const metaCustomSection = document.getElementById("metaCustomSection");
-const metaCustomList = document.getElementById("metaCustomList");
-
-const PROP_FIELDS = [
-  ["title", propTitle],
-  ["creator", propCreator],
-  ["subject", propSubject],
-  ["category", propCategory],
-  ["keywords", propKeywords],
-  ["description", propDescription],
-];
-
-function displayMetadataValue(element, value, formatter = String) {
-  const hasValue = value !== null && value !== undefined && value !== "";
-  element.textContent = hasValue ? formatter(value) : "Not set";
-  element.classList.toggle("metadata-empty", !hasValue);
-  if (hasValue) element.title = String(value);
-  else element.removeAttribute("title");
-}
-
-function formatMetadataDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function customMetadataValue(value) {
-  if (!value || typeof value !== "object") return "";
-  if (value.type === "bool") return value.value ? "True" : "False";
-  return value.value ?? "";
-}
-
-function reflectDocumentMetadata() {
-  const metadata = JSON.parse(doc.documentMetadata());
-  const core = metadata.core ?? {};
-  const app = metadata.app ?? {};
-
-  displayMetadataValue(metaCreated, core.created, formatMetadataDate);
-  displayMetadataValue(metaModified, core.modified, formatMetadataDate);
-  displayMetadataValue(metaLastModifiedBy, core.lastModifiedBy);
-  displayMetadataValue(metaLastPrinted, core.lastPrinted, formatMetadataDate);
-  displayMetadataValue(metaRevision, core.revision);
-  displayMetadataValue(metaLanguage, core.language);
-  displayMetadataValue(metaContentStatus, core.contentStatus);
-  displayMetadataValue(metaVersion, core.version);
-
-  displayMetadataValue(metaApplication, app.application);
-  displayMetadataValue(metaAppVersion, app.appVersion);
-  displayMetadataValue(metaTemplate, app.template);
-  displayMetadataValue(metaCompany, app.company);
-  displayMetadataValue(metaManager, app.manager);
-  displayMetadataValue(
-    metaTotalTime,
-    app.totalTime,
-    (minutes) => `${Number(minutes).toLocaleString()} min`,
-  );
-
-  const savedCounts = [
-    ["pages", app.pages],
-    ["words", app.words],
-    ["characters", app.characters],
-    ["paragraphs", app.paragraphs],
-  ]
-    .filter(([, value]) => value !== null && value !== undefined)
-    .map(([label, value]) => `${Number(value).toLocaleString()} ${label}`)
-    .join(" · ");
-  displayMetadataValue(metaSavedStats, savedCounts);
-
-  metaCustomList.replaceChildren();
-  const custom = Array.isArray(metadata.custom) ? metadata.custom : [];
-  for (const property of custom) {
-    const row = document.createElement("div");
-    const name = document.createElement("dt");
-    const value = document.createElement("dd");
-    name.textContent = property.name;
-    value.textContent = customMetadataValue(property.value) || "Not set";
-    row.append(name, value);
-    metaCustomList.append(row);
-  }
-  metaCustomSection.hidden = custom.length === 0;
-}
+// The whole dialog is `document_metadata.mjs`: the six editable fields, the
+// seventeen read-only `docProps` cells beside them, and the one transaction Apply
+// runs. Splitting one dialog across two files would have been worse than moving
+// it whole, and the File page shows the same element as a pane.
+const propertiesUi = createPropertiesDialog({ registerModal, getDoc: () => doc, runEdit });
 
 // Chrome that must never survive into a modal's foreground (docs/104 HF-089):
 // a pinned tracked-change card used to paint above the scrim with live
@@ -16424,40 +16429,6 @@ setModalHooks({
     closeReviewInlineCard();
     closeAppMenu();
   },
-});
-
-const propertiesModal = registerModal(propertiesPanel, {
-  initialFocus: () => propTitle,
-  fallbackFocus: () => propertiesBtn,
-});
-
-function toggleProperties(open) {
-  const show = open ?? !propertiesModal.isOpen;
-  if (show === propertiesModal.isOpen) return;
-  if (show && doc) {
-    const current = JSON.parse(doc.documentProperties());
-    for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";
-    reflectDocumentMetadata();
-  }
-  propertiesBtn.setAttribute("aria-expanded", String(show));
-  if (show) propertiesModal.open();
-  else propertiesModal.close();
-}
-propertiesBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  toggleProperties();
-});
-propertiesCancelBtn.addEventListener("click", () => toggleProperties(false));
-propertiesCloseBtn.addEventListener("click", () => toggleProperties(false));
-propertiesApplyBtn.addEventListener("click", async () => {
-  if (!doc) return;
-  const current = JSON.parse(doc.documentProperties());
-  for (const [key, input] of PROP_FIELDS) {
-    const value = input.value.trim();
-    current[key] = value ? value : null;
-  }
-  await runEdit(() => doc.setDocumentProperties(JSON.stringify(current)), { gate: true });
-  toggleProperties(false);
 });
 
 // ---- Page setup, line numbers, watermark -----------------------------------

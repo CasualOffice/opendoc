@@ -224,7 +224,25 @@ const SRC = new URL("../src/", import.meta.url);
  *  ceiling to 16,589 underneath it. That is the merge trap the notes above record
  *  three times, and it is why this number is a measurement of the merged file and
  *  never arithmetic on two branches. */
-const MAIN_JS_LINE_CEILING = 16574;
+/** Lowered to 16,545 by the version history UI (`docs/139`, `docs/140`; HF-068 /
+ *  `105` OO-004). The file was AT its ceiling with zero slack again, and the
+ *  surface needed lines for the preview swap, the store's four seams and the
+ *  command — so THREE extractions paid for it, every one of them worth having on
+ *  its own rather than a file split to make room:
+ *
+ *    `confirm_dialog.mjs`    the application's one yes/no card
+ *    `name_dialog.mjs`       "ask for one line of text", now the single
+ *                            implementation behind BOTH the create-style card and
+ *                            Name this version — the staged-result dance that
+ *                            keeps Escape from leaving a promise pending is
+ *                            subtle enough that a second copy is a second bug
+ *    `document_metadata.mjs` the Document properties dialog, whole
+ *
+ *  Re-measured from the file AFTER rebasing onto #652 (SDK phase 3), which had
+ *  lowered this number to 16,574 underneath the branch. Carrying the branch's own
+ *  earlier figure forward would have been arithmetic on two branches' numbers,
+ *  which the note above says is always wrong. */
+const MAIN_JS_LINE_CEILING = 16545;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -297,6 +315,13 @@ const PURE_MODULES = [
   "table_band.mjs",
   "text_rules.mjs",
   "units.mjs",
+  // What the version timeline SAYS: one sentence per `HISTORY_STATUS` code, the
+  // day grouping, a row's words, and the five different reasons the entry can be
+  // disabled. Purity is the point — the store returns codes and no English, so
+  // "does every refusal have a sentence" and "does a version written at 23:30
+  // group under today" are node questions. The DOM half is `version_panel.mjs`,
+  // the same split `status_policy.mjs` / `status_channel.mjs` already uses.
+  "version_policy.mjs",
 ];
 
 const BROWSER_GLOBALS = /\b(document|window|navigator|localStorage|sessionStorage|indexedDB|globalThis)\s*\./;

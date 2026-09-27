@@ -108,7 +108,12 @@ const CEILINGS = new Map([
   // per-capability list was not accepted, and the one that said both reading roles
   // got the editing chrome dimmed — because both had become false, and a page that
   // understates is as wrong as one that overstates (`docs/99` §9.6). Measured.
-  ["embedding.page.html", 349],
+  // 349 -> 350: one row, generated. The region table on this page is built from
+  // `REGIONS` by `tools/build-embed-docs.mjs`, so adding the `history` region —
+  // the version-history timeline a host can withhold (`docs/139`, `docs/140`) —
+  // adds its one-line description here. Measured, and it is the generator's row
+  // rather than hand-written prose, which is why it is a single site.
+  ["embedding.page.html", 350],
   ["fidelity.page.html", 84],
   ["index.page.html", 157],
   // The shared header and footer, counted where they are AUTHORED. The generated

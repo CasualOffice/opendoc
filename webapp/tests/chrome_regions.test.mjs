@@ -39,6 +39,7 @@ const EXPECTED = Object.freeze({
   menu: ['id="appMenuBar"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
+  history: ['id="versionPanel"', 'id="viewVersionsBtn"', 'id="versionPreviewBanner"'],
   status: ['class="footer"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],

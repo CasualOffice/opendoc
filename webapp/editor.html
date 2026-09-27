@@ -802,6 +802,16 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelView.toggleOutline.title" data-i18n-label="panelView.toggleOutline.label" id="viewOutlineBtn" type="button" class="fmt" title="Toggle outline" aria-label="Toggle outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span></button>
               <button data-i18n-title="panelView.toggleCommentsSuggestions.title" data-i18n-label="panelView.toggleCommentsSuggestions.label" id="reviewBtn" type="button" class="fmt" title="Toggle comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
+              <!-- The second DURABLE surface for version history, beside the File
+                   page's row (`105` UX-004: a capability reachable from one place
+                   is the recurring defect here). It belongs on View because it is
+                   a PANEL TOGGLE and the two controls beside it are the editor's
+                   other two panel toggles — not because Word or Docs file version
+                   history under View; both put it under File, which is where the
+                   primary entry is. Ribbon cost: one 32px button on a band that
+                   `ribbon-width-budget.spec.mjs` measures as fitting far below
+                   1280px, so no group is pushed anywhere. -->
+              <button data-i18n-title="panelView.versionHistory.title" data-i18n-label="panelView.versionHistory.label" id="viewVersionsBtn" type="button" class="fmt" title="Version history" aria-label="Version history" aria-pressed="false" disabled><span class="ms" aria-hidden="true">history</span></button>
             </div>
             <span data-i18n="panelView.show" class="rgroup-label">Show</span>
           </div>
@@ -1569,6 +1579,30 @@
         <footer class="dialog-foot"><span data-i18n="styleNameDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="styleNameDialog.cancel" id="styleNameCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="styleNameDialog.create" id="styleNameConfirm" type="button" class="dialog-button dialog-button-primary">Create</button></div></footer>
       </section>
     </div>
+    <!-- "Name this version" (docs/139 §8.3). The same card as Create a style,
+         through the same `createNamePrompt` contract, because they are the same
+         interaction: ask for one bounded line of text and resolve to it or to
+         null. `window.prompt` is barred here for the reasons above the confirm
+         card in main.js, and a second hand-rolled name dialog would be a second
+         place for the Escape-leaves-the-promise-pending bug to live. -->
+    <div id="versionNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="versionNameTitle" aria-describedby="versionNameDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="versionNameDialog.nameThisVersion" id="versionNameTitle">Name this version</h2>
+              <p data-i18n="versionNameDialog.namedVersionsAreKept" id="versionNameDescription">A named version is kept until you delete it, and can be found by name.</p>
+            </div>
+          </div>
+          <button data-i18n-title="versionNameDialog.close.title" data-i18n-label="versionNameDialog.closeNameVersion.label" id="versionNameClose" type="button" class="dialog-close" title="Close" aria-label="Close name this version"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label data-i18n="versionNameDialog.versionName" class="dialog-field field-wide">Version name<input data-i18n-placeholder="versionNameDialog.egBeforeReview.placeholder" id="versionNameInput" type="text" maxlength="120" autocomplete="off" spellcheck="false" placeholder="e.g. Before the legal review" /></label>
+          <p data-i18n="versionNameDialog.namingDoesNotChange" id="versionNameNote" class="dialog-field-note">Naming a version changes nothing in the document — only how this version is listed and how long it is kept.</p>
+        </div>
+        <footer class="dialog-foot"><span data-i18n="versionNameDialog.twoVersionsMayShare" class="dialog-note">Two versions may share a name; they are told apart by time.</span><div class="dialog-actions"><button data-i18n="versionNameDialog.cancel" id="versionNameCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="versionNameDialog.save" id="versionNameConfirm" type="button" class="dialog-button dialog-button-primary">Save name</button></div></footer>
+      </section>
+    </div>
     <div id="bookmarkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="bookmarkTitle" aria-describedby="bookmarkDescription">
       <section class="dialog-card bookmark-dialog">
         <header class="dialog-head">
@@ -1977,6 +2011,20 @@
       <button data-i18n="viewingBanner.switchEditing" id="viewingBannerEdit" type="button">Switch to editing</button>
     </div>
 
+    <!-- VERSION PREVIEW (docs/139 §8.4). The same bar shape as the two review
+         banners above, deliberately: "the document on screen is not the one you
+         are editing" is the same class of fact as "your edits are being tracked",
+         and a reader should not have to learn a second visual language for it.
+         The sentence names WHEN the version is from, because a read-only canvas
+         with no date on it is indistinguishable from a locked document. Its text
+         is written by `version_panel.mjs` (it carries a timestamp), so it has no
+         `data-i18n` of its own. -->
+    <div id="versionPreviewBanner" class="suggesting-banner version-preview-banner" role="status" hidden>
+      <span class="ms" aria-hidden="true">history</span>
+      <span id="versionPreviewBannerText"></span>
+      <button data-i18n="versionPreviewBanner.backToCurrent" id="versionPreviewBack" type="button">Back to current</button>
+    </div>
+
     <!-- CRASH RECOVERY (docs/112 §4.6, HF-011). A non-modal region, not a
          dialog: Word's Document Recovery is a task pane and Docs uses a bar,
          and for the same reason — the editor must not block the document to
@@ -2091,6 +2139,44 @@
           <div id="reviewSidebarBody" class="review-sidebar-body"></div>
         </aside>
       </main>
+
+      <!-- VERSION HISTORY (docs/139, docs/140, ADR-038/ADR-039; `104` HF-068,
+           `105` OO-004). The store landed in #653 with no user interface at all;
+           this is the surface.
+           On the RIGHT of the canvas, as in Google Docs, and as a side panel
+           rather than a full-window page: Docs takes over the window, but this
+           editor already has an established shape for "a list beside the
+           document" in Outline, Pages and Comments, and one mechanism beats two.
+           The list is a single-select LISTBOX — selecting an entry previews it,
+           which is the Docs interaction — and the actions sit in a bar below it
+           rather than in a per-row hover menu, so every one of them is reachable
+           by touch and by keyboard without a pointer hovering anything. -->
+      <aside id="versionPanel" class="side-panel version-panel" hidden aria-labelledby="versionPanelTitle">
+        <div class="panel-head">
+          <span data-i18n="versionPanel.versionHistory" id="versionPanelTitle" class="panel-title">Version history</span>
+          <button data-i18n-title="versionPanel.close.title" data-i18n-label="versionPanel.closeVersionHistory.label" id="versionPanelClose" type="button" class="panel-close" title="Close" aria-label="Close version history"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div class="version-filter">
+          <label class="version-filter-label"><input id="versionNamedOnly" type="checkbox" /><span data-i18n="versionPanel.onlyNamedVersions">Only named versions</span></label>
+        </div>
+        <div data-i18n-label="versionPanel.versionsOfThisDocument.label" id="versionPanelBody" class="panel-body version-list" role="listbox" tabindex="0" aria-label="Versions of this document"></div>
+        <div data-i18n-label="versionPanel.actionsSelectedVersion.label" class="version-actions" role="group" aria-label="Actions for the selected version">
+          <button data-i18n="versionPanel.restoreThisVersion" id="versionRestoreBtn" type="button" class="dialog-button dialog-button-primary" disabled>Restore this version</button>
+          <button data-i18n="versionPanel.nameThisVersion" id="versionNameBtn" type="button" class="dialog-button" disabled>Name this version…</button>
+          <button data-i18n="versionPanel.keepThisVersion" id="versionPinBtn" type="button" class="dialog-button" aria-pressed="false" disabled>Keep this version</button>
+          <button data-i18n="versionPanel.showChanges" id="versionChangesBtn" type="button" class="dialog-button" disabled>Show changes</button>
+          <button data-i18n="versionPanel.deleteThisVersion" id="versionDeleteBtn" type="button" class="dialog-button" disabled>Delete this version</button>
+        </div>
+        <!-- The disclosure docs/139 §12 asks for by name: how much history there
+             is, where it lives, and what the policy will do with it. A person
+             who cannot see the bound cannot trust the promise. -->
+        <div class="version-foot">
+          <p id="versionPanelSummary" class="version-foot-line"></p>
+          <p id="versionPanelDetail" class="version-foot-line version-foot-muted"></p>
+          <p id="versionPanelPolicy" class="version-foot-note"></p>
+          <button data-i18n="versionPanel.clearVersionHistory" id="versionClearBtn" type="button" class="dialog-button" disabled>Clear version history</button>
+        </div>
+      </aside>
 
       <aside id="symbolDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="symbolTitle" aria-describedby="symbolDescription">
         <div class="glyph-panel-content">

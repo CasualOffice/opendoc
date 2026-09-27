@@ -94,6 +94,12 @@ export const KEYMAP = [
   { chord: "⌘S", command: "file.save", scope: APP_SCOPE },
   { chord: "⌘P", command: "file.print", scope: APP_SCOPE },
   { chord: "⌘F", command: "edit.find", scope: APP_SCOPE },
+  // Google Docs' own chord for revision history (Ctrl+Alt+Shift+H), which is
+  // ⌘⌥⇧H on an Apple keyboard. Taken from the competition rather than invented:
+  // a chord nobody else uses is a chord nobody reaches for, and this one is free
+  // in both keymaps. `APP_SCOPE`, because opening a timeline is an application
+  // action and must work from a chrome control as well as from the canvas.
+  { chord: "⌘⌥⇧H", command: "file.versionHistory", scope: APP_SCOPE },
 
   // ---- Editing -------------------------------------------------------------
   { chord: "⌘Z", command: "edit.undo", scope: EDITOR_SCOPE },

@@ -1,13 +1,15 @@
 # 140 — Version History, Restore, and Diff Architecture
 
-**Status:** Accepted for the local storage layer, and **implemented** for H1's store and
-H2's restore coordinator (`webapp/src/version_history.mjs`, schema v3 in
-`webapp/src/drafts.mjs`). H3 (diff), H4 (unified commits) and H5 (collaboration) remain
-proposed. Nothing here is a support claim: the layer is not reachable from the editor yet.
-Decisions this document left open about identity, retention and restore atomicity are
-settled in **ADR-038**.
+**Status:** Accepted for the local storage layer, and **implemented and reachable** for H1 and
+H2: the store and restore coordinator in `webapp/src/version_history.mjs` (schema v3 in
+`webapp/src/drafts.mjs`), and the interface over them in `webapp/src/version_panel.mjs` and
+`webapp/src/version_policy.mjs`. H3 (diff), H4 (unified commits) and H5 (collaboration) remain
+proposed and are **not** support claims. Decisions this document left open about identity,
+retention and restore atomicity are settled in **ADR-038**; the ones the interface had to make
+— the panel's shape, its surfaces, the `history` chrome region, the restore confirmation and
+the read-only preview — are settled in **ADR-040**.
 
-**Opened:** 2026-09-27. Storage layer landed 2026-09-28.
+**Opened:** 2026-09-27. Storage layer landed 2026-09-28; the surface the same day.
 
 **Product requirements:** doc 139.
 
@@ -18,6 +20,54 @@ settled in **ADR-038**.
 94–98, 107, 112, 116, 125, and 139.
 
 ---
+
+### §7.5's wiring table, as wired
+
+That table was written by the storage lane so this lane would not have to re-derive the call
+sites. It held, with three corrections worth recording because each one is a defect somebody
+else would otherwise repeat.
+
+| §7.5 said | As wired | Correction |
+| --- | --- | --- |
+| `writeDraft`, after `store.putDraft` succeeded → `shouldCapture` then `captureVersion` with the same `snapshot.bytes` | exactly that | The snapshot object's shape is already `{bytes, formatId, mode, findings}`, so it is passed whole rather than re-spread — one fewer place for a field to be dropped. |
+| `markDocumentSaved` → the same pair with `reason: "save"` | exactly that, and it takes **its own** snapshot | `markDocumentSaved` runs after the export artifact has been freed, and the download may have been a PDF. A checkpoint has to be fidelity-capable whatever was handed to the visitor, so it re-exports in the document's own format. That is a second export on an explicit Save, which is user-initiated and already O(document). |
+| `openBytes` / `adoptDraftDocument` → `openLineage` then a capture with `reason: "open"` | exactly that, **skipped while a restore is activating** | A restore activates through `openBytes`, so without a flag the open path recorded an "Opened" baseline on top of the restore version that had just committed — one user action reading as two points in the timeline. |
+| boot, after the recovery bar → `resolvePendingRestores()` and `sweep()` | exactly that, last in `boot()` | — |
+| `statusChannel.publish` with `historyStatusKind(status)` as the kind | exactly that, through `version_policy.mjs` | The panel first had its own copy of that classification, which agreed with the store for every known code and **disagreed for an unknown one** — the store treats an unknown code as a refusal deliberately, so the copy would have answered an unrecognised failure with silence. It now delegates. Caught by `version_policy.test.mjs`, not by review. |
+
+### What §9's restore state machine looks like from the UI
+
+Prepare → validate → commit → activate, in that order and no other. The panel runs
+`prepareRestore` (which reads and hash-verifies the target and captures the current document
+as a version **first**), parses the returned bytes in isolation, abandons the prepared record
+if that parse fails, calls `commitRestore` (compare-and-set the head in one IndexedDB
+transaction), and only then activates the canvas through the ordinary `openBytes` path.
+
+Two costs are accepted rather than hidden. The target bytes are **parsed twice** — once to
+validate before the head moves, once to activate — because §9.2 requires validation before any
+live state changes and §9.3 requires activation from a validated artifact; refactoring
+`openBytes` to adopt an already-parsed document would have been the alternative, and it is not
+worth a second open path. And the pre-restore capture is a full export of the current document.
+Neither is on an interaction path: a restore is an explicit, confirmed, once-in-a-while act.
+
+**§9.5 as built.** The UI exits preview, publishes a result sentence, and marks the document
+Edited/Unsaved through the same flag a recovered crash draft sets — it is the same fact, so it
+is one flag and not two. Selection resets to the engine's own body-start position.
+
+### The UI's own budgets, against §15
+
+- **Opening the panel** is O(versions in this lineage) and reads metadata only; the artifact
+  bytes are never touched until a preview or a restore asks for one. The 1.3-million-paragraph
+  case from `docs/116` cannot trigger eager work by opening the panel, because nothing the
+  panel does reads the document.
+- **Selecting an entry** is O(1) in the panel and O(target document) for the preview it opens,
+  which is what opening a document costs anywhere. Arrow-key navigation **settles for 220 ms**
+  before previewing, so holding ↓ through nine rows is one parse rather than nine; a click does
+  not wait, because the reader has already chosen. Preview work is serialised behind one token,
+  so a fast reader cannot stack two parses or leak the loser's WASM allocation.
+- **Scrolling the list** is the browser's, with no per-row work.
+- **The editing path** gains nothing: `VersionCapturePolicy.shouldCapture` is O(1) in both
+  document size and stored-version count, and is all the keystroke path ever pays.
 
 ## 1. Decision summary
 
@@ -711,8 +761,9 @@ limits, never values above engine hard ceilings.
 - source-format checkpoint manifest and validation; **landed** — content-addressed artifact
   plus format/mode/findings/engine/revision metadata, verified on read;
 - metadata timeline, naming/pinning, preview, copy/download, retention; **timeline, naming,
-  pinning and retention landed. Preview, copy and download are NOT built** — they need the
-  editor session, which this lane deliberately did not touch;
+  pinning, retention and PREVIEW landed** (the preview is a read-only session swap enforced
+  through the editor's existing viewing-mode choke point, ADR-040). **Copy and download are
+  NOT built** — both need a format-to-MIME answer the export registry owns;
 - version-level actor only; no per-change author claim; **held to**;
 - no mutation required except metadata; **held to**.
 
@@ -720,10 +771,12 @@ limits, never values above engine hard ceilings.
 
 - restore coordinator and prepared record; **landed**;
 - compare-and-set head, pre-restore checkpoint, idempotency; **landed**;
-- active-session atomic switch through the host/session command boundary; **NOT built** —
-  `commitRestore` hands the validated bytes back and the session swap is the wiring lane's;
+- active-session atomic switch through the host/session command boundary; **landed** —
+  `commitRestore` hands the validated bytes back and the panel activates them through the
+  ordinary `openBytes` path, so a restored document is indistinguishable from an opened one;
 - one-step session Undo and after-reload reversal; **NOT built** (the pre-restore version is
-  stored, which is what makes both possible later);
+  stored and is visible in the timeline as "Before a restore", which is what makes both
+  possible later — and is how a restore is reversed today);
 - crash/failure injection and fidelity corpus; **failure injection landed** in
   `webapp/tests/version_history.test.mjs` and
   `webapp/tests/e2e/version-history-store.spec.mjs`; the format-fidelity corpus is not run

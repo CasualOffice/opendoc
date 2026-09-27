@@ -650,6 +650,7 @@ const REGION_MEANINGS = Object.freeze({
   "band.view": "Outline, zoom, page setup, showing changes.",
   "band.table": "The contextual table band, present when the caret is in a table.",
   rail: "The left navigation rail: outline and page thumbnails.",
+  history: "The version-history timeline, its ribbon entry and its preview bar.",
   status: "The status bar: counts, page number, language, mode.",
   zoom: "The zoom cluster in the status bar.",
   find: "The find and replace card.",

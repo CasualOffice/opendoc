@@ -140,6 +140,11 @@ export const HOME_FACES = Object.freeze([
 export const VIEW_FACES = Object.freeze([
   face("#viewOutlineBtn", "view.outline"),
   face("#reviewBtn", "review.toggle"),
+  // Version history's second ribbon face; the File page's row is the other
+  // surface. Declared here for the same reason every other View control is: a
+  // visible ribbon control with no command id fails `ribbon-command-faces`, and
+  // that is how a hand-bound button gets caught the moment it is added.
+  face("#viewVersionsBtn", "file.versionHistory"),
   face("#viewZoomOut", "view.zoomOut"),
   face("#viewZoomIn", "view.zoomIn"),
   face("#viewFitWidth", "view.zoom.fitWidth"),

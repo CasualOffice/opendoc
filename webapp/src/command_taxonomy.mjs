@@ -62,6 +62,15 @@ export const FILE_SURFACE = [
   // too; this gives it a File home that matches the competition.
   { heading: "Print", ids: ["layout.pageSetup", "file.print"] },
   { heading: "Document", ids: ["file.properties"] },
+  // Version history's PRIMARY home, and the one both references agree on: Google
+  // Docs is File ▸ Version history ▸ See version history, ONLYOFFICE is a File
+  // page item (`DE.Views.FileMenu.btnHistory`), Word puts it under File ▸ Info.
+  // `docs/139` §8.1 names this entry point first. It is its own heading rather
+  // than a row under Document because a document's metadata and its past are
+  // different questions, and because §6 of `docs/122` listed Version History as
+  // "not adopted … `docs/107` designs it; not built" — that sentence was true
+  // when it was written and is corrected there in this change.
+  { heading: "History", ids: ["file.versionHistory"] },
   // ONLYOFFICE's "Advanced Settings" and "Help" are both File-page items. They
   // were the whole content of a `Tools` menu and a `Help` menu, which is two
   // more top-level names for five rows — and the two that fell off the end of

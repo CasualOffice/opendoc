@@ -92,27 +92,38 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1021],
-  ["de", 1021],
-  ["es", 1021],
-  ["fr", 1021],
-  ["hi", 1021],
-  ["id", 1021],
-  ["it", 1021],
-  ["ja", 1021],
-  ["ko", 1021],
-  ["nl", 1021],
-  ["pl", 1021],
-  ["pt-BR", 1021],
-  ["ru", 1021],
-  ["tr", 1021],
-  ["uk", 1021],
-  ["vi", 1021],
-  ["zh-Hans", 1021],
-  ["zh-Hant", 1021],
+  ["ar", 1169],
+  ["de", 1169],
+  ["es", 1169],
+  ["fr", 1169],
+  ["hi", 1169],
+  ["id", 1169],
+  ["it", 1169],
+  ["ja", 1169],
+  ["ko", 1169],
+  ["nl", 1169],
+  ["pl", 1169],
+  ["pt-BR", 1169],
+  ["ru", 1169],
+  ["tr", 1169],
+  ["uk", 1169],
+  ["vi", 1169],
+  ["zh-Hans", 1169],
+  ["zh-Hant", 1169],
 ]);
 
-/** English defines 1,021 keys today, and every locale answers all 1,021 — 100.0%,
+/** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
+ *  HF-068 / `105` OO-004): the panel and its action bar, the "Name this version"
+ *  card, the View band's entry, the preview bar, and — the half that matters most
+ *  — **one sentence for every `HISTORY_STATUS` code the store can return**. The
+ *  store deliberately returns codes and no English (`version_history.mjs`), so
+ *  those nineteen sentences are the only thing standing between a reader and
+ *  `history.quotaExhausted` in their status bar, and a locale that could not
+ *  answer them would print the code. All 148 landed translated in the same change
+ *  that routed them, in all eighteen locales, which is why this row moves rather
+ *  than being followed by a comment about a later pass.
+ *
+ *  English defines 1,169 keys today, and every locale answers all 1,169 — 100.0%,
  *  up from the 301 (35.4%) the previous pass had reached. That is the whole
  *  routed surface: every ribbon tab's groups and controls, the menu bar, every
  *  dialog title and button, the field labels, the File page, and the status and

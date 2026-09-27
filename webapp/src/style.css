@@ -1554,9 +1554,29 @@ body.modal-open {
   cursor: pointer;
 }
 
-.dialog-button:hover {
+.dialog-button:hover:not(:disabled) {
   border-color: var(--muted);
   background: var(--bg-2);
+}
+
+/* A disabled dialog button has to LOOK disabled.
+ *
+ * `.dialog-button` had no `:disabled` rule and its `:hover` applied regardless,
+ * so a button that ships disabled-with-a-reason rendered identically to a live
+ * one — same ink, `opacity: 1`, `cursor: pointer` — and lit up on hover. Found
+ * by screenshotting the version-history panel: "Show changes" is genuinely
+ * `disabled` and carries the right title ("Comparing one version with another
+ * is not built yet"), and it was indistinguishable from "Restore this version"
+ * beside it. `SKILL.md` §10's rule is that a command which cannot run ships
+ * disabled WITH A REASON rather than as a button that does nothing — a reason
+ * only a tooltip can reveal, on a control that looks live, is the second half of
+ * that rule unmet.
+ *
+ * The values are the ones the rest of the chrome already uses (`.btn:disabled`,
+ * `.save-format:disabled`), not new ones: one treatment for one meaning. */
+.dialog-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .dialog-button-primary {
@@ -5209,6 +5229,17 @@ body.is-format-painting .page-wrap * {
 }
 .suggesting-banner button:hover { background: var(--accent-soft); }
 
+/* The version-preview bar. Same shape and rhythm as the two review banners it
+   sits with — "the document on screen is not the one you are editing" is the
+   same class of fact as "your edits are being tracked" — and it carries the
+   ACCENT rather than the warning palette for the recovery bar's reason: looking
+   at an earlier version is not a problem, it is a thing the reader asked for. */
+.version-preview-banner {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: var(--accent-soft);
+}
+.version-preview-banner .ms { color: var(--accent-text); }
+
 /* Crash-recovery offer (docs/112 §4.6, HF-011). Shares the banner's placement
    and rhythm so the chrome stays one system, but carries the accent rather than
    the warning palette: recovered work is good news, and the warning colours are
@@ -5771,6 +5802,159 @@ body.is-format-painting .page-wrap * {
   color: var(--faint);
   font-size: var(--fs-small);
   line-height: 1.5;
+}
+
+/* ---- Version history (docs/139, docs/140; HF-068 / 105 OO-004) -------------
+   Reuses `.side-panel`, `.panel-head`, `.panel-body`, `.dialog-button` and
+   `.outline-empty` wholesale: docs/63's design tokens are deliberate and this
+   panel introduces NO new colour, radius or type size. It is wider than the
+   252px navigators for the reason the properties panels are — its rows carry two
+   lines and its actions are full-width buttons — and that width comes from the
+   existing `.side-panel.properties-panel` value rather than a new one. */
+.side-panel.version-panel {
+  flex-basis: 320px;
+  width: 320px;
+  max-width: min(320px, calc(100vw - 52px));
+}
+
+.version-filter {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The whole row is the hit target, not the 13px box: a checkbox with a separate
+   label is the classic control nobody can tap on a phone. */
+.version-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.version-list {
+  padding: 4px 6px;
+}
+
+.version-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.version-group + .version-group {
+  margin-top: 8px;
+}
+
+.version-group-day {
+  padding: 6px 8px 3px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 650;
+}
+
+/* 44px minimum, so the row is a touch target and not only a mouse target: the
+   owner has said mobile is supported, and this list has no hover affordance at
+   all — every action is a real button in the bar below. */
+.version-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+  justify-content: center;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.version-item:hover {
+  background: var(--bg-2);
+}
+
+.version-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* The version currently ON SCREEN, which is not always the selected row: a
+   reader can arrow past it. A left rule rather than a second fill, so it can
+   coexist with the selection colour. */
+.version-item.is-previewing {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+
+.version-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.version-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.version-item-pin {
+  font-size: var(--icon-compact);
+  color: var(--accent-text);
+}
+
+.version-item-current,
+.version-item-detail {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.version-item.is-active .version-item-current,
+.version-item.is-active .version-item-detail {
+  color: inherit;
+}
+
+.version-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.version-actions .dialog-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.version-foot {
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.version-foot-line {
+  margin: 0 0 2px;
+  font-size: var(--fs-small);
+}
+
+.version-foot-muted,
+.version-foot-note {
+  color: var(--muted);
+}
+
+.version-foot-note {
+  margin: 0 0 8px;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+}
+
+.version-foot .dialog-button {
+  width: 100%;
+  justify-content: center;
 }
 
 /* A panel that is showing a WINDOW of a long document says so, rather than
@@ -7618,8 +7802,15 @@ body:not(.doc-loaded) .drop-title {
     display: none;
   }
 
+  /* The version timeline joins the established narrow-screen drawer rather than
+     getting a pattern of its own — `docs/139` §14 asks for exactly that, and an
+     in-flow 320px panel at 390px would leave 70px of canvas beside it, which is a
+     document nobody can read next to a timeline nobody asked to fill the screen.
+     As a drawer the actions bar stays reachable without hover, which is the
+     touch path. */
   .side-panel.table-properties-panel,
-  .side-panel.properties-panel {
+  .side-panel.properties-panel,
+  .side-panel.version-panel {
     position: fixed;
     z-index: var(--z-drawer);
     top: calc(var(--chrome-bottom) + 8px);
@@ -9134,6 +9325,12 @@ body.chrome-no-ribbon .ribbon-nav,
 body.chrome-no-rail .rail,
 body.chrome-no-rail #outlinePanel,
 body.chrome-no-rail #pagesPanel,
+/* Version history, withheld: the panel, its ribbon button and its preview bar.
+   The COMMAND is withheld too, in `main.js`, because the palette and the ⌘⌥⇧H
+   chord belong to no region and CSS cannot reach them. */
+body.chrome-no-history #versionPanel,
+body.chrome-no-history #viewVersionsBtn,
+body.chrome-no-history #versionPreviewBanner,
 body.chrome-no-status .footer,
 body.chrome-no-zoom .zoom,
 body.chrome-no-find #findPanel,

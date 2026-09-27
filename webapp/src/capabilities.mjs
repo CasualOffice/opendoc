@@ -158,6 +158,25 @@ export const REGIONS = Object.freeze([
   "band.view",
   "band.table",
   "rail", // the left navigation rail and its panels: outline, pages
+  // The version-history timeline: the panel, its View-band button, its preview
+  // bar, and the command that opens them (`docs/139`, `docs/140`).
+  //
+  // A REGION and not merely a capability, decided rather than assumed. Version
+  // history is already gated on the `autosave` capability — one switch must not
+  // promise what the other has stopped doing (ADR-038) — so the permission axis
+  // was covered. But a container's entry points are only half of reachability:
+  // the command palette and the ⌘⌥⇧H chord belong to no region, so a host that
+  // withheld `band.file` and `band.view` would still have a visitor one chord
+  // away from a timeline of a document's past. That is a whole presentation a
+  // host can legitimately have no business with — the test this file sets for a
+  // region — so it is one, and withholding it takes the command out of the
+  // registry rather than hiding a button.
+  //
+  // Not in `READING_REGIONS`: no preset below `edit` grants `autosave`, so a
+  // reader's timeline could only ever be empty and disabled. A presentation that
+  // can never say anything is a dead control, and leaving it out is the honest
+  // answer rather than an oversight.
+  "history",
   "status", // the status bar
   "zoom", // the zoom cluster in the status bar
   "find", // the find/replace card
