@@ -38690,19 +38690,47 @@ mod tests {
         let mut declared: Vec<String> = Vec::new();
         for path in &files {
             let text = std::fs::read_to_string(path).expect("a readable source file");
-            // Production code only. A test helper is not a second answer the engine
-            // can call, and including the test module is how this guard came to
-            // match its own name.
-            let production = match text.find("\n#[cfg(test)]\nmod ") {
-                Some(cut) => &text[..cut],
-                None => &text[..],
-            };
             let name = path
                 .file_name()
                 .expect("a source file has a name")
                 .to_string_lossy()
                 .into_owned();
-            for (index, line) in production.lines().enumerate() {
+
+            // Production code only: a test helper is not a second answer the engine
+            // can call, and scanning the test module is how this guard came to match
+            // its own name.
+            //
+            // The boundary is found LINE-WISE, and that is not a style choice.
+            // Searching the raw text for a pattern containing "\n" does not match a
+            // CRLF checkout, so on Windows the cut silently did not happen, the test
+            // module was scanned, and this guard failed there alone with its own name
+            // in the list — the exact defect it had just been rewritten to remove,
+            // reintroduced by a line ending. `str::lines` handles both, so the
+            // boundary is computed the same way on every platform.
+            let lines: Vec<&str> = text.lines().collect();
+            let end = (0..lines.len())
+                .find(|&index| {
+                    lines[index].trim_end() == "#[cfg(test)]"
+                        && lines
+                            .get(index + 1)
+                            .is_some_and(|next| next.starts_with("mod "))
+                })
+                .unwrap_or(lines.len());
+            let production = &lines[..end];
+
+            // And the cut is CHECKED rather than assumed. A guard that silently
+            // scans the wrong text still runs and still passes most of the time,
+            // which is how this one stopped guarding; if the boundary is ever missed
+            // again this says so, instead of producing a confusing list that invites
+            // someone to edit the expectation.
+            assert!(
+                !production.iter().any(|line| line.trim() == "#[test]"),
+                "{name}: the `#[cfg(test)] mod` boundary was not found, so this \
+                 guard is scanning test code as if it were production code. Fix the \
+                 boundary detection, not the expected list"
+            );
+
+            for (index, line) in production.iter().enumerate() {
                 if let Some(found) = family_member(line) {
                     declared.push(format!("{name}:{}: {found}", index + 1));
                 }
