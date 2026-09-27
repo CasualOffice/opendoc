@@ -387,7 +387,11 @@ marker (`CT_FldChar` allows them on any marker, not only the `begin` Word writes
 on) and **merges** rather than overwrites, since an absent attribute is the schema
 default and not an assertion of `false`. A flag on the `end` marker of a field that was
 promoted to a range lands on the registered `FieldRange`; a flag on a marker with no
-field at all is *reported*, not swallowed. Export writes them on the `begin` marker.
+field at all is *reported*, not swallowed. A marker belonging to a **nested** field is
+ignored rather than merged upward: a nested field is not modelled (it is reported and
+its result flattens into the enclosing field), so crediting its `w:fldLock` to the
+enclosing field would freeze a field its author never froze. Export writes them on the
+`begin` marker.
 
 **A recorded near-miss.** The first implementation read the attributes with `is_true`,
 which answers the `w:val` question — where a *missing* value means `true`, as in

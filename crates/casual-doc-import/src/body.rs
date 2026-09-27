@@ -6770,8 +6770,18 @@ impl BodyParser<'_> {
     ///   set flags there are REPORTED rather than swallowed, since a stray
     ///   `w:fldLock` is author intent we cannot place.
     ///
+    /// A marker belonging to a NESTED field (`field_depth > 1`) is ignored rather
+    /// than merged upward. A nested field is not modeled — `begin_field` reports it
+    /// and its result flattens into the enclosing field — so crediting its
+    /// `w:fldLock` to the enclosing field would freeze a field its author never
+    /// froze. Discarding is the same treatment the rest of the nested field gets,
+    /// and that drop is already reported.
+    ///
     /// O(1) — a `DefinitionMap` lookup on the one open range, never a scan.
     fn merge_field_update(&mut self, update: FieldUpdateState) {
+        if self.field_depth > 1 {
+            return;
+        }
         if let Some(field) = self.field.as_mut() {
             field.update.merge(update);
             return;

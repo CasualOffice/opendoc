@@ -385,6 +385,42 @@ fn an_update_attribute_on_a_later_marker_is_not_lost() {
 }
 
 #[test]
+fn a_nested_fields_lock_does_not_freeze_the_field_that_encloses_it() {
+    // A field nested in another field is not modeled: it is reported and its
+    // cached result flattens into the enclosing field. Its `w:fldLock` must go with
+    // it. Crediting the inner marker to the outer field would freeze a field whose
+    // author never froze it — a silent content change in the other direction, and
+    // the easy mistake to make when markers are read off every `w:fldChar`.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+        <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+        <w:r><w:instrText xml:space="preserve"> IF 1 = 1 </w:instrText></w:r>
+        <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        <w:r><w:fldChar w:fldCharType="begin" w:fldLock="true" w:dirty="true"/></w:r>
+        <w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>
+        <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        <w:r><w:t>2</w:t></w:r>
+        <w:r><w:fldChar w:fldCharType="end" w:fldLock="true"/></w:r>
+        <w:r><w:fldChar w:fldCharType="end"/></w:r>
+    </w:p></w:body></w:document>"#;
+    let (first, second) = round_trip(xml);
+    assert_eq!(
+        field_updates(&first),
+        vec![FieldUpdateState::default()],
+        "one field survives (the nested one flattens), and it is not locked"
+    );
+    assert_eq!(
+        field_updates(&second),
+        vec![FieldUpdateState::default()],
+        "and it is still not locked after export -> reopen"
+    );
+    let markup = written_document_xml(&write_document(&first, &BTreeMap::new()).unwrap());
+    assert!(
+        !markup.contains("w:fldLock") && !markup.contains("w:dirty"),
+        "no update attribute is written for a field that declared none: {markup}"
+    );
+}
+
+#[test]
 fn a_paragraph_spanning_fields_lock_survives_the_round_trip() {
     // The range encoding carries the same two flags, in the definitions table
     // rather than on an inline node. A field that outgrew its paragraph must not
