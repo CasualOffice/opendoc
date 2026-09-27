@@ -42,6 +42,8 @@ use casual_doc_model::v1::FormFieldKind;
 // Separate `use` line (anti-conflict): the run emphasis mark (`w:em`).
 use casual_doc_model::v1::EmphasisMark;
 
+use casual_doc_model::v1::PaginatedField;
+
 use crate::block::BlockBorderSpace;
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
@@ -4276,17 +4278,16 @@ fn form_checkbox_glyph_run(
 /// Classifies a field instruction by its leading keyword (case-insensitive):
 /// `PAGE` and `NUMPAGES` are the page-dependent fields the field pass recomputes;
 /// everything else passes its cached result through unchanged.
+///
+/// The rule itself lives in the model ([`PaginatedField`]) because the edit layer
+/// needs the same answer — an edit to a recomputed field's cached result is text
+/// no page would ever show — and two copies of one rule drift. This function is
+/// only the projection onto layout's own three-way enum.
 fn field_kind(instruction: &str) -> FieldKind {
-    match instruction
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_uppercase()
-        .as_str()
-    {
-        "PAGE" => FieldKind::Page,
-        "NUMPAGES" => FieldKind::NumPages,
-        _ => FieldKind::Passthrough,
+    match PaginatedField::parse(instruction) {
+        Some(PaginatedField::PageNumber) => FieldKind::Page,
+        Some(PaginatedField::PageCount) => FieldKind::NumPages,
+        None => FieldKind::Passthrough,
     }
 }
 

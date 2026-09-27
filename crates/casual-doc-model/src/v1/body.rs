@@ -1693,6 +1693,67 @@ impl FieldKind {
     }
 }
 
+/// A field whose value is **recomputed from pagination** rather than displayed
+/// from the cached result the producer wrote.
+///
+/// These two are special everywhere in the engine and the reason is one fact:
+/// their value is not a property of the model, it is a property of the page the
+/// field lands on. Layout therefore restamps them after pagination and never
+/// shows [`Field::inlines`], and an edit to those inlines would be text nothing
+/// renders. Every other field's cached result *is* what the reader sees.
+///
+/// This lives in the model so the layout pass that restamps them and the edit
+/// layer that must refuse to edit them key off ONE rule. It had two homes
+/// before (`casual-doc-layout`'s `field_kind` and an anchor-width predicate in
+/// `casual-doc-wasm`), which is exactly the shape that drifts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaginatedField {
+    /// `PAGE` — the number of the page the field sits on.
+    PageNumber,
+    /// `NUMPAGES` — the document's total page count.
+    PageCount,
+}
+
+impl PaginatedField {
+    /// Which pagination-dependent field `instruction` names, if either
+    /// (case-insensitive, leading whitespace and trailing switches ignored).
+    ///
+    /// O(the instruction's first token) and allocation-free — never O(document).
+    /// [`FieldKind::parse`] answers the same question, but it tokenizes the whole
+    /// instruction into owned `String`s; this one runs per keystroke over every
+    /// inline of the caret's paragraph, so it may not allocate. Both read the
+    /// leading keyword through the same helper, and a model test pins their
+    /// answers against each other so they cannot drift.
+    #[must_use]
+    pub fn parse(instruction: &str) -> Option<Self> {
+        let keyword = leading_field_token(instruction);
+        if keyword.eq_ignore_ascii_case("PAGE") {
+            Some(Self::PageNumber)
+        } else if keyword.eq_ignore_ascii_case("NUMPAGES") {
+            Some(Self::PageCount)
+        } else {
+            None
+        }
+    }
+}
+
+/// The instruction's leading keyword as a borrowed slice, without allocating.
+///
+/// Mirrors [`tokenize_field_instruction`]'s first token exactly — leading
+/// whitespace skipped, a leading double-quoted span unquoted, an unquoted token
+/// ending at whitespace or a quote — so the cheap predicate and the full
+/// classification cannot disagree about which keyword an instruction names.
+fn leading_field_token(instruction: &str) -> &str {
+    let rest = instruction.trim_start();
+    if let Some(quoted) = rest.strip_prefix('"') {
+        return quoted.split('"').next().unwrap_or(quoted);
+    }
+    let end = rest
+        .find(|character: char| character.is_whitespace() || character == '"')
+        .unwrap_or(rest.len());
+    &rest[..end]
+}
+
 /// Splits a field instruction into whitespace-separated tokens, treating a
 /// double-quoted span as a single token (quotes stripped) and a `\`-switch as
 /// its own token. Best-effort: unterminated quotes run to the end.

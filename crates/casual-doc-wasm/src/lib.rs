@@ -12209,7 +12209,16 @@ impl WasmDocument {
                     if let Some(snapshot) = snapshot {
                         self.document = snapshot;
                     }
-                    return Err(format!("{error:?}"));
+                    // A refusal the ENGINE has already written as a sentence
+                    // passes through verbatim (it carries the host's `refused: `
+                    // marker); everything else is internal vocabulary the host
+                    // translates. Without this, a Backspace inside a footer's
+                    // page-count field arrived as the debug name `FieldResult(…)`
+                    // and the host showed its one generic sentence, which blames
+                    // the selection for a calculated value.
+                    return Err(error
+                        .reason()
+                        .map_or_else(|| format!("{error:?}"), str::to_owned));
                 }
             };
             caret = caret_after(op, &inverse, &self.document);
@@ -39333,5 +39342,64 @@ mod tests {
             "the fixture must hold at least one inline CONTAINER, or agreement is \
              vacuous"
         );
+    }
+
+    /// A refusal the ENGINE has already written as a sentence must reach the host
+    /// as that sentence, not as the debug name of an `EditError` variant.
+    ///
+    /// This is the last link in the reported defect: `sample.docx`'s footer
+    /// refused a Backspace inside its `NUMPAGES` result with
+    /// `EditError::Unsupported`, `apply_group` stringified it, and
+    /// `webapp/src/edit_errors.mjs` — which recognises an already-explained
+    /// refusal only by its `refused: ` prefix — fell back to its one generic
+    /// sentence, "That edit isn't supported for this selection yet". The
+    /// selection was fine; the content was a calculated value.
+    #[test]
+    fn an_engine_refusal_that_carries_its_own_sentence_reaches_the_host_as_that_sentence() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open");
+        let footer = doc
+            .ordered_paragraphs_by_surface()
+            .into_iter()
+            .find(|(id, _, surface)| *surface != 0 && doc.paragraph_text(*id).ends_with("1 of 14"))
+            .expect("sample.docx's footer reads `… 1 of 14`");
+        let (node, len, _) = footer;
+
+        // Backspace at the end of the footer: the last byte of the NUMPAGES
+        // result, which is the exact reported gesture.
+        let message = doc
+            .apply(Operation::DeleteText {
+                range: EditRange {
+                    start: Pos::new(node, len - 1),
+                    end: Pos::new(node, len),
+                },
+            })
+            .expect_err("a partial edit of a calculated result is refused");
+        assert!(
+            message.starts_with("refused: "),
+            "the host recognises an explained refusal by this marker alone \
+             (`edit_errors.mjs`), so without it the reader gets the generic \
+             sentence: {message}",
+        );
+        assert!(
+            message.contains("total page count is calculated"),
+            "and the sentence says what the reader is up against: {message}",
+        );
+        assert_eq!(
+            doc.paragraph_text(node),
+            "OpenDoc by CasualOffice   \u{2022}   1 of 14",
+            "refused means refused",
+        );
+
+        // An UNexplained refusal still arrives as the engine's own vocabulary for
+        // the host to translate, so this did not turn every error into prose.
+        let plain = doc
+            .apply(Operation::DeleteText {
+                range: EditRange {
+                    start: Pos::new(node, len),
+                    end: Pos::new(node, len + 50),
+                },
+            })
+            .expect_err("an out-of-range delete is refused");
+        assert_eq!(plain, "OffsetOutOfRange");
     }
 }
