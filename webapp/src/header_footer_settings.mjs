@@ -326,9 +326,22 @@ export function createHeaderFooterSettings(io) {
     else modal.close();
   }
 
-  /** Writes the two band distances and the page numbering as ONE undoable action
-   *  each — two engine calls, because they are two properties in two payloads, and
-   *  the engine has no single "write this whole section" entry point.
+  /** Writes whatever the user actually changed, and NOTHING ELSE.
+   *
+   *  Two engine entry points, because these are two property families in two
+   *  payloads and the engine has no single "write this whole section" call:
+   *  `setPageSetup` carries the band distances (they live in `w:pgMar`) and
+   *  `setSectionLayout` carries the numbering (`w:pgNumType`). So ONE CHANGE IS ONE
+   *  UNDOABLE ACTION only if each call is skipped when its half is untouched —
+   *  which is what the comparisons below are for. An Apply that issued both
+   *  unconditionally made a header-distance change take TWO presses of undo to
+   *  reverse, which is what this repository's undo guard caught.
+   *
+   *  A user who changes both halves in one Apply does make two changes, and undoes
+   *  them in two steps. That is a deliberate departure from Word, recorded here
+   *  rather than left to be discovered: closing it means one engine operation
+   *  spanning two property families, which is a change to the op set and not to
+   *  this dialog.
    *
    *  Both payloads are built from a FRESH read rather than from what the dialog
    *  opened on, so applying here cannot clobber a value Page setup changed while
@@ -340,35 +353,57 @@ export function createHeaderFooterSettings(io) {
     const list = sections();
     const fresh = list?.sections?.find((section) => section.section === current.section);
     if (!fresh) return; // the section went away under us; say nothing, change nothing
-    const geometry = {
-      section: fresh.section,
-      pageSize: fresh.pageSize,
-      pageMargins: {
-        ...fresh.pageMargins,
-        headerTwips: distanceTwips(headerFromTop),
-        footerTwips: distanceTwips(footerFromBottom),
-      },
-      columns: fresh.columns,
-      // Required key, and `null` is a legal value the engine reads as "infer from
-      // the page size" — so it is passed through rather than defaulted, which
-      // would turn an inferred orientation into an asserted one on every Apply.
-      orientation: fresh.orientation ?? null,
-    };
+
+    const headerTwips = distanceTwips(headerFromTop);
+    const footerTwips = distanceTwips(footerFromBottom);
+    const bandsMoved =
+      headerTwips !== (fresh.pageMargins?.headerTwips ?? DEFAULT_BAND_TWIPS) ||
+      footerTwips !== (fresh.pageMargins?.footerTwips ?? DEFAULT_BAND_TWIPS);
+    if (bandsMoved) {
+      await io.runEdit(
+        () =>
+          doc.setPageSetup(
+            JSON.stringify({
+              section: fresh.section,
+              pageSize: fresh.pageSize,
+              pageMargins: { ...fresh.pageMargins, headerTwips, footerTwips },
+              columns: fresh.columns,
+              // Required key, and `null` is a legal value the engine reads as
+              // "infer from the page size" — so it is passed through rather than
+              // defaulted, which would turn an inferred orientation into an
+              // asserted one on every Apply.
+              orientation: fresh.orientation ?? null,
+            }),
+          ),
+        { gate: true },
+      );
+    }
+
     const state = layoutOf(fresh.section);
-    const numbering = {
-      section: fresh.section,
-      // Carried through untouched: vertical alignment is Page setup's field, and
-      // this Apply must not invent a value for it.
-      verticalAlignment: state?.verticalAlignment ?? null,
-      // An off-list format is preserved rather than replaced: the select shows
-      // nothing for one, so reading the select back would drop it.
-      pageNumberFormat: numberFormat.value || (state?.pageNumberFormat ?? null),
-      pageNumberStart: numberRestart.checked
-        ? Math.min(1_000_000, Math.max(0, Math.round(Number(numberStart.value) || 0)))
-        : null,
-    };
-    await io.runEdit(() => doc.setPageSetup(JSON.stringify(geometry)), { gate: true });
-    await io.runEdit(() => doc.setSectionLayout(JSON.stringify(numbering)), { gate: true });
+    // An off-list format is preserved rather than replaced: the select shows
+    // nothing for one, so reading the select back would drop it.
+    const format = numberFormat.value || (state?.pageNumberFormat ?? null);
+    const start = numberRestart.checked
+      ? Math.min(1_000_000, Math.max(0, Math.round(Number(numberStart.value) || 0)))
+      : null;
+    const numberingChanged =
+      format !== (state?.pageNumberFormat ?? null) || start !== (state?.pageNumberStart ?? null);
+    if (numberingChanged) {
+      await io.runEdit(
+        () =>
+          doc.setSectionLayout(
+            JSON.stringify({
+              section: fresh.section,
+              // Carried through untouched: vertical alignment is Page setup's
+              // field, and this Apply must not invent a value for it.
+              verticalAlignment: state?.verticalAlignment ?? null,
+              pageNumberFormat: format,
+              pageNumberStart: start,
+            }),
+          ),
+        { gate: true },
+      );
+    }
     toggle(false);
   }
 

@@ -1890,25 +1890,28 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
-/* Two columns of GROUPS, not one tall stack. `auto-fit` rather than a fixed pair
-   so the same rule collapses to one column when the card is narrow — the
-   `max-width` rung below then only has the gap left to adjust. `align-content:
-   start` keeps the groups at the top instead of stretching them to fill, and
-   `start` on `align-items` stops a short group growing to match a tall neighbour.
-
-   28rem is chosen from what the groups hold: a `.dialog-field-grid` cell is
-   `clamp(7rem, 20vw, 9rem)`, so two of them plus the gap need ~19rem, and 28rem
-   leaves room for the Margins group to keep three cells per row at the card's
-   900px. Below two columns' worth, one column is correct rather than two cramped
-   ones — the same judgement `.dialog-field-grid` records about not stacking a
-   pair of five-character fields. */
+/* Two columns of GROUPS, not one tall stack — a BALANCED MULTI-COLUMN FLOW and
+   not a grid, which is the point worth recording.
+   A two-column grid aligns rows, so each row is as tall as its taller group: the
+   160px Margins group would have pinned an 88px Page size group's row to 160px
+   and left 72px of white space beside it, and the total would have been the sum of
+   the row maxima rather than half the content. `columns` balances instead — it is
+   the mechanism designed for "flow these blocks into n columns of equal height",
+   and the groups here are exactly a flow of independent blocks.
+   `break-inside: avoid` keeps a group whole; the DOM order is unchanged, so tab
+   order still reads down the first column and then the second. */
 .page-setup-fields {
-  display: grid;
   min-width: 0;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
-  align-content: start;
-  align-items: start;
-  gap: 20px;
+  columns: 2;
+  column-gap: clamp(20px, 2.4vw, 28px);
+}
+
+/* The rhythm is a bottom margin rather than the flex `gap` this was, because a
+   gap does not exist between multi-column boxes. `.dialog-group` zeroes its own
+   margin, so this is scoped to the children of this one container. */
+.page-setup-fields > .dialog-group {
+  margin-bottom: 20px;
+  break-inside: avoid;
 }
 
 /* ---- Watermark (`109` OO-006) --------------------------------------------- */
@@ -1929,15 +1932,38 @@ body.modal-open {
    `fit-content` on its own, NOT the unparseable `min(fit-content, …)` — see
    `.field-dialog`. */
 .header-footer-settings-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 58ch);
+  /* A STATED width, not `fit-content`. Sized to the content this card measured
+     476px and held 598px of groups in a 542px body — 56px below the fold on a
+     1280x720 laptop, the same defect `dialog-fit.spec.mjs` was written for. The
+     four groups are short and the card was narrow, so the fix is the same balanced
+     two-column flow Page setup now uses, and that needs a width that fits two
+     `.dialog-field-grid` cells per column (2 x 144px plus the gaps). */
+  width: min(620px, 100%);
+  max-inline-size: min(100%, 76ch);
 }
 
+/* Balanced across two columns, for the reason `.page-setup-fields` records: a grid
+   would align rows and pin a short group's row to a tall neighbour's height. */
 .header-footer-settings-body {
-  display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: 20px;
+  columns: 2;
+  column-gap: clamp(20px, 2.4vw, 28px);
+}
+
+.header-footer-settings-body > .dialog-group {
+  margin-bottom: 20px;
+  break-inside: avoid;
+}
+
+/* Apply to and Position run the FULL width rather than living in a column.
+   Measured: at two columns this card gives each one 274px, and a
+   `.dialog-field-grid` cell is 144px — so "Header from top" and "Footer from
+   bottom" stacked, which is precisely the outcome `.dialog-field-grid`'s own
+   comment refuses for a pair of short number fields. Spanning gives that pair the
+   whole 588px and keeps it side by side, and the two taller groups below then
+   balance against each other, which is what the two columns are for. */
+.header-footer-settings-body > .dialog-group-span {
+  column-span: all;
 }
 
 /* Rhythm on the ROWS and not as a gap on the fieldset, for the reason
@@ -7606,8 +7632,16 @@ body:not(.doc-loaded) .drop-title {
     width: 130px;
   }
 
+  /* One column on a phone. `columns: 2` in ~360px of card would give two ~160px
+     columns, and a `.dialog-field-grid` cell is already 112px minimum — so the
+     Margins pair would have stacked, which is the outcome `.dialog-field-grid`
+     exists to refuse. */
   .page-setup-fields {
-    gap: 18px;
+    columns: 1;
+  }
+
+  .page-setup-fields > .dialog-group {
+    margin-bottom: 18px;
   }
 }
 
