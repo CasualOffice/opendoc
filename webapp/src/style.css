@@ -7782,8 +7782,15 @@ body:not(.doc-loaded) .drop-title {
     display: none;
   }
 
+  /* The version timeline joins the established narrow-screen drawer rather than
+     getting a pattern of its own — `docs/139` §14 asks for exactly that, and an
+     in-flow 320px panel at 390px would leave 70px of canvas beside it, which is a
+     document nobody can read next to a timeline nobody asked to fill the screen.
+     As a drawer the actions bar stays reachable without hover, which is the
+     touch path. */
   .side-panel.table-properties-panel,
-  .side-panel.properties-panel {
+  .side-panel.properties-panel,
+  .side-panel.version-panel {
     position: fixed;
     z-index: var(--z-drawer);
     top: calc(var(--chrome-bottom) + 8px);

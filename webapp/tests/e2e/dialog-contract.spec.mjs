@@ -21,6 +21,7 @@ import {
   MOD,
   expectEditorFocused,
   openAppMenu,
+  runFilePageCommand,
 } from "./fixtures.mjs";
 
 async function openPalette(page) {
@@ -278,6 +279,26 @@ const MODALS = [
       await page.keyboard.press(`${MOD}+Home`);
       await page.keyboard.press("Shift+End");
       await runFromPalette(page, "Create style from selection", "Create style from selection");
+    },
+  },
+  {
+    // Version history's "Name this version" (`docs/139` §8.3, ADR-040). Same card
+    // and the same `createNamePrompt` contract as Create a style, which is the
+    // point: one implementation of "ask for one bounded line of text", so the
+    // staged-result dance that keeps Escape from leaving the promise pending
+    // exists once. Reached through the panel, because that is the only place it
+    // is offered — a version has to be selected before it can be named.
+    id: "versionNameDialog",
+    name: "Name this version",
+    opener: null,
+    focus: "#versionNameInput",
+    async open(page) {
+      await gotoEditor(page);
+      await runFilePageCommand(page, "file.versionHistory");
+      const row = page.locator("#versionPanelBody .version-item").first();
+      await expect(row).toBeVisible();
+      await row.click();
+      await page.locator("#versionNameBtn").click();
     },
   },
   {
