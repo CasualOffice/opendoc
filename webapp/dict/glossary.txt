@@ -278,6 +278,7 @@ dropdowns
 embeddability
 embeddable
 embeddings
+encodings
 endnote
 endnotes
 enum

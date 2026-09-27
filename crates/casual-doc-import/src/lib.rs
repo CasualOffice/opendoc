@@ -72,9 +72,8 @@ pub use vml::{
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Bookmark, BookmarkId, Comment, CommentId, DefinitionMap, Definitions, Document,
-    DocumentSettings, HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph,
-    ParagraphProperties, Person,
+    BlockNode, Comment, CommentId, DefinitionMap, Definitions, Document, DocumentSettings,
+    HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph, ParagraphProperties, Person,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -868,7 +867,7 @@ fn build_notes(
     styles: &Styles,
     numbering: &Numbering,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut body::ParsedDefinitions,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -885,7 +884,7 @@ fn build_notes(
             numbering,
             &media_index,
             &part.hyperlinks,
-            bookmarks,
+            parsed_defs,
             container,
             config,
         )?;
@@ -917,7 +916,7 @@ fn build_comments(
     styles: &Styles,
     numbering: &Numbering,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut body::ParsedDefinitions,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -935,7 +934,7 @@ fn build_comments(
             numbering,
             &media_index,
             &part.hyperlinks,
-            bookmarks,
+            parsed_defs,
             config,
         )?;
         // Companion-part joins: the last-paragraph `paraId` per comment (from the
@@ -1001,7 +1000,7 @@ fn build_header_footers(
     styles: &Styles,
     numbering: &Numbering,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut body::ParsedDefinitions,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -1025,7 +1024,7 @@ fn build_header_footers(
             numbering,
             &media_index,
             &part.hyperlinks,
-            bookmarks,
+            parsed_defs,
             root,
             config,
         )?;
@@ -1159,11 +1158,12 @@ pub(crate) fn import_with_sources(
     let mut media = DefinitionMap::default();
     let media_index = media::build_into(media_sources, &mut media, &mut ids, &mut reporter)?;
 
-    // Bookmarks are discovered during each part's body parse (not built ahead like
-    // media), so they accumulate into one document-global map threaded (by `&mut`)
-    // into every part parser — body, notes, headers, footers, and comments all land
-    // in a single `Definitions::bookmarks`.
-    let mut bookmarks = DefinitionMap::default();
+    // Bookmarks and paragraph-spanning field ranges are discovered during each
+    // part's body parse (not built ahead like media), so they accumulate into one
+    // document-global bundle threaded (by `&mut`) into every part parser — body,
+    // notes, headers, footers, and comments all land in a single
+    // `Definitions::bookmarks` / `Definitions::field_ranges`.
+    let mut parsed_defs = body::ParsedDefinitions::new();
 
     let (footnotes_map, footnote_ids) = build_notes(
         footnotes,
@@ -1171,7 +1171,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
-        &mut bookmarks,
+        &mut parsed_defs,
         &mut ids,
         &mut reporter,
         config,
@@ -1182,7 +1182,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
-        &mut bookmarks,
+        &mut parsed_defs,
         &mut ids,
         &mut reporter,
         config,
@@ -1193,7 +1193,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
-        &mut bookmarks,
+        &mut parsed_defs,
         &mut ids,
         &mut reporter,
         config,
@@ -1206,7 +1206,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
-        &mut bookmarks,
+        &mut parsed_defs,
         &mut ids,
         &mut reporter,
         config,
@@ -1216,7 +1216,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
-        &mut bookmarks,
+        &mut parsed_defs,
         &mut ids,
         &mut reporter,
         config,
@@ -1244,7 +1244,7 @@ pub(crate) fn import_with_sources(
             comment_ids: &comment_ids,
             color_scheme: theme.color_scheme.as_ref(),
         },
-        &mut bookmarks,
+        &mut parsed_defs,
         config,
     )?;
     // The second half of the watermark lift: the shapes left their headers during
@@ -1280,7 +1280,8 @@ pub(crate) fn import_with_sources(
         headers,
         footers,
         comments: comments_map,
-        bookmarks,
+        bookmarks: parsed_defs.bookmarks,
+        field_ranges: parsed_defs.field_ranges,
         document_defaults,
         latent_styles,
         font_table,

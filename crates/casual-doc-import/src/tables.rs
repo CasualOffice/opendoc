@@ -79,6 +79,18 @@ fn set_margin_field(margins: &mut CellMargins, edge: &[u8], twips: i32) {
     }
 }
 
+/// The last paragraph in a block list, descending through a trailing block
+/// content control (transparent to its container) but never into a table (whose
+/// cells are containers of their own). `None` when the list ends in a table, or
+/// holds no paragraph at all.
+pub(crate) fn last_paragraph_mut(blocks: &mut [BlockNode]) -> Option<&mut Paragraph> {
+    match blocks.last_mut()? {
+        BlockNode::Paragraph(paragraph) => Some(paragraph),
+        BlockNode::Sdt(sdt) => last_paragraph_mut(&mut sdt.blocks),
+        BlockNode::Table(_) | BlockNode::AltChunk(_) => None,
+    }
+}
+
 impl TableStack {
     /// Whether a table is currently open.
     pub(crate) fn is_active(&self) -> bool {
@@ -563,6 +575,20 @@ impl TableStack {
             }
             None => Some(block),
         }
+    }
+
+    /// The last paragraph already committed in the innermost open cell, if that
+    /// cell holds one. A trailing block content control is descended into (it is
+    /// transparent: its blocks belong to the enclosing cell's stream on export);
+    /// a trailing nested table is not, because each of its own cells is a block
+    /// container in its own right.
+    ///
+    /// Exists for the field-range repair (`docs/128` §4a): a cell is a block
+    /// container, so a field range a cell's markup leaves open has its `end`
+    /// synthesized into the cell's last paragraph rather than leaking out of it.
+    /// O(1) — it looks at the last block, not the cell's content.
+    pub(crate) fn last_cell_paragraph_mut(&mut self) -> Option<&mut Paragraph> {
+        last_paragraph_mut(&mut self.current_cell()?.blocks)
     }
 
     /// Closes the innermost open cell, committing it to its row. A cell with no

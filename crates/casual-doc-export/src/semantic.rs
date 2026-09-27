@@ -5511,6 +5511,62 @@ fn write_inline(
             el.push_attribute(("w:id", id.as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
+        // The start marker of a paragraph-spanning complex field writes the field's
+        // three-run prologue: `fldChar begin`, the `w:instrText` instruction, then
+        // `fldChar separate`. Everything up to the matching end marker is the field's
+        // cached result and is written as the ordinary content it already is, so a
+        // `TOC` field's entry paragraphs go out as paragraphs.
+        //
+        // Four runs across the pair rather than one is what Word itself writes and
+        // what the inline complex-field writer above already emits: the markers are
+        // run-level elements, which is the whole reason they can sit in different
+        // paragraphs. A producer may legally pack all four children into a single
+        // `w:r` (`sample.docx` does), and that is the one respect in which this is
+        // structurally rather than byte-for-byte faithful — `docs/128` §5.
+        //
+        // A marker whose definition does not resolve writes nothing, the same
+        // defence `BookmarkStart` has; `ModelError::DanglingFieldRangeRef` refuses
+        // such a document first, so it is unreachable from a valid model.
+        InlineNode::FieldRangeStart(marker) => {
+            if let Some(range) = ctx.defs.field_ranges.get(&marker.field) {
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut begin = start("w:fldChar");
+                begin.push_attribute(("w:fldCharType", "begin"));
+                w.write_event(Event::Empty(begin)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut instr = start("w:instrText");
+                instr.push_attribute(("xml:space", "preserve"));
+                w.write_event(Event::Start(instr)).map_err(pkg)?;
+                w.write_event(Event::Text(BytesText::new(&strip_xml_forbidden(
+                    &range.instruction,
+                ))))
+                .map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:instrText")))
+                    .map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut separate = start("w:fldChar");
+                separate.push_attribute(("w:fldCharType", "separate"));
+                w.write_event(Event::Empty(separate)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+            }
+        }
+        // The end marker writes the field's epilogue. Unconditional, unlike the
+        // start: a `begin` already written needs its `end` whatever the definition
+        // table says, because an unmatched `begin` makes Word read the rest of the
+        // document as instruction text.
+        InlineNode::FieldRangeEnd(_) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            let mut end = start("w:fldChar");
+            end.push_attribute(("w:fldCharType", "end"));
+            w.write_event(Event::Empty(end)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
         // A tracked-move range marker (zero-width). The pairing `w:id` and the
         // move `w:name` are re-emitted verbatim; `w:author`/`w:date` restore the
         // move metadata. The start/end pair is self-contained (the shared

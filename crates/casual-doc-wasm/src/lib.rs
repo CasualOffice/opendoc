@@ -3535,6 +3535,34 @@ impl WasmDocument {
             .collect()
     }
 
+    /// Every **paragraph-spanning** complex field as `id\tinstruction`, in ascending
+    /// id order.
+    ///
+    /// The host-facing name for what `docs/128` calls a field range: a complex field
+    /// whose `w:fldChar` markers sit in different paragraphs, which is the only way a
+    /// table of contents — one paragraph per entry — can be a field at all. A field
+    /// that fits inside one paragraph is an inline field and does NOT appear here;
+    /// `parseCommonField` and the field commands cover those.
+    ///
+    /// A host needs this to know a document HOLDS such a field before it can offer to
+    /// act on one (Word's "Update Table"). Generating and updating are not in this
+    /// layer, so there is deliberately no command here yet — an affordance backed by
+    /// nothing would be a dead control.
+    ///
+    /// O(field ranges), not O(document): it reads the definition map and never walks
+    /// the body. Shaped exactly like [`bookmarkEntries`](Self::bookmark_entries), for
+    /// the same reason — one mechanism for one kind of question.
+    #[wasm_bindgen(js_name = fieldRangeEntries)]
+    #[must_use]
+    pub fn field_range_entries(&self) -> Vec<String> {
+        self.document
+            .definitions()
+            .field_ranges
+            .iter()
+            .map(|(id, range)| format!("{}\t{}", id.node_id(), range.instruction))
+            .collect()
+    }
+
     /// Creates a bookmark named `name` over the current selection (which may span
     /// two paragraphs), inserting its start/end markers and registering the name
     /// under a fresh id. One undoable action. The new id is discoverable via
@@ -27774,6 +27802,154 @@ mod tests {
         let restored = d.bookmark_entries();
         assert_eq!(restored.len(), 1, "bookmark restored by undo");
         assert!(restored[0].ends_with("\tanchor"));
+    }
+
+    /// **A document holding a paragraph-spanning field costs a keystroke no more than
+    /// the same document without one, and the cost does not grow with the document.**
+    ///
+    /// `docs/107` §4 makes per-keystroke work O(1) in document size an owner
+    /// constraint, and `docs/128` §8 claims a field range is free on that path because
+    /// the markers are inert leaves and the definition map is keyed, never scanned.
+    /// This is that claim as a budget rather than a sentence.
+    ///
+    /// The existing `a_keystroke_costs_a_bounded_number_of_document_scans` pins the
+    /// same rule, but its fixture is plain text opened from a `.txt`, so it holds no
+    /// field range and a scan added on the range path would never execute there — the
+    /// "green for the wrong reason" shape `SKILL.md` §4 warns about. Hence a
+    /// range-bearing fixture here, and hence the doubling: a budget alone catches a
+    /// per-range cost, a doubling catches a per-paragraph one.
+    #[test]
+    fn a_keystroke_in_a_document_with_a_field_range_costs_no_extra_document_scan() {
+        /// The same ONE the plain-text budget allows: the editing path resolves the
+        /// caret's surface once, and that is the whole per-keystroke document cost.
+        const BUDGET: usize = 1;
+
+        let scans = |paragraphs: usize, with_range: bool| {
+            let mut xml = String::from(r#"<w:document xmlns:w="urn:w"><w:body>"#);
+            if with_range {
+                xml.push_str(
+                    r#"<w:p>
+                        <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                        <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r>
+                        <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                    </w:p>"#,
+                );
+            }
+            for _ in 0..paragraphs {
+                xml.push_str("<w:p><w:r><w:t>A paragraph of ordinary body text.</w:t></w:r></w:p>");
+            }
+            if with_range {
+                xml.push_str(r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#);
+            }
+            xml.push_str("</w:body></w:document>");
+            let document = casual_doc_import::import_main_document_xml(
+                xml.as_bytes(),
+                casual_doc_import::ImportConfig::default(),
+            )
+            .expect("import")
+            .document;
+            assert_eq!(
+                document.definitions().field_ranges.iter().count(),
+                usize::from(with_range),
+                "the fixture really does (or does not) hold a range — a fixture that \
+                 cannot exercise the path would make this guard meaningless"
+            );
+            let mut wasm = wasm_document(document);
+            // Type into a paragraph INSIDE the field's cached result, which is the
+            // position a per-range cost would be charged to.
+            let target = wasm
+                .document
+                .body()
+                .iter()
+                .filter_map(|block| match block {
+                    casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                        Some(paragraph.id.to_string())
+                    }
+                    _ => None,
+                })
+                .nth(if with_range { 1 } else { 0 })
+                .expect("a body paragraph");
+            casual_doc_edit::reset_document_scans();
+            wasm.insert_text(&target, 0, "x".to_owned())
+                .expect("type one character");
+            casual_doc_edit::document_scans()
+        };
+
+        let plain = scans(200, false);
+        let ranged = scans(200, true);
+        let ranged_twice_as_long = scans(400, true);
+        assert!(
+            ranged <= BUDGET,
+            "a keystroke inside a field range's result scanned the whole document \
+             {ranged} times, against a budget of {BUDGET}; per-keystroke work is O(1) \
+             in document size (`docs/107` §4)"
+        );
+        assert_eq!(
+            plain, ranged,
+            "a document holding a paragraph-spanning field must not make a keystroke \
+             cost more than the same document without one"
+        );
+        assert_eq!(
+            ranged, ranged_twice_as_long,
+            "a keystroke cost {ranged} scans at 200 paragraphs and \
+             {ranged_twice_as_long} at 400 — the cost grows with the document"
+        );
+    }
+
+    #[test]
+    fn field_range_entries_lists_a_paragraph_spanning_field_and_not_an_inline_one() {
+        // The host-facing accessor a surface needs before it can offer to act on a
+        // table of contents. Two halves, and the second is the one that matters: an
+        // INLINE field must not appear, or a host would think every PAGE field in
+        // every header were a table of contents.
+        //
+        // Built by importing the real markup rather than hand-assembling a model, so
+        // the fixture is one the importer can actually produce — a fixture that cannot
+        // reach the path under test is the specific trap in this area.
+        let spanning = casual_doc_import::import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body>
+                <w:p>
+                    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                    <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r>
+                    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                </w:p>
+                <w:p><w:r><w:t>First chapter</w:t></w:r></w:p>
+                <w:p><w:r><w:t>Second chapter</w:t></w:r>
+                     <w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+            </w:body></w:document>"#,
+            casual_doc_import::ImportConfig::default(),
+        )
+        .expect("import")
+        .document;
+        let document = wasm_document(spanning);
+        let entries = document.field_range_entries();
+        assert_eq!(
+            entries.len(),
+            1,
+            "one paragraph-spanning field: {entries:?}"
+        );
+        let (id, instruction) = entries[0].split_once('\t').expect("id\\tinstruction");
+        assert_eq!(instruction, r#" TOC \o "1-3" \h "#);
+        assert_eq!(id.len(), 32, "the 32-hex node id, as bookmarkEntries gives");
+
+        // An inline field — a complex field whose markers are in ONE paragraph, which is
+        // the shape `sample.docx` has — is not a range and must not be listed.
+        let inline = casual_doc_import::import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r>
+                <w:fldChar w:fldCharType="begin"/>
+                <w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText>
+                <w:fldChar w:fldCharType="separate"/>
+                <w:t>Update this field in Word.</w:t>
+                <w:fldChar w:fldCharType="end"/>
+            </w:r></w:p></w:body></w:document>"#,
+            casual_doc_import::ImportConfig::default(),
+        )
+        .expect("import")
+        .document;
+        assert!(
+            wasm_document(inline).field_range_entries().is_empty(),
+            "an inline field is not a range"
+        );
     }
 
     #[test]

@@ -202,6 +202,7 @@ impl Document {
         self.validate_comments()?;
         self.validate_people()?;
         self.validate_bookmarks()?;
+        self.validate_field_ranges()?;
         self.validate_font_table()?;
         self.validate_font_scheme()?;
         self.validate_color_scheme()?;
@@ -1392,6 +1393,28 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                // Field-range markers are inert leaves, exactly like the bookmark
+                // markers above: transparent to
+                // `wrapper`/`textbox_depth`/`revision_depth`, and a hard merge
+                // boundary so two equal runs either side of one are not merged
+                // (which would move the marker). Each verifies its definition
+                // resolves; the start/end BALANCE is a separate, container-scoped
+                // question and lives in `validate_field_ranges` — it cannot be
+                // answered here because this function sees one inline list, not a
+                // container. Reported against the MARKER's own id, not the
+                // definition's, so a caller can find the offending node.
+                InlineNode::FieldRangeStart(marker) => {
+                    if !self.definitions.field_ranges.contains_key(&marker.field) {
+                        return Err(ModelError::DanglingFieldRangeRef(marker.id));
+                    }
+                    previous_run_properties = None;
+                }
+                InlineNode::FieldRangeEnd(marker) => {
+                    if !self.definitions.field_ranges.contains_key(&marker.field) {
+                        return Err(ModelError::DanglingFieldRangeRef(marker.id));
+                    }
+                    previous_run_properties = None;
+                }
                 // Move range markers are inert leaves (like bookmark markers):
                 // transparent to `in_wrapper`/`textbox_depth`/`revision_depth` and
                 // a hard merge boundary. The pairing id and name are opaque bounded
@@ -1718,6 +1741,60 @@ impl Document {
         Ok(())
     }
 
+    /// Validates every paragraph-spanning field definition's instruction domain,
+    /// then the start/end balance of its markers in every block container.
+    ///
+    /// # Why this is a walk of its own
+    ///
+    /// Balance is a **container-scoped** question — "did this start find its end
+    /// before the container ran out?" — and `validate_inlines` sees one inline
+    /// list at a time with no mutable state threaded through the block recursion.
+    /// Folding a tally into that recursion would mean adding a `&mut` parameter to
+    /// `validate_block`, `validate_table`, `validate_inlines` and `validate_group`
+    /// for one construct. This walk is O(document) and so is the validation pass
+    /// it joins (`validate_unique_ids` and `validate_body` each already walk the
+    /// whole document); it runs per mutation, never per keystroke.
+    ///
+    /// Memory is O(field ranges in the container), not O(paragraphs): only the
+    /// range ids seen are kept, never a per-paragraph row (`docs/127` §3 records
+    /// what that costs on a 1.3M-paragraph document).
+    fn validate_field_ranges(&self) -> Result<(), ModelError> {
+        for (_, range) in self.definitions.field_ranges.iter() {
+            check_domain(
+                !range.instruction.is_empty()
+                    && range.instruction.len() <= MAX_FIELD_INSTRUCTION_BYTES,
+                "fieldRange.instruction",
+            )?;
+            validate_field_kind(&range.kind)?;
+        }
+        // Every block container is checked independently: a field range may span
+        // paragraphs and whole tables inside its container, but never out of one,
+        // because each container is a separate inline stream (or a separate
+        // package part) on export and a marker written outside it would have
+        // nowhere to go. `docs/128` §3.
+        check_field_range_container(&self.body)?;
+        for (_, note) in self
+            .definitions
+            .footnotes
+            .iter()
+            .chain(self.definitions.endnotes.iter())
+        {
+            check_field_range_container(&note.blocks)?;
+        }
+        for (_, header_footer) in self
+            .definitions
+            .headers
+            .iter()
+            .chain(self.definitions.footers.iter())
+        {
+            check_field_range_container(&header_footer.blocks)?;
+        }
+        for (_, comment) in self.definitions.comments.iter() {
+            check_field_range_container(&comment.blocks)?;
+        }
+        Ok(())
+    }
+
     fn validate_snapshot_limits(&self, limits: SnapshotLimits) -> Result<(), SnapshotError> {
         let mut blocks = 0_usize;
         let mut scalar_values = 0_usize;
@@ -1882,6 +1959,8 @@ fn accumulate_inline_limits(
         | InlineNode::CommentRangeEnd(_)
         | InlineNode::BookmarkStart(_)
         | InlineNode::BookmarkEnd(_)
+        | InlineNode::FieldRangeStart(_)
+        | InlineNode::FieldRangeEnd(_)
         | InlineNode::MoveRangeStart(_)
         | InlineNode::MoveRangeEnd(_)
         | InlineNode::Symbol(_)
@@ -2164,11 +2243,6 @@ fn check_opt_bound(
     Ok(())
 }
 
-/// Validates a legacy form field's configuration (`w:ffData`): every present
-/// string is at most `MAX_FORM_FIELD_STRING_BYTES`, a drop-down carries at most
-/// `MAX_FORM_FIELD_ENTRIES` entries, and the kind-specific payload agrees with
-/// the field instruction's `FORM…` token (a `TextInput` payload only on a
-/// FORMTEXT field, and so on). Absent (`None`) for an ordinary field.
 /// Bounds the strings carried by a [`FieldKind`] projection. Each is derived
 /// from the (already length-bounded) instruction, so this only guards against a
 /// hand-built model whose kind strings exceed the instruction ceiling.
@@ -2186,6 +2260,139 @@ fn validate_field_kind(kind: &FieldKind) -> Result<(), ModelError> {
         FieldKind::Other { keyword } => within(keyword),
     };
     check_domain(ok, "field.kind")
+}
+
+/// The start/end tally of the field ranges open in one block container.
+///
+/// Lives in a struct rather than three locals so the recursion into transparent
+/// children (a block content control's blocks, an inline hyperlink's inlines)
+/// carries one thing, and so the container-exhausted check has one place to read.
+#[derive(Default)]
+struct FieldRangeTally {
+    /// The range currently open, with the id of the start marker that opened it
+    /// (so an unclosed range is reported against a node a caller can find).
+    open: Option<(FieldRangeId, NodeId)>,
+    /// Ranges already opened in this container, so a second start for one range is
+    /// a duplicate rather than a fresh (and silently accepted) range.
+    started: BTreeSet<FieldRangeId>,
+    /// Ranges already closed in this container, likewise for a second end.
+    ended: BTreeSet<FieldRangeId>,
+}
+
+/// Checks that the field-range markers in one block container are balanced,
+/// non-duplicated, and neither nested nor crossing, then recurses into every
+/// nested container as a container of its own.
+///
+/// O(inlines in the container) time and O(field ranges in the container) memory.
+/// See `Document::validate_field_ranges` for why this is not folded into the main
+/// validation recursion, and `docs/128` §3 for the four rules.
+fn check_field_range_container(blocks: &[BlockNode]) -> Result<(), ModelError> {
+    let mut tally = FieldRangeTally::default();
+    check_field_range_blocks(blocks, &mut tally)?;
+    // A start still open when the container's content runs out is the failure mode
+    // that matters most: Word reads everything after an unmatched `fldChar begin`
+    // as instruction text, so exporting one can blank the rest of the document.
+    if let Some((_, start)) = tally.open {
+        return Err(ModelError::UnbalancedFieldRange(start));
+    }
+    Ok(())
+}
+
+/// Tallies one block list into `tally`. A block content control is transparent
+/// (its blocks belong to the enclosing container's stream on export); a table cell
+/// and a text box are each a container of their own and recurse through
+/// `check_field_range_container`.
+fn check_field_range_blocks(
+    blocks: &[BlockNode],
+    tally: &mut FieldRangeTally,
+) -> Result<(), ModelError> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                check_field_range_inlines(&paragraph.inlines, tally)?;
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        check_field_range_container(&cell.blocks)?;
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => check_field_range_blocks(&sdt.blocks, tally)?,
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Tallies one inline list into `tally`, descending into the wrappers a marker can
+/// legitimately sit inside.
+///
+/// A marker inside an inline hyperlink is the normal case, not an edge one: a
+/// table-of-contents row is `<w:hyperlink>` around the title, the leader tab and
+/// the `PAGEREF`, so a field promoted to a range from inside an open hyperlink puts
+/// its start marker there. Revisions and inline content controls are transparent
+/// range wrappers and are descended for the same reason. An inline `Field`'s cached
+/// result is leaf-only by validation, so it cannot hold a marker; a text box's
+/// blocks are their own container and are reached from
+/// `check_field_range_blocks`'s table/`Document`-level walk instead — descending
+/// into them here would let a range cross a container boundary unnoticed.
+fn check_field_range_inlines(
+    inlines: &[InlineNode],
+    tally: &mut FieldRangeTally,
+) -> Result<(), ModelError> {
+    for inline in inlines {
+        match inline {
+            InlineNode::FieldRangeStart(marker) => {
+                if !tally.started.insert(marker.field) {
+                    return Err(ModelError::DuplicateFieldRangeMarker(marker.id));
+                }
+                if tally.open.is_some() {
+                    return Err(ModelError::OverlappingFieldRanges(marker.id));
+                }
+                tally.open = Some((marker.field, marker.id));
+            }
+            InlineNode::FieldRangeEnd(marker) => {
+                if tally.ended.contains(&marker.field) {
+                    return Err(ModelError::DuplicateFieldRangeMarker(marker.id));
+                }
+                // An end that does not close the range actually open is unmatched,
+                // whether its start comes later in the container or never. One
+                // error rather than a separate "inverted" one: distinguishing them
+                // would need a whole-container pre-pass and the caller's fix is the
+                // same either way (`docs/128` §3).
+                if tally.open.map(|(field, _)| field) != Some(marker.field) {
+                    return Err(ModelError::UnbalancedFieldRange(marker.id));
+                }
+                tally.ended.insert(marker.field);
+                tally.open = None;
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                check_field_range_inlines(&hyperlink.inlines, tally)?;
+            }
+            InlineNode::Revision(revision) => {
+                check_field_range_inlines(&revision.inlines, tally)?;
+            }
+            InlineNode::Sdt(sdt) => check_field_range_inlines(&sdt.inlines, tally)?,
+            InlineNode::TextBox(text_box) => check_field_range_container(&text_box.blocks)?,
+            InlineNode::Group(group) => check_field_range_group(group)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Recurses a DrawingML group, treating each child text box's blocks as its own
+/// container (the same rule `Document::validate_group` applies).
+fn check_field_range_group(group: &WordprocessingGroup) -> Result<(), ModelError> {
+    for child in &group.children {
+        match child {
+            GroupChild::TextBox(text_box) => check_field_range_container(&text_box.blocks)?,
+            GroupChild::Group(nested) => check_field_range_group(nested)?,
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn check_form_field(field: &Field) -> Result<(), ModelError> {

@@ -5128,3 +5128,502 @@ fn a_document_is_built_holding_no_spare_vector_capacity() {
         );
     }
 }
+
+// --- Paragraph-spanning field ranges (docs/128 §3) -------------------------
+
+fn field_range_id(counter: u64) -> FieldRangeId {
+    FieldRangeId::new(tid(counter))
+}
+
+/// A definition table holding one `TOC` field range under `field_range_id(10)`.
+fn toc_definitions() -> Definitions {
+    let mut definitions = Definitions::default();
+    definitions.field_ranges.insert(
+        field_range_id(10),
+        FieldRange {
+            instruction: " TOC \\h ".to_owned(),
+            kind: FieldKind::Toc,
+        },
+    );
+    definitions
+}
+
+fn range_start(id: u64, field: FieldRangeId) -> InlineNode {
+    InlineNode::FieldRangeStart(FieldRangeStart { id: tid(id), field })
+}
+
+fn range_end(id: u64, field: FieldRangeId) -> InlineNode {
+    InlineNode::FieldRangeEnd(FieldRangeEnd { id: tid(id), field })
+}
+
+#[test]
+fn a_balanced_field_range_spanning_paragraphs_is_accepted_and_round_trips() {
+    // The shape the whole change exists to allow: the markers in DIFFERENT
+    // paragraphs, with ordinary paragraphs between them as the field's cached
+    // result. A container representation could not hold this.
+    let field = field_range_id(10);
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, field)]),
+            paragraph_block(tid(3)),
+            bookmark_paragraph(tid(4), vec![range_end(5, field)]),
+        ],
+        toc_definitions(),
+    )
+    .expect("a balanced range across paragraphs validates");
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(
+        document, reloaded,
+        "the range survives a snapshot round trip"
+    );
+    assert!(
+        String::from_utf8(json).unwrap().contains("fieldRanges"),
+        "the definition table is serialized when non-empty"
+    );
+}
+
+#[test]
+fn an_empty_field_range_table_is_omitted_from_a_snapshot() {
+    // Additive: a document with no range must serialize byte-identically to before
+    // this change, or every committed snapshot fixture moves.
+    let document = Document::new(
+        tid(99),
+        vec![paragraph_block(tid(1))],
+        Definitions::default(),
+    )
+    .unwrap();
+    let json = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert!(!json.contains("fieldRanges"), "{json}");
+}
+
+#[test]
+fn a_field_range_definition_with_no_markers_is_allowed() {
+    // An unreferenced definition is like an unused style, not a corruption
+    // (`docs/128` §3). The inverse — a marker with no definition — is R1 below.
+    Document::new(tid(99), vec![paragraph_block(tid(1))], toc_definitions())
+        .expect("an unreferenced field-range definition is not a corruption");
+}
+
+#[test]
+fn r1_a_field_range_marker_whose_definition_is_missing_is_rejected() {
+    let document = Document::new(
+        tid(99),
+        vec![bookmark_paragraph(
+            tid(1),
+            vec![
+                range_start(2, field_range_id(77)),
+                range_end(3, field_range_id(77)),
+            ],
+        )],
+        toc_definitions(),
+    );
+    assert!(
+        matches!(document, Err(ModelError::DanglingFieldRangeRef(id)) if id == tid(2)),
+        "reported against the MARKER's own id, so a caller can find the node: {document:?}"
+    );
+}
+
+#[test]
+fn r2_a_field_range_start_with_no_end_in_its_container_is_rejected() {
+    // The failure mode that matters most: Word reads everything after an unmatched
+    // `w:fldChar begin` as field instruction text, so one missing `end` can blank the
+    // rest of the document on open. This is refused where the bookmark validator
+    // tolerates the same shape, and the asymmetry is deliberate.
+    let field = field_range_id(10);
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, field)]),
+            paragraph_block(tid(3)),
+        ],
+        toc_definitions(),
+    );
+    assert!(
+        matches!(document, Err(ModelError::UnbalancedFieldRange(id)) if id == tid(2)),
+        "reported against the unclosed START marker: {document:?}"
+    );
+}
+
+#[test]
+fn r2_a_field_range_end_before_its_start_is_reported_at_the_end_marker() {
+    // An `end` encountered with no range open is an unmatched end, whether its start
+    // comes later in the container or not at all. One error rather than a separate
+    // "inverted" one: distinguishing them needs a whole-container pre-pass and the
+    // caller's fix is the same either way (`docs/128` §3).
+    let field = field_range_id(10);
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_end(2, field)]),
+            bookmark_paragraph(tid(3), vec![range_start(4, field)]),
+        ],
+        toc_definitions(),
+    );
+    assert!(
+        matches!(document, Err(ModelError::UnbalancedFieldRange(id)) if id == tid(2)),
+        "reported at the END marker, not the later start: {document:?}"
+    );
+}
+
+#[test]
+fn r2_a_field_range_may_not_cross_out_of_a_table_cell() {
+    // A cell is a block container: its blocks are a separate inline stream on export,
+    // so a marker written outside it would have nowhere to go. A start in one cell and
+    // an end in the next is therefore unbalanced in BOTH cells, and refused.
+    let field = field_range_id(10);
+    let table = BlockNode::Table(Box::new(Table {
+        id: tid(1),
+        properties: TableProperties::default(),
+        grid: Vec::new(),
+        grid_change: None,
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties::default(),
+            cells: vec![
+                cell(
+                    tid(3),
+                    TableCellProperties::default(),
+                    vec![bookmark_paragraph(tid(4), vec![range_start(5, field)])],
+                ),
+                cell(
+                    tid(6),
+                    TableCellProperties::default(),
+                    vec![bookmark_paragraph(tid(7), vec![range_end(8, field)])],
+                ),
+            ],
+        }],
+    }));
+    let document = Document::new(tid(99), vec![table], toc_definitions());
+    assert!(
+        matches!(document, Err(ModelError::UnbalancedFieldRange(_))),
+        "a range may span paragraphs and tables INSIDE its container, never out of \
+         one: {document:?}"
+    );
+}
+
+#[test]
+fn a_field_range_wholly_inside_one_table_cell_is_accepted() {
+    // The positive half of the container rule — without it the rule above would pass
+    // for a validator that simply refused every range in a table.
+    let field = field_range_id(10);
+    let table = BlockNode::Table(Box::new(Table {
+        id: tid(1),
+        properties: TableProperties::default(),
+        grid: Vec::new(),
+        grid_change: None,
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(
+                tid(3),
+                TableCellProperties::default(),
+                vec![
+                    bookmark_paragraph(tid(4), vec![range_start(5, field)]),
+                    bookmark_paragraph(tid(6), vec![range_end(7, field)]),
+                ],
+            )],
+        }],
+    }));
+    Document::new(tid(99), vec![table], toc_definitions())
+        .expect("a range spanning two paragraphs of one cell is legitimate");
+}
+
+#[test]
+fn r3_a_second_start_for_one_field_range_in_a_container_is_rejected() {
+    let field = field_range_id(10);
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, field)]),
+            bookmark_paragraph(tid(3), vec![range_end(4, field)]),
+            bookmark_paragraph(tid(5), vec![range_start(6, field)]),
+            bookmark_paragraph(tid(7), vec![range_end(8, field)]),
+        ],
+        toc_definitions(),
+    );
+    assert!(
+        matches!(document, Err(ModelError::DuplicateFieldRangeMarker(id)) if id == tid(6)),
+        "the DUPLICATE marker is named, not the first: {document:?}"
+    );
+}
+
+#[test]
+fn r3_a_second_end_for_one_field_range_in_a_container_is_rejected() {
+    let field = field_range_id(10);
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, field)]),
+            bookmark_paragraph(tid(3), vec![range_end(4, field)]),
+            bookmark_paragraph(tid(5), vec![range_end(6, field)]),
+        ],
+        toc_definitions(),
+    );
+    assert!(
+        matches!(document, Err(ModelError::DuplicateFieldRangeMarker(id)) if id == tid(6)),
+        "{document:?}"
+    );
+}
+
+#[test]
+fn r4_a_field_range_opened_inside_another_is_rejected() {
+    // Nesting is refused where the format permits it (`{ IF { PAGE } … }`), for the
+    // same reason `ModelError::NestedField` refuses it for the inline field: one
+    // policy for one construct. Recorded as a deliberate difference from Word, not an
+    // oversight (`docs/128` §10).
+    let outer = field_range_id(10);
+    let inner = field_range_id(11);
+    let mut definitions = toc_definitions();
+    definitions.field_ranges.insert(
+        inner,
+        FieldRange {
+            instruction: " PAGE ".to_owned(),
+            kind: FieldKind::Page,
+        },
+    );
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, outer)]),
+            bookmark_paragraph(tid(3), vec![range_start(4, inner)]),
+            bookmark_paragraph(tid(5), vec![range_end(6, inner)]),
+            bookmark_paragraph(tid(7), vec![range_end(8, outer)]),
+        ],
+        definitions,
+    );
+    assert!(
+        matches!(document, Err(ModelError::OverlappingFieldRanges(id)) if id == tid(4)),
+        "reported at the start that opened inside another: {document:?}"
+    );
+}
+
+#[test]
+fn r4_two_crossing_field_ranges_are_rejected() {
+    let first = field_range_id(10);
+    let second = field_range_id(11);
+    let mut definitions = toc_definitions();
+    definitions.field_ranges.insert(
+        second,
+        FieldRange {
+            instruction: " PAGE ".to_owned(),
+            kind: FieldKind::Page,
+        },
+    );
+    let document = Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, first)]),
+            bookmark_paragraph(tid(3), vec![range_start(4, second)]),
+            bookmark_paragraph(tid(5), vec![range_end(6, first)]),
+            bookmark_paragraph(tid(7), vec![range_end(8, second)]),
+        ],
+        definitions,
+    );
+    assert!(
+        matches!(document, Err(ModelError::OverlappingFieldRanges(id)) if id == tid(4)),
+        "{document:?}"
+    );
+}
+
+#[test]
+fn two_field_ranges_in_sequence_are_accepted() {
+    // The positive half of R4: refusing nesting must not refuse two fields one after
+    // the other, which is what a document with a table of contents AND a table of
+    // figures looks like.
+    let first = field_range_id(10);
+    let second = field_range_id(11);
+    let mut definitions = toc_definitions();
+    definitions.field_ranges.insert(
+        second,
+        FieldRange {
+            instruction: " TOC \\h \\c \"Figure\" ".to_owned(),
+            kind: FieldKind::Toc,
+        },
+    );
+    Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, first)]),
+            bookmark_paragraph(tid(3), vec![range_end(4, first)]),
+            bookmark_paragraph(tid(5), vec![range_start(6, second)]),
+            bookmark_paragraph(tid(7), vec![range_end(8, second)]),
+        ],
+        definitions,
+    )
+    .expect("two sequential ranges are not nested");
+}
+
+#[test]
+fn the_same_field_range_may_recur_in_a_different_container() {
+    // R3 is container-scoped, not document-scoped: the tally is rebuilt per container,
+    // so a start in the body and a start in a header are not duplicates of each other.
+    // Asserting this pins the scope — a document-wide tally would pass every R3 test
+    // above and refuse this legitimate shape.
+    let field = field_range_id(10);
+    let mut definitions = toc_definitions();
+    definitions.headers.insert(
+        HeaderFooterId::new(tid(50)),
+        HeaderFooter {
+            blocks: vec![
+                bookmark_paragraph(tid(51), vec![range_start(52, field)]),
+                bookmark_paragraph(tid(53), vec![range_end(54, field)]),
+            ],
+        },
+    );
+    Document::new(
+        tid(99),
+        vec![
+            bookmark_paragraph(tid(1), vec![range_start(2, field)]),
+            bookmark_paragraph(tid(3), vec![range_end(4, field)]),
+        ],
+        definitions,
+    )
+    .expect("marker balance is scoped to one block container");
+}
+
+#[test]
+fn a_field_range_instruction_must_be_non_empty_and_bounded() {
+    for instruction in ["".to_owned(), "x".repeat(MAX_FIELD_INSTRUCTION_BYTES + 1)] {
+        let mut definitions = Definitions::default();
+        definitions.field_ranges.insert(
+            field_range_id(10),
+            FieldRange {
+                instruction: instruction.clone(),
+                kind: FieldKind::Other {
+                    keyword: "TOC".to_owned(),
+                },
+            },
+        );
+        let document = Document::new(tid(99), vec![paragraph_block(tid(1))], definitions);
+        assert!(
+            matches!(
+                document,
+                Err(ModelError::PropertyValueOutOfDomain {
+                    property: "fieldRange.instruction"
+                })
+            ),
+            "instruction of {} bytes: {document:?}",
+            instruction.len()
+        );
+    }
+}
+
+/// One unbalanced start marker, for a container-coverage guard.
+fn unbalanced_range_blocks(paragraph: u64, marker: u64) -> Vec<BlockNode> {
+    vec![bookmark_paragraph(
+        tid(paragraph),
+        vec![range_start(marker, field_range_id(10))],
+    )]
+}
+
+#[test]
+fn r2_every_block_container_is_checked_for_balance_not_only_the_body() {
+    // The positive test above pins R3's SCOPE (the same range may recur in another
+    // container) but cannot prove a container is walked at all: it asserts acceptance,
+    // so deleting the header walk leaves it green. That is exactly how a guard passes
+    // while the code is wrong, so each container kind gets a NEGATIVE case here.
+    //
+    // A header, a footer, a footnote, an endnote and a comment are each their own
+    // block container on export — a separate package part or a separate inline
+    // stream — so an unbalanced range in any of them must be refused just as it is in
+    // the body.
+    let header = {
+        let mut definitions = toc_definitions();
+        definitions.headers.insert(
+            HeaderFooterId::new(tid(50)),
+            HeaderFooter {
+                blocks: unbalanced_range_blocks(51, 52),
+            },
+        );
+        definitions
+    };
+    let footer = {
+        let mut definitions = toc_definitions();
+        definitions.footers.insert(
+            HeaderFooterId::new(tid(60)),
+            HeaderFooter {
+                blocks: unbalanced_range_blocks(61, 62),
+            },
+        );
+        definitions
+    };
+    let footnote = {
+        let mut definitions = toc_definitions();
+        definitions.footnotes.insert(
+            NoteId::new(tid(70)),
+            Note {
+                blocks: unbalanced_range_blocks(71, 72),
+            },
+        );
+        definitions
+    };
+    let endnote = {
+        let mut definitions = toc_definitions();
+        definitions.endnotes.insert(
+            NoteId::new(tid(80)),
+            Note {
+                blocks: unbalanced_range_blocks(81, 82),
+            },
+        );
+        definitions
+    };
+    let comment = {
+        let mut definitions = toc_definitions();
+        definitions.comments.insert(
+            CommentId::new(tid(90)),
+            Comment {
+                blocks: unbalanced_range_blocks(91, 92),
+                ..Comment::default()
+            },
+        );
+        definitions
+    };
+    for (container, definitions, marker) in [
+        ("header", header, 52_u64),
+        ("footer", footer, 62),
+        ("footnote", footnote, 72),
+        ("endnote", endnote, 82),
+        ("comment", comment, 92),
+    ] {
+        let document = Document::new(tid(99), vec![paragraph_block(tid(1))], definitions);
+        assert!(
+            matches!(document, Err(ModelError::UnbalancedFieldRange(id)) if id == tid(marker)),
+            "an unbalanced range inside a {container} is refused, and reported against \
+             its own marker: {document:?}"
+        );
+    }
+}
+
+#[test]
+fn r2_an_unbalanced_field_range_inside_a_text_box_is_rejected() {
+    // A text box is a block container too, and it is the one that leaks: its blocks
+    // sit inside an inline node in the enclosing paragraph, so a validator that
+    // descended into it as ordinary content would let a range pair across the
+    // boundary.
+    let field = field_range_id(10);
+    let text_box = TextBox {
+        id: tid(20),
+        hyperlink: None,
+        anchor: None,
+        relative_height: None,
+        extent: None,
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties::default(),
+        blocks: vec![bookmark_paragraph(tid(21), vec![range_start(22, field)])],
+    };
+    let document = Document::new(
+        tid(99),
+        vec![bookmark_paragraph(
+            tid(1),
+            vec![InlineNode::TextBox(Box::new(text_box)), range_end(2, field)],
+        )],
+        toc_definitions(),
+    );
+    assert!(
+        matches!(document, Err(ModelError::UnbalancedFieldRange(_))),
+        "the box's start cannot pair with the body's end: {document:?}"
+    );
+}

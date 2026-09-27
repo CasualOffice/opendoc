@@ -38,7 +38,9 @@ use casual_doc_model::v1::{
 // merge collisions with other agents editing this shared file.
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
+// Same rule: the paragraph-spanning field range's own imports go on their own line.
 use casual_doc_model::v1::Watermark;
+use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -55,7 +57,7 @@ use crate::properties::{
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 use crate::styles::Styles;
-use crate::tables::TableStack;
+use crate::tables::{TableStack, last_paragraph_mut};
 use crate::vml::{
     VmlColor, VmlDrawing, VmlFill, VmlGradientKind, VmlHorizontalAlign, VmlHr, VmlHrAlign,
     VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextAnchor, VmlVerticalAlign, VmlWrap,
@@ -150,6 +152,15 @@ enum Segment {
     /// The end marker of a bookmark range.
     BookmarkEnd {
         bookmark: BookmarkId,
+    },
+    /// The start marker of a paragraph-spanning complex field's range, emitted
+    /// when a field is still open at `</w:p>` (`promote_field_to_range`).
+    FieldRangeStart {
+        field: FieldRangeId,
+    },
+    /// The end marker of a paragraph-spanning complex field's range.
+    FieldRangeEnd {
+        field: FieldRangeId,
     },
     /// The start marker of a tracked-move (source/destination) range.
     MoveRangeStart {
@@ -769,6 +780,12 @@ struct ContentFrame {
     hyperlink_depth: u32,
     field: Option<FieldAccumulator>,
     field_depth: u32,
+    /// The enclosing container's open field range, suspended for a TEXT BOX frame
+    /// only — a text box is a block container of its own, so a range must not
+    /// leak between it and the body. A block content control is transparent (its
+    /// blocks join the enclosing container's stream on export), so its frame
+    /// leaves the slot live and a range may legitimately close inside it.
+    open_field_range: Option<(FieldRangeId, bool)>,
     in_instr: bool,
     instr_buffer: String,
     ruby_annotation_depth: u32,
@@ -807,6 +824,14 @@ struct HyperlinkAccumulator {
 struct FieldAccumulator {
     /// The field instruction (`w:instr` or concatenated `w:instrText`).
     instruction: String,
+    /// Whether this is a `w:fldSimple` (element-delimited) rather than a complex
+    /// `fldChar` field (marker-delimited).
+    ///
+    /// Only a complex field can outlive its paragraph and so be promoted to a
+    /// range: `w:fldSimple` is a single element whose result is its children, so
+    /// one still open at `</w:p>` is malformed markup with no `end` to come, and
+    /// keeps the existing commit-what-we-have behaviour. `docs/128` §4.
+    simple: bool,
     /// Whether we are past the `separate` boundary (collecting the cached
     /// result). A simple field starts in the result state; a complex field
     /// starts collecting its instruction.
@@ -1067,6 +1092,16 @@ struct BodyParser<'a> {
     /// Nesting depth of `<w:fldSimple>` / complex `fldChar` fields, so a
     /// missing/extra delimiter cannot desynchronize field commits.
     field_depth: u32,
+    /// The paragraph-spanning field range currently open in THIS block container,
+    /// with whether it was promoted inside a table cell.
+    ///
+    /// `Some` only between a promotion at `</w:p>` and the `fldChar end` that
+    /// closes it, so every following paragraph is imported with no knowledge of
+    /// the range at all. The flag picks the sink the repair writes into
+    /// (`balance_open_field_range`): a range promoted inside a cell belongs to
+    /// that cell's container, one promoted outside it to the part's. `docs/128`
+    /// §4a.
+    open_field_range: Option<(FieldRangeId, bool)>,
     /// Whether we are inside a legacy form field's `w:ffData` block, so its
     /// children route onto the open field's `FormFieldBuilder`.
     in_ffdata: bool,
@@ -1210,7 +1245,7 @@ struct BodyParser<'a> {
     comment_ids: &'a BTreeMap<String, CommentId>,
     /// Document-global bookmark definitions accumulator (threaded across every
     /// part so body + notes + headers + footers + comments land in one table).
-    bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &'a mut ParsedDefinitions,
     /// Source `w:id` string -> allocated `BookmarkId`, for start/end pairing
     /// across paragraphs. Part-scoped (NOT swapped in `ContentFrame`): a bookmark
     /// opened in body flow and closed inside a text box still pairs.
@@ -1254,7 +1289,7 @@ impl<'a> BodyParser<'a> {
         ids: &'a mut IdGenerator,
         reporter: &'a mut Reporter,
         inputs: &ParseInputs<'a>,
-        bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+        parsed_defs: &'a mut ParsedDefinitions,
         note_container: Option<&'static [u8]>,
         config: ImportConfig,
     ) -> Self {
@@ -1335,6 +1370,7 @@ impl<'a> BodyParser<'a> {
             hyperlink_depth: 0,
             field: None,
             field_depth: 0,
+            open_field_range: None,
             in_ffdata: false,
             in_instr: false,
             instr_buffer: String::new(),
@@ -1384,12 +1420,38 @@ impl<'a> BodyParser<'a> {
             header_ids: inputs.header_ids,
             footer_ids: inputs.footer_ids,
             comment_ids: inputs.comment_ids,
-            bookmarks,
+            parsed_defs,
             bookmark_ids: BTreeMap::new(),
             math_depth: 0,
             math_writer: None,
             math_text: String::new(),
             math_in_t: false,
+        }
+    }
+}
+
+/// The definition tables that are discovered **during** a part's body parse rather
+/// than built ahead of it (as media is), and therefore accumulate document-globally
+/// across every part — body, notes, headers, footers, comments.
+///
+/// One bundle rather than one `&mut` parameter per table: every parse entry point
+/// already carries `#[allow(clippy::too_many_arguments)]`, and a second parallel
+/// parameter would have to be added to five signatures and six call sites for each
+/// new table. `docs/128` §4.
+pub(crate) struct ParsedDefinitions {
+    /// Bookmark names by id, shared by each `BookmarkStart`/`BookmarkEnd` pair.
+    pub bookmarks: DefinitionMap<BookmarkId, Bookmark>,
+    /// Paragraph-spanning complex field instructions by id, shared by each
+    /// `FieldRangeStart`/`FieldRangeEnd` pair.
+    pub field_ranges: DefinitionMap<FieldRangeId, FieldRange>,
+}
+
+impl ParsedDefinitions {
+    /// An empty bundle, for the start of a document import.
+    pub fn new() -> Self {
+        Self {
+            bookmarks: DefinitionMap::default(),
+            field_ranges: DefinitionMap::default(),
         }
     }
 }
@@ -1414,24 +1476,16 @@ pub(crate) fn parse<'a>(
     ids: &'a mut IdGenerator,
     reporter: &'a mut Reporter,
     inputs: ParseInputs<'a>,
-    bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &'a mut ParsedDefinitions,
     config: ImportConfig,
 ) -> Result<BodyParse, ImportError> {
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, config);
     parser.run(xml)?;
-    // Unwind any text box left open by malformed input so the true body root is
-    // restored, then finish a paragraph the unwind may have re-opened so its
-    // content is committed, not stranded in a suspended frame.
-    while !parser.frames.is_empty() {
-        parser.exit_frame()?;
-    }
-    if parser.paragraph_open {
-        parser.finish_paragraph()?;
-    }
-    // Commit any table left open by truncated body markup (its partial content
-    // would otherwise be stranded in the `TableStack` at EOF).
-    let roots = parser.tables.flush_open(&mut *parser.ids)?;
-    parser.blocks.extend(roots);
+    // The body is one block container: unwind any text box left open by malformed
+    // input so the true body root is restored, balance a field range the markup
+    // left open, finish a paragraph the unwind may have re-opened, and commit a
+    // table left open by truncated markup.
+    parser.finish_container()?;
     Ok(BodyParse {
         blocks: parser.blocks,
         sections: parser.sections,
@@ -1452,7 +1506,7 @@ pub(crate) fn parse_notes(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut ParsedDefinitions,
     container: &'static [u8],
     config: ImportConfig,
 ) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
@@ -1475,7 +1529,8 @@ pub(crate) fn parse_notes(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(container), config);
+    let mut parser =
+        BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(container), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -1513,7 +1568,7 @@ pub(crate) fn parse_header_footer(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut ParsedDefinitions,
     root: &'static [u8],
     config: ImportConfig,
 ) -> Result<HeaderFooterParse, ImportError> {
@@ -1534,18 +1589,11 @@ pub(crate) fn parse_header_footer(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, config);
     parser.hf_root = Some(root);
     parser.run(xml)?;
-    while !parser.frames.is_empty() {
-        parser.exit_frame()?;
-    }
-    if parser.paragraph_open {
-        parser.finish_paragraph()?;
-    }
-    // Commit any table left open by truncated header/footer markup.
-    let roots = parser.tables.flush_open(&mut *parser.ids)?;
-    parser.blocks.extend(roots);
+    // A header/footer part is one block container.
+    parser.finish_container()?;
     Ok(HeaderFooterParse {
         blocks: parser.blocks,
         watermark: parser.watermark,
@@ -1564,7 +1612,7 @@ pub(crate) fn parse_comments(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut ParsedDefinitions,
     config: ImportConfig,
 ) -> Result<Vec<(String, CommentId, Comment)>, ImportError> {
     let empty_notes = BTreeMap::new();
@@ -1584,7 +1632,14 @@ pub(crate) fn parse_comments(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(b"comment"), config);
+    let mut parser = BodyParser::build(
+        ids,
+        reporter,
+        &inputs,
+        parsed_defs,
+        Some(b"comment"),
+        config,
+    );
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -2391,7 +2446,9 @@ impl BodyParser<'_> {
                             self.reporter.report(b"bookmarkStart");
                         } else {
                             let bookmark = BookmarkId::new(self.next_id()?);
-                            self.bookmarks.insert(bookmark, Bookmark { name });
+                            self.parsed_defs
+                                .bookmarks
+                                .insert(bookmark, Bookmark { name });
                             self.bookmark_ids.insert(source, bookmark);
                             self.push_segment(Segment::BookmarkStart { bookmark });
                             // A column bookmark (`w:colFirst`/`w:colLast`, a
@@ -4731,6 +4788,11 @@ impl BodyParser<'_> {
             }
             b"tc" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
                 self.tcpr_depth = 0;
+                // A table cell is a block container of its own (its blocks are a
+                // separate inline stream on export), so a field range the cell's
+                // markup leaves open is closed inside the cell rather than allowed
+                // to pair with an `end` in a later cell. `docs/128` §3.
+                self.balance_open_field_range()?;
                 self.tables.close_cell(&mut *self.ids)?;
             }
             b"tr" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
@@ -6205,6 +6267,10 @@ impl BodyParser<'_> {
             hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
             field: self.field.take(),
             field_depth: std::mem::take(&mut self.field_depth),
+            open_field_range: match kind {
+                FrameKind::TextBox => self.open_field_range.take(),
+                FrameKind::BlockSdt => None,
+            },
             in_instr: std::mem::take(&mut self.in_instr),
             ruby_annotation_depth: std::mem::take(&mut self.ruby_annotation_depth),
             instr_buffer: std::mem::take(&mut self.instr_buffer),
@@ -6237,6 +6303,16 @@ impl BodyParser<'_> {
     /// `TextBox` segment or a `BlockNode::Sdt`. An empty (or over-deep text box)
     /// frame is reported and dropped (never silent).
     fn exit_frame(&mut self) -> Result<(), ImportError> {
+        // A text box is a block container: a field range its markup leaves open is
+        // closed INSIDE it, before its content is committed, so the range cannot
+        // leak out into the body. A block content control is transparent and so
+        // does not close one. `docs/128` §4a.
+        if matches!(
+            self.frames.last().map(|frame| frame.kind),
+            Some(FrameKind::TextBox)
+        ) {
+            self.balance_open_field_range()?;
+        }
         if self.paragraph_open {
             self.finish_paragraph()?;
         }
@@ -6280,6 +6356,9 @@ impl BodyParser<'_> {
         self.hyperlink_depth = frame.hyperlink_depth;
         self.field = frame.field;
         self.field_depth = frame.field_depth;
+        if matches!(frame.kind, FrameKind::TextBox) {
+            self.open_field_range = frame.open_field_range;
+        }
         self.in_instr = frame.in_instr;
         self.ruby_annotation_depth = frame.ruby_annotation_depth;
         self.instr_buffer = frame.instr_buffer;
@@ -6394,26 +6473,23 @@ impl BodyParser<'_> {
     /// Closes the open note, committing its block content keyed by source `w:id`.
     fn close_note(&mut self) -> Result<(), ImportError> {
         if !self.skip_note && self.current_note.is_some() {
-            // Unwind open text boxes FIRST — each restores its enclosing
-            // paragraph — then finish that paragraph so its content (and the text
-            // box) is committed, not dropped.
-            while !self.frames.is_empty() {
-                self.exit_frame()?;
-            }
-            if self.paragraph_open {
-                self.finish_paragraph()?;
-            }
-            // Commit any table left open by truncated markup so its content is not
-            // stranded in the shared `TableStack`, and so it cannot bleed into the
-            // next note/comment parsed by this reused parser.
-            let roots = self.tables.flush_open(&mut *self.ids)?;
-            self.blocks.extend(roots);
+            // Each note/comment is one block container: unwind open text boxes
+            // FIRST (each restores its enclosing paragraph), balance a field range
+            // the markup left open, finish that paragraph so its content (and the
+            // text box) is committed, and commit a table left open by truncated
+            // markup so its content is not stranded in the shared `TableStack` and
+            // cannot bleed into the next note/comment parsed by this reused parser.
+            self.finish_container()?;
         }
         // Clear residual table-suppression so the next note/comment starts clean.
         self.suppressed_tbl_depth = 0;
         // A bookmark never legitimately spans two notes/comments; clear the pairing
         // map defensively so an unclosed start cannot pair across containers.
         self.bookmark_ids.clear();
+        // Nor does a field range: `finish_container` above balanced one for a content
+        // note, and a SKIPPED note never opens a container at all, so anything left
+        // here would be a leak into the next note parsed by this reused parser.
+        self.open_field_range = None;
         // Content-control state never spans two notes/comments either; a
         // truncated block control (missing `</w:sdt>`) would otherwise leak a
         // `Block` scope and a non-zero depth into the next note parsed by this
@@ -6618,6 +6694,7 @@ impl BodyParser<'_> {
             self.field = Some(FieldAccumulator {
                 instruction: String::new(),
                 in_result: false,
+                simple: false,
                 segments: Vec::new(),
                 form: None,
             });
@@ -6637,6 +6714,7 @@ impl BodyParser<'_> {
             self.field = Some(FieldAccumulator {
                 instruction,
                 in_result: true,
+                simple: true,
                 segments: Vec::new(),
                 form: None,
             });
@@ -6658,9 +6736,20 @@ impl BodyParser<'_> {
 
     /// Closes the outermost field on `fldChar end` or `</w:fldSimple>`, committing
     /// it; inner (nested) delimiters only balance the depth counter.
+    ///
+    /// An `end` arriving with NO field open closes a field that was promoted to a
+    /// range at an earlier `</w:p>` (`promote_field_to_range` reset the depth with
+    /// the paragraph), emitting the range's end marker. With neither a field nor a
+    /// range open it is an unmatched `fldChar end` — reported, never silent.
     fn close_field(&mut self) {
         if self.field_depth == 1 {
             self.commit_field();
+        } else if self.field_depth == 0 {
+            match self.open_field_range.take() {
+                Some((field, _)) => self.push_segment(Segment::FieldRangeEnd { field }),
+                None => self.reporter.report(b"fldChar"),
+            }
+            return;
         }
         self.field_depth = self.field_depth.saturating_sub(1);
     }
@@ -6900,7 +6989,9 @@ impl BodyParser<'_> {
         }
         while self.wrapper_order.last() != Some(&kind) {
             let before = self.wrapper_order.len();
-            self.commit_top_wrapper();
+            // `false`: this close is mid-paragraph, so a field open across it is
+            // still inside its own paragraph and commits as an inline field.
+            let _ = self.commit_top_wrapper(false);
             if self.wrapper_order.len() == before {
                 // Defensive: a marker with no live accumulator would not pop;
                 // drop it so the drain always terminates.
@@ -6910,15 +7001,158 @@ impl BodyParser<'_> {
     }
 
     /// Commits the innermost open wrapper (whichever kind), used to drain wrappers
-    /// left open by malformed input at paragraph end.
-    fn commit_top_wrapper(&mut self) {
+    /// left open at a `</w:sdt>` / `</w:hyperlink>` that closes over an open field,
+    /// and to drain them at paragraph end.
+    ///
+    /// `at_paragraph_end` is the whole difference between the two callers. An
+    /// element-delimited wrapper closing mid-paragraph leaves a complex field
+    /// inside the SAME paragraph, so the field still commits as an inline
+    /// `InlineNode::Field`. At `</w:p>` the field has outlived its paragraph, so it
+    /// is promoted to a range instead of being committed with the truncated result
+    /// it happens to have accumulated. `docs/128` §4.
+    fn commit_top_wrapper(&mut self, at_paragraph_end: bool) -> Result<(), ImportError> {
         match self.wrapper_order.last() {
+            Some(WrapperKind::Field) if at_paragraph_end => self.promote_field_to_range()?,
             Some(WrapperKind::Field) => self.commit_field(),
             Some(WrapperKind::Hyperlink) => self.commit_hyperlink(),
             Some(WrapperKind::Revision) => self.commit_revision(),
             Some(WrapperKind::Sdt) => self.commit_sdt(),
             None => {}
         }
+        Ok(())
+    }
+
+    /// Promotes the open complex field to a paragraph-spanning RANGE: registers its
+    /// instruction in `Definitions::field_ranges`, emits a `FieldRangeStart` where
+    /// the field's content began, splices the already-accumulated result after it as
+    /// ordinary paragraph content, and records the open range so the later
+    /// `fldChar end` can close it. `docs/128` §4.
+    ///
+    /// O(result segments accumulated in this first paragraph) — they are moved
+    /// once, not copied, and nothing rescans the document.
+    ///
+    /// Falls back to `Self::commit_field` (today's commit-what-we-have) in the four
+    /// cases a range cannot honestly represent, each reported:
+    ///
+    /// - a `w:fldSimple`, which is element-delimited and has no `end` to come;
+    /// - a legacy form field (`w:ffData`), whose configuration a `FieldRange` does
+    ///   not carry — promoting it would drop the form data silently;
+    /// - an empty or over-long instruction, which the model refuses either way;
+    /// - a field promoted while a range is already open, because nesting is refused
+    ///   (`ModelError::OverlappingFieldRanges`) exactly as the inline field refuses
+    ///   it (`ModelError::NestedField`).
+    fn promote_field_to_range(&mut self) -> Result<(), ImportError> {
+        let promotable = self.field.as_ref().is_some_and(|field| {
+            !field.simple
+                && field.form.is_none()
+                && !field.instruction.is_empty()
+                && field.instruction.len() <= MAX_FIELD_INSTRUCTION_BYTES
+        }) && self.open_field_range.is_none();
+        if !promotable {
+            if self.field.is_some() {
+                self.reporter.report(b"fldChar");
+            }
+            self.commit_field();
+            return Ok(());
+        }
+        let Some(field) = self.field.take() else {
+            return Ok(());
+        };
+        // Drop the field's own wrapper marker (it is the innermost) BEFORE routing,
+        // so the start marker and the accumulated result land in the enclosing
+        // wrapper — an open `w:hyperlink`, which is where a table-of-contents row's
+        // markup put them.
+        self.pop_wrapper(WrapperKind::Field);
+        let range = FieldRangeId::new(self.next_id()?);
+        let kind = FieldKind::parse(&field.instruction);
+        self.parsed_defs.field_ranges.insert(
+            range,
+            FieldRange {
+                instruction: field.instruction,
+                kind,
+            },
+        );
+        self.push_segment(Segment::FieldRangeStart { field: range });
+        for segment in field.segments {
+            self.push_segment(segment);
+        }
+        self.open_field_range = Some((range, self.tables.in_cell()));
+        Ok(())
+    }
+
+    /// Closes a field range this block container's markup left open (truncated
+    /// input, or a producer that wrote a `begin` with no `end`), so the model never
+    /// sees an unbalanced range — which `Document::validate` refuses, and which
+    /// Word reads as instruction text for the rest of the document. `docs/128` §4a.
+    ///
+    /// The `end` goes into the open paragraph when there is one; otherwise it is
+    /// appended to the last paragraph already committed in the range's own sink (the
+    /// cell it was promoted in, or the container's block list). Only if that sink
+    /// holds no paragraph at all does a paragraph get synthesized to carry it — an
+    /// empty paragraph is a visible artifact, so it is the last resort rather than
+    /// the mechanism. **No content is dropped on any path**: the field's result is
+    /// ordinary paragraphs and stays exactly where it is; what is lost is where the
+    /// field ended, and that is reported.
+    ///
+    /// O(1): it looks at the last block of one sink, never at the container.
+    fn balance_open_field_range(&mut self) -> Result<(), ImportError> {
+        let Some((field, in_cell)) = self.open_field_range.take() else {
+            return Ok(());
+        };
+        self.reporter.report(b"fldChar");
+        if self.paragraph_open {
+            self.push_segment(Segment::FieldRangeEnd { field });
+            return Ok(());
+        }
+        let id = self.next_id()?;
+        let marker = InlineNode::FieldRangeEnd(FieldRangeEnd { id, field });
+        let last = if in_cell {
+            self.tables.last_cell_paragraph_mut()
+        } else {
+            last_paragraph_mut(&mut self.blocks)
+        };
+        if let Some(paragraph) = last {
+            paragraph.inlines.push(marker);
+            return Ok(());
+        }
+        let paragraph_id = self.next_id()?;
+        let block = BlockNode::Paragraph(Paragraph {
+            id: paragraph_id,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![marker],
+        });
+        if in_cell {
+            if let Some(returned) = self.tables.push_block(block) {
+                self.blocks.push(returned);
+            }
+        } else {
+            self.blocks.push(block);
+        }
+        Ok(())
+    }
+
+    /// Ends one block container — the body, a header/footer, a note, a comment:
+    /// unwind any suspended frame, balance a field range the markup left open,
+    /// commit an open paragraph, then commit a table left open by truncated markup.
+    ///
+    /// One function rather than the epilogue that was copy-pasted at each of these
+    /// entry points: adding the balance step to four copies is how the fourth gets
+    /// forgotten. `docs/128` §4a.
+    fn finish_container(&mut self) -> Result<(), ImportError> {
+        // Unwind a text box left open by malformed input so the true container root
+        // is restored before anything else looks at it.
+        while !self.frames.is_empty() {
+            self.exit_frame()?;
+        }
+        // Before the paragraph is committed, so the `end` marker rides into it as a
+        // segment in document order rather than being appended afterwards.
+        self.balance_open_field_range()?;
+        if self.paragraph_open {
+            self.finish_paragraph()?;
+        }
+        let roots = self.tables.flush_open(&mut *self.ids)?;
+        self.blocks.extend(roots);
+        Ok(())
     }
 
     /// Commits the innermost open inline content control, routing its segment into
@@ -7081,9 +7315,16 @@ impl BodyParser<'_> {
         // hyperlink/field/revision missing its close) is drained innermost-first
         // so each commits its accumulated content into the next-enclosing wrapper
         // (or the paragraph) — nothing is dropped and nesting order is preserved.
+        //
+        // A complex field is the one wrapper for which reaching this point is NOT
+        // malformed: `w:fldChar` markers are run-level, so a field may legitimately
+        // outlive its paragraph. `true` tells the drain to PROMOTE such a field to a
+        // paragraph-spanning range instead of committing it with the truncated
+        // result it has accumulated so far, which is what used to happen (and
+        // dropped the later `fldChar end` on the floor). `docs/128` §4.
         while !self.wrapper_order.is_empty() {
             let before = self.wrapper_order.len();
-            self.commit_top_wrapper();
+            self.commit_top_wrapper(true)?;
             if self.wrapper_order.len() == before {
                 // Defensive: a marker with no live accumulator would not pop;
                 // drop it so the drain always terminates.
@@ -7406,6 +7647,14 @@ impl BodyParser<'_> {
             Segment::BookmarkStart { bookmark } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::BookmarkStart(BookmarkStart { id, bookmark }))
+            }
+            Segment::FieldRangeStart { field } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::FieldRangeStart(FieldRangeStart { id, field }))
+            }
+            Segment::FieldRangeEnd { field } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::FieldRangeEnd(FieldRangeEnd { id, field }))
             }
             Segment::BookmarkEnd { bookmark } => {
                 let id = self.next_id()?;

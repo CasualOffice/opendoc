@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use super::SharedParagraphProperties;
 use super::SharedRunProperties;
 use super::{BookmarkId, BreakKind, CommentId, MediaId, NoteId, RunProperties, Table};
+// Separate `use` line (kept out of the sorted block above) to avoid import-list
+// merge collisions with other agents editing this shared model file.
+use super::FieldRangeId;
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -2067,6 +2070,41 @@ pub struct BookmarkEnd {
     pub bookmark: BookmarkId,
 }
 
+/// The start marker of a **paragraph-spanning** complex field
+/// (`w:fldChar w:fldCharType="begin"`, with its instruction and the following
+/// `separate`). A zero-width point; the field's cached result is the span to the
+/// [`FieldRangeEnd`] sharing its `field`.
+///
+/// In OOXML a complex field is a range, not a container: the `w:fldChar` markers
+/// are run-level, so `begin` and `end` may sit in different paragraphs — which is
+/// the only way a table of contents, whose result is one paragraph per entry, can
+/// be a field at all. The shape is deliberately the bookmark's: two markers plus a
+/// definition-table payload (`Definitions::field_ranges`), so the two ends cannot
+/// disagree about the instruction.
+///
+/// A complex field whose markers fall in the **same** paragraph stays an inline
+/// [`Field`] and is unaffected. See `docs/128`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldRangeStart {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// The field range this opens (resolves in `Definitions::field_ranges`).
+    pub field: FieldRangeId,
+}
+
+/// The end marker of a paragraph-spanning complex field
+/// (`w:fldChar w:fldCharType="end"`). A zero-width point closing the
+/// [`FieldRangeStart`] that shares its `field`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldRangeEnd {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// The field range this closes (resolves in `Definitions::field_ranges`).
+    pub field: FieldRangeId,
+}
+
 /// Whether a move range marks the source or the destination of a tracked move.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -2680,6 +2718,11 @@ pub enum InlineNode {
     BookmarkStart(BookmarkStart),
     /// The end marker of a bookmark range.
     BookmarkEnd(BookmarkEnd),
+    /// The start marker of a paragraph-spanning complex field. The field's cached
+    /// result is the content up to the matching [`InlineNode::FieldRangeEnd`].
+    FieldRangeStart(FieldRangeStart),
+    /// The end marker of a paragraph-spanning complex field.
+    FieldRangeEnd(FieldRangeEnd),
     /// The start marker of a tracked-move (source or destination) range.
     /// Boxed: see the note on this enum.
     MoveRangeStart(Box<MoveRangeStart>),
@@ -2727,6 +2770,8 @@ impl InlineNode {
             Self::Revision(revision) => revision.id,
             Self::BookmarkStart(node) => node.id,
             Self::BookmarkEnd(node) => node.id,
+            Self::FieldRangeStart(node) => node.id,
+            Self::FieldRangeEnd(node) => node.id,
             Self::MoveRangeStart(node) => node.id,
             Self::MoveRangeEnd(node) => node.id,
             Self::Sdt(sdt) => sdt.id,
@@ -2853,6 +2898,8 @@ impl InlineNode {
             | Self::CommentRangeEnd(_)
             | Self::BookmarkStart(_)
             | Self::BookmarkEnd(_)
+            | Self::FieldRangeStart(_)
+            | Self::FieldRangeEnd(_)
             | Self::MoveRangeStart(_)
             | Self::MoveRangeEnd(_)
             | Self::Math(_)

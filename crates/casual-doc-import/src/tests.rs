@@ -3525,9 +3525,21 @@ fn complex_field_without_separate_has_empty_result() {
 }
 
 #[test]
-fn complex_field_missing_end_is_flushed_without_loss() {
-    // A begin/separate with no end (malformed): the field is flushed at paragraph
-    // close so its cached text is not dropped.
+fn complex_field_missing_end_is_promoted_and_repaired_without_loss() {
+    // A begin/separate with no end (malformed). This test used to assert the field
+    // was FLUSHED as an inline field at paragraph close, which is the truncation
+    // `docs/128` replaces: at `</w:p>` the parser cannot know whether an `end` is
+    // still coming, so treating the field as paragraph-bound is what dropped the
+    // later `end` on the floor for every real table of contents.
+    //
+    // The field is now promoted to a range, and because no `end` ever arrives, the
+    // container-end repair closes it (`docs/128` §4a). For this input the start and
+    // the synthesized end land in the same paragraph, so the outcome is a range
+    // where an inline field would also have served — a slightly weaker shape for
+    // malformed input, deliberately traded for never truncating a valid one.
+    //
+    // What has to hold either way: the instruction survives, the cached text
+    // survives in document order, and the loss is reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p>
             <w:r><w:fldChar w:fldCharType="begin"/></w:r>
@@ -3537,13 +3549,30 @@ fn complex_field_missing_end_is_flushed_without_loss() {
         </w:p>
     </w:body></w:document>"#;
     let import = import(xml);
-    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
-        panic!("expected a flushed field");
-    };
-    assert_eq!(field.instruction, " PAGE ");
+    assert!(import.document.validate().is_ok(), "the repair validates");
+    let (id, start, end) = sole_field_range(&import);
+    assert_eq!((start, end), (0, 0));
+    assert_eq!(
+        import
+            .document
+            .definitions()
+            .field_ranges
+            .get(&id)
+            .expect("the instruction is registered")
+            .instruction,
+        " PAGE "
+    );
+    let inlines = &paragraph(&import, 0).inlines;
+    assert!(matches!(inlines[0], InlineNode::FieldRangeStart(_)));
+    assert!(matches!(inlines.last(), Some(InlineNode::FieldRangeEnd(_))));
     let mut text = String::new();
-    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
-    assert_eq!(text, "3");
+    inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "3", "the cached text is not dropped");
+    assert!(
+        features(&import).contains(&"fldChar"),
+        "the missing end is reported: {:?}",
+        features(&import)
+    );
 }
 
 /// The body of a real, populated table of contents: the `TOC` field itself,
@@ -8972,5 +9001,506 @@ fn a_styles_tab_list_accepts_the_numbering_and_clear_tabs() {
         !features(&import).contains(&"tab"),
         "no style tab stop is reported as lost: {:?}",
         features(&import)
+    );
+}
+
+// --- Paragraph-spanning complex fields (docs/128) --------------------------
+
+/// A `TOC` field as Word actually writes one: the `fldChar begin` and the
+/// instruction in one paragraph, three entry paragraphs, and the `end` in the
+/// last of them. Every marker is a run-level element, which is why they can sit
+/// in different paragraphs at all.
+const SPANNING_TOC: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
+    <w:p>
+        <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+        <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r>
+        <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+    </w:p>
+    <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+        <w:hyperlink w:anchor="_Toc100">
+            <w:r><w:t>First chapter</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> PAGEREF _Toc100 \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>1</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:hyperlink>
+    </w:p>
+    <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+        <w:hyperlink w:anchor="_Toc101">
+            <w:r><w:t>Second chapter</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> PAGEREF _Toc101 \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>4</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:hyperlink>
+    </w:p>
+    <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+        <w:hyperlink w:anchor="_Toc102">
+            <w:r><w:t>Third chapter</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> PAGEREF _Toc102 \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>9</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:hyperlink>
+        <w:r><w:fldChar w:fldCharType="end"/></w:r>
+    </w:p>
+    <w:p><w:r><w:t>Body text after the table of contents.</w:t></w:r></w:p>
+</w:body></w:document>"#;
+
+/// Body-flow paragraph text in document order, descending the transparent inline
+/// wrappers (`collect_block_texts` reads only top-level runs, so it cannot see the
+/// text inside a table-of-contents row's hyperlink).
+fn paragraph_texts(import: &Import) -> Vec<String> {
+    import
+        .document
+        .body()
+        .iter()
+        .filter_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut text = String::new();
+                paragraph
+                    .inlines
+                    .iter()
+                    .for_each(|inline| inline_text(inline, &mut text));
+                Some(text)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The single `FieldRangeId` referenced by a document's markers, and the
+/// (start, end) paragraph indices holding them. Panics if the document does not
+/// hold exactly one balanced pair in body flow.
+fn sole_field_range(import: &Import) -> (casual_doc_model::v1::FieldRangeId, usize, usize) {
+    let mut start = None;
+    let mut end = None;
+    let mut id = None;
+    for (index, block) in import.document.body().iter().enumerate() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        // Document order, explicitly: a LIFO stack would visit one paragraph's
+        // inlines in reverse and see a same-paragraph pair end-first.
+        let mut queue: std::collections::VecDeque<&InlineNode> = paragraph.inlines.iter().collect();
+        while let Some(inline) = queue.pop_front() {
+            match inline {
+                InlineNode::FieldRangeStart(marker) => {
+                    assert!(start.is_none(), "more than one start marker");
+                    start = Some(index);
+                    id = Some(marker.field);
+                }
+                InlineNode::FieldRangeEnd(marker) => {
+                    assert!(end.is_none(), "more than one end marker");
+                    end = Some(index);
+                    assert_eq!(id, Some(marker.field), "the pair shares one id");
+                }
+                // A transparent wrapper's children come next in document order, so
+                // they go to the FRONT of the queue, not the back.
+                InlineNode::Hyperlink(link) => {
+                    link.inlines.iter().rev().for_each(|c| queue.push_front(c));
+                }
+                InlineNode::Revision(revision) => {
+                    revision
+                        .inlines
+                        .iter()
+                        .rev()
+                        .for_each(|c| queue.push_front(c));
+                }
+                InlineNode::Sdt(sdt) => {
+                    sdt.inlines.iter().rev().for_each(|c| queue.push_front(c));
+                }
+                _ => {}
+            }
+        }
+    }
+    (
+        id.expect("a field range marker pair is present"),
+        start.expect("a start marker is present"),
+        end.expect("an end marker is present"),
+    )
+}
+
+#[test]
+fn a_toc_field_that_outlives_its_paragraph_becomes_a_range_not_a_truncated_field() {
+    // The constraint this whole change exists for: a `TOC` field's cached result is
+    // MANY paragraphs, and the inline `Field` holds leaf inlines, so before this the
+    // field committed at `</w:p>` with an empty result and the later `fldChar end`
+    // was dropped. Now the field is promoted to a range and its result stays the
+    // ordinary paragraphs it is. `docs/128` §4.
+    let import = import(SPANNING_TOC);
+    assert!(import.document.validate().is_ok(), "the range validates");
+
+    let (id, start, end) = sole_field_range(&import);
+    assert_eq!(
+        start, 0,
+        "the start marker is in the paragraph that opened it"
+    );
+    assert_eq!(end, 3, "the end marker is in the paragraph that closed it");
+
+    let range = import
+        .document
+        .definitions()
+        .field_ranges
+        .get(&id)
+        .expect("the instruction is registered in Definitions");
+    assert_eq!(range.instruction, r#" TOC \o "1-3" \h \z \u "#);
+    assert!(
+        matches!(range.kind, casual_doc_model::v1::FieldKind::Toc),
+        "the kind projection is derived from the instruction: {:?}",
+        range.kind
+    );
+
+    // The entry paragraphs are real, separate paragraphs in body flow — not content
+    // flattened into one field's inline list, and not a `BlockSdt` standing in for a
+    // field. Five blocks: the opening paragraph, three entries, the trailing text.
+    assert_eq!(import.document.body().len(), 5);
+    for index in 1..=3 {
+        let paragraph = paragraph(&import, index);
+        assert!(
+            matches!(paragraph.inlines.first(), Some(InlineNode::Hyperlink(_))),
+            "entry paragraph {index} keeps its own row structure: {:?}",
+            paragraph.inlines
+        );
+    }
+
+    // Each entry's `PAGEREF` is still the existing INLINE field — a field that fits
+    // in a paragraph stays inline, which is the invariant that keeps this one
+    // construct rather than two (`docs/128` §2c).
+    let mut pagerefs = Vec::new();
+    for index in 1..=3 {
+        for inline in &paragraph(&import, index).inlines {
+            if let InlineNode::Hyperlink(link) = inline {
+                for child in &link.inlines {
+                    if let InlineNode::Field(field) = child {
+                        pagerefs.push(field.instruction.clone());
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        pagerefs,
+        vec![
+            " PAGEREF _Toc100 \\h ".to_owned(),
+            " PAGEREF _Toc101 \\h ".to_owned(),
+            " PAGEREF _Toc102 \\h ".to_owned(),
+        ],
+        "every entry's PAGEREF survives as an inline field"
+    );
+
+    // And no text was lost anywhere, including the run after the field.
+    // `collect_block_texts` does not descend hyperlinks, so the entry text is read
+    // through `inline_text` — a helper that cannot see the text under test is the
+    // specific trap this area has already fallen into.
+    // `inline_text` renders no tab, so the entry texts read without one and the
+    // leader tab is asserted structurally below.
+    let texts = paragraph_texts(&import);
+    assert_eq!(
+        texts,
+        vec![
+            String::new(),
+            "First chapter1".to_owned(),
+            "Second chapter4".to_owned(),
+            "Third chapter9".to_owned(),
+            "Body text after the table of contents.".to_owned(),
+        ],
+        "every entry's title and page number survive, and the paragraph after the \
+         field is not swallowed"
+    );
+    for index in 1..=3 {
+        let InlineNode::Hyperlink(link) = &paragraph(&import, index).inlines[0] else {
+            unreachable!("asserted above");
+        };
+        assert!(
+            link.inlines
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Tab(_))),
+            "entry {index} keeps the dot-leader tab that separates title from page \
+             number: {:?}",
+            link.inlines
+        );
+    }
+}
+
+#[test]
+fn a_complex_field_that_fits_in_one_paragraph_stays_an_inline_field() {
+    // The other half of §2c, and the shape `sample.docx`'s own TOC field has: the
+    // markers are in the SAME paragraph, so it is an inline `Field` before this
+    // change and after it. Promoting every complex field to a range would weaken a
+    // guarantee for thousands of fields to accommodate the rare one.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r>
+        <w:fldChar w:fldCharType="begin"/>
+        <w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText>
+        <w:fldChar w:fldCharType="separate"/>
+        <w:t>Update this field in Word to generate the table of contents.</w:t>
+        <w:fldChar w:fldCharType="end"/>
+    </w:r></w:p></w:body></w:document>"#;
+    let import = import(xml);
+    assert!(import.document.validate().is_ok());
+    assert!(
+        import.document.definitions().field_ranges.is_empty(),
+        "no range is created for a field that fits in a paragraph"
+    );
+    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected an inline field, got {:?}",
+            paragraph(&import, 0).inlines
+        );
+    };
+    assert_eq!(field.instruction, r#" TOC \o "1-3" \h \z \u "#);
+    let mut text = String::new();
+    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(
+        text,
+        "Update this field in Word to generate the table of contents."
+    );
+}
+
+#[test]
+fn a_field_ranges_end_marker_lands_inside_the_hyperlink_that_holds_it() {
+    // Marker placement follows the markup, not a policy: some producers close a TOC
+    // inside the last row's `w:hyperlink` rather than after it. The end marker must
+    // then be the link's child, because that is the run position the `fldChar end`
+    // occupied and it is what the export has to write back.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> TOC \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        </w:p>
+        <w:p><w:hyperlink w:anchor="_Toc1">
+            <w:r><w:t>Last chapter</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:hyperlink></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(import.document.validate().is_ok());
+    let InlineNode::Hyperlink(link) = &paragraph(&import, 1).inlines[0] else {
+        panic!(
+            "the hyperlink is still modeled: {:?}",
+            paragraph(&import, 1).inlines
+        );
+    };
+    assert!(
+        matches!(link.inlines.last(), Some(InlineNode::FieldRangeEnd(_))),
+        "the end marker is the link's last child, not a sibling after it: {:?}",
+        link.inlines
+    );
+    // And validation is happy with a start at paragraph level closing inside a
+    // hyperlink, because the balance walk descends transparent wrappers in order.
+    let (_, start, end) = sole_field_range(&import);
+    assert_eq!((start, end), (0, 1));
+}
+
+#[test]
+fn an_unterminated_field_range_is_closed_inside_its_container_and_reported() {
+    // A `begin` with no `end` is not a cosmetic defect: Word reads everything after
+    // an unmatched one as instruction text, so a single missing `end` can blank the
+    // rest of the document on open. Import REPAIRS (the model must never see an
+    // unbalanced range) and reports; validation refuses one that arrives anyway.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> TOC \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        </w:p>
+        <w:p><w:r><w:t>orphaned entry</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        import.document.validate().is_ok(),
+        "the repaired range validates"
+    );
+    let (_, start, end) = sole_field_range(&import);
+    assert_eq!(start, 0);
+    assert_eq!(end, 1, "the synthesized end lands in the last paragraph");
+    assert!(
+        features(&import).contains(&"fldChar"),
+        "the loss is reported, never silent: {:?}",
+        features(&import)
+    );
+    assert!(
+        paragraph_texts(&import)
+            .iter()
+            .any(|t| t == "orphaned entry"),
+        "no content is dropped by the repair: {:?}",
+        paragraph_texts(&import)
+    );
+}
+
+#[test]
+fn a_field_range_open_at_a_cell_boundary_is_closed_inside_the_cell() {
+    // A table cell is a block container of its own: its blocks are a separate inline
+    // stream on export, so a marker written outside it would have nowhere to go.
+    // Without the balance at `</w:tc>` the start would pair with the `end` in the
+    // NEXT cell and `Document::validate` would refuse the whole import.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:tbl>
+        <w:tr>
+            <w:tc>
+                <w:p>
+                    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                    <w:r><w:instrText> TOC \h </w:instrText></w:r>
+                    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                </w:p>
+                <w:p><w:r><w:t>in cell one</w:t></w:r></w:p>
+            </w:tc>
+            <w:tc>
+                <w:p><w:r><w:t>in cell two</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+            </w:tc>
+        </w:tr>
+    </w:tbl></w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        import.document.validate().is_ok(),
+        "a cross-cell range is repaired, not refused: {:?}",
+        import.document.validate()
+    );
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("expected a table");
+    };
+    let first = &table.rows[0].cells[0].blocks;
+    let mut markers = 0_usize;
+    for block in first {
+        if let BlockNode::Paragraph(paragraph) = block {
+            for inline in &paragraph.inlines {
+                if matches!(
+                    inline,
+                    InlineNode::FieldRangeStart(_) | InlineNode::FieldRangeEnd(_)
+                ) {
+                    markers += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(
+        markers, 2,
+        "both markers are inside the cell that opened the range"
+    );
+    let mut texts = Vec::new();
+    collect_block_texts(import.document.body(), &mut texts);
+    assert!(
+        texts.iter().any(|t| t == "in cell two"),
+        "the next cell's content survives: {texts:?}"
+    );
+}
+
+#[test]
+fn a_field_range_open_in_a_text_box_does_not_leak_into_the_body() {
+    // A text box is a block container too, and it is the case that leaks: the frame
+    // restores the enclosing parser state, so without balancing the box's own range
+    // first, the body's later `fldChar end` would close a range whose start is
+    // inside the box.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+        <w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText> TOC \h </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            </w:p>
+            <w:p><w:r><w:t>inside the box</w:t></w:r></w:p>
+        </w:txbxContent></v:textbox></v:rect></w:pict></w:r>
+    </w:p>
+    <w:p><w:r><w:t>body</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        import.document.validate().is_ok(),
+        "the box's range is closed inside it: {:?}",
+        import.document.validate()
+    );
+    // The body's stray `end` found no open range and was reported rather than
+    // closing the box's one.
+    assert!(
+        features(&import).contains(&"fldChar"),
+        "the stray end is reported: {:?}",
+        features(&import)
+    );
+    let mut texts = Vec::new();
+    collect_block_texts(import.document.body(), &mut texts);
+    assert!(
+        texts.iter().any(|t| t.contains("body")),
+        "body content survives: {texts:?}"
+    );
+}
+
+#[test]
+fn a_fld_simple_open_at_a_paragraph_close_is_not_promoted_to_a_range() {
+    // `w:fldSimple` is ELEMENT-delimited: its result is its children, so there is no
+    // `fldChar end` that could ever close a range made from one. Promoting it would
+    // manufacture a range that only the repair can close — a range invented out of a
+    // producer bug.
+    //
+    // An UNCLOSED `w:fldSimple` cannot reach this: the XML reader refuses markup
+    // that is not well formed. What does reach it is a `w:p` nested inside the
+    // field — well-formed XML that the schema does not allow (`CT_SimpleField`
+    // holds `EG_PContent`, which has no `w:p`), and exactly the shape a hardened
+    // importer has to survive rather than trust.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:fldSimple w:instr=" PAGE ">
+            <w:r><w:t>7</w:t></w:r>
+            <w:p><w:r><w:t>nested</w:t></w:r></w:p>
+        </w:fldSimple></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(import.document.validate().is_ok());
+    assert!(
+        import.document.definitions().field_ranges.is_empty(),
+        "a fldSimple never becomes a range, however its paragraph closes"
+    );
+    assert!(
+        paragraph_texts(&import).iter().any(|t| t.contains('7')),
+        "the field's own cached text survives: {:?}",
+        paragraph_texts(&import)
+    );
+}
+
+#[test]
+fn a_paragraph_spanning_field_nested_in_another_is_reported_and_not_nested() {
+    // Nesting is refused for the range for the same reason the inline field refuses
+    // it (`ModelError::NestedField`), and the two must not disagree: the inner
+    // field's result flattens into the enclosing stream and the loss is reported.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> TOC \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        </w:p>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> TOC \h \o "2-2" </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>inner cached</w:t></w:r>
+        </w:p>
+        <w:p><w:r><w:t>tail</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        import.document.validate().is_ok(),
+        "no nested range reaches the model: {:?}",
+        import.document.validate()
+    );
+    assert_eq!(
+        import.document.definitions().field_ranges.iter().count(),
+        1,
+        "only the outer field became a range"
+    );
+    assert!(
+        features(&import).contains(&"fldChar"),
+        "the refused nesting is reported: {:?}",
+        features(&import)
+    );
+    assert!(
+        paragraph_texts(&import)
+            .iter()
+            .any(|t| t.contains("inner cached")),
+        "the inner field's cached text is flattened, not dropped: {:?}",
+        paragraph_texts(&import)
     );
 }

@@ -179,6 +179,11 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         InlineNode::CommentRangeStart(_) | InlineNode::CommentRangeEnd(_) => {}
         // A bookmark marker is a zero-width range anchor with no in-flow text.
         InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {}
+        // A paragraph-spanning field's markers are zero-width range anchors. The
+        // field's cached result is the ordinary content BETWEEN them and is walked
+        // in its own right, so `push_inline_text` must add nothing here — counting
+        // the result at the marker too would double it.
+        InlineNode::FieldRangeStart(_) | InlineNode::FieldRangeEnd(_) => {}
         // A tracked-move range marker is a zero-width anchor with no in-flow text;
         // the moved text lives in the paired `w:moveFrom`/`w:moveTo` run wrapper.
         InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => {}
