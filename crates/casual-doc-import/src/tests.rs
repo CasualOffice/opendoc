@@ -3592,7 +3592,11 @@ const POPULATED_TOC: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
 /// Every `PAGEREF` field in `inlines`, paired with the hyperlink anchor it sits
 /// inside (`None` when it sits at paragraph level). Walks the whole tree so a
 /// field that escaped its hyperlink is found, not merely missed.
-fn pageref_fields(inlines: &[InlineNode], inside: Option<&str>, out: &mut Vec<(Option<String>, String)>) {
+fn pageref_fields(
+    inlines: &[InlineNode],
+    inside: Option<&str>,
+    out: &mut Vec<(Option<String>, String)>,
+) {
     for inline in inlines {
         match inline {
             InlineNode::Hyperlink(link) => {
@@ -3655,7 +3659,10 @@ fn every_table_of_contents_row_keeps_its_pageref_field_inside_its_hyperlink() {
     };
     assert_eq!(field.instruction, " PAGEREF _Toc100 \\h ");
     let mut cached = String::new();
-    field.inlines.iter().for_each(|c| inline_text(c, &mut cached));
+    field
+        .inlines
+        .iter()
+        .for_each(|c| inline_text(c, &mut cached));
     assert_eq!(cached, "2", "the cached page number is the field's result");
 
     // The TOC field itself still sits at paragraph level, unwrapped.
