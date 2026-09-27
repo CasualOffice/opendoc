@@ -8438,27 +8438,52 @@ impl WasmDocument {
         initials: Option<String>,
         date: Option<String>,
     ) -> Result<EditResult, JsValue> {
+        self.add_comment_inner(
+            start_node, start, end_node, end, text, author, initials, date,
+        )
+        .map_err(to_js)
+    }
+
+    /// [`add_comment`](Self::add_comment) with its refusals as `String`s instead
+    /// of `JsValue`s.
+    ///
+    /// This split is a TESTABILITY fix, not a refactor. Any `#[wasm_bindgen]`
+    /// method whose error path builds a `JsValue` cannot be driven down that path
+    /// in a native test: `JsError::new` panics with "cannot call wasm-bindgen
+    /// imported functions on non-wasm targets", so the panic destroys the message
+    /// before any assertion can read it. A native guard over such a method can
+    /// therefore assert a success and can neither assert a refusal nor see WHY one
+    /// happened — which is how this method's deepest refusal shipped unguarded and
+    /// wrong. `caption_renumber_operations` and `caption_target_refusal` were
+    /// factored out for the same reason; this is the same pattern, applied to the
+    /// method the class was found in.
+    #[allow(clippy::too_many_arguments)]
+    fn add_comment_inner(
+        &mut self,
+        start_node: &str,
+        start: u32,
+        end_node: &str,
+        end: u32,
+        text: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
         if text.is_empty() {
-            return Err(to_js(
-                "comment range and text must be non-empty".to_string(),
-            ));
+            return Err("comment range and text must be non-empty".to_string());
         }
-        let start_node = node_id(start_node)?;
-        let end_node = node_id(end_node)?;
+        let start_node = node_id_msg(start_node)?;
+        let end_node = node_id_msg(end_node)?;
         if start_node == end_node && start >= end {
-            return Err(to_js(
-                "comment range and text must be non-empty".to_string(),
-            ));
+            return Err("comment range and text must be non-empty".to_string());
         }
         let author = self.resolve_author(author);
         let initials = self.resolve_initials(initials);
         // The note-ordinal index for this one command, built once before the
         // review body is spliced. O(notes); see `NoteAnchorLengths`.
         let notes = NoteAnchorLengths::of(&self.document);
-        let next_id = |ids: &mut IdGenerator| {
-            ids.next_id()
-                .map_err(|_| to_js("id space exhausted".to_string()))
-        };
+        let next_id =
+            |ids: &mut IdGenerator| ids.next_id().map_err(|_| "id space exhausted".to_string());
         let comment = CommentId::new(next_id(&mut self.edit_ids)?);
         let start_id = next_id(&mut self.edit_ids)?;
         let end_id = next_id(&mut self.edit_ids)?;
@@ -8478,7 +8503,7 @@ impl WasmDocument {
             comment,
         };
         let (body, caret) = if start_node == end_node {
-            let mut body = review_paragraph_body(&self.document, start_node).map_err(to_js)?;
+            let mut body = review_paragraph_body(&self.document, start_node)?;
             if !insert_review_comment_markers(
                 &notes,
                 &mut body,
@@ -8490,9 +8515,7 @@ impl WasmDocument {
                 reference,
                 &mut self.edit_ids,
             ) {
-                return Err(to_js(
-                    "comment range must cover editable top-level text".to_string(),
-                ));
+                return Err(COMMENT_RANGE_REFUSAL.to_string());
             }
             (body, Pos::new(start_node, end))
         } else {
@@ -8502,8 +8525,8 @@ impl WasmDocument {
             // changed paragraphs (its inverse removes both markers). The
             // endpoints arrive in document order, so the markers are ordered
             // correctly across the body.
-            let mut body = review_paragraph_body(&self.document, start_node).map_err(to_js)?;
-            body.extend(review_paragraph_body(&self.document, end_node).map_err(to_js)?);
+            let mut body = review_paragraph_body(&self.document, start_node)?;
+            body.extend(review_paragraph_body(&self.document, end_node)?);
             if !insert_comment_markers_at(
                 &notes,
                 &mut body,
@@ -8522,14 +8545,12 @@ impl WasmDocument {
                 ],
                 &mut self.edit_ids,
             ) {
-                return Err(to_js(
-                    "comment range must cover editable top-level text".to_string(),
-                ));
+                return Err(COMMENT_RANGE_REFUSAL.to_string());
             }
             (body, Pos::new(end_node, end))
         };
         let mut comments = self.document.definitions().comments.clone();
-        let para_id = next_comment_para_id(&comments).map_err(to_js)?;
+        let para_id = next_comment_para_id(&comments)?;
         comments.insert(
             comment,
             Comment {
@@ -8552,10 +8573,8 @@ impl WasmDocument {
                 person: None,
             },
         );
-        let operation =
-            update_review_operation(&self.document, &body, Some(comments)).map_err(to_js)?;
+        let operation = update_review_operation(&self.document, &body, Some(comments))?;
         self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
-            .map_err(to_js)
     }
 
     /// Resolves or reopens an existing comment as one undoable review action.
@@ -10811,8 +10830,12 @@ impl WasmDocument {
         // Unchanged shape: a bare array of blocks. The windowed call below is
         // additive, so an existing caller keeps the contract it was written to.
         let cascade = StyleCascade::new(self.document.definitions());
+        // The note-label index for this one projection. O(notes), built once and
+        // queried O(1) per reference; resolving each marker's ordinal from the
+        // definition map instead would be a linear scan inside the walk (HF-184).
+        let notes = NoteAnchorLengths::of(&self.document);
         let mut out = Vec::new();
-        self.collect_a11y_blocks(self.document.body(), &cascade, &mut out);
+        self.collect_a11y_blocks(self.document.body(), &cascade, &notes, &mut out);
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -10833,6 +10856,8 @@ impl WasmDocument {
     #[must_use]
     pub fn accessibility_tree_window(&self, start: u32, count: u32) -> String {
         let cascade = StyleCascade::new(self.document.definitions());
+        // O(notes), once for the window — see `accessibility_tree`.
+        let notes = NoteAnchorLengths::of(&self.document);
         let mut out = Vec::new();
         let mut seen = 0_usize;
         let start = start as usize;
@@ -10840,6 +10865,7 @@ impl WasmDocument {
         self.collect_a11y_window(
             self.document.body(),
             &cascade,
+            &notes,
             start,
             limit,
             &mut seen,
@@ -10889,6 +10915,7 @@ impl WasmDocument {
         &self,
         blocks: &[BlockNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         start: usize,
         limit: usize,
         seen: &mut usize,
@@ -10898,7 +10925,7 @@ impl WasmDocument {
             let index = *seen;
             *seen += 1;
             if index >= start && index < limit {
-                self.collect_a11y_blocks(std::slice::from_ref(block), cascade, out);
+                self.collect_a11y_blocks(std::slice::from_ref(block), cascade, notes, out);
             }
         }
     }
@@ -10907,9 +10934,10 @@ impl WasmDocument {
         &self,
         blocks: &[BlockNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         out: &mut Vec<A11yBlockJson>,
     ) {
-        self.collect_a11y_blocks_at(blocks, cascade, 0, out);
+        self.collect_a11y_blocks_at(blocks, cascade, notes, 0, out);
     }
 
     /// [`collect_a11y_blocks`](Self::collect_a11y_blocks) with the nesting
@@ -10925,6 +10953,7 @@ impl WasmDocument {
         &self,
         blocks: &[BlockNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         depth: u32,
         out: &mut Vec<A11yBlockJson>,
     ) {
@@ -10966,7 +10995,14 @@ impl WasmDocument {
                     // control that text could be labelling. Counted once, for
                     // the whole paragraph.
                     let label = (count_a11y_checkboxes(&paragraph.inlines) == 1).then_some(trimmed);
-                    self.collect_a11y_inlines(&paragraph.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(
+                        &paragraph.inlines,
+                        cascade,
+                        notes,
+                        depth,
+                        label,
+                        out,
+                    );
                 }
                 BlockNode::Table(table) => {
                     let rows = table.rows.iter().map(a11y_row_cells).collect::<Vec<_>>();
@@ -10982,7 +11018,7 @@ impl WasmDocument {
                     });
                 }
                 BlockNode::Sdt(sdt) => {
-                    self.collect_a11y_blocks_at(&sdt.blocks, cascade, depth, out);
+                    self.collect_a11y_blocks_at(&sdt.blocks, cascade, notes, depth, out);
                 }
                 BlockNode::AltChunk(_) => {}
             }
@@ -11012,6 +11048,7 @@ impl WasmDocument {
         &self,
         inlines: &[InlineNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         depth: u32,
         label: Option<&str>,
         out: &mut Vec<A11yBlockJson>,
@@ -11024,6 +11061,30 @@ impl WasmDocument {
                 InlineNode::AnchoredDrawing(drawing) => out.push(A11yBlockJson::Image {
                     alt: drawing.descr.clone(),
                 }),
+                // A chart, a SmartArt diagram or an OLE embedding. Layout paints
+                // one — as its cached preview picture, or as a `[chart]` label run
+                // — and the projection emitted nothing, so a chart reached
+                // assistive technology as silence: the reader heard the paragraph
+                // before it and the one after it and nothing in between, which is
+                // the same defect the `Image` variant was added to fix for
+                // drawings. `EmbeddedObject` carries no `descr` in the model
+                // (`wp:docPr@descr` belongs to a drawing), so this is an
+                // UNLABELLED graphic, which a screen reader must still announce.
+                InlineNode::EmbeddedObject(_) => out.push(A11yBlockJson::Image { alt: None }),
+                // An equation. It is announced as the text layout paints for it,
+                // so what is read back is what is on the page. MathML would be
+                // better and needs a node of its own plus a host renderer; the
+                // plain-text form is what the model holds and is not silence.
+                InlineNode::Math(math) => out.push(A11yBlockJson::Paragraph {
+                    text: math_a11y_text(math),
+                }),
+                // A footnote/endnote reference marker. Word announces "Footnote
+                // reference"; this announces which note, from the index built once
+                // per projection, because the number is how a reader finds the note
+                // body on the notes surface.
+                InlineNode::NoteReference(reference) => out.push(A11yBlockJson::Paragraph {
+                    text: note_reference_a11y_text(notes, reference),
+                }),
                 // A text box's content is ordinary block content flowed through
                 // the same pipeline as the body, so it is projected the same
                 // way. Its text reaches the MIRROR only: it is not part of
@@ -11031,10 +11092,10 @@ impl WasmDocument {
                 // caret offsets index, so no offset in the host paragraph
                 // moves (`docs/120` §3).
                 InlineNode::TextBox(text_box) => {
-                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, depth + 1, out);
+                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, notes, depth + 1, out);
                 }
                 InlineNode::Group(group) => {
-                    self.collect_a11y_group(&group.children, cascade, depth + 1, out);
+                    self.collect_a11y_group(&group.children, cascade, notes, depth + 1, out);
                 }
                 InlineNode::Sdt(sdt) => {
                     if let Some(checkbox) = sdt_form_checkbox(sdt) {
@@ -11044,17 +11105,24 @@ impl WasmDocument {
                         }
                         out.push(A11yBlockJson::Checkbox(node));
                     } else {
-                        self.collect_a11y_inlines(&sdt.inlines, cascade, depth, label, out);
+                        self.collect_a11y_inlines(&sdt.inlines, cascade, notes, depth, label, out);
                     }
                 }
                 // Wrappers carry ordinary flow: a figure inside a link, a
                 // tracked insertion, or an inline content control is still a
                 // figure.
                 InlineNode::Hyperlink(hyperlink) => {
-                    self.collect_a11y_inlines(&hyperlink.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(
+                        &hyperlink.inlines,
+                        cascade,
+                        notes,
+                        depth,
+                        label,
+                        out,
+                    );
                 }
                 InlineNode::Field(field) => {
-                    self.collect_a11y_inlines(&field.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(&field.inlines, cascade, notes, depth, label, out);
                 }
                 // A deletion is not on the page under the default projection, so
                 // it is not read; `node_plain_text` drops its text for the same
@@ -11064,9 +11132,42 @@ impl WasmDocument {
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup) =>
                 {
-                    self.collect_a11y_inlines(&revision.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(&revision.inlines, cascade, notes, depth, label, out);
                 }
-                _ => {}
+                InlineNode::Revision(_) => {}
+                // A horizontal rule (`w:pict`/`v:rect@o:hr`) IS painted and is not
+                // projected, deliberately and for now: it is a presentational
+                // separator, the projection has no separator node, and the two
+                // dishonest ways to emit one with today's nodes are an unlabelled
+                // `Image` (a screen reader then announces a graphic where the
+                // reader sees a line) and a `Paragraph` of dashes (text that is not
+                // in the document). Adding the node needs a host renderer, which is
+                // the webapp lane's; recorded as an open row rather than papered
+                // over. This arm is what makes the omission deliberate.
+                InlineNode::HorizontalRule(_) => {}
+                // Text, and the markers and glyphs that carry no separate
+                // announcement: their bytes are already in the paragraph's text
+                // through `a11y_plain_text`, or they are boundaries rather than
+                // content. Enumerated with no wildcard, because a wildcard is how
+                // the next paintable kind becomes silence — which is what
+                // `EmbeddedObject`, `Math` and `NoteReference` above were.
+                InlineNode::Run(_)
+                | InlineNode::Tab(_)
+                | InlineNode::PositionalTab(_)
+                | InlineNode::Break(_)
+                | InlineNode::Symbol(_)
+                | InlineNode::NoteNumberMark(_)
+                | InlineNode::NoBreakHyphen(_)
+                | InlineNode::SoftHyphen(_)
+                | InlineNode::CommentReference(_)
+                | InlineNode::CommentRangeStart(_)
+                | InlineNode::CommentRangeEnd(_)
+                | InlineNode::BookmarkStart(_)
+                | InlineNode::BookmarkEnd(_)
+                | InlineNode::FieldRangeStart(_)
+                | InlineNode::FieldRangeEnd(_)
+                | InlineNode::MoveRangeStart(_)
+                | InlineNode::MoveRangeEnd(_) => {}
             }
         }
     }
@@ -11083,6 +11184,7 @@ impl WasmDocument {
         &self,
         children: &[GroupChild],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         depth: u32,
         out: &mut Vec<A11yBlockJson>,
     ) {
@@ -11095,10 +11197,10 @@ impl WasmDocument {
                     alt: picture.descr.clone(),
                 }),
                 GroupChild::TextBox(text_box) => {
-                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, depth + 1, out);
+                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, notes, depth + 1, out);
                 }
                 GroupChild::Group(group) => {
-                    self.collect_a11y_group(&group.children, cascade, depth + 1, out);
+                    self.collect_a11y_group(&group.children, cascade, notes, depth + 1, out);
                 }
                 // A shape child of a group carries no text by construction
                 // (`GroupShape` is the no-text variant) and no alt text, so
@@ -14238,25 +14340,27 @@ fn body_group_object_ref(blocks: &[BlockNode], node: NodeId) -> Option<GroupObje
     in_blocks(blocks, node)
 }
 
-fn collect_group_text(children: &[GroupChild], out: &mut Vec<(NodeId, String)>) {
-    for child in children {
-        match child {
-            GroupChild::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
-            GroupChild::Group(nested) => collect_group_text(&nested.children, out),
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
-        }
-    }
-}
-
+/// The text of every block story an inline list owns, at any container depth —
+/// what `findText` searches inside a shape. **O(inlines in the subtree)**; descent
+/// is [`inline_descent`]'s, so the container set is the complete one.
+///
+/// It descended `TextBox`, `Hyperlink`, `Field` and `Group` and stopped, so text
+/// in a box inside an inline content control or a tracked insertion was
+/// unsearchable while being on the page and editable.
+///
+/// A twin of this walk lives in `casual_doc_edit` (`text_box_text`), and the two
+/// must eventually be one function: this is the same "two answers to one
+/// question" shape as the anchor-length family. Only the wasm copy is fixed here,
+/// because `casual-doc-edit` is another lane's crate.
 fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>) {
     for inline in inlines {
-        match inline {
-            InlineNode::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
-            InlineNode::Hyperlink(link) => collect_text_box_text(&link.inlines, out),
-            InlineNode::Field(field) => collect_text_box_text(&field.inlines, out),
-            // Groups hold text boxes too, and nest.
-            InlineNode::Group(group) => collect_group_text(&group.children, out),
-            _ => {}
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => collect_text_box_text(nested, out),
+            InlineDescent::Blocks(blocks) => collect_block_text(blocks, out),
+            InlineDescent::Group(children) => {
+                group_block_stories(children, &mut |blocks| collect_block_text(blocks, out));
+            }
+            InlineDescent::Leaf => {}
         }
     }
 }
@@ -14791,6 +14895,92 @@ fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, S
 /// [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph).
 type ObjectNodesByParagraph = HashMap<NodeId, (Vec<(NodeId, Option<String>)>, Vec<NodeId>)>;
 
+/// What an [`InlineNode`] CONTAINS — the one place in this crate that knows the
+/// inline container set.
+///
+/// An inline can contain other inlines, or block content of its own, and every
+/// walk over a paragraph has to descend both. Written out ad hoc, each walk
+/// implemented three or four of the six containers and stopped; the pair left out
+/// was almost always `Sdt`+`Revision` or `TextBox`+`Group`, and the symptom was
+/// always the same — content plainly on the page that one subsystem cannot see.
+/// Eight such walks were found in this crate at once, which is the evidence that
+/// the missing thing was an abstraction and not eight fixes.
+///
+/// The match in [`inline_descent`] is **exhaustive with no wildcard arm**: a
+/// wildcard is how the next inline kind gets silently treated as a leaf, which is
+/// this same defect arriving by omission.
+enum InlineDescent<'a> {
+    /// Inline children in the SAME paragraph and the same model-offset space:
+    /// `Hyperlink`, `Field`, `Revision`, `Sdt`.
+    Inlines(&'a [InlineNode]),
+    /// A block story of its own — `TextBox`. Its paragraphs have ids and offsets
+    /// in the same id space as the body but a DIFFERENT offset space from the
+    /// paragraph that anchors the box, so a walk that measures offsets must not
+    /// follow this axis (see [`inline_anchor_len`]).
+    Blocks(&'a [BlockNode]),
+    /// A DrawingML group's children — `Group`. Pictures and shapes are leaves;
+    /// its text boxes and nested groups carry block stories.
+    Group(&'a [GroupChild]),
+    /// Everything else: a leaf, with nothing inside it to visit.
+    Leaf,
+}
+
+/// The children of one inline node, by descent axis. **O(1)** — it returns
+/// borrowed slices and visits nothing.
+///
+/// The complete container set is `Hyperlink`, `Field`, `Revision`, `Sdt`
+/// (inline-in-inline) and `TextBox`, `Group` (block-in-inline). `Revision` is a
+/// container whatever its kind: a walk that is looking for content decides for
+/// itself whether a non-contributing revision counts, and a walk that is looking
+/// for an id must descend one regardless, because a tracked deletion's nodes are
+/// still in the tree.
+fn inline_descent(inline: &InlineNode) -> InlineDescent<'_> {
+    match inline {
+        InlineNode::Hyperlink(link) => InlineDescent::Inlines(&link.inlines),
+        InlineNode::Field(field) => InlineDescent::Inlines(&field.inlines),
+        InlineNode::Revision(revision) => InlineDescent::Inlines(&revision.inlines),
+        InlineNode::Sdt(sdt) => InlineDescent::Inlines(&sdt.inlines),
+        InlineNode::TextBox(text_box) => InlineDescent::Blocks(&text_box.blocks),
+        InlineNode::Group(group) => InlineDescent::Group(&group.children),
+        InlineNode::Run(_)
+        | InlineNode::Tab(_)
+        | InlineNode::PositionalTab(_)
+        | InlineNode::Break(_)
+        | InlineNode::Symbol(_)
+        | InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
+        | InlineNode::EmbeddedObject(_)
+        | InlineNode::NoteReference(_)
+        | InlineNode::NoteNumberMark(_)
+        | InlineNode::Math(_)
+        | InlineNode::HorizontalRule(_)
+        | InlineNode::NoBreakHyphen(_)
+        | InlineNode::SoftHyphen(_)
+        | InlineNode::CommentReference(_)
+        | InlineNode::CommentRangeStart(_)
+        | InlineNode::CommentRangeEnd(_)
+        | InlineNode::BookmarkStart(_)
+        | InlineNode::BookmarkEnd(_)
+        | InlineNode::FieldRangeStart(_)
+        | InlineNode::FieldRangeEnd(_)
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_) => InlineDescent::Leaf,
+    }
+}
+
+/// Every block story a group's children own, in paint order — the `Group` axis of
+/// [`inline_descent`] flattened. **O(children in the subtree)**; a picture or a
+/// shape is a leaf.
+fn group_block_stories<'a>(children: &'a [GroupChild], visit: &mut impl FnMut(&'a [BlockNode])) {
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => visit(&text_box.blocks),
+            GroupChild::Group(nested) => group_block_stories(&nested.children, visit),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
 /// Every paragraph in `blocks`, in document order, with the paragraph itself in
 /// hand — the traversal [`collect_block_text`] is written on top of.
 ///
@@ -14823,24 +15013,25 @@ fn visit_paragraphs(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
     }
 }
 
+/// The paragraphs of every block story an inline list owns, at any container
+/// depth. **O(inlines in the subtree)**; descent is [`inline_descent`]'s, so the
+/// container set is the complete one.
+///
+/// It descended `TextBox`, `Hyperlink`, `Field` and `Group` and stopped, so a text
+/// box inside an inline content control or inside a tracked insertion had no
+/// paragraphs as far as every caller of [`visit_paragraphs_all_surfaces`] was
+/// concerned — and those callers are the reference scan (so a caption in such a
+/// box was missing from the cross-reference picker and from renumbering), the
+/// object map, and endpoint ordering.
 fn visit_text_box_paragraphs(inlines: &[InlineNode], visit: &mut impl FnMut(&Paragraph)) {
     for inline in inlines {
-        match inline {
-            InlineNode::TextBox(text_box) => visit_paragraphs(&text_box.blocks, visit),
-            InlineNode::Hyperlink(link) => visit_text_box_paragraphs(&link.inlines, visit),
-            InlineNode::Field(field) => visit_text_box_paragraphs(&field.inlines, visit),
-            InlineNode::Group(group) => visit_group_paragraphs(&group.children, visit),
-            _ => {}
-        }
-    }
-}
-
-fn visit_group_paragraphs(children: &[GroupChild], visit: &mut impl FnMut(&Paragraph)) {
-    for child in children {
-        match child {
-            GroupChild::TextBox(text_box) => visit_paragraphs(&text_box.blocks, visit),
-            GroupChild::Group(nested) => visit_group_paragraphs(&nested.children, visit),
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => visit_text_box_paragraphs(nested, visit),
+            InlineDescent::Blocks(blocks) => visit_paragraphs(blocks, visit),
+            InlineDescent::Group(children) => {
+                group_block_stories(children, &mut |blocks| visit_paragraphs(blocks, visit));
+            }
+            InlineDescent::Leaf => {}
         }
     }
 }
@@ -15119,6 +15310,31 @@ fn a11y_plain_text(inlines: &[InlineNode]) -> String {
     let mut out = String::new();
     append_a11y_text(inlines, &mut out);
     out
+}
+
+/// What the accessibility projection announces for an equation: the plain-text
+/// form the model retains, bracketed exactly as `casual_doc_layout::flow` paints
+/// an unshaped one, so the mirror reads back what is on the page. **O(1)**.
+fn math_a11y_text(math: &casual_doc_model::v1::Math) -> String {
+    if math.text.is_empty() {
+        "[equation]".to_owned()
+    } else {
+        format!("[{}]", math.text)
+    }
+}
+
+/// What the accessibility projection announces for a note reference marker:
+/// the note kind and the label the marker paints. **O(1)** — the label comes from
+/// the index, never from a scan of the definition map.
+fn note_reference_a11y_text(
+    notes: &NoteAnchorLengths,
+    reference: &casual_doc_model::v1::NoteReference,
+) -> String {
+    let kind = match reference.kind {
+        NoteKind::Footnote => "footnote",
+        NoteKind::Endnote => "endnote",
+    };
+    format!("[{kind} {}]", notes.label_of(reference))
 }
 
 fn append_a11y_text(inlines: &[InlineNode], out: &mut String) {
@@ -16254,6 +16470,15 @@ fn validate_active_author_name(name: &str) -> Result<(), String> {
     }
 }
 
+/// Why `addComment` refuses a range it cannot mark up: one of its endpoints does
+/// not fall on a boundary between two inlines of the paragraph, so a marker there
+/// would have to be placed INSIDE something that cannot be split — the middle of
+/// an equation, a field's cached result, or a text box's own story.
+///
+/// One constant so the message the host shows and the message the guards assert
+/// are the same string.
+const COMMENT_RANGE_REFUSAL: &str = "comment range must fall on inline boundaries of editable text";
+
 #[allow(clippy::too_many_arguments)]
 fn insert_review_comment_markers(
     notes: &NoteAnchorLengths,
@@ -16285,11 +16510,23 @@ fn insert_review_comment_markers(
                         end_index = Some(index);
                         break;
                     }
-                    if let InlineNode::Run(run) = inline {
-                        offset = offset.saturating_add(run.text.len() as u32);
-                    } else {
-                        return false;
-                    }
+                    // Measure EVERY inline, not just runs. This walk used to
+                    // advance only past a `Run` and refuse at anything else, so a
+                    // comment whose range lay at or after any non-run inline in the
+                    // paragraph was refused outright: a page-number field, a
+                    // footnote marker, an equation, a picture, a bookmark marker or
+                    // a comment marker from an earlier comment was enough. In a
+                    // document numbered "Page 7 of 9" the text after the field
+                    // could not be commented at all.
+                    //
+                    // An endpoint that does not land on a boundary is still
+                    // refused, and that falls out of the arithmetic rather than
+                    // needing a check: `review_split_top_level_run` above has
+                    // already split a run at each endpoint, so an offset inside a
+                    // run IS a boundary by the time this runs, while an offset
+                    // inside an unsplittable inline is never equal to `offset` and
+                    // leaves `start_index`/`end_index` `None`.
+                    offset = offset.saturating_add(inline_anchor_len(notes, inline));
                 }
                 let Some(start_index) = start_index else {
                     return false;
@@ -16357,8 +16594,12 @@ fn insert_review_comment_markers(
 /// This is the cross-node building block for [`WasmDocument::add_comment`]: a
 /// multi-paragraph comment places its start marker in one paragraph and its end
 /// marker plus reference in another with two calls. Returns `false` when the
-/// node is absent or `offset` does not fall on a top-level run boundary — the
-/// same "editable top-level text" restriction as `insert_review_comment_markers`.
+/// node is absent or `offset` does not fall on a boundary between two of its
+/// top-level inlines — the same restriction as `insert_review_comment_markers`,
+/// and the one [`COMMENT_RANGE_REFUSAL`] describes.
+///
+/// **O(inlines in the paragraph)** per call, plus the descent into block
+/// containers to find the paragraph; no document walk and no by-id lookup.
 fn insert_comment_markers_at(
     notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
@@ -16380,11 +16621,11 @@ fn insert_comment_markers_at(
                         insert_at = Some(index);
                         break;
                     }
-                    if let InlineNode::Run(run) = inline {
-                        cursor = cursor.saturating_add(run.text.len() as u32);
-                    } else {
-                        return false;
-                    }
+                    // Every inline is measured — see the same change in
+                    // `insert_review_comment_markers`. A cross-paragraph comment
+                    // whose start paragraph held a field could not be created
+                    // either, for the same reason and in the same walk shape.
+                    cursor = cursor.saturating_add(inline_anchor_len(notes, inline));
                 }
                 let Some(insert_at) =
                     insert_at.or_else(|| (cursor == offset).then_some(paragraph.inlines.len()))
@@ -19791,22 +20032,28 @@ fn paragraph_links<'a>(
 /// imported document.
 #[derive(Clone, Debug, Default)]
 struct NoteAnchorLengths {
-    /// Byte length of each footnote's painted ordinal, by note id.
-    footnotes: HashMap<NoteId, u32>,
-    /// Byte length of each endnote's painted ordinal, by note id.
-    endnotes: HashMap<NoteId, u32>,
+    /// Each footnote's painted ordinal label, by note id.
+    footnotes: HashMap<NoteId, String>,
+    /// Each endnote's painted ordinal label, by note id.
+    endnotes: HashMap<NoteId, String>,
 }
+
+/// What a reference to a note the document does not define is painted as, and
+/// therefore how wide it is: one byte. An orphaned reference still occupies the
+/// width it is drawn at rather than collapsing and dragging every later offset in
+/// its paragraph backwards.
+const ORPHANED_NOTE_LABEL: &str = "?";
 
 impl NoteAnchorLengths {
     /// Indexes `document`'s note definitions. **O(notes)**, once.
     fn of(document: &Document) -> Self {
         fn index(
             notes: &casual_doc_model::v1::DefinitionMap<NoteId, casual_doc_model::v1::Note>,
-        ) -> HashMap<NoteId, u32> {
+        ) -> HashMap<NoteId, String> {
             notes
                 .iter()
                 .enumerate()
-                .map(|(index, (id, _))| (*id, (index + 1).to_string().len() as u32))
+                .map(|(index, (id, _))| (*id, (index + 1).to_string()))
                 .collect()
         }
         Self {
@@ -19815,18 +20062,28 @@ impl NoteAnchorLengths {
         }
     }
 
-    /// The bytes `reference` contributes. **O(1)**.
+    /// The label `reference` paints — its 1-based ordinal, or
+    /// [`ORPHANED_NOTE_LABEL`] when the document does not define the note.
+    /// **O(1)**.
     ///
-    /// A reference to a note the document does not define is painted `?`, one
-    /// byte — the same fallback the linear scan this replaced used, so an
-    /// orphaned reference still occupies the width it is drawn at rather than
-    /// collapsing and dragging every later offset in its paragraph backwards.
-    fn len_of(&self, reference: &casual_doc_model::v1::NoteReference) -> u32 {
+    /// The index carries the label rather than only its length so that the
+    /// accessibility projection can announce *which* note a marker points at
+    /// without a second index and without a `position()` scan per reference. One
+    /// derived fact, one table: the shape the deleted `inline_anchor_len_for_review`
+    /// copy failed to use.
+    fn label_of(&self, reference: &casual_doc_model::v1::NoteReference) -> &str {
         let table = match reference.kind {
             NoteKind::Footnote => &self.footnotes,
             NoteKind::Endnote => &self.endnotes,
         };
-        table.get(&reference.note).copied().unwrap_or(1)
+        table
+            .get(&reference.note)
+            .map_or(ORPHANED_NOTE_LABEL, String::as_str)
+    }
+
+    /// The bytes `reference` contributes. **O(1)**.
+    fn len_of(&self, reference: &casual_doc_model::v1::NoteReference) -> u32 {
+        self.label_of(reference).len() as u32
     }
 }
 
@@ -19840,7 +20097,32 @@ impl NoteAnchorLengths {
 /// review paths splice comment markers and accepted/rejected revisions against
 /// offsets that come from this same space, so a second opinion is a marker in
 /// the wrong place. `NoteAnchorLengths` exists so the mutating splices can call
-/// this one function; `anchor_len_has_exactly_one_answer` pins it.
+/// this one function; `there_is_exactly_one_anchor_length_family` and
+/// `every_review_length_answer_agrees_on_one_paragraph` pin it.
+///
+/// # Known disagreement with the model-offset space, recorded rather than hidden
+///
+/// This function is **not** the space the host addresses paragraphs in. That space
+/// is `casual_doc_layout::flow::node_plain_text` (what `paragraphLength` reports)
+/// and `casual_doc_layout::tabs::FlowItem::model_bytes` (what a painted line
+/// range is measured in). The three agree on `Run`, `Symbol`, `Field`, and the
+/// four inline-in-inline containers, and they differ on:
+///
+/// | kind | here | `node_plain_text` | `model_bytes` |
+/// | --- | --- | --- | --- |
+/// | `Tab` | 0 | 1 | 1 |
+/// | `Math` | painted label | 0 | 0, or the label when unshaped |
+/// | `NoteReference` | the ordinal | 0 | 0 |
+/// | `EmbeddedObject` without a preview | the label | 0 | the label |
+/// | `NoBreakHyphen` / `SoftHyphen` | the glyph | 0 | 0 |
+///
+/// So a review splice in a paragraph holding a tab or an equation is measured in a
+/// space the host's offsets do not come from. That predates the deletion of the
+/// review copy — both copies charged `Tab` zero — and it is **not** fixed here: the
+/// fix is for this crate to stop having a length function at all and call
+/// `casual-doc-edit`'s, which needs that function made `pub` in another lane's
+/// crate. Reported as a row rather than guessed at, because changing this
+/// function's semantics moves every review offset in the crate at once.
 ///
 /// The match is **exhaustive on purpose** — no wildcard arm. A wildcard is how a
 /// new inline kind gets silently charged zero bytes, which is the same defect as
@@ -20779,31 +21061,99 @@ fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&Word
         .find_map(|blocks| object_group(blocks, object))
 }
 
+/// The model nodes of this paragraph's INLINE objects — the drawings (with their
+/// resolved media part name) and the inline text boxes — in the order layout
+/// paints them, so `resolve_object_boxes` can correlate each painted box on the
+/// paragraph's lines with the node a selection handle has to name.
+///
+/// A node missing from here is an object with **no selection handles**: it is on
+/// screen and cannot be clicked, moved, resized or given alt text. The walk
+/// descended `Hyperlink` and `Revision` only, so an image or a text box inside an
+/// inline content control (`Sdt`) or inside a field result (`Field`) — both of
+/// which `casual_doc_layout::flow::collect_items` recurses into and paints — was
+/// unselectable. A preview-bearing `EmbeddedObject` was missing for a different
+/// reason: it paints as a `FlowItem::Image`, exactly like a `Drawing`, so a chart
+/// with a cached preview produced a painted image box with no model node to
+/// correlate it to.
+///
+/// **What deliberately does NOT belong here**, because putting it here would
+/// corrupt the correlation rather than extend it: `AnchoredDrawing`, an anchored
+/// `TextBox`, and `Group` are FLOATS. They are placed by the float layer and reach
+/// `resolve_object_boxes` through `page.anchored`, which carries the model node
+/// itself and needs no map. Pushing them into `images`/`text_boxes` would let a
+/// float claim an inline image's slot and hand the wrong node to the handles. A
+/// preview-LESS `EmbeddedObject` is excluded for the matching reason: layout
+/// paints it as a text run (its `[chart]` label), not an image box.
+///
+/// The match is exhaustive with no wildcard: a new inline kind must be classified
+/// as painted-inline, float, or leaf deliberately.
+///
+/// **O(inlines in this paragraph's subtree)**, called once per paragraph by the
+/// one walk in [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph);
+/// no by-id lookup, so a click stays O(placed fragments) rather than
+/// O(fragments × document) (HF-184, `docs/116`).
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
     images: &mut Vec<(NodeId, Option<String>)>,
     text_boxes: &mut Vec<NodeId>,
 ) {
+    let part_of = |media: &casual_doc_model::v1::MediaId| {
+        definitions
+            .media
+            .get(media)
+            .map(|media| media.part_name.clone())
+    };
     for inline in inlines {
         match inline {
             InlineNode::Drawing(drawing) => {
-                let part = definitions
-                    .media
-                    .get(&drawing.media)
-                    .map(|media| media.part_name.clone());
-                images.push((drawing.id, part));
+                images.push((drawing.id, part_of(&drawing.media)));
+            }
+            // A chart/diagram/OLE object with a cached preview flows as that
+            // picture (`embedded_object_items`), so it is an inline image box.
+            InlineNode::EmbeddedObject(object) => {
+                if let Some(preview) = object.preview {
+                    images.push((object.id, part_of(&preview)));
+                }
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
                 text_boxes.push(text_box.id);
             }
+            // Floats: placed by the float layer, reported through `page.anchored`.
+            InlineNode::TextBox(_) | InlineNode::AnchoredDrawing(_) | InlineNode::Group(_) => {}
             InlineNode::Hyperlink(hyperlink) => {
                 collect_para_objects(&hyperlink.inlines, definitions, images, text_boxes);
             }
             InlineNode::Revision(revision) => {
                 collect_para_objects(&revision.inlines, definitions, images, text_boxes);
             }
-            _ => {}
+            InlineNode::Sdt(sdt) => {
+                collect_para_objects(&sdt.inlines, definitions, images, text_boxes);
+            }
+            InlineNode::Field(field) => {
+                collect_para_objects(&field.inlines, definitions, images, text_boxes);
+            }
+            // Leaves: nothing inside them paints an object box of its own.
+            InlineNode::Run(_)
+            | InlineNode::Tab(_)
+            | InlineNode::PositionalTab(_)
+            | InlineNode::Break(_)
+            | InlineNode::Symbol(_)
+            | InlineNode::NoteReference(_)
+            | InlineNode::NoteNumberMark(_)
+            | InlineNode::Math(_)
+            | InlineNode::HorizontalRule(_)
+            | InlineNode::NoBreakHyphen(_)
+            | InlineNode::SoftHyphen(_)
+            | InlineNode::CommentReference(_)
+            | InlineNode::CommentRangeStart(_)
+            | InlineNode::CommentRangeEnd(_)
+            | InlineNode::BookmarkStart(_)
+            | InlineNode::BookmarkEnd(_)
+            | InlineNode::FieldRangeStart(_)
+            | InlineNode::FieldRangeEnd(_)
+            | InlineNode::MoveRangeStart(_)
+            | InlineNode::MoveRangeEnd(_) => {}
         }
     }
 }
@@ -21795,7 +22145,14 @@ fn review_format_delta(
 
 /// Parses a 32-hex node-id string, or a thrown JS error.
 fn node_id(node: &str) -> Result<NodeId, JsValue> {
-    NodeId::from_str(node).map_err(|_| to_js(format!("invalid node id: {node}")))
+    node_id_msg(node).map_err(to_js)
+}
+
+/// [`node_id`] with the refusal as a `String`, for the inner implementations whose
+/// error path has to be readable on a native target (see
+/// `WasmDocument::add_comment_inner`).
+fn node_id_msg(node: &str) -> Result<NodeId, String> {
+    NodeId::from_str(node).map_err(|_| format!("invalid node id: {node}"))
 }
 
 /// Converts a crop inset fraction (0..=1 of a source edge) to the model's
