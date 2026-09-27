@@ -185,8 +185,11 @@ const ALL_REGIONS = Object.freeze([...REGIONS]);
  *
  *  Not here: the ribbon and every band, the floating selection toolbar (it offers
  *  formatting), and Settings (appearance, reviewer identity, autosave and
- *  proofing are an author's preferences). */
-const READING_REGIONS = Object.freeze(["brand", "title", "menu", "rail", "status", "zoom", "find"]);
+ *  proofing are an author's preferences).
+ *
+ *  And no `brand`: a reader is not somewhere we advertise, and no preset below
+ *  `owner` grants `branding` anyway, so listing it would be a dead entry. */
+const READING_REGIONS = Object.freeze(["title", "menu", "rail", "status", "zoom", "find"]);
 
 /** PREVIEW CHROME.
  *
@@ -346,10 +349,31 @@ export function resolveCapabilities({ mode = null, framed = false, autosave = nu
  * @param {{mode?: string|null, framed?: boolean, withhold?: string|null}} [input]
  * @returns {Set<string>}
  */
-export function resolveRegions({ mode = null, framed = false, withhold = null } = {}) {
+export function resolveRegions({ mode = null, framed = false, withhold = null, capabilities = null } = {}) {
   const asked = typeof mode === "string" ? mode.trim().toLowerCase() : "";
   const preset = REGION_PRESETS[asked] ?? REGION_PRESETS[framed ? "embedded" : "standalone"];
   const shown = new Set(preset);
+  // The resolved grant, so a `?can=-branding` reaches this too. Resolved here only
+  // when a caller did not already have it — `hostRegions` does, and resolving the
+  // same inputs twice is how the two answers start to differ.
+  const granted = capabilities ?? resolveCapabilities({ mode, framed });
+  // `branding` — "show OUR name and mark" — was declared in phase 1 and consulted
+  // NOWHERE, with a test asserting so and the embedding page saying in prose that
+  // withholding it does nothing. A capability that does nothing is the API-level
+  // form of a dead control.
+  //
+  // It is wired here, to the `brand` region, because that is what it always meant:
+  // the `edit` preset's own comment says an embedded editor "does not advertise us
+  // inside their product", and the only presets that grant `branding` are `owner`
+  // and `standalone` — a page that is ours. So a host embedding the editor in their
+  // product gets no mark of ours by default, and does not have to discover a
+  // parameter to stop advertising us.
+  //
+  // THIS IS NOT A SECOND ENFORCEMENT, and the distinction matters after all the
+  // above: the capability set is an INPUT to composition, the same way
+  // `editingModeFor` maps it onto a review mode. It decides what the chrome IS, once,
+  // at boot. It does not gate a command, and no command consults it.
+  if (!grants(granted, "branding")) shown.delete("brand");
   for (const id of parseWithheld(withhold, REGIONS)) shown.delete(id);
   // The ribbon's bands are inside the ribbon, so withholding the ribbon
   // withholds them. Derived rather than asked of the host twice: a host who
@@ -522,5 +546,13 @@ export function hostCapabilities(view = globalThis) {
 /** The regions a real page shows, from the same inputs. */
 export function hostRegions(view = globalThis) {
   const config = hostConfig(view);
-  return resolveRegions({ mode: config.mode, framed: config.framed, withhold: config.chrome });
+  return resolveRegions({
+    mode: config.mode,
+    framed: config.framed,
+    withhold: config.chrome,
+    // The same grant `hostCapabilities` resolves, handed over rather than resolved
+    // again: `branding` is one of the capabilities a `?can=` list can withhold, and
+    // the `brand` region follows it.
+    capabilities: resolveCapabilities(config),
+  });
 }

@@ -236,3 +236,37 @@ test("the URL is the one configuration channel, read in one place", () => {
   const hostile = { location: { search: "" }, get self() { throw new Error("cross-origin"); } };
   assert.equal(hostConfig(hostile).framed, true);
 });
+
+test("`branding` is consulted: an embedded editor does not advertise us", () => {
+  // It was declared in phase 1 and consulted NOWHERE, with a test asserting so and
+  // the embedding page saying in prose that withholding it does nothing. A capability
+  // that does nothing is a dead control at the API level — the same defect `SKILL` §10
+  // forbids in the chrome.
+  //
+  // It is wired to the `brand` region, because that is what it always meant: the
+  // `edit` preset's own comment says an embedded editor "does not advertise us inside
+  // their product". So the default for a host embedding the editor is no mark of ours,
+  // without them having to discover a parameter.
+  for (const mode of ["owner", "standalone"]) {
+    assert.equal(resolveCapabilities({ mode }).has("branding"), true);
+    assert.equal(resolveRegions({ mode }).has("brand"), true, `${mode} is our own page`);
+  }
+  for (const mode of ["edit", "embedded", "commentor", "readonly", "preview", "viewer"]) {
+    assert.equal(resolveCapabilities({ mode }).has("branding"), false);
+    assert.equal(
+      resolveRegions({ mode, framed: true }).has("brand"),
+      false,
+      `${mode} shows our mark inside someone else's product`,
+    );
+  }
+  // And a `?can=` list reaches it, which is what proves the wiring reads the RESOLVED
+  // grant rather than the preset name.
+  assert.equal(
+    resolveRegions({
+      mode: "owner",
+      capabilities: resolveCapabilities({ mode: "owner", withhold: "-branding" }),
+    }).has("brand"),
+    false,
+    "`?can=-branding` did not reach the brand region",
+  );
+});
