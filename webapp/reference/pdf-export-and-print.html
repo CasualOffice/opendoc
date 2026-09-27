@@ -370,6 +370,7 @@
         <ul class="doc-list">
         <li>Any <em>rendering/layout</em> fidelity work — that lives in the layout engine, not here. This document adds <strong>no</strong> shaping, line-breaking, or pagination logic.</li>
         <li>Round-trip PDF <em>import</em>. This is export-only.</li>
+        <li>Experimental local PDF semantic reconstruction is evaluated separately in doc 131 and proposed ADR-034. It does not alter this design's export-only scope or the current <code>can_import: false</code> product behavior.</li>
         <li>Text-as-outlines or rasterized-page output (explicitly rejected).</li>
         <li>Editing PDFs, PDF forms (AcroForm) authoring, digital signatures, JavaScript, or embedded multimedia.</li>
         <li>Font <em>procurement</em>. Which faces are legally embeddable is a licensing decision (§7), out of engineering scope; this document only specifies the embedding mechanism and the fallback policy.</li>

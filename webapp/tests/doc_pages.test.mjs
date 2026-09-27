@@ -404,15 +404,25 @@ test("how much English the reference pages put on the site, measured and publish
   // MEASURED, per page, by running the scanner over the committed pages. Not
   // calculated: the total below is the sum this test computes, and the same rule
   // the string ceilings carry applies — a number here is a measurement.
+  //
+  // IT WILL MOVE, and that is the design. 2,029 when the pages landed; 2,031
+  // after a rebase, because another branch added one bullet to
+  // `docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md`. Editing a published document
+  // already fails `build-doc-pages --check` until the pages are regenerated, so
+  // the same commit that regenerates them updates this figure — one number, in
+  // the same pass, deliberately. A figure that updated itself would let the
+  // excluded region grow silently, which is the one thing it exists to prevent.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2029,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2,029). That ` +
-      `is not a failure — it is the number, and it moved. Per page: ${JSON.stringify(sites)}`,
+    2031,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2,031). That ` +
+      `is not a failure — it is the number, and it moved: a published document gained or ` +
+      `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
+      JSON.stringify(sites),
   );
   // The site's own hand-authored ceilings did not move to make room for any of it,
   // which is the claim this work has to be able to make: no ceiling was raised.
