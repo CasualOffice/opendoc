@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embed configuration playground — OpenDoc</title>
+    <meta
+      name="description"
+      content="Change a role, withhold a capability, take away a chrome region or supply a brand colour, and watch an embedded OpenDoc editor change with it — then copy the configuration that reproduces exactly what is on screen."
+    />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/playground.html" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Configure an OpenDoc embed, live" />
+    <meta
+      property="og:description"
+      content="Roles, per-capability policies, chrome regions and white-label tokens, applied to a running editor on the page."
+    />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/playground.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Configure an OpenDoc embed, live" />
+    <meta
+      name="twitter:description"
+      content="Roles, capabilities, chrome regions and brand tokens, applied to a running editor."
+    />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="./src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/playground.html#webpage",
+            "url": "https://opendoc.casualoffice.org/playground.html",
+            "name": "Embed configuration playground — OpenDoc",
+            "headline": "Configure an embed, and watch it change",
+            "description": "Change a role, withhold a capability, take away a chrome region or supply a brand colour, and watch an embedded OpenDoc editor change with it — then copy the configuration that reproduces exactly what is on screen.",
+            "inLanguage": "en",
+            "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
+            "about": { "@id": "https://opendoc.casualoffice.org/#software" },
+            "publisher": { "@id": "https://opendoc.casualoffice.org/#organization" },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/playground.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Embed the editor",
+                "item": "https://opendoc.casualoffice.org/embedding.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Configuration playground",
+                "item": "https://opendoc.casualoffice.org/playground.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+    <style>
+      /* Only what this page needs, and every colour is a marketing.css token.
+         `tests/e2e/site-contrast.spec.mjs` discovers this page from the template
+         list and sweeps every text node on it at 1280 and 390, in the one theme
+         the site has — so a token is not enough on its own: `--muted-3` clears
+         4.5:1 on `--bg` and misses it on the quieter `--surface-2` and `--paper`
+         (HF-189, measured at 4.40 and 4.47). Secondary text here is `--muted-2`
+         or `--muted`, and `--faint*` is never text. The tokens themselves are
+         deliberate (docs/63) and this page is not the place to relitigate them. */
+      .pg {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 36px 20px 72px;
+      }
+      .pg-lede {
+        max-width: 72ch;
+        color: var(--muted);
+        font-size: 1.02rem;
+        line-height: 1.6;
+      }
+      .pg-lede code,
+      .pg-note code,
+      .pg-hint code {
+        font-family: var(--font-mono);
+        font-size: 0.86em;
+      }
+      /* Side by side above 1080px, stacked below it — controls first, because on a
+         phone the thing you came to change has to be reachable without scrolling
+         past a 620px editor. */
+      .pg-split {
+        display: grid;
+        gap: 22px;
+        grid-template-columns: 1fr;
+        margin-top: 28px;
+      }
+      @media (min-width: 1080px) {
+        .pg-split {
+          grid-template-columns: minmax(290px, 320px) minmax(0, 1fr);
+        }
+        /* STRETCHED rather than pinned to the top, and the alternative is worth
+           recording: with `align-items: start` the live card kept its 620px and
+           left a screen and a half of empty white beside the controls, which read
+           as an unfinished page. Stretching spends that space on the thing the
+           page is about — several pages of document instead of one — and the
+           brand controls, which are the last group in the column, still sit
+           beside editor rather than beside nothing. */
+        .pg-live {
+          display: flex;
+          flex-direction: column;
+        }
+        .pg-live .pg-stage {
+          flex: 1 1 auto;
+        }
+      }
+      .pg-card {
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow-sm);
+        min-width: 0;
+      }
+      .pg-controls {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .pg-group {
+        border: 0;
+        margin: 0;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+        min-width: 0;
+      }
+      .pg-group:last-child {
+        border-bottom: 0;
+      }
+      .pg-group > legend {
+        padding: 0;
+        font-size: 0.82rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--muted-2);
+      }
+      .pg-hint {
+        margin: 6px 0 12px;
+        font-size: 0.83rem;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      /* One row per switch: the control, its name, and what it is. */
+      .pg-switches {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .pg-switch {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 4px 9px;
+        align-items: baseline;
+        padding: 5px 6px;
+        border-radius: var(--radius-sm);
+      }
+      .pg-switch:hover {
+        background: var(--surface-3);
+      }
+      /* The nineteen regions are the longest list on the page by some way, and
+         left open they pushed the brand controls a screen and a half below the
+         fold. Scrolled rather than folded away: a `<details>` would hide a switch
+         behind a disclosure nobody opens, and a scroller keeps every row in the
+         tab order with the browser scrolling focus into view for free. */
+      .pg-switches[data-scroll] {
+        max-height: 330px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-right: 4px;
+      }
+      .pg-switch input {
+        margin: 0;
+        accent-color: var(--accent);
+      }
+      .pg-switch input:disabled + .pg-switch-name {
+        color: var(--muted-2);
+        text-decoration: line-through;
+      }
+      .pg-switch-name {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--ink);
+      }
+      .pg-switch-what {
+        grid-column: 2;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      .pg-field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        margin: 0 0 12px;
+        font-size: 0.83rem;
+        color: var(--muted);
+      }
+      .pg-field:last-child {
+        margin-bottom: 0;
+      }
+      .pg-field input,
+      .pg-field select {
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 6px 8px;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        min-width: 0;
+      }
+      .pg-field input[type="color"] {
+        padding: 2px;
+        height: 34px;
+        cursor: pointer;
+      }
+      .pg-colour-row {
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+      }
+      .pg-btn {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 7px 13px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+        cursor: pointer;
+      }
+      .pg-btn[data-variant="quiet"] {
+        background: var(--surface);
+        border-color: var(--line-strong);
+        color: var(--ink);
+      }
+      .pg-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      .pg-btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      /* ---- The live side ---- */
+      .pg-live-head {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .pg-live-head h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+      .pg-readout {
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.82rem;
+      }
+      .pg-readout dl {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 6px 14px;
+        margin: 0;
+      }
+      .pg-readout dt {
+        color: var(--muted-2);
+      }
+      .pg-readout dd {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: 0.76rem;
+        overflow-wrap: anywhere;
+      }
+      .pg-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .pg-chips li {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        padding: 2px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--line-strong);
+        color: var(--muted-2);
+        background: var(--surface-2);
+      }
+      .pg-chips li[data-state="granted"] {
+        border-color: var(--accent-line);
+        background: var(--accent-tint);
+        color: var(--accent-2);
+      }
+      .pg-chips li[data-state="withheld"] {
+        text-decoration: line-through;
+        /* On --surface-2, where --muted-3 measures 4.40:1. HF-189. */
+        color: var(--faint-on-paper);
+      }
+      .pg-stage {
+        background: var(--paper);
+        display: flex;
+        min-height: 620px;
+        border-radius: 0 0 var(--radius) var(--radius);
+        overflow: hidden;
+      }
+      .pg-stage > * {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      /* `.pg-idle` sets `display: flex`, which beats the user-agent sheet's
+         `[hidden] { display: none }` — so hiding it left the notice on screen and
+         the flex row gave it half the stage, squeezing the booted editor into the
+         other half. Seen in a screenshot, not in a test: nothing asserts the width
+         of an iframe. */
+      .pg-stage > [hidden] {
+        display: none;
+      }
+      .pg-stage iframe {
+        display: block;
+        width: 100%;
+        min-height: 620px;
+        border: 0;
+      }
+      .pg-idle {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        align-items: center;
+        justify-content: center;
+        padding: 28px;
+        margin: 0;
+        text-align: center;
+        /* On --paper, where --muted-3 measures 4.47:1. HF-189. */
+        color: var(--faint-on-paper);
+        font-size: 0.85rem;
+      }
+      .pg-refusal {
+        margin: 10px 0 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line-strong);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
+        font-family: var(--font-mono);
+        font-size: 0.74rem;
+        line-height: 1.55;
+        color: var(--ink);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .pg-out {
+        margin-top: 32px;
+      }
+      .pg-out .code-panel {
+        margin-top: 12px;
+      }
+      .pg-note {
+        max-width: 78ch;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.65;
+      }
+      @media (max-width: 640px) {
+        .pg {
+          padding: 24px 16px 56px;
+        }
+        .pg-stage,
+        .pg-stage iframe {
+          min-height: 460px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="./" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="./" data-nav="overview">Overview</a>
+          <a href="./editor.html" data-nav="editor">Editor</a>
+          <a href="./docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="./editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="pg">
+      <p class="doc-eyebrow">SDK · Embedding</p>
+      <h1>Configure an embed, and watch it change</h1>
+      <p class="pg-lede">
+        Everything on the left is host configuration. Change it and the editor on
+        the right becomes the thing you configured: a
+        <code>readonly</code> container has reading chrome and no editing ribbon, a
+        <code>preview</code> container is offered none of the
+        <span data-claim="region-count">19</span> regions at all, a withheld
+        capability is gone from the API as well as from the buttons, and a brand
+        colour lands on the running editor. The snippet at the bottom reproduces
+        whatever is on screen, so you can paste it into your own page and get the
+        same result.
+      </p>
+      <p class="pg-lede">
+        Nothing here is gated. ONLYOFFICE puts host customization behind a licence
+        check in code — <code>LayoutManager._applyCustomization</code> returns
+        early when <code>!_licensed</code> — so an integrator ships their chrome
+        and then discovers the modal. This is Apache-2.0, the permissive licence
+        is the whole point of the project, and gating the one thing that makes it
+        worth embedding would surrender it.
+      </p>
+
+      <div class="pg-split">
+        <form class="pg-card pg-controls" data-controls aria-label="Embed configuration">
+          <fieldset class="pg-group">
+            <legend>Role</legend>
+            <p class="pg-hint">
+              <span data-claim="role-count">5</span> presets over the capability
+              set — a name for a subset, never the unit of enforcement. Switching
+              one rewrites everything below it.
+            </p>
+            <!-- @generated playground-role-controls -->
+            <ul class="pg-switches">
+              <li class="pg-switch">
+                <input type="radio" name="role" id="pg-role-preview" value="preview" data-role />
+                <label class="pg-switch-name" for="pg-role-preview">preview</label>
+                <span class="pg-switch-what">A picture of the document — a thumbnail, an attachment preview, a print preview. The runtime as a layout and rendering engine, and nearly replaceable by a static image.<br />Grants nothing at all · 0 of 19 regions · <code>viewing</code></span>
+              </li>
+              <li class="pg-switch">
+                <input type="radio" name="role" id="pg-role-readonly" value="readonly" data-role />
+                <label class="pg-switch-name" for="pg-role-readonly">readonly</label>
+                <span class="pg-switch-what">A published document, to read. Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome.<br />Grants <code>print</code> · 6 of 19 regions · <code>viewing</code></span>
+              </li>
+              <li class="pg-switch">
+                <input type="radio" name="role" id="pg-role-commentor" value="commentor" data-role />
+                <label class="pg-switch-name" for="pg-role-commentor">commentor</label>
+                <span class="pg-switch-what">Google Docs' Commenter, Word's reviewer. Annotates and suggests; every body change is a tracked revision somebody else accepts.<br />Grants <code>print</code> <code>download</code> <code>comment</code> · 18 of 19 regions · <code>suggesting</code></span>
+              </li>
+              <li class="pg-switch">
+                <input type="radio" name="role" id="pg-role-edit" value="edit" data-role checked />
+                <label class="pg-switch-name" for="pg-role-edit">edit</label>
+                <span class="pg-switch-what">The reason a host embeds an editor. Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours.<br />Grants <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code> · 18 of 19 regions · <code>editing</code></span>
+              </li>
+              <li class="pg-switch">
+                <input type="radio" name="role" id="pg-role-owner" value="owner" data-role />
+                <label class="pg-switch-name" for="pg-role-owner">owner</label>
+                <span class="pg-switch-what">The page is ours, or the host has said it may as well be.<br />Grants <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code> · 19 of 19 regions · <code>editing</code></span>
+              </li>
+            </ul>
+            <!-- @end playground-role-controls -->
+          </fieldset>
+
+          <fieldset
+            class="pg-group"
+            data-narrow-reason="This role does not grant it. A capability list can only narrow a role, never widen one, so there is exactly one direction to audit."
+          >
+            <legend>Capabilities</legend>
+            <p class="pg-hint">
+              All <span data-claim="capability-count">9</span> are withheld
+              independently: &ldquo;comments only, everything else off&rdquo; is a
+              configuration, not a rung on a ladder. A list can only
+              <em>narrow</em> a role, so a capability the role never granted is
+              shown struck through and disabled — one direction to audit.
+            </p>
+            <!-- @generated playground-capability-controls -->
+            <ul class="pg-switches">
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-open" value="open" data-capability />
+                <label class="pg-switch-name" for="pg-cap-open">open</label>
+                <span class="pg-switch-what">Replace the loaded document from inside the editor.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-new" value="new" data-capability />
+                <label class="pg-switch-name" for="pg-cap-new">new</label>
+                <span class="pg-switch-what">Start a blank document.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-save" value="save" data-capability />
+                <label class="pg-switch-name" for="pg-cap-save">save</label>
+                <span class="pg-switch-what">Write the document back out.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-download" value="download" data-capability />
+                <label class="pg-switch-name" for="pg-cap-download">download</label>
+                <span class="pg-switch-what">Export to a file the visitor keeps.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-print" value="print" data-capability />
+                <label class="pg-switch-name" for="pg-cap-print">print</label>
+                <span class="pg-switch-what">Open the browser's print dialog.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-edit" value="edit" data-capability />
+                <label class="pg-switch-name" for="pg-cap-edit">edit</label>
+                <span class="pg-switch-what">Change the document at all.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-comment" value="comment" data-capability />
+                <label class="pg-switch-name" for="pg-cap-comment">comment</label>
+                <span class="pg-switch-what">Annotate, and change the document as tracked suggestions.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-branding" value="branding" data-capability />
+                <label class="pg-switch-name" for="pg-cap-branding">branding</label>
+                <span class="pg-switch-what">Show OpenDoc's own name and mark inside the frame.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-cap-autosave" value="autosave" data-capability />
+                <label class="pg-switch-name" for="pg-cap-autosave">autosave</label>
+                <span class="pg-switch-what">Keep drafts of the visitor's typing on this origin.</span>
+              </li>
+            </ul>
+            <!-- @end playground-capability-controls -->
+          </fieldset>
+
+          <fieldset
+            class="pg-group"
+            data-narrow-reason="This role is not offered that region, so there is nothing to take away. A chrome list narrows too: a preview with a ribbon is not a presentation anybody asked for."
+          >
+            <legend>Chrome regions</legend>
+            <p class="pg-hint">
+              <span data-claim="region-count">19</span> whole presentations a host
+              can decline, <span data-claim="band-count">8</span> of them ribbon
+              bands. A region is not a capability: withholding one is a decision
+              about your page, withholding a capability is a permission. Dropping
+              <code>ribbon</code> drops every band with it.
+            </p>
+            <!-- @generated playground-region-controls -->
+            <ul class="pg-switches" data-scroll>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-brand" value="brand" data-region />
+                <label class="pg-switch-name" for="pg-chrome-brand">brand</label>
+                <span class="pg-switch-what">Our name and mark in the top bar.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-title" value="title" data-region />
+                <label class="pg-switch-name" for="pg-chrome-title">title</label>
+                <span class="pg-switch-what">The document name, and renaming it.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-menu" value="menu" data-region />
+                <label class="pg-switch-name" for="pg-chrome-menu">menu</label>
+                <span class="pg-switch-what">The application menu bar — one of the two navigation axes.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-ribbon" value="ribbon" data-region />
+                <label class="pg-switch-name" for="pg-chrome-ribbon">ribbon</label>
+                <span class="pg-switch-what">The whole tabbed ribbon, strip and bands together.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-file" value="band.file" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-file">band.file</label>
+                <span class="pg-switch-what">The File page: open, save, export, print, properties, settings.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-home" value="band.home" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-home">band.home</label>
+                <span class="pg-switch-what">Character and paragraph formatting, styles, clipboard, undo.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-insert" value="band.insert" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-insert">band.insert</label>
+                <span class="pg-switch-what">Tables, pictures, shapes, links, comments, headers, symbols.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-layout" value="band.layout" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-layout">band.layout</label>
+                <span class="pg-switch-what">Page setup, margins, columns, spacing, watermark, arrange.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-references" value="band.references" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-references">band.references</label>
+                <span class="pg-switch-what">Captions, cross-references, contents, footnotes, fields.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-review" value="band.review" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-review">band.review</label>
+                <span class="pg-switch-what">Tracked changes, comments, proofing, the review mode control.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-view" value="band.view" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-view">band.view</label>
+                <span class="pg-switch-what">Outline, zoom, page setup, showing changes.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-band-table" value="band.table" data-region />
+                <label class="pg-switch-name" for="pg-chrome-band-table">band.table</label>
+                <span class="pg-switch-what">The contextual table band, present when the caret is in a table.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-rail" value="rail" data-region />
+                <label class="pg-switch-name" for="pg-chrome-rail">rail</label>
+                <span class="pg-switch-what">The left navigation rail: outline and page thumbnails.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-history" value="history" data-region />
+                <label class="pg-switch-name" for="pg-chrome-history">history</label>
+                <span class="pg-switch-what">The version-history timeline, its ribbon entry and its preview bar.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-status" value="status" data-region />
+                <label class="pg-switch-name" for="pg-chrome-status">status</label>
+                <span class="pg-switch-what">The status bar: counts, page number, language, mode.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-zoom" value="zoom" data-region />
+                <label class="pg-switch-name" for="pg-chrome-zoom">zoom</label>
+                <span class="pg-switch-what">The zoom cluster in the status bar.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-find" value="find" data-region />
+                <label class="pg-switch-name" for="pg-chrome-find">find</label>
+                <span class="pg-switch-what">The find and replace card.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-selection" value="selection" data-region />
+                <label class="pg-switch-name" for="pg-chrome-selection">selection</label>
+                <span class="pg-switch-what">The floating toolbar above a selection.</span>
+              </li>
+              <li class="pg-switch">
+                <input type="checkbox" id="pg-chrome-settings" value="settings" data-region />
+                <label class="pg-switch-name" for="pg-chrome-settings">settings</label>
+                <span class="pg-switch-what">The settings dialog and the gear that opens it.</span>
+              </li>
+            </ul>
+            <!-- @end playground-region-controls -->
+          </fieldset>
+
+          <fieldset class="pg-group">
+            <legend>Brand</legend>
+            <p class="pg-hint">
+              <span data-claim="overridable-token-count">18</span> palette tokens
+              are a public contract; geometry and the paper layer are refused.
+              These two apply to the running editor with no reload, because a
+              white-labelled build is one swapped stylesheet.
+            </p>
+            <!-- @generated playground-brand-controls -->
+            <p class="pg-field">
+              <label for="pgBrandName">Product name</label>
+              <input type="text" id="pgBrandName" data-brand-name placeholder="OpenDoc" autocomplete="off" spellcheck="false" />
+            </p>
+            <p class="pg-field">
+              <label for="pgBrandAccentHex">Accent colour</label>
+              <span class="pg-colour-row">
+                <input type="color" id="pgBrandAccent" value="#3355c4" data-brand-accent aria-label="Accent colour, as a swatch" />
+                <input type="text" id="pgBrandAccentHex" value="#3355c4" data-brand-accent-hex autocomplete="off" spellcheck="false" aria-label="Accent colour, as hex" />
+              </span>
+            </p>
+            <p class="pg-field">
+              <label for="pgBrandTabTitle">The host browser tab says</label>
+              <select id="pgBrandTabTitle" data-brand-tab-title>
+                <option value="document+product">document+product</option>
+                <option value="document">document</option>
+              </select>
+            </p>
+            <!-- @end playground-brand-controls -->
+            <div class="pg-btn-row">
+              <button type="button" class="pg-btn" data-variant="quiet" data-try-failing>
+                Try an accent that fails AA
+                (<code data-claim="failing-accent">#f5a524</code>)
+              </button>
+            </div>
+            <p class="pg-refusal" data-refusal hidden></p>
+          </fieldset>
+        </form>
+
+        <section class="pg-card pg-live" aria-labelledby="pgLiveHeading">
+          <div class="pg-live-head">
+            <h2 id="pgLiveHeading">The live editor</h2>
+            <div class="pg-btn-row">
+              <button type="button" class="pg-btn" data-mount>Start the editor</button>
+              <button type="button" class="pg-btn" data-variant="quiet" data-release disabled>
+                Stop it
+              </button>
+            </div>
+          </div>
+          <div class="pg-readout">
+            <dl>
+              <dt>Review mode</dt>
+              <dd data-editing-mode>—</dd>
+              <dt>Sandbox</dt>
+              <dd data-sandbox>—</dd>
+              <dt>Capabilities</dt>
+              <dd>
+                <ul
+                  class="pg-chips"
+                  data-caps
+                  data-granted-label="granted"
+                  data-withheld-label="withheld"
+                ></ul>
+              </dd>
+              <dt>Chrome withheld</dt>
+              <dd data-withheld-regions data-none-label="nothing — every region is shown">—</dd>
+            </dl>
+          </div>
+          <div
+            class="pg-stage"
+            data-stage
+            data-frame-title="OpenDoc editor, embedded with the configuration on this page"
+          >
+            <p class="pg-idle" data-idle>
+              <span
+                >The editor holds a WebAssembly instance of roughly 100&nbsp;MB, so it
+                boots when you ask rather than on arrival. The readout above is already
+                live: it is resolved from the same authority the editor resolves.</span
+              >
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <section class="pg-out">
+        <h2 class="doc-h2">The configuration this produces</h2>
+        <p class="pg-note">
+          Both panels are rewritten on every change, and between them they are the
+          whole of what a host writes. The element takes
+          <span data-claim="attribute-count">3</span> attributes; the per-capability
+          and per-region lists travel in <code>editor-src</code>, because the
+          editor resolves them before the frame's first navigation and a
+          configuration channel that arrives after the document is on screen would
+          be a permission granted too late. The URL parameters are
+          <code data-claim="url-parameters">autosave mode can chrome</code>.
+        </p>
+        <div class="code-panel">
+          <div class="code-panel-head">
+            <span>The embed — paste this into your page</span>
+            <button
+              type="button"
+              class="pg-btn"
+              data-variant="quiet"
+              data-copy="element"
+              data-idle-label="Copy"
+              data-done-label="Copied"
+            >
+              Copy
+            </button>
+          </div>
+          <pre><code data-snippet="element"></code></pre>
+        </div>
+        <div class="code-panel">
+          <div class="code-panel-head">
+            <span>webapp/brand.json — then run <code>node webapp/tools/build-brand.mjs</code></span>
+            <button
+              type="button"
+              class="pg-btn"
+              data-variant="quiet"
+              data-copy="brand"
+              data-idle-label="Copy"
+              data-done-label="Copied"
+            >
+              Copy
+            </button>
+          </div>
+          <pre><code data-snippet="brand"></code></pre>
+        </div>
+        <p class="pg-note">
+          A colour that fails WCAG AA is <em>refused</em> by that command, naming
+          the pair, the measured ratio, the floor and the nearest value on the same
+          hue that would pass — not corrected, because a product shipped in an
+          accent nobody approved is a lie a host discovers from a screenshot, and
+          not warned about, because a warning in a build log is ONLYOFFICE's
+          nag-modal in a different font. The floors are WCAG's own split:
+          <span data-claim="text-contrast-floor">4.5</span>:1 for text,
+          <span data-claim="ui-contrast-floor">3</span>:1 for edges and icons. The
+          refusal beside the Brand controls is produced by the same code that
+          command runs, in this page, so it cannot describe a message the generator
+          no longer emits.
+        </p>
+      </section>
+
+      <section class="pg-out">
+        <h2 class="doc-h2">What this page does not do yet</h2>
+        <ul class="doc-list pg-note">
+          <li>
+            <b>Role, capability and region changes remount the frame.</b> They are
+            resolved before the first paint on purpose, so there is no way to apply
+            one to a running editor without reloading it — and a channel that could
+            would be a window in which the editor was something else. The brand
+            controls do apply live, because a palette is a stylesheet.
+          </li>
+          <li>
+            <b><code>can</code> and <code>chrome</code> have no attribute of their
+            own.</b> The element reads
+            <span data-claim="attribute-count">3</span> attributes and they are not
+            among them, so the lists ride in <code>editor-src</code>'s query. That
+            works and is what the snippet above generates; an attribute apiece
+            would read better and belongs to the element and its published types
+            rather than to this page.
+          </li>
+          <li>
+            <b>The brand preview is this page applying the generated stylesheet to
+            the frame.</b> A real white-labelled deployment commits what
+            <code>build-brand.mjs</code> writes and serves it; nothing here can
+            write a file. The CSS in the panel above is the generator's own output,
+            byte for byte.
+          </li>
+          <li>
+            <b>Two strips survive a container that was offered no region</b>, and
+            this page is how they were found. In <code>preview</code> the top bar
+            still carries the document-state chip, the import-findings count and
+            the Properties button, and the Viewing banner still offers
+            &ldquo;Switch to editing&rdquo; — which a <code>preview</code>
+            container can never do. Neither belongs to any of the
+            <span data-claim="region-count">19</span> regions, so neither can be
+            withheld; deciding where they belong is a change to the region set
+            rather than to this page, and it is filed rather than quietly patched.
+          </li>
+          <li>
+            <b>One document, and no host commands.</b> The frame opens the shipped
+            sample. For driving the editor over both transports — in-process and
+            <code>postMessage</code> — with every command the registry offers, the
+            two-panel host demo is <a href="./embed.html">embed.html</a>.
+          </li>
+        </ul>
+        <p class="pg-note">
+          The reference for all of it is
+          <a href="./embedding.html">Embed the editor</a>: the capability table, the
+          region table, the host contract, the refusal codes, and the tests that
+          hold each claim up.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="./reference/security.html">Security</a>
+        <a href="./reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "./pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+    <script type="module" src="./src/playground.js"></script>
+  </body>
+</html>

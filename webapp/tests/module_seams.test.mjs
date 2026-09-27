@@ -284,6 +284,16 @@ const PURE_MODULES = [
   // half — walking `data-i18n` attributes — is `localize.mjs`.
   "i18n.mjs",
   "contrast.mjs",
+  // The white-label contract: which tokens a host may set, what a refusal says,
+  // and the stylesheet their choices produce. Purity is the whole reason it left
+  // `tools/build-brand.mjs` — the configuration playground runs the SAME validator
+  // in a browser so a host reads the refusal the command line would give them, and
+  // a browser cannot import a module that opens with `node:fs`.
+  "brand_contract.mjs",
+  // How a palette is read out of stylesheet TEXT, with nothing that knows where
+  // the text came from. Same split, same reason: the generator reads the file, the
+  // page fetches it, and there is one parser.
+  "palette_parse.mjs",
   // The caption / cross-reference VOCABULARY: which "Insert reference to"
   // options a reference type offers, when Word offers "Include above/below",
   // and what a caption will read as. Word's own rules, with no widget attached,
