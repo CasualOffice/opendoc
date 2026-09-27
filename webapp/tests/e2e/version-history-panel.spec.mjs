@@ -32,7 +32,13 @@ const rows = `${list} .version-item`;
  *  helper asserts the row is present AND enabled, so an unreachable command fails
  *  loudly rather than quietly doing nothing. */
 async function openTimeline(page) {
-  await runFilePageCommand(page, "file.versionHistory");
+  // The command is a TOGGLE, which is what the View button's `aria-pressed`
+  // reflects — so running it on an already-open panel closes it. Idempotent here
+  // so a test that saved while the panel was open does not close it by asking
+  // for it again.
+  if (!(await page.locator(panel).isVisible())) {
+    await runFilePageCommand(page, "file.versionHistory");
+  }
   await expect(page.locator(panel)).toBeVisible();
 }
 

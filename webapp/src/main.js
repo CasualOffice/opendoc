@@ -3108,11 +3108,9 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // The identity a draft records, computed from the bytes the document was
     // opened from. O(1) in document size — see `documentKey`.
     adoptDraftDocument(name, bytes);
-    // And the timeline this document rejoins. `adopt` mints or finds the lineage
-    // and records the import baseline — the point a reopened file rejoins its
-    // own past (`docs/140` §7.5). Skipped while a restore is activating: the
-    // restore version has just been committed, and a second "Opened" row for the
-    // same user action would make the timeline read as two events.
+    // And the timeline this document rejoins: `adopt` mints or finds the lineage
+    // and records the import baseline (`docs/140` §7.5). See `activatingRestore`
+    // for why a restore skips it.
     if (!activatingRestore) void versionHistory.adopt();
     // Ignored words and cached paragraphs belong to the document that is being
     // replaced; the personal dictionary and the fetched word lists do not, and
@@ -16111,22 +16109,21 @@ function saveSettings() {
   savePrefObject("opendoc.settings", settings);
 }
 
-// ---- Version history (docs/139, docs/140, ADR-038/ADR-039; HF-068 / OO-004) --
+// ---- Version history (docs/139, docs/140, ADR-038/ADR-040; HF-068 / OO-004) --
 //
 // Everything about the timeline — the store handle, the panel, the keyboard
 // contract, the retention disclosure and the restore state machine — is in
-// `version_panel.mjs`. What is left here is the four seams it cannot own, and
-// only those: parsing bytes, putting a document on the canvas, taking it off
-// again, and reporting. Placed AFTER `settings`, because the capture interval is
-// read from it at construction.
+// `version_panel.mjs`. What is left here is the four seams it cannot own:
+// parsing bytes, putting a document on the canvas, taking it off again, and
+// reporting. Placed AFTER `settings`, because the capture interval is read from
+// it at construction.
 //
 // The read-only enforcement is deliberately NOT a new mechanism. A preview sets
-// `readOnlyReason` and `viewing` mode, which is the editor's existing
-// fail-closed choke point: `blockMutationInViewing()` refuses every mutation
-// route — typing, paste, toolbar, tables, review decisions, the SDK and the host
-// bridge — and `editRefusalMessage` already prefers `readOnlyReason` over every
-// other sentence, so a preview refuses an edit by SAYING it is a preview. A
-// second gate would have put the reason for a refusal in two places.
+// `readOnlyReason` and `viewing` mode, which is the editor's existing fail-closed
+// choke point: `blockMutationInViewing()` refuses every mutation route — typing,
+// paste, toolbar, tables, review decisions, the SDK and the host bridge — and
+// `editRefusalMessage` already prefers `readOnlyReason` over every other
+// sentence, so a preview refuses an edit by SAYING it is a preview.
 const versionNamePrompt = createNamePrompt({
   registerModal,
   fallbackFocus: () => pagesEl,
@@ -16164,10 +16161,10 @@ async function showVersionPreview(previewDoc) {
     versionPreviewHome = null;
     setReviewMode(home.reviewMode);
   }
-  // A different document, so every answer cached about the last one is wrong:
-  // the remembered object presence, any table selection, the review card
-  // geometry, and the background measure ticker (which captures `doc` and
-  // becomes a no-op for the one it was armed for).
+  // A different document, so every answer cached about the last one is wrong: the
+  // remembered object presence, any table selection, the review card geometry,
+  // and the background measure ticker (which captures `doc`, so a late tick from
+  // the old one is already a no-op).
   objectPresence.forget();
   tableSelection = null;
   reviewLayout = [];
@@ -16188,16 +16185,15 @@ async function showVersionPreview(previewDoc) {
 }
 
 /** Set while a restore is activating, so the open path does not ALSO record an
- *  "Opened" baseline version on top of the restore version that just committed —
- *  one user action, one point in the timeline. */
+ *  import baseline on top of the restore version that just committed — one user
+ *  action, one point in the timeline. */
 let activatingRestore = false;
 
 const versionHistory = createVersionHistory({
   parse: (bytes) => open(bytes),
   showPreview: (previewDoc) => showVersionPreview(previewDoc),
   // Through the ORDINARY open path, so a restored document is indistinguishable
-  // from an opened one — same admission limits, same dirty tracking, same draft
-  // adoption, same compatibility reporting.
+  // from an opened one: same admission limits, dirty tracking and loss reporting.
   activateRestored: async (bytes, name) => {
     activatingRestore = true;
     try {
@@ -16308,6 +16304,10 @@ autosaveToggle?.addEventListener("change", () => {
     void clearAllDrafts({ confirm: false });
     setDraftStatus("Autosave off", "off", "Autosave is off. Turn it back on in Settings ▸ Autosave.");
   }
+  // Version history rides this switch (ADR-038). Stored VERSIONS are left alone:
+  // `clear()` above empties the draft slots only, and deleting a timeline as a
+  // side effect of a switch is a destruction nobody asked for.
+  versionHistory.reflect();
 });
 draftsClearBtn?.addEventListener("click", () => void clearAllDrafts());
 spellCheckToggle?.addEventListener("change", () => setSpellCheckEnabled(spellCheckToggle.checked));

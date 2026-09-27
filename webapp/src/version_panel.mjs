@@ -468,12 +468,22 @@ export function createVersionHistory({
     const ids = visibleIds();
     if (ids.length === 0) return;
     const at = ids.indexOf(selectedId);
+    // With nothing selected yet, the FIRST press lands on an end rather than
+    // stepping from an imagined position: ArrowDown selects the newest version,
+    // ArrowUp the oldest. Stepping from a notional index 0 made the first
+    // ArrowDown select the SECOND row and skip the newest version entirely —
+    // found by `version-history-panel.spec.mjs`, which reads
+    // `aria-activedescendant` rather than trusting the list looked right.
     const next =
-      absolute === null
-        ? Math.min(ids.length - 1, Math.max(0, (at === -1 ? 0 : at) + delta))
-        : absolute < 0
+      absolute !== null
+        ? absolute < 0
           ? ids.length - 1
-          : 0;
+          : 0
+        : at === -1
+          ? delta > 0
+            ? 0
+            : ids.length - 1
+          : Math.min(ids.length - 1, Math.max(0, at + delta));
     select(ids[next]);
     body.querySelector(`#${CSS.escape(optionId(ids[next]))}`)?.scrollIntoView({ block: "nearest" });
     clearTimeout(settleTimer);
