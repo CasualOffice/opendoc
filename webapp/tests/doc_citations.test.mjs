@@ -310,3 +310,68 @@ test("every ADR number is unique, and the register has no gaps", () => {
       "says so; if a merge dropped one, restore it — a gap is how a deleted decision looks",
   );
 });
+
+// An INSTALL INSTRUCTION is an address too, and nothing was checking it.
+//
+// `docs/83` told every reader to `npm install @casualoffice/document-runtime` — a
+// package that has never existed, under a name nothing publishes — and said so in
+// its header metadata, its architecture diagram, two phase task lists and the one
+// literal install line in the whole of `docs/`. `docs/05` handed them an
+// `import { DocumentEngine } from` it, live on the public site through
+// `build-doc-pages.mjs`. `docs/00` listed it as "the WebAssembly package". The real
+// name, `@casualoffice/opendoc-embed`, appeared in `docs/` ZERO times.
+//
+// This is `docs/99` §9 in its most expensive form: not a number that drifted, but an
+// instruction a reader follows and cannot complete. It also cost nothing to catch —
+// the package manifests are in the tree.
+//
+// WHAT THIS DELIBERATELY DOES NOT CHECK. Only install instructions, not every
+// mention. `docs/83` names `@casualoffice/collaboration-yjs`, `@casualoffice/react`
+// and `@casualoffice/vue` inside phase task lists that are explicitly future work,
+// and a guard that refused those would be refusing a plan. The line between them is
+// the imperative: a doc may PLAN a package, and may not TELL SOMEBODY TO INSTALL
+// one that is not there.
+test("every `npm install` in docs names a package that exists", () => {
+  const packagesDir = join(repoRoot, "packages");
+  const published = new Set();
+  for (const entry of readdirSync(packagesDir)) {
+    const manifest = join(packagesDir, entry, "package.json");
+    try {
+      published.add(JSON.parse(readFileSync(manifest, "utf8")).name);
+    } catch {
+      /* not a package directory */
+    }
+  }
+  assert.ok(published.size > 0, "no package manifests found, so this guard checks nothing");
+
+  const wrong = [];
+  for (const file of readdirSync(join(repoRoot, "docs"))) {
+    if (!file.endsWith(".md")) continue;
+    const source = readFileSync(join(repoRoot, "docs", file), "utf8");
+    for (const [, name] of source.matchAll(/npm install\s+((?:@[\w.-]+\/)?[\w.-]+)/g)) {
+      if (published.has(name)) continue;
+      // A bare name with no scope is a third-party dependency, not ours to publish.
+      if (!name.startsWith("@casualoffice/")) continue;
+      wrong.push(`docs/${file}: npm install ${name}`);
+    }
+  }
+  assert.deepEqual(
+    wrong,
+    [],
+    "a doc tells a reader to install a package that does not exist. An instruction a " +
+      "reader cannot complete is worse than a missing instruction: they conclude the " +
+      "project is broken rather than that the doc is",
+  );
+
+  // And the REAL name is somewhere in the docs, because it appeared zero times while
+  // the phantom appeared eleven. A guard that only forbids the wrong name passes
+  // happily on documentation that names no package at all.
+  const allDocs = readdirSync(join(repoRoot, "docs"))
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => readFileSync(join(repoRoot, "docs", f), "utf8"))
+    .join("\n");
+  assert.ok(
+    allDocs.includes("@casualoffice/opendoc-embed"),
+    "the published package name appears nowhere in docs/, so a reader cannot find it",
+  );
+});

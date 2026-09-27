@@ -88,6 +88,24 @@ export declare function hostConfig(view?: unknown): {
 /** Parses a withhold list against a vocabulary. Only ever narrows. */
 export declare function parseWithheld(raw: string | null | undefined, known: readonly string[]): readonly string[];
 
+// ---- Release and provenance (`docs/126` phase 3) ---------------------------
+
+/** What a host installed, what it speaks, and what it was built from.
+ *
+ *  Three numbers, deliberately not one. `contract` is stable across package
+ *  releases because an added command, event or refusal code is additive
+ *  (`docs/05` §12), so tying it to `version` would make hosts re-pin for changes
+ *  that break nothing. There is no build commit: it is stamped at DEPLOY time,
+ *  and a committed file claiming one would be a fabricated provenance. */
+export declare const RELEASE: {
+  readonly package: string;
+  readonly version: string;
+  readonly contract: number;
+  readonly engine: string;
+  readonly licence: string;
+  readonly repository: string;
+};
+
 /** Maps a capability set onto the editor's existing three review modes. Fails
  *  closed to `"viewing"` for anything that is not a set. */
 export declare function editingModeFor(capabilities: unknown): EditingMode;
