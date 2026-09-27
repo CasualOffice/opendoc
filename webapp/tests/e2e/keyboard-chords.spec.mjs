@@ -7,7 +7,15 @@
 // dead chord. SKILL.md §10 — a control that does nothing is worse than none. So
 // every assertion here DRIVES the keystroke and reads the result back out of the
 // document or the chrome that reflects it.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  mirrorBlocks,
+  moveCaretToDocStart,
+  MOD,
+} from "./fixtures.mjs";
 
 /** Which alignment the ribbon is showing as active — the engine's answer, round
  *  tripped through the toolbar's own reflection rather than through the keymap. */
@@ -204,4 +212,103 @@ test("every chord the palette advertises is one the editor can run", async ({ pa
   });
   expect(mismatches.count, "the palette advertises no chords at all").toBeGreaterThan(25);
   expect(mismatches.mismatches).toEqual([]);
+});
+
+// ---- History through the chord ----------------------------------------------
+//
+// Undo and redo had no direct chord guard. When the keymap rewrite moved ⌘Z off
+// an inline `keydown` branch onto the dispatcher, the only things that noticed a
+// broken undo were `line-numbers` and `shape-editing` — two specs about
+// something else entirely, which caught it by measuring ink in a margin and a
+// hex fill. That is an accident, not coverage: the diagnosis had to start from
+// "the numbers are still painted" and work backwards to the keyboard.
+//
+// So these two assert the GUARANTEE — the document is back in the state it was
+// in — rather than the mechanism, and they assert it for the two families the
+// history stack has to serve: an edit that changes TEXT, and an edit that
+// changes a paragraph's FORMATTING without changing a character.
+
+test("the history chords put the text back, and forward again", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  // The a11y mirror is the document as the engine has it, one string per block,
+  // so "the document returned to its prior state" is a comparison of the whole
+  // reading order rather than of one element's text. `#undoBtn` is deliberately
+  // NOT the subject here — that button is the other surface, and this test is
+  // about the keyboard.
+  const before = await mirrorBlocks(page);
+  const marker = "CHORDUNDOMARKER";
+  await page.keyboard.type(marker);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n").includes(marker), {
+      message: "the typing never reached the document, so undo cannot be measured",
+    })
+    .toBe(true);
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n"), {
+      message: "the undo chord did not put the document back",
+    })
+    .toBe(before.join("\n"));
+
+  // Redo, both spellings Word binds. ⌘⇧Z first; then undo again so ⌘Y has
+  // something to put forward, because a chord that fires on an empty redo stack
+  // proves nothing.
+  await page.keyboard.press(`${MOD}+Shift+z`);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n").includes(marker), {
+      message: "the redo chord did not put the typing back",
+    })
+    .toBe(true);
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(async () => (await mirrorBlocks(page)).join("\n")).toBe(before.join("\n"));
+  await page.keyboard.press(`${MOD}+y`);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n").includes(marker), {
+      message: "⌘Y is bound to redo as well and must reach the same command",
+    })
+    .toBe(true);
+
+  // Leave the document as it was found.
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(async () => (await mirrorBlocks(page)).join("\n")).toBe(before.join("\n"));
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the undo chord puts back a formatting change too", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  // Not a text edit: alignment leaves every character in place, and it is the
+  // family `line-numbers` and `shape-editing` were incidentally covering — a
+  // property change whose undo has to travel the same chord to the same command.
+  const before = await reflected(page);
+  const wasCentered = before.center === "true";
+  const chord = wasCentered ? `${MOD}+l` : `${MOD}+e`;
+  const changed = wasCentered ? "start" : "center";
+
+  await page.keyboard.press(chord);
+  await expect
+    .poll(async () => (await reflected(page))[changed], {
+      message: `${chord} did not change the alignment, so undo cannot be measured`,
+    })
+    .toBe("true");
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(async () => (await reflected(page))[changed], {
+      message: "the undo chord left the alignment applied",
+    })
+    .not.toBe("true");
+  expect(await reflected(page), "undo restored something other than the prior state").toEqual(
+    before,
+  );
+  expect(consoleErrors).toEqual([]);
 });
