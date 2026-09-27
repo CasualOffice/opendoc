@@ -334,9 +334,33 @@ function queueRows(text) {
   };
   const out = [];
   for (const line of lines.slice(headerAt + 1)) {
+    // The queue table ends where the next section begins. This bound matters now
+    // that a row is recognised by its Id rather than by a numeric first cell:
+    // `Dropped, and on whose authority` and `What was merged` are also id-bearing
+    // tables, and without the bound their rows would be read as queue rows.
+    if (line.startsWith("## ")) break;
     if (!line.startsWith("|")) continue;
     const c = cells(line);
-    if (!/^\d+$/.test(c[0])) continue;
+    // A queue row is one whose first cell is position-SHAPED — digits, optionally
+    // with a letter suffix. It used to require a plain integer, and that
+    // `continue` was a hole rather than a filter: rows had been inserted with a
+    // suffixed position (`1b`, `2e`, `64a`) instead of renumbering, so every
+    // assertion below skipped them — the 1..N enumeration, the duplicate-id
+    // check, the lane order, the priority order and the derived counts alike.
+    //
+    // What that cost, measured rather than supposed: seventeen rows were
+    // invisible, so the summary said 129 rows against an actual 142 (`docs/99`
+    // §9 rule 6 — understating is also false); a P2 row sat inside the P1 block
+    // and the ordering assertion could not see it; and two DIFFERENT defects were
+    // both numbered HF-179, which the duplicate-id check would have caught except
+    // that one of them was a skipped row.
+    //
+    // Accepting the suffix here is what makes it FAIL, loudly, in the enumeration
+    // assertion below, instead of vanishing. The id is deliberately NOT the test:
+    // ids in this queue take four shapes (`HF-011`, `FID-L-07b`, `RM-01`, `Q3`),
+    // and a filter written to match ids silently dropped six rows the first time
+    // this was attempted — including the five owner-decision rows.
+    if (!/^\d+[a-z]*$/.test(c[0])) continue;
     assert.equal(
       c.length,
       header.length,
@@ -344,6 +368,9 @@ function queueRows(text) {
         "a missing cell shifts every later column left and the derived counts go wrong",
     );
     out.push({
+      // Kept verbatim as well as coerced: `Number("2e")` is NaN, and a position
+      // that silently becomes NaN is how a malformed row hides.
+      nRaw: c[idx.n],
       n: Number(c[idx.n]),
       id: c[idx.id],
       lane: c[idx.lane],
@@ -366,9 +393,12 @@ test("docs/109: the queue is well formed and ordered the way the owner asked", (
 
   // The # column is a position, not an identity. It must enumerate the queue.
   assert.deepEqual(
-    queue.map((r) => r.n),
-    Array.from({ length: queue.length }, (_, i) => i + 1),
-    "docs/109's # column must run 1..N with no gaps or repeats",
+    queue.map((r) => r.nRaw),
+    Array.from({ length: queue.length }, (_, i) => String(i + 1)),
+    "docs/109's # column must run 1..N with no gaps, repeats or suffixes. The # is a " +
+      "position, not an identity (the Id is the identity), so inserting a row means " +
+      "renumbering — a suffixed position such as `2e` is how sixteen rows once escaped " +
+      "every assertion in this file",
   );
 
   // An id appearing twice means the same work is queued twice — or, worse, that
