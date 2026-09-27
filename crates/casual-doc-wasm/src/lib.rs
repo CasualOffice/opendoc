@@ -14991,6 +14991,47 @@ pub(crate) fn contained_inlines(inline: &InlineNode) -> Option<&[InlineNode]> {
     }
 }
 
+/// [`contained_inlines`] for a walk that MUTATES what it finds. **O(1)**.
+///
+/// Rust cannot share one match across mutability, so this is the one deliberate
+/// second spelling of the container set, kept immediately beside the first so the
+/// two cannot drift apart unnoticed — and
+/// `the_two_faces_of_the_container_set_agree` fails the build if they ever do.
+/// Adding a third spelling anywhere else is the defect this module is about.
+pub(crate) fn contained_inlines_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineNode>> {
+    match inline {
+        InlineNode::Hyperlink(link) => Some(&mut link.inlines),
+        InlineNode::Field(field) => Some(&mut field.inlines),
+        InlineNode::Revision(revision) => Some(&mut revision.inlines),
+        InlineNode::Sdt(sdt) => Some(&mut sdt.inlines),
+        InlineNode::TextBox(_)
+        | InlineNode::Group(_)
+        | InlineNode::Run(_)
+        | InlineNode::Tab(_)
+        | InlineNode::PositionalTab(_)
+        | InlineNode::Break(_)
+        | InlineNode::Symbol(_)
+        | InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
+        | InlineNode::EmbeddedObject(_)
+        | InlineNode::NoteReference(_)
+        | InlineNode::NoteNumberMark(_)
+        | InlineNode::Math(_)
+        | InlineNode::HorizontalRule(_)
+        | InlineNode::NoBreakHyphen(_)
+        | InlineNode::SoftHyphen(_)
+        | InlineNode::CommentReference(_)
+        | InlineNode::CommentRangeStart(_)
+        | InlineNode::CommentRangeEnd(_)
+        | InlineNode::BookmarkStart(_)
+        | InlineNode::BookmarkEnd(_)
+        | InlineNode::FieldRangeStart(_)
+        | InlineNode::FieldRangeEnd(_)
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_) => None,
+    }
+}
+
 /// Every block story an inline owns, at any container depth — both the `TextBox`
 /// and the `Group` axis of [`inline_descent`], plus the inline containers that can
 /// hold either. **O(inlines in the subtree)**.
@@ -39175,6 +39216,94 @@ mod tests {
             error, COMMENT_RANGE_REFUSAL,
             "the refusal must be the one constant the host shows, readable on a \
              native target rather than destroyed by a `JsValue` panic"
+        );
+    }
+
+    /// The immutable and mutable faces of the container set classify every inline
+    /// kind the same way.
+    ///
+    /// Rust cannot share one match across mutability, so `contained_inlines` and
+    /// `contained_inlines_mut` are two spellings of one fact — the exact shape this
+    /// branch exists to remove. They are kept adjacent so a reader sees both at
+    /// once; this fails the build if they ever disagree, which is the part a reader
+    /// cannot be relied on for. Drift here is not theoretical: it is how a caption
+    /// gets LISTED by a reading walk and then silently not renumbered by a writing
+    /// one, which is a defect this branch actually introduced and then caught.
+    ///
+    /// Driven over `every_inline_kind_document`, the fixture
+    /// `structured_paste_carries_every_inline_kind_and_reports_what_it_cannot`
+    /// already keeps complete, so a variant added to the model arrives here for
+    /// free: `inline_descent`'s exhaustive match refuses to compile without a new
+    /// arm, and this then checks the mutable face got the same arm rather than
+    /// being quietly defaulted to `None`.
+    #[test]
+    fn the_two_faces_of_the_container_set_agree() {
+        /// Every inline in a block tree, at every depth, by both descent axes.
+        fn gather(blocks: &[BlockNode], out: &mut Vec<InlineNode>) {
+            for block in blocks {
+                match block {
+                    BlockNode::Paragraph(paragraph) => {
+                        fn walk(inlines: &[InlineNode], out: &mut Vec<InlineNode>) {
+                            for inline in inlines {
+                                out.push(inline.clone());
+                                match inline_descent(inline) {
+                                    InlineDescent::Inlines(nested) => walk(nested, out),
+                                    InlineDescent::Blocks(blocks) => gather(blocks, out),
+                                    InlineDescent::Group(children) => {
+                                        group_block_stories(children, &mut |blocks| {
+                                            gather(blocks, out);
+                                        });
+                                    }
+                                    InlineDescent::Leaf => {}
+                                }
+                            }
+                        }
+                        walk(&paragraph.inlines, out);
+                    }
+                    BlockNode::Table(table) => {
+                        for row in &table.rows {
+                            for cell in &row.cells {
+                                gather(&cell.blocks, out);
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(sdt) => gather(&sdt.blocks, out),
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+        }
+
+        let (document, _, _) = every_inline_kind_document();
+        let mut kinds = Vec::new();
+        gather(document.body(), &mut kinds);
+        assert!(
+            kinds.len() >= 25,
+            "the fixture must reach one of nearly every `InlineNode` variant — \
+             found {}, which means the gather is not descending and this guard is \
+             checking far less than it claims",
+            kinds.len()
+        );
+
+        let mut containers = 0;
+        for inline in &mut kinds {
+            let immutable = contained_inlines(inline).is_some();
+            let mutable = contained_inlines_mut(inline).is_some();
+            assert_eq!(
+                immutable,
+                mutable,
+                "`contained_inlines` and `contained_inlines_mut` disagree about \
+                 {:.60}: a walk that reads the tree and a walk that rewrites it \
+                 would descend different containers",
+                format!("{inline:?}")
+            );
+            if immutable {
+                containers += 1;
+            }
+        }
+        assert!(
+            containers > 0,
+            "the fixture must hold at least one inline CONTAINER, or agreement is \
+             vacuous"
         );
     }
 }

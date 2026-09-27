@@ -393,36 +393,70 @@ fn paragraph_offsets(
 /// returning the new inline tree — the vehicle for renumbering an existing
 /// caption without touching anything else about it. `None` when there is no
 /// `SEQ` field or its result already reads `number`, so a renumber that changes
-/// nothing produces no operation and no history entry. O(inlines).
+/// nothing produces no operation and no history entry.
+/// **O(inlines in the paragraph's subtree)**.
+///
+/// It rewrote a TOP-LEVEL `SEQ` only, which was consistent with [`sequence_of`]
+/// while that function was also top-level and became a half-fix the moment it was
+/// not: a caption whose `SEQ` sits inside a hyperlink or a tracked insertion would
+/// be LISTED and numbered by the scan and then silently skipped by every renumber,
+/// so Update Caption Numbers would report nothing stale while the document read
+/// 1, 1, 2. The two must agree about where a caption's `SEQ` can be, so the
+/// descent is the same one — [`crate::contained_inlines`].
 fn renumbered(
     inlines: &[InlineNode],
     number: &str,
     next_id: &mut impl FnMut() -> Option<NodeId>,
 ) -> Option<Vec<InlineNode>> {
-    let mut out = inlines.to_vec();
-    for inline in &mut out {
-        if let InlineNode::Field(field) = inline
-            && matches!(field.kind, FieldKind::Seq { .. })
-        {
-            if node_plain_text(&field.inlines) == number {
-                return None;
+    /// Rewrites in place, reporting whether it found a `SEQ` and whether the
+    /// rewrite changed anything. `None` = no `SEQ` here; `Some(false)` = found one
+    /// already reading `number`.
+    fn rewrite(
+        inlines: &mut [InlineNode],
+        number: &str,
+        next_id: &mut impl FnMut() -> Option<NodeId>,
+    ) -> Option<bool> {
+        for inline in inlines {
+            if let InlineNode::Field(field) = inline
+                && matches!(field.kind, FieldKind::Seq { .. })
+            {
+                if node_plain_text(&field.inlines) == number {
+                    return Some(false);
+                }
+                let first = match field.inlines.first() {
+                    Some(InlineNode::Run(run)) => Some((run.id, run.properties.clone())),
+                    _ => None,
+                };
+                let (id, properties) = match first {
+                    Some(pair) => pair,
+                    None => (
+                        next_id()?,
+                        casual_doc_model::v1::RunProperties::default().into(),
+                    ),
+                };
+                field.inlines = vec![InlineNode::Run(casual_doc_model::v1::Run {
+                    id,
+                    properties,
+                    text: number.to_owned(),
+                })];
+                return Some(true);
             }
-            let id = match field.inlines.first() {
-                Some(InlineNode::Run(run)) => run.id,
-                _ => next_id()?,
-            };
-            field.inlines = vec![InlineNode::Run(casual_doc_model::v1::Run {
-                id,
-                properties: match field.inlines.first() {
-                    Some(InlineNode::Run(run)) => run.properties.clone(),
-                    _ => casual_doc_model::v1::RunProperties::default().into(),
-                },
-                text: number.to_owned(),
-            })];
-            return Some(out);
+            // The same container set the caption was IDENTIFIED through, so a
+            // caption this engine lists is a caption this engine can renumber.
+            if let Some(nested) = crate::contained_inlines_mut(inline)
+                && let Some(changed) = rewrite(nested, number, next_id)
+            {
+                return Some(changed);
+            }
         }
+        None
     }
-    None
+
+    let mut out = inlines.to_vec();
+    match rewrite(&mut out, number, next_id) {
+        Some(true) => Some(out),
+        Some(false) | None => None,
+    }
 }
 
 /// Why a caption cannot attach to `target`, or `None` when it can.
@@ -2495,6 +2529,24 @@ mod tests {
             "the boundary between the caption's label-and-number and its own text \
              is the end of the `SEQ` field, and a `SEQ` inside a hyperlink is still \
              the caption's `SEQ`"
+        );
+
+        // And a caption this engine LISTS is one it can RENUMBER. `renumbered`
+        // rewrote a top-level `SEQ` only, which agreed with `sequence_of` while
+        // that was also top-level and became a half-fix the moment it was not: the
+        // caption would be listed, counted, and then silently skipped by every
+        // renumber, so Update Caption Numbers reported nothing stale while the
+        // document read 1, 1, 2.
+        let BlockNode::Paragraph(caption_paragraph) = &d.document.body()[0] else {
+            panic!("the caption paragraph");
+        };
+        let mut allocate = || Some(NodeId::from_parts(72, 95).unwrap());
+        let rewritten = renumbered(&caption_paragraph.inlines, "4", &mut allocate)
+            .expect("a caption whose SEQ sits inside a hyperlink can be renumbered");
+        assert_eq!(
+            node_plain_text(&rewritten),
+            "Figure 4: Wiring",
+            "the renumber must reach the nested `SEQ`'s cached result"
         );
     }
 
