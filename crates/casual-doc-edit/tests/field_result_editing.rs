@@ -226,27 +226,29 @@ fn typing_between_the_page_counts_digits_is_refused_not_moved_to_the_paragraph_e
     let inside = start + 1;
     assert!(inside > start && inside < end, "strictly inside the result");
 
-    let error = apply(
+    let outcome = apply(
         &mut document,
         &mut ids(),
         &Operation::InsertText {
             at: Pos::new(node, inside),
             text: "9".to_owned(),
         },
-    )
-    .expect_err("typing inside a calculated result is refused");
-    assert_eq!(refusal(error), FieldRefusal::PageCountIsCalculated);
+    );
 
-    // The guarantee, and the reason this test exists: the character is NOT
-    // silently relocated. Before this, `insert_text` fell through to its
-    // "insert a fresh run at the matching top-level position" fallback, whose
-    // loop cannot match an offset interior to an inline, so the footer read
-    // "…1 of 149" — the typed character after the field, and a reported success.
+    // The guarantee FIRST, so a regression's failure message says where the
+    // character landed rather than merely that the op returned `Ok`. This is the
+    // reason this test exists: the character must not be silently relocated.
+    // Before this, `insert_text` fell through to its "insert a fresh run at the
+    // matching top-level position" fallback, whose loop cannot match an offset
+    // interior to an inline, so the footer read "…1 of 149" — the typed
+    // character after the field, and a reported success.
     assert_eq!(
         paragraph_text(&document, node),
         "OpenDoc by CasualOffice   •   1 of 14",
         "no character landed anywhere, least of all at the paragraph end",
     );
+    let error = outcome.expect_err("typing inside a calculated result is refused");
+    assert_eq!(refusal(error), FieldRefusal::PageCountIsCalculated);
 }
 
 #[test]
@@ -468,11 +470,12 @@ fn only_the_pagination_dependent_fields_refuse_an_interior_edit() {
         );
         match expected {
             Some(wanted) => {
+                // The document first: a regression shows the misplaced text.
+                assert_eq!(paragraph_text(&document, node), "AB", "for {instruction:?}");
                 let error = outcome
                     .err()
                     .unwrap_or_else(|| panic!("{instruction:?} must refuse an interior edit"));
                 assert_eq!(refusal(error), wanted, "for {instruction:?}");
-                assert_eq!(paragraph_text(&document, node), "AB", "for {instruction:?}");
             }
             None => {
                 outcome.unwrap_or_else(|error| {

@@ -1072,7 +1072,7 @@ impl EditError {
     ///
     /// The `refused: ` prefix is the host's marker for "already explained, pass
     /// it through verbatim" (`webapp/src/edit_errors.mjs`), the same contract
-    /// [`crate::BreakRefusal::reason`] uses. Every other variant is internal
+    /// [`crate::breaks::BreakRefusal::reason`] uses. Every other variant is internal
     /// vocabulary the host must translate, and returns `None`.
     ///
     /// O(1).
