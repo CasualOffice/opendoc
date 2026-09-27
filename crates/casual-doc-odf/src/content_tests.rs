@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, Extent, HyperlinkTarget, InlineNode, NoteKind,
-    NumberFormat, RgbColor, VerticalMerge,
+    Alignment, BlockNode, BreakKind, Color, Document, Extent, HyperlinkTarget, InlineNode,
+    NoteKind, NumberFormat, Paragraph, RevisionKind, RgbColor, Run, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 
@@ -1357,6 +1357,227 @@ fn tracked_deletion_round_trips_to_a_fixed_point() {
     reopened.document.validate().unwrap();
     let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
     assert_eq!(first.bytes, second.bytes);
+}
+
+/// Replaces the single run inside the imported document's one tracked deletion
+/// with `replacement`, reusing the freed run's node id so the document still
+/// validates. Returns the document ready to export.
+fn deletion_with_inlines(
+    body: &str,
+    replacement: impl FnOnce(casual_doc_model::NodeId) -> Vec<InlineNode>,
+) -> Document {
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Paragraph(para) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    let mut replacement = Some(replacement);
+    for inline in &mut para.inlines {
+        if let InlineNode::Revision(revision) = inline {
+            let inner_id = match revision.inlines.as_slice() {
+                [InlineNode::Run(run)] => run.id,
+                other => panic!("deletion run: {other:?}"),
+            };
+            let build = replacement.take().expect("one deletion");
+            revision.inlines = build(inner_id);
+        }
+    }
+    document.validate().unwrap();
+    document
+}
+
+/// The one-deletion content.xml body the deletion guards mutate.
+const ONE_DELETION_BODY: &str = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="d1"><text:deletion><office:change-info><dc:creator>A</dc:creator></office:change-info><text:p>gone</text:p></text:deletion></text:changed-region></text:tracked-changes><text:p>x<text:change text:change-id="d1"/>y</text:p>"#;
+
+#[test]
+fn symbol_only_tracked_deletion_keeps_its_region_and_marker() {
+    // Regression: `flatten_inline_text` dropped `Symbol`, so a deletion made only
+    // of symbols flattened to nothing, `collect_revisions_in_inlines` declared no
+    // changed-region, and the body emitted no `text:change` marker either — the
+    // tracked change vanished with no marker at all, so a reviewer could neither
+    // accept nor reject it. Assert the GUARANTEE: the exported ODT carries a
+    // deletion region containing the symbol's character AND a body marker
+    // referencing that region, and the pair survives a reopen as a deletion.
+    use casual_doc_model::v1::Symbol;
+    let document = deletion_with_inlines(ONE_DELETION_BODY, |id| {
+        vec![InlineNode::Symbol(Box::new(Symbol {
+            id,
+            font: "Wingdings".to_owned(),
+            // U+2713 CHECK MARK — a glyph, no run text anywhere in the deletion.
+            char: 0x2713,
+            properties: Default::default(),
+        }))]
+    });
+    let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains("<text:deletion>"),
+        "no deletion region: {content_xml}"
+    );
+    assert!(
+        content_xml.contains("<text:p>\u{2713}</text:p></text:deletion>"),
+        "symbol character missing from the deletion region: {content_xml}"
+    );
+    // The marker must name the region that was actually declared.
+    let region_id = content_xml
+        .split("<text:changed-region text:id=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("declared region id")
+        .to_owned();
+    assert!(
+        content_xml.contains(&format!("<text:change text:change-id=\"{region_id}\"/>")),
+        "no body marker for region {region_id}: {content_xml}"
+    );
+    // And it is still a deletion after a reopen, not a silently dropped change.
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let BlockNode::Paragraph(paragraph) = &reopened.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let deletion = paragraph
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Revision(revision) if revision.kind == RevisionKind::Deletion => {
+                Some(revision)
+            }
+            _ => None,
+        })
+        .expect("reopened deletion");
+    assert_eq!(
+        deletion.inlines.len(),
+        1,
+        "reopened deletion content: {:?}",
+        deletion.inlines
+    );
+    let InlineNode::Run(run) = &deletion.inlines[0] else {
+        panic!("deleted run: {:?}", deletion.inlines)
+    };
+    assert_eq!(run.text, "\u{2713}");
+}
+
+#[test]
+fn deleted_field_symbol_math_and_text_box_content_reaches_the_region() {
+    // `flatten_inline_text` is the ONLY projection of a tracked deletion's
+    // content, so every text-bearing inline kind must reach it. Before the fix it
+    // handled runs, tabs, breaks and three wrappers; a deleted field result, a
+    // symbol, an equation, the two hyphens, a positional tab and a text box's
+    // text were all dropped out of the region.
+    use casual_doc_model::v1::{
+        Field, FieldKind, Math, NoBreakHyphen, PositionalTab, PositionalTabAlignment,
+        PositionalTabLeader, PositionalTabRelativeTo, SoftHyphen, Symbol, TextBox,
+    };
+    let document = deletion_with_inlines(ONE_DELETION_BODY, |id| {
+        // Only the first replacement node may reuse the freed id; the rest draw
+        // fresh ids well above anything the importer minted.
+        let mut next = 90_000_u32;
+        let mut fresh = || {
+            next += 1;
+            casual_doc_model::NodeId::new(u128::from(next)).unwrap()
+        };
+        vec![
+            InlineNode::Field(Box::new(Field {
+                id,
+                instruction: "PAGE".to_owned(),
+                kind: FieldKind::Page,
+                inlines: vec![InlineNode::Run(Run {
+                    id: fresh(),
+                    properties: Default::default(),
+                    text: "7".to_owned(),
+                })],
+                form: None,
+                update: Default::default(),
+            })),
+            InlineNode::Symbol(Box::new(Symbol {
+                id: fresh(),
+                font: "Symbol".to_owned(),
+                char: 0x03B1,
+                properties: Default::default(),
+            })),
+            InlineNode::Math(Box::new(Math {
+                id: fresh(),
+                omml: "<m:oMath/>".to_owned(),
+                text: "E=mc2".to_owned(),
+                expression: None,
+            })),
+            InlineNode::NoBreakHyphen(NoBreakHyphen { id: fresh() }),
+            InlineNode::SoftHyphen(SoftHyphen { id: fresh() }),
+            InlineNode::PositionalTab(PositionalTab {
+                id: fresh(),
+                alignment: PositionalTabAlignment::Left,
+                relative_to: PositionalTabRelativeTo::Margin,
+                leader: PositionalTabLeader::None,
+            }),
+            InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
+                id: fresh(),
+                anchor: None,
+                relative_height: None,
+                extent: None,
+                fill: None,
+                border: None,
+                body_properties: Default::default(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: fresh(),
+                    properties: Default::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: Default::default(),
+                        text: "boxed".to_owned(),
+                    })],
+                })],
+            })),
+        ]
+    });
+    let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let mut package = package;
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    let region = content_xml
+        .split("<text:deletion>")
+        .nth(1)
+        .and_then(|rest| rest.split("</text:deletion>").next())
+        .expect("deletion region");
+    for expected in [
+        "7",           // the field's cached result
+        "\u{03B1}",    // the symbol's glyph
+        "E=mc2",       // the equation's text fallback
+        "\u{2011}",    // the non-breaking hyphen
+        "\u{00ad}",    // the soft hyphen
+        "<text:tab/>", // the positional tab
+        "boxed",       // the text box's text
+    ] {
+        assert!(
+            region.contains(expected),
+            "deleted {expected:?} missing from the region: {region}"
+        );
+    }
+    // Every degrade is disclosed, not silent.
+    let reported: Vec<&str> = export
+        .report
+        .entries
+        .iter()
+        .map(|entry| entry.feature.as_str())
+        .collect();
+    for feature in [
+        "odt.export.deleted_field",
+        "odt.export.deleted_symbol_font",
+        "odt.export.deleted_math",
+        "odt.export.deleted_positional_tab",
+        "odt.export.deleted_text_box",
+    ] {
+        assert!(
+            reported.contains(&feature),
+            "{feature} not reported: {reported:?}"
+        );
+    }
 }
 
 #[test]

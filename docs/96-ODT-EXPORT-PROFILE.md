@@ -88,6 +88,32 @@ omitted (the model comment resolves through its reference), so a range comment i
 written as a point at its anchor. A non-representable author/date is dropped with
 a finding; the annotation and its body are still emitted.
 
+A tracked revision maps to ODF's changed-region model: each insertion is
+declared in the leading `text:tracked-changes` block and delimited in the body by
+`text:change-start`/`text:change-end`, and each deletion is declared as a
+`text:deletion` region with the body carrying only a `text:change` point marker.
+Because ODF puts deleted content in the region rather than inline, that region is
+the **only** place a deletion's content survives, and the writer projects it as
+one plain-text `text:p`. Every text-bearing inline kind reaches that projection:
+run text, tabs and breaks, both hyphens, a field's cached result, a symbol's
+glyph, an equation's text fallback, a positional tab, and the text of a text box
+or a group text box. A kind with no plain-text projection contributes nothing and
+is reported (a drawing, an embedded object, a horizontal rule, a note reference,
+and the bookmark/comment/move/field-range anchors) — nothing is invented for it,
+because injecting a drawing's alt text would make *rejecting* the deletion
+restore alt text as literal characters.
+
+A region is declared whenever that projection produced text, which is what keeps
+a deletion made only of symbols or only of a field result from vanishing without
+even a marker. A deletion whose content has no text projection **at all** is
+dropped, because the importer models a `text:change` only when its region carries
+deleted text and an empty region would be output this writer's own reader
+discards; that case is reported as `odt.export.deleted_revision` Omitted — a loss
+of the tracked change itself, distinct from `odt.export.revision`, which says
+only that its content degraded. Emitting a deleted image or table structurally
+inside `text:deletion` (which ODF permits) requires the importer's deletion
+capture to grow with it and is not in this profile yet.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is
@@ -213,15 +239,72 @@ When schema-v1 sections are present, the writer emits a deterministic
 Section column count, gap, and separator settings are emitted when present.
 Supported section writing modes are emitted as `style:writing-mode`.
 When the first section carries header/footer references, the writer emits a
-`style:master-page` (bound to the page-layout) with the bounded plain-text
-subset: `HeaderFooterKind::Default` maps to `style:header`/`style:footer` and
-`Even` to `style:header-left`/`style:footer-left`. The `text` namespace and the
-`office:master-styles` block are only added when a header/footer is present, so
-geometry-only output stays byte-identical. Header/footer content reuses the body
-block/paragraph/text writer so escaping, `text:s` spacing, and DoS counters are
-shared; run/paragraph formatting, first-page (`First`) references, non-paragraph
-blocks, and duplicate references are explicit loss findings. Supported
-header/footer content is a semantic and byte fixed point.
+`style:master-page` (bound to the page-layout): `HeaderFooterKind::Default` maps
+to `style:header`/`style:footer` and `Even` to
+`style:header-left`/`style:footer-left`. The `office:master-styles` block is only
+added when a header/footer is present, so geometry-only output stays
+byte-identical.
+
+Header/footer content is written by **the same `write_blocks`/`write_inlines`
+pipeline as the body** — there is deliberately no second, narrower writer, so a
+field, an image, a hyperlink, a table, a bookmark, a comment, a text box and
+paragraph/run formatting all survive into a page region, and a future inline kind
+is covered in a header the day it is covered in the body. Escaping, `text:s`
+spacing, the text budget and the DoS counters are therefore shared by
+construction, and header/footer bytes are folded into `max_content_bytes` so the
+buffer swap cannot escape the budget.
+
+Three constructs genuinely differ, because a fragment lands in styles.xml and
+their DECLARATION does not cross that boundary, or a repeated page region cannot
+host them at all. Each is gated and reported, never written as an unresolvable
+reference:
+
+- a **form control** — `office:forms` is a child of `office:text`, so a
+  `draw:control` in a `style:header` has nothing to resolve against. It degrades
+  to the field's cached result text (`header_footer.form_field`).
+- a **tracked change** — `text:tracked-changes` is likewise a child of
+  `office:text`. An insertion's (or move destination's) content is the text on
+  the page and is written without markers
+  (`header_footer.tracked_insertion`); a deletion's content is **not** written,
+  because resurrecting deleted text as live page furniture would be a
+  corruption (`header_footer.tracked_deletion`).
+- a **note or an index** — ODF gives `style:header`/`style:footer` no note area
+  and a page region is not an index container. A `NoteReference` is dropped
+  (`header_footer.note`, and the definition is then reported as unreferenced); a
+  TOC content control degrades to its cached entry paragraphs
+  (`header_footer.table_of_content`), so no text is lost.
+
+Two mechanical consequences of the same part boundary are handled rather than
+reported:
+
+- **automatic styles are per part.** A style defined in content.xml's
+  `office:automatic-styles` is not in scope from a `style:master-page`, so the
+  styles minted while writing a header/footer are emitted into styles.xml's own
+  `office:automatic-styles`, alongside the page layout. Style names are
+  content-addressed, so the two scopes cannot disagree about a name. This is what
+  makes header/footer paragraph and run formatting representable at all. Only the
+  list-style definitions a header/footer actually references are emitted there.
+- **namespaces are per part.** The styles.xml root declares
+  `office`/`style`/`fo` always, and adds `text`, `table`, `draw`, `svg` and
+  `xlink` when the emitted fragments use them. The set is derived by scanning the
+  emitted bytes for each prefix, not from a list of emit sites, so a new element
+  using a prefix cannot silently produce namespace-invalid XML; the scan cannot be
+  fooled by document text because `<` and `&` are escaped before they reach the
+  buffer. The `draw` and `text` declarations keep their historical position and
+  condition, so geometry-only and plain-text-header output is byte-identical to
+  prior releases.
+
+First-page (`First`) references and duplicate references for one page type are
+explicit loss findings. List-continuation state is scoped to the part, so a
+header list is not numbered as a continuation of a body list sharing its
+numbering instance.
+
+The **master-page importer** (`master_page.rs`) is still the bounded plain-text
+reader described in `95-ODT-IMPORT-PROFILE.md`: paragraphs of plain runs, spaces,
+tabs and line breaks. So the widened writer output is a fixed point only for that
+plain-text subset; a field, image, link, table or bookmark written into a page
+region is read back as `odf.master-page.unsupported-content`. That
+asymmetry is a known open gap on the import side, not a silent one.
 
 ## 6. Acceptance gates
 

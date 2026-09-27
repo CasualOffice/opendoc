@@ -1413,20 +1413,48 @@ fn split_paragraph_properties(remainder: &mut ParagraphProperties) -> OdtParagra
     style
 }
 
+/// The automatic styles minted while writing ONE output part.
+///
+/// Two instances exist. `Writer::body_styles` is serialized into content.xml's
+/// `office:automatic-styles`; `Writer::master_styles` is serialized into
+/// styles.xml's, because an automatic style defined in content.xml is **not** in
+/// scope from a `style:master-page` — a header referencing it would carry a
+/// dangling `text:style-name`. Style names are content-addressed, so the same
+/// properties mint the same name in both parts and the two scopes cannot
+/// disagree.
+#[derive(Default)]
+struct AutomaticStyles {
+    paragraph: BTreeSet<OdtParagraphStyle>,
+    run: BTreeSet<OdtRunStyle>,
+    /// Distinct table-column widths (twips) that need a `table-column` style.
+    column: BTreeSet<i32>,
+    /// Distinct cell formatting that needs a `table-cell` style.
+    cell: BTreeSet<OdtCellStyle>,
+    /// Distinct row formatting (height) that needs a `table-row` style.
+    row: BTreeSet<OdtRowStyle>,
+    /// Distinct table-level formatting (align/width) that needs a `table` style.
+    table: BTreeSet<OdtTableStyle>,
+    /// Distinct floating-frame graphic formatting (wrap + exclusion distances).
+    graphic: BTreeSet<OdtGraphicStyle>,
+    /// Numbering instances this part's content actually referenced. The
+    /// definitions live in the shared `Writer::list_styles` registry; only
+    /// styles.xml needs the used subset (content.xml emits the whole registry,
+    /// as it always has).
+    lists: BTreeSet<NumberingInstanceId>,
+}
+
 struct Writer {
     xml: String,
-    paragraph_styles: BTreeSet<OdtParagraphStyle>,
-    /// Distinct table-column widths (twips) that need a `table-column` style.
-    column_styles: BTreeSet<i32>,
-    /// Distinct cell formatting that needs a `table-cell` style.
-    cell_styles: BTreeSet<OdtCellStyle>,
-    /// Distinct row formatting (height) that needs a `table-row` style.
-    row_styles: BTreeSet<OdtRowStyle>,
-    /// Distinct table-level formatting (align/width) that needs a `table` style.
-    table_styles: BTreeSet<OdtTableStyle>,
-    run_styles: BTreeSet<OdtRunStyle>,
-    /// Distinct floating-frame graphic formatting (wrap + exclusion distances).
-    graphic_styles: BTreeSet<OdtGraphicStyle>,
+    /// Automatic styles for content.xml.
+    body_styles: AutomaticStyles,
+    /// Automatic styles for the styles.xml header/footer fragments.
+    master_styles: AutomaticStyles,
+    /// Set while a header/footer fragment is being written. It selects the
+    /// automatic-style set above, and gates the three constructs whose
+    /// DECLARATION lives in content.xml (`text:tracked-changes`, `office:forms`)
+    /// or which a page region cannot host at all (a note, an index), so a
+    /// reference styles.xml cannot resolve is never emitted.
+    master_page: bool,
     /// Distinct synthesized `<draw:gradient>` fill definitions, emitted into
     /// `office:styles` (styles.xml) and referenced by graphic styles.
     gradient_defs: BTreeSet<OdtGradientDef>,
@@ -1501,13 +1529,9 @@ impl Writer {
     fn new(limits: OdfExportLimits) -> Result<Self, OdfError> {
         let mut writer = Self {
             xml: String::new(),
-            paragraph_styles: BTreeSet::new(),
-            column_styles: BTreeSet::new(),
-            cell_styles: BTreeSet::new(),
-            row_styles: BTreeSet::new(),
-            table_styles: BTreeSet::new(),
-            run_styles: BTreeSet::new(),
-            graphic_styles: BTreeSet::new(),
+            body_styles: AutomaticStyles::default(),
+            master_styles: AutomaticStyles::default(),
+            master_page: false,
             gradient_defs: BTreeSet::new(),
             dash_defs: BTreeSet::new(),
             list_styles: BTreeMap::new(),
@@ -1546,6 +1570,17 @@ impl Writer {
         };
         writer.push(BODY_PREFIX)?;
         Ok(writer)
+    }
+
+    /// The automatic-style set the active output part mints into: styles.xml's
+    /// while a header/footer fragment is being written, content.xml's otherwise.
+    /// Complexity: O(1).
+    fn styles(&mut self) -> &mut AutomaticStyles {
+        if self.master_page {
+            &mut self.master_styles
+        } else {
+            &mut self.body_styles
+        }
     }
 
     fn register_bookmarks(&mut self, definitions: &Definitions) {
@@ -1697,19 +1732,46 @@ impl Writer {
             match inline {
                 InlineNode::Revision(revision) => match revision.kind {
                     RevisionKind::Insertion => {
-                        self.assign_revision(revision);
+                        self.assign_revision(revision, None);
                         // An insertion's children ARE emitted in the body.
                         self.collect_revisions_in_inlines(&revision.inlines);
                     }
                     RevisionKind::Deletion => {
-                        // A deletion's content is flattened into its region, not
-                        // emitted in the body — so assign a region only when there
-                        // is flattenable content (an empty flatten would emit an
-                        // unresolvable marker), and do NOT recurse (a nested
-                        // revision would orphan-declare its own region that no body
-                        // marker references).
-                        if !flatten_inline_text(&revision.inlines).is_empty() {
-                            self.assign_revision(revision);
+                        // A deletion's content is flattened into its region rather
+                        // than emitted in the body, so the flatten happens HERE,
+                        // once, and its text is handed to `assign_revision` (the
+                        // region is the only place deleted content survives). Do
+                        // NOT recurse — a nested revision would orphan-declare a
+                        // region no body marker references.
+                        //
+                        // The region (and therefore the body's `text:change`
+                        // marker) is declared whenever the flatten produced text.
+                        // `flatten_inline_text` now projects every text-bearing
+                        // inline kind — a field result, a symbol, an equation, the
+                        // hyphens, a positional tab, a text box, a group text box —
+                        // so a deletion made only of symbols keeps its region and
+                        // its marker instead of vanishing.
+                        //
+                        // A deletion with NO text projection at all (only a
+                        // drawing, an embedded object, a horizontal rule, or bare
+                        // anchors) still declares nothing: our own importer models a
+                        // `text:change` only when its region carries deleted text
+                        // (`content.rs`, `meta.deleted`), so emitting an empty
+                        // region would write output this writer's own reader drops —
+                        // breaking the export fixed point that
+                        // `deletion_wrapping_non_text_content_stays_idempotent`
+                        // guards. The tracked change is therefore dropped, and that
+                        // is reported here as a loss of the CHANGE, distinct from
+                        // `odt.export.revision`, which only says its content
+                        // degraded.
+                        let budget = self.limits.max_recursion_depth;
+                        let deleted =
+                            flatten_inline_text(&revision.inlines, &mut self.reporter, budget);
+                        if deleted.is_empty() {
+                            self.reporter
+                                .record("odt.export.deleted_revision", ModelOutcome::Omitted);
+                        } else {
+                            self.assign_revision(revision, Some(deleted));
                         }
                     }
                     _ => self.collect_revisions_in_inlines(&revision.inlines),
@@ -1741,7 +1803,11 @@ impl Writer {
         }
     }
 
-    fn assign_revision(&mut self, revision: &Revision) {
+    /// Records `revision`'s `text:change-id` and its `text:tracked-changes`
+    /// region. `deleted_text` is `Some` (possibly empty) exactly for a deletion,
+    /// whose content lives in the region rather than the body; the caller has
+    /// already flattened it so the walk stays single-pass. Complexity: O(1).
+    fn assign_revision(&mut self, revision: &Revision, deleted_text: Option<String>) {
         if self.revision_change_ids.contains_key(&revision.id) {
             return;
         }
@@ -1760,8 +1826,11 @@ impl Writer {
             .insert(revision.id, change_id.clone());
         // A deletion declares its content in the region (the body carries only a
         // point marker); an insertion's content stays in the body.
-        let deleted_text = (revision.kind == RevisionKind::Deletion)
-            .then(|| flatten_inline_text(&revision.inlines));
+        debug_assert_eq!(
+            deleted_text.is_some(),
+            revision.kind == RevisionKind::Deletion,
+            "a deletion carries its flattened region text; nothing else does"
+        );
         self.revision_regions.push(RevisionRegion {
             change_id,
             author: revision.author.clone(),
@@ -1974,7 +2043,21 @@ impl Writer {
                 BlockNode::Paragraph(paragraph) => {
                     self.write_paragraph(paragraph, depth + 1, false)?
                 }
-                BlockNode::Sdt(sdt) if is_toc_sdt(sdt) => self.write_toc(sdt, depth + 1)?,
+                BlockNode::Sdt(sdt) if is_toc_sdt(sdt) => {
+                    if self.master_page {
+                        // `text:table-of-content` is body-level index content; a
+                        // repeated page region is not an index container. The
+                        // cached entry blocks survive as ordinary paragraphs, so
+                        // no text is lost — the content stops being an index.
+                        self.reporter.record(
+                            "odt.export.header_footer.table_of_content",
+                            ModelOutcome::Degraded,
+                        );
+                        self.write_blocks(&sdt.blocks, depth + 1)?;
+                    } else {
+                        self.write_toc(sdt, depth + 1)?;
+                    }
+                }
                 BlockNode::Sdt(sdt) => {
                     self.reporter
                         .record("odt.export.block_content_control", ModelOutcome::Degraded);
@@ -2059,7 +2142,7 @@ impl Writer {
         }
         let table_style_name = (!table_style.is_empty()).then(|| {
             let name = table_style.name();
-            self.table_styles.insert(table_style);
+            self.styles().table.insert(table_style);
             name
         });
 
@@ -2096,7 +2179,7 @@ impl Writer {
                 }
                 self.push("<table:table-column")?;
                 if let Some(width) = width {
-                    self.column_styles.insert(width);
+                    self.styles().column.insert(width);
                     self.push(" table:style-name=\"")?;
                     self.push(&column_style_name(width))?;
                     self.push("\"")?;
@@ -2159,7 +2242,7 @@ impl Writer {
             self.push("<table:table-row>")?;
         } else {
             let name = row_style.name();
-            self.row_styles.insert(row_style);
+            self.styles().row.insert(row_style);
             self.push("<table:table-row table:style-name=\"")?;
             self.push(&name)?;
             self.push("\">")?;
@@ -2219,7 +2302,7 @@ impl Writer {
             }
             let cell_style_name = (!cell_style.is_empty()).then(|| {
                 let name = cell_style.name();
-                self.cell_styles.insert(cell_style);
+                self.styles().cell.insert(cell_style);
                 name
             });
 
@@ -2273,6 +2356,9 @@ impl Writer {
             .map(|style| style.name.clone())
             .ok_or(OdfError::InvalidModel)?;
         let continued = !self.emitted_lists.insert(instance);
+        // Record the instance against the active part so styles.xml carries the
+        // definitions its header/footer lists actually reference.
+        self.styles().lists.insert(instance);
         let mut current_level = None::<u8>;
         for paragraph in paragraphs {
             let reference = paragraph
@@ -2367,7 +2453,7 @@ impl Writer {
             None
         } else {
             let name = style.name();
-            self.paragraph_styles.insert(style);
+            self.styles().paragraph.insert(style);
             Some(name)
         };
         if let Some(level) = outline {
@@ -2396,9 +2482,14 @@ impl Writer {
     }
 
     /// Resolves the first section's header/footer references into deterministic
-    /// styles.xml fragments. Content is limited to the bounded plain-text subset
-    /// (paragraphs, plain runs, tabs, and line breaks); anything richer is a loss
-    /// finding so no header/footer detail disappears silently.
+    /// styles.xml fragments, each rendered by the shared body writer (see
+    /// `render_header_footer`), so a page-number field, an image, a hyperlink, a
+    /// table, a bookmark and paragraph/run formatting all survive into a header or
+    /// footer. What a page region cannot host is a reported loss.
+    ///
+    /// Complexity: O(H) in the total header/footer content of the first section —
+    /// one map lookup and one linear render per reference, so it is linear in
+    /// header count, not quadratic.
     fn render_master_page(&mut self, document: &Document) -> Result<MasterPageXml, OdfError> {
         let mut parts = MasterPageXml::default();
         let Some(section) = document.definitions().sections.first() else {
@@ -2451,65 +2542,35 @@ impl Writer {
         Ok(parts)
     }
 
-    /// Serializes one header/footer's blocks into a self-contained XML fragment by
-    /// swapping the content buffer, so the reusable counters and loss reporting
-    /// still aggregate while the emitted bytes are captured separately.
+    /// Serializes one header/footer's blocks into a self-contained styles.xml
+    /// fragment through the SAME `write_blocks`/`write_inlines` pipeline the body
+    /// uses, by swapping the content buffer so the shared DoS counters, text
+    /// budget, escaping and loss reporting still aggregate while the emitted
+    /// bytes are captured separately.
+    ///
+    /// There is deliberately no second writer. The three places a page region
+    /// genuinely differs from the body are gated on `master_page` at their own
+    /// sites in `write_blocks`/`write_inlines` — a form control and a tracked
+    /// change declare themselves in content.xml (`office:forms`,
+    /// `text:tracked-changes`, both children of `office:text`) and so cannot be
+    /// referenced from a `style:master-page`, and a note and an index have no
+    /// placement in a repeated page region. Automatic styles minted here go to
+    /// the styles.xml set for the same scoping reason.
+    ///
+    /// List-continuation state is saved and restored: a header list must not be
+    /// numbered as a continuation of a body list that shares its numbering
+    /// instance.
+    ///
+    /// Complexity: O(n) in this header/footer's own blocks and inlines.
     fn render_header_footer(&mut self, blocks: &[BlockNode]) -> Result<String, OdfError> {
         let outer = std::mem::take(&mut self.xml);
-        let result = self.render_header_footer_blocks(blocks);
+        let outer_lists = std::mem::take(&mut self.emitted_lists);
+        let was_master = std::mem::replace(&mut self.master_page, true);
+        let result = self.write_blocks(blocks, 0);
+        self.master_page = was_master;
+        self.emitted_lists = outer_lists;
         let fragment = std::mem::replace(&mut self.xml, outer);
         result.map(|()| fragment)
-    }
-
-    fn render_header_footer_blocks(&mut self, blocks: &[BlockNode]) -> Result<(), OdfError> {
-        for block in blocks {
-            self.visit_block()?;
-            match block {
-                BlockNode::Paragraph(paragraph) => {
-                    self.render_header_footer_paragraph(paragraph)?
-                }
-                _ => self
-                    .reporter
-                    .record("odt.export.header_footer.block", ModelOutcome::Omitted),
-            }
-        }
-        Ok(())
-    }
-
-    fn render_header_footer_paragraph(&mut self, paragraph: &Paragraph) -> Result<(), OdfError> {
-        if paragraph.properties != ParagraphProperties::default() {
-            self.reporter.record(
-                "odt.export.header_footer.paragraph_properties",
-                ModelOutcome::Omitted,
-            );
-        }
-        self.push("<text:p>")?;
-        for inline in &paragraph.inlines {
-            self.visit_inline()?;
-            match inline {
-                InlineNode::Run(run) => {
-                    if run.properties != RunProperties::default() {
-                        self.reporter.record(
-                            "odt.export.header_footer.run_properties",
-                            ModelOutcome::Omitted,
-                        );
-                    }
-                    self.write_text(&run.text)?;
-                }
-                InlineNode::Tab(_) => self.push("<text:tab/>")?,
-                InlineNode::Break(node) => {
-                    if node.kind != BreakKind::Line {
-                        self.reporter
-                            .record("odt.export.header_footer.break", ModelOutcome::Degraded);
-                    }
-                    self.push("<text:line-break/>")?;
-                }
-                _ => self
-                    .reporter
-                    .record("odt.export.header_footer.inline", ModelOutcome::Omitted),
-            }
-        }
-        self.push("</text:p>")
     }
 
     fn write_inlines(&mut self, inlines: &[InlineNode], depth: usize) -> Result<(), OdfError> {
@@ -2553,7 +2614,7 @@ impl Writer {
                         None
                     } else {
                         let name = style.name();
-                        self.run_styles.insert(style);
+                        self.styles().run.insert(style);
                         Some(name)
                     };
                     if let Some(name) = &style_name {
@@ -2610,6 +2671,17 @@ impl Writer {
                         self.push("</text:a>")?;
                     }
                 }
+                InlineNode::Field(field) if self.master_page && field.form.is_some() => {
+                    // `office:forms` is a child of `office:text`, so a
+                    // `draw:control` inside a `style:header`/`style:footer` has no
+                    // form registry to resolve against. Keep the field's cached
+                    // result text rather than emit a dangling control.
+                    self.reporter.record(
+                        "odt.export.header_footer.form_field",
+                        ModelOutcome::Degraded,
+                    );
+                    self.write_inlines(&field.inlines, depth + 1)?;
+                }
                 InlineNode::Field(field) if self.form_field_ids.contains_key(&field.id) => {
                     // A text-input form field: anchor it with draw:control (its
                     // office:forms entry was declared up front). xmlns:draw inline.
@@ -2664,6 +2736,30 @@ impl Writer {
                         self.write_inlines(&field.inlines, depth + 1)?;
                     }
                 },
+                InlineNode::Revision(revision) if self.master_page => {
+                    // `text:tracked-changes` is a child of `office:text`, so no
+                    // changed region is reachable from a `style:master-page`. An
+                    // insertion's (or move destination's) content IS the text on
+                    // the page, so it is written without markers. A deletion's
+                    // content is NOT written: it is deleted text, and resurrecting
+                    // it as live page furniture would corrupt the header.
+                    let deleted = matches!(
+                        revision.kind,
+                        RevisionKind::Deletion | RevisionKind::MoveFrom
+                    );
+                    if deleted {
+                        self.reporter.record(
+                            "odt.export.header_footer.tracked_deletion",
+                            ModelOutcome::Omitted,
+                        );
+                    } else {
+                        self.reporter.record(
+                            "odt.export.header_footer.tracked_insertion",
+                            ModelOutcome::Degraded,
+                        );
+                        self.write_inlines(&revision.inlines, depth + 1)?;
+                    }
+                }
                 InlineNode::Revision(revision) => {
                     // An insertion assigned a change-id in the pre-walk is wrapped
                     // in text:change-start/-end markers referencing the leading
@@ -2781,7 +2877,19 @@ impl Writer {
                             .record("odt.export.group", ModelOutcome::Omitted);
                     }
                 }
-                InlineNode::NoteReference(note) => self.write_note(note, depth + 1)?,
+                InlineNode::NoteReference(note) => {
+                    if self.master_page {
+                        // ODF gives `style:header`/`style:footer` no note area, and
+                        // neither Word nor LibreOffice permits a footnote in a page
+                        // region — a note there has no defined placement on a page
+                        // that repeats. The reference is dropped; the definition is
+                        // then reported as unreferenced.
+                        self.reporter
+                            .record("odt.export.header_footer.note", ModelOutcome::Omitted);
+                    } else {
+                        self.write_note(note, depth + 1)?;
+                    }
+                }
                 InlineNode::CommentReference(reference) => {
                     self.write_comment(reference, depth + 1)?
                 }
@@ -3102,7 +3210,7 @@ impl Writer {
         graphic.vertical_rel = vertical_rel_name(anchor_type, anchor.vertical.relative_from);
         let graphic_name = (!graphic.is_empty()).then(|| {
             let name = graphic.name();
-            self.graphic_styles.insert(graphic);
+            self.styles().graphic.insert(graphic);
             name
         });
         // Alignment positioning is carried by `style:horizontal-pos`/`vertical-pos`
@@ -3415,7 +3523,7 @@ impl Writer {
     fn register_graphic_style(&mut self, graphic: OdtGraphicStyle) -> Option<String> {
         (!graphic.is_empty()).then(|| {
             let name = graphic.name();
-            self.graphic_styles.insert(graphic);
+            self.styles().graphic.insert(graphic);
             name
         })
     }
@@ -4009,17 +4117,44 @@ fn hash_bytes_128(hash: &mut u128, bytes: &[u8]) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Serializes one part's automatic styles wrapped in their own
+/// `office:automatic-styles` element, or the empty string when there are none.
+/// Used for content.xml; styles.xml shares the element with the page layout and
+/// therefore calls [`automatic_styles_body`] directly.
 fn automatic_styles_xml(
-    paragraph_styles: &BTreeSet<OdtParagraphStyle>,
-    run_styles: &BTreeSet<OdtRunStyle>,
+    styles: &AutomaticStyles,
     list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
-    column_styles: &BTreeSet<i32>,
-    cell_styles: &BTreeSet<OdtCellStyle>,
-    row_styles: &BTreeSet<OdtRowStyle>,
-    table_styles: &BTreeSet<OdtTableStyle>,
-    graphic_styles: &BTreeSet<OdtGraphicStyle>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
+    let body = automatic_styles_body(styles, list_styles, max_content_bytes)?;
+    if body.is_empty() {
+        return Ok(String::new());
+    }
+    let mut xml = String::new();
+    push_bounded(&mut xml, "<office:automatic-styles>", max_content_bytes)?;
+    push_bounded(&mut xml, &body, max_content_bytes)?;
+    push_bounded(&mut xml, "</office:automatic-styles>", max_content_bytes)?;
+    Ok(xml)
+}
+
+/// Serializes one part's automatic-style definitions WITHOUT the enclosing
+/// `office:automatic-styles` element, in a fixed family order so identical input
+/// mints identical bytes. `list_styles` supplies the definitions for the list
+/// instances this part uses.
+///
+/// Complexity: O(d) in the distinct styles, each serialized once.
+fn automatic_styles_body(
+    styles: &AutomaticStyles,
+    list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
+    max_content_bytes: usize,
+) -> Result<String, OdfError> {
+    let paragraph_styles = &styles.paragraph;
+    let run_styles = &styles.run;
+    let column_styles = &styles.column;
+    let cell_styles = &styles.cell;
+    let row_styles = &styles.row;
+    let table_styles = &styles.table;
+    let graphic_styles = &styles.graphic;
     if paragraph_styles.is_empty()
         && run_styles.is_empty()
         && list_styles.is_empty()
@@ -4032,7 +4167,6 @@ fn automatic_styles_xml(
         return Ok(String::new());
     }
     let mut xml = String::new();
-    push_bounded(&mut xml, "<office:automatic-styles>", max_content_bytes)?;
     for &width in column_styles {
         push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
         push_bounded(&mut xml, &column_style_name(width), max_content_bytes)?;
@@ -4174,8 +4308,19 @@ fn automatic_styles_xml(
         }
         push_bounded(&mut xml, "</text:list-style>", max_content_bytes)?;
     }
-    push_bounded(&mut xml, "</office:automatic-styles>", max_content_bytes)?;
     Ok(xml)
+}
+
+/// The subset of the list-style registry that `used` names, for the styles.xml
+/// block. content.xml keeps emitting the whole registry, as it always has.
+/// Complexity: O(|used| log d).
+fn used_list_styles(
+    registry: &BTreeMap<NumberingInstanceId, OdtListStyle>,
+    used: &BTreeSet<NumberingInstanceId>,
+) -> BTreeMap<NumberingInstanceId, OdtListStyle> {
+    used.iter()
+        .filter_map(|id| registry.get(id).map(|style| (*id, style.clone())))
+        .collect()
 }
 
 /// Serializes the supported `<style:text-properties>` attribute subset for a run
@@ -4674,14 +4819,15 @@ fn write_odt_impl(
         limits.max_content_bytes,
     )?;
     let styles = automatic_styles_xml(
-        &writer.paragraph_styles,
-        &writer.run_styles,
+        &writer.body_styles,
         &writer.list_styles,
-        &writer.column_styles,
-        &writer.cell_styles,
-        &writer.row_styles,
-        &writer.table_styles,
-        &writer.graphic_styles,
+        limits.max_content_bytes,
+    )?;
+    // The header/footer fragments' own automatic styles belong to styles.xml: an
+    // automatic style defined in content.xml is not in scope from a master-page.
+    let master_automatic_styles = automatic_styles_body(
+        &writer.master_styles,
+        &used_list_styles(&writer.list_styles, &writer.master_styles.lists),
         limits.max_content_bytes,
     )?;
     // Synthesize the shapes' `<draw:gradient>` fill definitions and fold them into
@@ -4703,6 +4849,7 @@ fn write_odt_impl(
         // buffer swap / separate string), so fold their bytes in here or they
         // would escape the content byte budget.
         .and_then(|value| value.checked_add(master_page.total_len()))
+        .and_then(|value| value.checked_add(master_automatic_styles.len()))
         .and_then(|value| value.checked_add(office_styles.len()))
         .ok_or(OdfError::LimitExceeded {
             limit: "odt_export_content_bytes",
@@ -4725,7 +4872,13 @@ fn write_odt_impl(
         .filter(|properties| !properties.is_empty())
         .map(metadata_xml)
         .transpose()?;
-    let page_styles = page_styles_xml(document, &master_page, &office_styles, has_draw_defs);
+    let page_styles = page_styles_xml(
+        document,
+        &master_page,
+        &master_automatic_styles,
+        &office_styles,
+        has_draw_defs,
+    );
     let empty_retained = crate::OdfRetainedParts::default();
     let bytes = package(
         &content,
@@ -5241,6 +5394,7 @@ fn store_master_slot(slot: &mut Option<String>, fragment: String, reporter: &mut
 fn page_styles_xml(
     document: &Document,
     master: &MasterPageXml,
+    master_automatic_styles: &str,
     office_styles: &str,
     has_draw_defs: bool,
 ) -> Option<Vec<u8>> {
@@ -5251,25 +5405,79 @@ fn page_styles_xml(
     if section.is_none() && office_styles.is_empty() {
         return None;
     }
-    let automatic_styles = section.map(page_layout_xml).unwrap_or_default();
-    // The text namespace and master-styles are only emitted when a header/footer
-    // is present, so geometry-only output stays byte-identical to prior releases.
-    let text_ns = if master.is_empty() {
-        " "
+    let page_layout = section.map(page_layout_xml).unwrap_or_default();
+    // The page layout and the header/footer automatic styles share one
+    // `office:automatic-styles` element; either alone still produces it.
+    let automatic_styles = if page_layout.is_empty() && master_automatic_styles.is_empty() {
+        String::new()
     } else {
-        " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
-    };
-    // The drawing namespace is only declared when an `office:styles` draw
-    // definition (gradient/stroke-dash) needs it, so def-free output stays
-    // byte-identical.
-    let draw_ns = if has_draw_defs {
-        " xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\""
-    } else {
-        ""
+        format!(
+            "<office:automatic-styles>{page_layout}{master_automatic_styles}</office:automatic-styles>"
+        )
     };
     let master_styles = master_styles_xml(master);
+    let namespaces = styles_namespaces(master, master_automatic_styles, has_draw_defs);
     // ODF orders office:styles, then office:automatic-styles, then master-styles.
-    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{draw_ns}{text_ns}office:version=\"1.4\">{office_styles}{automatic_styles}{master_styles}</office:document-styles>").into_bytes())
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{namespaces} office:version=\"1.4\">{office_styles}{automatic_styles}{master_styles}</office:document-styles>").into_bytes())
+}
+
+/// The namespace declarations the styles.xml root must carry beyond the always
+/// present `office`/`style`/`fo`, as a single string of ` xmlns:…="…"` pairs.
+///
+/// The header/footer fragments are the only variable part and they are produced
+/// by the shared body writer, so the set is derived by **scanning the emitted
+/// bytes** for each prefix rather than from a hand-kept list of emit sites: a new
+/// element that starts using a prefix is then covered automatically instead of
+/// silently producing namespace-invalid XML.
+///
+/// The scan errs in the safe direction only. Header text is escaped for `<` and
+/// `&` but not for a bare `draw:`, so a run whose text happens to read
+/// `"table: 3"` over-declares one namespace. An unused (or doubly declared)
+/// namespace is valid XML and changes nothing a consumer reads, and the result
+/// is still deterministic — identical input mints identical bytes. The direction
+/// that would matter, a prefix used without a declaration, cannot happen,
+/// because anything emitted is in the bytes the scan reads.
+///
+/// The `draw` and `text` declarations keep their historical position and
+/// condition so geometry-only and plain-text-header output stays byte-identical;
+/// `table`, `svg` and `xlink` can only appear in output that did not exist
+/// before.
+///
+/// Complexity: O(b) in the emitted styles.xml body bytes, once per export.
+fn styles_namespaces(
+    master: &MasterPageXml,
+    master_automatic_styles: &str,
+    has_draw_defs: bool,
+) -> String {
+    let uses = |prefix: &str| {
+        master_automatic_styles.contains(prefix)
+            || [
+                &master.default_header,
+                &master.even_header,
+                &master.default_footer,
+                &master.even_footer,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|fragment| fragment.contains(prefix))
+    };
+    let mut xml = String::new();
+    if has_draw_defs || uses("draw:") {
+        xml.push_str(" xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\"");
+    }
+    if !master.is_empty() {
+        xml.push_str(" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\"");
+    }
+    if uses("table:") {
+        xml.push_str(" xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\"");
+    }
+    if uses("svg:") {
+        xml.push_str(" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\"");
+    }
+    if uses("xlink:") {
+        xml.push_str(" xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
+    }
+    xml
 }
 
 /// Serializes the shapes' distinct `<draw:gradient>` fill definitions (the two-color
@@ -5367,6 +5575,9 @@ fn combine_office_styles(default_styles: String, draw_defs: &str) -> String {
 }
 
 /// Builds the `<office:automatic-styles>` page-layout block for one section.
+/// Serializes the section's `<style:page-layout>` element. The caller wraps it
+/// in `office:automatic-styles`, which styles.xml shares with the header/footer
+/// automatic styles. Complexity: O(1).
 fn page_layout_xml(section: &casual_doc_model::v1::SectionBoundary) -> String {
     let cm = |twips: i32| format!("{:.4}cm", f64::from(twips) * 2.54 / 1440.0);
     let orientation = matches!(
@@ -5404,7 +5615,7 @@ fn page_layout_xml(section: &casual_doc_model::v1::SectionBoundary) -> String {
         })
         .unwrap_or_default();
     format!(
-        "<office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout></office:automatic-styles>",
+        "<style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout>",
         cm(section.page_size.width_twips),
         cm(section.page_size.height_twips),
         cm(section.page_margins.top_twips),
@@ -5593,7 +5804,6 @@ fn field_projects_inlines(field: &Field) -> bool {
     }
 }
 
-/// One region to declare in `text:tracked-changes`. `deleted_text` is `Some` for
 /// A form control to declare in `office:forms`.
 #[derive(Clone, Debug)]
 enum FormControlOut {
@@ -5605,6 +5815,7 @@ enum FormControlOut {
     DropDown(Vec<String>),
 }
 
+/// One region to declare in `text:tracked-changes`. `deleted_text` is `Some` for
 /// a deletion (whose content lives in the region, not the body) and `None` for an
 /// insertion.
 #[derive(Clone, Debug)]
@@ -5615,25 +5826,204 @@ struct RevisionRegion {
     deleted_text: Option<String>,
 }
 
-/// Flattens a revision's inline content to plain text (concatenating run text and
-/// recursing into wrappers) — the deleted content projection written into a
-/// `text:deletion` region.
-fn flatten_inline_text(inlines: &[InlineNode]) -> String {
+/// Flattens a revision's inline content into the plain-text projection written
+/// into its `text:deletion` region — the only place a tracked deletion's content
+/// survives in ODT, because ODF declares deleted content in the leading
+/// `text:tracked-changes` block instead of inline.
+///
+/// Every `InlineNode` kind is decided explicitly rather than falling through a
+/// wildcard: a text-bearing kind contributes its characters (`write_text` turns
+/// `\t`/`\n` into `text:tab`/`text:line-break` and space runs into `text:s`), a
+/// transparent wrapper is recursed into, and a kind with no plain-text
+/// projection contributes nothing and is reported through `reporter`. Nothing is
+/// invented for a non-text object: injecting a drawing's alt text here would
+/// make *rejecting* the deletion restore alt text as literal characters, which
+/// is a corruption rather than a recovery.
+///
+/// Complexity: O(n) in the nodes reachable from `inlines`, each visited once and
+/// appended to a single buffer. `budget` bounds recursion.
+fn flatten_inline_text(inlines: &[InlineNode], reporter: &mut Reporter, budget: usize) -> String {
     let mut text = String::new();
+    push_flattened_inlines(&mut text, inlines, reporter, budget);
+    text
+}
+
+/// Appends the flattened plain-text projection of `inlines` to `out`.
+/// See [`flatten_inline_text`] for the per-kind decisions.
+fn push_flattened_inlines(
+    out: &mut String,
+    inlines: &[InlineNode],
+    reporter: &mut Reporter,
+    budget: usize,
+) {
+    let Some(budget) = budget.checked_sub(1) else {
+        reporter.record("odt.export.deleted_content.depth", ModelOutcome::Omitted);
+        return;
+    };
     for inline in inlines {
         match inline {
-            InlineNode::Run(run) => text.push_str(&run.text),
-            InlineNode::Tab(_) => text.push('\t'),
-            InlineNode::Break(_) => text.push('\n'),
-            InlineNode::Hyperlink(link) => text.push_str(&flatten_inline_text(&link.inlines)),
+            // Carried: the characters the reader saw deleted.
+            InlineNode::Run(run) => out.push_str(&run.text),
+            InlineNode::Tab(_) => out.push('\t'),
+            InlineNode::Break(_) => out.push('\n'),
+            InlineNode::NoBreakHyphen(_) => out.push('\u{2011}'),
+            InlineNode::SoftHyphen(_) => out.push('\u{00ad}'),
+            // Carried, with the wrapper itself degraded: a deletion region is a
+            // text run, so a link target, a field's field-ness, a symbol's font,
+            // an equation's structure, and a box's geometry cannot ride along.
             InlineNode::Revision(revision) => {
-                text.push_str(&flatten_inline_text(&revision.inlines))
+                push_flattened_inlines(out, &revision.inlines, reporter, budget);
             }
-            InlineNode::Sdt(sdt) => text.push_str(&flatten_inline_text(&sdt.inlines)),
-            _ => {}
+            InlineNode::Sdt(sdt) => push_flattened_inlines(out, &sdt.inlines, reporter, budget),
+            InlineNode::Hyperlink(link) => {
+                reporter.record("odt.export.deleted_hyperlink", ModelOutcome::Degraded);
+                push_flattened_inlines(out, &link.inlines, reporter, budget);
+            }
+            InlineNode::Field(field) => {
+                // The field's cached RESULT is the text that was deleted; ODF has
+                // no field element inside a deletion region.
+                reporter.record("odt.export.deleted_field", ModelOutcome::Degraded);
+                push_flattened_inlines(out, &field.inlines, reporter, budget);
+            }
+            InlineNode::Symbol(symbol) => {
+                reporter.record("odt.export.deleted_symbol_font", ModelOutcome::Degraded);
+                if let Some(character) = char::from_u32(symbol.char) {
+                    out.push(character);
+                }
+            }
+            InlineNode::Math(math) => {
+                reporter.record("odt.export.deleted_math", ModelOutcome::Degraded);
+                out.push_str(&math.text);
+            }
+            InlineNode::PositionalTab(_) => {
+                reporter.record("odt.export.deleted_positional_tab", ModelOutcome::Degraded);
+                out.push('\t');
+            }
+            InlineNode::TextBox(text_box) => {
+                reporter.record("odt.export.deleted_text_box", ModelOutcome::Degraded);
+                push_flattened_blocks(out, &text_box.blocks, reporter, budget);
+            }
+            InlineNode::Group(group) => {
+                reporter.record("odt.export.deleted_group", ModelOutcome::Degraded);
+                push_flattened_group(out, &group.children, reporter, budget);
+            }
+            // No plain-text projection: contributes nothing, reported so the
+            // deletion's loss is disclosed rather than silent.
+            InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) => {
+                reporter.record("odt.export.deleted_drawing", ModelOutcome::Omitted);
+            }
+            InlineNode::EmbeddedObject(_) => {
+                reporter.record("odt.export.deleted_embedded_object", ModelOutcome::Omitted);
+            }
+            InlineNode::HorizontalRule(_) => {
+                reporter.record("odt.export.deleted_horizontal_rule", ModelOutcome::Omitted);
+            }
+            InlineNode::NoteReference(_) => {
+                reporter.record("odt.export.deleted_note_reference", ModelOutcome::Omitted);
+            }
+            InlineNode::NoteNumberMark(_) => {
+                reporter.record("odt.export.deleted_note_number_mark", ModelOutcome::Omitted);
+            }
+            // Zero-width anchors. They carry no characters, but rejecting the
+            // deletion cannot restore them from a text-only region, so the loss
+            // is real and reported.
+            InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {
+                reporter.record("odt.export.deleted_bookmark", ModelOutcome::Omitted);
+            }
+            InlineNode::CommentReference(_)
+            | InlineNode::CommentRangeStart(_)
+            | InlineNode::CommentRangeEnd(_) => {
+                reporter.record("odt.export.deleted_comment_anchor", ModelOutcome::Omitted);
+            }
+            InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => {
+                reporter.record("odt.export.deleted_move_range", ModelOutcome::Omitted);
+            }
+            InlineNode::FieldRangeStart(_) | InlineNode::FieldRangeEnd(_) => {
+                reporter.record("odt.export.deleted_field_range", ModelOutcome::Omitted);
+            }
         }
     }
-    text
+}
+
+/// Appends the flattened plain-text projection of block content (a deleted text
+/// box or a deleted group's text box) to `out`, separating paragraphs with `\n`
+/// and table cells with `\t` — the same separators the importer's deletion
+/// capture reads back. Complexity: O(n) in the reachable nodes.
+fn push_flattened_blocks(
+    out: &mut String,
+    blocks: &[BlockNode],
+    reporter: &mut Reporter,
+    budget: usize,
+) {
+    let Some(budget) = budget.checked_sub(1) else {
+        reporter.record("odt.export.deleted_content.depth", ModelOutcome::Omitted);
+        return;
+    };
+    let mut first = true;
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if !first {
+                    out.push('\n');
+                }
+                first = false;
+                push_flattened_inlines(out, &paragraph.inlines, reporter, budget);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    if !first {
+                        out.push('\n');
+                    }
+                    first = false;
+                    for (index, cell) in row.cells.iter().enumerate() {
+                        if index != 0 {
+                            out.push('\t');
+                        }
+                        push_flattened_blocks(out, &cell.blocks, reporter, budget);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if !first {
+                    out.push('\n');
+                }
+                first = false;
+                push_flattened_blocks(out, &sdt.blocks, reporter, budget);
+            }
+            BlockNode::AltChunk(_) => {
+                reporter.record("odt.export.deleted_alt_chunk", ModelOutcome::Omitted);
+            }
+        }
+    }
+}
+
+/// Appends the flattened plain-text projection of a deleted group's children to
+/// `out`. Only a group text box (and a nested group containing one) carries text;
+/// a picture or a geometric shape has none. Complexity: O(n) in the reachable
+/// nodes.
+fn push_flattened_group(
+    out: &mut String,
+    children: &[GroupChild],
+    reporter: &mut Reporter,
+    budget: usize,
+) {
+    let Some(budget) = budget.checked_sub(1) else {
+        reporter.record("odt.export.deleted_content.depth", ModelOutcome::Omitted);
+        return;
+    };
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                push_flattened_blocks(out, &text_box.blocks, reporter, budget);
+            }
+            GroupChild::Group(group) => {
+                push_flattened_group(out, &group.children, reporter, budget);
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {
+                reporter.record("odt.export.deleted_group_shape", ModelOutcome::Omitted);
+            }
+        }
+    }
 }
 
 /// Whether `value` is a valid XML NCName (a usable `text:change-id`): non-empty,

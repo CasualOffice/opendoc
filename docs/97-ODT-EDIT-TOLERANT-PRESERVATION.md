@@ -154,7 +154,28 @@ Rules:
 4. Each checkpoint gets its own adversarial review (path safety, bounds,
    determinism, atomicity) before the next.
 
-## 10. Open questions
+## 10. Header and footer regions
+
+Header/footer content is written by the shared body writer (doc 96 §3), so a
+`Drawing` inside a header or footer takes the same preserving path as one in the
+body: with its bytes retained it re-emits `draw:frame`/`draw:image` into the
+`style:header`/`style:footer` region in styles.xml, and the part is repackaged
+once for the whole document regardless of which part references it (retention is
+keyed on `Definitions::media`, which the header's reference shares). The
+styles.xml root declares `draw`/`svg`/`xlink` when a fragment needs them; without
+retained bytes a header drawing degrades to alt text exactly as an inline one
+does.
+
+The asymmetry to know about: the master-page **importer** is still the bounded
+plain-text reader, so a `draw:frame` in a page region is not read back into
+`Definitions::media` when the package is read back, and therefore is not
+retained on the next
+preserving export. A header image survives export, and survives an
+`ExactIfUnchanged` recovery, but does not yet survive an import-edit-export cycle.
+That is an import-side gap, reported (`odf.master-page.unsupported-content`)
+rather than silent.
+
+## 11. Open questions
 
 - Anchored/block-level `draw:frame` (page/paragraph anchors) is out of the doc 95
   import subset; preserving writer emits only the inline subset until that lands.
@@ -164,7 +185,7 @@ Rules:
   edit already invalidates signatures, so retained parts must not resurrect a
   signature as valid.
 
-## 11. Normative references
+## 12. Normative references
 
 - OASIS, [OpenDocument Version 1.4, Part 2: Packages](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part2-packages/OpenDocument-v1.4-os-part2-packages.html).
 - `135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` (retention/preservation axes, tagged sidecar envelopes).
