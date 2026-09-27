@@ -140,17 +140,17 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/embed_element.mjs</code></div>
-            <div class="disp-cell"><code>import "@casualoffice/opendoc-embed"</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed"</code></div>
             <div class="disp-cell">The element class, the capability authority it re-exports, and <code>defineOpenDocEditor</code>.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/embed_define.js</code></div>
-            <div class="disp-cell"><code>import "@casualoffice/opendoc-embed/define"</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />define"</code></div>
             <div class="disp-cell">The side-effect entry: importing it registers the tag and nothing else.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/capabilities.mjs</code></div>
-            <div class="disp-cell"><code>import "@casualoffice/opendoc-embed/capabilities"</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />capabilities"</code></div>
             <div class="disp-cell">Resolve a capability set without mounting anything — no DOM, so it answers in Node.</div>
           </div>
           <div class="disp-row">
@@ -574,7 +574,7 @@ function resolveFor(role) {
           That is the whole competitive position rather than a footnote:
           ONLYOFFICE's host-customization path early-returns when the editor is
           not licensed —
-          <code>apps/common/main/lib/controller/LayoutManager.js:68</code>,
+          <code>apps/common/<wbr />main/lib/<wbr />controller/<wbr />LayoutManager.js:68</code>,
           <code>if (!_licensed || !config) return;</code> — so the customization a
           host is offered is a licence check away from doing nothing. Gating ours
           would surrender the only structural advantage that cannot be copied.
@@ -614,27 +614,27 @@ function resolveFor(role) {
             <div>The test</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name"><code>webapp/tests/roles.test.mjs</code></div>
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />roles.test.mjs</code></div>
             <div class="disp-cell"><code>npm run test:unit</code></div>
             <div class="disp-cell">the role chain is monotone: a higher role never loses a lower one's grant</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name"><code>webapp/tests/embed_package.test.mjs</code></div>
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />embed_package.test.mjs</code></div>
             <div class="disp-cell"><code>npm run test:unit</code></div>
             <div class="disp-cell">the package packs, installs, and imports — not just claims to</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name"><code>webapp/tests/e2e/embedded-capability-gate.spec.mjs</code></div>
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
             <div class="disp-cell"><code>npm run test:e2e</code></div>
             <div class="disp-cell">both embeds resolve their role before first paint, and the chrome refuses with a reason</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name"><code>webapp/tests/e2e/embedded-capability-gate.spec.mjs</code></div>
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
             <div class="disp-cell"><code>npm run test:e2e</code></div>
             <div class="disp-cell">the simplest possible embed is not a standalone editor</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name"><code>webapp/tests/e2e/embedded-capability-gate.spec.mjs</code></div>
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
             <div class="disp-cell"><code>npm run test:e2e</code></div>
             <div class="disp-cell">a readonly host cannot mutate the document through the engine, chrome defeated</div>
           </div>

@@ -278,6 +278,18 @@ function table(head, rows) {
   ].join("\n");
 }
 
+/** A path or import specifier as inline code, with break opportunities.
+ *
+ *  A 50-character mono token is one unbreakable word, and one of them pushed the
+ *  whole page 65px wider than a 390px phone before this existed. `<wbr />` adds
+ *  the break the browser has no other way to find, costs no characters, and
+ *  needs no stylesheet change — the tokens are deliberate (`docs/63`) and a
+ *  `word-break` rule on a shared component would be a restyle. */
+function pathCode(text) {
+  const marked = text.length > 24 ? escape(text).replaceAll("/", "/<wbr />") : escape(text);
+  return `<code>${marked}</code>`;
+}
+
 /** Capability names as inline code, or an em dash for none. */
 function codeList(values) {
   const list = [...values];
@@ -400,7 +412,7 @@ function evidenceRows() {
             "The page cites it as evidence, so either restore the title or cite the new one.",
         );
       }
-      rows.push([`<code>${escape(rel(path))}</code>`, lane(path), escape(title)]);
+      rows.push([pathCode(rel(path)), lane(path), escape(title)]);
     }
   }
   // Read from the spec rather than asserted: the strongest claim on the page is
@@ -413,7 +425,7 @@ function evidenceRows() {
         '(a title containing "through the engine").',
     );
   }
-  rows.push([`<code>${escape(rel(SOURCES.gate))}</code>`, lane(SOURCES.gate), escape(attack)]);
+  rows.push([pathCode(rel(SOURCES.gate)), lane(SOURCES.gate), escape(attack)]);
   return rows;
 }
 
@@ -438,22 +450,22 @@ function regions() {
       ["File", "Ships as", "What it is"],
       [
         [
-          `<code>${escape(manifest.main)}</code>`,
-          `<code>import "${escape(manifest.name)}"</code>`,
+          pathCode(manifest.main),
+          `<code>import ${pathCode(`"${manifest.name}"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
           "The element class, the capability authority it re-exports, and <code>defineOpenDocEditor</code>.",
         ],
         [
-          "<code>./src/embed_define.js</code>",
-          `<code>import "${escape(manifest.name)}/define"</code>`,
+          pathCode("./src/embed_define.js"),
+          `<code>import ${pathCode(`"${manifest.name}/define"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
           "The side-effect entry: importing it registers the tag and nothing else.",
         ],
         [
-          "<code>./src/capabilities.mjs</code>",
-          `<code>import "${escape(manifest.name)}/capabilities"</code>`,
+          pathCode("./src/capabilities.mjs"),
+          `<code>import ${pathCode(`"${manifest.name}/capabilities"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
           "Resolve a capability set without mounting anything — no DOM, so it answers in Node.",
         ],
         [
-          `<code>${escape(manifest.types)}</code>`,
+          pathCode(manifest.types),
           "Types",
           "Generated from the authority's real values, so a role cannot exist in the types without existing in the code.",
         ],
