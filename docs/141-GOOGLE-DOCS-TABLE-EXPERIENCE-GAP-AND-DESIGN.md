@@ -1662,10 +1662,14 @@ Three `docs/109` rows are genuinely open and directly relevant to this document:
 
 Per the brief, this document does not edit `docs/104`, `105`, `109` or `14`. The rows to file:
 
-**New rows (interaction):** TBL-01 … TBL-38 from §2. If they are filed as a single themed row
-rather than 38, the three that must survive individually are **TBL-01** (Tab appends a row),
-**TBL-02** (unmerge unreachable) and **TBL-16** (cell-range selection), because the first two are
-XS and the third gates six others.
+**New rows (interaction):** TBL-01 … TBL-38 from §2. **TBL-01 … TBL-05 have SHIPPED and need
+no row** (§0.9); TBL-08 shipped only an interim refusal and stays open with its facade query
+named. Of the rest, the one that must survive individually is **TBL-16** (cell-range
+selection), because it gates six others. **Two rows the build promoted:** **TBL-20**
+(`TableInfo` has no per-cell merge state) is now what stands between Unmerge being correct and
+being precise, and **TBL-24** (facade refusal codes) is what makes a table refusal specific
+again rather than generic — both were filed as quality refinements and are now the direct
+successors of shipped work.
 
 **Close or amend as already fixed:** UX-008, UX-012 (both halves), UX-015's table-gallery clause;
 and reconcile FID-L-13 between `105` and `109`.
