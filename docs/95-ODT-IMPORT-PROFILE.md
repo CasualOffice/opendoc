@@ -3,7 +3,7 @@
 **Status:** Accepted for Slice D implementation
 **Date:** 2026-08-04
 **Tracker:** MFIO-005
-**Parent:** `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`
+**Parent:** `135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`
 
 ## 1. Purpose
 

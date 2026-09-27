@@ -42,6 +42,7 @@ Clippy
 Cmd
 Collabora
 Ctrl
+DAI
 DOCX
 DOCXF
 DOM
@@ -73,6 +74,7 @@ GiB
 GitHub
 HLD
 HTML
+HTTP
 HarfBuzz
 Hotfix
 Hunspell
@@ -90,6 +92,7 @@ JavaScript
 KiB
 Knuth
 LGPL
+LLM
 LOC
 LRU
 LTR
@@ -111,30 +114,36 @@ NUMPAGES
 Namespace
 NodeId
 Noto
+OCR
 ODF
 ODT
 OFL
 OLE
 OMML
 ONLYOFFICE
+ONNX
 OOM
 OOXML
 OPC
 OSS
 OTT
 OVBA
+Offline
 OffscreenCanvas
 OnlyOffice
 OpenDoc
 OpenDocument
 OpenType
 PDF
+PDFR
+PDFs
 PNG
 PNGs
 POS
 PRs
 PTS
 PUA
+PaddleOCR
 Plass
 Pre
 ProseMirror
@@ -163,6 +172,7 @@ TBL
 TOC
 TXT
 Tauri
+Tesseract
 TrueType
 Twip
 UAX
@@ -173,6 +183,7 @@ USENIX
 UTF
 UXOBJ
 Unicode
+UnlimitedOCR
 Untrusted
 VBA
 VML
@@ -208,6 +219,7 @@ altChunk
 app
 ary
 ascii
+aspirational
 async
 atLeast
 atomicity
@@ -257,6 +269,7 @@ contextualSpacing
 customXml
 customizable
 debounce
+decodable
 del
 deps
 desync
@@ -277,6 +290,7 @@ draggable
 drawingml
 dropdown
 dropdowns
+editability
 embeddability
 embeddable
 embeddings
@@ -321,6 +335,7 @@ iframe
 impl
 incl
 inlines
+inspectable
 integrators
 intra
 invariants
@@ -384,6 +399,7 @@ polyline
 pre
 preedit
 premultiplied
+preprocessing
 prev
 quiesce
 rAF
@@ -443,6 +459,7 @@ submenu
 subsetter
 subsetting
 subtree
+summarization
 superset
 svg
 swappable
