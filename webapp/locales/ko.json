@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "삼각형 글머리 기호",
   "bulletGalleryMenu.triangularBullet.title": "삼각형 글머리 기호",
   "capability.embedded": "이 편집기는 다른 애플리케이션에 포함되어 있습니다",
+  "capability.notGranted": "호스트 애플리케이션이 이를 허용하지 않았습니다",
   "caption.bodyOnly": "캡션은 문서 본문에만 넣을 수 있고 머리글, 바닥글, 주석에는 넣을 수 없습니다",
   "caption.inserted": "캡션을 삽입했습니다.",
   "caption.numbersAlreadyRight": "모든 캡션이 이미 올바른 번호를 표시하고 있습니다",

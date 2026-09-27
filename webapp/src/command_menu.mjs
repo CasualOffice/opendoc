@@ -99,7 +99,12 @@ function commandRow(command, { itemClass, formatShortcut, onRun }) {
   item.setAttribute("role", "menuitem");
   item.dataset.command = command.id;
   item.disabled = command.enabled === false;
-  if (command.disabledReason) item.title = command.disabledReason;
+  // Only when it is actually refused. A reason on an ENABLED row is a lie in the
+  // other direction: `file.print` is granted to a `readonly` host and was still
+  // titled "The host has not granted this", because this line ignored the state
+  // the line above it had just computed. The hint column in the palette already
+  // got this right (`c.enabled === false ? …`); the tooltip did not.
+  if (command.enabled === false && command.disabledReason) item.title = command.disabledReason;
 
   const label = document.createElement("span");
   label.className = `${itemClass}-label`;

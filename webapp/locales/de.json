@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Dreieck als Aufzählungszeichen",
   "bulletGalleryMenu.triangularBullet.title": "Dreieck als Aufzählungszeichen",
   "capability.embedded": "Dieser Editor ist in eine andere Anwendung eingebettet",
+  "capability.notGranted": "Die Host-Anwendung hat dies nicht erlaubt",
   "caption.bodyOnly": "Eine Beschriftung kann nur in den Dokumenttext, nicht in eine Kopf- oder Fußzeile oder eine Notiz",
   "caption.inserted": "Beschriftung eingefügt.",
   "caption.numbersAlreadyRight": "Jede Beschriftung zeigt bereits die richtige Nummer",

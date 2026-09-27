@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Viñeta triangular",
   "bulletGalleryMenu.triangularBullet.title": "Viñeta triangular",
   "capability.embedded": "Este editor está incrustado en otra aplicación",
+  "capability.notGranted": "La aplicación anfitriona no ha concedido esto",
   "caption.bodyOnly": "Un título solo puede ir en el cuerpo del documento, no en un encabezado, pie de página o nota",
   "caption.inserted": "Título insertado.",
   "caption.numbersAlreadyRight": "Todos los títulos ya muestran el número correcto",

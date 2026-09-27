@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Punktor trójkątny",
   "bulletGalleryMenu.triangularBullet.title": "Punktor trójkątny",
   "capability.embedded": "Ten edytor jest osadzony w innej aplikacji",
+  "capability.notGranted": "Aplikacja hosta nie udzieliła na to zgody",
   "caption.bodyOnly": "Podpis może znaleźć się tylko w treści dokumentu, nie w nagłówku, stopce ani przypisie",
   "caption.inserted": "Wstawiono podpis.",
   "caption.numbersAlreadyRight": "Każdy podpis pokazuje już właściwy numer",

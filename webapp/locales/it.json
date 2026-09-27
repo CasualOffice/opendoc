@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Punto elenco triangolare",
   "bulletGalleryMenu.triangularBullet.title": "Punto elenco triangolare",
   "capability.embedded": "Questo editor è incorporato in un'altra applicazione",
+  "capability.notGranted": "L'applicazione host non l'ha consentito",
   "caption.bodyOnly": "Una didascalia può stare solo nel corpo del documento, non in un’intestazione, un piè di pagina o una nota",
   "caption.inserted": "Didascalia inserita.",
   "caption.numbersAlreadyRight": "Ogni didascalia mostra già il numero corretto",

@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Dấu đầu dòng tam giác",
   "bulletGalleryMenu.triangularBullet.title": "Dấu đầu dòng tam giác",
   "capability.embedded": "Trình soạn thảo này được nhúng trong một ứng dụng khác",
+  "capability.notGranted": "Ứng dụng chủ không cho phép điều này",
   "caption.bodyOnly": "Chú thích chỉ có thể nằm trong phần nội dung tài liệu, không nằm trong đầu trang, chân trang hay ghi chú",
   "caption.inserted": "Đã chèn chú thích.",
   "caption.numbersAlreadyRight": "Mọi chú thích đều đã hiển thị số đúng",

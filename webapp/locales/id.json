@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Butir segitiga",
   "bulletGalleryMenu.triangularBullet.title": "Butir segitiga",
   "capability.embedded": "Editor ini disematkan di aplikasi lain",
+  "capability.notGranted": "Aplikasi host tidak mengizinkan ini",
   "caption.bodyOnly": "Keterangan hanya dapat diletakkan di badan dokumen, bukan di header, footer, atau catatan",
   "caption.inserted": "Keterangan disisipkan.",
   "caption.numbersAlreadyRight": "Setiap keterangan sudah menampilkan nomor yang benar",

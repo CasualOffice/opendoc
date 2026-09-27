@@ -74,12 +74,18 @@ export const EXPORT_COMMANDS = Object.freeze([
  * @param {(format: string) => unknown} exportAs how to run one export.
  * @returns {Array<object>} descriptors in File-menu order.
  */
-export function exportCommands(exportAs) {
+export function exportCommands(exportAs, allowed = true, refusedReason = "") {
   return EXPORT_COMMANDS.map(({ id, label, kw, format }) => ({
     id,
     label,
     group: "File",
     kw,
+    // Every export writes a FILE the visitor keeps, so all of them are the one
+    // `download` capability. Disabled WITH the reason rather than removed: a host
+    // that withheld downloads still wants the row to say so, and a reader who
+    // finds no Export at all cannot tell a permission from a missing feature.
+    enabled: allowed,
+    disabledReason: refusedReason,
     run: () => exportAs(format),
   }));
 }

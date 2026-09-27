@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "三角形项目符号",
   "bulletGalleryMenu.triangularBullet.title": "三角形项目符号",
   "capability.embedded": "此编辑器已嵌入其他应用程序",
+  "capability.notGranted": "宿主应用未授予此权限",
   "caption.bodyOnly": "题注只能放在文档正文中，不能放在页眉、页脚或注释里",
   "caption.inserted": "已插入题注。",
   "caption.numbersAlreadyRight": "每条题注都已显示正确的编号",

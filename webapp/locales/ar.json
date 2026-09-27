@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "تعداد نقطي مثلثي",
   "bulletGalleryMenu.triangularBullet.title": "تعداد نقطي مثلثي",
   "capability.embedded": "هذا المحرر مضمَّن في تطبيق آخر",
+  "capability.notGranted": "لم يمنح التطبيق المضيف هذا الإذن",
   "caption.bodyOnly": "لا يمكن وضع التسمية التوضيحية إلا في متن المستند، لا في رأس الصفحة أو تذييلها أو في حاشية",
   "caption.inserted": "تم إدراج التسمية التوضيحية.",
   "caption.numbersAlreadyRight": "كل تسمية توضيحية تعرض الرقم الصحيح بالفعل",

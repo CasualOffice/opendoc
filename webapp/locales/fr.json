@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Puce triangulaire",
   "bulletGalleryMenu.triangularBullet.title": "Puce triangulaire",
   "capability.embedded": "Cet éditeur est intégré à une autre application",
+  "capability.notGranted": "L'application hôte ne l'a pas autorisé",
   "caption.bodyOnly": "Une légende ne peut aller que dans le corps du document, pas dans un en-tête, un pied de page ou une note",
   "caption.inserted": "Légende insérée.",
   "caption.numbersAlreadyRight": "Chaque légende affiche déjà le bon numéro",

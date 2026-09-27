@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Marcador triangular",
   "bulletGalleryMenu.triangularBullet.title": "Marcador triangular",
   "capability.embedded": "Este editor está incorporado em outro aplicativo",
+  "capability.notGranted": "O aplicativo host não concedeu isso",
   "caption.bodyOnly": "Uma legenda só pode ficar no corpo do documento, não em um cabeçalho, rodapé ou nota",
   "caption.inserted": "Legenda inserida.",
   "caption.numbersAlreadyRight": "Todas as legendas já mostram o número correto",
