@@ -1882,6 +1882,118 @@ body.modal-open {
   gap: 20px;
 }
 
+/* ---- Caption and Cross-reference (`109` OO-005) ---------------------------- */
+/* These two dialogs shipped with NO CSS AT ALL. Every class their markup declared
+   — `.caption-body`, `.caption-label-actions`, `.caption-preview-row`,
+   `.crossref-targets`, `.crossref-list` and both card classes — had zero rules in
+   this file, so they fell back to default block layout: a 596px-wide text input
+   beside 98px selects, the two label buttons orphaned on a row of their own, and
+   the cross-reference target LIST — the thing you have to pick from — 55px tall
+   inside a 289px card. Measured before writing any of this.
+
+   The arrangement follows ONLYOFFICE, whose `CaptionDialog.js:61-120` is a
+   four-column table: caption text with Position beside it, then the Label combo
+   with its Add and Delete buttons ON THE SAME ROW bottom-aligned, then exclude,
+   numbering, the chapter pair, and the example last. Ours stacked all of that
+   full-width, which is what made it read as a wall. */
+
+.caption-body,
+.crossref-body {
+  /* The shared `.dialog-body` already owns padding and scrolling; this only sets
+     the rhythm between groups, which is what was missing. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Caption text takes the room it needs; Position is a two-option select and does
+   not (`CaptionDialog.js:69-71` gives it 75px beside a full-width caption box). */
+.caption-text-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+/* Label + its two actions on ONE row, bottom-aligned, as theirs are
+   (`CaptionDialog.js:75-85`). They were a 596x34 strip of their own. */
+.caption-label-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  gap: var(--space-2);
+  align-items: end;
+}
+
+/* A pair of selects reads as a pair when the columns match. `.dialog-field-grid`
+   sizes cells by content on purpose — right for a Top/Bottom number pair, wrong
+   here, where it gave 98px beside 170px and 218px beside 130px. */
+.caption-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: end;
+}
+
+/* Numbering is one narrow select. Left it in the flow rather than stretching it
+   across the card, which is where 490px of the emptiness came from. */
+.caption-numbering {
+  max-inline-size: 16ch;
+}
+
+/* A grid cell only equalises the CELL. `.dialog-select` sizes to its longest
+   option, so the pairs still came out 218px beside 130px and 106px beside 231px
+   until the control was told to fill the column it was given. `min-inline-size: 0`
+   because a select's intrinsic minimum otherwise refuses to shrink and pushes the
+   grid wider than the card. */
+.caption-text-row .dialog-field,
+.caption-label-row .dialog-field,
+.caption-pair .dialog-field {
+  min-inline-size: 0;
+}
+
+.caption-text-row > .dialog-field > input,
+.caption-label-row > .dialog-field > .dialog-select,
+.caption-pair > .dialog-field > .dialog-select {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.caption-preview-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.caption-preview-label {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.caption-preview {
+  font-weight: 600;
+}
+
+/* The target list is the CONTENT of the cross-reference dialog, not a footnote to
+   it. ONLYOFFICE gives theirs 368x161 (`CrossReferenceDialog.js:91`); ours had 55
+   and the reader had to scroll a five-item list. A min-height rather than a fixed
+   one so a short document does not leave a hole. */
+.crossref-targets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+}
+
+.crossref-list {
+  min-height: 9.5rem;
+  max-height: 16rem;
+}
+
 /* ---- Watermark (`109` OO-006) --------------------------------------------- */
 /* Sized by what it holds, like `.page-setup-dialog` above: the widest row is
    the three-cell Font/Size/Color grid, so the 640px standard constant would
