@@ -372,6 +372,39 @@ test("the panel is a grid: arrows move rows and cells, and the keyboard really l
   expect(focused, "closing the panel left the keyboard on <body>").not.toEqual("");
 });
 
+test("the timeline keeps the keyboard when a preview opens under it", async ({ page }) => {
+  await gotoEditor(page);
+  await saveDocument(page);
+  await openTimeline(page);
+  await expect(page.locator(rows)).toHaveCount(2);
+  const ids = await page.locator(rows).evaluateAll((els) => els.map((el) => el.id));
+
+  // THIS TEST CREATES ITS CONDITION, and that is the whole of it. Selecting a
+  // version swaps the document, swapping the document sets the review mode, and
+  // setting the review mode ends by focusing the editing surface — so a keyboard
+  // reader walking the timeline was ejected from the panel by the panel's own
+  // feature, and the next ArrowUp scrolled the document instead of moving to the
+  // next version.
+  //
+  // It has to WAIT for the preview to really be on screen: the settle is 220 ms
+  // and the parse takes longer still, so an assertion made straight after the
+  // keypress measures the editor before the defect has had a chance to happen
+  // and passes whatever the code does. Waiting for the banner is what turns this
+  // from a race into a guard.
+  await page.keyboard.press("End");
+  await expect(page.locator("#versionPreviewBanner")).toBeVisible();
+  await expect(page.locator('[data-review-mode="editing"]')).toBeDisabled();
+
+  expect(
+    await focusedCell(page),
+    "the preview took the keyboard out of the timeline",
+  ).toEqual({ row: ids[ids.length - 1], cell: "entry" });
+
+  // The guarantee, not the mechanism: the arrows still walk the list.
+  await page.keyboard.press("ArrowUp");
+  expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "entry" });
+});
+
 test("the row's ⋮ menu carries that row's actions, and opens from the keyboard", async ({
   page,
   consoleErrors,
