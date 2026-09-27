@@ -55,6 +55,30 @@ const DIALOGS = [
       await page.locator("#watermarkKindText").check();
     },
   },
+  // Page setup joins the roster because it was FAILING this property and nothing
+  // covered it: measured on this same laptop viewport, its body held 602px of
+  // content in a 560px box, so the bottom of the Columns group was below the fold.
+  // Its groups are now a balanced two-column flow rather than one tall stack.
+  {
+    id: "pageSetupMenu",
+    name: "Page setup",
+    async open(page) {
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="layout"]').click();
+      await page.locator("#layoutMarginsBtn").click();
+    },
+  },
+  // And the new one, measured before it shipped rather than after: at its
+  // content-sized 476px it held 598px in a 542px box.
+  {
+    id: "headerFooterSettingsDialog",
+    name: "Header and footer settings",
+    async open(page) {
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#headerFooterSettingsBtn").click();
+    },
+  },
   {
     id: "dropCapDialog",
     name: "Drop cap",
