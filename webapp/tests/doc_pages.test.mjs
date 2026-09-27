@@ -43,6 +43,7 @@ const {
   artifacts,
   blocks,
   inline,
+  openingIsProse,
   plain,
   renderBlocks,
   resolveTarget,
@@ -569,6 +570,44 @@ test("the summary is the document's prose, never its filing information", () => 
     /does not have/,
     "naming a section that is not there must fail loudly, not fall back silently",
   );
+});
+
+test("a summary may continue past the opening, but may not start deep in a document", () => {
+  // The rule that keeps a page's one quotable sentence a sentence ABOUT the page.
+  //
+  // It may continue: `docs/02`'s first section is one short sentence and an ASCII
+  // diagram, and its description is that sentence plus the next one from the
+  // section after it. Refusing that would have cost a good description.
+  assert.ok(
+    openingIsProse(blocks("## First\n\nA short opening sentence.\n\n## Second\n\nMore prose here.")),
+  );
+  // It may not start deep: a document whose first section is headings and lists
+  // has nothing to summarise, and the next prose it reaches describes a subsection
+  // rather than the page.
+  assert.equal(
+    openingIsProse(blocks("## First\n\n- a bullet;\n- another;\n\n## Second\n\nDeep prose here.")),
+    false,
+  );
+  // A provenance line does not count as the opening prose, which is the case that
+  // matters: almost every document in `docs/` starts with one.
+  assert.equal(
+    openingIsProse(blocks("**Status:** Accepted\n\n## First\n\n- a bullet;\n\n## Second\n\nDeep.")),
+    false,
+  );
+
+  // And the real case, measured against the real document. `docs/40` is withheld
+  // BECAUSE of this rule; if the document ever gains an opening paragraph, this
+  // fails and the withheld entry has to be revisited rather than left to ossify.
+  const fonts = blocks(readRepo("docs/40-FONT-MANAGEMENT-DESIGN.md")).slice(1);
+  assert.equal(
+    openingIsProse(fonts),
+    false,
+    "docs/40 now opens with prose, so it has a summary and can be published — remove " +
+      "its WITHHELD entry",
+  );
+  // Verified, not assumed: the sentence the scan WOULD have reached is the
+  // competitive claim named in that entry's reason.
+  assert.match(summarise(fonts), /the embedded-font correctness that all three products lack/);
 });
 
 test("plain() strips markup so a title and a description are text", () => {

@@ -219,14 +219,19 @@ export const WITHHELD = [
   {
     source: "docs/40-FONT-MANAGEMENT-DESIGN.md",
     reason:
-      "Refused by this generator's own rule rather than by a judgement call: it has " +
-      "no prose paragraph to summarise. Its opening paragraph is a provenance line " +
-      "(`Status: Draft for review. Owner: … Depends on: … Feeds: …`) and everything " +
-      "after it is headings and bulleted implementation items carrying source " +
-      "coordinates like `definitions.rs l.235`. A page whose search result is filing " +
-      "information, and whose body reads as an internal work order against line " +
-      "numbers, is not a page a reader or an assistant can use. Publish it when the " +
-      "document gains an opening that says what font management does.",
+      "Refused by this generator's `openingIsProse` rule rather than by a judgement " +
+      "call: its first section says nothing in prose, so it has no summary to " +
+      "publish. Its opening paragraph is a provenance line (`Status: Draft for " +
+      "review. Owner: … Depends on: … Feeds: …`) and §1 is headings and bulleted " +
+      "implementation items carrying source coordinates like `definitions.rs l.235`. " +
+      "MEASURED, and this is why the rule exists: publishing it anyway was tried, " +
+      "and the description the scan reached was a sentence from a Synthesis " +
+      "subsection of §2 — a three-way comparative claim about ONLYOFFICE, " +
+      "LibreOffice and CSS Fonts 4 ending 'the embedded-font correctness that all " +
+      "three products lack'. That would have been this page's search result, its " +
+      "social card, and the one line an assistant quotes: a competitive assertion " +
+      "nobody here re-derived, presented as what the page is about. Publish it when " +
+      "the document gains an opening that says what font management does.",
   },
   {
     source: "docs/14-EXECUTION-TRACKER.md",
@@ -642,6 +647,39 @@ export function section(list, heading, sourcePath) {
   return list.slice(start + 1, end < 0 ? undefined : end);
 }
 
+/** The blocks a summary may be drawn from when no section is named: all of them,
+ *  unless the document's FIRST SECTION says nothing in prose — in which case,
+ *  none.
+ *
+ *  A summary may CONTINUE past the opening (`docs/02`'s first section is one
+ *  sentence and a diagram, and its description is that sentence plus the next one),
+ *  but it may not START deep in a document. That distinction was found by
+ *  measurement, not chosen on principle: `docs/40` has no opening prose at all — a
+ *  provenance line, then headings and bulleted implementation items — and the
+ *  first eligible paragraph the scan reached was a three-way competitive claim
+ *  inside a "Synthesis" subsection of section 2. Published, that sentence would
+ *  have been the page's search result, its social card and the one line an
+ *  assistant quotes: a comparative assertion about two other products, nobody
+ *  re-derived, presented as what the page is about.
+ *
+ *  So a document whose first section has nothing to say has no summary, and the
+ *  caller refuses to publish it rather than quoting it out of context. Naming a
+ *  section with `summaryFrom` opts out, because there the choice is deliberate and
+ *  reviewed. */
+export function openingIsProse(list) {
+  let sections = 0;
+  for (const block of list) {
+    if (block.kind === "heading" && block.depth === 2) {
+      sections += 1;
+      if (sections === 2) return false;
+    }
+    if (block.kind !== "paragraph") continue;
+    const text = plain(block.text);
+    if (text && !isPreamble(text) && !isStem(text)) return true;
+  }
+  return false;
+}
+
 export function summarise(list, { min = 110, max = 300 } = {}) {
   const sentences = [];
   let length = 0;
@@ -718,7 +756,12 @@ export function describe(entry) {
   // The document number is the repository's filing system, not a page title:
   // "98 — PDF Export and Print Design" becomes "PDF Export and Print Design".
   const heading = plain(first.text).replace(/^\d+\s*[—–-]\s*/, "");
-  const summary = summarise(section(list.slice(1), entry.summaryFrom, entry.source));
+  const body = list.slice(1);
+  const summary = entry.summaryFrom
+    ? summarise(section(body, entry.summaryFrom, entry.source))
+    : openingIsProse(body)
+      ? summarise(body)
+      : null;
   if (!summary) {
     throw new Error(
       `${entry.source} has no prose paragraph to summarise, so it cannot be published as a ` +
@@ -731,7 +774,7 @@ export function describe(entry) {
     sourcePath: entry.source,
     heading,
     summary,
-    body: list.slice(1),
+    body,
     file: `${OUT_DIR}/${entry.slug}.html`,
   };
   checkHeadFields(page);
