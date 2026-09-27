@@ -418,7 +418,16 @@ test("how much English the reference pages put on the site, measured and publish
   //
   // IT WILL MOVE, and that is the design. 2,029 when the pages landed; 2,052
   // after a rebase, because another branch added one bullet to
-  // `docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md`. Editing a published document
+  // `docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md`; 2,060 with `docs/126` phase 3, which
+  // added a correction note to `docs/05` saying that its JavaScript example is the
+  // DESIGNED surface rather than the shipped one. It had told a reader to
+  // `import { DocumentEngine } from "@casualoffice/document-runtime"` — a package
+  // that has never existed, importing a symbol nothing exports — from a page live on
+  // this site. Eight sentences of English replacing an instruction nobody could
+  // complete is a trade worth recording rather than hiding. 2,095 once `docs/126`
+  // recorded phase 3's outcome in its own section, which is the whole point of that
+  // document and is published as `reference/embeddability-plan.html`. Editing a
+  // published document
   // already fails `build-doc-pages --check` until the pages are regenerated, so
   // the same commit that regenerates them updates this figure — one number, in
   // the same pass, deliberately. A figure that updated itself would let the
@@ -429,8 +438,8 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2052,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2,052). That ` +
+    2095,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2,095). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),

@@ -1,5 +1,5 @@
 {
-  "//": "The white-label configuration (docs/126 phase 3, ADR-038). Edit THIS file and run `node webapp/tools/build-brand.mjs` — no code changes. Every field is a delta from the product's own identity; `null` means 'keep ours'. The shipped file is all-null on purpose, so the default build is the product and a white-label is visibly a decision somebody made.",
+  "//": "The white-label configuration (docs/126 phase 3, ADR-039). Edit THIS file and run `node webapp/tools/build-brand.mjs` — no code changes. Every field is a delta from the product's own identity; `null` means 'keep ours'. The shipped file is all-null on purpose, so the default build is the product and a white-label is visibly a decision somebody made.",
   "version": 1,
   "name": null,
   "mark": null,
