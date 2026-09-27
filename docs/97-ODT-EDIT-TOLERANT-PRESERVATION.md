@@ -168,7 +168,8 @@ does.
 
 The asymmetry to know about: the master-page **importer** is still the bounded
 plain-text reader, so a `draw:frame` in a page region is not read back into
-`Definitions::media` on reimport and therefore is not retained on the next
+`Definitions::media` when the package is read back, and therefore is not
+retained on the next
 preserving export. A header image survives export, and survives an
 `ExactIfUnchanged` recovery, but does not yet survive an import-edit-export cycle.
 That is an import-side gap, reported (`odf.master-page.unsupported-content`)

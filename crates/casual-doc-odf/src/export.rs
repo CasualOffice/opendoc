@@ -5428,9 +5428,15 @@ fn page_styles_xml(
 /// by the shared body writer, so the set is derived by **scanning the emitted
 /// bytes** for each prefix rather than from a hand-kept list of emit sites: a new
 /// element that starts using a prefix is then covered automatically instead of
-/// silently producing namespace-invalid XML. The scan cannot be fooled by
-/// document text, because `write_text`/`push_escaped_attribute` escape `<` and
-/// `&` — a prefix followed by `:` can only come from markup this writer emitted.
+/// silently producing namespace-invalid XML.
+///
+/// The scan errs in the safe direction only. Header text is escaped for `<` and
+/// `&` but not for a bare `draw:`, so a run whose text happens to read
+/// `"table: 3"` over-declares one namespace. An unused (or doubly declared)
+/// namespace is valid XML and changes nothing a consumer reads, and the result
+/// is still deterministic — identical input mints identical bytes. The direction
+/// that would matter, a prefix used without a declaration, cannot happen,
+/// because anything emitted is in the bytes the scan reads.
 ///
 /// The `draw` and `text` declarations keep their historical position and
 /// condition so geometry-only and plain-text-header output stays byte-identical;

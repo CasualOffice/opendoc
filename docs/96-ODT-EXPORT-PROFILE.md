@@ -303,7 +303,7 @@ The **master-page importer** (`master_page.rs`) is still the bounded plain-text
 reader described in `95-ODT-IMPORT-PROFILE.md`: paragraphs of plain runs, spaces,
 tabs and line breaks. So the widened writer output is a fixed point only for that
 plain-text subset; a field, image, link, table or bookmark written into a page
-region is read back as `odf.master-page.unsupported-content` on reimport. That
+region is read back as `odf.master-page.unsupported-content`. That
 asymmetry is a known open gap on the import side, not a silent one.
 
 ## 6. Acceptance gates

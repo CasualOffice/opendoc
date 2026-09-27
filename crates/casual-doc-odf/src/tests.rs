@@ -750,6 +750,51 @@ fn master_styles_block(styles_xml: &str) -> &str {
         .expect("master-styles block")
 }
 
+/// Every namespace prefix used by an element or attribute inside the
+/// `office:master-styles` block must be declared — on the styles.xml root, or
+/// inline on the element that uses it. Derived from the emitted bytes rather than
+/// a hand-kept list, so it cannot drift as the writer grows: a new element using
+/// an undeclared prefix fails here rather than shipping invalid XML.
+fn assert_every_master_prefix_is_declared(styles_xml: &str) {
+    let master = master_styles_block(styles_xml);
+    let mut prefixes: Vec<String> = Vec::new();
+    // Element prefixes: `<prefix:local`. `<` in document text is escaped, so every
+    // occurrence here is markup the writer emitted.
+    for occurrence in master.split('<').skip(1) {
+        let head = occurrence
+            .split([' ', '>', '/', '\t', '\n'])
+            .next()
+            .unwrap_or_default();
+        if let Some((prefix, _)) = head.split_once(':')
+            && !prefix.is_empty()
+            && !prefixes.iter().any(|seen| seen == prefix)
+        {
+            prefixes.push(prefix.to_owned());
+        }
+    }
+    // Attribute prefixes: ` prefix:name="`.
+    for occurrence in master.split('=').take(master.split('=').count() - 1) {
+        let tail = occurrence.rsplit([' ', '<']).next().unwrap_or_default();
+        if let Some((prefix, _)) = tail.split_once(':')
+            && !prefix.is_empty()
+            && prefix != "xmlns"
+            && !prefixes.iter().any(|seen| seen == prefix)
+        {
+            prefixes.push(prefix.to_owned());
+        }
+    }
+    assert!(
+        prefixes.len() > 1,
+        "no prefixes found in the master-styles block; the scan is broken, not the writer: {master}"
+    );
+    for prefix in prefixes {
+        assert!(
+            styles_xml.contains(&format!("xmlns:{prefix}=")),
+            "master-styles uses prefix {prefix:?} that styles.xml never declares: {styles_xml}"
+        );
+    }
+}
+
 /// Every automatic-style name referenced inside `region` must be DEFINED in
 /// `styles_xml`. An automatic style declared in content.xml is not in scope from
 /// a `style:master-page`, so this is the assertion that catches a header
@@ -1009,6 +1054,8 @@ fn footer_page_number_field_and_logo_survive_the_export() {
             "styles.xml root does not declare {declaration}: {styles_xml}"
         );
     }
+    // And the general form, which cannot drift as the writer grows.
+    assert_every_master_prefix_is_declared(&styles_xml);
 
     // The logo's bytes are in the package, byte-verbatim, so the reference is not
     // dangling, and the whole package still reopens through the bounded layer.
@@ -1027,6 +1074,80 @@ fn footer_page_number_field_and_logo_survive_the_export() {
     assert!(
         omitted.is_empty(),
         "footer content still reported as header/footer loss: {omitted:?}"
+    );
+}
+
+#[test]
+fn header_text_that_looks_like_a_namespace_prefix_stays_deterministic() {
+    // `styles_namespaces` decides the styles.xml root declarations by scanning the
+    // emitted fragment bytes for each prefix. Header TEXT is escaped for `<` and
+    // `&` but not for a bare `table:`, so such a run over-declares a namespace.
+    // That is the safe direction — an unused declaration is valid XML and changes
+    // nothing a consumer reads — but it must not make output non-deterministic or
+    // unreadable, which is what this pins.
+    use casual_doc_model::v1::{Paragraph, Run};
+
+    let mut fresh = test_ids();
+    let document = document_with_footer(|document, footer_id| {
+        let definitions = document.definitions_mut();
+        let footer = definitions.footers.get_mut(&footer_id).expect("footer");
+        footer.blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: fresh(),
+            properties: Default::default(),
+            inlines: vec![InlineNode::Run(Run {
+                id: fresh(),
+                properties: Default::default(),
+                text: "see table: 3 and <draw:frame> & co".to_owned(),
+            })],
+        })];
+    });
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let second = write_odt(&document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes, "export must stay deterministic");
+
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_xml = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    // The angle brackets are escaped, so nothing became markup.
+    assert!(
+        styles_xml.contains("see<text:s/>table:<text:s/>3<text:s/>and<text:s/>&lt;draw:frame&gt;"),
+        "header text was not escaped: {styles_xml}"
+    );
+    assert!(
+        !styles_xml.contains("<draw:frame"),
+        "header text became markup: {styles_xml}"
+    );
+    assert_every_master_prefix_is_declared(&styles_xml);
+    // And it still reopens through the bounded admission layer.
+    //
+    // This deliberately does NOT assert the reopened run text equals the input.
+    // The master-page importer drops XML entities from header/footer text
+    // (`a&lt;b&gt;c&amp;d` imports as `abcd`) — a separate, pre-existing,
+    // genuinely silent import-side defect in `master_page.rs`, reported rather
+    // than papered over here. Asserting the current lossy value would pin the
+    // bug; asserting the correct value would make this guard fail for a reason it
+    // is not about. It asserts the writer's side, which is what changed.
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let reference = reopened.document.definitions().sections[0].footers[0].reference;
+    let footer = reopened
+        .document
+        .definitions()
+        .footers
+        .get(&reference)
+        .expect("footer");
+    let BlockNode::Paragraph(paragraph) = &footer.blocks[0] else {
+        panic!("footer paragraph")
+    };
+    let InlineNode::Run(run) = &paragraph.inlines[0] else {
+        panic!("footer run")
+    };
+    // The unescaped parts do survive, so the fragment really was read as text and
+    // not skipped as markup.
+    assert!(
+        run.text.starts_with("see table: 3 and"),
+        "footer text did not survive as text: {:?}",
+        run.text
     );
 }
 
