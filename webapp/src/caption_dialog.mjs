@@ -10,7 +10,7 @@
 // The module adopts markup already in `editor.html` by id, the way
 // `drop_cap.mjs` and `bookmark_manager.mjs` do, so the dialog's structure stays
 // readable in the document it renders in and this file stays about behaviour.
-import { t } from "./i18n.mjs";
+import { has, t } from "./i18n.mjs";
 import {
   NUMBER_FORMATS,
   SEPARATORS,
@@ -90,11 +90,35 @@ export function createCaptionDialog(io) {
   let entries = [];
   let targetIndex = 0;
 
-  for (let level = 1; level <= 9; level += 1) {
-    const option = document.createElement("option");
-    option.value = String(level);
-    option.textContent = t("captionDialog.headingLevel", { level });
-    chapterLevel.append(option);
+  /** The nine heading levels, filled ON OPEN rather than when this factory runs.
+   *
+   *  They used to be built here, in the factory body. Catalogues arrive
+   *  ASYNCHRONOUSLY — `setCatalogue` is called "once a locale's JSON arrives" —
+   *  and `t()` returns the KEY for a miss, deliberately, so it shows up. This ran
+   *  before the catalogue did, stamped all nine options with the literal string
+   *  `captionDialog.headingLevel`, and never rebuilt them: the raw key was on
+   *  screen for the life of the tab, in every language.
+   *
+   *  The existing guards could not catch it. `locale_coverage` and
+   *  `no_unrouted_strings` both check that a key EXISTS — and it does, in all 19
+   *  catalogues. Nothing checked that a key had been resolved by the time it was
+   *  painted. `dialog-i18n-keys.spec.mjs` now does.
+   *
+   *  Idempotent, because `open()` can be called repeatedly. */
+  function fillChapterLevels() {
+    const wanted = 9;
+    if (chapterLevel.options.length === wanted && chapterLevel.dataset.i18nReady === "1") return;
+    chapterLevel.replaceChildren();
+    for (let level = 1; level <= wanted; level += 1) {
+      const option = document.createElement("option");
+      option.value = String(level);
+      option.textContent = t("captionDialog.headingLevel", { level });
+      chapterLevel.append(option);
+    }
+    // Only mark it done when the catalogue actually answered. If it has not yet,
+    // the next open rebuilds rather than keeping a key on screen forever — which
+    // is the whole defect this replaces.
+    if (has("captionDialog.headingLevel")) chapterLevel.dataset.i18nReady = "1";
   }
 
   const modal = io.registerModal(dialog, {
@@ -180,6 +204,7 @@ export function createCaptionDialog(io) {
       return;
     }
     targetIndex = captionsBefore(entries, node);
+    fillChapterLevels();
     fillLabels(labels, currentLabel());
     newLabelRow.hidden = true;
     reflectAll();
