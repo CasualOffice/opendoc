@@ -302,9 +302,9 @@ const PALETTE_ONLY = new Map([
   // is the face, "Accept This Change" is the first dropdown row. We have the
   // face (`#reviewAcceptBtn` = review.acceptNext) and no dropdown, so the
   // at-caret pair is palette-only. Pre-existing, found by this guard rather
-  // than caused by the restructure; queued in `109` as HF-179.
-  ["review.acceptAtCaret", "needs the Review band's Accept split button (109 HF-179)"],
-  ["review.rejectAtCaret", "needs the Review band's Reject split button (109 HF-179)"],
+  // than caused by the restructure; queued in `109` as HF-190 (it was HF-179 until 2026-09-27, when that id turned out to name two different defects; the pointer-cursor row keeps HF-179).
+  ["review.acceptAtCaret", "needs the Review band's Accept split button (109 HF-190)"],
+  ["review.rejectAtCaret", "needs the Review band's Reject split button (109 HF-190)"],
 ]);
 
 test("no command is reachable from the command palette alone", async ({
