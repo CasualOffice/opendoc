@@ -79,6 +79,8 @@ impl<'a> NumberingResolver<'a> {
     /// *through* a paragraph style; a caller with no styles table can pass an
     /// empty map, and a `numStyleLink` will then simply fail to resolve (which
     /// its callers report — it is never silently defaulted).
+    ///
+    /// Complexity: O(1). It stores three references and copies nothing.
     #[must_use]
     pub fn new(
         styles: &'a DefinitionMap<StyleId, Style>,
