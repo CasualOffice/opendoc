@@ -373,7 +373,17 @@ export async function openCommandPalette(page) {
  *  reachable and runs" must not have to know which chrome it is in, and must not
  *  silently switch the chrome under a spec that chose one. */
 export async function runFilePageCommand(page, commandId) {
-  if (await page.locator("body.compact-mode").count()) {
+  // Three chromes now, not two (`docs/126` phase 3). A container can have the
+  // ribbon's File band, or the compact chrome's File menu, or — for a `readonly`
+  // reading container — the menu bar with no ribbon at all, because a role with no
+  // business with a whole surface does not get the surface. All three render the
+  // same `FILE_SURFACE` roster, so a spec asking "File ▸ X is reachable" must not
+  // have to know which one it is in: that is this helper's whole reason for
+  // existing, and the composition case belongs here rather than in every caller.
+  const viaMenu =
+    (await page.locator("body.compact-mode").count()) > 0 ||
+    (await page.locator("body.chrome-no-ribbon, body.chrome-no-band-file").count()) > 0;
+  if (viaMenu) {
     await runAppMenuCommand(page, "file", commandId);
     return;
   }

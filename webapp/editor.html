@@ -8,11 +8,18 @@
       name="description"
       content="Open and edit DOCX, ODT, normalized JSON, and plain-text files locally in your browser with the OpenDoc Rust and WebAssembly document engine."
     />
+    <!-- @generated brand-icons -->
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- @end brand-icons -->
     <link rel="canonical" href="https://opendoc.casualoffice.org/editor.html" />
     <link rel="stylesheet" href="./src/fonts.css" />
     <link rel="stylesheet" href="./src/style.css" />
+    <!-- The white-label palette, mark and font face (docs/126 phase 3, ADR-039),
+         generated from webapp/brand.json. AFTER style.css so a host's tokens win
+         by ordinary cascade order, with no !important and no script. The shipped
+         file overrides nothing; a white-labelled deployment regenerates it. -->
+    <link rel="stylesheet" href="./src/brand.css" />
     <!-- Start the engine download at parse time. `init()` lives at the bottom of
          a 500 KB module graph, so without these the ~9 MB (gzipped) wasm did not
          begin downloading until main.js had been fetched, parsed and evaluated —
@@ -27,7 +34,9 @@
     <a data-i18n="ui.skipDocument" class="skip-link" href="#pages">Skip to the document</a>
     <header class="bar">
       <div class="brand">
-        <img class="brand-logo" src="./opendoc-mark.svg" alt="" width="24" height="24" />
+        <!-- @generated brand-mark -->
+      <span class="brand-logo" aria-hidden="true"></span>
+        <!-- @end brand-mark -->
       </div>
       <div id="documentChrome" class="document-chrome" hidden>
         <div class="document-title-row">

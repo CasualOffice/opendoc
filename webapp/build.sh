@@ -112,6 +112,15 @@ cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 # below, and as build-embed-package --check for the published package.
 node "$here/tools/build-embed-docs.mjs" --check
 
+# The white-label artifacts (docs/126 phase 3, ADR-038): `src/brand.css`,
+# `src/brand.mjs` and two generated regions in `editor.html`, all produced from
+# `brand.json`. FIRST, because it rewrites `editor.html` and `build-locale`'s
+# extraction and `build-site.py`'s templates both read it — and armed here because a
+# generator CI never runs is the "prose describing a gate that was never armed"
+# defect (docs/99 §9.2). It also re-validates the palette on every build, so a
+# deployment cannot drift into unreadable text by editing `src/brand.css` by hand.
+node "$here/tools/build-brand.mjs" --check
+
 "$here/build-site.py"
 "$here/build-site.py" --check
 

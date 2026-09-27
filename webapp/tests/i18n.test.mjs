@@ -17,9 +17,11 @@ const {
   has,
   list,
   n,
+  hasOverrides,
   resetI18n,
   setCatalogue,
   setLocale,
+  setOverrides,
   t,
 } = await import("../src/i18n.mjs");
 
@@ -131,4 +133,96 @@ test("switching locale switches every lookup at once", () => {
   assert.equal(t("file.save"), "Enregistrer");
   setLocale("en");
   assert.equal(t("file.save"), "Save");
+});
+
+// ---- Host string overrides (`docs/126` phase 3) ------------------------------
+// The layer a white-label installs, and `docs/126` is explicit that it must be a
+// LAYER on this seam rather than a second mechanism: "One mechanism, not two." The
+// cases below are the ones a second mechanism would get wrong — and the ones
+// registering the host's words as a twentieth CATALOGUE would get wrong too, which
+// is why `setOverrides` exists instead.
+
+test("a host override beats every catalogue, in every language", () => {
+  // Entirely first, not interleaved per tag. An override that lost to one of the
+  // nineteen catalogues would white-label the editor in eighteen languages and not
+  // the nineteenth — the kind of almost-working somebody finds in a screenshot.
+  setCatalogue("de", { "file.save": "Speichern" });
+  setOverrides({ "*": { "file.save": "Keep" } });
+  assert.equal(t("file.save"), "Keep");
+  setLocale("de");
+  assert.equal(t("file.save"), "Keep", "the German catalogue beat the host's override");
+});
+
+test("the reader's own language outranks the every-language override", () => {
+  // `*` means "in every language", so it must beat a FALLBACK language: a German
+  // reader gets the host's every-language word, not the host's English one. The
+  // reader's OWN language still wins, because a host who wrote a German override
+  // meant it for German readers.
+  setOverrides({
+    "*": { "file.save": "Keep" },
+    de: { "file.save": "Behalten" },
+    en: { "file.save": "Retain" },
+  });
+  setLocale("de");
+  assert.equal(t("file.save"), "Behalten");
+  setLocale("en");
+  assert.equal(t("file.save"), "Retain");
+  setLocale("fr");
+  assert.equal(t("file.save"), "Keep", "French fell through to the host's ENGLISH, not its wildcard");
+});
+
+test("a region falls back to its base language before the wildcard", () => {
+  setOverrides({ "*": { "file.save": "Keep" }, de: { "file.save": "Behalten" } });
+  setLocale("de-AT");
+  assert.equal(t("file.save"), "Behalten");
+});
+
+test("an override only covers the keys it names, and `has` answers for it", () => {
+  setOverrides({ "*": { "file.save": "Keep" } });
+  assert.equal(t("app.greeting", { who: "world" }), "Hello world");
+  // `has()` must answer for an override, or `localizeTree` skips the element and
+  // the markup keeps its authored English — a white-label that relabels the script
+  // and not the page.
+  setOverrides({ "*": { "brand.only": "Acme" } });
+  assert.equal(has("brand.only"), true);
+  assert.equal(t("brand.only"), "Acme");
+});
+
+test("an override interpolates like any other string", () => {
+  setOverrides({ "*": { "app.greeting": "Welcome to Acme, {who}" } });
+  assert.equal(t("app.greeting", { who: "world" }), "Welcome to Acme, world");
+});
+
+test("an override may carry a plural family, and answers in its own words", () => {
+  // One layer at a time, the same rule the catalogues follow: a host who supplied
+  // only `other` answers in their own words for every count rather than losing
+  // `one` to ours, which would read as two different products in one sentence.
+  setOverrides({ "*": { "count.words.other": "{count} Acme words" } });
+  assert.equal(t("count.words", { count: 3 }), "3 Acme words");
+  assert.equal(t("count.words", { count: 1 }), "1 Acme words");
+});
+
+test("overrides are announced, and cleared by the reset every test relies on", () => {
+  assert.equal(hasOverrides(), false);
+  setOverrides({ "*": { "file.save": "Keep" } });
+  assert.equal(hasOverrides(), true);
+  setOverrides(null);
+  assert.equal(hasOverrides(), false);
+  assert.equal(t("file.save"), "Save");
+  // And `resetI18n` clears them. A test that installed a white-label and did not
+  // clear it would white-label every test after it, which is the hardest kind of
+  // green-for-the-wrong-reason to find.
+  setOverrides({ "*": { "file.save": "Keep" } });
+  resetI18n();
+  setCatalogue("en", EN);
+  assert.equal(t("file.save"), "Save");
+});
+
+test("a malformed override set is ignored rather than thrown", () => {
+  // A host's configuration reaching `t()` must not be able to take the editor
+  // down: every label in the chrome resolves through here.
+  setOverrides({ "*": null, de: "not an object", en: { "file.save": "Retain" } });
+  assert.equal(t("file.save"), "Retain");
+  setLocale("de");
+  assert.equal(t("file.save"), "Retain", "German fell through to the host's English");
 });

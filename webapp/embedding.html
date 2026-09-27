@@ -168,8 +168,8 @@
         <p class="doc-body">
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
-          <span data-claim="package-file-count">8</span> files,
-          <span data-claim="package-unpacked-kb">79 kB</span> unpacked,
+          <span data-claim="package-file-count">9</span> files,
+          <span data-claim="package-unpacked-kb">97 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b>Nothing publishes it to a registry yet</b>, so today a host installs
           the tarball <code>npm pack</code> produces from a checkout. The
@@ -189,7 +189,7 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         </div>
         <!-- @end install-commands -->
         <p class="doc-body">
-          The package has <span data-claim="entry-point-count">5</span> entry
+          The package has <span data-claim="entry-point-count">6</span> entry
           points, and a set of typings generated from the capability authority's
           real values rather than typed out beside it:
         </p>
@@ -513,18 +513,23 @@ function resolveFor(role) {
           That is what makes "print, download, save, edit and comment are withheld
           independently" a property of the design rather than a promise.
         </p>
-        <div class="doc-callout">
-          <p class="doc-callout-label">Today's limit</p>
-          <p>
-            The set is per capability, but the <em>host's input</em> is not yet: a
-            host picks one of the
-            <span data-claim="preset-count">8</span> accepted names and may
-            override <code>autosave</code>. There is no capability list a host can pass, so
-            "commentor, but no printing" is not expressible today — it is a
-            one-authority change rather than a new mechanism, and it is listed
-            under <a href="#not-yet">what this does not do yet</a>.
-          </p>
-        </div>
+        <p class="doc-body">
+          A host picks one of the
+          <span data-claim="preset-count">8</span> accepted names and then narrows it,
+          per capability, with <code>can</code>. An embed whose
+          <code>editor-src</code> carries
+          <code>?can=-print,-download</code> on top of
+          <code>mode="commentor"</code> may comment and nothing else.
+        </p>
+        <p class="doc-body">
+          The list resolves through the
+          same function the presets do, which is what keeps "roles are presets over
+          the capability set" a fact rather than a claim — a guard proves every role
+          is reachable by narrowing the role above it. It only ever <em>takes
+          away</em>, whether or not an entry carries its minus sign, and an unknown
+          entry is dropped: dropping narrows nothing, so a typo in a URL can never
+          grant more than the role did.
+        </p>
 
         <h2 id="presentations" class="doc-h2"><code>preview</code> is not <code>readonly</code></h2>
         <p class="doc-body">
@@ -538,16 +543,25 @@ function resolveFor(role) {
           no, because the reader navigates and searches. So
           <code>preview</code> is not "<code>readonly</code> minus print".
         </p>
+        <p class="doc-body">
+          The chrome reflects that. A <code>readonly</code> container gets
+          <span data-claim="reading-region-count">6</span> regions — the menu bar, the
+          navigation rail, the status bar, zoom, find and the document title — and
+          <strong>no editing ribbon at all</strong>, not a ribbon full of greyed
+          buttons. A <code>preview</code> container gets
+          <span data-claim="preview-region-count">0</span>: the runtime paints the
+          document and nothing else.
+        </p>
         <div class="doc-callout">
-          <p class="doc-callout-label">What is true today</p>
+          <p class="doc-callout-label">Why the menu bar, and not just "no ribbon"</p>
           <p>
-            The capability sets already differ, and so does the frame's sandbox.
-            The <em>chrome</em> does not: both roles land in the editor's Viewing
-            mode with the full editing chrome present and its controls disabled,
-            rather than a minimal canvas and a reading surface respectively.
-            Composing a surface out — a <code>readonly</code> container with no
-            editing ribbon at all — is designed and not built, and a wall of
-            greyed controls is not the intended answer for these two roles.
+            <code>readonly</code> is granted exactly one capability —
+            <code>print</code> — and File ▸ Print lives in the menu bar. Hiding the
+            ribbon without revealing the menu bar would have made the one thing a
+            reader is allowed to do unreachable, which is why a guard asserts that
+            every capability a preset grants has an affordance in chrome that preset
+            shows. It also keeps the editor's one-navigation-axis rule: a container
+            has the tab strip or the menu bar, never both.
           </p>
         </div>
 
@@ -917,6 +931,271 @@ export function parseOriginAllowlist(raw, selfOrigin) {
         </div>
         <!-- @end origin-policy -->
 
+        <h2 id="white-label" class="doc-h2">Make it your product</h2>
+        <p class="doc-body">
+          Name, mark, palette, font and wording are one file —
+          <code>webapp/brand.json</code> — and one command. Nothing below needs a code
+          change: the generator writes the stylesheet, the module and the icon links
+          the editor reads, and <code>build.sh</code> fails if a committed artifact is
+          not what a fresh run produces.
+        </p>
+        <!-- @generated brand-config -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/brand.example.json — a white-label, and the input to its own guard</span></div>
+          <pre><code>{
+  "version": 1,
+  "name": "Northwind Docs",
+  "mark": "./opendoc-mark.svg",
+  "tabTitle": "document",
+  "theme": {
+    "tokens": {
+      "--accent": "#0f6d6a",
+      "--accent-ink": "#ffffff"
+    },
+    "light": {
+      "--bg": "#f2f0ec",
+      "--bg-2": "#f7f6f3",
+      "--surface": "#ffffff",
+      "--surface-alt": "#f4f2ee",
+      "--ink": "#1b1a18",
+      "--muted": "#5c5953",
+      "--faint": "#67635c",
+      "--line": "#e4e1da",
+      "--line-strong": "#cec9bf",
+      "--primary-bg": "#1b1a18",
+      "--primary-ink": "#faf9f6",
+      "--accent-text": "#0c5a57"
+    },
+    "dark": {
+      "--bg": "#16181a",
+      "--bg-2": "#1c1f21",
+      "--surface": "#202426",
+      "--surface-alt": "#272b2e",
+      "--ink": "#e9eaea",
+      "--muted": "#a9aeb0",
+      "--faint": "#9ba1a3",
+      "--line": "#303538",
+      "--line-strong": "#414749",
+      "--primary-bg": "#e9eaea",
+      "--primary-ink": "#16181a",
+      "--accent-text": "#5fc3bf"
+    }
+  },
+  "font": null,
+  "strings": {
+    "de": {
+      "branding.themeSetByHost": "Die Farbe wird von Northwind Docs vorgegeben."
+    }
+  }
+}</code></pre>
+        </div>
+        <!-- @end brand-config -->
+        <p class="doc-body">
+          <span data-claim="overridable-token-count">18</span> token names are
+          overridable and frozen as a public contract: the accent family, the
+          surfaces, the foregrounds, the lines and the primary action. Geometry,
+          z-order and type scale are refused, because those are structure rather than
+          brand. So is the <code>--paper*</code> layer: the sheet is white in both
+          themes on purpose so that everything drawn onto it has a fixed contrast
+          partner, and a host who darkened it would put the dark theme's insertion
+          and deletion marks on a dark page.
+        </p>
+
+        <h3 id="legibility" class="doc-h3">An unreadable palette is refused, not shipped</h3>
+        <p class="doc-body">
+          A host palette is measured as it will <em>render</em> — our tokens with
+          yours written over them, per theme, with <code>var()</code> and
+          <code>color-mix()</code> resolved — because a brand colour measured on its
+          own passes when it is unreadable only against the surface it will be painted
+          on. Text pairs clear 4.5:1 and edges clear 3:1, which is WCAG's own split,
+          so a hairline is not held to the prose bar. A failure stops the build and
+          says what would work:
+        </p>
+        <!-- @generated brand-refusal -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/tools/build-brand.mjs — what a failing palette is told</span></div>
+          <pre><code>$ node webapp/tools/build-brand.mjs
+brand.json was refused:
+  - light: --muted (#9aa0a6) on --surface (#ffffff) measures 2.64:1 and must clear 4.5:1. #72777b would pass, on the same hue.
+  - light: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. #484848 would pass, on the same hue.
+  - light: --accent-text (var(--accent)) on --surface (#ffffff) measures 2.04:1 and must clear 4.5:1. #a06c17 would pass, on the same hue.
+  - system dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. #484848 would pass, on the same hue.
+  - explicit dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. #484848 would pass, on the same hue.</code></pre>
+        </div>
+        <!-- @end brand-refusal -->
+        <p class="doc-body">
+          Refused rather than corrected, because shipping your product in a colour you
+          did not choose is a worse outcome than a failed build — and rather than
+          warned about, because a warning in a build log is read once and then the
+          integrator ships it. The failure lands on the person who can still fix it,
+          at the moment it is free to fix.
+        </p>
+
+        <h3 id="chrome-selection" class="doc-h3">Choose the chrome</h3>
+        <p class="doc-body">
+          <span data-claim="region-count">18</span> regions, of which
+          <span data-claim="band-count">8</span> are ribbon bands, each withheld
+          independently with <code>chrome</code>. A withheld region is a presentation
+          decision about your page, not a permission — so it is <em>absent</em> and
+          silent, where a command you were offered but cannot run right now is
+          disabled and says why. "Never, for you" versus "not right now".
+        </p>
+        <!-- @generated region-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Region</div>
+            <div>What it is</div>
+            <div>readonly</div>
+            <div>preview</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>brand</code></div>
+            <div class="disp-cell">Our name and mark in the top bar.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>title</code></div>
+            <div class="disp-cell">The document name, and renaming it.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>menu</code></div>
+            <div class="disp-cell">The application menu bar — one of the two navigation axes.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>ribbon</code></div>
+            <div class="disp-cell">The whole tabbed ribbon, strip and bands together.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.file</code></div>
+            <div class="disp-cell">The File page: open, save, export, print, properties, settings.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.home</code></div>
+            <div class="disp-cell">Character and paragraph formatting, styles, clipboard, undo.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.insert</code></div>
+            <div class="disp-cell">Tables, pictures, shapes, links, comments, headers, symbols.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.layout</code></div>
+            <div class="disp-cell">Page setup, margins, columns, spacing, watermark, arrange.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.references</code></div>
+            <div class="disp-cell">Captions, cross-references, contents, footnotes, fields.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.review</code></div>
+            <div class="disp-cell">Tracked changes, comments, proofing, the review mode control.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.view</code></div>
+            <div class="disp-cell">Outline, zoom, page setup, showing changes.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>band.table</code></div>
+            <div class="disp-cell">The contextual table band, present when the caret is in a table.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>rail</code></div>
+            <div class="disp-cell">The left navigation rail: outline and page thumbnails.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>status</code></div>
+            <div class="disp-cell">The status bar: counts, page number, language, mode.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>zoom</code></div>
+            <div class="disp-cell">The zoom cluster in the status bar.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>find</code></div>
+            <div class="disp-cell">The find and replace card.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>selection</code></div>
+            <div class="disp-cell">The floating toolbar above a selection.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>settings</code></div>
+            <div class="disp-cell">The settings dialog and the gear that opens it.</div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+        </div>
+        <!-- @end region-table -->
+
+        <h3 id="wording" class="doc-h3">Change the words</h3>
+        <p class="doc-body">
+          Setting <code>name</code> renames the product in all nineteen languages. The
+          override set is derived by substitution over the committed catalogues rather
+          than written per locale, because nineteen hand-written overrides are nineteen
+          chances to forget one and the one forgotten is the one a reader sees. Host
+          overrides are a layer on the same <code>t()</code> lookup the catalogues
+          resolve through — <code>*</code> for every language, an exact tag to narrow —
+          and there is deliberately no second string mechanism.
+        </p>
+        <p class="doc-body">
+          A face is named as a file you place beside the editor, never a URL. The
+          chrome self-hosts every font it uses and a test asserts no remote font
+          reference, because local-first means the chrome paints with the network off;
+          a white-label that fetched a webfont from a CDN would break that for every
+          deployment that used it.
+        </p>
+
+        <h3 id="release" class="doc-h3">What you installed, and what it speaks</h3>
+        <p class="doc-body">
+          <code>@casualoffice/opendoc-embed/release</code> reports three numbers, and
+          they are deliberately not one. The package version is what npm resolved; the
+          engine version (<span data-claim="release-engine">0.0.1</span>) is the Rust
+          workspace the WebAssembly came from; the contract version
+          (<span data-claim="contract-version">1</span>) is what the editor speaks, and
+          it is stable across package releases because an added command, event or
+          refusal code is additive — tying it to the package version would make you
+          re-pin for changes that break nothing. The licence is
+          <span data-claim="release-licence">Apache-2.0</span>, with no licence check,
+          no tab counting and no modal anywhere in it.
+        </p>
+        <p class="doc-body">
+          There is no build commit in that module. The commit is stamped into the
+          deployed assets at deploy time; a committed file carrying a hash would be
+          wrong for every build after the one that wrote it.
+        </p>
+
         <h2 id="evidence" class="doc-h2">How this page is kept honest</h2>
         <p class="doc-body">
           The pages of this site have carried fabricated claims twice, in both
@@ -1074,11 +1353,13 @@ export function parseOriginAllowlist(raw, selfOrigin) {
             everything else off" cannot be expressed.
           </li>
           <li>
-            <b>No reading or preview chrome.</b> <code>readonly</code> and
-            <code>preview</code> get the editing chrome with controls disabled,
-            not a reading surface and a bare canvas. The two presentations are
-            designed; the surface composition that would make them real is not
-            built.
+            <b>No per-GROUP selection inside a ribbon band.</b> All eight bands are
+            selectable and every one of the
+            <span data-claim="region-count">18</span> chrome regions can be
+            withheld, but the groups <em>inside</em> a band are not addressable:
+            <span data-claim="unnamed-group-count">46</span> of them carry no
+            <code>data-group</code> attribute at all, so a per-group roster would
+            be half expressible. The honest grain for a host is the band.
           </li>
           <li>
             <b>A browser-enforced refusal does not explain itself.</b> Withholding
@@ -1088,11 +1369,13 @@ export function parseOriginAllowlist(raw, selfOrigin) {
             editor can still report a save that never reached the visitor's disk.
           </li>
           <li>
-            <b>Withholding <code>branding</code> does nothing.</b> The capability
-            exists and is refused to every role but <code>owner</code>, but no
-            code consults it, so the editor still shows its own mark inside your
-            page. White-labelling — name, mark, theme tokens, chrome selection and
-            string overrides — is phase 3.
+            <b>The favicon, the canonical URL and the meta description are not
+            configuration.</b> The brand mark in the top bar is a token and the
+            icon links are generated, so <code>brand.json</code> reaches both. The
+            canonical URL and the page description are still authored in
+            <code>editor.html</code>'s head: a white-labelled deployment that cares
+            about them edits two lines of HTML. Everything a reader sees inside the
+            editor is configuration; two things a crawler sees are not.
           </li>
           <li>
             <b>No framework bindings</b>, by choice. A custom element needs no

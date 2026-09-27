@@ -14,6 +14,13 @@
 // `.few` and `.many` without any call site changing, which is the entire
 // reason plural selection lives in the seam (`i18n.mjs`).
 export const EN_STRINGS = Object.freeze({
+  // The one sentence white-labelling needs (docs/126 phase 3). A deployment whose
+  // `brand.json` pinned the accent owns it, so the Settings colour controls are
+  // disabled WITH A REASON rather than removed — a control inside a surface the
+  // visitor was offered, which is where "never a dead control" applies. Word greys
+  // a policy-managed setting and says who set it; a control that vanishes cannot
+  // be told from a bug.
+  "branding.themeSetByHost": "The colour is set by the site that provides this editor.",
   "status.words.one": "{count} word",
   "status.words.other": "{count} words",
   "status.characters.one": "{count} character",

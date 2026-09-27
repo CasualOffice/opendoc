@@ -61,9 +61,14 @@ export function documentStateBadge(state) {
  * With no document open there is no name to show, so the page's own static
  * title stands; that is `fallback`.
  */
-export function documentTabTitle({ name, dirty = false, fallback = "OpenDoc" }) {
+export function documentTabTitle({ name, dirty = false, fallback = "OpenDoc", product = "OpenDoc" }) {
   if (!name) return fallback;
-  return `${dirty ? "• " : ""}${name} — OpenDoc`;
+  // `product` is an INPUT, and empty means "no product name at all" — a host who
+  // white-labelled, or who set `tabTitle: "document"` because the tab is theirs.
+  // It was a hardcoded literal, which is `docs/125` §2 F4's second half: the
+  // HOST's browser tab carried our brand, and a test asserted that it did.
+  const suffix = product ? ` — ${product}` : "";
+  return `${dirty ? "• " : ""}${name}${suffix}`;
 }
 
 /** Whether a message needs the transient on-screen channel — the toast — as

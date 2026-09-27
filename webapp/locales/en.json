@@ -58,6 +58,7 @@
   "bookmarkDialog.namePlaceDocumentThen": "Name a place in the document, then jump back to it anytime.",
   "bookmarkDialog.noBookmarksYetSelect": "No bookmarks yet. Select text and add one above.",
   "bookmarkDialog.sortBookmarks.label": "Sort bookmarks",
+  "branding.themeSetByHost": "The colour is set by the site that provides this editor.",
   "bulletGalleryMenu.arrowheadBullet.label": "Arrowhead bullet",
   "bulletGalleryMenu.arrowheadBullet.title": "Arrowhead bullet",
   "bulletGalleryMenu.dashBullet.label": "Dash bullet",

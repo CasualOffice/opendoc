@@ -252,9 +252,13 @@
         let bytes = session.save_docx(Default::default()).await?;</code></pre>
         </div>
         <h2 class="doc-h2" id="3-javascript-wasm-example">3. JavaScript/WASM example</h2>
+        <blockquote class="doc-quote">
+        <p class="doc-body"><strong>This example is the DESIGNED surface, not the shipped one</strong> — corrected in <code>docs/126</code> phase 3, because until then it named <code>@casualoffice/document-runtime</code>, a package that has never existed, and <code>DocumentEngine</code>, which nothing exports. A reader who copied it got a failed install. What ships today is <strong><code>@casualoffice/opendoc-embed</code></strong>: the <code>&lt;opendoc-editor&gt;</code> custom element, the capability authority, the host contract and its <code>postMessage</code> client, documented on the <a href="https://github.com/CasualOffice/opendoc/blob/main/../webapp/embedding.page.html">embedding page</a> with every snippet extracted from code that runs in CI. <code>DocumentEngine</code> belongs to the <code>casual-doc-sdk</code> convergence, which is <code>docs/125</code> §9 row 5 and still open.</p>
+        </blockquote>
         <div class="code-panel">
         <div class="code-panel-head"><span>ts</span></div>
-        <pre><code>import { DocumentEngine } from &quot;@casualoffice/document-runtime&quot;;
+        <pre><code>// Designed, not shipped. See the note above.
+        import { DocumentEngine } from &quot;@casualoffice/opendoc-embed&quot;;
 
         const engine = await DocumentEngine.create({
           locale: &quot;en-US&quot;,

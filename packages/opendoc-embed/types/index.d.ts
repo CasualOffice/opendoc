@@ -40,7 +40,71 @@ export declare function resolveCapabilities(input?: {
   mode?: Mode | string | null;
   framed?: boolean;
   autosave?: boolean | null;
+  /** Narrows the preset, never widens it. `"-print,-download"` or
+   *  `"print,download"`; an unknown entry is dropped, and dropping narrows
+   *  nothing, so a typo can never grant more. */
+  withhold?: string | null;
 }): Set<Capability>;
+
+// ---- Region composition (`docs/126` phase 3) -------------------------------
+//
+// A different axis from the capability set, and deliberately not folded into it:
+// a withheld REGION is a presentation decision about the host's own page, and a
+// withheld CAPABILITY is a permission. "Never, for you" is composition and is
+// silent; "not right now" is state and explains itself with a reason.
+
+/** Every region of the chrome a host can withhold. */
+export type Region = "brand" | "title" | "menu" | "ribbon" | "band.file" | "band.home" | "band.insert" | "band.layout" | "band.references" | "band.review" | "band.view" | "band.table" | "rail" | "status" | "zoom" | "find" | "selection" | "settings";
+
+export declare const REGIONS: readonly Region[];
+
+/**
+ * The chrome regions a page load gets.
+ *
+ * Presets, by role: `preview` gets none of them — it is the runtime as a layout
+ * and rendering engine, a picture of the document — and `readonly` gets READING
+ * chrome: the menu bar rather than the ribbon, the navigation rail, the status bar
+ * with its page count and zoom, and the find card. Every other role gets all of
+ * them. Withholding `ribbon` withholds its bands too.
+ */
+export declare function resolveRegions(input?: {
+  mode?: Mode | string | null;
+  framed?: boolean;
+  withhold?: string | null;
+}): Set<Region>;
+
+/** Reads `mode` and `chrome` off a real window. */
+export declare function hostRegions(view?: unknown): Set<Region>;
+
+/** Every host input carried on the page's URL, read once. */
+export declare function hostConfig(view?: unknown): {
+  mode: string | null;
+  autosave: boolean | null;
+  withhold: string | null;
+  chrome: string | null;
+  framed: boolean;
+};
+
+/** Parses a withhold list against a vocabulary. Only ever narrows. */
+export declare function parseWithheld(raw: string | null | undefined, known: readonly string[]): readonly string[];
+
+// ---- Release and provenance (`docs/126` phase 3) ---------------------------
+
+/** What a host installed, what it speaks, and what it was built from.
+ *
+ *  Three numbers, deliberately not one. `contract` is stable across package
+ *  releases because an added command, event or refusal code is additive
+ *  (`docs/05` §12), so tying it to `version` would make hosts re-pin for changes
+ *  that break nothing. There is no build commit: it is stamped at DEPLOY time,
+ *  and a committed file claiming one would be a fabricated provenance. */
+export declare const RELEASE: {
+  readonly package: string;
+  readonly version: string;
+  readonly contract: number;
+  readonly engine: string;
+  readonly licence: string;
+  readonly repository: string;
+};
 
 /** Maps a capability set onto the editor's existing three review modes. Fails
  *  closed to `"viewing"` for anything that is not a set. */

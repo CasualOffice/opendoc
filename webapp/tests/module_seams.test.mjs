@@ -186,6 +186,29 @@ const SRC = new URL("../src/", import.meta.url);
  *  beside the rule it calls: its only hard part is that an engine offset is a
  *  UTF-8 BYTE index (`docs/104` HF-055), which is exactly what that module is
  *  for, and it is now answerable with a plain function instead of a document.
+ *  Lowered to 16,574 by white-labelling and region composition (`docs/126` phase
+ *  3). The round needed three imports, a region application at boot, a brand
+ *  product in the tab title and a pinned-accent branch, and the file was at its
+ *  ceiling with zero slack again — so it paid with two extractions rather than
+ *  whitespace.
+ *
+ *  Out: the guarded `localStorage` helpers, now `prefs.mjs`. Worth more than the
+ *  lines because `localStorage` here is HOST POLICY — touching it throws with
+ *  site data blocked, in a cross-origin embed, or in some private modes, and an
+ *  unguarded module-scope read once left the whole editor inert — so "what
+ *  happens when storage is refused" is now a node question with a fake store,
+ *  where before only a browser with site data blocked could ask it.
+ *
+ *  And out: the appearance policy, now `appearance.mjs`. That one is the phase's
+ *  own defect. `applySettings()` wrote an INLINE `--accent` on `:root` at import
+ *  and REMOVED a host's `data-theme`, so a white-labelled build had its brand
+ *  overwritten before its first frame (`docs/125` §2 F4). The rule "a host's
+ *  brand outranks a visitor's stored preference" is now a function of two inputs
+ *  rather than six lines in the middle of a DOM reflection, and can be driven red
+ *  in node.
+ *
+ *  RE-MEASURED from the merged file after rebasing onto `origin/main`, not
+ *  before: the trap the notes above record three times.
  *  Lowered to 16,579 by the structured-paste loss fix (`docs/129` §2). The round
  *  needed an import, a `pasteLossMessage` call and the comment saying why a
  *  SUCCESSFUL paste reports as `"error"` — and the file was at its ceiling with
@@ -201,7 +224,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  ceiling to 16,589 underneath it. That is the merge trap the notes above record
  *  three times, and it is why this number is a measurement of the merged file and
  *  never arithmetic on two branches. */
-const MAIN_JS_LINE_CEILING = 16579;
+const MAIN_JS_LINE_CEILING = 16574;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
