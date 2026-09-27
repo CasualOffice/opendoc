@@ -1,9 +1,19 @@
 # 128 — The paragraph-spanning complex field
 
-**Status:** Design of record for `105` OO-001 (table of contents / table of figures),
-**representation layer only**. **Opened:** 2026-09-27.
+**Status:** **Implemented** for the representation layer. Design of record for `105`
+OO-001 (table of contents / table of figures). **Opened:** 2026-09-27.
+**Landed:** 2026-09-27 — model, validation, import, export, layout, wasm accessor.
+Generation, the update command and the editing behaviour are **not** in it (§9).
+
 **Companion:** `127` defines the field-result contract this builds on; every field
 switch, picture switch and `PAGEREF` row this document carries is specified there.
+
+Three claims in the first draft of this document were wrong, and each is corrected
+below rather than quietly dropped: the import promotion cannot land a start marker
+inside an open hyperlink (§4), the repair needed more than "an `end` at the
+container's last paragraph" (§4a), and "verbatim" export understated what the inline
+field still normalizes (§5). Each was found by driving a guard red, or by checking a
+claim against the fixture instead of trusting it.
 
 ## 1. The problem, stated as a model constraint
 
@@ -134,6 +144,20 @@ paragraphs and tables inside its container; it may not cross out of it, because 
 container is a separate part or a separate inline stream on export and the marker
 would have nowhere to be written.
 
+A **block content control (`BlockNode::Sdt`) is NOT a container**: its blocks belong
+to the enclosing container's stream on export, so the balance walk descends into one
+carrying the enclosing tally, and a range may legitimately open outside a control and
+close inside it. This matters because a `TOC` wrapped in a `w:sdt`
+(`docPartGallery = "Table of Contents"`) is the shape Word most often writes; there
+the whole range is inside the control, but nothing about the rule depends on that.
+
+Each container kind has a **negative** test — an unbalanced range inside a header, a
+footer, a footnote, an endnote, a comment, a table cell and a text box is refused.
+The positive test (the same range id recurring in two containers) pins the *scope* of
+R3 but cannot prove a container is walked at all: it asserts acceptance, so deleting
+the header walk left it green. That is recorded here because it is the exact failure
+mode this repository keeps hitting.
+
 | Rule | Violation | `ModelError` |
 | --- | --- | --- |
 | R1 | A marker's `FieldRangeId` is absent from `Definitions::field_ranges` | `DanglingFieldRangeRef(marker.id)` |
@@ -180,23 +204,84 @@ The parser now distinguishes the two cases at the one point where it can:
 4. Every following paragraph is imported with no knowledge of the range at all.
 5. `fldChar end` with an open range emits a `FieldRangeEnd`.
 
-Promotion happens **inside the wrapper drain**, so a field promoted from inside an
-open `w:hyperlink` puts its start marker and its result inside that hyperlink, which
-is where the markup put them.
+Promotion happens **inside the wrapper drain**, after the field's own wrapper marker
+is popped, so the start marker and the spliced result route into the *enclosing*
+wrapper rather than being hoisted out of it.
+
+**Correction to the first draft.** That draft said this is how "a field promoted from
+inside an open `w:hyperlink`" keeps its marker in the link. It cannot happen: every
+inline wrapper — `w:hyperlink`, `w:ins`/`w:del`, an inline `w:sdt` — is
+*element*-delimited and must close before `</w:p>`, and a close over an open field
+drains it as an **inline** field (that is what `at_paragraph_end = false` is for). So
+in well-formed XML the field is necessarily the **only** open wrapper at `</w:p>`, and
+the start marker always lands at paragraph level. The pop-before-route order is still
+correct and is kept as defence, but it is not reachable, and the test that claimed to
+exercise it was asserting nothing — the fixture had to close the hyperlink to be
+well-formed XML at all, which committed the field inline before promotion could run.
+
+The reachable and realistic case is the **end** marker: producers do write the closing
+`fldChar end` inside the last entry row's `w:hyperlink`, and the marker must then be
+that link's child because that is the run position it occupies and what the export has
+to write back. That is what is guarded.
+
+### 4b. Four cases that are not promoted
+
+Each falls back to the existing inline commit and is **reported**:
+
+| Case | Why a range would be wrong |
+| --- | --- |
+| `w:fldSimple` | Element-delimited: its result is its children, so no `fldChar end` can ever close a range made from one. Unreachable from well-formed XML (an unclosed `w:fldSimple` is refused by the reader); reachable from a `w:p` nested inside the field, which is balanced XML the schema does not allow, and that is what the guard uses. |
+| A legacy form field (`w:ffData`) | `FieldRange` carries no form configuration, so promoting one would drop the `ffData` block silently. |
+| An empty or over-long instruction | The model refuses it either way; the cached result is flattened so no text is lost. |
+| A field opened while a range is already open | Nesting is refused (R4), exactly as the inline field refuses it (`ModelError::NestedField`). One policy for one construct. |
 
 ### 4a. Repair, so the model never sees an unbalanced range
 
 A container whose markup ends with a range still open (truncated input, a producer
-bug) has an `end` synthesized at its last paragraph and the loss reported — nothing
-is dropped and the document validates. A text box is a container: `enter_frame`
-saves the open-range slot alongside `field_depth` and `exit_frame` closes any range
-the frame left open, so a range cannot leak out of a text box into the body.
+bug) has an `end` synthesized and the loss reported — nothing is dropped and the
+document validates.
 
-The hook for this is a new `BodyParser::finish_container`, which replaced the
-six-line epilogue that was **copy-pasted at five parse entry points** (body,
-notes, header/footer, comments, and the text-box frame unwind). One mechanism where
-there were five copies; adding the balance step to five copies is how the fifth gets
-forgotten.
+**Correction to the first draft.** "An `end` at its last paragraph" is not a
+specification. Where the marker can go depends on what is still open, and getting it
+wrong produces a range that crosses a container boundary — which validation then
+refuses, turning a weird document into a failed *import*. The rule as implemented:
+
+1. If a paragraph is still open, the `end` is pushed as a **segment** into it, so it
+   rides into the paragraph in document order with the ids assigned as usual.
+2. Otherwise it is appended to the last paragraph already committed **in the range's
+   own sink** — which is why the open-range slot records whether the range was
+   promoted inside a table cell. A range promoted in a cell belongs to that cell; one
+   promoted outside it belongs to the part. Reading `in_cell` at repair time instead
+   would put a body-scoped range's `end` inside a cell left open by truncated markup.
+3. Only if that sink holds no paragraph at all is a paragraph synthesized to carry the
+   marker. An empty paragraph is a visible artifact, so this is the last resort rather
+   than the mechanism — and stating it removes the "unreachable" claim that a
+   panic-or-truncate fallback would need.
+
+No content is dropped on any path: the field's result is ordinary paragraphs and stays
+exactly where it is. What is lost is *where the field ended*, and that is reported.
+
+The repair runs at four kinds of boundary:
+
+- `BodyParser::finish_container`, which replaced the epilogue copy-pasted at **four**
+  parse entry points (the body, a header/footer part, and — through `close_note` — a
+  note and a comment). One mechanism where there were four copies; adding the balance
+  step to four copies is how the fourth gets forgotten.
+- `</w:tc>`, before the cell closes, because a cell is a container.
+- `exit_frame`, for a **text box** frame only, before its content is committed — so a
+  range cannot leak between the box and the body. `push_frame` suspends the open-range
+  slot for a text-box frame and deliberately does **not** for a block content control,
+  which is transparent (§3).
+- `close_note`'s unconditional tail clears the slot, so a *skipped* note (a separator)
+  cannot leak a range into the next note parsed by the same reused parser.
+
+One consequence worth stating plainly: a complex field with `begin`/`separate` and
+**no `end` at all**, entirely within one paragraph, used to commit as an inline field
+and now becomes a range that the repair closes in the same paragraph. At `</w:p>` the
+parser cannot know whether an `end` is still coming, so paragraph-bound is not a
+decision it can make — and treating it as paragraph-bound is exactly what dropped the
+`end` for every real table of contents. A weaker shape for malformed input, traded for
+never truncating a valid one.
 
 ## 5. Export: the `fldChar` structure, written back
 
@@ -219,9 +304,27 @@ that to one run per marker. The field is the same field to any reader, including
 Word; the bytes are not the same bytes, and this document says so rather than
 claiming a fidelity we do not have.
 
-A start marker whose definition does not resolve writes nothing — the same
-defensive behaviour `BookmarkStart` already has — but validation refuses that
-document first (R1), so it is unreachable from a valid model.
+The start marker writes nothing when its definition does not resolve — the same
+defence `BookmarkStart` has — while the **end marker writes unconditionally**. The
+asymmetry is the point: an unmatched `begin` makes Word read the rest of the document
+as instruction text, whereas a stray `end` is inert. So the export's obligation is to
+never emit a `begin` it cannot complete. Validation refuses such a document first
+(R1), so the path is defence in depth for a model arriving by snapshot load.
+
+### 5a. The inline field's own normalization — a recorded gap
+
+This is the correction to the first draft's implied claim. The **range** is written as
+`fldChar`. The **inline** field is not: `write_inline` has always written an ordinary
+inline field as `w:fldSimple w:instr="…"`, so a single-paragraph complex field —
+`sample.docx`'s `TOC` among them — round-trips `fldChar` → `fldSimple`.
+
+`w:fldSimple` is a real field that Word updates, so nothing is broken and "Update
+Table" still has a field to act on. But Word itself writes the complex spelling, so
+this *is* a fidelity gap and it is recorded here rather than hidden behind the word
+"verbatim". Changing it is a change to the inline field's export, which touches every
+field in the corpus and every existing export expectation; it belongs in a change that
+covers both encodings together, like `w:dirty` and `w:fldLock` (§9), not bolted onto
+the range.
 
 ## 6. Layout: no new path
 
@@ -250,51 +353,97 @@ Nothing in layout learns what a table of contents is.
 ```
 
 Two facts about this fixture are worth recording, because both have been stated the
-other way round in this repository:
+other way round in this repository. **Both were re-verified against the file itself,
+not carried over from the draft.**
 
 1. **It is not Word output.** `docProps/core.xml` says
    `<dc:description>generated by python-docx</dc:description>`; `docProps/app.xml`
    reads `Microsoft Macintosh Word` / `AppVersion 14.0000` because that is what
    python-docx's bundled `Normal.dotm` template carries, not because Word wrote the
-   file. So it is **not** the stronger provenance for field markup, and its
-   single-`w:r` field is in fact a shape Word never writes. It is still a valuable
-   fixture — it is a real `TOC` instruction with a real cached result — but the
-   claim that it is Word-produced is false and should not be repeated.
-2. **This field does not exercise the range at all.** Its `begin` and `end` are in
-   the same paragraph, so by §2c it is, correctly, an inline `Field` — before this
-   change and after it. It is the guard that the inline path did not regress, not
-   the guard for the new one.
+   file. (Its XML declarations are single-quoted `lxml` output, too.) So it is **not**
+   the stronger provenance for field markup, and its single-`w:r` field is in fact a
+   shape Word never writes. It is still a valuable fixture — a real `TOC` instruction
+   with a real cached result — but the claim that it is Word-produced is false and
+   should not be repeated.
+2. **This field does not exercise the range at all.** The whole document contains
+   exactly three `fldChar` markers, all inside one `w:r` in one `w:p`. By §2c it is,
+   correctly, an inline `Field` — before this change and after it. It is the guard
+   that the inline path did not regress, not the guard for the new one.
 
-The range is therefore exercised by a fixture that can actually reach it: a
-paragraph-spanning `TOC` whose `begin` is in one paragraph, whose result is three
-`TOC 1` paragraphs with dot leaders and `PAGEREF` fields, and whose `end` is in the
-last of them. A fixture that cannot exercise the path under test is the specific
-trap this area has already fallen into, so both fixtures are asserted on and the
-paragraph-spanning one is asserted to *be* a range.
+### 7a. What is actually asserted
+
+| Guard | Fixture | What it proves |
+| --- | --- | --- |
+| `a_paragraph_spanning_toc_field_is_written_back_as_fld_chars` | A four-paragraph `TOC`: `begin`/instruction/`separate`, three entry rows with leader tabs and `PAGEREF` fields, `end` in the last row | `begin` → `instrText` → `separate` → result → `end` in that order, each marker its own run, and **three `w:hyperlink` rows and three `w:p` between `separate` and `end`** — the assertion neither a container representation nor the `BlockSdt` fallback could satisfy |
+| `a_paragraph_spanning_toc_field_survives_write_then_reopen` | the same | write → reopen produces an equal model, markers and definition included; and a **second save is byte-identical**, so the shape has a fixed point rather than drifting per save |
+| `sample_docx_keeps_its_toc_field_as_an_updatable_field` | `sample.docx` | its field is **not** promoted, survives export → reopen as a field with the same instruction, and is written as the `w:fldSimple` §5a records |
+| `a_field_range_marker_whose_definition_is_missing_writes_no_orphan_begin` | a hand-built model with a balanced pair and no definition | validation refuses it (R1) and the export emits no `begin` and no invented instruction |
+| `field_range_markers_are_inert_and_their_result_flows_as_paragraphs` | two entry paragraphs bracketed by markers | the flowed galley is **equal** to the same body without the markers, and the entries really did flow (so it is not two empty galleys agreeing) |
+
+**Word's own "Update Table" has not been exercised**, because that needs Word and there
+is none here. What is established is that the export writes the `fldChar` structure
+Word's field machinery reads, in the order the schema requires, with the instruction
+intact. That is the necessary condition; it is not a test of Word, and this document
+does not claim to be one.
 
 ## 8. Complexity, stated per path
 
 | Path | Cost | Note |
 | --- | --- | --- |
 | Import of a range | O(1) per marker on top of the existing single-pass parse | Promotion moves the already-accumulated segments once: O(result segments in the first paragraph) |
-| Import repair (`finish_container`) | O(1) | One `Option` check per container, not a walk |
-| Validation of a container | O(1) per marker, O(open ranges) memory | Folded into the existing validation walk; no second pass, no per-marker lookup-by-id inside a loop |
+| Import repair | O(1) per container boundary | One `Option` check, plus at most one look at the last block of one sink — never a walk |
+| Validation, R1 (reference resolves) | O(1) per marker | A keyed `contains_key`, inside the existing `validate_inlines` walk. No lookup-by-id inside a loop over ids. |
+| Validation, R2–R4 (balance) | O(inlines in the container) time, O(ranges in the container) memory | **A walk of its own**, corrected from the first draft — see below |
 | Export of a marker | O(1) | Four `write_event`s |
 | Layout | O(1) — a catch-all arm | The result paragraphs cost what paragraphs cost |
 | `fieldRangeEntries` (wasm) | O(ranges) | Reads the definition map; **no document walk**, the same shape as `bookmarkEntries` |
 | **A keystroke** | **unchanged** | See below |
 
-**What keeps a keystroke O(1).** Nothing on the editing path consults a field range.
-The markers are inert leaves; the result paragraphs are paragraphs; the definition
-map is keyed and never scanned. A document containing a `TOC` range does exactly the
-same per-keystroke work as the same document without one, because no code asks
-"am I inside a field range?" — and no code needs to, since generation and update are
-not in this layer. `document_scans` continues to pin the per-keystroke scan count at
-one.
+**Correction to the first draft: balance is its own walk, not a fold.** The draft said
+the balance check was "folded into the existing validation walk; no second pass". It is
+not, and it cannot be cheaply: balance is a *container-scoped* question — "did this
+start find its end before the container ran out?" — while `validate_inlines` sees one
+inline list at a time with no mutable state threaded through the block recursion.
+Folding a tally in would mean adding a `&mut` parameter to `validate_block`,
+`validate_table`, `validate_inlines` and `validate_group` for one construct.
 
-Validation is the one path that touches every marker, and it is already O(document)
-by construction, running inside the walk it shares with every other rule rather than
-adding a pass of its own. It runs per mutation, not per keystroke.
+So `validate_field_ranges` is a second O(document) walk. That is acceptable, and the
+reason is worth being explicit about rather than papering over: `Document::validate`
+already walks the whole document more than once (`validate_unique_ids` and
+`validate_body` are each their own pass), it runs **per mutation, not per keystroke**,
+and its memory is O(ranges in the container) — never a per-paragraph row, which is what
+`docs/127` §3 records the cost of on a 1.3M-paragraph document. What would not be
+acceptable is a per-marker lookup-by-id inside the walk, and there is none: the tally is
+two `BTreeSet`s of range ids and one `Option`.
+
+**What keeps a keystroke O(1).** Nothing on the editing path consults a field range.
+The markers are inert leaves; the result paragraphs are paragraphs; the definition map
+is keyed and never scanned. No code asks "am I inside a field range?" — and none needs
+to, since generation and update are not in this layer.
+
+That is a budget, not a sentence:
+`a_keystroke_in_a_document_with_a_field_range_costs_no_extra_document_scan` asserts a
+keystroke **inside a field's cached result** costs the same one `document_scans` as the
+same document with no range, and that the count does not change when the document
+doubles. It has its own range-bearing fixture because the existing
+`a_keystroke_costs_a_bounded_number_of_document_scans` opens plain text and therefore
+holds no range — a scan added on the range path would never execute there. Mutation:
+walking the document once per range on the keystroke path takes it to 2 against a
+budget of 1.
+
+### 8a. The operation set stayed closed (ADR-030 I2)
+
+**Zero new operations.** A range arrives by import and leaves by export; the markers
+are `InlineNode`s, so the existing content operations move, copy and delete them like
+any other inline, and the definition table is reached the same way
+`Definitions::bookmarks` is. Undo/redo, review tracking and the transaction log
+therefore work without knowing the feature exists — the same result the captions work
+reached, and for the same reason.
+
+The one place this shows as a *restriction* rather than a freedom is §10.1: an edit that
+deletes one marker of a pair makes the document invalid and is refused. That is the
+honest consequence of not adding an operation, and the fix is the editing work in §9,
+not an operation bolted on here.
 
 When generation and update land (§9) they are legitimately O(document): per ADR-005
 and `107` §4 they must not run on the main thread, must show progress and must be
@@ -336,3 +485,15 @@ they use — there is no worker.
 4. **`Definitions::field_ranges` is not garbage-collected.** A definition whose
    markers are both deleted stays in the map (allowed by §3). Bookmarks behave the
    same way; a sweep, if wanted, belongs with the editing work.
+5. **A range crossing into or out of a block content control is allowed by validation
+   but repaired by import.** §3 makes a `BlockNode::Sdt` transparent, so a range that
+   opens outside one and closes inside it is a *valid* model. Import cannot produce it,
+   though: `push_frame` suspends the open-range slot for a text-box frame only, and a
+   block control's frame leaves the slot live — which is right — but a range left open
+   when the control's frame exits is not balanced there, so it reaches the container's
+   own repair instead. No producer in the corpus writes one, and the asymmetry is
+   recorded rather than resolved because resolving it means threading the slot through
+   the frame for one kind and not the other twice over.
+6. **The inline field still exports as `w:fldSimple`** (§5a). Not introduced here and
+   not fixed here; it belongs with `w:dirty`/`w:fldLock` in one change that covers both
+   encodings.

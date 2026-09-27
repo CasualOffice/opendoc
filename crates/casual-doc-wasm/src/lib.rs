@@ -27499,6 +27499,98 @@ mod tests {
         assert!(restored[0].ends_with("\tanchor"));
     }
 
+    /// **A document holding a paragraph-spanning field costs a keystroke no more than
+    /// the same document without one, and the cost does not grow with the document.**
+    ///
+    /// `docs/107` §4 makes per-keystroke work O(1) in document size an owner
+    /// constraint, and `docs/128` §8 claims a field range is free on that path because
+    /// the markers are inert leaves and the definition map is keyed, never scanned.
+    /// This is that claim as a budget rather than a sentence.
+    ///
+    /// The existing `a_keystroke_costs_a_bounded_number_of_document_scans` pins the
+    /// same rule, but its fixture is plain text opened from a `.txt`, so it holds no
+    /// field range and a scan added on the range path would never execute there — the
+    /// "green for the wrong reason" shape `SKILL.md` §4 warns about. Hence a
+    /// range-bearing fixture here, and hence the doubling: a budget alone catches a
+    /// per-range cost, a doubling catches a per-paragraph one.
+    #[test]
+    fn a_keystroke_in_a_document_with_a_field_range_costs_no_extra_document_scan() {
+        /// The same ONE the plain-text budget allows: the editing path resolves the
+        /// caret's surface once, and that is the whole per-keystroke document cost.
+        const BUDGET: usize = 1;
+
+        let scans = |paragraphs: usize, with_range: bool| {
+            let mut xml = String::from(r#"<w:document xmlns:w="urn:w"><w:body>"#);
+            if with_range {
+                xml.push_str(
+                    r#"<w:p>
+                        <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                        <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r>
+                        <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                    </w:p>"#,
+                );
+            }
+            for _ in 0..paragraphs {
+                xml.push_str("<w:p><w:r><w:t>A paragraph of ordinary body text.</w:t></w:r></w:p>");
+            }
+            if with_range {
+                xml.push_str(r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#);
+            }
+            xml.push_str("</w:body></w:document>");
+            let document = casual_doc_import::import_main_document_xml(
+                xml.as_bytes(),
+                casual_doc_import::ImportConfig::default(),
+            )
+            .expect("import")
+            .document;
+            assert_eq!(
+                document.definitions().field_ranges.iter().count(),
+                usize::from(with_range),
+                "the fixture really does (or does not) hold a range — a fixture that \
+                 cannot exercise the path would make this guard meaningless"
+            );
+            let mut wasm = wasm_document(document);
+            // Type into a paragraph INSIDE the field's cached result, which is the
+            // position a per-range cost would be charged to.
+            let target = wasm
+                .document
+                .body()
+                .iter()
+                .filter_map(|block| match block {
+                    casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                        Some(paragraph.id.to_string())
+                    }
+                    _ => None,
+                })
+                .nth(if with_range { 1 } else { 0 })
+                .expect("a body paragraph");
+            casual_doc_edit::reset_document_scans();
+            wasm.insert_text(&target, 0, "x".to_owned())
+                .expect("type one character");
+            casual_doc_edit::document_scans()
+        };
+
+        let plain = scans(200, false);
+        let ranged = scans(200, true);
+        let ranged_twice_as_long = scans(400, true);
+        assert!(
+            ranged <= BUDGET,
+            "a keystroke inside a field range's result scanned the whole document \
+             {ranged} times, against a budget of {BUDGET}; per-keystroke work is O(1) \
+             in document size (`docs/107` §4)"
+        );
+        assert_eq!(
+            plain, ranged,
+            "a document holding a paragraph-spanning field must not make a keystroke \
+             cost more than the same document without one"
+        );
+        assert_eq!(
+            ranged, ranged_twice_as_long,
+            "a keystroke cost {ranged} scans at 200 paragraphs and \
+             {ranged_twice_as_long} at 400 — the cost grows with the document"
+        );
+    }
+
     #[test]
     fn field_range_entries_lists_a_paragraph_spanning_field_and_not_an_inline_one() {
         // The host-facing accessor a surface needs before it can offer to act on a
