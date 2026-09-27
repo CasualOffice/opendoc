@@ -43,6 +43,7 @@ Cmd
 Collabora
 Ctrl
 DOCX
+DOCXF
 DOM
 DOTX
 DPI
@@ -61,6 +62,7 @@ FFI
 FID
 FNV
 FORMCHECKBOX
+FORMDROPDOWN
 FORMTEXT
 Firefox
 Frontend
@@ -373,6 +375,7 @@ parsers
 passthrough
 pdf
 perf
+pilcrow
 pointercancel
 pointerdown
 pointermove

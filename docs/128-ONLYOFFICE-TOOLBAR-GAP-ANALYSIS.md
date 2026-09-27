@@ -623,7 +623,7 @@ S = under a day, M = up to a week, L = more than a week). **Fifteen new rows**, 
 `#7` rank it came from. Nothing here duplicates an open row; where an existing row covers the
 work, §7 names it instead.
 
-| Proposed id | Lane | Pri | Eff | Description, in the tracker's voice | §7 |
+| Proposed id | Lane | Priority | Effort | Description, in the tracker's voice | §7 |
 | --- | --- | --- | --- | --- | --- |
 | OO-022 | Audit | P1 | M | No way to insert a page, column or section break — the operation set has no break-insert variant, so `Blank Page` is blocked behind it too | 1 |
 | OO-023 | Audit | P1 | M | No formatting-marks view — no pilcrow, space dot, tab arrow or page-break rule, and no invisibles primitive in the display list | 2 |
@@ -644,7 +644,7 @@ work, §7 names it instead.
 Plus two rows that are **not** ONLYOFFICE gaps but came out of the measurement (§11). They are
 listed separately so the owner can file them in the Hotfix lane, where they belong:
 
-| Proposed id | Lane | Pri | Eff | Description, in the tracker's voice |
+| Proposed id | Lane | Priority | Effort | Description, in the tracker's voice |
 | --- | --- | --- | --- | --- |
 | HF-190 | Hotfix | P2 | S | The context menu wires five leaf capabilities under ids the registry does not answer (`link.add`, `comment.add`, `paragraph.bullets`, `paragraph.numbering`, `paragraph.properties`), so a cross-surface parity guard cannot see those rows and the menu is a second implementation free to drift — it already shipped the compact chrome with no list buttons and no Add comment (`docs/115`:314-323) |
 | HF-191 | Hotfix | P3 | S | `ribbon_faces.mjs:1-13` and `ribbon-command-faces.spec.mjs:3-9` carry a hand-maintained "120 controls / References 7/7" count that is now 122 / 9-of-9, and it is the source of the figure quoted elsewhere |
@@ -677,6 +677,18 @@ hygiene), `npm ci` in the worktree, two throwaway Playwright probes on an explic
 `node --test tests/keymap.test.mjs tests/ribbon_faces.test.mjs tests/menu_taxonomy.test.mjs`
 (33/33) and `npx playwright test one-axis-navigation ribbon-command-faces
 command-shortcut-coverage` (19/19 in 4.7 min, no retries).
+
+This document is itself an input to a derived artifact — `webapp/dict/glossary.txt` is
+regenerated from the repository's own documentation — so `node webapp/tools/build-glossary.mjs`
+was re-run and the three new terms it earns (`DOCXF`, `FORMDROPDOWN`, `pilcrow`) are committed
+with it. Two more were rejected by changing this document rather than the dictionary: the row
+tables originally used `Pri` and `Eff` as column headers, which crossed the generator's
+occurrence threshold and would have shipped two non-words to every user's spell checker. The
+headers now read `Priority` and `Effort`. **The guard was proven able to fail**: mutating
+`pilcrow` to `pilcrowMUTATED` in the committed glossary turned
+`tests/glossary_artifact.test.mjs` red — `not ok 1 - the committed glossary is exactly what the
+generator derives, today` — and regenerating returned it to 10/10. `npm run test:unit` is
+580/580.
 
 - **The 122 total was measured twice, two ways, and agrees** — live DOM with the guard's own
   selector, and statically over the markup (§0). Cross-checked against the declaration tables:
