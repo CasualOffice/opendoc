@@ -588,6 +588,32 @@
                    Footer tab's Options group. -->
               <button data-i18n-title="panelInsert.differentFirstPageHeader.title" data-i18n-label="panelInsert.differentFirstPage.label" id="insertFirstPageVariantBtn" type="button" class="fmt" title="Different first page header and footer" aria-label="Different first page" aria-pressed="false" disabled><span class="ms" aria-hidden="true">looks_one</span></button>
               <button data-i18n-title="panelInsert.differentOddEvenPage.title" data-i18n-label="panelInsert.differentOddEvenPages.label" id="insertEvenOddVariantBtn" type="button" class="fmt" title="Different odd and even page headers and footers" aria-label="Different odd and even pages" aria-pressed="false" disabled><span class="ms" aria-hidden="true">import_contacts</span></button>
+              <!-- Header and footer settings — the band distances and the page
+                   numbering, which nothing could reach.
+
+                   It sits in THIS group, last, because that is where ONLYOFFICE
+                   puts the same controls. Their Header & Footer contextual ribbon
+                   tab (`apps/documenteditor/main/app/view/HeaderFooterTab.js`)
+                   reads, left to right: the Header & Footer button, then Page
+                   Number / Date & Time / Field / Image, then — one separator later
+                   — a group holding "Header from top" and "Footer from bottom"
+                   (L63-72), then the "Different odd and even pages" and "Different
+                   first page" switches (L74-81) and "Link to previous" (L82-87)
+                   with no separator between those last two, so the three switches
+                   read as one block. The distances sit BESIDE the switches, not in
+                   a margins dialog, and that grouping is what this dialog copies.
+
+                   A dialog and not a ribbon group, because two labelled spinners
+                   and three checkboxes is ~400px of band for controls nobody
+                   touches twice in a session. ONLYOFFICE can afford it only
+                   because their tab is CONTEXTUAL — it exists only while the caret
+                   is inside a header (`controller/Toolbar.js:1035-1043`) — and this
+                   chrome has no contextual tab to spend. Their own earlier answer
+                   was a dialog-shaped right-side panel with exactly these groups
+                   (`view/HeaderFooterSettings.js` + its template: Position,
+                   Options, Insert Page Number, Page Numbering), now commented out
+                   of `view/RightMenu.js:56` but still the closer shape. -->
+              <button data-i18n-title="panelInsert.headerFooterSettings.title" data-i18n-label="panelInsert.headerFooterSettings.label" id="headerFooterSettingsBtn" type="button" class="fmt" title="Header and footer position, options, and page numbering" aria-label="Header and footer settings" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">tune</span></button>
             </div>
             <span data-i18n="panelInsert.headerAmpFooter" class="rgroup-label">Header &amp; footer</span>
           </div>
@@ -1016,6 +1042,52 @@
                 <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
                 <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
                 <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <!-- Gutter: the binding margin added on the inner edge, which the
+                     engine has added to `margin_start` since P1F-36
+                     (`casual-doc-layout/src/document_layout.rs`) with no way to
+                     ask for one. It belongs beside the four margins, which is
+                     where ONLYOFFICE keeps it too
+                     (`apps/documenteditor/main/app/view/PageMarginsDialog.js:89`,
+                     in their Margins dialog).
+
+                     It gets its OWN label, which is a deliberate departure from
+                     them: their spinner has none, sitting under a bold header
+                     reading "Gutter position" that actually belongs to the combo
+                     beside it — they even define the string `textGutter`
+                     (`PageMarginsDialog.js:428`) and never reference it.
+
+                     Word's "Gutter position" (top vs left) is NOT offered: it is
+                     `w:settings/w:gutterAtTop`, which this engine does not model,
+                     and `document_layout.rs` records that landing it is a
+                     multi-crate change that must arrive as one unit. An offered
+                     control that silently did nothing is the thing docs/63
+                     forbids. -->
+                <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+            </fieldset>
+            <!-- Word's Page Setup ▸ Layout ▸ Vertical alignment. WORD is the model
+                 here and not ONLYOFFICE, because ONLYOFFICE does not have this
+                 feature at all — not merely no dialog: their `SectPr` constructor
+                 (`sdkjs/word/Editor/sections/sect-pr.js:58-88`) has no VAlign
+                 field, and their binary section-property enum
+                 (`sdkjs/word/Editor/Serialize2.js:391-406`) has no slot for it, so
+                 `w:vAlign` cannot survive a round-trip through their editor.
+
+                 The engine has aligned pages since `apply_page_vertical_alignment`
+                 (`casual-doc-layout/src/document_layout.rs:1206`), and it takes the
+                 property seriously enough that incremental repagination refuses to
+                 reuse a page while it is set — which is the note the dialog carries
+                 below, because a user choosing this on a long document should know
+                 it costs a full repagination per edit. -->
+            <fieldset class="dialog-group">
+              <legend data-i18n="pageSetupMenu.layout">Layout</legend>
+              <div class="dialog-field-grid">
+                <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
+                  <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
+                  <option data-i18n="pageSetupMenu.vAlignCenter" value="center">Center</option>
+                  <option data-i18n="pageSetupMenu.vAlignBoth" value="both">Justified</option>
+                  <option data-i18n="pageSetupMenu.vAlignBottom" value="bottom">Bottom</option>
+                </select></label>
               </div>
             </fieldset>
             <fieldset class="dialog-group">
@@ -1035,6 +1107,143 @@
           <div class="dialog-actions">
             <button data-i18n="pageSetupMenu.cancel" type="button" id="pageSetupCancel" class="dialog-button">Cancel</button>
             <button data-i18n="pageSetupMenu.apply2" type="button" id="pageSetupApply" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Header and footer settings. ONLYOFFICE's grouping, verbatim: Position,
+         then Options, then Page numbering — the three sections of their own
+         header/footer settings surface
+         (`apps/documenteditor/main/app/template/HeaderFooterSettings.template`
+         L4 "Position", L20 "Options", L84 "Page Numbering"), and the same
+         adjacency their live Header & Footer ribbon tab keeps
+         (`view/HeaderFooterTab.js` L63-87: the two distances, one separator, then
+         the three switches).
+
+         Two spinners, not one. Their dead right panel had a SINGLE distance
+         spinner whose label flipped between "Header from Top" and "Footer from
+         bottom" depending on which band the caret was in
+         (`view/HeaderFooterSettings.js:117-123`); their current ribbon tab shows
+         both at once (`view/HeaderFooterTab.js:166,183`). Both is right: this
+         dialog is reachable with the caret in the body, where "which band am I
+         in" has no answer, and a control whose meaning depends on where you came
+         from is a control that has to be re-read every time.
+
+         Word's own home for the distances is Page Setup ▸ Layout ▸ "From edge".
+         They are here instead because the owner asked for ONLYOFFICE's UX and
+         this is the one place the two products genuinely disagree about: Word
+         files them with the page geometry, ONLYOFFICE with the headers they
+         actually position. ONLYOFFICE is right about which question a user is
+         answering, and it is also what keeps the page-geometry dialog from
+         growing a seventh group. -->
+    <div id="headerFooterSettingsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="headerFooterSettingsTitle" aria-describedby="headerFooterSettingsDescription">
+      <section class="dialog-card header-footer-settings-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="headerFooterSettingsDialog.title" id="headerFooterSettingsTitle">Header and footer</h2>
+              <p data-i18n="headerFooterSettingsDialog.description" id="headerFooterSettingsDescription">Where the running bands sit, which pages get their own, and how the pages are numbered.</p>
+            </div>
+          </div>
+          <button data-i18n-title="headerFooterSettingsDialog.close.title" data-i18n-label="headerFooterSettingsDialog.close.label" id="headerFooterSettingsClose" type="button" class="dialog-close" title="Close" aria-label="Close header and footer settings">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body header-footer-settings-body">
+          <!-- Which section the dialog is showing. The same control Page setup
+               carries, for the same reason and reading the same engine answer:
+               these are per-section properties and the only defect worth
+               designing against here is showing one section's values while
+               writing another's. ONLYOFFICE has NO such control on any page
+               dialog — their scope is implicit "current section", decided in
+               `sdkjs/word/Editor/Document.js:16981` (`GetCurrentSectPr()`), and
+               two of their margins controls are silently document-wide inside a
+               per-section dialog (`Document.js:17016-17021`). They do ship a
+               proper "Apply changes to" on Line Numbers
+               (`view/LineNumbersDialog.js:159-170`), so the control is theirs;
+               its absence from the page dialogs is an inconsistency, not a
+               design. -->
+          <fieldset class="dialog-group">
+            <legend data-i18n="headerFooterSettingsDialog.applyTo">Apply to</legend>
+            <label data-i18n="headerFooterSettingsDialog.section" class="dialog-field">Section<select id="headerFooterSection" class="dialog-select"></select></label>
+          </fieldset>
+          <fieldset class="dialog-group">
+            <legend data-i18n="headerFooterSettingsDialog.position">Position</legend>
+            <div class="dialog-field-grid">
+              <label data-i18n="headerFooterSettingsDialog.headerFromTop" class="dialog-field">Header from top<span class="number-control"><input id="headerFromTop" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <label data-i18n="headerFooterSettingsDialog.footerFromBottom" class="dialog-field">Footer from bottom<span class="number-control"><input id="footerFromBottom" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+            </div>
+          </fieldset>
+          <fieldset class="dialog-group">
+            <legend data-i18n="headerFooterSettingsDialog.options">Options</legend>
+            <!-- Odd/even BEFORE first page, which is the order their live ribbon
+                 tab uses (`view/HeaderFooterTab.js` L76 then L79) and the reverse
+                 of the order their dead panel used. The two checkboxes are the
+                 SAME commands the Insert band's two toggle buttons run, so a
+                 change here shows up there and vice versa — one engine answer,
+                 two faces, which is the parity requirement rather than a second
+                 copy of the state. -->
+            <label class="dialog-check"><input id="headerFooterDiffOddEven" type="checkbox" /><span data-i18n="headerFooterSettingsDialog.diffOddEven">Different odd and even pages</span></label>
+            <label class="dialog-check"><input id="headerFooterDiffFirst" type="checkbox" /><span data-i18n="headerFooterSettingsDialog.diffFirst">Different first page</span></label>
+            <!-- Link to previous. ONLYOFFICE ships this as `chSameAs`
+                 (`view/HeaderFooterTab.js:219`) and DISABLES rather than hides it
+                 when there is no previous section to link to
+                 (`controller/HeaderFooterTab.js:247`, keyed on their core
+                 returning `null` rather than `false` for the first section) —
+                 which is the same rule this product states as "never a dead
+                 control, disabled with a reason".
+
+                 It is offered here READ-ONLY, reflecting the truth the engine
+                 already reports (`runningBands` returns `headerLinked` /
+                 `footerLinked`), and carrying why it cannot be changed yet. The
+                 reason is not laziness: in OOXML a section inherits by OMITTING
+                 `w:headerReference`, so UNLINKING has to materialise a copy of the
+                 inherited body — with fresh node ids for every descendant — or
+                 editing the newly "unlinked" header would still change the
+                 previous section's. The op that points a reference exists
+                 (`Operation::SetSectionRunningRef`, `None` being the linked form)
+                 and the deep copy does not. Shipping the toggle without it would
+                 produce exactly the silent cross-section mutation docs/104 T-01
+                 is about. Designed in docs/127; tracked as its own row. -->
+            <label data-i18n-title="headerFooterSettingsDialog.linkReason" class="dialog-check" title="Unlinking has to copy the inherited header into this section, which the engine cannot do yet"><input id="headerFooterLinkToPrevious" type="checkbox" disabled /><span data-i18n="headerFooterSettingsDialog.linkToPrevious">Link to previous</span></label>
+            <p data-i18n="headerFooterSettingsDialog.linkReason" id="headerFooterLinkReason" class="dialog-note">Unlinking has to copy the inherited header into this section, which the engine cannot do yet — so this shows what the document says and cannot be changed.</p>
+          </fieldset>
+          <fieldset class="dialog-group">
+            <legend data-i18n="headerFooterSettingsDialog.pageNumbering">Page numbering</legend>
+            <!-- "Continue from previous section" / "Start at N" is exactly their
+                 dialog (`view/PageNumberingDlg.js` L68-78 and L90-113), and it is
+                 exactly Word's Page Number Format too. It is a radio pair rather
+                 than a checkbox because it is exactly-one-of, and it is a radio
+                 pair rather than "restart numbering" because OOXML has no restart
+                 flag: continuing IS an absent `w:start`, which is how their own
+                 dialog encodes it (`PageNumberingDlg.js:271` sends -1 for
+                 continue). -->
+            <label class="dialog-check"><input id="pageNumberContinue" type="radio" name="pageNumberStartMode" value="continue" /><span data-i18n="headerFooterSettingsDialog.continueFromPrevious">Continue from previous section</span></label>
+            <label class="dialog-check"><input id="pageNumberRestart" type="radio" name="pageNumberStartMode" value="startAt" /><span data-i18n="headerFooterSettingsDialog.startAt">Start at</span><span class="number-control"><input data-i18n-label="headerFooterSettingsDialog.startAt" id="pageNumberStart" type="number" min="0" max="1000000" step="1" inputmode="numeric" aria-label="Start at" /></span></label>
+            <!-- Their six formats (`view/PageNumberingDlg.js:115-122`), minus
+                 `NumberInDash` ("- 1 -, - 2 -"), which is not an
+                 `ST_NumberFormat` token this engine types — it would have to ride
+                 `NumberFormat::Other`, and offering a value the layout cannot
+                 render as anything but decimal is a control that lies. Their
+                 Russian-locale pair and their "More types" escape hatch are also
+                 out: the first is locale-gated in a way `ST_NumberFormat` does not
+                 need, and the second opens a whole list-format picker for a page
+                 number. -->
+            <label data-i18n="headerFooterSettingsDialog.numberFormat" class="dialog-field">Number format<select id="pageNumberFormat" class="dialog-select">
+              <option data-i18n="numberFormat.decimal" value="decimal">1, 2, 3, …</option>
+              <option data-i18n="numberFormat.lowerLetter" value="lowerLetter">a, b, c, …</option>
+              <option data-i18n="numberFormat.upperLetter" value="upperLetter">A, B, C, …</option>
+              <option data-i18n="numberFormat.lowerRoman" value="lowerRoman">i, ii, iii, …</option>
+              <option data-i18n="numberFormat.upperRoman" value="upperRoman">I, II, III, …</option>
+            </select></label>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="headerFooterSettingsDialog.note" class="dialog-note">Applies to this section and can be undone.</span>
+          <div class="dialog-actions">
+            <button data-i18n="headerFooterSettingsDialog.cancel" type="button" id="headerFooterSettingsCancel" class="dialog-button">Cancel</button>
+            <button data-i18n="headerFooterSettingsDialog.apply" type="button" id="headerFooterSettingsApply" class="dialog-button dialog-button-primary">Apply</button>
           </div>
         </footer>
       </section>

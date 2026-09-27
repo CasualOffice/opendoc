@@ -1756,10 +1756,25 @@ body.modal-open {
      The ch ceiling keeps a long margin label from stretching it back out. */
   /* This declaration DOES NOT PARSE and never has — see `.field-dialog`, which
      explains why, and `dialog_density.test.mjs`, which ratchets it. Left as
-     written rather than corrected in passing: the one-word fix changes this
-     card's rendered width, and Page setup is not this change's to redesign. */
+     written rather than corrected in passing: `fit-content` on its own would size
+     this card to its content, and what this dialog needs is the opposite — a
+     stated width wide enough to hold two columns of groups. The declaration below
+     is the one that applies. */
   width: min(fit-content, 100%);
-  max-inline-size: min(100%, 68ch);
+  /* The layout pass `dialog_density.test.mjs` said Page setup wanted.
+     MEASURED, on a 1280x720 laptop: the body held 602px of content in a 560px
+     box, so 42px of this dialog — the bottom of the Columns group — was already
+     below the fold before this change added anything, and `dialog-fit.spec.mjs`
+     did not cover it. Two more groups (a Gutter field, which `auto-fit` absorbs
+     into the existing Margins rows for free, and Vertical alignment, which does
+     not) would have made that 108px.
+
+     A wider card and two columns of groups fixes both at once: the aside column
+     already wasted ~320px of empty space under a 240px preview, and the groups
+     were a single tall stack beside it. Page setup is now in `dialog-fit`'s roster
+     so this cannot regress. */
+  width: min(900px, 100%);
+  max-inline-size: min(100%, 112ch);
 }
 
 /* `min(fit-content, 100%)` IS NOT VALID CSS, and it is written on five cards in
@@ -1875,10 +1890,24 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
+/* Two columns of GROUPS, not one tall stack. `auto-fit` rather than a fixed pair
+   so the same rule collapses to one column when the card is narrow — the
+   `max-width` rung below then only has the gap left to adjust. `align-content:
+   start` keeps the groups at the top instead of stretching them to fill, and
+   `start` on `align-items` stops a short group growing to match a tall neighbour.
+
+   28rem is chosen from what the groups hold: a `.dialog-field-grid` cell is
+   `clamp(7rem, 20vw, 9rem)`, so two of them plus the gap need ~19rem, and 28rem
+   leaves room for the Margins group to keep three cells per row at the card's
+   900px. Below two columns' worth, one column is correct rather than two cramped
+   ones — the same judgement `.dialog-field-grid` records about not stacking a
+   pair of five-character fields. */
 .page-setup-fields {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-direction: column;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  align-content: start;
+  align-items: start;
   gap: 20px;
 }
 
@@ -2004,6 +2033,48 @@ body.modal-open {
      available space, so the `min()` bought nothing even in intent. */
   width: fit-content;
   max-inline-size: min(100%, 56ch);
+}
+
+/* ---- Header and footer settings ------------------------------------------- */
+/* Sized by what it holds, like the cards above: the widest row is the Position
+   pair, and the standard 640px constant would leave a third of every row empty.
+   `fit-content` on its own, NOT the unparseable `min(fit-content, …)` — see
+   `.field-dialog`. */
+.header-footer-settings-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 58ch);
+}
+
+.header-footer-settings-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Rhythm on the ROWS and not as a gap on the fieldset, for the reason
+   `.watermark-body` records: `fieldset { display: flex }` takes the legend out of
+   the flow inconsistently across engines, and these legends are what a screen
+   reader reads the checkboxes and radios out under. */
+.header-footer-settings-body .dialog-check + .dialog-check,
+.header-footer-settings-body .dialog-check + .dialog-note,
+.header-footer-settings-body .dialog-check + .dialog-field,
+.header-footer-settings-body .dialog-field-grid + .dialog-check {
+  margin-top: 12px;
+}
+
+/* "Start at" and its spinner read across, so the number belongs to the words
+   beside it rather than sitting under them. */
+.header-footer-settings-body .dialog-check {
+  flex-wrap: wrap;
+}
+
+/* The reason a disabled control carries, under the control it explains. Indented
+   to the checkbox's text so it reads as that row's footnote and not as a note
+   about the whole group. */
+#headerFooterLinkReason {
+  margin-top: 6px;
+  padding-inline-start: 26px;
 }
 
 /* ---- Drop cap ------------------------------------------------------------- */
