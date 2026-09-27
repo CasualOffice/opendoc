@@ -353,7 +353,11 @@ const BULLET = /^(\s*)([-*+])\s+(.*)$/;
 const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const TABLE_ROW = /^\s*\|/;
-const TABLE_DIVIDER = /^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/;
+// One dash is enough, because `:-:` is a legal GFM centre marker and the first
+// version of this required two — which silently rendered a centre-aligned table as
+// three paragraphs of pipes. No document in the published set uses that spelling
+// today; the guard in `tests/doc_pages.test.mjs` does, which is how it was found.
+const TABLE_DIVIDER = /^\s*\|(\s*:?-+:?\s*\|)+\s*$/;
 
 /** Splits a Markdown source into blocks. Returned as data rather than HTML so
  *  the same walk can produce the page body, the on-this-page list, and the

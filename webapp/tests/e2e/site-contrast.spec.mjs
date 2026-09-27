@@ -55,8 +55,24 @@ const MARKETING_CSS = readFileSync(join(WEBAPP, "src", "marketing.css"), "utf8")
 const GENERATED = readdirSync(WEBAPP)
   .filter((name) => name.endsWith(".page.html"))
   .map((name) => name.replace(/\.page\.html$/, ".html"));
+
+/** The reference pages — the repository's own design docs, published as site pages
+ *  by `tools/build-doc-pages.mjs` (`109` HF-192).
+ *
+ *  DISCOVERED from the directory, for the same reason as above and with a sharper
+ *  edge: these pages are generated, so there are eleven of them today and there
+ *  will be more, and nobody will remember this sweep when the twelfth is added.
+ *  They also introduced the first prose components this stylesheet has ever had to
+ *  paint — rendered Markdown: tables with their own header ground, block quotes on
+ *  `--surface-3`, nested lists, a provenance line in the faint tone — none of which
+ *  the hand-built docs page needed and none of which any sweep had measured. */
+const REFERENCE = readdirSync(join(WEBAPP, "reference"))
+  .filter((name) => name.endsWith(".html"))
+  .map((name) => `reference/${name}`);
+
 const PAGES = [
   ...GENERATED,
+  ...REFERENCE,
   ...readdirSync(WEBAPP).filter(
     (name) =>
       name.endsWith(".html") &&
@@ -198,13 +214,17 @@ test("--faint-on-paper clears AA on every ground the site paints it on", async (
 });
 
 test("the sweep covers every page the site generator builds", async () => {
-  // The floor that stops the page list emptying out unnoticed. MEASURED: five
-  // pages today — four generated (index, docs, fidelity, embedding) plus the
-  // hand-written embed host. If a template is deleted the count drops and this
-  // fails, which is the difference between a discovered list and an absent one.
+  // The floor that stops the page list emptying out unnoticed. MEASURED: seventeen
+  // pages today — four from `*.page.html` templates (index, docs, fidelity,
+  // embedding), twelve reference pages generated from `docs/`, and the hand-written
+  // embed host. If a template or the reference directory is emptied the count drops
+  // and this fails, which is the difference between a discovered list and an absent
+  // one.
   expect(GENERATED.length, `generated pages: ${GENERATED.join(", ")}`).toBeGreaterThan(3);
+  expect(REFERENCE.length, `reference pages: ${REFERENCE.join(", ")}`).toBeGreaterThan(8);
+  expect(REFERENCE).toContain("reference/index.html");
   expect(PAGES, `site pages swept: ${PAGES.join(", ")}`).toContain("embed.html");
-  for (const generated of GENERATED) expect(PAGES).toContain(generated);
+  for (const page of [...GENERATED, ...REFERENCE]) expect(PAGES).toContain(page);
 });
 
 test("the site is one theme, and stays one theme while this sweep is one theme", async () => {
