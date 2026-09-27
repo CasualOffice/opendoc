@@ -1,7 +1,7 @@
 {
   "name": "@casualoffice/opendoc-embed",
   "version": "0.1.0",
-  "description": "Framework-free <opendoc-editor> custom element, and the capability contract it resolves before first paint.",
+  "description": "Framework-free <opendoc-editor> custom element, the capability contract it resolves before first paint, and the host contract for commanding it.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/embed_element.mjs",
@@ -19,6 +19,14 @@
     "./capabilities": {
       "types": "./types/index.d.ts",
       "import": "./src/capabilities.mjs"
+    },
+    "./contract": {
+      "types": "./types/index.d.ts",
+      "import": "./src/host_contract.mjs"
+    },
+    "./client": {
+      "types": "./types/index.d.ts",
+      "import": "./src/host_client.mjs"
     }
   },
   "files": [

@@ -37,7 +37,14 @@ import {
   resolveCapabilities,
   sandboxTokensFor,
 } from "../src/capabilities.mjs";
-import { OPENDOC_EDITOR_TAG } from "../src/embed_element.mjs";
+import { OPENDOC_EDITOR_TAG, OpenDocEditorElement } from "../src/embed_element.mjs";
+import {
+  COMMAND_CONTRACT,
+  HOST_EVENTS,
+  PROTOCOL,
+  REFUSAL_CODES,
+  commandContract,
+} from "../src/host_contract.mjs";
 
 const WEBAPP = dirname(dirname(fileURLToPath(import.meta.url)));
 const REPO = dirname(WEBAPP);
@@ -318,12 +325,47 @@ test("everything under 'does not do yet' is still not done", () => {
     .map((name) => read(join(PACKAGE, "src", name)))
     .join("\n");
 
-  // No command/event API, and no postMessage protocol.
-  assert.ok(!/postMessage/.test(packageSources), "the package now speaks postMessage");
+  // The ELEMENT has no command methods: the contract is reached through
+  // `window.opendoc` or through `createHostClient`, and a host holds the contract
+  // rather than the element. Asserted against the class, not against its source,
+  // so adding a method is caught however it is spelled.
+  for (const method of ["execute", "query", "describe", "ping", "on", "off"]) {
+    assert.equal(
+      typeof OpenDocEditorElement.prototype[method],
+      "undefined",
+      `the element now has a ${method}() method, so the page must stop saying it does not`,
+    );
+  }
   const events = [...packageSources.matchAll(/new CustomEvent\(\s*([A-Z_]+|"[^"]+")/g)].map(
     (m) => m[1],
   );
   assert.deepEqual(events, ["CAPABILITIES_EVENT"], "the element now fires more than one event");
+
+  // No arguments for most commands: the schema declares an argument list and
+  // exactly one row uses it.
+  const withArgs = COMMAND_CONTRACT.filter((row) => row.args.length > 0).map((row) => row.id);
+  assert.deepEqual(withArgs, ["view.zoom"], "more commands take arguments now");
+
+  // No document I/O through the contract: none of the four verbs moves bytes.
+  assert.deepEqual([...PROTOCOL.requests], ["describe", "execute", "query", "ping"]);
+  const write = HOST_EVENTS.find((event) => event.name === "export");
+  assert.deepEqual(
+    [...write.detail],
+    ["format", "name", "bytes"],
+    "the export event's payload changed — if it now carries the document, the page " +
+      "must stop saying a host cannot have the bytes",
+  );
+
+  // The context menu's word-level commands are outside the contract. Both halves
+  // are asserted: that the ids are NOT in the contract, and that they really exist
+  // — a gap stated about a command that does not exist is not a gap.
+  const wordLevel = ["spell.ignoreOnce", "spell.addToDictionary", "grammar.explain"];
+  const spellSource = read(join(WEBAPP, "src", "spell_check.mjs"));
+  for (const id of wordLevel) {
+    assert.equal(commandContract(id), null, `${id} is in the contract now`);
+    assert.ok(spellSource.includes(`id: "${id}"`), `${id} no longer exists, so the gap is stale`);
+  }
+  assert.ok(REFUSAL_CODES.length > 0);
 
   // No host-supplied document: three mount attributes, and none of them is one.
   const attributes = [

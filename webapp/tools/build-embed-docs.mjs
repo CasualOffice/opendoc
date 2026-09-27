@@ -45,6 +45,14 @@ import {
   resolveCapabilities,
   sandboxTokensFor,
 } from "../src/capabilities.mjs";
+import {
+  COMMAND_CONTRACT,
+  COMMAND_FAMILIES,
+  CONTRACT_VERSION,
+  HOST_EVENTS,
+  PROTOCOL,
+  REFUSAL_CODES,
+} from "../src/host_contract.mjs";
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = join(WEBAPP, "..");
@@ -66,6 +74,9 @@ const SOURCES = Object.freeze({
   gate: join(WEBAPP, "tests", "e2e", "embedded-capability-gate.spec.mjs"),
   roles: join(WEBAPP, "tests", "roles.test.mjs"),
   packaging: join(WEBAPP, "tests", "embed_package.test.mjs"),
+  contract: join(WEBAPP, "src", "host_contract.mjs"),
+  contractTest: join(WEBAPP, "tests", "host_contract.test.mjs"),
+  contractGate: join(WEBAPP, "tests", "e2e", "host-contract.spec.mjs"),
 });
 
 /** What each capability is, in one clause.
@@ -85,6 +96,45 @@ const MEANINGS = Object.freeze({
   comment: "Annotate, and change the document as tracked suggestions.",
   branding: "Show OpenDoc's own name and mark inside the frame.",
   autosave: "Keep drafts of the visitor's typing on this origin.",
+});
+
+/** When each host event fires.
+ *
+ *  The only authored column of the event table. The NAMES and the payload FIELDS
+ *  are read from `HOST_EVENTS`, and `eventRows()` fails if an event exists with no
+ *  clause, so a new event cannot ship unexplained. */
+const EVENT_WHEN = Object.freeze({
+  ready: "Once, when the document is open and on screen.",
+  change: "After every applied edit, whoever made it.",
+  selection: "Whenever the caret or the selection moves.",
+  save: "After File \u25B8 Save writes the document out.",
+  export: "After an export writes another format out.",
+  error: "When something failed that was not a command being refused.",
+  refusal: "Whenever a command is refused, including one nobody asked for over the API.",
+});
+
+/** What each refusal code means, and which layer decided it.
+ *
+ *  Authored for the same reason, and the second column matters: a host reading
+ *  \u201crefused\u201d needs to know whether to ask differently, ask later, or not ask at
+ *  all. `refusalRows()` fails if a code exists with no entry. */
+const REFUSAL_MEANINGS = Object.freeze({
+  "unknown-command": ["No such command in this state.", "the contract"],
+  "capability-withheld": [
+    "The host did not grant what this command requires. Decided before dispatch, so the engine is never asked.",
+    "the API",
+  ],
+  unavailable: [
+    "The command exists and cannot run right now; the message is the chrome's own reason.",
+    "the chrome",
+  ],
+  "engine-refused": [
+    "It ran and the engine refused it \u2014 a read-only document, or Viewing mode.",
+    "the engine",
+  ],
+  threw: ["It raised; the message is the exception's.", "the command"],
+  "bad-request": ["The envelope or the arguments were not the contract's.", "the transport"],
+  timeout: ["The transport gave up waiting for an answer.", "the transport"],
 });
 
 /** For a capability the editor page consults, what it decides there.
@@ -113,7 +163,15 @@ const CHROME_NOTES = Object.freeze({
  *  the source fails this tool rather than quietly publishing the wrong lines. */
 function functionSource(path, name) {
   const source = read(path);
-  const start = source.search(new RegExp(`^[ \\t]*function ${name}\\(`, "m"));
+  // `async ` is allowed because the two-transport function is async: a panel that
+  // could only quote synchronous code would silently exclude exactly the part of
+  // the host contract worth showing.
+  // `async` and `export` are both allowed: a panel that could only quote a private
+  // synchronous function would silently exclude exactly the parts of the host
+  // contract worth showing — the two-transport call and the origin policy.
+  const start = source.search(
+    new RegExp(`^[ \\t]*(?:export )?(?:async )?function ${name}\\(`, "m"),
+  );
   if (start < 0) throw new Error(`build-embed-docs: no function ${name}() in ${rel(path)}`);
   let depth = 0;
   let end = -1;
@@ -375,6 +433,33 @@ function chromeRows() {
     });
 }
 
+function eventRows() {
+  return HOST_EVENTS.map((event) => {
+    const when = EVENT_WHEN[event.name];
+    if (!when) {
+      throw new Error(
+        `build-embed-docs: the host contract declares the "${event.name}" event but ` +
+          "EVENT_WHEN has no clause saying when it fires.",
+      );
+    }
+    return [`<code>${event.name}</code>`, codeList(event.detail), escape(when)];
+  });
+}
+
+function refusalRows() {
+  return REFUSAL_CODES.map((code) => {
+    const entry = REFUSAL_MEANINGS[code];
+    if (!entry) {
+      throw new Error(
+        `build-embed-docs: the host contract declares the "${code}" refusal code but ` +
+          "REFUSAL_MEANINGS has no entry for it.",
+      );
+    }
+    const [meaning, decided] = entry;
+    return [`<code>${code}</code>`, escape(meaning), escape(decided)];
+  });
+}
+
 /** The test titles that hold this page's claims up, read out of the test files.
  *
  *  `docs/99` §9.2: prose describing a gate must name it, and a test must assert
@@ -399,6 +484,22 @@ function evidenceRows() {
       [
         "both embeds resolve their role before first paint, and the chrome refuses with a reason",
         "the simplest possible embed is not a standalone editor",
+      ],
+    ],
+    [
+      SOURCES.contractTest,
+      [
+        "both transports return the identical result, for every command in the contract",
+        "nothing is ever posted to a wildcard, in either direction",
+        "a message from an origin the editor does not know is dropped in silence",
+      ],
+    ],
+    [
+      SOURCES.contractGate,
+      [
+        "the contract covers the command registry exactly, in every state a family needs",
+        "a refusal the CHROME makes is a refusal the API makes",
+        "a command the contract calls ungated really does not touch the document",
       ],
     ],
   ];
@@ -468,6 +569,16 @@ function regions() {
           "Resolve a capability set without mounting anything — no DOM, so it answers in Node.",
         ],
         [
+          pathCode("./src/host_contract.mjs"),
+          `<code>import ${pathCode(`"${manifest.name}/contract"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
+          "The host contract: what each command requires, which events exist, what a refusal can say, and the envelope. No DOM.",
+        ],
+        [
+          pathCode("./src/host_client.mjs"),
+          `<code>import ${pathCode(`"${manifest.name}/client"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
+          "<code>createHostClient</code> \u2014 the <code>postMessage</code> transport, for a host that cannot reach into the frame.",
+        ],
+        [
           pathCode(manifest.types),
           "Types",
           "Generated from the authority's real values, so a role cannot exist in the types without existing in the code.",
@@ -490,6 +601,16 @@ function regions() {
       `${rel(SOURCES.demo)} — resolveFor()`,
       functionSource(SOURCES.demo, "resolveFor"),
     ),
+    "command-transports": codePanel(
+      `${rel(SOURCES.demo)} \u2014 runCommand()`,
+      functionSource(SOURCES.demo, "runCommand"),
+    ),
+    "origin-policy": codePanel(
+      `${rel(SOURCES.contract)} \u2014 parseOriginAllowlist()`,
+      functionSource(SOURCES.contract, "parseOriginAllowlist"),
+    ),
+    "event-table": table(["Event", "Detail", "When it fires"], eventRows()),
+    "refusal-table": table(["Refusal code", "What it means", "Decided by"], refusalRows()),
     "capability-table": table(["Capability", "What it is", "Enforced by"], capabilityRows()),
     "role-table": table(["Role", "Review mode", "Grants"], roleRows()),
     "legacy-table": table(["Legacy name", "Relationship", "Grants"], legacyRows()),
@@ -518,6 +639,13 @@ function claims() {
     "entry-point-count": String(Object.keys(manifest.exports).length),
     "attribute-count": String(mountAttributes().length),
     "attack-command-count": String(attackCommandCount()),
+    "contract-version": String(CONTRACT_VERSION),
+    "command-count": String(COMMAND_CONTRACT.length),
+    "family-count": String(COMMAND_FAMILIES.length),
+    "event-count": String(HOST_EVENTS.length),
+    "refusal-code-count": String(REFUSAL_CODES.length),
+    "verb-count": String(PROTOCOL.requests.length),
+    "verbs": PROTOCOL.requests.join(" "),
   };
 }
 
