@@ -172,6 +172,7 @@ import {
   zipStore,
 } from "./blank_document.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
+import { pasteLossMessage } from "./paste_loss.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
@@ -14323,10 +14324,9 @@ async function pasteHtml(html) {
     // structured paste (a range selection, or a caret inside a table cell), fall
     // back to the flat runs too.
     if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.blocks)) {
-      if (
-        reviewMode !== "suggesting" &&
-        (await pasteStructured(JSON.stringify({ blocks: parsed.blocks })))
-      ) {
+      const fragment = JSON.stringify({ blocks: parsed.blocks });
+      const insert = (a, f) => doc.pasteStructured(a.node, a.offset, f.node, f.offset, fragment);
+      if (reviewMode !== "suggesting" && (await runStructuredPaste(insert))) {
         return true;
       }
       await pasteRichRunsJson(JSON.stringify(parsed.runs ?? []));
@@ -14344,7 +14344,10 @@ async function pasteHtml(html) {
   // body caret — otherwise the engine declines and we fall back below.
   if (reviewMode !== "suggesting") {
     const structured = htmlToStructured(parsed.body);
-    if (structured && (await pasteExternalStructured(structured))) return true;
+    const fragment = JSON.stringify(structured);
+    const insert = (a, f) =>
+      doc.pasteExternalStructured(a.node, a.offset, f.node, f.offset, fragment);
+    if (structured && (await runStructuredPaste(insert))) return true;
   }
   const runs = htmlToRuns(parsed.body);
   if (!runs.length) return false;
@@ -14352,50 +14355,37 @@ async function pasteHtml(html) {
   return true;
 }
 
-/** Editing-mode paste of external structure (a foreign `<table>` / `<ul>`/`<ol>`
- * parsed by `htmlToStructured`): reconstructs real tables and list paragraphs at
- * the caret via `doc.pasteExternalStructured`, as one undoable action. Returns
- * true when applied; false when the engine declines (a range selection, or a caret
- * that is not a top-level body paragraph), so the caller falls back to the flat
- * rich-run paste. Calls the engine directly (not through `runEdit`, which swallows
- * the decline) so the fallback can see it. */
-async function pasteExternalStructured(fragment) {
+/** Editing-mode paste of whole-block structure (tables and list paragraphs) at
+ * the caret, as one undoable action. `insert(anchor, focus)` names the engine
+ * call: `pasteStructured` for an internal OpenDoc copy, `pasteExternalStructured`
+ * for foreign HTML parsed by `htmlToStructured`. Returns true when applied; false
+ * when the engine declines (a range selection, or a caret that is not a top-level
+ * body paragraph), so the caller falls back to the flat rich-run paste. Calls the
+ * engine directly (not through `runEdit`, which swallows the decline) so the
+ * fallback can see it. ONE helper rather than the two that used to sit here: they
+ * differed only in which engine method they named, and two copies of a paste path
+ * is where the loss report below gets wired into one and forgotten in the other. */
+async function runStructuredPaste(insert) {
   if (!doc || !selection) return false;
   const { anchor, focus } = selection;
   breakTypingSession();
   let res;
   try {
-    res = doc.pasteExternalStructured(
-      anchor.node,
-      anchor.offset,
-      focus.node,
-      focus.offset,
-      JSON.stringify(fragment),
-    );
+    res = insert(anchor, focus);
   } catch {
     return false;
   }
+  // Five families of reference cannot be duplicated inside one document, and are
+  // REPORTED because `AGENTS.md` forbids silent data loss. READ before
+  // `applyEditResult`, which calls `res.free()` — reading a freed wasm object
+  // throws "null pointer passed to rust" and failed all four structured-paste
+  // specs on the first draft. SAID after, so the paint's own status line cannot
+  // overwrite it, and as `"error"`: the paste succeeded, but "your comment anchor
+  // did not come across" is must-notice, and only that kind reaches the toast and
+  // the assertive region (`status_policy.mjs`).
+  const loss = pasteLossMessage(res.pasteLoss);
   await applyEditResult(res);
-  return true;
-}
-
-/** Editing-mode structured paste: reconstructs a copied fragment of tables and
- * list paragraphs at the caret via `doc.pasteStructured`, as one undoable
- * action. Returns true when applied; false when the engine declines (a range
- * selection, or a caret that is not a top-level body paragraph), so the caller
- * falls back to the flat rich-run paste. Calls the engine directly (not through
- * `runEdit`, which swallows the decline) so the fallback can see it. */
-async function pasteStructured(fragmentJson) {
-  if (!doc || !selection) return false;
-  const { anchor, focus } = selection;
-  breakTypingSession();
-  let res;
-  try {
-    res = doc.pasteStructured(anchor.node, anchor.offset, focus.node, focus.offset, fragmentJson);
-  } catch {
-    return false;
-  }
-  await applyEditResult(res);
+  if (loss) setStatus(loss, "error");
   return true;
 }
 
