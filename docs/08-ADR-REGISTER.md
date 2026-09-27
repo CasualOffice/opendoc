@@ -668,6 +668,167 @@ none; #635 added two and had to argue for them.
   body section is separate work.
 - `Blank Page` is no longer blocked: it is two page breaks, and needs no engine work.
 
+## ADR-038 — White-labelling is a validated configuration, and chrome composition is a second axis
+
+**Status:** accepted and implemented (`docs/126` phase 3).
+**Context:** `docs/126` phase 3, `docs/125` §7 and §2 F4, `docs/63`, `109` HF-109.
+**Supersedes nothing.** Extends **ADR-036** (the host contract) with the two axes a
+host configures and the one thing they may not: legibility.
+
+### The decisions
+
+**1. The seam is a GENERATOR over a data file, not a runtime that accepts CSS.**
+`webapp/brand.json` is the whole configuration; `webapp/tools/build-brand.mjs` turns it
+into three committed artifacts — `src/brand.css`, `src/brand.mjs` and two generated
+regions in `editor.html` — with `--check` failing the build in both directions, the
+same contract the four existing generators hold rather than a fifth convention. So
+white-labelling is "edit one JSON file, run one command", which is what `docs/126`'s
+"no code changes — configuration only" means in practice, and the shipped
+configuration is all-null so the default build IS the product and a white-label is
+visibly a decision somebody made.
+
+The alternative — a host stylesheet the editor loads and trusts — was rejected because
+it cannot be validated. Which brings us to:
+
+**2. A host palette that fails AA is REFUSED, at generate time, with the measured
+ratio and a value that would pass.** Not corrected, and not warned about.
+
+`docs/126` states the constraint: "a white-label that ships unreadable text is a worse
+outcome than no white-labelling." Three candidates, and the other two are worse:
+
+* **Correct it silently** — ship the host's brand in a colour the host did not choose.
+  `src/contrast.mjs` already refuses to do this one layer down, in as many words:
+  "Nudging a document's colour until it passes produces a preview that is a lie about
+  the style." A whole product in an unapproved accent is that lie with a bigger blast
+  radius, and the host finds out from a screenshot.
+* **Warn and ship** — precisely ONLYOFFICE's failure mode, recorded in `docs/125`
+  §1.1: a custom logo "is not blocked — it is *nagged*. It applies, then raises a
+  'paid feature' modal. Worse than refusing, because the integrator ships it and then
+  discovers the modal." A warning in a build log is read once.
+* **Refuse** — the failure lands on the person who can still fix it, at the moment it
+  is free to fix, with the number and a working value. One edit for them; nothing for
+  their readers.
+
+The floors are WCAG's own split, so a brand colour is not refused for being a hairline:
+text pairs clear 4.5:1 (SC 1.4.3), edges and icons clear 3:1 (SC 1.4.11). The palette
+is measured AS IT WILL RENDER — our tokens with the host's written over them, per
+theme, with `var()` and `color-mix()` resolved — because a brand colour measured in
+isolation passes when it is unreadable only against the surface it will be painted on.
+
+**3. The overridable token set is a PUBLIC CONTRACT; the rest are internal.** This
+answers `docs/125` Q-B, which asked whether publishing the token names freezes them.
+Eighteen names are publishable and frozen: the accent family, the surfaces, the
+foregrounds, the lines and the primary action. Everything else is refused —
+
+* **geometry and z-order** (`--radius`, `--space-*`, `--fs-*`, `--h-*`, `--z-*`),
+  because `docs/63` calls the flattened radii a considered decision and says to propose
+  visual changes rather than make them. A seam that let a host round every corner would
+  be making them on the owner's behalf, for every deployment, with nobody ever seeing
+  the proposal;
+* **the `--paper*` layer**, because the sheet is white in both themes on purpose so
+  that everything drawn onto the raster has a fixed contrast partner. A host who
+  darkened it would put the dark theme's insertion and deletion marks on a dark page at
+  roughly 2:1, and no existing guard would see it — the paper tokens are in neither
+  role list, deliberately, because they are not a theme. A host who wants dark reading
+  wants dark chrome and a white page, which is what Word, Docs and ONLYOFFICE all do.
+
+**4. A host's brand outranks a visitor's stored preference, and the answer travels in
+the stylesheet that pinned it.** `docs/125` §2 F4 was still true: `applySettings()` wrote
+an inline `--accent` on `:root` from `localStorage` (an inline declaration beats any
+author stylesheet) and REMOVED a host's `data-theme` whenever the stored theme was
+`system`, which is the default. Rather than adding a second configuration channel for
+"did the host pin this", the generator emits `--brand-accent-pinned: 1` into
+`src/brand.css` and the runtime reads it back. That is what makes a white-labelled
+build a swapped static file and nothing else: no JSON to fetch, no ordering to get
+wrong, no window in which the editor was our colour and then became theirs.
+
+A host may pin the accent, because that is brand. It may **not** pin light/dark: that is
+a reader's preference about their own eyes. A pinned accent disables the two Settings
+colour controls WITH A REASON rather than removing them — a control inside a surface the
+visitor was offered, which is where "never a dead control" applies, and what Word does
+for a policy-managed setting.
+
+**5. String overrides are a LAYER on `t()`, and the per-locale set is DERIVED.**
+`setOverrides` is consulted before the nineteen catalogues in the same two lookup
+functions, with `*` for every language and an exact tag to narrow; `*` outranks a
+fallback language but not the reader's own. Registering a host's words as a twentieth
+catalogue was rejected: an override for `de` would lose to our own `de` when the chain
+reached it first, an every-language override would have no tag to live under, and
+`locale_coverage.test.mjs`'s orphan gate would be refusing the host's own words.
+
+A host renames the product in ONE field and gets all nineteen languages, because the
+override set is generated by substitution over the committed catalogues rather than
+hand-written per locale. Nineteen hand-written overrides are nineteen chances to forget
+one, and the one forgotten is the one a reader sees.
+
+**6. Chrome composition is a SECOND AXIS, resolved by the same authority.**
+`capabilities.mjs` gains `REGIONS` (eighteen) and `resolveRegions` beside
+`resolveCapabilities`. A region is deliberately **not** a capability: a withheld region
+is a presentation decision about the host's page, a withheld capability is a permission,
+and collapsing them would make every hidden band read as a refusal — and would let a
+host defeat a permission by showing a surface.
+
+The two rules compose as the owner's container notes require. Within a surface a role
+DOES get, a command that cannot run now is disabled and says why. A role with no
+business with a whole surface does not get the surface: **a `readonly` container has no
+editing ribbon — not a ribbon full of greyed buttons, no ribbon.** "Never, for you"
+versus "not right now".
+
+`readonly` gets READING chrome — the menu bar rather than the ribbon, the navigation
+rail, the status bar's page count and zoom, the find card. The menu bar rather than the
+ribbon is not a detail: it is where File ▸ Print lives, and `print` is the one
+capability `readonly` is granted. `preview` gets NONE of the eighteen, because it is the
+runtime as a layout and rendering engine and `docs/126`'s own test of the difference is
+"could a static image replace it? For `preview`, nearly."
+
+`CAPABILITY_AFFORDANCES` is the joint between the axes: every capability a preset grants
+must have an affordance in chrome that preset shows. That guard is what shaped reading
+chrome rather than being written after it.
+
+**7. Policies are per capability, not per tier.** `resolveCapabilities` takes a
+withhold list (`?can=-print,-download`) applied after the preset, by the same function,
+which is what makes the roles presets over the capability set rather than a parallel
+mechanism. `?chrome=-ribbon` is the same parser over the region vocabulary. Both only
+ever narrow, whether or not an entry carries its minus sign, and an unknown entry is
+dropped — dropping narrows nothing, so a typo in a host's URL can never widen the
+result. A guard proves every role is reachable as a narrowing of the role above it,
+through that one function.
+
+**8. Three version numbers, one place.** `package` is what npm resolved, `contract` is
+what the editor speaks, `engine` is the Rust workspace the WebAssembly came from. They
+are not collapsed, because `contract` is deliberately stable across package releases
+(an added command, event or refusal code is additive — `docs/05` §12) and tying it to
+the package version would make hosts re-pin for changes that break nothing. What was
+missing was not one number but one PLACE:
+`packages/opendoc-embed/src/release.mjs`, generated, with each field re-derived from its
+source by a guard. No build commit in it — that is stamped at deploy time from
+`GITHUB_SHA`, and a committed file carrying a hash is fabricated provenance.
+
+**9. Ungated, and said so in the code.** No licence check, no tab counting, no
+`_licensed` branch, no modal. ONLYOFFICE gates exactly this behind two server-supplied
+flags — `LayoutManager._applyCustomization` early-returns when `!_licensed`, and the
+logo and About block sit behind a second flag — and refuses to let an integrator remove
+their About button at all (`Main.js:2639` force-sets `customization.about = true`). The
+permissive licence is the wedge, so gating this would surrender the only structural
+advantage we have. Every module that implements a piece of it says so.
+
+### Consequences
+
+- Editing `brand.json` without regenerating fails `build.sh`; hand-editing
+  `src/brand.css` fails it too, so a deployment cannot drift into unreadable text.
+- The overridable eighteen are now a compatibility surface: renaming one is a breaking
+  change to every white-labelled deployment, and the refusal list is where that is
+  enforced.
+- A guard failure at generate time is the designed outcome for a bad palette, so a host
+  whose brand fails AA cannot ship until they choose a legible pairing.
+- Adding a region means an entry in `REGIONS`, a rule in `style.css`, and an affordance
+  answer if a capability depends on it — all three asserted.
+- Per-GROUP selection inside a band is NOT in this decision: eleven ribbon groups carry
+  no `data-group`, so that roster would be half-expressible, and the honest grain for a
+  host is the band.
+- No engine operation was added (ADR-030 I2): theme and chrome resolve at boot and
+  nothing here touches the document.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

@@ -167,6 +167,94 @@ Rust in-process transport.
 — and still passes the contrast sweep; and every published claim is re-derived by a
 guard rather than asserted.
 
+### Phase 3 status — landed 2026-09-27
+
+The configuration is `webapp/brand.json` and the seam is a generator,
+`webapp/tools/build-brand.mjs`, which turns it into three committed artifacts:
+`src/brand.css` (the palette, the mark, and one marker the runtime reads),
+`src/brand.mjs` (the name, the tab-title policy, the string overrides), and two
+generated regions in `editor.html` (the icons and the brand element). `--check` runs in
+`build.sh` and fails in both directions. So white-labelling is one JSON edit and one
+command, the shipped configuration is all-null — the default build is the product — and
+the decision is recorded as **ADR-038**.
+
+**The exit gate, both halves.** `webapp/brand.example.json` is a committed worked
+example (a fictional "Northwind Docs": teal accent, warmer greys, twenty-odd token
+values moved, `tabTitle: "document"`). `tests/brand.test.mjs` generates from it and
+audits the result in node; `tests/e2e/white-label.spec.mjs` serves the artifacts in
+place of the shipped ones — which is exactly what a white-labelled deployment does — and
+runs the same `contrast-audit.mjs` sweep the editor's own theme sweep uses, over both
+themes, with a positive control asserting the palette really is not ours before any of
+it. A sweep over the DEFAULT build would have proved only that our palette passes, which
+was already true and already guarded.
+
+**What happens when a host's colour fails AA: it is refused**, at generate time, naming
+the pair, the measured ratio, the floor, and the nearest value on the same hue that
+would pass. Not corrected (that ships a brand nobody approved, which is the lie
+`contrast.mjs` already refuses to tell about a document's own colours) and not warned
+about (that is ONLYOFFICE's nag-modal failure mode, `docs/125` §1.1). The floors are
+WCAG's split, so a hairline is not held to the prose bar.
+
+Five things worth knowing, because they are decisions rather than details.
+
+* **The overridable token set is a public contract; the rest are refused.** This answers
+  `docs/125` Q-B. Eighteen names are frozen — the accent family, surfaces, foregrounds,
+  lines, primary action. Geometry and z-order are refused because `docs/63` says to
+  propose visual changes rather than make them, and the `--paper*` layer is refused
+  because the sheet is white in both themes on purpose; a host who darkened it would put
+  the dark theme's markers on a dark page at roughly 2:1, and no existing guard would
+  see it.
+* **`docs/125` §2 F4 is closed, and the sharper half was the one F4 did not mention.**
+  `applySettings()` wrote an inline `--accent` from `localStorage` — which beats any
+  stylesheet a host ships — and REMOVED a host's `data-theme` whenever the stored theme
+  was `system`, the default. The fix travels in the stylesheet that pinned the value
+  (`--brand-accent-pinned`) rather than through a second configuration channel, which is
+  what keeps a white-labelled build a swapped static file. A host may pin the accent; it
+  may not pin light/dark, because that is a reader's preference about their own eyes.
+* **Chrome composition is a second axis in the same authority, and `CAPABILITY_AFFORDANCES`
+  is the joint.** Every capability a preset grants must have an affordance in chrome that
+  preset shows. That guard is what SHAPED reading chrome rather than being written after
+  it: hiding the ribbon for `readonly` without revealing the menu bar would have made its
+  only grant — `print` — unreachable, and the guard said so before the code existed.
+  `readonly` gets reading chrome; `preview` gets none of the eighteen regions.
+* **Per capability, not per tier, is now real.** `?can=-print,-download` narrows any
+  preset through the same `resolveCapabilities`, and a guard proves every role is
+  reachable as a narrowing of the role above it. Phase 1 had only the `autosave`
+  override.
+* **A mutation that did NOT go red found the phase's own version of phase 2's finding.**
+  Deleting the generator's AA refusal left all eighteen assertions in `brand.test.mjs`
+  green, because they called the audit directly and never proved the GENERATOR refuses.
+  The door was open with a lock behind it. The fix is a test that drives the real command
+  line and reads the real exit status, which is why the generator has
+  `--check --config <path>`.
+
+**Per-GROUP selection inside a band is deliberately not here.** Eleven ribbon groups
+carry no `data-group`, so that roster would be half-expressible; the honest grain for a
+host is the band, and all eight are selectable.
+
+**Also deliberately not here, and each for a reason:**
+
+* **Publishing to npm.** Nothing publishes the package, and the embedding page still says
+  so. A publish workflow needs an owner-held registry credential and a decided version
+  line, and shipping one that cannot be exercised would arm a gate nobody has run — which
+  is `docs/99` §9.2's defect. The packaging side is done: `release.mjs` is generated and
+  guarded, the `./release` subpath is typed, and `npm pack`'s file count and size are
+  re-derived on the embedding page.
+* **A consumer type-check job.** `docs/104` recommends one and `embed_package.test.mjs`
+  still checks the `.d.ts` by string rather than by compiling it. Adding `tsc` to a
+  repository with no TypeScript toolchain is its own decision.
+* **Publishing `docs/83` as a site page.** The install-line defect that withheld it is
+  fixed, but this generator's head-field rules still refuse it: an `&` in the H1 and an
+  85-character `<title>` against a 20-70 rule. Both are fixed by shortening the
+  document's own heading, which is its identity and belongs to whoever owns it — filed as
+  `109` HF-202 rather than done in passing. The withheld entry now carries the new reason
+  and a guard asserts the new reason is a fact.
+* **Site localisation.** The four site templates still have no `t()` seam, so the
+  measured-not-ratcheted exception `docs/126` phase 2 introduced still stands.
+* **A second mechanism for anything.** Strings layer on `t()`, the palette layers on the
+  cascade, chrome layers on the body-class shape `body:not(.doc-loaded)` already uses, and
+  the mark is a token.
+
 ---
 
 ## Container policy — owner notes, 2026-09-27
