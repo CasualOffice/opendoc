@@ -101,9 +101,18 @@
       }
       .pg-lede code,
       .pg-note code,
-      .pg-hint code {
+      .pg-hint code,
+      .pg .doc-list code,
+      .pg .doc-callout code {
         font-family: var(--font-mono);
         font-size: 0.86em;
+        /* A mono token is one unbreakable word, and at 390px
+           `LayoutManager._applyCustomization` was 24px wider than the viewport.
+           `anywhere` rather than the docs page's `<wbr />` trick because these
+           identifiers have no `/` to break on, and scoped to this page's own
+           classes because the tokens are deliberate (docs/63) and a `word-break`
+           on a shared component would be a restyle. */
+        overflow-wrap: anywhere;
       }
       /* Side by side above 1080px, stacked below it — controls first, because on a
          phone the thing you came to change has to be reachable without scrolling
@@ -666,19 +675,19 @@
             </p>
             <!-- @generated playground-brand-controls -->
             <p class="pg-field">
-              <label for="pgBrandName">Product name</label>
-              <input type="text" id="pgBrandName" data-brand-name placeholder="OpenDoc" autocomplete="off" spellcheck="false" />
+              <label for="pg-brand-name">Product name</label>
+              <input type="text" id="pg-brand-name" data-brand-name placeholder="OpenDoc" autocomplete="off" spellcheck="false" />
             </p>
             <p class="pg-field">
-              <label for="pgBrandAccentHex">Accent colour</label>
+              <label for="pg-brand-accent-hex">Accent colour</label>
               <span class="pg-colour-row">
-                <input type="color" id="pgBrandAccent" value="#3355c4" data-brand-accent aria-label="Accent colour, as a swatch" />
-                <input type="text" id="pgBrandAccentHex" value="#3355c4" data-brand-accent-hex autocomplete="off" spellcheck="false" aria-label="Accent colour, as hex" />
+                <input type="color" id="pg-brand-accent" value="#3355c4" data-brand-accent aria-label="Accent colour, as a swatch" />
+                <input type="text" id="pg-brand-accent-hex" value="#3355c4" data-brand-accent-hex autocomplete="off" spellcheck="false" aria-label="Accent colour, as hex" />
               </span>
             </p>
             <p class="pg-field">
-              <label for="pgBrandTabTitle">The host browser tab says</label>
-              <select id="pgBrandTabTitle" data-brand-tab-title>
+              <label for="pg-brand-tab-title">The host browser tab says</label>
+              <select id="pg-brand-tab-title" data-brand-tab-title>
                 <option value="document+product">document+product</option>
                 <option value="document">document</option>
               </select>

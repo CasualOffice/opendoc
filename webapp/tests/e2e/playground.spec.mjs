@@ -119,41 +119,62 @@ test("withholding one capability from a role changes the live editor and the API
 }) => {
   // "Comments only, everything else off" is a real configuration (`docs/126`
   // container policy §1), so a role has to be narrowable one capability at a time —
-  // and the narrowing has to reach the ENGINE, not just the buttons. Withholding
-  // `edit` from `edit` leaves `comment`, so the editor must arrive in Suggesting
-  // rather than Editing, and an editing command over the host API must come back
-  // refused.
+  // and the narrowing has to reach the ENGINE, not just the buttons.
+  //
+  // THIS TEST'S FIRST DRAFT WAS WRONG, and the way it was wrong is the reason the
+  // rest of it is shaped like this. It withheld `edit` and asserted that
+  // `format.bold` was refused over the API. It is not, and it must not be: the
+  // contract's `mutate` requirement resolves through `editingModeFor`, so a
+  // container that still holds `comment` runs bold and RECORDS IT AS A SUGGESTION,
+  // which is the whole point of the commentor role. The test went red, which is
+  // exactly what a guard written against a guess should do. So it now walks the
+  // narrowing one capability at a time and asserts what each step really produces.
   const before = await mount(page);
   expect((await painted(before)).editingOffered, "an edit container may choose Editing").toBe(true);
-  const allowed = await before.evaluate(async () => {
-    const session = window.opendoc;
-    return session ? (await session.execute("format.bold")).ok : null;
-  });
-  expect(allowed, "an edit-granted container runs an editing command").toBe(true);
 
+  // Step one: withhold `edit`, keep `comment`. The container drops to Suggesting,
+  // Editing is disabled WITH A REASON rather than removed, and bold still runs —
+  // as a tracked revision.
   await page.locator("#pg-cap-edit").uncheck();
-  const after = await liveFrame(page);
-
-  // The URL the page resolved really carries the narrowing, minus sign and all.
-  expect(after.url()).toContain("can=-edit");
-  const refused = await after.evaluate(async () => {
+  const suggesting = await liveFrame(page);
+  expect(suggesting.url()).toContain("can=-edit");
+  const chrome = await painted(suggesting);
+  expect(chrome.editingOffered, "Editing is still offered after edit was withheld").toBe(false);
+  expect(chrome.mode).toBe("suggesting");
+  const suggested = await suggesting.evaluate(async () => {
     const session = window.opendoc;
     return session ? await session.execute("format.bold") : null;
   });
-  expect(refused.ok, "an editing command must not run in a container without edit").toBe(false);
+  expect(suggested.ok, "a commentor must still be able to suggest a format change").toBe(true);
+
+  // Step two: withhold `comment` as well, which is the page's own "everything else
+  // off". Now nothing may change the document, and the API says so BEFORE dispatch
+  // rather than leaving it to a layer further down — the gate phase 2's own guard
+  // failed to prove.
+  await page.locator("#pg-cap-comment").uncheck();
+  const viewing = await liveFrame(page);
+  // Decoded: `URLSearchParams` percent-encodes the comma, which is correct and is
+  // also what a host would paste. The decoded form is the one the page prints in
+  // its snippet, so this is the value a reader would compare against.
+  expect(decodeURIComponent(viewing.url())).toContain("can=-edit,-comment");
+  const refused = await viewing.evaluate(async () => {
+    const session = window.opendoc;
+    return session ? await session.execute("format.bold") : null;
+  });
+  expect(refused.ok, "an editing command ran in a container granted neither edit nor comment").toBe(
+    false,
+  );
   expect(refused.refusal.code).toBe("capability-withheld");
-  // The chrome agrees, and says why rather than hiding the control — the right half
-  // of `docs/126`'s container policy for a surface this role still gets.
-  const chrome = await painted(after);
-  expect(chrome.editingOffered, "Editing is still offered after edit was withheld").toBe(false);
-  expect(chrome.mode).toBe("suggesting");
+  expect((await painted(viewing)).mode).toBe("viewing");
 
   // And the readout on the HOST page says so, from the same resolution.
-  await expect(page.locator("[data-caps] li[data-capability='edit']")).toHaveAttribute(
-    "data-state",
-    "withheld",
-  );
-  await expect(page.locator("[data-caps] li[data-capability='comment']")).toHaveAttribute(
+  for (const capability of ["edit", "comment"]) {
+    await expect(page.locator(`[data-caps] li[data-capability='${capability}']`)).toHaveAttribute(
+      "data-state",
+      "withheld",
+    );
+  }
+  await expect(page.locator("[data-caps] li[data-capability='print']")).toHaveAttribute(
     "data-state",
     "granted",
   );
@@ -267,8 +288,16 @@ test("an accent that fails AA is refused in the generator's own words, and is no
 
 test("the snippet reproduces the state it was generated from", async ({ page, consoleErrors }) => {
   // The promise on the page is "paste it into your own page and get the same
-  // result", so the test is to take what it printed and mount a SECOND editor from
-  // it, with nothing else carried over, and compare the two.
+  // result", so the test is to take what it printed, mount a SECOND editor from it
+  // with nothing else carried over, and compare.
+  //
+  // AND TO CHECK THE SNIPPET AGAINST THE CHOICES, not only against the live frame.
+  // The first version of this test did only the round trip, and a mutation that
+  // dropped `can` from the resolved URL left it GREEN — because the live frame and
+  // the snippet are built from one state, so both became wrong together and went
+  // on agreeing. That is the "a guard that proves the default works proves
+  // nothing" trap wearing a different hat. The three assertions below are about
+  // what a person clicked.
   await mount(page);
   await page.locator("#pg-role-commentor").check();
   await page.locator("#pg-cap-download").uncheck();
@@ -276,16 +305,28 @@ test("the snippet reproduces the state it was generated from", async ({ page, co
   const configured = await painted(await liveFrame(page));
 
   const snippet = await page.locator('[data-snippet="element"]').textContent();
-  const src = snippet.match(/editor-src="([^"]+)"/)?.[1].replaceAll("&amp;", "&");
+  const src = decodeURIComponent(
+    snippet.match(/editor-src="([^"]+)"/)?.[1].replaceAll("&amp;", "&") ?? "",
+  );
   expect(src, `no editor-src in the snippet:\n${snippet}`).toBeTruthy();
   expect(snippet).toContain('mode="commentor"');
+  expect(src, "the snippet lost the capability the visitor withheld").toContain("can=-download");
+  expect(src, "the snippet lost the region the visitor withheld").toContain("chrome=-rail");
 
   const pasted = await page.context().newPage();
   await pasted.goto(`/${src.replace(/^\.\//, "")}`);
   await waitForFramedEditor(pasted.mainFrame());
   const reproduced = await painted(pasted.mainFrame());
+  // The permission travelled too, not just the chrome: an export is refused in the
+  // pasted editor, by the API, before dispatch.
+  const exported = await pasted.evaluate(async () => {
+    const session = window.opendoc;
+    return session ? await session.execute("file.export.docx") : null;
+  });
   await pasted.close();
 
+  expect(exported.ok, "the pasted embed could still export").toBe(false);
+  expect(exported.refusal.code).toBe("capability-withheld");
   expect(reproduced.withheld).toEqual(configured.withheld);
   expect(reproduced.ribbon).toEqual(configured.ribbon);
   expect(reproduced.rail).toEqual(configured.rail);
@@ -327,14 +368,35 @@ test("every control has an accessible name and a keyboard path", async ({ page }
 test("the page fits a phone without scrolling sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/playground.html");
-  const overflow = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-    widest: [...document.querySelectorAll(".pg *")]
-      .filter((el) => el.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
-      .map((el) => `${el.tagName.toLowerCase()}.${el.className}`.slice(0, 60))
-      .slice(0, 5),
-  }));
+  const overflow = await page.evaluate(() => {
+    // A code block IS allowed to be wider than the phone, inside its own
+    // `overflow-x: auto` box — that is the house rule, and `.code-panel pre` is
+    // exactly such a box. What is not allowed is the PAGE scrolling sideways, so
+    // the sweep skips anything inside a scroller and then checks the document.
+    // Pinned to the guarantee rather than to the circumstance: the first version
+    // failed on the generated snippet, which is not a defect.
+    const scrolled = (el) => {
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        const overflowX = getComputedStyle(node).overflowX;
+        if (overflowX === "auto" || overflowX === "scroll") return true;
+      }
+      return false;
+    };
+    const limit = document.documentElement.clientWidth;
+    return {
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: limit,
+      widest: [...document.querySelectorAll(".pg *")]
+        .filter((el) => el.getBoundingClientRect().right > limit + 1 && !scrolled(el))
+        .map(
+          (el) =>
+            `${el.tagName.toLowerCase()}.${el.className} ` +
+            `right=${Math.round(el.getBoundingClientRect().right)} ` +
+            `${JSON.stringify((el.textContent ?? "").trim().slice(0, 40))}`,
+        )
+        .slice(0, 5),
+    };
+  });
   expect(overflow.widest).toEqual([]);
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 });
