@@ -1131,7 +1131,8 @@ impl WasmDocument {
             return None;
         }
         let paragraph = find_paragraph_any(&self.document, hit.pos.node)?;
-        let links = paragraph_links(&self.document, paragraph);
+        // One note-ordinal index per click, not one per note reference met.
+        let links = paragraph_links(&NoteAnchorLengths::of(&self.document), paragraph);
         let link = links.into_iter().find(|candidate| {
             // `paragraph_links` reports EDITING-space offsets (it skips revisions
             // that do not contribute without advancing the offset), so the range
@@ -8437,24 +8438,52 @@ impl WasmDocument {
         initials: Option<String>,
         date: Option<String>,
     ) -> Result<EditResult, JsValue> {
+        self.add_comment_inner(
+            start_node, start, end_node, end, text, author, initials, date,
+        )
+        .map_err(to_js)
+    }
+
+    /// [`add_comment`](Self::add_comment) with its refusals as `String`s instead
+    /// of `JsValue`s.
+    ///
+    /// This split is a TESTABILITY fix, not a refactor. Any `#[wasm_bindgen]`
+    /// method whose error path builds a `JsValue` cannot be driven down that path
+    /// in a native test: `JsError::new` panics with "cannot call wasm-bindgen
+    /// imported functions on non-wasm targets", so the panic destroys the message
+    /// before any assertion can read it. A native guard over such a method can
+    /// therefore assert a success and can neither assert a refusal nor see WHY one
+    /// happened — which is how this method's deepest refusal shipped unguarded and
+    /// wrong. `caption_renumber_operations` and `caption_target_refusal` were
+    /// factored out for the same reason; this is the same pattern, applied to the
+    /// method the class was found in.
+    #[allow(clippy::too_many_arguments)]
+    fn add_comment_inner(
+        &mut self,
+        start_node: &str,
+        start: u32,
+        end_node: &str,
+        end: u32,
+        text: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
         if text.is_empty() {
-            return Err(to_js(
-                "comment range and text must be non-empty".to_string(),
-            ));
+            return Err("comment range and text must be non-empty".to_string());
         }
-        let start_node = node_id(start_node)?;
-        let end_node = node_id(end_node)?;
+        let start_node = node_id_msg(start_node)?;
+        let end_node = node_id_msg(end_node)?;
         if start_node == end_node && start >= end {
-            return Err(to_js(
-                "comment range and text must be non-empty".to_string(),
-            ));
+            return Err("comment range and text must be non-empty".to_string());
         }
         let author = self.resolve_author(author);
         let initials = self.resolve_initials(initials);
-        let next_id = |ids: &mut IdGenerator| {
-            ids.next_id()
-                .map_err(|_| to_js("id space exhausted".to_string()))
-        };
+        // The note-ordinal index for this one command, built once before the
+        // review body is spliced. O(notes); see `NoteAnchorLengths`.
+        let notes = NoteAnchorLengths::of(&self.document);
+        let next_id =
+            |ids: &mut IdGenerator| ids.next_id().map_err(|_| "id space exhausted".to_string());
         let comment = CommentId::new(next_id(&mut self.edit_ids)?);
         let start_id = next_id(&mut self.edit_ids)?;
         let end_id = next_id(&mut self.edit_ids)?;
@@ -8474,8 +8503,9 @@ impl WasmDocument {
             comment,
         };
         let (body, caret) = if start_node == end_node {
-            let mut body = review_paragraph_body(&self.document, start_node).map_err(to_js)?;
+            let mut body = review_paragraph_body(&self.document, start_node)?;
             if !insert_review_comment_markers(
+                &notes,
                 &mut body,
                 start_node,
                 start,
@@ -8485,9 +8515,7 @@ impl WasmDocument {
                 reference,
                 &mut self.edit_ids,
             ) {
-                return Err(to_js(
-                    "comment range must cover editable top-level text".to_string(),
-                ));
+                return Err(COMMENT_RANGE_REFUSAL.to_string());
             }
             (body, Pos::new(start_node, end))
         } else {
@@ -8497,15 +8525,17 @@ impl WasmDocument {
             // changed paragraphs (its inverse removes both markers). The
             // endpoints arrive in document order, so the markers are ordered
             // correctly across the body.
-            let mut body = review_paragraph_body(&self.document, start_node).map_err(to_js)?;
-            body.extend(review_paragraph_body(&self.document, end_node).map_err(to_js)?);
+            let mut body = review_paragraph_body(&self.document, start_node)?;
+            body.extend(review_paragraph_body(&self.document, end_node)?);
             if !insert_comment_markers_at(
+                &notes,
                 &mut body,
                 start_node,
                 start,
                 &[InlineNode::CommentRangeStart(range_start)],
                 &mut self.edit_ids,
             ) || !insert_comment_markers_at(
+                &notes,
                 &mut body,
                 end_node,
                 end,
@@ -8515,14 +8545,12 @@ impl WasmDocument {
                 ],
                 &mut self.edit_ids,
             ) {
-                return Err(to_js(
-                    "comment range must cover editable top-level text".to_string(),
-                ));
+                return Err(COMMENT_RANGE_REFUSAL.to_string());
             }
             (body, Pos::new(end_node, end))
         };
         let mut comments = self.document.definitions().comments.clone();
-        let para_id = next_comment_para_id(&comments).map_err(to_js)?;
+        let para_id = next_comment_para_id(&comments)?;
         comments.insert(
             comment,
             Comment {
@@ -8545,10 +8573,8 @@ impl WasmDocument {
                 person: None,
             },
         );
-        let operation =
-            update_review_operation(&self.document, &body, Some(comments)).map_err(to_js)?;
+        let operation = update_review_operation(&self.document, &body, Some(comments))?;
         self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
-            .map_err(to_js)
     }
 
     /// Resolves or reopens an existing comment as one undoable review action.
@@ -8790,10 +8816,14 @@ impl WasmDocument {
             text: text.to_owned(),
         })];
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        // The note-ordinal index for this one command, built once before the
+        // review body is spliced. O(notes); see `NoteAnchorLengths`.
+        let notes = NoteAnchorLengths::of(&self.document);
         // docs/86 decision 1: typing strictly inside the author's own pending
         // insertion extends that suggestion (continuing its group), rather than
         // failing on the interior offset or starting a fresh adjacent revision.
         if let Some(interior_group) = extend_authored_insertion_interior(
+            &notes,
             &mut body,
             node,
             offset,
@@ -8821,7 +8851,7 @@ impl WasmDocument {
             };
         }
         let changed = if continuing_group.is_some() {
-            extend_review_group_insertion(&mut body, node, offset, group, addition)
+            extend_review_group_insertion(&notes, &mut body, node, offset, group, addition)
         } else {
             let revision = self
                 .edit_ids
@@ -8829,6 +8859,7 @@ impl WasmDocument {
                 .map_err(|_| to_js("id space exhausted".to_string()))?;
             let revision_id = self.revision_ids.allocate().map_err(to_js)?;
             insert_review_revision(
+                &notes,
                 &mut body,
                 node,
                 offset,
@@ -8936,9 +8967,13 @@ impl WasmDocument {
             ),
         );
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        // The note-ordinal index for this one command, built once before the
+        // review body is spliced. O(notes); see `NoteAnchorLengths`.
+        let notes = NoteAnchorLengths::of(&self.document);
         // docs/86 decision 1: styled typing strictly inside the author's own
         // pending insertion extends that suggestion too.
         if let Some(interior_group) = extend_authored_insertion_interior(
+            &notes,
             &mut body,
             node,
             offset,
@@ -8966,7 +9001,7 @@ impl WasmDocument {
             };
         }
         let changed = if continuing_group.is_some() {
-            extend_review_group_insertion(&mut body, node, offset, group, inlines)
+            extend_review_group_insertion(&notes, &mut body, node, offset, group, inlines)
         } else {
             let revision = self
                 .edit_ids
@@ -8974,6 +9009,7 @@ impl WasmDocument {
                 .map_err(|_| to_js("id space exhausted".to_string()))?;
             let revision_id = self.revision_ids.allocate().map_err(to_js)?;
             insert_review_revision(
+                &notes,
                 &mut body,
                 node,
                 offset,
@@ -9057,7 +9093,11 @@ impl WasmDocument {
         let deletion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
         let insertion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        // The note-ordinal index for this one command, built once before the
+        // review body is spliced. O(notes); see `NoteAnchorLengths`.
+        let notes = NoteAnchorLengths::of(&self.document);
         if !wrap_review_deletion(
+            &notes,
             &mut body,
             node,
             start,
@@ -9078,6 +9118,7 @@ impl WasmDocument {
             ));
         }
         if !insert_review_revision(
+            &notes,
             &mut body,
             node,
             start,
@@ -9137,7 +9178,10 @@ impl WasmDocument {
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
-        self.suggest_deletion_into_body(&mut body, node, start, end, author, date)
+        // The note-ordinal index for this one command, built once before the
+        // review body is spliced. O(notes); see `NoteAnchorLengths`.
+        let notes = NoteAnchorLengths::of(&self.document);
+        self.suggest_deletion_into_body(&notes, &mut body, node, start, end, author, date)
             .map_err(to_js)?;
         let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
         self.apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
@@ -9148,8 +9192,13 @@ impl WasmDocument {
     /// may hold several paragraphs. Single- and cross-paragraph deletion share it,
     /// so both follow docs/86 decision 2 the same way: the author's own pending
     /// insertions are removed outright and only accepted text is suggested deleted.
+    // Eight arguments because `NoteAnchorLengths` is PASSED rather than looked
+    // up: that is the whole point of the index (build once, query O(1)), and the
+    // alternative to the parameter is the linear scan per reference it replaced.
+    #[allow(clippy::too_many_arguments)]
     fn suggest_deletion_into_body(
         &mut self,
+        notes: &NoteAnchorLengths,
         body: &mut Vec<BlockNode>,
         node: NodeId,
         start: u32,
@@ -9157,13 +9206,18 @@ impl WasmDocument {
         author: Option<String>,
         date: Option<String>,
     ) -> Result<(), String> {
-        if remove_authored_review_insertion(body, node, start, end, author.as_deref()) {
+        if remove_authored_review_insertion(notes, body, node, start, end, author.as_deref()) {
             return Ok(());
         }
         let mut mixed = body.clone();
-        if let Some(removed) =
-            strip_authored_insertions_in_range(&mut mixed, node, start, end, author.as_deref())
-        {
+        if let Some(removed) = strip_authored_insertions_in_range(
+            &NoteAnchorLengths::default(),
+            &mut mixed,
+            node,
+            start,
+            end,
+            author.as_deref(),
+        ) {
             let new_end = end.saturating_sub(removed);
             if new_end > start {
                 let revision = self
@@ -9172,6 +9226,7 @@ impl WasmDocument {
                     .map_err(|_| "id space exhausted".to_string())?;
                 let revision_id = self.revision_ids.allocate()?;
                 if !wrap_review_deletion(
+                    notes,
                     &mut mixed,
                     node,
                     start,
@@ -9199,6 +9254,7 @@ impl WasmDocument {
             .map_err(|_| "id space exhausted".to_string())?;
         let revision_id = self.revision_ids.allocate()?;
         if !wrap_review_deletion(
+            notes,
             body,
             node,
             start,
@@ -9487,6 +9543,9 @@ impl WasmDocument {
             }
         }
         let last = nodes.len() - 1;
+        // One index for the whole cross-paragraph suggestion, not one per
+        // paragraph in the range. O(notes).
+        let notes = NoteAnchorLengths::of(&self.document);
         let mut body = Vec::new();
         for node in &nodes {
             body.extend(review_paragraph_body(&self.document, *node)?);
@@ -9500,6 +9559,7 @@ impl WasmDocument {
             };
             if to > from {
                 self.suggest_deletion_into_body(
+                    &notes,
                     &mut body,
                     *node,
                     from,
@@ -9520,6 +9580,7 @@ impl WasmDocument {
                 .map_err(|_| "id space exhausted".to_string())?;
             let revision_id = self.revision_ids.allocate()?;
             if !insert_review_revision(
+                &notes,
                 &mut body,
                 start.node,
                 start.offset,
@@ -9683,7 +9744,11 @@ impl WasmDocument {
             kind: RevisionGroupKind::Formatting,
         };
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        // The note-ordinal index for this one command, built once before the
+        // review body is spliced. O(notes); see `NoteAnchorLengths`.
+        let notes = NoteAnchorLengths::of(&self.document);
         if !apply_review_format_change(
+            &notes,
             &mut body,
             node,
             start,
@@ -9929,7 +9994,12 @@ impl WasmDocument {
         accept: bool,
     ) -> Result<EditResult, JsValue> {
         let group = node_id(group)?;
-        let validated = validate_review_group(self.document.body(), group).map_err(to_js)?;
+        let validated = validate_review_group(
+            &NoteAnchorLengths::of(&self.document),
+            self.document.body(),
+            group,
+        )
+        .map_err(to_js)?;
         let mut body = review_paragraph_body(&self.document, validated.node).map_err(to_js)?;
         for target in validated.targets {
             let decided = match target {
@@ -9985,8 +10055,10 @@ impl WasmDocument {
         }
         let mut editor_groups = BTreeSet::new();
         collect_review_editor_group_ids(self.document.body(), &mut editor_groups);
+        // One index for every group validated, not one per group.
+        let notes = NoteAnchorLengths::of(&self.document);
         for group in editor_groups {
-            validate_review_group(self.document.body(), group).map_err(to_js)?;
+            validate_review_group(&notes, self.document.body(), group).map_err(to_js)?;
         }
         let marker_ids: BTreeSet<NodeId> = pairs
             .iter()
@@ -10762,8 +10834,12 @@ impl WasmDocument {
         // Unchanged shape: a bare array of blocks. The windowed call below is
         // additive, so an existing caller keeps the contract it was written to.
         let cascade = StyleCascade::new(self.document.definitions());
+        // The note-label index for this one projection. O(notes), built once and
+        // queried O(1) per reference; resolving each marker's ordinal from the
+        // definition map instead would be a linear scan inside the walk (HF-184).
+        let notes = NoteAnchorLengths::of(&self.document);
         let mut out = Vec::new();
-        self.collect_a11y_blocks(self.document.body(), &cascade, &mut out);
+        self.collect_a11y_blocks(self.document.body(), &cascade, &notes, &mut out);
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -10784,6 +10860,8 @@ impl WasmDocument {
     #[must_use]
     pub fn accessibility_tree_window(&self, start: u32, count: u32) -> String {
         let cascade = StyleCascade::new(self.document.definitions());
+        // O(notes), once for the window — see `accessibility_tree`.
+        let notes = NoteAnchorLengths::of(&self.document);
         let mut out = Vec::new();
         let mut seen = 0_usize;
         let start = start as usize;
@@ -10791,6 +10869,7 @@ impl WasmDocument {
         self.collect_a11y_window(
             self.document.body(),
             &cascade,
+            &notes,
             start,
             limit,
             &mut seen,
@@ -10836,10 +10915,15 @@ impl WasmDocument {
 
     /// [`Self::accessibility_tree_window`]'s walk: counts every block so `total`
     /// is the document's real size, and projects only those inside the window.
+    // Eight arguments because `NoteAnchorLengths` is PASSED rather than looked
+    // up: that is the whole point of the index (build once, query O(1)), and the
+    // alternative to the parameter is the linear scan per reference it replaced.
+    #[allow(clippy::too_many_arguments)]
     fn collect_a11y_window(
         &self,
         blocks: &[BlockNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         start: usize,
         limit: usize,
         seen: &mut usize,
@@ -10849,7 +10933,7 @@ impl WasmDocument {
             let index = *seen;
             *seen += 1;
             if index >= start && index < limit {
-                self.collect_a11y_blocks(std::slice::from_ref(block), cascade, out);
+                self.collect_a11y_blocks(std::slice::from_ref(block), cascade, notes, out);
             }
         }
     }
@@ -10858,9 +10942,10 @@ impl WasmDocument {
         &self,
         blocks: &[BlockNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         out: &mut Vec<A11yBlockJson>,
     ) {
-        self.collect_a11y_blocks_at(blocks, cascade, 0, out);
+        self.collect_a11y_blocks_at(blocks, cascade, notes, 0, out);
     }
 
     /// [`collect_a11y_blocks`](Self::collect_a11y_blocks) with the nesting
@@ -10876,6 +10961,7 @@ impl WasmDocument {
         &self,
         blocks: &[BlockNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         depth: u32,
         out: &mut Vec<A11yBlockJson>,
     ) {
@@ -10917,7 +11003,14 @@ impl WasmDocument {
                     // control that text could be labelling. Counted once, for
                     // the whole paragraph.
                     let label = (count_a11y_checkboxes(&paragraph.inlines) == 1).then_some(trimmed);
-                    self.collect_a11y_inlines(&paragraph.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(
+                        &paragraph.inlines,
+                        cascade,
+                        notes,
+                        depth,
+                        label,
+                        out,
+                    );
                 }
                 BlockNode::Table(table) => {
                     let rows = table.rows.iter().map(a11y_row_cells).collect::<Vec<_>>();
@@ -10933,7 +11026,7 @@ impl WasmDocument {
                     });
                 }
                 BlockNode::Sdt(sdt) => {
-                    self.collect_a11y_blocks_at(&sdt.blocks, cascade, depth, out);
+                    self.collect_a11y_blocks_at(&sdt.blocks, cascade, notes, depth, out);
                 }
                 BlockNode::AltChunk(_) => {}
             }
@@ -10963,6 +11056,7 @@ impl WasmDocument {
         &self,
         inlines: &[InlineNode],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         depth: u32,
         label: Option<&str>,
         out: &mut Vec<A11yBlockJson>,
@@ -10975,6 +11069,30 @@ impl WasmDocument {
                 InlineNode::AnchoredDrawing(drawing) => out.push(A11yBlockJson::Image {
                     alt: drawing.descr.clone(),
                 }),
+                // A chart, a SmartArt diagram or an OLE embedding. Layout paints
+                // one — as its cached preview picture, or as a `[chart]` label run
+                // — and the projection emitted nothing, so a chart reached
+                // assistive technology as silence: the reader heard the paragraph
+                // before it and the one after it and nothing in between, which is
+                // the same defect the `Image` variant was added to fix for
+                // drawings. `EmbeddedObject` carries no `descr` in the model
+                // (`wp:docPr@descr` belongs to a drawing), so this is an
+                // UNLABELLED graphic, which a screen reader must still announce.
+                InlineNode::EmbeddedObject(_) => out.push(A11yBlockJson::Image { alt: None }),
+                // An equation. It is announced as the text layout paints for it,
+                // so what is read back is what is on the page. MathML would be
+                // better and needs a node of its own plus a host renderer; the
+                // plain-text form is what the model holds and is not silence.
+                InlineNode::Math(math) => out.push(A11yBlockJson::Paragraph {
+                    text: math_a11y_text(math),
+                }),
+                // A footnote/endnote reference marker. Word announces "Footnote
+                // reference"; this announces which note, from the index built once
+                // per projection, because the number is how a reader finds the note
+                // body on the notes surface.
+                InlineNode::NoteReference(reference) => out.push(A11yBlockJson::Paragraph {
+                    text: note_reference_a11y_text(notes, reference),
+                }),
                 // A text box's content is ordinary block content flowed through
                 // the same pipeline as the body, so it is projected the same
                 // way. Its text reaches the MIRROR only: it is not part of
@@ -10982,10 +11100,10 @@ impl WasmDocument {
                 // caret offsets index, so no offset in the host paragraph
                 // moves (`docs/120` §3).
                 InlineNode::TextBox(text_box) => {
-                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, depth + 1, out);
+                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, notes, depth + 1, out);
                 }
                 InlineNode::Group(group) => {
-                    self.collect_a11y_group(&group.children, cascade, depth + 1, out);
+                    self.collect_a11y_group(&group.children, cascade, notes, depth + 1, out);
                 }
                 InlineNode::Sdt(sdt) => {
                     if let Some(checkbox) = sdt_form_checkbox(sdt) {
@@ -10995,17 +11113,24 @@ impl WasmDocument {
                         }
                         out.push(A11yBlockJson::Checkbox(node));
                     } else {
-                        self.collect_a11y_inlines(&sdt.inlines, cascade, depth, label, out);
+                        self.collect_a11y_inlines(&sdt.inlines, cascade, notes, depth, label, out);
                     }
                 }
                 // Wrappers carry ordinary flow: a figure inside a link, a
                 // tracked insertion, or an inline content control is still a
                 // figure.
                 InlineNode::Hyperlink(hyperlink) => {
-                    self.collect_a11y_inlines(&hyperlink.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(
+                        &hyperlink.inlines,
+                        cascade,
+                        notes,
+                        depth,
+                        label,
+                        out,
+                    );
                 }
                 InlineNode::Field(field) => {
-                    self.collect_a11y_inlines(&field.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(&field.inlines, cascade, notes, depth, label, out);
                 }
                 // A deletion is not on the page under the default projection, so
                 // it is not read; `node_plain_text` drops its text for the same
@@ -11015,9 +11140,42 @@ impl WasmDocument {
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup) =>
                 {
-                    self.collect_a11y_inlines(&revision.inlines, cascade, depth, label, out);
+                    self.collect_a11y_inlines(&revision.inlines, cascade, notes, depth, label, out);
                 }
-                _ => {}
+                InlineNode::Revision(_) => {}
+                // A horizontal rule (`w:pict`/`v:rect@o:hr`) IS painted and is not
+                // projected, deliberately and for now: it is a presentational
+                // separator, the projection has no separator node, and the two
+                // dishonest ways to emit one with today's nodes are an unlabelled
+                // `Image` (a screen reader then announces a graphic where the
+                // reader sees a line) and a `Paragraph` of dashes (text that is not
+                // in the document). Adding the node needs a host renderer, which is
+                // the webapp lane's; recorded as an open row rather than papered
+                // over. This arm is what makes the omission deliberate.
+                InlineNode::HorizontalRule(_) => {}
+                // Text, and the markers and glyphs that carry no separate
+                // announcement: their bytes are already in the paragraph's text
+                // through `a11y_plain_text`, or they are boundaries rather than
+                // content. Enumerated with no wildcard, because a wildcard is how
+                // the next paintable kind becomes silence — which is what
+                // `EmbeddedObject`, `Math` and `NoteReference` above were.
+                InlineNode::Run(_)
+                | InlineNode::Tab(_)
+                | InlineNode::PositionalTab(_)
+                | InlineNode::Break(_)
+                | InlineNode::Symbol(_)
+                | InlineNode::NoteNumberMark(_)
+                | InlineNode::NoBreakHyphen(_)
+                | InlineNode::SoftHyphen(_)
+                | InlineNode::CommentReference(_)
+                | InlineNode::CommentRangeStart(_)
+                | InlineNode::CommentRangeEnd(_)
+                | InlineNode::BookmarkStart(_)
+                | InlineNode::BookmarkEnd(_)
+                | InlineNode::FieldRangeStart(_)
+                | InlineNode::FieldRangeEnd(_)
+                | InlineNode::MoveRangeStart(_)
+                | InlineNode::MoveRangeEnd(_) => {}
             }
         }
     }
@@ -11034,6 +11192,7 @@ impl WasmDocument {
         &self,
         children: &[GroupChild],
         cascade: &StyleCascade,
+        notes: &NoteAnchorLengths,
         depth: u32,
         out: &mut Vec<A11yBlockJson>,
     ) {
@@ -11046,10 +11205,10 @@ impl WasmDocument {
                     alt: picture.descr.clone(),
                 }),
                 GroupChild::TextBox(text_box) => {
-                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, depth + 1, out);
+                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, notes, depth + 1, out);
                 }
                 GroupChild::Group(group) => {
-                    self.collect_a11y_group(&group.children, cascade, depth + 1, out);
+                    self.collect_a11y_group(&group.children, cascade, notes, depth + 1, out);
                 }
                 // A shape child of a group carries no text by construction
                 // (`GroupShape` is the no-text variant) and no alt text, so
@@ -13433,7 +13592,12 @@ impl WasmDocument {
             return pos;
         };
         let mut segments = Vec::new();
-        review_segments(&self.document, &paragraph.inlines, false, &mut segments);
+        review_segments(
+            &NoteAnchorLengths::of(&self.document),
+            &paragraph.inlines,
+            false,
+            &mut segments,
+        );
         ModelPos::new(pos.node, editing_to_markup_offset(&segments, pos.offset))
     }
 
@@ -13447,7 +13611,12 @@ impl WasmDocument {
             return pos;
         };
         let mut segments = Vec::new();
-        review_segments(&self.document, &paragraph.inlines, false, &mut segments);
+        review_segments(
+            &NoteAnchorLengths::of(&self.document),
+            &paragraph.inlines,
+            false,
+            &mut segments,
+        );
         ModelPos::new(pos.node, markup_to_editing_offset(&segments, pos.offset))
     }
 
@@ -13535,6 +13704,8 @@ impl WasmDocument {
         // with `find_paragraph_any` walks the whole document again — so one index,
         // built by a single walk.
         let by_id = ParagraphIndex::build(&self.document);
+        // One note-ordinal index for the whole copy, not one per paragraph.
+        let notes = NoteAnchorLengths::of(&self.document);
         for (idx, (node, text)) in nodes.iter().enumerate().take(ei + 1).skip(si) {
             if idx > si {
                 out.push(ClipboardRun {
@@ -13551,7 +13722,7 @@ impl WasmDocument {
             let Some(paragraph) = by_id.paragraph(node) else {
                 continue;
             };
-            paragraph_rich_runs(&self.document, paragraph, lo as u32, hi as u32, &mut out);
+            paragraph_rich_runs(&notes, paragraph, lo as u32, hi as u32, &mut out);
         }
         out
     }
@@ -13916,7 +14087,7 @@ struct ExternalCell {
 }
 
 fn paragraph_rich_runs(
-    document: &Document,
+    notes: &NoteAnchorLengths,
     paragraph: &Paragraph,
     lo: u32,
     hi: u32,
@@ -13925,7 +14096,7 @@ fn paragraph_rich_runs(
     let full_text = node_plain_text(&paragraph.inlines);
     let mut offset = 0u32;
     walk_inlines_rich(
-        document,
+        notes,
         &paragraph.inlines,
         None,
         &mut offset,
@@ -13938,7 +14109,7 @@ fn paragraph_rich_runs(
 
 #[allow(clippy::too_many_arguments)]
 fn walk_inlines_rich(
-    document: &Document,
+    notes: &NoteAnchorLengths,
     inlines: &[InlineNode],
     href: Option<&str>,
     offset: &mut u32,
@@ -13962,7 +14133,7 @@ fn walk_inlines_rich(
             InlineNode::Hyperlink(link) => {
                 let href = hyperlink_href(&link.target);
                 walk_inlines_rich(
-                    document,
+                    notes,
                     &link.inlines,
                     Some(&href),
                     offset,
@@ -13978,7 +14149,7 @@ fn walk_inlines_rich(
                     .contributes_to(ReviewProjection::FinalWithMarkup) =>
             {
                 walk_inlines_rich(
-                    document,
+                    notes,
                     &revision.inlines,
                     href,
                     offset,
@@ -13990,11 +14161,11 @@ fn walk_inlines_rich(
             }
             InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => {
-                walk_inlines_rich(document, &sdt.inlines, href, offset, lo, hi, full_text, out);
+                walk_inlines_rich(notes, &sdt.inlines, href, offset, lo, hi, full_text, out);
             }
             other => {
                 let start = *offset;
-                let end = start.saturating_add(inline_anchor_len(document, other));
+                let end = start.saturating_add(inline_anchor_len(notes, other));
                 *offset = end;
                 let (a, b) = (start.max(lo), end.min(hi));
                 if a < b {
@@ -14177,25 +14348,27 @@ fn body_group_object_ref(blocks: &[BlockNode], node: NodeId) -> Option<GroupObje
     in_blocks(blocks, node)
 }
 
-fn collect_group_text(children: &[GroupChild], out: &mut Vec<(NodeId, String)>) {
-    for child in children {
-        match child {
-            GroupChild::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
-            GroupChild::Group(nested) => collect_group_text(&nested.children, out),
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
-        }
-    }
-}
-
+/// The text of every block story an inline list owns, at any container depth —
+/// what `findText` searches inside a shape. **O(inlines in the subtree)**; descent
+/// is [`inline_descent`]'s, so the container set is the complete one.
+///
+/// It descended `TextBox`, `Hyperlink`, `Field` and `Group` and stopped, so text
+/// in a box inside an inline content control or a tracked insertion was
+/// unsearchable while being on the page and editable.
+///
+/// A twin of this walk lives in `casual_doc_edit` (`text_box_text`), and the two
+/// must eventually be one function: this is the same "two answers to one
+/// question" shape as the anchor-length family. Only the wasm copy is fixed here,
+/// because `casual-doc-edit` is another lane's crate.
 fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>) {
     for inline in inlines {
-        match inline {
-            InlineNode::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
-            InlineNode::Hyperlink(link) => collect_text_box_text(&link.inlines, out),
-            InlineNode::Field(field) => collect_text_box_text(&field.inlines, out),
-            // Groups hold text boxes too, and nest.
-            InlineNode::Group(group) => collect_group_text(&group.children, out),
-            _ => {}
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => collect_text_box_text(nested, out),
+            InlineDescent::Blocks(blocks) => collect_block_text(blocks, out),
+            InlineDescent::Group(children) => {
+                group_block_stories(children, &mut |blocks| collect_block_text(blocks, out));
+            }
+            InlineDescent::Leaf => {}
         }
     }
 }
@@ -14730,6 +14903,168 @@ fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, S
 /// [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph).
 type ObjectNodesByParagraph = HashMap<NodeId, (Vec<(NodeId, Option<String>)>, Vec<NodeId>)>;
 
+/// What an [`InlineNode`] CONTAINS — the one place in this crate that knows the
+/// inline container set.
+///
+/// An inline can contain other inlines, or block content of its own, and every
+/// walk over a paragraph has to descend both. Written out ad hoc, each walk
+/// implemented three or four of the six containers and stopped; the pair left out
+/// was almost always `Sdt`+`Revision` or `TextBox`+`Group`, and the symptom was
+/// always the same — content plainly on the page that one subsystem cannot see.
+/// Eight such walks were found in this crate at once, which is the evidence that
+/// the missing thing was an abstraction and not eight fixes.
+///
+/// The match in [`inline_descent`] is **exhaustive with no wildcard arm**: a
+/// wildcard is how the next inline kind gets silently treated as a leaf, which is
+/// this same defect arriving by omission.
+enum InlineDescent<'a> {
+    /// Inline children in the SAME paragraph and the same model-offset space:
+    /// `Hyperlink`, `Field`, `Revision`, `Sdt`.
+    Inlines(&'a [InlineNode]),
+    /// A block story of its own — `TextBox`. Its paragraphs have ids and offsets
+    /// in the same id space as the body but a DIFFERENT offset space from the
+    /// paragraph that anchors the box, so a walk that measures offsets must not
+    /// follow this axis (see [`inline_anchor_len`]).
+    Blocks(&'a [BlockNode]),
+    /// A DrawingML group's children — `Group`. Pictures and shapes are leaves;
+    /// its text boxes and nested groups carry block stories.
+    Group(&'a [GroupChild]),
+    /// Everything else: a leaf, with nothing inside it to visit.
+    Leaf,
+}
+
+/// The children of one inline node, by descent axis. **O(1)** — it returns
+/// borrowed slices and visits nothing.
+///
+/// The complete container set is `Hyperlink`, `Field`, `Revision`, `Sdt`
+/// (inline-in-inline) and `TextBox`, `Group` (block-in-inline). `Revision` is a
+/// container whatever its kind: a walk that is looking for content decides for
+/// itself whether a non-contributing revision counts, and a walk that is looking
+/// for an id must descend one regardless, because a tracked deletion's nodes are
+/// still in the tree.
+fn inline_descent(inline: &InlineNode) -> InlineDescent<'_> {
+    match inline {
+        InlineNode::Hyperlink(link) => InlineDescent::Inlines(&link.inlines),
+        InlineNode::Field(field) => InlineDescent::Inlines(&field.inlines),
+        InlineNode::Revision(revision) => InlineDescent::Inlines(&revision.inlines),
+        InlineNode::Sdt(sdt) => InlineDescent::Inlines(&sdt.inlines),
+        InlineNode::TextBox(text_box) => InlineDescent::Blocks(&text_box.blocks),
+        InlineNode::Group(group) => InlineDescent::Group(&group.children),
+        InlineNode::Run(_)
+        | InlineNode::Tab(_)
+        | InlineNode::PositionalTab(_)
+        | InlineNode::Break(_)
+        | InlineNode::Symbol(_)
+        | InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
+        | InlineNode::EmbeddedObject(_)
+        | InlineNode::NoteReference(_)
+        | InlineNode::NoteNumberMark(_)
+        | InlineNode::Math(_)
+        | InlineNode::HorizontalRule(_)
+        | InlineNode::NoBreakHyphen(_)
+        | InlineNode::SoftHyphen(_)
+        | InlineNode::CommentReference(_)
+        | InlineNode::CommentRangeStart(_)
+        | InlineNode::CommentRangeEnd(_)
+        | InlineNode::BookmarkStart(_)
+        | InlineNode::BookmarkEnd(_)
+        | InlineNode::FieldRangeStart(_)
+        | InlineNode::FieldRangeEnd(_)
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_) => InlineDescent::Leaf,
+    }
+}
+
+/// The inline children an inline contains IN THE SAME PARAGRAPH, or `None` when it
+/// has none. **O(1)**.
+///
+/// This is [`InlineDescent::Inlines`] on its own, for the walks that must follow
+/// only that axis: anything measuring or addressing offsets within one paragraph.
+/// A `TextBox`'s or a `Group`'s paragraphs are separate stories with their own
+/// offset spaces, so following them would produce an offset in one paragraph for a
+/// node that lives in another.
+pub(crate) fn contained_inlines(inline: &InlineNode) -> Option<&[InlineNode]> {
+    match inline_descent(inline) {
+        InlineDescent::Inlines(inlines) => Some(inlines),
+        InlineDescent::Blocks(_) | InlineDescent::Group(_) | InlineDescent::Leaf => None,
+    }
+}
+
+/// [`contained_inlines`] for a walk that MUTATES what it finds. **O(1)**.
+///
+/// Rust cannot share one match across mutability, so this is the one deliberate
+/// second spelling of the container set, kept immediately beside the first so the
+/// two cannot drift apart unnoticed — and
+/// `the_two_faces_of_the_container_set_agree` fails the build if they ever do.
+/// Adding a third spelling anywhere else is the defect this module is about.
+pub(crate) fn contained_inlines_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineNode>> {
+    match inline {
+        InlineNode::Hyperlink(link) => Some(&mut link.inlines),
+        InlineNode::Field(field) => Some(&mut field.inlines),
+        InlineNode::Revision(revision) => Some(&mut revision.inlines),
+        InlineNode::Sdt(sdt) => Some(&mut sdt.inlines),
+        InlineNode::TextBox(_)
+        | InlineNode::Group(_)
+        | InlineNode::Run(_)
+        | InlineNode::Tab(_)
+        | InlineNode::PositionalTab(_)
+        | InlineNode::Break(_)
+        | InlineNode::Symbol(_)
+        | InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
+        | InlineNode::EmbeddedObject(_)
+        | InlineNode::NoteReference(_)
+        | InlineNode::NoteNumberMark(_)
+        | InlineNode::Math(_)
+        | InlineNode::HorizontalRule(_)
+        | InlineNode::NoBreakHyphen(_)
+        | InlineNode::SoftHyphen(_)
+        | InlineNode::CommentReference(_)
+        | InlineNode::CommentRangeStart(_)
+        | InlineNode::CommentRangeEnd(_)
+        | InlineNode::BookmarkStart(_)
+        | InlineNode::BookmarkEnd(_)
+        | InlineNode::FieldRangeStart(_)
+        | InlineNode::FieldRangeEnd(_)
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_) => None,
+    }
+}
+
+/// Every block story an inline owns, at any container depth — both the `TextBox`
+/// and the `Group` axis of [`inline_descent`], plus the inline containers that can
+/// hold either. **O(inlines in the subtree)**.
+///
+/// For the walks that ask "is this node anywhere under this paragraph", where a
+/// text box's own paragraphs count.
+pub(crate) fn inline_block_stories<'a>(
+    inlines: &'a [InlineNode],
+    visit: &mut impl FnMut(&'a [BlockNode]),
+) {
+    for inline in inlines {
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => inline_block_stories(nested, visit),
+            InlineDescent::Blocks(blocks) => visit(blocks),
+            InlineDescent::Group(children) => group_block_stories(children, visit),
+            InlineDescent::Leaf => {}
+        }
+    }
+}
+
+/// Every block story a group's children own, in paint order — the `Group` axis of
+/// [`inline_descent`] flattened. **O(children in the subtree)**; a picture or a
+/// shape is a leaf.
+fn group_block_stories<'a>(children: &'a [GroupChild], visit: &mut impl FnMut(&'a [BlockNode])) {
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => visit(&text_box.blocks),
+            GroupChild::Group(nested) => group_block_stories(&nested.children, visit),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
 /// Every paragraph in `blocks`, in document order, with the paragraph itself in
 /// hand — the traversal [`collect_block_text`] is written on top of.
 ///
@@ -14762,24 +15097,25 @@ fn visit_paragraphs(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
     }
 }
 
+/// The paragraphs of every block story an inline list owns, at any container
+/// depth. **O(inlines in the subtree)**; descent is [`inline_descent`]'s, so the
+/// container set is the complete one.
+///
+/// It descended `TextBox`, `Hyperlink`, `Field` and `Group` and stopped, so a text
+/// box inside an inline content control or inside a tracked insertion had no
+/// paragraphs as far as every caller of [`visit_paragraphs_all_surfaces`] was
+/// concerned — and those callers are the reference scan (so a caption in such a
+/// box was missing from the cross-reference picker and from renumbering), the
+/// object map, and endpoint ordering.
 fn visit_text_box_paragraphs(inlines: &[InlineNode], visit: &mut impl FnMut(&Paragraph)) {
     for inline in inlines {
-        match inline {
-            InlineNode::TextBox(text_box) => visit_paragraphs(&text_box.blocks, visit),
-            InlineNode::Hyperlink(link) => visit_text_box_paragraphs(&link.inlines, visit),
-            InlineNode::Field(field) => visit_text_box_paragraphs(&field.inlines, visit),
-            InlineNode::Group(group) => visit_group_paragraphs(&group.children, visit),
-            _ => {}
-        }
-    }
-}
-
-fn visit_group_paragraphs(children: &[GroupChild], visit: &mut impl FnMut(&Paragraph)) {
-    for child in children {
-        match child {
-            GroupChild::TextBox(text_box) => visit_paragraphs(&text_box.blocks, visit),
-            GroupChild::Group(nested) => visit_group_paragraphs(&nested.children, visit),
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => visit_text_box_paragraphs(nested, visit),
+            InlineDescent::Blocks(blocks) => visit_paragraphs(blocks, visit),
+            InlineDescent::Group(children) => {
+                group_block_stories(children, &mut |blocks| visit_paragraphs(blocks, visit));
+            }
+            InlineDescent::Leaf => {}
         }
     }
 }
@@ -15058,6 +15394,31 @@ fn a11y_plain_text(inlines: &[InlineNode]) -> String {
     let mut out = String::new();
     append_a11y_text(inlines, &mut out);
     out
+}
+
+/// What the accessibility projection announces for an equation: the plain-text
+/// form the model retains, bracketed exactly as `casual_doc_layout::flow` paints
+/// an unshaped one, so the mirror reads back what is on the page. **O(1)**.
+fn math_a11y_text(math: &casual_doc_model::v1::Math) -> String {
+    if math.text.is_empty() {
+        "[equation]".to_owned()
+    } else {
+        format!("[{}]", math.text)
+    }
+}
+
+/// What the accessibility projection announces for a note reference marker:
+/// the note kind and the label the marker paints. **O(1)** — the label comes from
+/// the index, never from a scan of the definition map.
+fn note_reference_a11y_text(
+    notes: &NoteAnchorLengths,
+    reference: &casual_doc_model::v1::NoteReference,
+) -> String {
+    let kind = match reference.kind {
+        NoteKind::Footnote => "footnote",
+        NoteKind::Endnote => "endnote",
+    };
+    format!("[{kind} {}]", notes.label_of(reference))
 }
 
 fn append_a11y_text(inlines: &[InlineNode], out: &mut String) {
@@ -15941,6 +16302,7 @@ fn collect_review_inline_move_ranges(
 }
 
 fn collect_review_revisions(
+    notes: &NoteAnchorLengths,
     blocks: &[BlockNode],
     move_links: &BTreeMap<NodeId, ReviewMoveLink>,
     out: &mut Vec<serde_json::Value>,
@@ -15957,6 +16319,7 @@ fn collect_review_revisions(
                 let format_at = out.len();
                 let mut offset = 0;
                 collect_review_inline(
+                    notes,
                     &paragraph.inlines,
                     paragraph.id,
                     &mut offset,
@@ -16009,17 +16372,18 @@ fn collect_review_revisions(
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_review_revisions(&cell.blocks, move_links, out);
+                        collect_review_revisions(notes, &cell.blocks, move_links, out);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => collect_review_revisions(&sdt.blocks, move_links, out),
+            BlockNode::Sdt(sdt) => collect_review_revisions(notes, &sdt.blocks, move_links, out),
             BlockNode::AltChunk(_) => {}
         }
     }
 }
 
 fn collect_review_comment_anchors(
+    notes: &NoteAnchorLengths,
     blocks: &[BlockNode],
     out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
 ) {
@@ -16030,10 +16394,11 @@ fn collect_review_comment_anchors(
     // paragraph's projected text length so a cross-paragraph end can anchor to
     // the start marker over the remainder of the start paragraph.
     let mut starts = std::collections::BTreeMap::new();
-    collect_review_comment_anchors_inner(blocks, &mut starts, out);
+    collect_review_comment_anchors_inner(notes, blocks, &mut starts, out);
 }
 
 fn collect_review_comment_anchors_inner(
+    notes: &NoteAnchorLengths,
     blocks: &[BlockNode],
     starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, (NodeId, u32, u32)>,
     out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
@@ -16044,11 +16409,12 @@ fn collect_review_comment_anchors_inner(
                 let para_len = paragraph
                     .inlines
                     .iter()
-                    .map(inline_anchor_len_for_review)
+                    .map(|inline| inline_anchor_len(notes, inline))
                     .sum();
                 let mut offset = 0;
                 for inline in &paragraph.inlines {
                     collect_review_comment_inline(
+                        notes,
                         inline,
                         paragraph.id,
                         para_len,
@@ -16062,12 +16428,12 @@ fn collect_review_comment_anchors_inner(
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_review_comment_anchors_inner(&cell.blocks, starts, out);
+                        collect_review_comment_anchors_inner(notes, &cell.blocks, starts, out);
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                collect_review_comment_anchors_inner(&sdt.blocks, starts, out);
+                collect_review_comment_anchors_inner(notes, &sdt.blocks, starts, out);
             }
             BlockNode::AltChunk(_) => {}
         }
@@ -16188,8 +16554,18 @@ fn validate_active_author_name(name: &str) -> Result<(), String> {
     }
 }
 
+/// Why `addComment` refuses a range it cannot mark up: one of its endpoints does
+/// not fall on a boundary between two inlines of the paragraph, so a marker there
+/// would have to be placed INSIDE something that cannot be split — the middle of
+/// an equation, a field's cached result, or a text box's own story.
+///
+/// One constant so the message the host shows and the message the guards assert
+/// are the same string.
+const COMMENT_RANGE_REFUSAL: &str = "comment range must fall on inline boundaries of editable text";
+
 #[allow(clippy::too_many_arguments)]
 fn insert_review_comment_markers(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     start: u32,
@@ -16202,8 +16578,8 @@ fn insert_review_comment_markers(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
-                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
-                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                if !review_split_top_level_run(notes, &mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(notes, &mut paragraph.inlines, end, ids)
                 {
                     return false;
                 }
@@ -16218,11 +16594,23 @@ fn insert_review_comment_markers(
                         end_index = Some(index);
                         break;
                     }
-                    if let InlineNode::Run(run) = inline {
-                        offset = offset.saturating_add(run.text.len() as u32);
-                    } else {
-                        return false;
-                    }
+                    // Measure EVERY inline, not just runs. This walk used to
+                    // advance only past a `Run` and refuse at anything else, so a
+                    // comment whose range lay at or after any non-run inline in the
+                    // paragraph was refused outright: a page-number field, a
+                    // footnote marker, an equation, a picture, a bookmark marker or
+                    // a comment marker from an earlier comment was enough. In a
+                    // document numbered "Page 7 of 9" the text after the field
+                    // could not be commented at all.
+                    //
+                    // An endpoint that does not land on a boundary is still
+                    // refused, and that falls out of the arithmetic rather than
+                    // needing a check: `review_split_top_level_run` above has
+                    // already split a run at each endpoint, so an offset inside a
+                    // run IS a boundary by the time this runs, while an offset
+                    // inside an unsplittable inline is never equal to `offset` and
+                    // leaves `start_index`/`end_index` `None`.
+                    offset = offset.saturating_add(inline_anchor_len(notes, inline));
                 }
                 let Some(start_index) = start_index else {
                     return false;
@@ -16248,6 +16636,7 @@ fn insert_review_comment_markers(
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
                         if insert_review_comment_markers(
+                            notes,
                             &mut cell.blocks,
                             node,
                             start,
@@ -16264,6 +16653,7 @@ fn insert_review_comment_markers(
             }
             BlockNode::Sdt(sdt) => {
                 if insert_review_comment_markers(
+                    notes,
                     &mut sdt.blocks,
                     node,
                     start,
@@ -16288,9 +16678,14 @@ fn insert_review_comment_markers(
 /// This is the cross-node building block for [`WasmDocument::add_comment`]: a
 /// multi-paragraph comment places its start marker in one paragraph and its end
 /// marker plus reference in another with two calls. Returns `false` when the
-/// node is absent or `offset` does not fall on a top-level run boundary — the
-/// same "editable top-level text" restriction as `insert_review_comment_markers`.
+/// node is absent or `offset` does not fall on a boundary between two of its
+/// top-level inlines — the same restriction as `insert_review_comment_markers`,
+/// and the one [`COMMENT_RANGE_REFUSAL`] describes.
+///
+/// **O(inlines in the paragraph)** per call, plus the descent into block
+/// containers to find the paragraph; no document walk and no by-id lookup.
 fn insert_comment_markers_at(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     offset: u32,
@@ -16300,7 +16695,7 @@ fn insert_comment_markers_at(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
-                if !review_split_top_level_run(&mut paragraph.inlines, offset, ids) {
+                if !review_split_top_level_run(notes, &mut paragraph.inlines, offset, ids) {
                     return false;
                 }
                 let mut cursor = 0;
@@ -16310,11 +16705,11 @@ fn insert_comment_markers_at(
                         insert_at = Some(index);
                         break;
                     }
-                    if let InlineNode::Run(run) = inline {
-                        cursor = cursor.saturating_add(run.text.len() as u32);
-                    } else {
-                        return false;
-                    }
+                    // Every inline is measured — see the same change in
+                    // `insert_review_comment_markers`. A cross-paragraph comment
+                    // whose start paragraph held a field could not be created
+                    // either, for the same reason and in the same walk shape.
+                    cursor = cursor.saturating_add(inline_anchor_len(notes, inline));
                 }
                 let Some(insert_at) =
                     insert_at.or_else(|| (cursor == offset).then_some(paragraph.inlines.len()))
@@ -16329,14 +16724,21 @@ fn insert_comment_markers_at(
             BlockNode::Table(table) => {
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
-                        if insert_comment_markers_at(&mut cell.blocks, node, offset, markers, ids) {
+                        if insert_comment_markers_at(
+                            notes,
+                            &mut cell.blocks,
+                            node,
+                            offset,
+                            markers,
+                            ids,
+                        ) {
                             return true;
                         }
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                if insert_comment_markers_at(&mut sdt.blocks, node, offset, markers, ids) {
+                if insert_comment_markers_at(notes, &mut sdt.blocks, node, offset, markers, ids) {
                     return true;
                 }
             }
@@ -16347,6 +16749,7 @@ fn insert_comment_markers_at(
 }
 
 fn insert_review_revision(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     offset: u32,
@@ -16356,7 +16759,7 @@ fn insert_review_revision(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
-                if !review_split_top_level_run(&mut paragraph.inlines, offset, ids) {
+                if !review_split_top_level_run(notes, &mut paragraph.inlines, offset, ids) {
                     return false;
                 }
                 let mut cursor = 0;
@@ -16368,7 +16771,7 @@ fn insert_review_revision(
                         return true;
                     }
                     if let Some(inline) = paragraph.inlines.get(index) {
-                        cursor = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                        cursor = cursor.saturating_add(inline_anchor_len(notes, inline));
                     }
                 }
                 return false;
@@ -16378,6 +16781,7 @@ fn insert_review_revision(
                 return table.rows.iter_mut().any(|row| {
                     row.cells.iter_mut().any(|cell| {
                         insert_review_revision(
+                            notes,
                             &mut cell.blocks,
                             node,
                             offset,
@@ -16389,6 +16793,7 @@ fn insert_review_revision(
             }
             BlockNode::Sdt(sdt) => {
                 return insert_review_revision(
+                    notes,
                     &mut sdt.blocks,
                     node,
                     offset,
@@ -16410,6 +16815,7 @@ fn insert_review_revision(
 /// typing session keeps merging into it. Returns `None` when no such suggestion
 /// contains the offset (the caller then takes the top-level insert path).
 fn extend_authored_insertion_interior(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     offset: u32,
@@ -16422,7 +16828,7 @@ fn extend_authored_insertion_interior(
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
                 let mut cursor = 0_u32;
                 for inline in &mut paragraph.inlines {
-                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    let next = cursor.saturating_add(inline_anchor_len(notes, inline));
                     if offset > cursor && offset < next {
                         let InlineNode::Revision(revision) = inline else {
                             return None;
@@ -16434,7 +16840,13 @@ fn extend_authored_insertion_interior(
                         }
                         let group = revision.editor_group?;
                         let local = offset - cursor;
-                        if splice_addition_into_runs(&mut revision.inlines, local, addition, ids) {
+                        if splice_addition_into_runs(
+                            notes,
+                            &mut revision.inlines,
+                            local,
+                            addition,
+                            ids,
+                        ) {
                             coalesce_review_runs(&mut revision.inlines);
                             return Some(group);
                         }
@@ -16449,6 +16861,7 @@ fn extend_authored_insertion_interior(
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
                         if let Some(group) = extend_authored_insertion_interior(
+                            &NoteAnchorLengths::default(),
                             &mut cell.blocks,
                             node,
                             offset,
@@ -16463,6 +16876,7 @@ fn extend_authored_insertion_interior(
             }
             BlockNode::Sdt(sdt) => {
                 if let Some(group) = extend_authored_insertion_interior(
+                    &NoteAnchorLengths::default(),
                     &mut sdt.blocks,
                     node,
                     offset,
@@ -16485,6 +16899,7 @@ fn extend_authored_insertion_interior(
 /// non-char boundary. Callers `coalesce_review_runs` afterwards, so a default-
 /// property insert merges back into one run.
 fn splice_addition_into_runs(
+    notes: &NoteAnchorLengths,
     inlines: &mut Vec<InlineNode>,
     local: u32,
     addition: &[InlineNode],
@@ -16492,7 +16907,7 @@ fn splice_addition_into_runs(
 ) -> bool {
     let mut cursor = 0_u32;
     for index in 0..inlines.len() {
-        let len = inline_anchor_len_for_review(&inlines[index]);
+        let len = inline_anchor_len(notes, &inlines[index]);
         let next = cursor.saturating_add(len);
         if local > cursor && local < next {
             let InlineNode::Run(run) = &inlines[index] else {
@@ -16528,6 +16943,7 @@ fn splice_addition_into_runs(
 }
 
 fn extend_review_group_insertion(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     offset: u32,
@@ -16539,7 +16955,7 @@ fn extend_review_group_insertion(
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
                 let mut cursor = 0_u32;
                 for inline in &mut paragraph.inlines {
-                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    let next = cursor.saturating_add(inline_anchor_len(notes, inline));
                     if next == offset
                         && let InlineNode::Revision(revision) = inline
                         && revision.kind == RevisionKind::Insertion
@@ -16558,6 +16974,7 @@ fn extend_review_group_insertion(
                 return table.rows.iter_mut().any(|row| {
                     row.cells.iter_mut().any(|cell| {
                         extend_review_group_insertion(
+                            notes,
                             &mut cell.blocks,
                             node,
                             offset,
@@ -16569,6 +16986,7 @@ fn extend_review_group_insertion(
             }
             BlockNode::Sdt(sdt) => {
                 return extend_review_group_insertion(
+                    notes,
                     &mut sdt.blocks,
                     node,
                     offset,
@@ -16590,10 +17008,15 @@ fn extend_review_group_insertion(
 /// boundary is the mixed case of docs/86 decision 4, where each covered segment
 /// has to be handled by origin; answering `Some` here would silently apply one
 /// rule to all of it.
-fn enclosing_revision(inlines: &[InlineNode], start: u32, end: u32) -> Option<(usize, u32)> {
+fn enclosing_revision(
+    notes: &NoteAnchorLengths,
+    inlines: &[InlineNode],
+    start: u32,
+    end: u32,
+) -> Option<(usize, u32)> {
     let mut cursor: u32 = 0;
     for (index, inline) in inlines.iter().enumerate() {
-        let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+        let next = cursor.saturating_add(inline_anchor_len(notes, inline));
         if matches!(inline, InlineNode::Revision(_))
             && start >= cursor
             && end <= next
@@ -16610,17 +17033,19 @@ fn enclosing_revision(inlines: &[InlineNode], start: u32, end: u32) -> Option<(u
 /// wrapper as well as beside one. Recurses, so a revision nested in a revision
 /// resolves too.
 fn wrap_review_deletion_in_inlines(
+    notes: &NoteAnchorLengths,
     inlines: &mut Vec<InlineNode>,
     start: u32,
     end: u32,
     revision: Revision,
     ids: &mut IdGenerator,
 ) -> bool {
-    if let Some((index, base)) = enclosing_revision(inlines, start, end) {
+    if let Some((index, base)) = enclosing_revision(notes, inlines, start, end) {
         let InlineNode::Revision(wrapper) = &mut inlines[index] else {
             return false;
         };
         return wrap_review_deletion_in_inlines(
+            notes,
             &mut wrapper.inlines,
             start - base,
             end - base,
@@ -16628,8 +17053,8 @@ fn wrap_review_deletion_in_inlines(
             ids,
         );
     }
-    if !review_split_top_level_run(inlines, start, ids)
-        || !review_split_top_level_run(inlines, end, ids)
+    if !review_split_top_level_run(notes, inlines, start, ids)
+        || !review_split_top_level_run(notes, inlines, end, ids)
     {
         return false;
     }
@@ -16637,7 +17062,7 @@ fn wrap_review_deletion_in_inlines(
     let mut first = None;
     let mut last = None;
     for (index, inline) in inlines.iter().enumerate() {
-        let len = inline_anchor_len_for_review(inline);
+        let len = inline_anchor_len(notes, inline);
         if cursor == start && first.is_none() {
             first = Some(index);
         }
@@ -16662,6 +17087,7 @@ fn wrap_review_deletion_in_inlines(
 }
 
 fn wrap_review_deletion(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     start: u32,
@@ -16683,11 +17109,14 @@ fn wrap_review_deletion(
                 // Checked BEFORE splitting at top level: the range is expressed in
                 // review coordinates, and once it is known to be interior the
                 // split has to happen inside the wrapper, not around it.
-                if let Some((index, base)) = enclosing_revision(&paragraph.inlines, start, end) {
+                if let Some((index, base)) =
+                    enclosing_revision(notes, &paragraph.inlines, start, end)
+                {
                     let InlineNode::Revision(wrapper) = &mut paragraph.inlines[index] else {
                         return false;
                     };
                     return wrap_review_deletion_in_inlines(
+                        notes,
                         &mut wrapper.inlines,
                         start - base,
                         end - base,
@@ -16695,8 +17124,8 @@ fn wrap_review_deletion(
                         ids,
                     );
                 }
-                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
-                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                if !review_split_top_level_run(notes, &mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(notes, &mut paragraph.inlines, end, ids)
                 {
                     return false;
                 }
@@ -16712,7 +17141,7 @@ fn wrap_review_deletion(
                         // accepted text (docs/86 decision 2). Previously the
                         // cursor only counted top-level runs, so any such wrapper
                         // shifted the range and the wrap silently failed.
-                        cursor = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                        cursor = cursor.saturating_add(inline_anchor_len(notes, inline));
                         continue;
                     };
                     if cursor == start {
@@ -16742,6 +17171,7 @@ fn wrap_review_deletion(
                 return table.rows.iter_mut().any(|row| {
                     row.cells.iter_mut().any(|cell| {
                         wrap_review_deletion(
+                            notes,
                             &mut cell.blocks,
                             node,
                             start,
@@ -16754,6 +17184,7 @@ fn wrap_review_deletion(
             }
             BlockNode::Sdt(sdt) => {
                 return wrap_review_deletion(
+                    notes,
                     &mut sdt.blocks,
                     node,
                     start,
@@ -16772,6 +17203,7 @@ fn wrap_review_deletion(
 /// insertion in place, matching Word/Docs behavior. It must not create a
 /// deletion-of-an-insertion pair for text that has never been accepted.
 fn remove_authored_review_insertion(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     start: u32,
@@ -16784,7 +17216,7 @@ fn remove_authored_review_insertion(
                 let mut cursor = 0_u32;
                 let mut edits = Vec::new();
                 for (index, inline) in paragraph.inlines.iter().enumerate() {
-                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    let next = cursor.saturating_add(inline_anchor_len(notes, inline));
                     if next > start && cursor < end {
                         let InlineNode::Revision(revision) = inline else {
                             return false;
@@ -16835,14 +17267,28 @@ fn remove_authored_review_insertion(
             BlockNode::Table(table) => {
                 if table.rows.iter_mut().any(|row| {
                     row.cells.iter_mut().any(|cell| {
-                        remove_authored_review_insertion(&mut cell.blocks, node, start, end, author)
+                        remove_authored_review_insertion(
+                            notes,
+                            &mut cell.blocks,
+                            node,
+                            start,
+                            end,
+                            author,
+                        )
                     })
                 }) {
                     return true;
                 }
             }
             BlockNode::Sdt(sdt) => {
-                if remove_authored_review_insertion(&mut sdt.blocks, node, start, end, author) {
+                if remove_authored_review_insertion(
+                    notes,
+                    &mut sdt.blocks,
+                    node,
+                    start,
+                    end,
+                    author,
+                ) {
                     return true;
                 }
             }
@@ -16858,12 +17304,13 @@ fn remove_authored_review_insertion(
 /// does the first half — strip the current author's own `Insertion` bytes that
 /// overlap `[start, end)` in place — and returns the total bytes removed, which
 /// closes the gap so the remaining accepted text is contiguous and the caller
-/// can `wrap_review_deletion([start, end - removed))`.
+/// can `wrap_review_deletion(notes, [start, end - removed))`.
 ///
 /// Returns `None` (defer to the plain deletion path) when the range holds no
 /// own-author insertion, or holds anything this half can't safely handle: a
 /// different author's revision, or an own insertion that is not a single run.
 fn strip_authored_insertions_in_range(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     start: u32,
@@ -16877,7 +17324,7 @@ fn strip_authored_insertions_in_range(
                 let mut edits: Vec<(usize, usize, usize)> = Vec::new();
                 let mut saw_own = false;
                 for (index, inline) in paragraph.inlines.iter().enumerate() {
-                    let len = inline_anchor_len_for_review(inline);
+                    let len = inline_anchor_len(notes, inline);
                     let next = cursor.saturating_add(len);
                     if len > 0 && next > start && cursor < end {
                         let overlap_start = start.max(cursor);
@@ -16937,6 +17384,7 @@ fn strip_authored_insertions_in_range(
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
                         if let Some(removed) = strip_authored_insertions_in_range(
+                            &NoteAnchorLengths::default(),
                             &mut cell.blocks,
                             node,
                             start,
@@ -16949,9 +17397,14 @@ fn strip_authored_insertions_in_range(
                 }
             }
             BlockNode::Sdt(sdt) => {
-                if let Some(removed) =
-                    strip_authored_insertions_in_range(&mut sdt.blocks, node, start, end, author)
-                {
+                if let Some(removed) = strip_authored_insertions_in_range(
+                    &NoteAnchorLengths::default(),
+                    &mut sdt.blocks,
+                    node,
+                    start,
+                    end,
+                    author,
+                ) {
                     return Some(removed);
                 }
             }
@@ -16963,6 +17416,7 @@ fn strip_authored_insertions_in_range(
 
 #[allow(clippy::too_many_arguments)]
 fn apply_review_format_change(
+    notes: &NoteAnchorLengths,
     blocks: &mut [BlockNode],
     node: NodeId,
     start: u32,
@@ -16977,15 +17431,15 @@ fn apply_review_format_change(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
-                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
-                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                if !review_split_top_level_run(notes, &mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(notes, &mut paragraph.inlines, end, ids)
                 {
                     return Ok(false);
                 }
                 let mut cursor = 0_u32;
                 let mut selected = Vec::new();
                 for (index, inline) in paragraph.inlines.iter().enumerate() {
-                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    let next = cursor.saturating_add(inline_anchor_len(notes, inline));
                     if cursor < end && next > start {
                         let InlineNode::Run(run) = inline else {
                             return Ok(false);
@@ -17038,6 +17492,7 @@ fn apply_review_format_change(
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
                         if apply_review_format_change(
+                            notes,
                             &mut cell.blocks,
                             node,
                             start,
@@ -17056,6 +17511,7 @@ fn apply_review_format_change(
             }
             BlockNode::Sdt(sdt) => {
                 if apply_review_format_change(
+                    notes,
                     &mut sdt.blocks,
                     node,
                     start,
@@ -17253,6 +17709,7 @@ fn decide_all_review_inlines(inlines: &mut Vec<InlineNode>, accept: bool) {
 }
 
 fn find_review_revision_anchor(
+    notes: &NoteAnchorLengths,
     blocks: &[BlockNode],
     id: NodeId,
 ) -> Option<(NodeId, u32, u32, RevisionKind)> {
@@ -17261,6 +17718,7 @@ fn find_review_revision_anchor(
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0;
                 if let Some(anchor) = find_review_inline_anchor(
+                    notes,
                     &paragraph.inlines,
                     paragraph.id,
                     id,
@@ -17273,14 +17731,14 @@ fn find_review_revision_anchor(
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        if let Some(anchor) = find_review_revision_anchor(&cell.blocks, id) {
+                        if let Some(anchor) = find_review_revision_anchor(notes, &cell.blocks, id) {
                             return Some(anchor);
                         }
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                if let Some(anchor) = find_review_revision_anchor(&sdt.blocks, id) {
+                if let Some(anchor) = find_review_revision_anchor(notes, &sdt.blocks, id) {
                     return Some(anchor);
                 }
             }
@@ -17291,6 +17749,7 @@ fn find_review_revision_anchor(
 }
 
 fn find_review_inline_anchor(
+    notes: &NoteAnchorLengths,
     inlines: &[InlineNode],
     node: NodeId,
     id: NodeId,
@@ -17306,7 +17765,7 @@ fn find_review_inline_anchor(
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup);
                 let end = if visible {
-                    start.saturating_add(projected_revision_len(revision))
+                    start.saturating_add(projected_revision_len(notes, revision))
                 } else {
                     start
                 };
@@ -17315,13 +17774,14 @@ fn find_review_inline_anchor(
                 }
                 if visible {
                     if let Some(anchor) =
-                        find_review_inline_anchor(&revision.inlines, node, id, offset, true)
+                        find_review_inline_anchor(notes, &revision.inlines, node, id, offset, true)
                     {
                         return Some(anchor);
                     }
                 } else {
                     let mut hidden_offset = start;
                     if let Some(anchor) = find_review_inline_anchor(
+                        notes,
                         &revision.inlines,
                         node,
                         id,
@@ -17335,20 +17795,20 @@ fn find_review_inline_anchor(
             }
             InlineNode::Hyperlink(link) => {
                 if let Some(anchor) =
-                    find_review_inline_anchor(&link.inlines, node, id, offset, projected)
+                    find_review_inline_anchor(notes, &link.inlines, node, id, offset, projected)
                 {
                     return Some(anchor);
                 }
             }
             InlineNode::Sdt(sdt) => {
                 if let Some(anchor) =
-                    find_review_inline_anchor(&sdt.inlines, node, id, offset, projected)
+                    find_review_inline_anchor(notes, &sdt.inlines, node, id, offset, projected)
                 {
                     return Some(anchor);
                 }
             }
             _ if projected => {
-                *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+                *offset = offset.saturating_add(inline_anchor_len(notes, inline));
             }
             _ => {}
         }
@@ -17609,12 +18069,17 @@ fn find_review_inline_format_change(
     None
 }
 
-fn find_review_format_anchor(blocks: &[BlockNode], run_id: NodeId) -> Option<(NodeId, u32, u32)> {
+fn find_review_format_anchor(
+    notes: &NoteAnchorLengths,
+    blocks: &[BlockNode],
+    run_id: NodeId,
+) -> Option<(NodeId, u32, u32)> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0;
                 if let Some(anchor) = find_review_inline_format_anchor(
+                    notes,
                     &paragraph.inlines,
                     paragraph.id,
                     run_id,
@@ -17627,14 +18092,15 @@ fn find_review_format_anchor(blocks: &[BlockNode], run_id: NodeId) -> Option<(No
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        if let Some(anchor) = find_review_format_anchor(&cell.blocks, run_id) {
+                        if let Some(anchor) = find_review_format_anchor(notes, &cell.blocks, run_id)
+                        {
                             return Some(anchor);
                         }
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                if let Some(anchor) = find_review_format_anchor(&sdt.blocks, run_id) {
+                if let Some(anchor) = find_review_format_anchor(notes, &sdt.blocks, run_id) {
                     return Some(anchor);
                 }
             }
@@ -17645,6 +18111,7 @@ fn find_review_format_anchor(blocks: &[BlockNode], run_id: NodeId) -> Option<(No
 }
 
 fn find_review_inline_format_anchor(
+    notes: &NoteAnchorLengths,
     inlines: &[InlineNode],
     node: NodeId,
     run_id: NodeId,
@@ -17672,6 +18139,7 @@ fn find_review_inline_format_anchor(
                         .contributes_to(ReviewProjection::FinalWithMarkup);
                 if visible {
                     if let Some(anchor) = find_review_inline_format_anchor(
+                        notes,
                         &revision.inlines,
                         node,
                         run_id,
@@ -17683,6 +18151,7 @@ fn find_review_inline_format_anchor(
                 } else {
                     let mut hidden_offset = *offset;
                     if let Some(anchor) = find_review_inline_format_anchor(
+                        notes,
                         &revision.inlines,
                         node,
                         run_id,
@@ -17694,21 +18163,31 @@ fn find_review_inline_format_anchor(
                 }
             }
             InlineNode::Hyperlink(link) => {
-                if let Some(anchor) =
-                    find_review_inline_format_anchor(&link.inlines, node, run_id, offset, projected)
-                {
+                if let Some(anchor) = find_review_inline_format_anchor(
+                    notes,
+                    &link.inlines,
+                    node,
+                    run_id,
+                    offset,
+                    projected,
+                ) {
                     return Some(anchor);
                 }
             }
             InlineNode::Sdt(sdt) => {
-                if let Some(anchor) =
-                    find_review_inline_format_anchor(&sdt.inlines, node, run_id, offset, projected)
-                {
+                if let Some(anchor) = find_review_inline_format_anchor(
+                    notes,
+                    &sdt.inlines,
+                    node,
+                    run_id,
+                    offset,
+                    projected,
+                ) {
                     return Some(anchor);
                 }
             }
             _ if projected => {
-                *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+                *offset = offset.saturating_add(inline_anchor_len(notes, inline));
             }
             _ => {}
         }
@@ -17853,11 +18332,12 @@ struct ValidatedReviewGroup {
 }
 
 fn validate_review_group(
+    notes: &NoteAnchorLengths,
     blocks: &[BlockNode],
     group_id: NodeId,
 ) -> Result<ValidatedReviewGroup, String> {
     let mut members = Vec::new();
-    collect_review_group_members(blocks, group_id, &mut members);
+    collect_review_group_members(notes, blocks, group_id, &mut members);
     if members.is_empty() {
         return Err("revision group not found".to_owned());
     }
@@ -17938,6 +18418,7 @@ fn validate_review_group(
 }
 
 fn collect_review_group_members(
+    notes: &NoteAnchorLengths,
     blocks: &[BlockNode],
     group_id: NodeId,
     out: &mut Vec<ReviewGroupMember>,
@@ -17948,6 +18429,7 @@ fn collect_review_group_members(
                 let mut offset = 0_u32;
                 for (index, inline) in paragraph.inlines.iter().enumerate() {
                     collect_review_group_inline(
+                        notes,
                         inline,
                         paragraph.id,
                         &mut offset,
@@ -17961,17 +18443,22 @@ fn collect_review_group_members(
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_review_group_members(&cell.blocks, group_id, out);
+                        collect_review_group_members(notes, &cell.blocks, group_id, out);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => collect_review_group_members(&sdt.blocks, group_id, out),
+            BlockNode::Sdt(sdt) => collect_review_group_members(notes, &sdt.blocks, group_id, out),
             BlockNode::AltChunk(_) => {}
         }
     }
 }
 
+// Eight arguments because `NoteAnchorLengths` is PASSED rather than looked up:
+// that is the whole point of the index (build once, query O(1)), and the
+// alternative to the parameter is the linear scan per reference it replaced.
+#[allow(clippy::too_many_arguments)]
 fn collect_review_group_inline(
+    notes: &NoteAnchorLengths,
     inline: &InlineNode,
     node: NodeId,
     offset: &mut u32,
@@ -17988,7 +18475,7 @@ fn collect_review_group_inline(
                     .kind
                     .contributes_to(ReviewProjection::FinalWithMarkup);
             let end = if visible {
-                start.saturating_add(projected_revision_len(revision))
+                start.saturating_add(projected_revision_len(notes, revision))
             } else {
                 start
             };
@@ -18012,12 +18499,15 @@ fn collect_review_group_inline(
             }
             if visible {
                 for child in &revision.inlines {
-                    collect_review_group_inline(child, node, offset, true, group_id, None, out);
+                    collect_review_group_inline(
+                        notes, child, node, offset, true, group_id, None, out,
+                    );
                 }
             } else {
                 let mut hidden_offset = start;
                 for child in &revision.inlines {
                     collect_review_group_inline(
+                        notes,
                         child,
                         node,
                         &mut hidden_offset,
@@ -18060,16 +18550,20 @@ fn collect_review_group_inline(
         }
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                collect_review_group_inline(child, node, offset, projected, group_id, None, out);
+                collect_review_group_inline(
+                    notes, child, node, offset, projected, group_id, None, out,
+                );
             }
         }
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
-                collect_review_group_inline(child, node, offset, projected, group_id, None, out);
+                collect_review_group_inline(
+                    notes, child, node, offset, projected, group_id, None, out,
+                );
             }
         }
         _ if projected => {
-            *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+            *offset = offset.saturating_add(inline_anchor_len(notes, inline));
         }
         _ => {}
     }
@@ -18165,6 +18659,7 @@ fn coalesce_review_runs(inlines: &mut Vec<InlineNode>) {
 /// halves still belong to their original author. Only `id` is refreshed, because
 /// two inline nodes cannot share an identity.
 fn split_revision_wrapper(
+    notes: &NoteAnchorLengths,
     inlines: &mut Vec<InlineNode>,
     index: usize,
     local: u32,
@@ -18176,7 +18671,7 @@ fn split_revision_wrapper(
         let InlineNode::Revision(revision) = &mut inlines[index] else {
             return false;
         };
-        if !review_split_top_level_run(&mut revision.inlines, local, ids) {
+        if !review_split_top_level_run(notes, &mut revision.inlines, local, ids) {
             return false;
         }
     }
@@ -18192,7 +18687,7 @@ fn split_revision_wrapper(
                 break;
             }
             if let Some(inline) = revision.inlines.get(i) {
-                cursor = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                cursor = cursor.saturating_add(inline_anchor_len(notes, inline));
             }
         }
         match cut {
@@ -18226,13 +18721,14 @@ fn split_revision_wrapper(
 }
 
 fn review_split_top_level_run(
+    notes: &NoteAnchorLengths,
     inlines: &mut Vec<InlineNode>,
     offset: u32,
     ids: &mut IdGenerator,
 ) -> bool {
     let mut cursor: u32 = 0;
     for index in 0..inlines.len() {
-        let next = cursor.saturating_add(inline_anchor_len_for_review(&inlines[index]));
+        let next = cursor.saturating_add(inline_anchor_len(notes, &inlines[index]));
         if offset == cursor || offset == next {
             return true;
         }
@@ -18266,7 +18762,7 @@ fn review_split_top_level_run(
             // bare `return false` here is why a second reviewer's keystrokes were
             // dropped with nothing but a status line to show for it.
             if matches!(inlines[index], InlineNode::Revision(_)) {
-                return split_revision_wrapper(inlines, index, offset - cursor, ids);
+                return split_revision_wrapper(notes, inlines, index, offset - cursor, ids);
             }
             return false;
         }
@@ -18275,7 +18771,12 @@ fn review_split_top_level_run(
     offset == cursor
 }
 
+// Eight arguments because `NoteAnchorLengths` is PASSED rather than looked up:
+// that is the whole point of the index (build once, query O(1)), and the
+// alternative to the parameter is the linear scan per reference it replaced.
+#[allow(clippy::too_many_arguments)]
 fn collect_review_comment_inline(
+    notes: &NoteAnchorLengths,
     inline: &InlineNode,
     node: NodeId,
     para_len: u32,
@@ -18305,7 +18806,7 @@ fn collect_review_comment_inline(
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
                 collect_review_comment_inline(
-                    child, node, para_len, offset, projected, starts, out,
+                    notes, child, node, para_len, offset, projected, starts, out,
                 );
             }
         }
@@ -18316,6 +18817,7 @@ fn collect_review_comment_inline(
                     .contributes_to(ReviewProjection::FinalWithMarkup);
             for child in &revision.inlines {
                 collect_review_comment_inline(
+                    notes,
                     child,
                     node,
                     para_len,
@@ -18329,12 +18831,12 @@ fn collect_review_comment_inline(
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
                 collect_review_comment_inline(
-                    child, node, para_len, offset, projected, starts, out,
+                    notes, child, node, para_len, offset, projected, starts, out,
                 );
             }
         }
         _ if projected => {
-            *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+            *offset = offset.saturating_add(inline_anchor_len(notes, inline));
         }
         _ => {}
     }
@@ -18357,7 +18859,7 @@ struct ReviewSegment {
 /// fields, content controls — are transparent to both spaces and are descended
 /// through.
 fn review_segments(
-    document: &Document,
+    notes: &NoteAnchorLengths,
     inlines: &[InlineNode],
     deleted: bool,
     out: &mut Vec<ReviewSegment>,
@@ -18368,13 +18870,13 @@ fn review_segments(
                 let contributes = revision
                     .kind
                     .contributes_to(ReviewProjection::FinalWithMarkup);
-                review_segments(document, &revision.inlines, !contributes, out);
+                review_segments(notes, &revision.inlines, !contributes, out);
             }
-            InlineNode::Hyperlink(link) => review_segments(document, &link.inlines, deleted, out),
-            InlineNode::Field(field) => review_segments(document, &field.inlines, deleted, out),
-            InlineNode::Sdt(sdt) => review_segments(document, &sdt.inlines, deleted, out),
+            InlineNode::Hyperlink(link) => review_segments(notes, &link.inlines, deleted, out),
+            InlineNode::Field(field) => review_segments(notes, &field.inlines, deleted, out),
+            InlineNode::Sdt(sdt) => review_segments(notes, &sdt.inlines, deleted, out),
             other => {
-                let len = inline_anchor_len(document, other);
+                let len = inline_anchor_len(notes, other);
                 if len > 0 {
                     out.push(ReviewSegment {
                         len,
@@ -18431,49 +18933,23 @@ fn markup_to_editing_offset(segments: &[ReviewSegment], markup_offset: u32) -> u
     edit_pos
 }
 
-fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
-    match inline {
-        InlineNode::Run(run) => run.text.len() as u32,
-        InlineNode::Hyperlink(link) => link.inlines.iter().map(inline_anchor_len_for_review).sum(),
-        InlineNode::Revision(revision)
-            if revision
-                .kind
-                .contributes_to(ReviewProjection::FinalWithMarkup) =>
-        {
-            revision
-                .inlines
-                .iter()
-                .map(inline_anchor_len_for_review)
-                .sum()
-        }
-        InlineNode::Revision(_) => 0,
-        InlineNode::Sdt(sdt) => sdt.inlines.iter().map(inline_anchor_len_for_review).sum(),
-        InlineNode::CommentReference(_) => 0,
-        InlineNode::Symbol(symbol) => {
-            char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
-        }
-        InlineNode::NoBreakHyphen(_) => '\u{2011}'.len_utf8() as u32,
-        InlineNode::SoftHyphen(_) => '\u{00ad}'.len_utf8() as u32,
-        _ => 0,
-    }
-}
-
-fn projected_revision_len(revision: &Revision) -> u32 {
+/// The anchor-stream bytes a revision wrapper contributes under the default
+/// (final-with-markup) projection: its children's, or none when the revision is
+/// hidden. **O(the revision's inlines)**; the single [`inline_anchor_len`]
+/// answers for each child, so this cannot drift from the rest of the engine.
+fn projected_revision_len(notes: &NoteAnchorLengths, revision: &Revision) -> u32 {
     if revision
         .kind
         .contributes_to(ReviewProjection::FinalWithMarkup)
     {
-        revision
-            .inlines
-            .iter()
-            .map(inline_anchor_len_for_review)
-            .sum()
+        inlines_anchor_len(notes, &revision.inlines)
     } else {
         0
     }
 }
 
 fn collect_review_inline(
+    notes: &NoteAnchorLengths,
     inlines: &[InlineNode],
     node: NodeId,
     offset: &mut u32,
@@ -18523,7 +18999,7 @@ fn collect_review_inline(
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup);
                 let end = if visible {
-                    start.saturating_add(projected_revision_len(revision))
+                    start.saturating_add(projected_revision_len(notes, revision))
                 } else {
                     start
                 };
@@ -18563,10 +19039,19 @@ fn collect_review_inline(
                 }
                 out.push(item);
                 if visible {
-                    collect_review_inline(&revision.inlines, node, offset, true, move_links, out);
+                    collect_review_inline(
+                        notes,
+                        &revision.inlines,
+                        node,
+                        offset,
+                        true,
+                        move_links,
+                        out,
+                    );
                 } else {
                     let mut hidden_offset = start;
                     collect_review_inline(
+                        notes,
                         &revision.inlines,
                         node,
                         &mut hidden_offset,
@@ -18578,13 +19063,29 @@ fn collect_review_inline(
                 *offset = end;
             }
             InlineNode::Hyperlink(link) => {
-                collect_review_inline(&link.inlines, node, offset, projected, move_links, out);
+                collect_review_inline(
+                    notes,
+                    &link.inlines,
+                    node,
+                    offset,
+                    projected,
+                    move_links,
+                    out,
+                );
             }
             InlineNode::Sdt(sdt) => {
-                collect_review_inline(&sdt.inlines, node, offset, projected, move_links, out);
+                collect_review_inline(
+                    notes,
+                    &sdt.inlines,
+                    node,
+                    offset,
+                    projected,
+                    move_links,
+                    out,
+                );
             }
             _ if projected => {
-                *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+                *offset = offset.saturating_add(inline_anchor_len(notes, inline));
             }
             _ => {}
         }
@@ -19543,9 +20044,12 @@ struct ParagraphLink<'a> {
 /// Collects hyperlink wrappers with ranges in the same byte-anchor space used by
 /// shaping and hit-testing. Visible revisions and inline content controls are
 /// transparent; hidden revisions contribute neither links nor bytes.
-fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<ParagraphLink<'a>> {
+fn paragraph_links<'a>(
+    notes: &NoteAnchorLengths,
+    paragraph: &'a Paragraph,
+) -> Vec<ParagraphLink<'a>> {
     fn walk<'a>(
-        document: &Document,
+        notes: &NoteAnchorLengths,
         inlines: &'a [InlineNode],
         node: NodeId,
         offset: &mut u32,
@@ -19555,7 +20059,7 @@ fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<Par
             match inline {
                 InlineNode::Hyperlink(link) => {
                     let start = *offset;
-                    *offset = offset.saturating_add(inlines_anchor_len(document, &link.inlines));
+                    *offset = offset.saturating_add(inlines_anchor_len(notes, &link.inlines));
                     out.push(ParagraphLink {
                         link,
                         range: ModelRange::new(
@@ -19569,12 +20073,12 @@ fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<Par
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup) =>
                 {
-                    walk(document, &revision.inlines, node, offset, out)
+                    walk(notes, &revision.inlines, node, offset, out)
                 }
                 InlineNode::Revision(_) => {}
-                InlineNode::Sdt(sdt) => walk(document, &sdt.inlines, node, offset, out),
+                InlineNode::Sdt(sdt) => walk(notes, &sdt.inlines, node, offset, out),
                 _ => {
-                    *offset = offset.saturating_add(inline_anchor_len(document, inline));
+                    *offset = offset.saturating_add(inline_anchor_len(notes, inline));
                 }
             }
         }
@@ -19583,7 +20087,7 @@ fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<Par
     let mut links = Vec::new();
     let mut offset = 0;
     walk(
-        document,
+        notes,
         &paragraph.inlines,
         paragraph.id,
         &mut offset,
@@ -19592,40 +20096,154 @@ fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<Par
     links
 }
 
+/// How many anchor-stream bytes each of the document's note references
+/// contributes, by note id — the one piece of "how long is this inline" that
+/// cannot be read off the inline node.
+///
+/// A note reference is painted as its NUMBER, and that number is the note's
+/// 1-based position among the document's note definitions, so answering for one
+/// reference used to mean holding the whole `Document`. That is precisely what
+/// the review splices cannot do: they are handed a `&mut [BlockNode]` taken *out
+/// of* the document, so a `&Document` beside it does not borrow-check. A second,
+/// document-free copy of the same question was written instead
+/// (`inline_anchor_len_for_review`), and it answered **0** for every field, note
+/// reference, equation and embedded object — so every comment marker and every
+/// accepted/rejected revision in a paragraph holding one of those was placed
+/// short by exactly those bytes. That is the third time two functions in this
+/// engine have disagreed about a paragraph's length (`inline_text_len` and
+/// `append_node_plain_text` carry the comments from the first two).
+///
+/// The established fix for "a pure function needs one derived fact from a big
+/// structure" is not a second function: it is to **precompute an index** and
+/// pass that. So this is built once per command — one pass over the two note
+/// maps, O(notes) — queried in O(1), and owned, so it outlives the immutable
+/// borrow and every caller can use the single [`inline_anchor_len`].
+///
+/// Footnotes and endnotes are kept apart because their ordinals restart
+/// independently and nothing guarantees the two id spaces are disjoint in an
+/// imported document.
+#[derive(Clone, Debug, Default)]
+struct NoteAnchorLengths {
+    /// Each footnote's painted ordinal label, by note id.
+    footnotes: HashMap<NoteId, String>,
+    /// Each endnote's painted ordinal label, by note id.
+    endnotes: HashMap<NoteId, String>,
+}
+
+/// What a reference to a note the document does not define is painted as, and
+/// therefore how wide it is: one byte. An orphaned reference still occupies the
+/// width it is drawn at rather than collapsing and dragging every later offset in
+/// its paragraph backwards.
+const ORPHANED_NOTE_LABEL: &str = "?";
+
+impl NoteAnchorLengths {
+    /// Indexes `document`'s note definitions. **O(notes)**, once.
+    fn of(document: &Document) -> Self {
+        fn index(
+            notes: &casual_doc_model::v1::DefinitionMap<NoteId, casual_doc_model::v1::Note>,
+        ) -> HashMap<NoteId, String> {
+            notes
+                .iter()
+                .enumerate()
+                .map(|(index, (id, _))| (*id, (index + 1).to_string()))
+                .collect()
+        }
+        Self {
+            footnotes: index(&document.definitions().footnotes),
+            endnotes: index(&document.definitions().endnotes),
+        }
+    }
+
+    /// The label `reference` paints — its 1-based ordinal, or
+    /// [`ORPHANED_NOTE_LABEL`] when the document does not define the note.
+    /// **O(1)**.
+    ///
+    /// The index carries the label rather than only its length so that the
+    /// accessibility projection can announce *which* note a marker points at
+    /// without a second index and without a `position()` scan per reference. One
+    /// derived fact, one table: the shape the deleted `inline_anchor_len_for_review`
+    /// copy failed to use.
+    fn label_of(&self, reference: &casual_doc_model::v1::NoteReference) -> &str {
+        let table = match reference.kind {
+            NoteKind::Footnote => &self.footnotes,
+            NoteKind::Endnote => &self.endnotes,
+        };
+        table
+            .get(&reference.note)
+            .map_or(ORPHANED_NOTE_LABEL, String::as_str)
+    }
+
+    /// The bytes `reference` contributes. **O(1)**.
+    fn len_of(&self, reference: &casual_doc_model::v1::NoteReference) -> u32 {
+        self.label_of(reference).len() as u32
+    }
+}
+
 /// Number of UTF-8 bytes an inline contributes to the layout anchor stream.
 /// This mirrors `tabs::split_blocks`: ordinary/positional tabs affect geometry
 /// but are zero-width in the current model-offset space, while synthetic display
 /// values contribute the bytes the shaper assigns them.
-fn inline_anchor_len(document: &Document, inline: &InlineNode) -> u32 {
+///
+/// **This is the only answer to "how long is this inline" on the wasm side.**
+/// There is no review-specific variant and there must never be one again: the
+/// review paths splice comment markers and accepted/rejected revisions against
+/// offsets that come from this same space, so a second opinion is a marker in
+/// the wrong place. `NoteAnchorLengths` exists so the mutating splices can call
+/// this one function; `there_is_exactly_one_anchor_length_family` and
+/// `every_review_length_answer_agrees_on_one_paragraph` pin it.
+///
+/// # Known disagreement with the model-offset space, recorded rather than hidden
+///
+/// This function is **not** the space the host addresses paragraphs in. That space
+/// is `casual_doc_layout::flow::node_plain_text` (what `paragraphLength` reports)
+/// and `casual_doc_layout::tabs::FlowItem::model_bytes` (what a painted line
+/// range is measured in). The three agree on `Run`, `Symbol`, `Field`, and the
+/// four inline-in-inline containers, and they differ on:
+///
+/// | kind | here | `node_plain_text` | `model_bytes` |
+/// | --- | --- | --- | --- |
+/// | `Tab` | 0 | 1 | 1 |
+/// | `Math` | painted label | 0 | 0, or the label when unshaped |
+/// | `NoteReference` | the ordinal | 0 | 0 |
+/// | `EmbeddedObject` without a preview | the label | 0 | the label |
+/// | `NoBreakHyphen` / `SoftHyphen` | the glyph | 0 | 0 |
+///
+/// So a review splice in a paragraph holding a tab or an equation is measured in a
+/// space the host's offsets do not come from. That predates the deletion of the
+/// review copy — both copies charged `Tab` zero — and it is **not** fixed here: the
+/// fix is for this crate to stop having a length function at all and call
+/// `casual-doc-edit`'s, which needs that function made `pub` in another lane's
+/// crate. Reported as a row rather than guessed at, because changing this
+/// function's semantics moves every review offset in the crate at once.
+///
+/// The match is **exhaustive on purpose** — no wildcard arm. A wildcard is how a
+/// new inline kind gets silently charged zero bytes, which is the same defect as
+/// the review copy, arriving by omission instead of by duplication.
+///
+/// **O(inlines in this subtree)**, O(1) for a leaf; no document walk.
+fn inline_anchor_len(notes: &NoteAnchorLengths, inline: &InlineNode) -> u32 {
     match inline {
         InlineNode::Run(run) => run.text.len() as u32,
-        InlineNode::Tab(_) | InlineNode::PositionalTab(_) => 0,
+        // Tabs and breaks affect geometry, not the model-offset space.
+        InlineNode::Tab(_)
+        | InlineNode::PositionalTab(_)
+        | InlineNode::Break(_)
+        | InlineNode::HorizontalRule(_) => 0,
         InlineNode::Symbol(symbol) => {
             char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
         }
-        InlineNode::Hyperlink(link) => inlines_anchor_len(document, &link.inlines),
+        InlineNode::Hyperlink(link) => inlines_anchor_len(notes, &link.inlines),
         InlineNode::Revision(revision)
             if revision
                 .kind
                 .contributes_to(ReviewProjection::FinalWithMarkup) =>
         {
-            inlines_anchor_len(document, &revision.inlines)
+            inlines_anchor_len(notes, &revision.inlines)
         }
         InlineNode::Revision(_) => 0,
-        InlineNode::Sdt(sdt) => inlines_anchor_len(document, &sdt.inlines),
+        InlineNode::Sdt(sdt) => inlines_anchor_len(notes, &sdt.inlines),
         InlineNode::Field(field) => field_anchor_len(field),
-        InlineNode::NoteReference(reference) => {
-            let notes = match reference.kind {
-                casual_doc_model::v1::NoteKind::Footnote => &document.definitions().footnotes,
-                casual_doc_model::v1::NoteKind::Endnote => &document.definitions().endnotes,
-            };
-            let ordinal = notes
-                .iter()
-                .position(|(id, _)| *id == reference.note)
-                .map_or_else(|| "?".to_owned(), |index| (index + 1).to_string());
-            ordinal.len() as u32
-        }
-        InlineNode::CommentReference(_) => 0,
+        InlineNode::NoteReference(reference) => notes.len_of(reference),
         InlineNode::Math(math) => {
             if math.text.is_empty() {
                 "[equation]".len() as u32
@@ -19635,19 +20253,53 @@ fn inline_anchor_len(document: &Document, inline: &InlineNode) -> u32 {
         }
         InlineNode::NoBreakHyphen(_) => '\u{2011}'.len_utf8() as u32,
         InlineNode::SoftHyphen(_) => '\u{00ad}'.len_utf8() as u32,
-        InlineNode::EmbeddedObject(object) if object.preview.is_none() => match &object.kind {
-            casual_doc_model::v1::EmbeddedKind::Chart => "[chart]".len() as u32,
-            casual_doc_model::v1::EmbeddedKind::Diagram => "[diagram]".len() as u32,
-            casual_doc_model::v1::EmbeddedKind::OleObject
-            | casual_doc_model::v1::EmbeddedKind::Other(_) => "[object]".len() as u32,
-        },
-        _ => 0,
+        // An embedded object with a cached preview paints as that picture, which
+        // occupies no offsets; without one, layout paints its `[chart]`-style
+        // label as real text, so the label's bytes ARE the offsets.
+        InlineNode::EmbeddedObject(object) => {
+            if object.preview.is_some() {
+                0
+            } else {
+                match &object.kind {
+                    casual_doc_model::v1::EmbeddedKind::Chart => "[chart]".len() as u32,
+                    casual_doc_model::v1::EmbeddedKind::Diagram => "[diagram]".len() as u32,
+                    casual_doc_model::v1::EmbeddedKind::OleObject
+                    | casual_doc_model::v1::EmbeddedKind::Other(_) => "[object]".len() as u32,
+                }
+            }
+        }
+        // A note's OWN number mark (`w:footnoteRef`) paints the enclosing note's
+        // label as real text (`flow.rs` `note_number_run`), so this is a known
+        // understatement inside a note body — but the label depends on WHICH
+        // note body is being flowed, which is context this function does not
+        // have and must not guess at. Recorded rather than papered over: a wrong
+        // width is worse than a documented zero, because it would move every
+        // offset in the note instead of only those after the mark.
+        InlineNode::NoteNumberMark(_) => 0,
+        // Objects and markers that occupy no offsets in the model-offset space.
+        // A drawing is placed, not shaped; a marker is a boundary, not content;
+        // a text box or group carries its own block stories, whose paragraphs
+        // have offsets of their own and none in this paragraph.
+        InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
+        | InlineNode::TextBox(_)
+        | InlineNode::Group(_)
+        | InlineNode::CommentReference(_)
+        | InlineNode::CommentRangeStart(_)
+        | InlineNode::CommentRangeEnd(_)
+        | InlineNode::BookmarkStart(_)
+        | InlineNode::BookmarkEnd(_)
+        | InlineNode::FieldRangeStart(_)
+        | InlineNode::FieldRangeEnd(_)
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_) => 0,
     }
 }
 
-fn inlines_anchor_len(document: &Document, inlines: &[InlineNode]) -> u32 {
+/// [`inline_anchor_len`] summed over `inlines`. **O(inlines in the subtree).**
+fn inlines_anchor_len(notes: &NoteAnchorLengths, inlines: &[InlineNode]) -> u32 {
     inlines.iter().fold(0u32, |total, inline| {
-        total.saturating_add(inline_anchor_len(document, inline))
+        total.saturating_add(inline_anchor_len(notes, inline))
     })
 }
 
@@ -19697,7 +20349,7 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
         .find_map(|(id, definition)| (definition.name == anchor).then_some(*id))?;
 
     fn inlines_pos(
-        document: &Document,
+        notes: &NoteAnchorLengths,
         inlines: &[InlineNode],
         node: NodeId,
         bookmark: BookmarkId,
@@ -19709,8 +20361,7 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
                     return Some(ModelPos::new(node, *offset));
                 }
                 InlineNode::Hyperlink(link) => {
-                    if let Some(pos) = inlines_pos(document, &link.inlines, node, bookmark, offset)
-                    {
+                    if let Some(pos) = inlines_pos(notes, &link.inlines, node, bookmark, offset) {
                         return Some(pos);
                     }
                 }
@@ -19719,8 +20370,7 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup) =>
                 {
-                    if let Some(pos) =
-                        inlines_pos(document, &revision.inlines, node, bookmark, offset)
+                    if let Some(pos) = inlines_pos(notes, &revision.inlines, node, bookmark, offset)
                     {
                         return Some(pos);
                     }
@@ -19728,24 +20378,23 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
                 InlineNode::Revision(revision) => {
                     let mut collapsed = *offset;
                     if let Some(pos) =
-                        inlines_pos(document, &revision.inlines, node, bookmark, &mut collapsed)
+                        inlines_pos(notes, &revision.inlines, node, bookmark, &mut collapsed)
                     {
                         return Some(ModelPos::new(pos.node, *offset));
                     }
                 }
                 InlineNode::Sdt(sdt) => {
-                    if let Some(pos) = inlines_pos(document, &sdt.inlines, node, bookmark, offset) {
+                    if let Some(pos) = inlines_pos(notes, &sdt.inlines, node, bookmark, offset) {
                         return Some(pos);
                     }
                 }
                 InlineNode::Field(field) => {
-                    if let Some(pos) = inlines_pos(document, &field.inlines, node, bookmark, offset)
-                    {
+                    if let Some(pos) = inlines_pos(notes, &field.inlines, node, bookmark, offset) {
                         return Some(pos);
                     }
                 }
                 _ => {
-                    *offset = offset.saturating_add(inline_anchor_len(document, inline));
+                    *offset = offset.saturating_add(inline_anchor_len(notes, inline));
                 }
             }
         }
@@ -19753,7 +20402,7 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
     }
 
     fn blocks_pos(
-        document: &Document,
+        notes: &NoteAnchorLengths,
         blocks: &[BlockNode],
         bookmark: BookmarkId,
     ) -> Option<ModelPos> {
@@ -19762,7 +20411,7 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
                 BlockNode::Paragraph(paragraph) => {
                     let mut offset = 0;
                     if let Some(pos) = inlines_pos(
-                        document,
+                        notes,
                         &paragraph.inlines,
                         paragraph.id,
                         bookmark,
@@ -19774,14 +20423,14 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
                 BlockNode::Table(table) => {
                     for row in &table.rows {
                         for cell in &row.cells {
-                            if let Some(pos) = blocks_pos(document, &cell.blocks, bookmark) {
+                            if let Some(pos) = blocks_pos(notes, &cell.blocks, bookmark) {
                                 return Some(pos);
                             }
                         }
                     }
                 }
                 BlockNode::Sdt(sdt) => {
-                    if let Some(pos) = blocks_pos(document, &sdt.blocks, bookmark) {
+                    if let Some(pos) = blocks_pos(notes, &sdt.blocks, bookmark) {
                         return Some(pos);
                     }
                 }
@@ -19791,7 +20440,10 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
         None
     }
 
-    blocks_pos(document, document.body(), bookmark)
+    // The note-ordinal index, built ONCE for this resolution rather than per
+    // note reference met. O(notes).
+    let notes = NoteAnchorLengths::of(document);
+    blocks_pos(&notes, document.body(), bookmark)
 }
 
 /// A placed selectable object resolved from the layout: its stable root/subject
@@ -20501,31 +21153,99 @@ fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&Word
         .find_map(|blocks| object_group(blocks, object))
 }
 
+/// The model nodes of this paragraph's INLINE objects — the drawings (with their
+/// resolved media part name) and the inline text boxes — in the order layout
+/// paints them, so `resolve_object_boxes` can correlate each painted box on the
+/// paragraph's lines with the node a selection handle has to name.
+///
+/// A node missing from here is an object with **no selection handles**: it is on
+/// screen and cannot be clicked, moved, resized or given alt text. The walk
+/// descended `Hyperlink` and `Revision` only, so an image or a text box inside an
+/// inline content control (`Sdt`) or inside a field result (`Field`) — both of
+/// which `casual_doc_layout::flow::collect_items` recurses into and paints — was
+/// unselectable. A preview-bearing `EmbeddedObject` was missing for a different
+/// reason: it paints as a `FlowItem::Image`, exactly like a `Drawing`, so a chart
+/// with a cached preview produced a painted image box with no model node to
+/// correlate it to.
+///
+/// **What deliberately does NOT belong here**, because putting it here would
+/// corrupt the correlation rather than extend it: `AnchoredDrawing`, an anchored
+/// `TextBox`, and `Group` are FLOATS. They are placed by the float layer and reach
+/// `resolve_object_boxes` through `page.anchored`, which carries the model node
+/// itself and needs no map. Pushing them into `images`/`text_boxes` would let a
+/// float claim an inline image's slot and hand the wrong node to the handles. A
+/// preview-LESS `EmbeddedObject` is excluded for the matching reason: layout
+/// paints it as a text run (its `[chart]` label), not an image box.
+///
+/// The match is exhaustive with no wildcard: a new inline kind must be classified
+/// as painted-inline, float, or leaf deliberately.
+///
+/// **O(inlines in this paragraph's subtree)**, called once per paragraph by the
+/// one walk in [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph);
+/// no by-id lookup, so a click stays O(placed fragments) rather than
+/// O(fragments × document) (HF-184, `docs/116`).
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
     images: &mut Vec<(NodeId, Option<String>)>,
     text_boxes: &mut Vec<NodeId>,
 ) {
+    let part_of = |media: &casual_doc_model::v1::MediaId| {
+        definitions
+            .media
+            .get(media)
+            .map(|media| media.part_name.clone())
+    };
     for inline in inlines {
         match inline {
             InlineNode::Drawing(drawing) => {
-                let part = definitions
-                    .media
-                    .get(&drawing.media)
-                    .map(|media| media.part_name.clone());
-                images.push((drawing.id, part));
+                images.push((drawing.id, part_of(&drawing.media)));
+            }
+            // A chart/diagram/OLE object with a cached preview flows as that
+            // picture (`embedded_object_items`), so it is an inline image box.
+            InlineNode::EmbeddedObject(object) => {
+                if let Some(preview) = object.preview {
+                    images.push((object.id, part_of(&preview)));
+                }
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
                 text_boxes.push(text_box.id);
             }
+            // Floats: placed by the float layer, reported through `page.anchored`.
+            InlineNode::TextBox(_) | InlineNode::AnchoredDrawing(_) | InlineNode::Group(_) => {}
             InlineNode::Hyperlink(hyperlink) => {
                 collect_para_objects(&hyperlink.inlines, definitions, images, text_boxes);
             }
             InlineNode::Revision(revision) => {
                 collect_para_objects(&revision.inlines, definitions, images, text_boxes);
             }
-            _ => {}
+            InlineNode::Sdt(sdt) => {
+                collect_para_objects(&sdt.inlines, definitions, images, text_boxes);
+            }
+            InlineNode::Field(field) => {
+                collect_para_objects(&field.inlines, definitions, images, text_boxes);
+            }
+            // Leaves: nothing inside them paints an object box of its own.
+            InlineNode::Run(_)
+            | InlineNode::Tab(_)
+            | InlineNode::PositionalTab(_)
+            | InlineNode::Break(_)
+            | InlineNode::Symbol(_)
+            | InlineNode::NoteReference(_)
+            | InlineNode::NoteNumberMark(_)
+            | InlineNode::Math(_)
+            | InlineNode::HorizontalRule(_)
+            | InlineNode::NoBreakHyphen(_)
+            | InlineNode::SoftHyphen(_)
+            | InlineNode::CommentReference(_)
+            | InlineNode::CommentRangeStart(_)
+            | InlineNode::CommentRangeEnd(_)
+            | InlineNode::BookmarkStart(_)
+            | InlineNode::BookmarkEnd(_)
+            | InlineNode::FieldRangeStart(_)
+            | InlineNode::FieldRangeEnd(_)
+            | InlineNode::MoveRangeStart(_)
+            | InlineNode::MoveRangeEnd(_) => {}
         }
     }
 }
@@ -21517,7 +22237,14 @@ fn review_format_delta(
 
 /// Parses a 32-hex node-id string, or a thrown JS error.
 fn node_id(node: &str) -> Result<NodeId, JsValue> {
-    NodeId::from_str(node).map_err(|_| to_js(format!("invalid node id: {node}")))
+    node_id_msg(node).map_err(to_js)
+}
+
+/// [`node_id`] with the refusal as a `String`, for the inner implementations whose
+/// error path has to be readable on a native target (see
+/// `WasmDocument::add_comment_inner`).
+fn node_id_msg(node: &str) -> Result<NodeId, String> {
+    NodeId::from_str(node).map_err(|_| format!("invalid node id: {node}"))
 }
 
 /// Converts a crop inset fraction (0..=1 of a source edge) to the model's
@@ -23634,8 +24361,9 @@ fn collect_review_comment_anchors_all(
     document: &Document,
     out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
 ) {
+    let notes = NoteAnchorLengths::of(document);
     for blocks in surface_block_lists(document) {
-        collect_review_comment_anchors(blocks, out);
+        collect_review_comment_anchors(&notes, blocks, out);
     }
 }
 
@@ -23644,8 +24372,9 @@ fn collect_review_revisions_all(
     move_links: &BTreeMap<NodeId, ReviewMoveLink>,
     out: &mut Vec<serde_json::Value>,
 ) {
+    let notes = NoteAnchorLengths::of(document);
     for blocks in surface_block_lists(document) {
-        collect_review_revisions(blocks, move_links, out);
+        collect_review_revisions(&notes, blocks, move_links, out);
     }
 }
 
@@ -23661,18 +24390,20 @@ fn find_review_revision_anchor_all(
     document: &Document,
     id: NodeId,
 ) -> Option<(NodeId, u32, u32, RevisionKind)> {
+    let notes = NoteAnchorLengths::of(document);
     surface_block_lists(document)
         .into_iter()
-        .find_map(|blocks| find_review_revision_anchor(blocks, id))
+        .find_map(|blocks| find_review_revision_anchor(&notes, blocks, id))
 }
 
 fn find_review_format_anchor_all(
     document: &Document,
     run_id: NodeId,
 ) -> Option<(NodeId, u32, u32)> {
+    let notes = NoteAnchorLengths::of(document);
     surface_block_lists(document)
         .into_iter()
-        .find_map(|blocks| find_review_format_anchor(blocks, run_id))
+        .find_map(|blocks| find_review_format_anchor(&notes, blocks, run_id))
 }
 
 fn collect_review_revision_serial_ids_all(document: &Document, out: &mut Vec<String>) {
@@ -27559,7 +28290,7 @@ mod tests {
         let bytes = d.export_docx().expect("export linked document");
         let reopened = open_document(&bytes).expect("re-open linked document");
         let paragraph = find_paragraph(reopened.document.body(), node_id).expect("same paragraph");
-        let links = paragraph_links(&reopened.document, paragraph);
+        let links = paragraph_links(&NoteAnchorLengths::of(&reopened.document), paragraph);
         assert_eq!(links.len(), 1);
         assert_eq!(
             links[0].link.target,
@@ -27572,7 +28303,7 @@ mod tests {
         d.undo().expect("undo link");
         assert!(
             paragraph_links(
-                &d.document,
+                &NoteAnchorLengths::of(&d.document),
                 find_paragraph(d.document.body(), node_id).unwrap()
             )
             .is_empty()
@@ -27581,7 +28312,7 @@ mod tests {
         d.remove_hyperlink(&node, start, end).expect("remove link");
         assert!(
             paragraph_links(
-                &d.document,
+                &NoteAnchorLengths::of(&d.document),
                 find_paragraph(d.document.body(), node_id).unwrap()
             )
             .is_empty()
@@ -27589,7 +28320,7 @@ mod tests {
         d.undo().expect("undo remove");
         assert_eq!(
             paragraph_links(
-                &d.document,
+                &NoteAnchorLengths::of(&d.document),
                 find_paragraph(d.document.body(), node_id).unwrap()
             )
             .len(),
@@ -28657,7 +29388,9 @@ mod tests {
         ];
         let mut offset = 0;
         let mut items = Vec::new();
+        let notes = NoteAnchorLengths::default();
         collect_review_inline(
+            &notes,
             &inlines,
             paragraph,
             &mut offset,
@@ -28702,12 +29435,17 @@ mod tests {
                 }),
             ],
         }))];
-        let para_len = inlines.iter().map(inline_anchor_len_for_review).sum();
+        let notes = NoteAnchorLengths::default();
+        let para_len = inlines
+            .iter()
+            .map(|inline| inline_anchor_len(&notes, inline))
+            .sum();
         let mut offset = 0;
         let mut starts = BTreeMap::new();
         let mut anchors = Vec::new();
         for inline in &inlines {
             collect_review_comment_inline(
+                &notes,
                 inline,
                 paragraph,
                 para_len,
@@ -28845,14 +29583,19 @@ mod tests {
         let revisions = summary["revisions"].as_array().expect("revision array");
         let group = NodeId::from_str(revisions[0]["groupId"].as_str().expect("editor group id"))
             .expect("valid group id");
-        validate_review_group(d.document.body(), group).expect("complete group validates");
+        validate_review_group(
+            &NoteAnchorLengths::of(&d.document),
+            d.document.body(),
+            group,
+        )
+        .expect("complete group validates");
 
         let first = NodeId::from_str(revisions[0]["id"].as_str().expect("revision id"))
             .expect("valid revision node id");
         let mut damaged = d.document.body().to_vec();
         assert!(decide_review_revision(&mut damaged, first, true));
         assert!(
-            validate_review_group(&damaged, group).is_err(),
+            validate_review_group(&NoteAnchorLengths::default(), &damaged, group).is_err(),
             "a missing half fails closed"
         );
 
@@ -28898,7 +29641,7 @@ mod tests {
         };
         assert!(alter_group_kind(&mut paragraph.inlines, group));
         assert!(
-            validate_review_group(&mixed, group).is_err(),
+            validate_review_group(&NoteAnchorLengths::default(), &mixed, group).is_err(),
             "mixed group kinds fail closed"
         );
 
@@ -28933,7 +29676,7 @@ mod tests {
             .expect("a second top-level paragraph");
         target.inlines.insert(0, moved_member);
         assert!(
-            validate_review_group(&crossed, group).is_err(),
+            validate_review_group(&NoteAnchorLengths::default(), &crossed, group).is_err(),
             "cross-paragraph groups fail closed"
         );
     }
@@ -30867,7 +31610,7 @@ mod tests {
             NodeId::from_str(&node).expect("valid node id"),
         )
         .expect("paragraph still present");
-        let links = paragraph_links(&d.document, paragraph);
+        let links = paragraph_links(&NoteAnchorLengths::of(&d.document), paragraph);
         assert!(
             links
                 .iter()
@@ -32263,7 +33006,11 @@ mod tests {
 
     /// Builds a `WasmDocument` around a constructed `Document` (paginated, so the
     /// float-placement pass runs and `object_boxes` can see anchored objects).
-    fn wasm_document(document: Document) -> WasmDocument {
+    ///
+    /// `pub(crate)` so `references.rs`'s guards build their fixtures the same way
+    /// rather than growing a second, subtly different constructor — the shape this
+    /// whole branch is about.
+    pub(crate) fn wasm_document(document: Document) -> WasmDocument {
         // A document under test carries the bytes for the pictures it declares.
         // The DOCX writer no longer writes a zero-byte media part behind a live
         // `/image` relationship (FID-R-06): a reference whose bytes it was not
@@ -34285,7 +35032,7 @@ mod tests {
     fn assert_toc_row_is_clickable(handle: &WasmDocument, source_id: NodeId, target_id: NodeId) {
         let paragraph =
             find_paragraph(handle.document.body(), source_id).expect("source paragraph");
-        let links = paragraph_links(&handle.document, paragraph);
+        let links = paragraph_links(&NoteAnchorLengths::of(&handle.document), paragraph);
         assert_eq!(links.len(), 1);
         assert_eq!(
             links[0].range,
@@ -34422,6 +35169,7 @@ mod tests {
 
         // Offset 3 is between C and D, strictly inside the insertion "CD".
         let group = extend_authored_insertion_interior(
+            &NoteAnchorLengths::default(),
             &mut blocks,
             node,
             3,
@@ -34455,6 +35203,7 @@ mod tests {
         // typing-session path handles them instead.
         assert_eq!(
             extend_authored_insertion_interior(
+                &NoteAnchorLengths::default(),
                 &mut blocks,
                 node,
                 2,
@@ -34466,6 +35215,7 @@ mod tests {
         );
         assert_eq!(
             extend_authored_insertion_interior(
+                &NoteAnchorLengths::default(),
                 &mut blocks,
                 node,
                 4,
@@ -34487,6 +35237,7 @@ mod tests {
         // caller falls through to author Bob's own adjacent insertion instead.
         assert_eq!(
             extend_authored_insertion_interior(
+                &NoteAnchorLengths::default(),
                 &mut blocks,
                 node,
                 3,
@@ -34525,7 +35276,14 @@ mod tests {
         // outright (it was never accepted) and reports 2 bytes gone; the accepted
         // "B"/"E" are left for the caller to suggest-delete.
         let (node, mut blocks) = suggestion_paragraph(Some("Me"), true);
-        let removed = strip_authored_insertions_in_range(&mut blocks, node, 1, 5, Some("Me"));
+        let removed = strip_authored_insertions_in_range(
+            &NoteAnchorLengths::default(),
+            &mut blocks,
+            node,
+            1,
+            5,
+            Some("Me"),
+        );
         assert_eq!(removed, Some(2));
         assert_eq!(only_revision_text(&blocks), None, "the suggestion is gone");
         assert_eq!(
@@ -34540,7 +35298,14 @@ mod tests {
         // A range that ends inside the suggestion removes only the covered bytes.
         let (node, mut blocks) = suggestion_paragraph(Some("Me"), true); // AB ins"CD" EF
         // [3, 6): "D" (inside the insertion) + "EF" (accepted). Only "D" is ours.
-        let removed = strip_authored_insertions_in_range(&mut blocks, node, 3, 6, Some("Me"));
+        let removed = strip_authored_insertions_in_range(
+            &NoteAnchorLengths::default(),
+            &mut blocks,
+            node,
+            3,
+            6,
+            Some("Me"),
+        );
         assert_eq!(removed, Some(1));
         assert_eq!(
             only_revision_text(&blocks).as_deref(),
@@ -34558,7 +35323,14 @@ mod tests {
             inlines: vec![wrun(2, "ABCDEF")],
         })];
         assert_eq!(
-            strip_authored_insertions_in_range(&mut blocks, node, 1, 5, Some("Me")),
+            strip_authored_insertions_in_range(
+                &NoteAnchorLengths::default(),
+                &mut blocks,
+                node,
+                1,
+                5,
+                Some("Me")
+            ),
             None,
             "no own insertion — plain deletion path handles it"
         );
@@ -34568,7 +35340,14 @@ mod tests {
     fn strip_defers_on_another_authors_insertion() {
         let (node, mut blocks) = suggestion_paragraph(Some("Alice"), true);
         assert_eq!(
-            strip_authored_insertions_in_range(&mut blocks, node, 1, 5, Some("Bob")),
+            strip_authored_insertions_in_range(
+                &NoteAnchorLengths::default(),
+                &mut blocks,
+                node,
+                1,
+                5,
+                Some("Bob")
+            ),
             None,
             "never silently discards another author's suggestion"
         );
@@ -37556,6 +38335,1003 @@ mod tests {
             reopened.page_count(),
             pages,
             "and the reopened document paginates the same way"
+        );
+    }
+
+    // ---- "How long is this paragraph?" must have ONE answer ------------------
+    // Three functions in this engine have disagreed about it, one after another:
+    // `casual_doc_edit::inline_text_len`, `casual_doc_layout::append_node_plain_text`
+    // and (until this branch) `inline_anchor_len_for_review`. Deleting the third
+    // copy fixes this instance; the three guards below are what makes a FOURTH
+    // one fail the build instead of shipping.
+
+    /// A paragraph whose inlines are `"Page "`, a `PAGE` field whose cached result
+    /// is `"7"`, and `" of 9"`. Plain text is `"Page 7 of 9"`, eleven bytes, and
+    /// the field occupies the one byte it paints.
+    fn page_field_paragraph() -> (WasmDocument, NodeId) {
+        use casual_doc_model::v1::{Field, FieldKind};
+        // Its own `use` line on purpose — a new v1 import added into a shared
+        // sorted block conflicts with every other branch doing the same.
+        use casual_doc_model::v1::FieldUpdateState;
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(77, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let node = id();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: node,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                run(id(), "Page "),
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "PAGE".to_owned(),
+                    kind: FieldKind::Page,
+                    inlines: vec![run(id(), "7")],
+                    form: None,
+                    update: FieldUpdateState::default(),
+                })),
+                run(id(), " of 9"),
+            ],
+        });
+        let document = Document::new(
+            NodeId::from_parts(77, 1).unwrap(),
+            vec![paragraph],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid page-field document");
+        (wasm_document(document), node)
+    }
+
+    /// The text a comment's range markers actually enclose in the model, read
+    /// back from the tree rather than from any offset arithmetic.
+    ///
+    /// Deliberately NOT expressed in offsets: if the guard asked the review path
+    /// where it put the marker, and the review path is what is under test, a
+    /// wrong answer would agree with itself and the guard would pass. The
+    /// characters between the markers are an independent fact.
+    fn commented_text(paragraph: &Paragraph) -> String {
+        let mut inside = false;
+        let mut out = String::new();
+        for inline in &paragraph.inlines {
+            match inline {
+                InlineNode::CommentRangeStart(_) => inside = true,
+                InlineNode::CommentRangeEnd(_) => inside = false,
+                other if inside => out.push_str(&node_plain_text(core::slice::from_ref(other))),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// A comment anchored after a page-number field must enclose the characters
+    /// the user selected.
+    ///
+    /// `inline_anchor_len_for_review` charged a `Field` zero bytes while the
+    /// canonical `inline_anchor_len` charged it the width of the result it
+    /// paints, so every review offset in a paragraph holding a field was short by
+    /// exactly those bytes and the markers were spliced that far to the left.
+    #[test]
+    fn a_comment_after_a_page_field_encloses_the_selected_characters() {
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert_eq!(
+            d.paragraph_length(&key),
+            11,
+            "the host addresses this paragraph as eleven bytes: \"Page 7 of 9\""
+        );
+
+        // Bytes 6..10 of "Page 7 of 9" — a range that ends BEFORE the paragraph's
+        // end, so it is still RESOLVABLE in the shortened space a
+        // field-charges-zero bug produces. Asserted first and deliberately: if the
+        // end-of-paragraph case below runs first, such a bug shows up only as a
+        // refusal (the range runs past the end of the short paragraph), and a
+        // refusal does not demonstrate what actually happened to users — a comment
+        // silently enclosing the wrong characters.
+        //
+        // Driven through `add_comment_inner` rather than the `#[wasm_bindgen]`
+        // method throughout: the binding's refusal builds a `JsValue`, which panics
+        // on a native target, so a failure here would report "cannot call
+        // wasm-bindgen imported functions" and destroy the reason. That is what
+        // this guard did when it was written, and it is why the refusal underneath
+        // it went undiagnosed through two takeovers.
+        d.add_comment_inner(&key, 6, &key, 10, "four bytes", None, None, None)
+            .expect("comment four bytes after the field");
+        let paragraph = find_paragraph(d.document.body(), node).expect("the paragraph");
+        assert_eq!(
+            commented_text(paragraph),
+            " of ",
+            "the host selected bytes 6..10 of \"Page 7 of 9\", which is \" of \". \
+             Charging the field zero bytes shifts the whole tail one byte left, so \
+             the SAME offsets enclose \"of 9\" — a comment on the wrong characters, \
+             with no refusal to notice"
+        );
+
+        // And the whole tail, to the paragraph's true length.
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert_eq!(
+            d.paragraph_length(&key),
+            11,
+            "the host still addresses this paragraph as eleven bytes"
+        );
+        d.add_comment_inner(&key, 6, &key, 11, "after the field", None, None, None)
+            .expect("comment the text after the field");
+        let paragraph = find_paragraph(d.document.body(), node).expect("the paragraph");
+        assert_eq!(
+            commented_text(paragraph),
+            " of 9",
+            "the comment encloses what the host selected; charging the field zero \
+             bytes slides both markers one byte to the left"
+        );
+    }
+
+    /// Every function on this crate's review path must report the SAME length for
+    /// the same paragraph.
+    ///
+    /// The fixture deliberately holds one of each kind the deleted copy charged
+    /// zero — a field, a note reference, an equation and a preview-less chart —
+    /// and holds them again one wrapper down, because the walks differ in how
+    /// they recurse and the bug hid inside the recursion too. A guard built from
+    /// runs alone cannot tell the two answers apart.
+    #[test]
+    fn every_review_length_answer_agrees_on_one_paragraph() {
+        use casual_doc_model::v1::FieldUpdateState;
+        use casual_doc_model::v1::{
+            EmbeddedKind, EmbeddedObject, EmbeddedPart, Field, FieldKind, InlineSdt, Math, Note,
+            NoteReference, SdtProperties,
+        };
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(78, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let note = NoteId::new(NodeId::from_parts(78, 900).unwrap());
+        let inlines = vec![
+            run(id(), "text"),
+            InlineNode::Field(Box::new(Field {
+                id: id(),
+                instruction: "PAGE".to_owned(),
+                kind: FieldKind::Page,
+                inlines: vec![run(id(), "7")],
+                form: None,
+                update: FieldUpdateState::default(),
+            })),
+            InlineNode::NoteReference(NoteReference {
+                id: id(),
+                kind: NoteKind::Footnote,
+                note,
+            }),
+            InlineNode::Math(Box::new(Math {
+                id: id(),
+                omml: "<m:oMath/>".to_owned(),
+                text: "x+1".to_owned(),
+                expression: None,
+            })),
+            InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                id: id(),
+                kind: EmbeddedKind::Chart,
+                part: EmbeddedPart {
+                    relationship_id: "rId7".to_owned(),
+                    relationship_type:
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                            .to_owned(),
+                    part_name: "word/charts/chart1.xml".to_owned(),
+                },
+                extra_parts: Vec::new(),
+                preview: None,
+                extent: Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                },
+                prog_id: None,
+            })),
+            InlineNode::Sdt(Box::new(InlineSdt {
+                id: id(),
+                properties: SdtProperties::default(),
+                inlines: vec![
+                    run(id(), "in a control"),
+                    InlineNode::Field(Box::new(Field {
+                        id: id(),
+                        instruction: "NUMPAGES".to_owned(),
+                        kind: FieldKind::NumPages,
+                        inlines: vec![run(id(), "9")],
+                        form: None,
+                        update: FieldUpdateState::default(),
+                    })),
+                ],
+            })),
+        ];
+        let node = id();
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: id(),
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run(id(), "the note")],
+                })],
+            },
+        );
+        let document = Document::new(
+            NodeId::from_parts(78, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: node,
+                properties: ParagraphProperties::default().into(),
+                inlines: inlines.clone(),
+            })],
+            definitions,
+        )
+        .expect("a valid mixed-inline document");
+
+        let notes = NoteAnchorLengths::of(&document);
+        let anchor = inlines_anchor_len(&notes, &inlines);
+        assert!(
+            anchor > "textin a control".len() as u32,
+            "the fixture must charge the non-run kinds something, or this guard \
+             cannot tell a zero-returning length function from a correct one \
+             (measured {anchor})"
+        );
+
+        let mut segments = Vec::new();
+        review_segments(&notes, &inlines, false, &mut segments);
+        let segment_total: u32 = segments.iter().map(|segment| segment.len).sum();
+        assert_eq!(
+            segment_total, anchor,
+            "`review_segments` — the editing/markup offset map — must measure the \
+             paragraph the same way the splices do"
+        );
+
+        let mut offset = 0;
+        let mut items = Vec::new();
+        collect_review_inline(
+            &notes,
+            &inlines,
+            node,
+            &mut offset,
+            true,
+            &BTreeMap::new(),
+            &mut items,
+        );
+        assert_eq!(
+            offset, anchor,
+            "`collect_review_inline` — the walk that reports every revision's \
+             anchor — must end where the paragraph ends"
+        );
+    }
+
+    /// The PRODUCTION code of this crate — every file of it — declares exactly one
+    /// family of inline-length functions.
+    ///
+    /// This is what makes a FOURTH answer to "how long is this paragraph" fail the
+    /// build, and it is the deliverable rather than a convenience. The behavioural
+    /// guard above catches a second answer that DISAGREES, which is one round of
+    /// the defect too late; this one catches a second answer at the moment it is
+    /// written, which is the failure mode this class actually has. Three times now
+    /// someone needed the length in a context the canonical function could not be
+    /// called from and wrote a private copy that started out agreeing and drifted.
+    ///
+    /// Three things the version this replaces got wrong, each of which is a way a
+    /// source guard silently stops guarding:
+    ///
+    /// 1. **It matched its own name.** `there_is_exactly_one_anchor_length_family`
+    ///    contains `anchor_len`, so the guard failed on arrival and the only way to
+    ///    make it pass was to list a test in the family. Cutting each file at its
+    ///    `#[cfg(test)] mod` fixes that properly: a guard should scan the code it
+    ///    guards and nothing else, and now no test name can enter the list however
+    ///    it is spelled.
+    /// 2. **It read `lib.rs` only.** A fourth copy written in `references.rs` or in
+    ///    a new module would not have been seen — and `references.rs` is exactly
+    ///    where a paragraph's offsets are computed. Every `.rs` file in `src/` is
+    ///    read now, so a new file is covered the day it is added rather than the
+    ///    day someone remembers to list it.
+    /// 3. **It reported an unsorted, unlabelled list.** The failure now names the
+    ///    file and line of the newcomer, because a guard whose message does not say
+    ///    where the problem is gets satisfied by editing the expectation.
+    ///
+    /// What it cannot do, stated so it is not mistaken for more than it is: it is a
+    /// NAME guard over ONE crate. A fourth answer called something else entirely is
+    /// caught only by `every_review_length_answer_agrees_on_one_paragraph`, and a
+    /// fourth answer in another crate is caught by neither —
+    /// `casual_doc_edit::inline_text_len` and
+    /// `casual_doc_layout::flow::append_node_plain_text` already disagree with
+    /// `inline_anchor_len` about `Tab`, `Math` and `NoteReference` (the table on
+    /// `inline_anchor_len` enumerates it). Reconciling those three is a cross-crate
+    /// change and an open row, not something this guard can assert.
+    #[test]
+    fn there_is_exactly_one_anchor_length_family() {
+        /// A declaration in the family: a function whose name is spelled the way
+        /// every member of this family has been spelled.
+        fn family_member(line: &str) -> Option<&str> {
+            let rest = line
+                .trim()
+                .strip_prefix("pub ")
+                .unwrap_or_else(|| line.trim());
+            let rest = rest.strip_prefix("pub(crate) ").unwrap_or(rest);
+            let name = rest.strip_prefix("fn ")?.split('(').next()?;
+            let matches = name.contains("anchor_len")
+                || name.ends_with("_text_len")
+                || name.ends_with("_byte_len")
+                || name.ends_with("_text_length");
+            matches.then_some(name)
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&src)
+            .expect("the crate's own source directory is readable")
+            .map(|entry| entry.expect("a readable directory entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect();
+        files.sort();
+        assert!(
+            files.len() >= 3,
+            "expected to scan every source file of this crate, found {files:?} — a \
+             guard that reads no files passes for the wrong reason"
+        );
+
+        let mut declared: Vec<String> = Vec::new();
+        for path in &files {
+            let text = std::fs::read_to_string(path).expect("a readable source file");
+            let name = path
+                .file_name()
+                .expect("a source file has a name")
+                .to_string_lossy()
+                .into_owned();
+
+            // Production code only: a test helper is not a second answer the engine
+            // can call, and scanning the test module is how this guard came to match
+            // its own name.
+            //
+            // The boundary is found LINE-WISE, and that is not a style choice.
+            // Searching the raw text for a pattern containing "\n" does not match a
+            // CRLF checkout, so on Windows the cut silently did not happen, the test
+            // module was scanned, and this guard failed there alone with its own name
+            // in the list — the exact defect it had just been rewritten to remove,
+            // reintroduced by a line ending. `str::lines` handles both, so the
+            // boundary is computed the same way on every platform.
+            let lines: Vec<&str> = text.lines().collect();
+            let end = (0..lines.len())
+                .find(|&index| {
+                    lines[index].trim_end() == "#[cfg(test)]"
+                        && lines
+                            .get(index + 1)
+                            .is_some_and(|next| next.starts_with("mod "))
+                })
+                .unwrap_or(lines.len());
+            let production = &lines[..end];
+
+            // And the cut is CHECKED rather than assumed. A guard that silently
+            // scans the wrong text still runs and still passes most of the time,
+            // which is how this one stopped guarding; if the boundary is ever missed
+            // again this says so, instead of producing a confusing list that invites
+            // someone to edit the expectation.
+            assert!(
+                !production.iter().any(|line| line.trim() == "#[test]"),
+                "{name}: the `#[cfg(test)] mod` boundary was not found, so this \
+                 guard is scanning test code as if it were production code. Fix the \
+                 boundary detection, not the expected list"
+            );
+
+            for (index, line) in production.iter().enumerate() {
+                if let Some(found) = family_member(line) {
+                    declared.push(format!("{name}:{}: {found}", index + 1));
+                }
+            }
+        }
+
+        let names: Vec<&str> = declared
+            .iter()
+            .filter_map(|row| row.rsplit(' ').next())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                // The single answer, and the one helper it owns.
+                "inline_anchor_len",
+                "inlines_anchor_len",
+                "field_anchor_len",
+            ],
+            "a new function answering \"how many bytes does this inline occupy\" \
+             has appeared. Three copies of this question have already disagreed and \
+             mis-placed comment markers. Call `inline_anchor_len` instead; if it \
+             genuinely cannot be called from where you are, precompute an index and \
+             pass it (that is what `NoteAnchorLengths` is), and if there is truly no \
+             alternative, add the new name here WITH ITS REASON. Declarations found: \
+             {declared:?}"
+        );
+    }
+
+    // ---- The inline container set: one walk per subsystem, all six containers --
+    // An `InlineNode` can CONTAIN other inlines (`Hyperlink`, `Field`, `Revision`,
+    // `Sdt`) or its own block stories (`TextBox`, `Group`). Every walk below used
+    // to implement three or four of those and stop, and the symptom was always
+    // content plainly on the page that one subsystem could not see. The guards
+    // assert the GUARANTEE — "it can be selected", "it is not silent", "it is
+    // findable" — rather than the shape of a returned vector, because the vector is
+    // the mechanism and the mechanism is what changed.
+
+    /// The OOXML relationship type of an embedded chart part, so the fixtures below
+    /// carry the real one rather than a plausible-looking string.
+    const EMBEDDED_CHART_RELATIONSHIP: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+
+    /// A paragraph holding the same drawing three ways: bare, inside an inline
+    /// content control, and inside a field's cached result. All three are painted
+    /// by `collect_items`, which recurses through both wrappers.
+    fn drawings_in_wrappers_document() -> (Document, [NodeId; 3]) {
+        use casual_doc_model::v1::{
+            Definitions, Drawing, Field, FieldKind, FieldUpdateState, InlineSdt, MediaId,
+            MediaReference, SdtProperties,
+        };
+
+        let media = MediaId::new(NodeId::from_parts(61, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId61".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(61, next).unwrap()
+        };
+        let drawing = |id: NodeId| {
+            InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
+                opacity: None,
+                id,
+                media,
+                extent: Some(Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                }),
+                crop: None,
+                descr: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            }))
+        };
+        let bare = id();
+        let in_control = id();
+        let in_field = id();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: id(),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                drawing(bare),
+                InlineNode::Sdt(Box::new(InlineSdt {
+                    id: id(),
+                    properties: SdtProperties::default(),
+                    inlines: vec![drawing(in_control)],
+                })),
+                // A passthrough instruction: `PAGE`/`NUMPAGES` become atomic
+                // markers and would not paint their result at all, so the fixture
+                // would prove nothing about the descent.
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "MERGEFIELD Figure".to_owned(),
+                    kind: FieldKind::Other {
+                        keyword: "MERGEFIELD".to_owned(),
+                    },
+                    inlines: vec![drawing(in_field)],
+                    form: None,
+                    update: FieldUpdateState::default(),
+                })),
+            ],
+        });
+        let document = Document::new(
+            NodeId::from_parts(61, 1).unwrap(),
+            vec![paragraph],
+            definitions,
+        )
+        .expect("a valid wrapped-drawing document");
+        (document, [bare, in_control, in_field])
+    }
+
+    /// An image inside an inline content control or a field result can be
+    /// selected.
+    ///
+    /// `collect_para_objects` descended `Hyperlink` and `Revision` only, so the
+    /// model node of such an image never entered the map `object_boxes`
+    /// correlates painted boxes against — and an object with no box has no
+    /// selection handles at all: it cannot be clicked, moved, resized, or given
+    /// alt text, while being visibly on the page. Asserted through
+    /// `object_boxes`, which is what the host asks, rather than through the map.
+    #[test]
+    fn an_image_inside_a_content_control_or_a_field_can_be_selected() {
+        let (document, [bare, in_control, in_field]) = drawings_in_wrappers_document();
+        let d = wasm_document(document);
+        let boxes = d.object_boxes();
+        let selectable: Vec<NodeId> = boxes.iter().map(|object| object.subject).collect();
+        assert!(
+            selectable.contains(&bare),
+            "the fixture must paint a bare inline image, or this guard cannot tell \
+             a missing descent from a missing image ({selectable:?})"
+        );
+        for (node, where_it_is) in [
+            (in_control, "an inline content control"),
+            (in_field, "a field's cached result"),
+        ] {
+            assert!(
+                selectable.contains(&node),
+                "an image inside {where_it_is} is on the page with no selection \
+                 handles: it cannot be clicked, moved, resized or given alt text. \
+                 Selectable objects were {selectable:?}"
+            );
+        }
+        assert!(
+            boxes
+                .iter()
+                .all(|object| object.kind == "image" && !object.anchored),
+            "all three are INLINE images; a float would be reported through \
+             `page.anchored` instead and must not be mixed into this map"
+        );
+    }
+
+    /// A chart whose cached preview is what layout paints can be selected.
+    ///
+    /// A preview-bearing `EmbeddedObject` flows as a `FlowItem::Image`, exactly
+    /// like a drawing, so it produced a painted image box with no model node to
+    /// correlate against and therefore no handles. A preview-LESS one paints as a
+    /// text run and correctly has none, which the second half asserts — so this
+    /// guard fails if the fix over-reaches as well as if it under-reaches.
+    #[test]
+    fn a_chart_with_a_cached_preview_can_be_selected() {
+        use casual_doc_model::v1::{
+            Definitions, EmbeddedKind, EmbeddedObject, EmbeddedPart, MediaId, MediaReference,
+        };
+
+        let media = MediaId::new(NodeId::from_parts(62, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId62".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/chart-preview.png".to_owned(),
+            },
+        );
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(62, next).unwrap()
+        };
+        let chart = |id: NodeId, preview: Option<MediaId>| {
+            InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                id,
+                kind: EmbeddedKind::Chart,
+                part: EmbeddedPart {
+                    relationship_id: "rId7".to_owned(),
+                    relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
+                    part_name: "word/charts/chart1.xml".to_owned(),
+                },
+                extra_parts: Vec::new(),
+                preview,
+                extent: Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                },
+                prog_id: None,
+            }))
+        };
+        let with_preview = id();
+        let without_preview = id();
+        let document = Document::new(
+            NodeId::from_parts(62, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: id(),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![
+                    chart(with_preview, Some(media)),
+                    chart(without_preview, None),
+                ],
+            })],
+            definitions,
+        )
+        .expect("a valid chart document");
+
+        let d = wasm_document(document);
+        let selectable: Vec<NodeId> = d
+            .object_boxes()
+            .into_iter()
+            .map(|object| object.subject)
+            .collect();
+        assert!(
+            selectable.contains(&with_preview),
+            "a chart painted as its cached preview picture has no selection \
+             handles ({selectable:?})"
+        );
+        assert!(
+            !selectable.contains(&without_preview),
+            "a chart with NO preview paints as its `[chart]` label text, not as an \
+             image box; claiming an image box for it would let it steal a real \
+             image's slot and hand the wrong node to the handles ({selectable:?})"
+        );
+    }
+
+    /// An equation, a chart and a footnote marker each reach assistive technology
+    /// as something rather than as silence.
+    ///
+    /// Layout paints all three. The projection emitted nothing for any of them, so
+    /// a reader heard the paragraph before the chart and the one after it and
+    /// nothing in between — the defect the `Image` node was added to fix for
+    /// drawings, still open for every other paintable kind. §10's UI floor requires
+    /// screen-reader-operable per phase.
+    #[test]
+    fn an_equation_a_chart_and_a_note_marker_are_not_silent() {
+        use casual_doc_model::v1::{
+            Definitions, EmbeddedKind, EmbeddedObject, EmbeddedPart, Math, Note, NoteReference,
+        };
+
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(63, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let note = NoteId::new(NodeId::from_parts(63, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: id(),
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run(id(), "the note body")],
+                })],
+            },
+        );
+        let document = Document::new(
+            NodeId::from_parts(63, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: id(),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![
+                    run(id(), "before"),
+                    InlineNode::Math(Box::new(Math {
+                        id: id(),
+                        omml: "<m:oMath/>".to_owned(),
+                        text: "E=mc^2".to_owned(),
+                        expression: None,
+                    })),
+                    InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                        id: id(),
+                        kind: EmbeddedKind::Chart,
+                        part: EmbeddedPart {
+                            relationship_id: "rId7".to_owned(),
+                            relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
+                            part_name: "word/charts/chart1.xml".to_owned(),
+                        },
+                        extra_parts: Vec::new(),
+                        preview: None,
+                        extent: Extent {
+                            width_emu: 914_400,
+                            height_emu: 914_400,
+                        },
+                        prog_id: None,
+                    })),
+                    InlineNode::NoteReference(NoteReference {
+                        id: id(),
+                        kind: NoteKind::Footnote,
+                        note,
+                    }),
+                    run(id(), "after"),
+                ],
+            })],
+            definitions,
+        )
+        .expect("a valid mixed-inline document");
+
+        let d = wasm_document(document);
+        let tree = d.accessibility_tree();
+        assert!(
+            tree.contains("before") && tree.contains("after"),
+            "the fixture's ordinary text must reach the mirror, or this guard \
+             cannot tell an empty projection from a missing arm: {tree}"
+        );
+        assert!(
+            tree.contains("[E=mc^2]"),
+            "the equation reaches assistive technology as nothing. It is painted \
+             as `[E=mc^2]`; the mirror must read back what is on the page: {tree}"
+        );
+        assert!(
+            tree.contains("[footnote 1]"),
+            "the footnote marker reaches assistive technology as nothing, so a \
+             reader cannot tell a note is referenced here or which one: {tree}"
+        );
+        assert!(
+            tree.contains("\"image\""),
+            "the chart reaches assistive technology as nothing. With no `descr` in \
+             the model it is an UNLABELLED graphic, which a screen reader must \
+             still announce rather than pass over: {tree}"
+        );
+    }
+
+    /// Text in a box inside an inline content control is findable.
+    ///
+    /// `collect_text_box_text` — which feeds `findText` — descended `TextBox`,
+    /// `Hyperlink`, `Field` and `Group` and stopped, so the pair it missed was
+    /// `Sdt` and `Revision`: text on screen, editable, and unsearchable.
+    #[test]
+    fn text_in_a_box_inside_a_content_control_is_findable() {
+        use casual_doc_model::v1::{InlineSdt, SdtProperties, TextBox};
+
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(64, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let boxed = |id: NodeId, inner: NodeId, run_id: NodeId, text: &str| {
+            InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
+                id,
+                anchor: None,
+                relative_height: None,
+                extent: Some(Extent {
+                    width_emu: 1_828_800,
+                    height_emu: 914_400,
+                }),
+                fill: None,
+                border: None,
+                body_properties: casual_doc_model::v1::TextBoxBodyProperties::default(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: inner,
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run(run_id, text)],
+                })],
+            }))
+        };
+        let first = id();
+        let plain_box = boxed(id(), first, id(), "findmeplain");
+        let second = id();
+        let controlled = InlineNode::Sdt(Box::new(InlineSdt {
+            id: id(),
+            properties: SdtProperties::default(),
+            inlines: vec![boxed(id(), second, id(), "findmecontrolled")],
+        }));
+        let anchor = id();
+        let document = Document::new(
+            NodeId::from_parts(64, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: anchor,
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![run(id(), "body"), plain_box, controlled],
+            })],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid text-box document");
+
+        let d = wasm_document(document);
+        let start = anchor.to_string();
+        let plain = d.find_text("findmeplain", &start, 0, true, false);
+        assert!(
+            plain.found(),
+            "the fixture must find text in a plain inline text box, or this guard \
+             cannot tell a missing descent from a broken search"
+        );
+        let controlled = d.find_text("findmecontrolled", &start, 0, true, false);
+        assert!(
+            controlled.found(),
+            "text in a box inside an inline content control is unsearchable while \
+             being on the page and editable"
+        );
+        assert_eq!(
+            controlled.start_node(),
+            second.to_string(),
+            "the match is reported against the paragraph inside the box, which is \
+             the node the caret has to move to"
+        );
+    }
+
+    /// `"Page 123 of 9"`: like [`page_field_paragraph`] but with a three-byte
+    /// cached result, so an offset strictly inside the field exists.
+    fn wide_field_paragraph() -> (WasmDocument, NodeId) {
+        use casual_doc_model::v1::{Field, FieldKind, FieldUpdateState};
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(65, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let node = id();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: node,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                run(id(), "Page "),
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "PAGE".to_owned(),
+                    kind: FieldKind::Page,
+                    inlines: vec![run(id(), "123")],
+                    form: None,
+                    update: FieldUpdateState::default(),
+                })),
+                run(id(), " of 9"),
+            ],
+        });
+        let document = Document::new(
+            NodeId::from_parts(65, 1).unwrap(),
+            vec![paragraph],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid wide-field document");
+        (wasm_document(document), node)
+    }
+
+    /// A comment range whose endpoint falls INSIDE something unsplittable is still
+    /// refused, and says so where a native guard can read it.
+    ///
+    /// The other half of the `add_comment` fix. Measuring every inline made ranges
+    /// on inline BOUNDARIES work; an offset in the middle of a field's cached
+    /// result still has no representable marker position, and the refusal must
+    /// survive rather than be widened into placing the marker somewhere plausible.
+    /// Driven through `add_comment_inner`, because the `#[wasm_bindgen]` method's
+    /// refusal builds a `JsValue` and panics on a native target before any
+    /// assertion can read the message.
+    #[test]
+    fn a_comment_range_inside_a_field_result_is_refused_with_a_readable_reason() {
+        // "Page 7 of 9": a range that ENCLOSES the one-byte field ends on a
+        // boundary and must be accepted now that every inline is measured.
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert!(
+            d.add_comment_inner(&key, 0, &key, 6, "spans the field", None, None, None)
+                .is_ok(),
+            "a range that encloses the whole field ends on an inline boundary"
+        );
+
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert!(
+            d.add_comment_inner(&key, 0, &key, 11, "everything", None, None, None)
+                .is_ok(),
+            "commenting the whole paragraph must work once every inline is measured"
+        );
+
+        // A field whose cached result is three bytes, so an offset strictly inside
+        // it exists to aim at. "Page 123 of 9": the field occupies 5..8.
+        let (mut d, node) = wide_field_paragraph();
+        let key = node.to_string();
+        let error = d
+            .add_comment_inner(&key, 0, &key, 6, "half a field", None, None, None)
+            .expect_err("an offset inside a field's result has no marker position");
+        assert_eq!(
+            error, COMMENT_RANGE_REFUSAL,
+            "the refusal must be the one constant the host shows, readable on a \
+             native target rather than destroyed by a `JsValue` panic"
+        );
+    }
+
+    /// The immutable and mutable faces of the container set classify every inline
+    /// kind the same way.
+    ///
+    /// Rust cannot share one match across mutability, so `contained_inlines` and
+    /// `contained_inlines_mut` are two spellings of one fact — the exact shape this
+    /// branch exists to remove. They are kept adjacent so a reader sees both at
+    /// once; this fails the build if they ever disagree, which is the part a reader
+    /// cannot be relied on for. Drift here is not theoretical: it is how a caption
+    /// gets LISTED by a reading walk and then silently not renumbered by a writing
+    /// one, which is a defect this branch actually introduced and then caught.
+    ///
+    /// Driven over `every_inline_kind_document`, the fixture
+    /// `structured_paste_carries_every_inline_kind_and_reports_what_it_cannot`
+    /// already keeps complete, so a variant added to the model arrives here for
+    /// free: `inline_descent`'s exhaustive match refuses to compile without a new
+    /// arm, and this then checks the mutable face got the same arm rather than
+    /// being quietly defaulted to `None`.
+    #[test]
+    fn the_two_faces_of_the_container_set_agree() {
+        /// Every inline in a block tree, at every depth, by both descent axes.
+        fn gather(blocks: &[BlockNode], out: &mut Vec<InlineNode>) {
+            for block in blocks {
+                match block {
+                    BlockNode::Paragraph(paragraph) => {
+                        fn walk(inlines: &[InlineNode], out: &mut Vec<InlineNode>) {
+                            for inline in inlines {
+                                out.push(inline.clone());
+                                match inline_descent(inline) {
+                                    InlineDescent::Inlines(nested) => walk(nested, out),
+                                    InlineDescent::Blocks(blocks) => gather(blocks, out),
+                                    InlineDescent::Group(children) => {
+                                        group_block_stories(children, &mut |blocks| {
+                                            gather(blocks, out);
+                                        });
+                                    }
+                                    InlineDescent::Leaf => {}
+                                }
+                            }
+                        }
+                        walk(&paragraph.inlines, out);
+                    }
+                    BlockNode::Table(table) => {
+                        for row in &table.rows {
+                            for cell in &row.cells {
+                                gather(&cell.blocks, out);
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(sdt) => gather(&sdt.blocks, out),
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+        }
+
+        let (document, _, _) = every_inline_kind_document();
+        let mut kinds = Vec::new();
+        gather(document.body(), &mut kinds);
+        assert!(
+            kinds.len() >= 25,
+            "the fixture must reach one of nearly every `InlineNode` variant — \
+             found {}, which means the gather is not descending and this guard is \
+             checking far less than it claims",
+            kinds.len()
+        );
+
+        let mut containers = 0;
+        for inline in &mut kinds {
+            let immutable = contained_inlines(inline).is_some();
+            let mutable = contained_inlines_mut(inline).is_some();
+            assert_eq!(
+                immutable,
+                mutable,
+                "`contained_inlines` and `contained_inlines_mut` disagree about \
+                 {:.60}: a walk that reads the tree and a walk that rewrites it \
+                 would descend different containers",
+                format!("{inline:?}")
+            );
+            if immutable {
+                containers += 1;
+            }
+        }
+        assert!(
+            containers > 0,
+            "the fixture must hold at least one inline CONTAINER, or agreement is \
+             vacuous"
         );
     }
 }
