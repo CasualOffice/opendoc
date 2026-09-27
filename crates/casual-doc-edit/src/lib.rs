@@ -3748,13 +3748,15 @@ fn try_insert_object_in_inlines(
                 }
             }
             InlineDescentMut::Group(children) => {
-                let inserted = find_in_group_block_stories_mut(children, &mut |blocks| {
-                    match try_insert_object(blocks, owner, index, node) {
-                        Ok(true) => Some(Ok(true)),
-                        Ok(false) => None,
-                        Err(error) => Some(Err(error)),
-                    }
-                });
+                let inserted =
+                    find_in_group_block_stories_mut(
+                        children,
+                        &mut |blocks| match try_insert_object(blocks, owner, index, node) {
+                            Ok(true) => Some(Ok(true)),
+                            Ok(false) => None,
+                            Err(error) => Some(Err(error)),
+                        },
+                    );
                 if let Some(result) = inserted {
                     return result;
                 }
@@ -4131,19 +4133,22 @@ fn ensure_run_boundary(
     };
     let (idx, parent_prefix) = path.split_last().ok_or(EditError::Unsupported)?;
     let parent = vec_at_path_mut(inlines, parent_prefix).ok_or(EditError::Unsupported)?;
-    let (head, tail, properties) = match &parent[*idx] {
-        InlineNode::Run(run) => {
-            if !run.text.is_char_boundary(local) {
-                return Err(EditError::NotCharBoundary);
-            }
-            (
-                run.text[..local].to_string(),
-                run.text[local..].to_string(),
-                run.properties.clone(),
-            )
-        }
-        _ => return Ok(()),
+    // A let-else rather than a `_ =>` arm: the path came from `collect_run_paths`,
+    // whose descent IS the declared container set, so anything but a run here means
+    // the tree changed under us and there is no boundary to make. Spelled this way
+    // so the container-set guard is not asked to reason about a wildcard that has
+    // nothing to do with containers.
+    let InlineNode::Run(run) = &parent[*idx] else {
+        return Ok(());
     };
+    if !run.text.is_char_boundary(local) {
+        return Err(EditError::NotCharBoundary);
+    }
+    let (head, tail, properties) = (
+        run.text[..local].to_string(),
+        run.text[local..].to_string(),
+        run.properties.clone(),
+    );
     let tail_id = ids.next().ok_or(EditError::IdExhausted)?;
     if let InlineNode::Run(run) = &mut parent[*idx] {
         run.text = head;
@@ -5168,7 +5173,13 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
         // character from the field's state, so it is one position wide.
         InlineNode::Field(field) => match field.form.as_ref().map(|form| &form.kind) {
             Some(FormFieldKind::CheckBox(checkbox)) => checkbox.glyph().len_utf8() as u32,
-            _ => nested_len(&field.inlines),
+            // A `FORMTEXT` blank and a `FORMDROPDOWN` both occupy the width of the
+            // value they SHOW, which is their cached result — as does every field
+            // that carries no legacy form record at all. Named rather than left to
+            // a wildcard so a fourth form kind has to decide.
+            Some(FormFieldKind::TextInput(_) | FormFieldKind::DropDown(_)) | None => {
+                nested_len(&field.inlines)
+            }
         },
         // The two block-story containers: see this function's doc comment. Zero is
         // the answer for THIS paragraph; the box's own paragraphs are measured
@@ -5184,7 +5195,9 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
         // would move every offset after it in a paragraph `node_plain_text`
         // measures without them. The two must agree, so both stay at zero until
         // they move together.
-        InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) | InlineNode::EmbeddedObject(_) => 0,
+        InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) | InlineNode::EmbeddedObject(_) => {
+            0
+        }
         // A note reference's and a note mark's printed label are synthesised by
         // layout from which note is being flowed — context this function does not
         // have. Zero, and `node_plain_text` agrees; a guessed width would move
@@ -5524,9 +5537,13 @@ fn vec_at_path_mut<'a>(
 fn run_at_path_mut<'a>(inlines: &'a mut Vec<InlineNode>, path: &[usize]) -> Option<&'a mut Run> {
     let (idx, parent) = path.split_last()?;
     let parent_vec = vec_at_path_mut(inlines, parent)?;
-    match parent_vec.get_mut(*idx)? {
-        InlineNode::Run(run) => Some(run),
-        _ => None,
+    // An `if let` rather than a `_ =>` arm: the containers on the path were already
+    // followed by `vec_at_path_mut` through `transparent_children_mut`, so the only
+    // question left here is whether the addressed node is a run.
+    if let InlineNode::Run(run) = parent_vec.get_mut(*idx)? {
+        Some(run)
+    } else {
+        None
     }
 }
 
@@ -5990,9 +6007,7 @@ fn split_paragraph_in_inlines(
 ) -> Result<bool, EditError> {
     for inline in inlines {
         let split = match inline_descent_mut(inline) {
-            InlineDescentMut::Blocks(blocks) => {
-                split_paragraph(blocks, id, offset, new_id, ids)?
-            }
+            InlineDescentMut::Blocks(blocks) => split_paragraph(blocks, id, offset, new_id, ids)?,
             InlineDescentMut::Inlines(nested) => {
                 split_paragraph_in_inlines(nested, id, offset, new_id, ids)?
             }
@@ -6109,12 +6124,8 @@ fn join_paragraphs_in_inlines(
     for inline in inlines {
         let joined = match inline_descent_mut(inline) {
             InlineDescentMut::Blocks(blocks) => join_paragraphs(blocks, first, second)?,
-            InlineDescentMut::Inlines(nested) => {
-                join_paragraphs_in_inlines(nested, first, second)?
-            }
-            InlineDescentMut::Group(children) => {
-                join_paragraphs_in_group(children, first, second)?
-            }
+            InlineDescentMut::Inlines(nested) => join_paragraphs_in_inlines(nested, first, second)?,
+            InlineDescentMut::Group(children) => join_paragraphs_in_group(children, first, second)?,
             InlineDescentMut::Leaf => None,
         };
         if joined.is_some() {
@@ -6132,6 +6143,17 @@ fn join_paragraphs_in_inlines(
 /// splits it across the two paragraphs instead of failing (docs/86
 /// REVIEW-GAP-007). At a boundary the inline goes wholly to one side. An atomic
 /// leaf cannot straddle a char-aligned offset, so it remains `Unsupported`.
+///
+/// **O(inlines in this subtree)**.
+//
+// container-set: this walk follows the inline axis only, and does not need to name
+// `TextBox` or `Group`. Both are zero-width in `inline_text_len` because they are
+// separate stories, so neither can ever STRADDLE the split offset: a box falls
+// wholly left or wholly right by the two branches above, exactly as Word puts an
+// anchored box on one side of a paragraph break. The catch-all below is the
+// atomic-leaf refusal — a tab or a symbol whose interior a break would fall inside
+// — not a container decision. Pressing Enter *inside* a box is a split of that
+// box's own paragraph and arrives here as that paragraph's own id.
 fn split_inlines(
     inlines: Vec<InlineNode>,
     offset: u32,
@@ -6500,6 +6522,15 @@ fn remove_field_by_id(inlines: &mut Vec<InlineNode>, field: NodeId) {
 }
 
 /// Removes the top-level bookmark marker whose own id is `marker` from `inlines`.
+/// **O(inlines at this level)**.
+//
+// container-set: deliberately top level only — it does not descend `Hyperlink`,
+// `Field`, `Revision`, `Sdt`, `TextBox` or `Group`. It is the exact inverse of
+// `locate_bookmark_markers`, whose contract is that it resolves a bookmark only
+// when BOTH markers sit at paragraph top level, so a marker this cannot see is one
+// that walk never handed out. Widening only this half would delete a marker whose
+// site the locator could not have produced. The bound is real and reported as a
+// row: a bookmark whose markers live inside a wrapper cannot be renamed or deleted.
 fn remove_marker_by_id(inlines: &mut Vec<InlineNode>, marker: NodeId) {
     inlines.retain(|inline| match inline {
         InlineNode::BookmarkStart(m) => m.id != marker,
@@ -6521,6 +6552,14 @@ fn locate_bookmark_markers(
     Some((start?, end?))
 }
 
+// container-set: the same declared bound as `remove_marker_by_id`, which is this
+// walk's inverse. It scans a paragraph's TOP-LEVEL inlines and does not descend
+// `Hyperlink`, `Field`, `Revision`, `Sdt`, `TextBox` or `Group`, because a marker
+// found inside one of those would carry an offset measured in the wrapper's own
+// projection (a `TextBox` paragraph's offsets are not this paragraph's at all), and
+// `MarkerSite` promises a `(node, offset)` in the paragraph it names. The
+// documented consequence is above `locate_bookmark_markers`: it answers `None`
+// unless both markers resolve at top level. **O(inlines in these blocks)**.
 fn scan_bookmark_markers(
     blocks: &[BlockNode],
     bookmark: BookmarkId,
@@ -11842,6 +11881,548 @@ mod tests {
             "work must roughly double, not quadruple: {small} visits at {small_n} \
              blocks and {large} at {}",
             small_n * 2
+        );
+    }
+
+    // ----------------------------------------------------------------------------
+    // The inline container set (`docs/109` HF-212/213/214).
+    //
+    // `containers.rs` holds the guard that a walk over `InlineNode` consults the
+    // declared set or says why not. These are the behavioural half: the objects the
+    // set now reaches, edited through the real operations.
+    // ----------------------------------------------------------------------------
+
+    /// A registered picture part plus an inline drawing that references it.
+    fn picture(id: u64, media: u64) -> (casual_doc_model::v1::MediaId, InlineNode) {
+        use casual_doc_model::v1::{Drawing, Extent, MediaId};
+        let media = MediaId::new(n(media));
+        (
+            media,
+            InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
+                opacity: None,
+                id: n(id),
+                media,
+                extent: Some(Extent {
+                    width_emu: 914_400,
+                    height_emu: 457_200,
+                }),
+                descr: None,
+                crop: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })),
+        )
+    }
+
+    fn definitions_with_media(media: casual_doc_model::v1::MediaId) -> Definitions {
+        use casual_doc_model::v1::MediaReference;
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        definitions
+    }
+
+    /// A `SEQ` field whose cached result is `inlines` — an ordinary field result,
+    /// the kind a caption or a cross-reference produces.
+    fn field_holding(id: u64, inlines: Vec<InlineNode>) -> InlineNode {
+        InlineNode::Field(Box::new(Field {
+            id: n(id),
+            instruction: " SEQ Figure \\* ARABIC ".to_owned(),
+            kind: FieldKind::Seq {
+                name: "Figure".to_owned(),
+            },
+            inlines,
+            form: None,
+            update: FieldUpdateState::default(),
+        }))
+    }
+
+    /// An inline content control wrapping `inlines`.
+    fn sdt_holding(id: u64, inlines: Vec<InlineNode>) -> InlineNode {
+        use casual_doc_model::v1::{InlineSdt, SdtProperties};
+        InlineNode::Sdt(Box::new(InlineSdt {
+            id: n(id),
+            properties: SdtProperties::default(),
+            inlines,
+        }))
+    }
+
+    /// A GROUPED text box (a `GroupChild`) whose body is `blocks`.
+    fn grouped_text_box(id: u64, blocks: Vec<BlockNode>) -> casual_doc_model::v1::GroupTextBox {
+        use casual_doc_model::v1::{Extent, GroupTextBox, PointEmu};
+        GroupTextBox {
+            id: n(id),
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: Extent {
+                width_emu: 1_000_000,
+                height_emu: 500_000,
+            },
+            blocks,
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties::default(),
+            hyperlink: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        }
+    }
+
+    /// An inline text box whose body is `blocks`.
+    fn text_box_holding(id: u64, blocks: Vec<BlockNode>) -> Box<casual_doc_model::v1::TextBox> {
+        use casual_doc_model::v1::TextBox;
+        Box::new(TextBox {
+            hyperlink: None,
+            id: n(id),
+            anchor: None,
+            relative_height: None,
+            extent: None,
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties::default(),
+            blocks,
+        })
+    }
+
+    /// A DrawingML group whose single child is the text box `boxed`.
+    fn group_holding(id: u64, boxed: casual_doc_model::v1::GroupTextBox) -> InlineNode {
+        use casual_doc_model::v1::{Extent, PointEmu, WordprocessingGroup};
+        let extent = Extent {
+            width_emu: 2_000_000,
+            height_emu: 1_000_000,
+        };
+        InlineNode::Group(Box::new(WordprocessingGroup {
+            id: n(id),
+            anchor: None,
+            relative_height: None,
+            extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            hyperlink: None,
+            children: vec![GroupChild::TextBox(boxed)],
+        }))
+    }
+
+    /// HF-214: an image inside a **field result** is resizable, croppable and
+    /// describable.
+    ///
+    /// The six object walks descended `Hyperlink`, `Revision` and a text box's
+    /// blocks and stopped, so `Field`, `Sdt` and `Group` were invisible to every one
+    /// of them — while `casual-doc-wasm`'s `collect_para_objects` was taught to find
+    /// exactly those, so the host drew selection handles on an image that then
+    /// refused resize, crop, alt text and delete. Handles that do nothing are worse
+    /// than no handles, which is why the two halves had to land in this order.
+    #[test]
+    fn an_image_inside_a_field_result_can_be_resized_cropped_and_described() {
+        use casual_doc_model::v1::Extent;
+        let (media, image) = picture(50, 900);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![run(3, "Figure "), field_holding(4, vec![image])],
+            )],
+            definitions_with_media(media),
+        )
+        .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+        let object = n(50);
+
+        let resized = Some(Extent {
+            width_emu: 1_828_800,
+            height_emu: 914_400,
+        });
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetExtent {
+                object,
+                extent: resized,
+            },
+        )
+        .expect("an image inside a field result is resizable");
+        assert_eq!(
+            drawing_extent(&d, object),
+            resized,
+            "the resize must reach the drawing inside the field's cached result"
+        );
+        apply(&mut d, &mut ids, &inverse).expect("the inverse applies");
+        assert_eq!(
+            drawing_extent(&d, object),
+            Some(Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            }),
+            "and the inverse restores the authored extent exactly"
+        );
+
+        let crop = Some(CropRect {
+            left: 5_000,
+            top: 0,
+            right: 5_000,
+            bottom: 0,
+        });
+        apply(&mut d, &mut ids, &Operation::SetImageCrop { object, crop })
+            .expect("an image inside a field result is croppable");
+        assert_eq!(
+            drawing_crop(&d, object),
+            crop,
+            "the crop must reach the same drawing"
+        );
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object,
+                descr: Some("A bar chart of quarterly revenue".to_owned()),
+            },
+        )
+        .expect("an image inside a field result can be given alt text");
+        assert_eq!(
+            object_descr(&d, object).as_deref(),
+            Some("A bar chart of quarterly revenue"),
+            "and the read-only inspector reads back what the write side stored — the \
+             two walks have to agree or a host prefills a dialog from a value it \
+             cannot change"
+        );
+    }
+
+    /// HF-214: an image inside an **inline content control** can be deleted, and the
+    /// inverse puts it back where it was.
+    ///
+    /// `remove_object_from_inlines` and `try_insert_object_in_inlines` are exact
+    /// inverses, so they must reach the same containers: with only the removal
+    /// widened, a delete would succeed and its undo answer `NodeNotFound` — which is
+    /// #649's failure mode, a silent undo, arriving in a new place.
+    #[test]
+    fn an_image_inside_a_content_control_is_deletable_and_its_undo_restores_it() {
+        let (media, image) = picture(50, 900);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                // The image is the control's LAST child: removing it must not leave
+                // two adjacent equivalent runs, which `Document::validate` rejects
+                // and which would mask the walk under test behind a rollback.
+                vec![sdt_holding(4, vec![run(3, "before"), image])],
+            )],
+            definitions_with_media(media),
+        )
+        .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+        let object = n(50);
+
+        let inverse = apply(&mut d, &mut ids, &Operation::DeleteObject { object })
+            .expect("an image inside a content control is deletable");
+        assert!(
+            drawing_extent(&d, object).is_none(),
+            "the drawing must be gone from the control's inline list"
+        );
+        let Operation::InsertObjectNode { owner, index, .. } = &inverse else {
+            panic!("the inverse of a delete is an insert; got {inverse:?}");
+        };
+        assert_eq!(
+            (*owner, *index),
+            (n(4), 1),
+            "the inverse must name the CONTROL as the owner and the exact index the \
+             image occupied, not the paragraph"
+        );
+
+        apply(&mut d, &mut ids, &inverse).expect("the undo of the delete applies");
+        assert!(
+            drawing_extent(&d, object).is_some(),
+            "and the image is back — a delete whose undo cannot find its owner is a \
+             silent loss"
+        );
+    }
+
+    /// HF-214: an image inside a text box nested in a **shape group** is reachable.
+    ///
+    /// This is the `Group` axis: a group's children are not inlines, so the walk has
+    /// to cross into their block stories. `set_group_geometry_in_children` had the
+    /// mirror hole — it looked only at sibling group children — so a group one box
+    /// deep could not be moved or resized either.
+    #[test]
+    fn an_image_inside_a_grouped_text_box_can_be_described_and_resized() {
+        use casual_doc_model::v1::Extent;
+        let (media, image) = picture(50, 900);
+        let boxed = grouped_text_box(6, vec![para(7, vec![image])]);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(2, vec![run(3, "anchor"), group_holding(8, boxed)])],
+            definitions_with_media(media),
+        )
+        .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+        let object = n(50);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object,
+                descr: Some("Logo".to_owned()),
+            },
+        )
+        .expect("an image inside a grouped text box can be given alt text");
+        assert_eq!(object_descr(&d, object).as_deref(), Some("Logo"));
+
+        let resized = Some(Extent {
+            width_emu: 457_200,
+            height_emu: 228_600,
+        });
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetExtent {
+                object,
+                extent: resized,
+            },
+        )
+        .expect("and resized");
+        assert_eq!(drawing_extent(&d, object), resized);
+    }
+
+    /// The authored extent of the drawing `object`, wherever it lives.
+    fn drawing_extent(document: &Document, object: NodeId) -> Option<casual_doc_model::v1::Extent> {
+        find_drawing(document, object).and_then(|drawing| drawing.extent)
+    }
+
+    fn drawing_crop(document: &Document, object: NodeId) -> Option<CropRect> {
+        find_drawing(document, object).and_then(|drawing| drawing.crop)
+    }
+
+    /// An independent oracle: it finds the drawing by a walk written out here rather
+    /// than by calling the walks under test, so a wrong container set in the engine
+    /// cannot make these guards pass by agreeing with itself.
+    fn find_drawing(document: &Document, object: NodeId) -> Option<&casual_doc_model::v1::Drawing> {
+        fn in_blocks(
+            blocks: &[BlockNode],
+            object: NodeId,
+        ) -> Option<&casual_doc_model::v1::Drawing> {
+            for block in blocks {
+                let found = match block {
+                    BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+                    BlockNode::Table(table) => table
+                        .rows
+                        .iter()
+                        .flat_map(|row| &row.cells)
+                        .find_map(|cell| in_blocks(&cell.blocks, object)),
+                    BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+                    BlockNode::AltChunk(_) => None,
+                };
+                if found.is_some() {
+                    return found;
+                }
+            }
+            None
+        }
+        fn in_children(
+            children: &[GroupChild],
+            object: NodeId,
+        ) -> Option<&casual_doc_model::v1::Drawing> {
+            for child in children {
+                let found = match child {
+                    GroupChild::TextBox(text_box) => in_blocks(&text_box.blocks, object),
+                    GroupChild::Group(nested) => in_children(&nested.children, object),
+                    GroupChild::Picture(_) | GroupChild::Shape(_) => None,
+                };
+                if found.is_some() {
+                    return found;
+                }
+            }
+            None
+        }
+        // container-set: this oracle names all six containers — `Hyperlink`,
+        // `Field`, `Revision`, `Sdt`, `TextBox`, `Group` — by hand and deliberately
+        // does NOT call `inline_descent`, because an oracle that shares the walk
+        // under test's descent agrees with its bugs by construction.
+        fn in_inlines(
+            inlines: &[InlineNode],
+            object: NodeId,
+        ) -> Option<&casual_doc_model::v1::Drawing> {
+            for inline in inlines {
+                if let InlineNode::Drawing(drawing) = inline
+                    && drawing.id == object
+                {
+                    return Some(drawing);
+                }
+                let found = match inline {
+                    InlineNode::Hyperlink(link) => in_inlines(&link.inlines, object),
+                    InlineNode::Field(field) => in_inlines(&field.inlines, object),
+                    InlineNode::Revision(revision) => in_inlines(&revision.inlines, object),
+                    InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, object),
+                    InlineNode::TextBox(text_box) => in_blocks(&text_box.blocks, object),
+                    InlineNode::Group(group) => in_children(&group.children, object),
+                    _ => None,
+                };
+                if found.is_some() {
+                    return found;
+                }
+            }
+            None
+        }
+        in_blocks(document.body(), object)
+    }
+
+    /// HF-213: a paragraph holding an inline text box is as long as **its own**
+    /// text, and the box's text is not added to it.
+    ///
+    /// `inline_text_len` charges a `TextBox` and a `Group` zero, which the row asked
+    /// to re-examine. It is the right answer, and this is the guard that keeps it: a
+    /// text box is a separate story whose paragraph offsets start at zero again, so
+    /// counting its bytes here would make this paragraph report a length no host
+    /// offset ever reaches and every position after the box would be wrong. What was
+    /// wrong was only the mechanism — a `_ => 0` arm that would have charged a 30th
+    /// text-bearing inline kind zero silently. The match is now exhaustive.
+    #[test]
+    fn a_paragraph_holding_a_text_box_is_as_long_as_its_own_text() {
+        let boxed = InlineNode::TextBox(text_box_holding(
+            6,
+            vec![para(7, vec![run(8, "a caption inside the box")])],
+        ));
+        let inlines = vec![run(3, "Left"), boxed, run(4, "Right")];
+        assert_eq!(
+            inlines.iter().map(inline_text_len).sum::<u32>(),
+            "LeftRight".len() as u32,
+            "the box contributes nothing to the anchoring paragraph's length"
+        );
+
+        // And the caret can still reach the end of the paragraph: typing there lands
+        // in the trailing run, not inside the box.
+        let mut d = doc(vec![para(2, inlines)]);
+        let mut ids = IdGenerator::new(9);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(n(2), "LeftRight".len() as u32),
+                text: "!".to_owned(),
+            },
+        )
+        .expect("an offset at the paragraph's own end is valid");
+        assert_eq!(text_of(&d, n(2)), "LeftRight!");
+
+        // And the box's own story is addressable in its own right, which is what
+        // makes charging it zero above correct rather than a loss.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(n(7), "a caption inside the box".len() as u32),
+                text: " 1".to_owned(),
+            },
+        )
+        .expect("the box's own paragraph takes an edit at its own offsets");
+        assert_eq!(
+            paragraph_text_by_id(&d, n(7)),
+            "a caption inside the box 1",
+            "the box's story is edited through its own paragraph id"
+        );
+    }
+
+    /// The run text of paragraph `id` wherever it lives, including inside a text
+    /// box — `text_of` above only reaches body and table paragraphs.
+    fn paragraph_text_by_id(document: &Document, id: NodeId) -> String {
+        surface_block_lists(document)
+            .into_iter()
+            .find_map(|blocks| find_paragraph(blocks, id))
+            .map(|paragraph| runs_text(&paragraph.inlines))
+            .unwrap_or_default()
+    }
+
+    /// HF-213, the part that makes a **fourth** disagreement in the "how long is
+    /// this paragraph" family fail the build.
+    ///
+    /// `inline_text_len` and `casual_doc_layout::flow::node_plain_text` are two
+    /// answers to one question: the first is what editing measures, the second is
+    /// what the reader sees and what hit-testing indexes. They have already drifted
+    /// apart three times — `inline_text_len`'s own `Field` comment records one round,
+    /// `append_node_plain_text`'s comment records another, and
+    /// `inline_anchor_len_for_review` was the third — and each time the symptom was a
+    /// caret landing somewhere the glyph is not.
+    ///
+    /// Deleting a duplicate does not stop a fourth. This does: every inline kind is
+    /// measured both ways and the two must agree, so a new variant, or a changed
+    /// width, is a red test rather than a moved caret. The layout crate is a
+    /// dev-dependency for exactly this comparison (it depends only on the model, so
+    /// there is no cycle).
+    ///
+    /// Where the two must NOT be compared is stated rather than skipped silently:
+    /// nothing is excluded. A `TextBox` and a `Group` contribute zero to both,
+    /// which is the agreement this row was really about.
+    #[test]
+    fn paragraph_length_agrees_with_the_text_the_reader_sees() {
+        // No document here, so the media part it would have to be registered in is
+        // not needed: both functions measure an inline list directly.
+        let (_media, image) = picture(50, 900);
+        let boxed = InlineNode::TextBox(text_box_holding(
+            6,
+            vec![para(7, vec![run(8, "a caption inside the box")])],
+        ));
+        let grouped = group_holding(
+            9,
+            grouped_text_box(10, vec![para(11, vec![run(12, "in a group")])]),
+        );
+        let subjects: Vec<InlineNode> = vec![
+            run(3, "plain"),
+            InlineNode::Tab(casual_doc_model::v1::Tab { id: n(13) }),
+            field_holding(14, vec![run(15, "Figure 1")]),
+            sdt_holding(16, vec![run(17, "controlled")]),
+            InlineNode::Hyperlink(Box::new(Hyperlink {
+                id: n(18),
+                target: external("https://example.org/"),
+                tooltip: None,
+                inlines: vec![run(19, "a link")],
+            })),
+            revision(20, 21, RevisionKind::Insertion, "suggested"),
+            revision(22, 23, RevisionKind::Deletion, "removed"),
+            image,
+            boxed,
+            grouped,
+        ];
+        assert!(
+            subjects.len() >= 10,
+            "the fixture must cover the text-bearing kinds AND both block-story \
+             containers, or the agreement is vacuous"
+        );
+        for inline in &subjects {
+            let editing = inline_text_len(inline);
+            let reader = casual_doc_layout::flow::node_plain_text(std::slice::from_ref(inline));
+            assert_eq!(
+                editing,
+                reader.len() as u32,
+                "`inline_text_len` and `node_plain_text` disagree about {:.60}: \
+                 editing measures {editing} bytes and the reader sees {} — a caret \
+                 resolved against one and applied against the other lands in the \
+                 wrong place",
+                format!("{inline:?}"),
+                reader.len()
+            );
+        }
+        // The whole list at once, so an accumulation error cannot hide behind a set
+        // of individually-correct widths.
+        assert_eq!(
+            subjects.iter().map(inline_text_len).sum::<u32>(),
+            casual_doc_layout::flow::node_plain_text(&subjects).len() as u32,
+            "and the paragraph's total length must agree too"
         );
     }
 }
