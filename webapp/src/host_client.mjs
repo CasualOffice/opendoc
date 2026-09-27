@@ -1,0 +1,182 @@
+// The `postMessage` transport, HOST side.
+//
+// `docs/126` phase 2. This is what a host across an iframe boundary holds, and
+// its whole point is that it looks like the in-process session: the same four
+// verbs, the same result shape, the same event names. Both come from
+// `host_contract.mjs`, and the verbs are GENERATED from `PROTOCOL.requests`
+// rather than written out, so a host cannot be handed a client that is missing
+// something the editor serves.
+//
+// WHAT THIS ADDS OVER ONLYOFFICE'S HOST API, which is the same shape done without
+// it: their `DocsAPI.DocEditor` sends `{command, data}` into the frame
+// (`reference/web-apps/apps/api/documents/api.js:649-651`) and receives
+// `{event, frameEditorId, data}` back (`:470-500`), with no correlation id
+// anywhere. A command is therefore fire-and-forget: a host asks for something and
+// finds out whether it happened by observing the document. `rid` here is what
+// turns a command into a call with a RESULT — and a result that can carry a
+// refusal, which is the property `docs/126` phase 2 turns on.
+//
+// The target origin is always explicit. `postMessage(msg, "*")` appears nowhere;
+// a guard asserts that for this file and for the bridge.
+//
+// No English, and no DOM beyond the frame the host hands in.
+import { HOST_EVENT_NAMES, PROTOCOL, isEditorEnvelope } from "./host_contract.mjs";
+
+/** How long a request waits before it is abandoned, in milliseconds.
+ *
+ *  Generous, because the frame may still be booting a WebAssembly instance when
+ *  the first `describe` goes out, and a host racing the editor's boot is the
+ *  normal case rather than an error. Short enough that a wrong origin or a
+ *  missing bridge is a failed promise rather than a hang — a host that waits
+ *  forever has no way to tell a slow editor from a broken embed. */
+export const DEFAULT_TIMEOUT_MS = 20_000;
+
+/**
+ * Creates a client for an embedded editor.
+ *
+ * @param {object} io
+ * @param {HTMLIFrameElement|Window} io.frame the editor's frame, or its window.
+ * @param {string} io.editorOrigin the origin to post to. REQUIRED: there is no
+ *   default, because the only default that would always work is `"*"`, and that
+ *   is the decision this contract refuses to make on a host's behalf. A host that
+ *   mounted a same-origin embed passes `location.origin`.
+ * @param {Window} [io.view] the host's own window, for the `message` listener.
+ * @param {number} [io.timeout]
+ */
+export function createHostClient({ frame, editorOrigin, view = globalThis, timeout = DEFAULT_TIMEOUT_MS }) {
+  if (typeof editorOrigin !== "string" || !editorOrigin || editorOrigin === "*") {
+    // Loud, and at construction rather than on the first silent non-answer: a
+    // host that passes no origin has not made the decision, and guessing one for
+    // them is how document content ends up posted to a wildcard.
+    throw new TypeError("createHostClient needs an explicit editorOrigin — never \"*\"");
+  }
+  /** rid -> {resolve, reject, type, id, timer}. */
+  const pending = new Map();
+  /** event name -> listeners. */
+  const listeners = new Map(HOST_EVENT_NAMES.map((name) => [name, new Set()]));
+  let counter = 0;
+
+  /** The editor's window, resolved late: a frame's `contentWindow` is null until
+   *  it is in the document, and a host may build the client first. */
+  function target() {
+    return frame?.contentWindow ?? frame ?? null;
+  }
+
+  function settle(rid, message) {
+    const waiter = pending.get(rid);
+    if (!waiter) return;
+    pending.delete(rid);
+    clearTimeout(waiter.timer);
+    if (waiter.type === "execute") {
+      // `execute` resolves whatever came back, refusal included: "a refused
+      // command must say so in its RESULT" means a host branches on the value,
+      // never on a rejection.
+      const { [PROTOCOL.marker]: _marker, kind: _kind, rid: _rid, ...result } = message;
+      waiter.resolve(Object.freeze(result));
+      return;
+    }
+    if (message.ok === false) {
+      waiter.reject(new Error(message.refusal?.message || message.refusal?.code || "refused"));
+      return;
+    }
+    waiter.resolve(message.value);
+  }
+
+  function onMessage(event) {
+    // The host's half of the origin contract: only the editor's origin may
+    // resolve this host's requests or deliver it events.
+    if (event.origin !== editorOrigin) return;
+    const message = event.data;
+    if (!isEditorEnvelope(message)) return;
+    if (message.kind === "result") {
+      settle(message.rid, message);
+      return;
+    }
+    for (const listener of listeners.get(message.event) ?? []) {
+      try {
+        listener(Object.freeze({ event: message.event, detail: message.detail }));
+      } catch (err) {
+        console.warn(`opendoc: a ${message.event} listener threw`, err);
+      }
+    }
+  }
+
+  view.addEventListener("message", onMessage);
+
+  /** Sends one request and waits for the result with that `rid`. */
+  function send(type, body = {}) {
+    const rid = `${type}:${(counter += 1)}`;
+    const envelope = { [PROTOCOL.marker]: PROTOCOL.version, kind: "request", rid, type, ...body };
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(rid);
+        if (type === "execute") {
+          resolve(
+            Object.freeze({
+              ok: false,
+              command: body.id ?? null,
+              revision: null,
+              refusal: Object.freeze({
+                code: "timeout",
+                command: body.id ?? null,
+                requires: null,
+                message: "",
+              }),
+            }),
+          );
+        } else {
+          reject(new Error(`opendoc: ${type} timed out after ${timeout}ms`));
+        }
+      }, timeout);
+      pending.set(rid, { resolve, reject, type, id: body.id ?? null, timer });
+      const window_ = target();
+      if (!window_) {
+        clearTimeout(timer);
+        pending.delete(rid);
+        reject(new Error("opendoc: the editor frame has no window yet"));
+        return;
+      }
+      window_.postMessage(envelope, editorOrigin);
+    });
+  }
+
+  /** The verbs, generated from the schema. A host gets `client.execute(...)`,
+   *  `client.query(...)`, `client.describe()` and `client.ping()` because those
+   *  are the four the schema declares — not because four methods were typed out
+   *  here. */
+  const client = {
+    /** Subscribes to one of the contract's events; returns an unsubscribe. */
+    on(name, listener) {
+      const set = listeners.get(name);
+      if (!set || typeof listener !== "function") return () => {};
+      set.add(listener);
+      return () => set.delete(listener);
+    },
+    off(name, listener) {
+      listeners.get(name)?.delete(listener);
+    },
+    /** Stops listening and fails every request still in flight, so a host that
+     *  tears down an embed does not leave awaited promises hanging forever. */
+    dispose() {
+      view.removeEventListener("message", onMessage);
+      for (const [rid, waiter] of pending) {
+        clearTimeout(waiter.timer);
+        pending.delete(rid);
+        waiter.reject(new Error("opendoc: the client was disposed"));
+      }
+      for (const set of listeners.values()) set.clear();
+    },
+    /** How many requests are awaiting a result. For tests and for a host that
+     *  wants to know whether the editor has gone quiet. */
+    inFlight: () => pending.size,
+  };
+  for (const type of PROTOCOL.requests) {
+    client[type] =
+      type === "execute"
+        ? (id, args = []) => send("execute", { id, args })
+        : type === "query"
+          ? (id) => send("query", { id })
+          : () => send(type);
+  }
+  return client;
+}

@@ -38,11 +38,14 @@ mod command;
 mod config;
 mod error;
 mod event;
+mod host;
 mod selection;
 mod session;
 mod snapshot;
 mod value;
 
+#[cfg(test)]
+mod host_parity;
 #[cfg(test)]
 mod tests;
 
@@ -58,6 +61,7 @@ pub use event::{
     EVENT_JOURNAL_CAPACITY, EventBatch, EventSequence, RuntimeEvent, SelectionChangeReason,
     SelectionChangedEvent, SequencedEvent, TransactionCommittedEvent, TransactionOrigin,
 };
+pub use host::{HOST_CONTRACT_VERSION, HostEvent, HostRefusal, HostRequest};
 pub use selection::{Affinity, Position, Range, SelectionSnapshot};
 pub use session::{DocumentSession, Subscription};
 pub use snapshot::{BlockSnapshot, DocumentSnapshot, InlineSnapshot, ParagraphSnapshot};

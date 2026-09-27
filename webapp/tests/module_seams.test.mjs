@@ -172,8 +172,21 @@ const SRC = new URL("../src/", import.meta.url);
  *  functions built went into the catalogue on the way — which is why the unrouted
  *  ceiling below moved too. Re-measured from the file AFTER rebasing onto
  *  `origin/main` at e8cdf0e, not before: measuring first is the trap the notes
- *  above record three times. */
-const MAIN_JS_LINE_CEILING = 16616;
+ *  above record three times.
+ *  Lowered to 16,602 by the host contract (`docs/126` phase 2). The file was AT
+ *  its ceiling with ZERO slack again, and the contract needs 20 lines of it: one
+ *  `let`, five notification hooks on choke points the editor already has, and the
+ *  session/bridge construction at the end, where the command registry finally
+ *  exists. It paid with two extractions. Out: the SAVE SURFACE — which formats
+ *  the Save selector offers, what the compatibility chip reads, and the one step
+ *  that puts bytes on a visitor's disk — now `save_formats.mjs`, so "does the
+ *  selector offer every exporter the engine registered, and does it default to
+ *  the format the document was opened as" is a node question rather than a
+ *  browser one. And the smart-quote decision, which moved into `text_rules.mjs`
+ *  beside the rule it calls: its only hard part is that an engine offset is a
+ *  UTF-8 BYTE index (`docs/104` HF-055), which is exactly what that module is
+ *  for, and it is now answerable with a plain function instead of a document. */
+const MAIN_JS_LINE_CEILING = 16589;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

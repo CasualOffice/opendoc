@@ -95,6 +95,55 @@ identical whether they hold a reference or are talking across an iframe boundary
 guard proves the two surfaces are the same contract — so adding a command to one
 without the other fails the build rather than shipping a half-reachable API.
 
+### Phase 2 status — landed 2026-09-27
+
+The schema is `webapp/src/host_contract.mjs`: commands and what each requires of
+the host's grant, the events and their payloads, the refusal codes, the
+`postMessage` envelope, and the origin rule. `host_session.mjs` (in process) gates
+and dispatches from it; `host_bridge.mjs` is an envelope and an origin check over
+that same session object, not a second implementation; `host_client.mjs` generates
+a host's verbs from the same schema. The decision is recorded as **ADR-034**.
+
+The exit gate is `webapp/tests/e2e/host-contract.spec.mjs`, driven from
+`webapp/embed.html`, which mounts the editor twice and drives both panels. It
+proves the contract covers the registry exactly in the three states the families
+need, that both transports answer identically for every command the editor offers,
+that a host granted nothing changes nothing, that a refusal the chrome makes is a
+refusal the API makes, and — by derivation from the engine rather than from the
+table — that a command the contract calls ungated really does not touch the
+document.
+
+Three things worth knowing, because they are decisions rather than details:
+
+* **The event set is this document's, not `docs/125` §8's.** `125` sketched ten
+  events derived from `casual_doc_sdk::RuntimeEvent` with `ErrorCode` as the
+  refusal vocabulary. What shipped is the seven named above, because that is what a
+  host needs to drive an editor rather than to read a transaction log. The refusal
+  codes are complementary to `ErrorCode`, not a rename of it: they say why a *host
+  command* was refused, and `HostRefusal::for_error` maps every `ErrorCode` onto
+  one, so a native and a browser host share one vocabulary.
+* **`crates/casual-doc-sdk` now declares that vocabulary and still does not run
+  the editor.** `src/host.rs` holds the events, codes, verbs and version, with
+  `HostEvent::from(&RuntimeEvent)` as the derivation `125` §8 asked for, and
+  `src/host_parity.rs` reads the editor's schema and fails in both directions. The
+  runtime convergence is `docs/125` §9 row 5 (**L**) behind `109` CQ-002, and it is
+  ADR-005's debt regardless — doing it inside this phase would have hidden a
+  runtime migration inside an API change. The embedding page says so in its "does
+  not do yet" list, with a guard that fails when it stops being true.
+* **The site page's unrouted-string count ROSE, deliberately.** The four site
+  templates have no localisation seam at all, so the only way to lower one of their
+  numbers is to delete English, and every site ceiling sat exactly at its
+  measurement. `no_unrouted_strings.test.mjs` now reads those files as declared
+  measurements held to equality, with a guard proving they really have no seam
+  (`editor.html` as the control) so the exception evaporates when site
+  localisation lands. That is a policy change and it is the one thing in this
+  phase an owner might want to reverse.
+
+Deliberately not in phase 2: document I/O through the contract (no `open(bytes)`,
+no `export()` that returns bytes), arguments for more than the one command that
+takes one, a per-capability host list, reading/preview chrome composition, and any
+Rust in-process transport.
+
 ## Phase 3 — White-labelling, customization, and release
 
 **What a host gets:** their product, not ours, and a way to install it.

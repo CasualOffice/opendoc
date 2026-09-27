@@ -139,3 +139,44 @@ export function escapeHtml(text) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
+
+/**
+ * The typographic quote a typed `"` or `'` becomes, at a caret in a document.
+ *
+ * `smartQuoteChar` above answers the RULE — opening or closing, given the
+ * preceding character. This answers the whole question a keystroke asks, and it
+ * is here rather than in `main.js` because the only hard part of it is a
+ * text-and-offset trap, which is what this module is for:
+ *
+ * `offset` is an ENGINE offset, a UTF-8 BYTE index, so `offset - 1` names the
+ * preceding character only while that character is ASCII. After "Müller", "café"
+ * or any Cyrillic or CJK word it lands INSIDE a multi-byte character, the
+ * engine's clamp snaps it forward past `offset`, the read returns "", and an
+ * empty prefix reads as start-of-paragraph — so every apostrophe typed after a
+ * non-ASCII letter came out as an OPENING quote (`docs/104` HF-055). The fix is
+ * to never synthesize an engine offset in JavaScript: read the whole prefix from
+ * 0, which is a boundary by definition, and take its last code point.
+ *
+ * `readPrefix` is injected, so the rule is answerable in node with a plain
+ * function and this module stays free of the engine. A reader that throws — an
+ * engine that cannot resolve the position — yields the literal key rather than a
+ * guess.
+ *
+ * Complexity: O(paragraph) in the prefix read, which is the engine's cost and is
+ * paid once per typed quote character, not per keystroke.
+ *
+ * @param {string} key the character typed.
+ * @param {{enabled: boolean, offset: number, readPrefix: () => string}} io
+ * @returns {string}
+ */
+export function smartQuoteForTyped(key, { enabled, offset, readPrefix }) {
+  if (!enabled || (key !== '"' && key !== "'")) return key;
+  if (offset <= 0) return smartQuoteChar(key, "");
+  let previous = "";
+  try {
+    previous = [...String(readPrefix() ?? "")].at(-1) ?? "";
+  } catch {
+    return key;
+  }
+  return smartQuoteChar(key, previous);
+}

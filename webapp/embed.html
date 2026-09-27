@@ -179,6 +179,44 @@
         font-size: 0.85rem;
         text-align: center;
       }
+      .embed-console {
+        border-top: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px 18px;
+      }
+      .embed-console-lede {
+        margin: 0;
+        font-size: 0.85rem;
+        color: var(--muted);
+        max-width: 78ch;
+      }
+      .embed-console .embed-controls {
+        border-bottom: 0;
+        padding: 0;
+      }
+      .embed-console .embed-readout {
+        border-bottom: 0;
+        padding: 0;
+      }
+      .embed-json {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--ink);
+      }
+      .embed-events {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        margin: 0;
+        padding-left: 1.4em;
+        max-height: 9em;
+        overflow-y: auto;
+        color: var(--muted-2);
+      }
       .embed-note {
         font-size: 0.85rem;
         color: var(--muted);
@@ -250,6 +288,38 @@
           <div class="embed-stage" data-stage>
             <p class="embed-idle" data-idle>Not mounted.</p>
           </div>
+          <div class="embed-console" data-console hidden>
+            <p class="embed-console-lede">
+              The same session, driven two ways. <b>In&nbsp;process</b> reaches
+              <code>frame.contentWindow.opendoc</code> directly, which a host can only
+              do same-origin. <b>postMessage</b> goes over the wire through
+              <code>createHostClient</code>, which works across origins once the
+              deployment names them. Every command, every event and every refusal on
+              both paths comes from one schema.
+            </p>
+            <div class="embed-controls">
+              <p class="embed-field">
+                <label for="iframeTransport">Transport</label>
+                <select id="iframeTransport" data-transport>
+                  <option value="in-process">In process</option>
+                  <option value="post-message">postMessage</option>
+                </select>
+              </p>
+              <p class="embed-field">
+                <label for="iframeCommand">Command</label>
+                <select id="iframeCommand" data-command-select></select>
+              </p>
+              <button type="button" class="embed-btn" data-run>Run it</button>
+            </div>
+            <div class="embed-readout">
+              <dl>
+                <dt>Result</dt>
+                <dd><pre class="embed-json" data-result>—</pre></dd>
+                <dt>Events</dt>
+                <dd><ol class="embed-events" data-events></ol></dd>
+              </dl>
+            </div>
+          </div>
         </section>
 
         <!-- Panel 2: the custom element. -->
@@ -295,6 +365,38 @@
           <div class="embed-stage" data-stage>
             <p class="embed-idle" data-idle>Not mounted.</p>
           </div>
+          <div class="embed-console" data-console hidden>
+            <p class="embed-console-lede">
+              The same session, driven two ways. <b>In&nbsp;process</b> reaches
+              <code>frame.contentWindow.opendoc</code> directly, which a host can only
+              do same-origin. <b>postMessage</b> goes over the wire through
+              <code>createHostClient</code>, which works across origins once the
+              deployment names them. Every command, every event and every refusal on
+              both paths comes from one schema.
+            </p>
+            <div class="embed-controls">
+              <p class="embed-field">
+                <label for="elementTransport">Transport</label>
+                <select id="elementTransport" data-transport>
+                  <option value="in-process">In process</option>
+                  <option value="post-message">postMessage</option>
+                </select>
+              </p>
+              <p class="embed-field">
+                <label for="elementCommand">Command</label>
+                <select id="elementCommand" data-command-select></select>
+              </p>
+              <button type="button" class="embed-btn" data-run>Run it</button>
+            </div>
+            <div class="embed-readout">
+              <dl>
+                <dt>Result</dt>
+                <dd><pre class="embed-json" data-result>—</pre></dd>
+                <dt>Events</dt>
+                <dd><ol class="embed-events" data-events></ol></dd>
+              </dl>
+            </div>
+          </div>
         </section>
       </div>
 
@@ -308,6 +410,20 @@
         feature is indistinguishable from one that is broken. Open the command
         palette inside a <code>readonly</code> embed and look at
         <em>Open…</em>: it is there, it is disabled, and it says why.
+      </p>
+
+      <h2>And the fourth layer: the API</h2>
+      <p class="embed-note">
+        A host that was not granted <code>edit</code> must not be able to run an
+        editing command <em>through the SDK</em> either, or the API is simply the
+        unlocked door beside three locked ones. So the capability gate runs
+        <em>before</em> dispatch: pick <code>preview</code> above, mount, and run
+        <code>format.bold</code> on either transport — the result is
+        <code>{"ok": false, "refusal": {"code": "capability-withheld"}}</code> and the
+        command never reaches the engine. A refusal is a <em>value</em>, not just a
+        toast: a host calling <code>file.save</code> on a <code>readonly</code> embed
+        gets something it can branch on, rather than a status line that says
+        &ldquo;Saved&rdquo; while no file was written.
       </p>
     </main>
 

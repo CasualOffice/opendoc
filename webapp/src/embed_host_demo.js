@@ -7,6 +7,14 @@
 // records that "built" is not "reachable", and an embed surface with no host
 // exercising it is exactly that failure.
 //
+// `docs/126` phase 2 adds the other half: each panel also DRIVES the editor, over
+// BOTH transports, from one command list the editor itself hands over. In process
+// is `frame.contentWindow.opendoc` — a direct reference, which a host can only
+// hold same-origin — and over the wire is `createHostClient`, which is what a
+// cross-origin host uses once the deployment names its origin. The point of
+// having both on this page is that a reader can watch them answer identically;
+// the point of the guard in `host-contract.spec.mjs` is that they must.
+//
 // Nothing here is fixture code. The capability readout is DERIVED from the same
 // authority the editor resolves, so this page cannot show a table that is not
 // the real one; and neither editor boots until asked, because each holds a
@@ -20,6 +28,7 @@ import {
   sandboxTokensFor,
 } from "./capabilities.mjs";
 import { defineOpenDocEditor } from "./embed_element.mjs";
+import { createHostClient } from "./host_client.mjs";
 
 defineOpenDocEditor();
 
@@ -80,6 +89,7 @@ function wirePanel(panel) {
     stage.append(live);
     releaseBtn.disabled = false;
     render(panel, resolveFor(role));
+    void wireConsole(panel);
   }
 
   /** The custom element's own path: the host sets `mode` and nothing else, and
@@ -118,6 +128,7 @@ function wirePanel(panel) {
   }
 
   function release() {
+    releaseConsole(panel);
     const live = stage.querySelector("[data-live]");
     if (live) {
       // Blank before detaching so the WebAssembly instance starts being released
@@ -177,4 +188,118 @@ function render(panel, { capabilities, editingMode, sandbox }) {
       return item;
     }),
   );
+}
+
+// ---- The host contract console (`docs/126` phase 2) ------------------------
+//
+// One controller for both panels and both transports, for the same reason the
+// panels already share one: two copies of "ask the editor to do something" would
+// be two things to keep in step, which is the drift this phase exists to remove.
+
+/** panel -> its live `postMessage` client, so releasing an embed disposes it and
+ *  a re-mount never talks to a frame that is gone. */
+const clients = new WeakMap();
+
+/** The iframe a panel is showing, whichever way it was mounted. The custom
+ *  element keeps its frame in a shadow root and exposes it as `.frame`; the
+ *  hand-wired panel IS the iframe. */
+function liveFrame(panel) {
+  const live = panel.querySelector("[data-stage] [data-live]");
+  if (!live) return null;
+  return live.tagName === "IFRAME" ? live : (live.frame ?? null);
+}
+
+/** Waits for the frame's own session to exist.
+ *
+ *  The editor assigns `window.opendoc` at the end of its module evaluation, so a
+ *  host reaching for it the instant the frame is attached finds nothing. That is
+ *  not a race to paper over — it is why the contract also has a `ready` event and
+ *  a `ping`, and a host that would rather not poll listens for `ready` instead. */
+async function waitForSession(frame) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const session = frame?.contentWindow?.opendoc ?? null;
+    if (session) return session;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return null;
+}
+
+/** Fills the command picker from the editor's OWN description of itself, and
+ *  starts logging its events. Nothing about the command list is written on this
+ *  page: a command added to the editor appears here with nobody editing it. */
+async function wireConsole(panel) {
+  const surface = panel.querySelector("[data-console]");
+  if (!surface) return;
+  const frame = liveFrame(panel);
+  if (!(await waitForSession(frame))) return;
+  const client = createHostClient({ frame, editorOrigin: window.location.origin });
+  clients.set(panel, client);
+  const described = await client.describe();
+  const events = surface.querySelector("[data-events]");
+  // Over the WIRE, deliberately: the in-process session delivers the same events,
+  // and taking them from the transport that has further to travel is what shows
+  // that it does.
+  for (const name of described.events) client.on(name, (event) => logEvent(events, event));
+  surface.querySelector("[data-command-select]").replaceChildren(
+    ...described.commands.map((command) => {
+      const option = document.createElement("option");
+      option.value = command.id;
+      // The id, not a label: the ids ARE the addressable surface, and giving them
+      // labels here would put a second name on every command.
+      option.textContent = command.id;
+      return option;
+    }),
+  );
+  surface.hidden = false;
+}
+
+/** Disposes a panel's client and empties its readouts. */
+function releaseConsole(panel) {
+  clients.get(panel)?.dispose();
+  clients.delete(panel);
+  const surface = panel.querySelector("[data-console]");
+  if (!surface) return;
+  surface.hidden = true;
+  surface.querySelector("[data-events]").replaceChildren();
+  surface.querySelector("[data-result]").textContent = "";
+}
+
+/** One event, newest last, bounded so a long session does not grow without end. */
+function logEvent(list, event) {
+  const item = document.createElement("li");
+  item.dataset.event = event.event;
+  // Joined rather than interpolated: the string-site scanner reads a template
+  // assigned to `textContent` as a user-facing literal, and this one carries no
+  // words at all — an event name and its own JSON.
+  item.textContent = [event.event, JSON.stringify(event.detail)].join(" ");
+  list.append(item);
+  while (list.children.length > 40) list.firstElementChild.remove();
+  list.scrollTop = list.scrollHeight;
+}
+
+for (const surface of document.querySelectorAll("[data-console]")) {
+  const panel = surface.closest("[data-embed]");
+  surface.querySelector("[data-run]").addEventListener("click", async () => {
+    const id = surface.querySelector("[data-command-select]").value;
+    const transport = surface.querySelector("[data-transport]").value;
+    const result = await runCommand(panel, transport, id);
+    // The RESULT, verbatim. A refusal is a value a host branches on, so the thing
+    // to show is the value — not a sentence this page wrote about it.
+    surface.querySelector("[data-result]").textContent = JSON.stringify(result, null, 2);
+  });
+}
+
+/**
+ * Runs one command over one transport, and returns exactly what came back.
+ *
+ * The two branches are the whole demonstration, and they are four lines apart so a
+ * reader can see that the only difference between them is how the call travels.
+ */
+async function runCommand(panel, transport, id) {
+  if (transport === "post-message") {
+    const client = clients.get(panel);
+    return client ? client.execute(id) : null;
+  }
+  const session = liveFrame(panel)?.contentWindow?.opendoc ?? null;
+  return session ? session.execute(id) : null;
 }
