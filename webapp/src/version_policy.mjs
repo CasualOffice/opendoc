@@ -28,7 +28,12 @@
 // No DOM, no engine, no store. `t()` is DOM-free (`i18n.mjs`).
 
 import { d, n, t } from "./i18n.mjs";
-import { HISTORY_STATUS, VERSION_KIND, historyStatusCodes, isHistoryRefusal } from "./version_history.mjs";
+import {
+  HISTORY_STATUS,
+  VERSION_KIND,
+  historyStatusCodes,
+  historyStatusKind,
+} from "./version_history.mjs";
 
 /**
  * Status code → the sentence a reader gets, as literal `t()` calls.
@@ -97,11 +102,20 @@ export function historyMessage(status) {
   return STATUS_TEXT[status]?.() ?? t("history.status.unknownFailure");
 }
 
-/** The `status_channel.mjs` kind a store result must be published with, taken
- *  from the store's own classification so the refusal/confirmation split is
- *  decided once (`version_history.mjs`'s `historyStatusKind`). O(1). */
+/** The `status_channel.mjs` kind a store result must be published with.
+ *
+ *  Delegates to `historyStatusKind`, and that is the whole point: the decision
+ *  about whether a message is a refusal belongs with the code that refuses, and
+ *  having it in two places is having it wrong in one of them. This function was
+ *  first written as `isHistoryRefusal(status) ? "error" : ""`, which is the same
+ *  answer for every KNOWN code and the opposite answer for an unknown one — the
+ *  store treats an unknown code as a refusal on purpose, because the failure mode
+ *  of guessing "error" is a toast nobody needed and the failure mode of guessing
+ *  "" is silence about somebody's lost work. `version_policy.test.mjs` caught it.
+ *
+ *  O(1). */
 export function historyMessageKind(status) {
-  return isHistoryRefusal(status) ? "error" : "";
+  return historyStatusKind(status);
 }
 
 // ── A version's words ────────────────────────────────────────────────────────

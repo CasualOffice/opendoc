@@ -1263,10 +1263,15 @@ const HOST_MODE = editingModeFor(HOST_CAPS);
  *  same URL the capability set came from, applied BEFORE first paint, and a
  *  different question from the capability set: a withheld region is a
  *  presentation decision, a withheld capability is a permission. */
-const HOST_REGIONS = applyRegions({
+const HOST_REGIONS = hostRegions();
+// `applyRegions` RETURNS the withheld ids, which is the opposite of the set above
+// — reading its return value as the shown set threw a `TypeError` on the first
+// registry build and killed boot outright. The return value is not wanted here,
+// so it is not bound.
+applyRegions({
   body: document.body,
   root: document,
-  regions: hostRegions(),
+  regions: HOST_REGIONS,
   selectBand: (band) => selectRibbonTab(band),
 });
 /** The host contract (`docs/126` phase 2), built at the END of this file because
@@ -15692,12 +15697,7 @@ async function writeDraft(reason) {
   // export of the document (`docs/140` §6.2, §7.5). The decision itself —
   // `VersionCapturePolicy.shouldCapture` — is O(1) in both document size and
   // stored-version count and is all the editing path ever pays.
-  versionHistory.capture(reason, {
-    bytes: snapshot.bytes,
-    formatId: snapshot.formatId,
-    mode: snapshot.mode,
-    findings: snapshot.findings,
-  });
+  versionHistory.capture(reason, snapshot);
   setDraftStatus(
     `Draft saved ${clockTime(now)}`,
     "saved",

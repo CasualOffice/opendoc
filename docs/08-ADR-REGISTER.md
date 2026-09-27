@@ -953,6 +953,110 @@ advantage we have. Every module that implements a piece of it says so.
 - No engine operation was added (ADR-030 I2): theme and chrome resolve at boot and
   nothing here touches the document.
 
+## ADR-040 — The version timeline is a right-hand panel, a withholdable chrome region, and a restore that confirms once
+
+**Status:** Accepted and implemented. Requirements: `docs/139`. Architecture: `docs/140`.
+Rows: `104` HF-068 / `105` OO-004. Builds on **ADR-038** (the store) and **ADR-039** (chrome
+region composition). Code: `webapp/src/version_panel.mjs`, `webapp/src/version_policy.mjs`,
+the `history` region in `webapp/src/capabilities.mjs`, and the four seams in
+`webapp/src/main.js`.
+
+**Context:** ADR-038 landed the whole durable store — checkpoints, naming, pinning,
+retention, atomic restore — and said in its own status line that it was *not yet reachable
+from the product*. A subsystem that is built and unreachable is the most expensive recurring
+pattern in this repository (SKILL §9.4, and the owner's report: *"prs are half as no ui in
+history"*). This ADR records the five decisions the interface had to make that the store
+could not, and it answers `docs/139` §18 question 6, which ADR-038 left open.
+
+The interface is designed from the Google Docs standard first, which is the standing rule
+and which `docs/139` §3 already names as the model. The table in `version_panel.mjs`'s header
+is the full mapping; what follows is only what it decided differently, and why.
+
+**Decision:**
+
+1. **A right-hand side panel, not a full-window page.** Google Docs replaces the whole window
+   with a version-history view. This editor already has an established shape for "a list
+   beside the document" — Outline, Pages, and the comments sidebar — and one mechanism beats
+   two (SKILL §8). A panel also keeps the document visible next to the timeline, which is
+   what makes previewing an entry legible: the reader can see the canvas change. It is
+   mutually exclusive with the comments sidebar for the reason Outline and Pages are mutually
+   exclusive with each other: the canvas is never squeezed from both sides at once.
+
+2. **Two durable surfaces, and a chord, and no ribbon cost for the primary one.** File ▸
+   Version history is the primary entry, and it is where all three references put it — Google
+   Docs (File ▸ Version history ▸ See version history), ONLYOFFICE (`DE.Views.FileMenu.btnHistory`),
+   Word (File ▸ Info). It spends no ribbon width. The second surface is a View-band button
+   beside the other two panel toggles, because the timeline IS a panel toggle in this product;
+   that is information architecture this editor already has, not a claim that Word or Docs
+   file version history under View. `⌘⌥⇧H` is Google Docs' own chord for revision history,
+   taken rather than invented. `105` UX-004 — a capability reachable from one place — is the
+   recurring defect this closes for the timeline before it can open.
+
+3. **The timeline is a WITHHOLDABLE CHROME REGION (`history`), and withholding it removes the
+   COMMAND.** Version history is already gated on the `autosave` capability, because it rides
+   the autosave path and one switch must not promise what the other has stopped doing
+   (ADR-038). That covered the permission axis. It did not cover reachability: the command
+   palette and the chord belong to no region, so a host that withheld `band.file` and
+   `band.view` would still have a visitor one keystroke away from a timeline of a document's
+   past. So the region takes the row out of the **registry** rather than hiding a button, and
+   every surface loses it at once. It is deliberately **not** in reading chrome: no preset
+   below `edit` grants `autosave`, so a reader's timeline could only ever be empty and
+   disabled, and a presentation that can never say anything is a dead control.
+
+   Adding the region made four existing guards fail — a selector, a CSS rule, a description on
+   the embedding page, and the mirrored copy in the embed package — which is the argument for
+   declaring it in `capabilities.mjs` rather than inventing a second mechanism.
+
+4. **Restore confirms, every time.** `docs/139` §18 question 6 asked whether the confirmation
+   could be skipped when the current head is already checkpointed and unchanged. It cannot,
+   and the reason is not caution: **the confirmation is the only place the reader is told that
+   their current work becomes a version of its own.** Google Docs does not ask, and can afford
+   not to — its restore is an undoable edit to a server-side document. Here it replaces the
+   document in the tab, so the sentence that makes restore legible as non-destructive has to be
+   read before it happens rather than after. The card also states that the restored document is
+   unsaved until it is written to a file.
+
+   The order of operations is `docs/140` §9 exactly: validate the target's bytes against the
+   hash its key claims → capture the current document as a version → parse in isolation →
+   compare-and-set the head in one IndexedDB transaction → only then activate the canvas,
+   through the ordinary open path. A refused pre-restore capture refuses the restore with it,
+   which is `docs/112`'s "never let a restore leave the work in neither place" one level up.
+
+5. **Read-only preview reuses the existing choke point.** A preview sets `readOnlyReason` and
+   viewing mode, which is the editor's one fail-closed gate: `blockMutationInViewing()` already
+   refuses every mutation route — typing, paste, toolbar, tables, review decisions, the SDK and
+   the host bridge — and `editRefusalMessage` already prefers `readOnlyReason` over every other
+   sentence, so a preview refuses an edit by *saying it is a preview*. A second gate would have
+   put the reason for a refusal in two places, and a gate enforced by hiding buttons is not
+   enforced.
+
+6. **Wording is a module, not a DOM concern.** ADR-038's store returns status codes and no
+   English on purpose. `version_policy.mjs` is the other half of that promise: one sentence per
+   `HISTORY_STATUS` code, through `t()` with a literal key, plus the day grouping and a row's
+   words. It is pure, so "does every refusal have a sentence a reader can act on" is a node
+   question — and writing that guard found a real defect on the first run, where the panel's
+   classifier disagreed with the store's about an unknown code and would have answered a
+   failure with silence.
+
+### Consequences
+
+- Every `HISTORY_STATUS` code is now a compatibility surface with a translated sentence in
+  nineteen catalogues. Adding a code without wording it fails `version_policy.test.mjs`.
+- A host who withholds `history` withholds the capability from every surface, including the
+  palette and the chord. A host who grants the region but withholds `autosave` gets a panel
+  whose entry is disabled with the autosave reason, which is state explaining itself rather
+  than a dead control.
+- Structural diff (`docs/140` H3) is **not** built, so "Show changes" ships present and
+  disabled with that as its reason. Make a copy and Download a version (`docs/139` VH-007)
+  are **not** built and are not implied by the panel: they need a format→MIME answer the
+  export registry owns.
+- Restore is one confirmation and is not yet one Undo step (`docs/139` VH-015): the
+  pre-restore version is stored, which is what makes both in-session Undo and after-reload
+  reversal possible later, and reversing a restore today means restoring the pre-restore
+  version from the timeline.
+- No engine operation was added (ADR-030 I2). The preview and the restore both go through
+  `open`, which is the ordinary format path with the ordinary admission limits.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
