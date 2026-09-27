@@ -166,7 +166,7 @@ underlying document operations do not yet exist. Dead placeholders remain forbid
 ## 5. Open decision (for the owner)
 
 > **Still the shipped decision.** A second, configuration-selected layout was
-> explored in [doc 105](105-DUAL-CHROME-DESIGN.md) and **cancelled by the owner on
+> explored in [doc 137](137-DUAL-CHROME-DESIGN.md) and **cancelled by the owner on
 > 2026-09-10**: "we have our old UI.. keep that one .. just polish it and fix that
 > issues". Doc 105 is kept for its evidence, not as a plan. Option A below stands.
 

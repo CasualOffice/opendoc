@@ -1,4 +1,4 @@
-# 105 — Dual chrome: Ribbon and Toolbar layouts
+# 137 — Dual chrome: Ribbon and Toolbar layouts
 
 Status: **CANCELLED by the owner, 2026-09-10.** Nothing in this note is implemented,
 and the second layout is not being built. Kept because the evidence in §2, the measured

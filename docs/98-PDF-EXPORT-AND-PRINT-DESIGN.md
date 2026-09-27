@@ -246,6 +246,9 @@ glyph-for-glyph identical to the editor. This is enforced by a CI golden (§9).
 - Any *rendering/layout* fidelity work — that lives in the layout engine, not here.
   This document adds **no** shaping, line-breaking, or pagination logic.
 - Round-trip PDF *import*. This is export-only.
+- Experimental local PDF semantic reconstruction is evaluated separately in doc 131
+  and proposed ADR-034. It does not alter this design's export-only scope or the
+  current `can_import: false` product behavior.
 - Text-as-outlines or rasterized-page output (explicitly rejected).
 - Editing PDFs, PDF forms (AcroForm) authoring, digital signatures, JavaScript, or
   embedded multimedia.

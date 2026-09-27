@@ -15397,7 +15397,7 @@ struct ObjectOrderEntryJson {
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
-/// inside one paragraph's final-with-markup projection (docs/83) — the same
+/// inside one paragraph's final-with-markup projection (docs/133) — the same
 /// projection `selectionRects`/`caretRect` already address. `node` is an
 /// opaque 32-hex `NodeId` string, passed back unchanged.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

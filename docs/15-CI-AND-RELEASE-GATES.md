@@ -185,6 +185,78 @@ These are tracked by P1G-REVIEW-035 through P1G-REVIEW-039. Until those slices
 close the gates, CI may prove the implemented baseline but not Word/Google Docs
 parity or complete tracked-change support.
 
+### Experimental PDF semantic-reconstruction gates
+
+Doc 131 and proposed ADR-034 describe an experimental future feature, not current
+support. No PDF-import dependency, model, or product claim may land until PDFR-000
+accepts the architecture and assigns owners to these future gates:
+
+- strict versioned `PdfEvidenceV1` decoding with boundary, far-over-limit,
+  cancellation, and no-partial-session tests;
+- evidence-replay determinism that produces identical normalized models and
+  compatibility reports without invoking a parser or OCR runtime;
+- rights-safe born-digital, scanned, hybrid, multilingual, table, formula, and
+  degraded-image corpora, plus malformed/encrypted/active-content/oversized hostile
+  PDFs;
+- native-text precedence and native/OCR conflict tests proving that OCR cannot
+  silently replace valid PDF text;
+- semantic `PDF -> model -> DOCX -> model`, edit-save-reopen, and model-validation
+  gates for the declared supported surface;
+- visual comparison against source page rasters, reported separately from semantic
+  and editability results;
+- Worker isolation, bounded cancellation latency, peak JS/WASM/GPU memory, and
+  main-thread long-task budgets;
+- an offline cached import and a network-interception proof that no document byte,
+  raster, extracted text, OCR token, or reconstructed content leaves the browser;
+- immutable parser/runtime/model artifact hashes, dependency/licence review, and
+  browser operator-coverage tests;
+- exact capability discovery and honest failure on devices that lack a required
+  local profile; no cloud fallback;
+- CPU/WASM cross-browser coverage for every browser claimed by the baseline profile,
+  with separate named-device gates for any WebGPU profile;
+- fuzz targets for evidence decoding and Rust reconstruction, and hostile-PDF browser
+  tests around the selected native provider.
+
+Until those gates exist and pass, CI proves only the implemented export-only PDF
+capability in doc 98.
+
+### Experimental document-assistance, semantic-search, and MCP gates
+
+Doc 132 and proposed ADR-035 describe an experimental future feature, not current
+support. No model/runtime dependency, MCP package, hosted provider, or product claim
+may land until DAI-0 accepts the architecture and assigns owners to these future
+gates:
+
+- scenario-contract tests for selection, section, table, story, and whole-document
+  scopes, including empty, ambiguous, protected, and unsupported scopes;
+- proposal validation proving base-revision checks, stale-result refusal, explicit
+  preview/accept/reject, one-transaction commit, one-step undo, and save/reopen
+  preservation for every mutable recipe;
+- prompt-injection and untrusted-content tests proving document text, comments,
+  fields, hyperlinks, retrieved chunks, and provider output cannot grant tools,
+  broaden scope, bypass host policy, or commit mutations;
+- incremental semantic-index tests for transaction invalidation, deleted or moved
+  anchors, event-journal gaps, full-rebuild recovery, deterministic chunk identities,
+  and no influence on serialized document bytes;
+- rights-safe multilingual retrieval and summarization corpora with named relevance,
+  grounding/citation, faithfulness, structure-preservation, and abstention thresholds;
+- Worker-isolation, cancellation, main-thread long-task, peak JS/WASM/GPU memory,
+  model-load, query-latency, and million-paragraph incremental-update budgets;
+- offline and network-interception proofs for every profile advertised as local-only,
+  with no silent cloud fallback and explicit handling of unavailable WebGPU/WASM
+  capabilities;
+- model/runtime artifact hashes, licence/provenance review, cache-integrity tests,
+  cross-browser operator coverage, and deterministic provider/profile discovery;
+- MCP protocol/conformance, schema-version, capability-discovery, authorization,
+  audit/redaction, rate/size-limit, cancellation, and approval-boundary tests for each
+  supported transport and topology;
+- browser-companion tests, if that topology is accepted, proving explicit user
+  pairing, origin/session binding, least privilege, expiry/revocation, and no ambient
+  access to unrelated tabs or documents.
+
+Until these gates exist and pass, CI makes no document-assistance, semantic-search,
+summarization, embedded-model, or MCP support claim.
+
 ## Release Gates
 
 ### Preview
@@ -236,6 +308,8 @@ parity or complete tracked-change support.
 | Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Comments and suggestions integrity | Partial | P1G-REVIEW-035 supplies numeric authored inline revision ids, scoped atomic review inverses, coalesced/bounded suggestion history, and fail-closed editor-group decisions. P1G-REVIEW-036 adds one deterministic Final-with-markup byte projection and standard one-copy `w:rPrChange` formatting with structured card deltas and import/export decisions. Doc 81 retains the pending full-schema/consumer, command-matrix, mixed-editing, scale, accessibility, and responsive gates in P1G-REVIEW-037 through P1G-REVIEW-039. |
+| PDF semantic reconstruction | Experimental design only | Not implemented or supported. Doc 131 defines future evidence, privacy, offline, determinism, security, semantic, visual, editability, memory, cancellation, and browser-profile gates. Current PDF CI covers export only. |
+| Document assistance / semantic search / MCP | Experimental design only | Not implemented or supported. Doc 132 and proposed ADR-035 define future scenario, proposal, preservation, injection-resistance, semantic-index, retrieval/summarization-quality, privacy/offline, resource, cross-browser, MCP-conformance, authorization, approval, and optional-companion gates. |
 | Release artifacts | Not started | Define before beta. |
 
 ## Failure Policy

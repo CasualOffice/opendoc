@@ -9,11 +9,13 @@ layers can be added **as adapters, without a core rewrite**:
 2. **Agentic / AI** — MCP tool servers, agent-driven edits.
 3. **RAG / vector** — retrieval, embeddings, semantic search over document content.
 
-None of these are current-focus work (they are Phase 2+). This document exists so
-the Phase-1F model/rendering work landing **now** actively *reinforces* the seams
-instead of eroding them, and so the requirement is not forgotten. The concrete
-decision is recorded as **ADR-030**; the four invariants below are a **review
-checklist item** for every PR that touches the model or mutation paths.
+Implementation of these layers is not current-focus work. Doc 132 now applies these
+seams to an experimental, user-scenario-first Document Assistance Layer, local
+semantic retrieval, and an optional MCP adapter; it does not change their unshipped
+status. This document exists so current model/rendering work actively *reinforces*
+the seams instead of eroding them. The concrete decision is recorded as **ADR-030**;
+the four invariants below are a **review checklist item** for every PR that touches
+the model or mutation paths.
 
 ## The key insight
 
@@ -66,12 +68,21 @@ guarantee.
   style) under the existing ops; block structure stays keyed by `NodeId`. Localized
   by I3. A **hybrid** (block-level structure by `NodeId` + intra-node sequence CRDT)
   fits the current model most naturally.
-- **MCP:** a thin protocol adapter at the **SDK boundary** exposing
-  `read snapshot / subscribe events / apply ops` as tools. No core change — MCP is a
-  transport over the same three primitives collaboration uses.
-- **RAG / vector:** a traversal that yields `(text, NodeId anchor)` chunks + the I4
-  sidecar for embeddings/metadata. Retrieval maps a hit back to a `NodeId` range
-  (which the layout/hit-test layer can already resolve to on-screen geometry).
+- **Document assistance:** a shared service above commands/transactions resolves
+  scope, gathers bounded context, invokes a host-approved provider, and emits a
+  read-only result or reviewable change proposal. Accepting a proposal commits through
+  the same mutation choke point as a local edit.
+- **MCP:** an optional thin protocol adapter at the **SDK/assistance boundary**. It
+  exposes bounded resources and proposal-oriented tools; it does not expose an
+  unrestricted raw mutation primitive or create a second command path. Embedded web
+  assistants call the same application service directly and do not require MCP.
+- **RAG / vector:** structure-aware chunks retain `NodeId` plus range anchors in the I4
+  sidecar. Incremental hybrid retrieval maps hits back to live document ranges and
+  must rebuild explicitly after an observation gap. It never changes serialized
+  document state.
+
+The detailed experimental architecture, user-scenario catalogue, browser execution
+profiles, MCP topologies, and graduation gates are in doc 132 and proposed ADR-035.
 
 Layout, rendering, import, and export are **read-only consumers** of the model
 (LayoutNG discipline), so none of these layers touch them. The bounded incremental

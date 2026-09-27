@@ -3,7 +3,7 @@
 **Status:** Checkpoints 1–3 implemented (retention capture, `draw:frame` export, and safe unknown-part carry)
 **Date:** 2026-08-05
 **Tracker:** MFIO-006 (Slice E continuation) / MFIO-007 inputs
-**Parents:** `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`, `95-ODT-IMPORT-PROFILE.md`, `96-ODT-EXPORT-PROFILE.md`
+**Parents:** `135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`, `95-ODT-IMPORT-PROFILE.md`, `96-ODT-EXPORT-PROFILE.md`
 
 ## 1. Purpose
 
@@ -167,4 +167,4 @@ Rules:
 ## 11. Normative references
 
 - OASIS, [OpenDocument Version 1.4, Part 2: Packages](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part2-packages/OpenDocument-v1.4-os-part2-packages.html).
-- `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` (retention/preservation axes, tagged sidecar envelopes).
+- `135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` (retention/preservation axes, tagged sidecar envelopes).

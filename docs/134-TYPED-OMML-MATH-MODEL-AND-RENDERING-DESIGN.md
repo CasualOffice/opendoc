@@ -1,4 +1,4 @@
-# 86 — Typed OMML Math Model and Rendering Design
+# 134 — Typed OMML Math Model and Rendering Design
 
 **Status:** Implemented for the bounded first slice (`P1F-MATH-TYPED-1`).  
 **Date:** 2026-08-02  

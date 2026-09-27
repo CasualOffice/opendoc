@@ -103,7 +103,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 83. `83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md` — SDK packaging, embedding, preview mode, collaboration, MCP AI tools, and plugin extensibility architecture.
 86. `86-REVISION-AWARE-EDITING-DESIGN.md` — revision-aware range splitting/normalization so typing, deleting, and formatting work inside pending suggestions and across Revision/Hyperlink/SDT wrappers (REVIEW-GAP-007).
 93. `93-REVIEW-MARKUP-RENDER-VIEW-POLICY-DESIGN.md` — a read-only `ReviewView::Markup` galley policy so the native/PNG viewer shows struck deletions, author-colored/underlined insertions, and highlighted comment ranges without double-marking the webapp editor (docs/55 §11).
-94. `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` — accepted format-neutral detection, adapter registry, preservation sidecar, package substrate, and SDK/WASM migration for DOCX, ODT, normalized JSON, plain text, and later trusted format adapters.
+135. `135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` — accepted format-neutral detection, adapter registry, preservation sidecar, package substrate, and SDK/WASM migration for DOCX, ODT, normalized JSON, plain text, and later trusted format adapters.
 95. `95-ODT-IMPORT-PROFILE.md` — bounded ODF package admission and staged ODT-to-schema-v1 semantic mapping, preservation, compatibility, and security rules.
 96. `96-ODT-EXPORT-PROFILE.md` — deterministic bounded ODF 1.4 package writing, partial semantic mapping, exact-unchanged recovery, loss reporting, and export gates.
 97. `97-ODT-EDIT-TOLERANT-PRESERVATION.md` — tolerant preservation and export behavior after ODT edits.
@@ -111,6 +111,8 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 99. `99-REMAINING-WORK-AUDIT.md` — current prioritized repository state, incomplete editing/model/fidelity areas, and deferred SDK/collaboration work.
 101. `101-EDITOR-OBJECT-AND-INSERT-PANEL-AUDIT.md` — deep object-editing correctness/UX audit, competitive analysis, contextual Properties/Insert panel design, equation-authoring gate, and prioritized delivery matrix.
 104. `104-HOTFIX-TRACKER.md` — ranked queue of confirmed UX, UI, and correctness defects in shipped code, with cross-cutting root-cause themes and the owner decisions that block several rows.
+131. `131-PDF-SEMANTIC-RECONSTRUCTION-AND-BROWSER-OCR-ARCHITECTURE.md` — experimental future-feature architecture for local browser PDF evidence extraction, selective OCR, staged Rust/WASM reconstruction, and semantic export; not implemented or supported.
+132. `132-EXPERIMENTAL-DOCUMENT-ASSISTANCE-SEMANTIC-SEARCH-AND-MCP-ARCHITECTURE.md` — proposed experimental, use-case-first architecture for document assistance, browser-local semantic retrieval and summarization, reviewable change proposals, and an optional MCP adapter; not implemented or supported.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 

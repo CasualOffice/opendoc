@@ -7,7 +7,7 @@
 //! the wasm facade or the webapp ever reads it, so no user can tell it exists. A
 //! DOCX round-trip proves the bytes survive. It proves nothing about reachability.
 //!
-//! So every row of the model inventory in `docs/95-MODEL-COMPLETENESS-LAYER1-TRACKER.md`
+//! So every row of the model inventory in `docs/136-MODEL-COMPLETENESS-LAYER1-TRACKER.md`
 //! must declare, in a **Consumer** column, one of three things:
 //!
 //! | form | meaning |
@@ -43,7 +43,7 @@
 //! The consumer check is textual: the file exists, contains the symbol, and
 //! contains the field name. That catches a consumer deleted or renamed, and a
 //! claim that was never true. It does **not** catch a consumer that reads a field
-//! and then throws the value away — the percentage table-width row in `docs/95`
+//! and then throws the value away — the percentage table-width row in `docs/136`
 //! is exactly that shape, and is recorded as `unconsumed` with the reason spelled
 //! out rather than cited as a consumer. Judging that case needs a human reading
 //! the code; this guard's job is to make sure someone did, and to keep the answer
@@ -58,7 +58,7 @@ use std::path::{Path, PathBuf};
 /// on a Windows checkout, which is why every read below goes through
 /// [`tracker_text`] — a previous source-scanning guard in this repository passed
 /// on every platform and failed only on Windows for exactly that reason.
-const TRACKER_RAW: &str = include_str!("../../../docs/95-MODEL-COMPLETENESS-LAYER1-TRACKER.md");
+const TRACKER_RAW: &str = include_str!("../../../docs/136-MODEL-COMPLETENESS-LAYER1-TRACKER.md");
 
 /// Line endings normalised, so the parsing below is platform-independent.
 fn tracker_text() -> String {
@@ -222,12 +222,12 @@ fn every_model_row_declares_who_consumes_it() {
     let (rows, malformed) = parse_rows(&tracker);
     assert!(
         malformed.is_empty(),
-        "docs/95 rows without a usable Consumer declaration:\n  {}",
+        "docs/136 rows without a usable Consumer declaration:\n  {}",
         malformed.join("\n  ")
     );
     assert!(
         rows.len() >= MINIMUM_ROWS,
-        "only {} inventory rows parsed out of docs/95 (expected at least {MINIMUM_ROWS}) — the \
+        "only {} inventory rows parsed out of docs/136 (expected at least {MINIMUM_ROWS}) — the \
          table shape changed and this guard has stopped seeing the inventory",
         rows.len()
     );
@@ -274,13 +274,13 @@ fn every_claimed_consumer_exists_and_reads_the_field() {
 
     assert!(
         failures.is_empty(),
-        "docs/95 consumer claims that do not hold:\n  {}",
+        "docs/136 consumer claims that do not hold:\n  {}",
         failures.join("\n  ")
     );
     // A ledger where nothing claims a consumer would pass the loop above trivially.
     assert!(
         checked >= 20,
-        "only {checked} rows claim a code consumer; docs/95 had 23 when the ledger was written, \
+        "only {checked} rows claim a code consumer; docs/136 had 23 when the ledger was written, \
          so either the tables changed shape or reachability regressed"
     );
 }
@@ -398,6 +398,6 @@ mod tests {
         let (rows, malformed) = parse_rows(&tracker);
         assert!(malformed.is_empty(), "{malformed:?}");
         // Tier 1 (21) + Tier 2 (19).
-        assert_eq!(rows.len(), 40, "docs/95 inventory size changed");
+        assert_eq!(rows.len(), 40, "docs/136 inventory size changed");
     }
 }
