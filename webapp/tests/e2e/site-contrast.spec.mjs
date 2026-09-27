@@ -34,21 +34,38 @@ import { auditRegion } from "./contrast-audit.mjs";
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MARKETING_CSS = readFileSync(join(WEBAPP, "src", "marketing.css"), "utf8");
 
-/** Every page the site stylesheet paints, DISCOVERED rather than listed.
+/** Every site page, DISCOVERED rather than listed.
  *
- *  A hardcoded list is the failure mode this whole spec is about: a new page
- *  would be added, nobody would remember the sweep, and the sweep would stay
- *  green. Any top-level page that links `src/marketing.css` is a site page and
- *  is swept; `editor.html` is excluded because it is the application, painted by
- *  `src/style.css` and already covered by `theme-contrast.spec.mjs`, and
- *  `*.page.html` because those are the generator's INPUTS — the same body
- *  without the inlined chrome, so sweeping them would audit every shared
- *  component twice and neither header nor footer once. */
-const PAGES = readdirSync(WEBAPP)
-  .filter((name) => name.endsWith(".html") && !name.endsWith(".page.html"))
-  .filter((name) => name !== "editor.html")
-  .filter((name) => readFileSync(join(WEBAPP, name), "utf8").includes("src/marketing.css"))
-  .sort();
+ *  A hardcoded list is the failure mode this whole spec is about: a new page gets
+ *  added, nobody remembers the sweep, and the sweep stays green.
+ *
+ *  Primarily the pages `build-site.py` GENERATES — one per `*.page.html`
+ *  template. That is the definition of the site, and it is deliberately not "any
+ *  page that links `src/marketing.css`": the first draft used the link, and
+ *  deleting the link from `docs.page.html` (the mutation written to prove the
+ *  unpainted-page guard) quietly dropped `docs.html` out of the sweep instead of
+ *  failing it. A page cannot leave this gate by removing its own stylesheet.
+ *
+ *  Plus any OTHER top-level page that does link the stylesheet, so a hand-written
+ *  one (`embed.html`) is covered too. `editor.html` is out: it is the
+ *  application, painted by `src/style.css`, swept by `theme-contrast.spec.mjs`.
+ *  The `*.page.html` templates themselves are out: they are the generator's
+ *  inputs, the same bodies without the inlined chrome, so sweeping them would
+ *  audit every shared component twice and neither the header nor the footer once. */
+const GENERATED = readdirSync(WEBAPP)
+  .filter((name) => name.endsWith(".page.html"))
+  .map((name) => name.replace(/\.page\.html$/, ".html"));
+const PAGES = [
+  ...GENERATED,
+  ...readdirSync(WEBAPP).filter(
+    (name) =>
+      name.endsWith(".html") &&
+      !name.endsWith(".page.html") &&
+      name !== "editor.html" &&
+      !GENERATED.includes(name) &&
+      readFileSync(join(WEBAPP, name), "utf8").includes("src/marketing.css"),
+  ),
+].sort();
 
 /** Text-bearing elements a real site page must present before a sweep over it
  *  means anything.
@@ -178,6 +195,16 @@ test("--faint-on-paper clears AA on every ground the site paints it on", async (
     swept.failures.map((failure) => failure.describe),
     "--faint-on-paper is below 4.5:1 on a ground this stylesheet paints",
   ).toEqual([]);
+});
+
+test("the sweep covers every page the site generator builds", async () => {
+  // The floor that stops the page list emptying out unnoticed. MEASURED: five
+  // pages today — four generated (index, docs, fidelity, embedding) plus the
+  // hand-written embed host. If a template is deleted the count drops and this
+  // fails, which is the difference between a discovered list and an absent one.
+  expect(GENERATED.length, `generated pages: ${GENERATED.join(", ")}`).toBeGreaterThan(3);
+  expect(PAGES, `site pages swept: ${PAGES.join(", ")}`).toContain("embed.html");
+  for (const generated of GENERATED) expect(PAGES).toContain(generated);
 });
 
 test("the site is one theme, and stays one theme while this sweep is one theme", async () => {
