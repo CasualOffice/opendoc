@@ -1904,31 +1904,126 @@ fn over_long_symbol_font_is_rejected() {
     ));
 }
 
+/// A paragraph holding one internal hyperlink whose children are `inlines`.
+fn hyperlink_paragraph(inlines: Vec<InlineNode>) -> BlockNode {
+    let link = InlineNode::Hyperlink(Box::new(Hyperlink {
+        id: tid(10),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "_Toc100".to_owned(),
+        }),
+        tooltip: None,
+        inlines,
+    }));
+    BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![link],
+    })
+}
+
 #[test]
-fn field_inside_a_hyperlink_is_rejected() {
-    let inner_field = InlineNode::Field(Box::new(Field {
+fn field_inside_a_hyperlink_is_accepted() {
+    // Every real table of contents relies on this: Word writes the row's
+    // `PAGEREF` field INSIDE the row's `w:hyperlink` (`CT_Hyperlink`'s content
+    // model is `EG_PContent`, which admits `w:fldSimple` and `w:r`). Refusing it
+    // cost the field on import — the cached page number survived as flattened
+    // text and the TOC could never be updated again (OO-001).
+    let field = InlineNode::Field(Box::new(Field {
         id: tid(12),
+        instruction: " PAGEREF _Toc100 \\h ".to_owned(),
+        kind: FieldKind::PageRef {
+            bookmark: "_Toc100".to_owned(),
+        },
+        inlines: vec![run_inline(tid(13), "2")],
+        form: None,
+    }));
+    assert!(
+        table_document(vec![hyperlink_paragraph(vec![
+            run_inline(tid(11), "First chapter"),
+            field,
+        ])])
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_field_inside_a_hyperlink_still_has_its_instruction_bounds_checked() {
+    // Permitting the position does not skip the field's own validation: an empty
+    // instruction is still out of domain one level deeper.
+    let field = InlineNode::Field(Box::new(Field {
+        id: tid(12),
+        instruction: String::new(),
+        kind: FieldKind::Other {
+            keyword: String::new(),
+        },
+        inlines: Vec::new(),
+        form: None,
+    }));
+    assert!(matches!(
+        table_document(vec![hyperlink_paragraph(vec![field])]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "field.instruction"
+        })
+    ));
+}
+
+#[test]
+fn a_field_inside_a_hyperlink_is_still_validated_as_leaf_only() {
+    // The field's cached result stays leaf-only wherever the field sits, so the
+    // relaxation cannot be chained into unbounded nesting: neither a further
+    // field nor a hyperlink is admissible inside it.
+    let inner_field = InlineNode::Field(Box::new(Field {
+        id: tid(14),
         instruction: " PAGE ".to_owned(),
         kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
     }));
-    let link = InlineNode::Hyperlink(Box::new(Hyperlink {
-        id: tid(10),
+    let outer = |inner: InlineNode, id: u64| {
+        InlineNode::Field(Box::new(Field {
+            id: tid(id),
+            instruction: " PAGEREF _Toc100 \\h ".to_owned(),
+            kind: FieldKind::PageRef {
+                bookmark: "_Toc100".to_owned(),
+            },
+            inlines: vec![inner],
+            form: None,
+        }))
+    };
+    assert!(matches!(
+        table_document(vec![hyperlink_paragraph(vec![outer(inner_field, 12)])]),
+        Err(ModelError::NestedField(_))
+    ));
+    let inner_link = InlineNode::Hyperlink(Box::new(Hyperlink {
+        id: tid(15),
         target: HyperlinkTarget::Internal(InternalTarget {
-            anchor: "top".to_owned(),
+            anchor: "elsewhere".to_owned(),
         }),
         tooltip: None,
-        inlines: vec![inner_field],
+        inlines: vec![run_inline(tid(16), "x")],
     }));
-    let block = BlockNode::Paragraph(Paragraph {
-        id: tid(1),
-        properties: ParagraphProperties::default().into(),
-        inlines: vec![link],
-    });
     assert!(matches!(
-        table_document(vec![block]),
-        Err(ModelError::NestedField(_))
+        table_document(vec![hyperlink_paragraph(vec![outer(inner_link, 12)])]),
+        Err(ModelError::NestedHyperlink(_))
+    ));
+}
+
+#[test]
+fn hyperlink_inside_a_hyperlink_is_still_rejected() {
+    // The other refusal that must survive the field relaxation. A boolean
+    // `in_wrapper` could not have told these two cases apart, which is why it
+    // became an enum naming the parent.
+    let inner_link = InlineNode::Hyperlink(Box::new(Hyperlink {
+        id: tid(12),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "inner".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![run_inline(tid(13), "x")],
+    }));
+    assert!(matches!(
+        table_document(vec![hyperlink_paragraph(vec![inner_link])]),
+        Err(ModelError::NestedHyperlink(_))
     ));
 }
 

@@ -4473,23 +4473,7 @@ impl BodyParser<'_> {
             b"sdt" => match self.sdt_scopes.pop() {
                 Some(SdtScope::Inline) => {
                     self.sdt_depth = self.sdt_depth.saturating_sub(1);
-                    // A dangling inner wrapper — e.g. an unterminated `fldChar`
-                    // field, which is delimited by markers, not an XML element —
-                    // may sit ABOVE this control on the wrapper stack when its
-                    // `</w:sdt>` fires. Drain those first so the control is the
-                    // innermost wrapper before it commits, mirroring the
-                    // `finish_paragraph` drain; otherwise `commit_sdt`'s
-                    // `pop_wrapper(Sdt)` would fire on the wrong wrapper (a panic
-                    // in debug, a silent desync/loss in release).
-                    while !self.wrapper_order.is_empty()
-                        && !matches!(self.wrapper_order.last(), Some(WrapperKind::Sdt))
-                    {
-                        let before = self.wrapper_order.len();
-                        self.commit_top_wrapper();
-                        if self.wrapper_order.len() == before {
-                            self.wrapper_order.pop();
-                        }
-                    }
+                    self.drain_wrappers_above(WrapperKind::Sdt);
                     self.commit_sdt();
                 }
                 Some(SdtScope::Block) => {
@@ -4713,6 +4697,7 @@ impl BodyParser<'_> {
             }
             b"hyperlink" if self.hyperlink_depth > 0 => {
                 if self.hyperlink_depth == 1 {
+                    self.drain_wrappers_above(WrapperKind::Hyperlink);
                     self.commit_hyperlink();
                 }
                 self.hyperlink_depth = self.hyperlink_depth.saturating_sub(1);
@@ -6618,11 +6603,18 @@ impl BodyParser<'_> {
     }
 
     /// Opens a complex field on a `fldChar begin`. A field nested in another
-    /// wrapper (field or hyperlink) is not modeled as structure; it is reported
-    /// and its result content flattens into the enclosing wrapper.
+    /// FIELD is not modeled as structure; it is reported and its result content
+    /// flattens into the enclosing wrapper.
+    ///
+    /// A field inside an open `w:hyperlink` IS modeled: that is the shape of every
+    /// real table of contents (`<w:hyperlink><w:r>title</w:r><w:r><w:tab/></w:r>
+    /// …PAGEREF…</w:hyperlink>`), and refusing it dropped the `PAGEREF` from every
+    /// TOC row we imported, leaving only the stale cached page number as text. The
+    /// committed segment routes into the hyperlink through `wrapper_order` (see
+    /// `commit_field`), so the nesting order is preserved rather than flattened.
     fn begin_field(&mut self) {
         self.field_depth += 1;
-        if self.field_depth == 1 && self.field.is_none() && self.hyperlink.is_none() {
+        if self.field_depth == 1 && self.field.is_none() {
             self.field = Some(FieldAccumulator {
                 instruction: String::new(),
                 in_result: false,
@@ -6636,9 +6628,11 @@ impl BodyParser<'_> {
     }
 
     /// Opens a simple `w:fldSimple` field (instruction inline, result as children).
+    /// Admissible inside an open hyperlink for the same reason `begin_field` is —
+    /// `CT_Hyperlink`'s content model is `EG_PContent`, which includes `w:fldSimple`.
     fn open_simple_field(&mut self, element: &BytesStart<'_>) {
         self.field_depth += 1;
-        if self.field_depth == 1 && self.field.is_none() && self.hyperlink.is_none() {
+        if self.field_depth == 1 && self.field.is_none() {
             let instruction = attribute_value(element, b"instr").unwrap_or_default();
             self.field = Some(FieldAccumulator {
                 instruction,
@@ -6674,7 +6668,9 @@ impl BodyParser<'_> {
     /// Commits the open field. A valid instruction becomes a `Field` segment; an
     /// empty or over-long instruction is reported and the cached-result content is
     /// flattened into the enclosing stream so no display text is lost. The field's
-    /// segment routes into the enclosing wrapper (an outer revision) or paragraph.
+    /// segment routes into the enclosing wrapper (an outer hyperlink, revision, or
+    /// sdt) or the paragraph — which is what keeps a table-of-contents `PAGEREF`
+    /// inside its row's hyperlink rather than beside it.
     fn commit_field(&mut self) {
         if let Some(field) = self.field.take() {
             // Drop the field's wrapper marker (it is the innermost) before routing
@@ -6883,6 +6879,33 @@ impl BodyParser<'_> {
         debug_assert_eq!(self.wrapper_order.last(), Some(&expected));
         if self.wrapper_order.last() == Some(&expected) {
             self.wrapper_order.pop();
+        }
+    }
+
+    /// Drains every wrapper opened ABOVE the innermost `kind` marker, committing
+    /// each into its own enclosing wrapper so `kind` is the innermost one before it
+    /// commits. No-op when no `kind` marker is open (so a reported-but-unmodeled
+    /// wrapper's close cannot drain the whole stack).
+    ///
+    /// This exists because a complex field is delimited by MARKERS (`w:fldChar`),
+    /// not by an XML element, so it can still be open when the element-delimited
+    /// wrapper around it closes — `</w:sdt>`, and now `</w:hyperlink>`, since a
+    /// field inside a hyperlink is modeled (every table-of-contents row). Without
+    /// the drain, `commit_sdt`/`commit_hyperlink`'s `pop_wrapper` would fire on the
+    /// wrong wrapper: a panic in debug, a silent desync and content loss in
+    /// release. One helper rather than a copy per close site.
+    fn drain_wrappers_above(&mut self, kind: WrapperKind) {
+        if !self.wrapper_order.contains(&kind) {
+            return;
+        }
+        while self.wrapper_order.last() != Some(&kind) {
+            let before = self.wrapper_order.len();
+            self.commit_top_wrapper();
+            if self.wrapper_order.len() == before {
+                // Defensive: a marker with no live accumulator would not pop;
+                // drop it so the drain always terminates.
+                self.wrapper_order.pop();
+            }
         }
     }
 

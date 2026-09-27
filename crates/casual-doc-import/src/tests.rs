@@ -3546,29 +3546,223 @@ fn complex_field_missing_end_is_flushed_without_loss() {
     assert_eq!(text, "3");
 }
 
+/// The body of a real, populated table of contents: the `TOC` field itself,
+/// then one row per entry, each row a single `w:hyperlink` holding the entry
+/// text, the dot-leader tab, and the `PAGEREF` field that yields the page
+/// number. Rows 100/101 use the complex (`w:fldChar`) spelling Word writes;
+/// row 102 uses `w:fldSimple`, which `CT_Hyperlink`'s `EG_PContent` content
+/// model also admits.
+const POPULATED_TOC: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
+    <w:p><w:pPr><w:pStyle w:val="TOCHeading"/></w:pPr><w:r><w:t>Contents</w:t></w:r></w:p>
+    <w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>
+        <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r>
+        <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        <w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="TOC1"/>
+        <w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+        <w:hyperlink w:anchor="_Toc100" w:history="1">
+            <w:r><w:t>First chapter</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc100 \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>2</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:hyperlink></w:p>
+    <w:p><w:pPr><w:pStyle w:val="TOC1"/>
+        <w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+        <w:hyperlink w:anchor="_Toc101" w:history="1">
+            <w:r><w:t>Second chapter</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc101 \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>5</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:hyperlink></w:p>
+    <w:p><w:pPr><w:pStyle w:val="TOC1"/>
+        <w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+        <w:hyperlink w:anchor="_Toc102" w:history="1">
+            <w:r><w:t>Third chapter</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:fldSimple w:instr=" PAGEREF _Toc102 \h "><w:r><w:t>11</w:t></w:r></w:fldSimple>
+        </w:hyperlink></w:p>
+</w:body></w:document>"#;
+
+/// Every `PAGEREF` field in `inlines`, paired with the hyperlink anchor it sits
+/// inside (`None` when it sits at paragraph level). Walks the whole tree so a
+/// field that escaped its hyperlink is found, not merely missed.
+fn pageref_fields(
+    inlines: &[InlineNode],
+    inside: Option<&str>,
+    out: &mut Vec<(Option<String>, String)>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Hyperlink(link) => {
+                let anchor = match &link.target {
+                    HyperlinkTarget::Internal(internal) => internal.anchor.clone(),
+                    HyperlinkTarget::External(external) => external.url.clone(),
+                };
+                pageref_fields(&link.inlines, Some(&anchor), out);
+            }
+            InlineNode::Field(field) => {
+                if let casual_doc_model::v1::FieldKind::PageRef { bookmark } = &field.kind {
+                    out.push((inside.map(str::to_owned), bookmark.clone()));
+                }
+                pageref_fields(&field.inlines, inside, out);
+            }
+            InlineNode::Revision(revision) => pageref_fields(&revision.inlines, inside, out),
+            InlineNode::Sdt(sdt) => pageref_fields(&sdt.inlines, inside, out),
+            _ => {}
+        }
+    }
+}
+
 #[test]
-fn field_inside_a_hyperlink_flattens_and_is_reported() {
-    // A field is not opened inside a hyperlink (wrapper-in-wrapper): its result
-    // text flattens into the hyperlink and the nesting is reported.
+fn every_table_of_contents_row_keeps_its_pageref_field_inside_its_hyperlink() {
+    // Word puts a TOC row's PAGEREF field INSIDE the row's `w:hyperlink`. The
+    // model used to refuse a field inside any wrapper, so the importer declined
+    // to open one while a hyperlink was open and flattened it away: the cached
+    // page number survived as plain text and the FIELD was gone, so a table of
+    // contents that reached us could never be updated again, by us or by Word
+    // after a round trip (OO-001). Measured before the fix on this very body:
+    // three PAGEREF fields in, zero out.
+    let import = import(POPULATED_TOC);
+    let mut found = Vec::new();
+    for block in import.document.body() {
+        if let BlockNode::Paragraph(paragraph) = block {
+            pageref_fields(&paragraph.inlines, None, &mut found);
+        }
+    }
+    assert_eq!(
+        found,
+        vec![
+            (Some("_Toc100".to_owned()), "_Toc100".to_owned()),
+            (Some("_Toc101".to_owned()), "_Toc101".to_owned()),
+            (Some("_Toc102".to_owned()), "_Toc102".to_owned()),
+        ],
+        "one PAGEREF field per row, each inside the hyperlink whose anchor it names"
+    );
+    assert!(import.document.validate().is_ok(), "the model accepts it");
+
+    // Nesting ORDER inside the row: entry text, leader tab, then the field
+    // carrying the cached page number. Not just "a field is present somewhere".
+    let InlineNode::Hyperlink(link) = &paragraph(&import, 2).inlines[0] else {
+        panic!("expected the first row to be one hyperlink");
+    };
+    assert_eq!(link.inlines.len(), 3, "{:?}", link.inlines);
+    assert!(matches!(&link.inlines[0], InlineNode::Run(run) if run.text == "First chapter"));
+    assert!(matches!(&link.inlines[1], InlineNode::Tab(_)));
+    let InlineNode::Field(field) = &link.inlines[2] else {
+        panic!("expected the PAGEREF field last: {:?}", link.inlines);
+    };
+    assert_eq!(field.instruction, " PAGEREF _Toc100 \\h ");
+    let mut cached = String::new();
+    field
+        .inlines
+        .iter()
+        .for_each(|c| inline_text(c, &mut cached));
+    assert_eq!(cached, "2", "the cached page number is the field's result");
+
+    // The TOC field itself still sits at paragraph level, unwrapped.
+    assert!(matches!(
+        &paragraph(&import, 1).inlines[0],
+        InlineNode::Field(field) if field.kind == casual_doc_model::v1::FieldKind::Toc
+    ));
+
+    // Nothing is reported as lost: the fields are modeled now, not flattened.
+    let features = features(&import);
+    assert!(
+        !features.contains(&"fldChar") && !features.contains(&"fldSimple"),
+        "a modeled field is not a loss: {features:?}"
+    );
+}
+
+#[test]
+fn a_field_inside_a_field_still_flattens_and_is_reported() {
+    // Permitting a field inside a HYPERLINK does not permit a field inside a
+    // FIELD: that is unbounded nesting with no interchange meaning here, so the
+    // inner field's result still flattens into the outer one and is reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-        <w:p><w:hyperlink w:anchor="top">
-            <w:fldSimple w:instr=" PAGE "><w:r><w:t>9</w:t></w:r></w:fldSimple>
+        <w:p><w:fldSimple w:instr=" PAGE ">
+            <w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>9</w:t></w:r></w:fldSimple>
+        </w:fldSimple></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected the outer field");
+    };
+    assert_eq!(field.instruction, " PAGE ");
+    assert!(
+        field
+            .inlines
+            .iter()
+            .all(|inline| !matches!(inline, InlineNode::Field(_))),
+        "no field inside a field: {:?}",
+        field.inlines
+    );
+    let mut text = String::new();
+    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "9", "the inner result text is kept, never dropped");
+    assert!(features(&import).contains(&"fldSimple"));
+}
+
+#[test]
+fn a_hyperlink_inside_a_hyperlink_still_flattens_and_is_reported() {
+    // The other refusal that must survive: a hyperlink inside a hyperlink is
+    // still not modeled as structure.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:hyperlink w:anchor="outer">
+            <w:hyperlink w:anchor="inner"><w:r><w:t>x</w:t></w:r></w:hyperlink>
         </w:hyperlink></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
     let InlineNode::Hyperlink(link) = &paragraph(&import, 0).inlines[0] else {
-        panic!("expected a hyperlink");
+        panic!("expected the outer hyperlink");
     };
-    // No nested field: the "9" flattened into the link as a plain run.
     assert!(
         link.inlines
             .iter()
-            .all(|inline| !matches!(inline, InlineNode::Field(_)))
+            .all(|inline| !matches!(inline, InlineNode::Hyperlink(_))),
+        "no hyperlink inside a hyperlink: {:?}",
+        link.inlines
     );
+    assert!(features(&import).contains(&"hyperlink"));
+}
+
+#[test]
+fn a_hyperlink_with_a_dangling_field_inside_does_not_panic_or_desync() {
+    // An unterminated complex field (`fldChar begin`, no end) inside a hyperlink
+    // leaves `WrapperKind::Field` on top of the wrapper stack when
+    // `</w:hyperlink>` fires. Committing the hyperlink would then pop the wrong
+    // wrapper — a panic in debug, a silent desync and content loss in release —
+    // which is why the close drains the dangling inner wrapper first, exactly as
+    // `</w:sdt>` does. A field inside a hyperlink was unreachable before OO-001,
+    // so this hazard arrives with it.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+        <w:hyperlink w:anchor="_Toc100">
+            <w:r><w:t>First chapter</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> PAGEREF _Toc100 </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>2</w:t></w:r>
+        </w:hyperlink>
+        <w:r><w:t>after</w:t></w:r>
+    </w:p></w:body></w:document>"#;
+    let import = import(xml);
+    assert!(import.document.validate().is_ok());
+    let inlines = &paragraph(&import, 0).inlines;
+    let InlineNode::Hyperlink(link) = &inlines[0] else {
+        panic!("the hyperlink is still modeled (not desynced away): {inlines:?}");
+    };
     let mut text = String::new();
     link.inlines.iter().for_each(|c| inline_text(c, &mut text));
-    assert_eq!(text, "9");
-    assert!(features(&import).contains(&"fldSimple"));
+    assert_eq!(text, "First chapter2", "nothing inside the link is lost");
+    // The run AFTER the link did not end up swallowed by the drained wrapper.
+    let mut tail = String::new();
+    inlines[1..].iter().for_each(|c| inline_text(c, &mut tail));
+    assert_eq!(tail, "after");
 }
 
 #[test]

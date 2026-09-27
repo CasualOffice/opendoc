@@ -1928,6 +1928,115 @@ mod semantic_tests {
     }
 
     #[test]
+    fn a_table_of_contents_pageref_stays_inside_its_hyperlink_across_the_round_trip() {
+        use casual_doc_model::v1::{BlockNode, FieldKind, InlineNode};
+        use std::io::Read;
+
+        // Word writes a TOC row as ONE `w:hyperlink` holding the entry text, the
+        // dot-leader tab, and the `PAGEREF` field that yields the page number. The
+        // model used to refuse a field inside any wrapper, so import flattened the
+        // field away: the cached page number survived as text, the field did not,
+        // and the table of contents could never be updated again (OO-001). Three
+        // rows here; three PAGEREF fields must come back, still inside their
+        // hyperlinks, and re-importing what we wrote must reproduce the same model.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:pStyle w:val="TOC1"/>
+                <w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+                <w:hyperlink w:anchor="_Toc100" w:history="1">
+                    <w:r><w:t>First chapter</w:t></w:r>
+                    <w:r><w:tab/></w:r>
+                    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                    <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc100 \h </w:instrText></w:r>
+                    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                    <w:r><w:t>2</w:t></w:r>
+                    <w:r><w:fldChar w:fldCharType="end"/></w:r>
+                </w:hyperlink></w:p>
+            <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+                <w:hyperlink w:anchor="_Toc101" w:history="1">
+                    <w:r><w:t>Second chapter</w:t></w:r>
+                    <w:r><w:tab/></w:r>
+                    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                    <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc101 \h </w:instrText></w:r>
+                    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                    <w:r><w:t>5</w:t></w:r>
+                    <w:r><w:fldChar w:fldCharType="end"/></w:r>
+                </w:hyperlink></w:p>
+            <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+                <w:hyperlink w:anchor="_Toc102" w:history="1">
+                    <w:r><w:t>Third chapter</w:t></w:r>
+                    <w:r><w:tab/></w:r>
+                    <w:fldSimple w:instr=" PAGEREF _Toc102 \h "><w:r><w:t>11</w:t></w:r></w:fldSimple>
+                </w:hyperlink></w:p>
+        </w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the populated TOC survives write -> reopen");
+
+        // Model side: one PAGEREF field per row, each the hyperlink's last child.
+        let mut anchors = Vec::new();
+        for block in m2.body() {
+            let BlockNode::Paragraph(paragraph) = block else {
+                panic!("expected paragraphs");
+            };
+            let InlineNode::Hyperlink(link) = &paragraph.inlines[0] else {
+                panic!("expected each row to be one hyperlink");
+            };
+            let InlineNode::Field(field) = link.inlines.last().expect("row content") else {
+                panic!("expected the PAGEREF field last: {:?}", link.inlines);
+            };
+            let FieldKind::PageRef { bookmark } = &field.kind else {
+                panic!("expected a PAGEREF kind, got {:?}", field.kind);
+            };
+            anchors.push(bookmark.clone());
+        }
+        assert_eq!(anchors, ["_Toc100", "_Toc101", "_Toc102"]);
+
+        // Package side: each field is written INSIDE its `w:hyperlink`, not beside
+        // it. Counted per hyperlink element rather than grepped for the substring,
+        // so a field that escaped its link would fail here even though the string
+        // `PAGEREF` still appeared in the part.
+        let bytes = write_document(&m2, &BTreeMap::new()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut written = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut written)
+            .unwrap();
+        let inside: Vec<&str> = written
+            .match_indices("<w:hyperlink")
+            .map(|(start, _)| {
+                let rest = &written[start..];
+                let end = rest.find("</w:hyperlink>").expect("a closed hyperlink");
+                &rest[..end]
+            })
+            .collect();
+        assert_eq!(inside.len(), 3, "three hyperlinks written");
+        for (segment, anchor) in inside.iter().zip(["_Toc100", "_Toc101", "_Toc102"]) {
+            // Position, independent of which field spelling we choose to write.
+            assert!(
+                segment.contains(&format!("PAGEREF {anchor}")),
+                "the PAGEREF instruction is INSIDE the {anchor} hyperlink: {segment}"
+            );
+            // And we write the canonical simple spelling, valid there because
+            // `CT_Hyperlink`'s content model is `EG_PContent`.
+            assert_eq!(
+                segment.matches("<w:fldSimple").count(),
+                1,
+                "one w:fldSimple inside {anchor}: {segment}"
+            );
+            assert!(
+                segment.contains(&format!(r#"w:instr=" PAGEREF {anchor} \h ""#)),
+                "the instruction is re-emitted verbatim inside {anchor}: {segment}"
+            );
+        }
+        assert_eq!(
+            written.matches("PAGEREF").count(),
+            3,
+            "no PAGEREF field escaped its hyperlink or was duplicated"
+        );
+    }
+
+    #[test]
     fn typed_field_kinds_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, FieldKind, InlineNode};
 
