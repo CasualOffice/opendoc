@@ -160,8 +160,21 @@ const SRC = new URL("../src/", import.meta.url);
  *  which is the same enumeration the References tab is about and took its one
  *  English sentence into the catalogue on the way. Both are worth more than the
  *  lines: 156 lines of menu policy now have a test, and `buildOutline` is
- *  answerable without a browser. */
-const MAIN_JS_LINE_CEILING = 16629;
+ *  answerable without a browser.
+ *  Lowered to 16,602 by the host contract (`docs/126` phase 2). The file was AT
+ *  its ceiling with ZERO slack again, and the contract needs 20 lines of it: one
+ *  `let`, five notification hooks on choke points the editor already has, and the
+ *  session/bridge construction at the end, where the command registry finally
+ *  exists. It paid with two extractions. Out: the SAVE SURFACE — which formats
+ *  the Save selector offers, what the compatibility chip reads, and the one step
+ *  that puts bytes on a visitor's disk — now `save_formats.mjs`, so "does the
+ *  selector offer every exporter the engine registered, and does it default to
+ *  the format the document was opened as" is a node question rather than a
+ *  browser one. And the smart-quote decision, which moved into `text_rules.mjs`
+ *  beside the rule it calls: its only hard part is that an engine offset is a
+ *  UTF-8 BYTE index (`docs/104` HF-055), which is exactly what that module is
+ *  for, and it is now answerable with a plain function instead of a document. */
+const MAIN_JS_LINE_CEILING = 16602;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

@@ -34,6 +34,9 @@ import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleM
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
+import { downloadBytes, populateSaveFormats, showCompatibilityFindings } from "./save_formats.mjs";
+import { attachHostBridge } from "./host_bridge.mjs";
+import { createHostSession } from "./host_session.mjs";
 import { createCompactToolbar } from "./compact_toolbar.mjs";
 import {
   MAX_SCROLL_PX,
@@ -114,7 +117,7 @@ import { previewInkIsLegible } from "./contrast.mjs";
 import {
   byteOffsetToStringIndex,
   isWholeWordAt,
-  smartQuoteChar,
+  smartQuoteForTyped,
   transformCase,
 } from "./text_rules.mjs";
 import {
@@ -1355,6 +1358,12 @@ const reviewMarginCommentBtn = document.getElementById("reviewMarginComment");
 // not an Editing page with disabled buttons. See `capabilities.mjs`.
 const HOST_CAPS = hostCapabilities();
 const HOST_MODE = editingModeFor(HOST_CAPS);
+/** The host contract (`docs/126` phase 2), built at the END of this file because
+ *  its command registry cannot exist until everything below is declared, and
+ *  declared HERE because the hooks that feed it are scattered up the file. Every
+ *  hook is `hostSession?.`: a status published during boot is not reported, which
+ *  is correct — no host has been handed the session yet. */
+let hostSession = null;
 let reviewMode = HOST_MODE;
 /** Why this DOCUMENT cannot be edited at all, or "" when it can be.
  *
@@ -2768,6 +2777,10 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
   statusEl.textContent = text;
   statusEl.className = statusClassName(kind);
   statusChannel.publish(text, kind);
+  // The host contract listening on the one feedback channel: a refusal a person
+  // sees must also be a refusal a host can hear, or an embedding host re-issues
+  // it forever (`docs/126` phase 2).
+  hostSession?.noteStatus(text, kind);
   if (text && timeout > 0) {
     statusClearTimer = window.setTimeout(() => {
       statusEl.textContent = "";
@@ -3179,18 +3192,19 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     void spellChecker.loadPersonal();
     setDocumentState("opened");
     if (saveBtn) saveBtn.disabled = false;
-    populateSaveFormats();
+    populateSaveFormats(saveFormatEl, doc ? doc.availableExportFormats() : [], currentSourceFormat, document);
     // What the IMPORT lost, not a cleared slate. `importReportJson` was a shipped
     // engine getter with zero consumers: loss was computed on every open and
     // thrown away, while export loss was reported. SKILL §1 names reporting as
     // the condition under which verbatim retention is an advantage at all.
-    showCompatibilityFindings(importFindingCount(doc.importReportJson), "import");
+    showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
     railOutline.disabled = false;
     railPages.disabled = false;
     populateStyles();
     populateTableStyles();
     dropEl.hidden = true;
     document.body.classList.add("doc-loaded");
+    hostSession?.noteReady();
     // The compact bar is built from the command registry, and at import time
     // that registry holds only the `noDoc` commands — so a reload straight into
     // compact mode rendered an EMPTY bar (every lookup missed, leaving just the
@@ -4128,6 +4142,7 @@ function drawSelection() {
   updatePageNumber();
   rulerView.syncToCaret();
   positionSelToolbar();
+  hostSession?.noteSelection();
 }
 
 function paintTableSelection() {
@@ -8519,6 +8534,8 @@ function noteDocumentEdited(revision) {
   // Spelling's only contact with it, under the same constraint and for the
   // same reason: a keystroke must never touch the dictionary (docs/114 §3).
   spellChecker.noteEdited();
+  // And the host's, under the same constraint: one revision integer, one boolean.
+  hostSession?.noteChange();
 }
 
 /** Re-baseline onto a freshly opened document: nothing is unsaved yet. */
@@ -14020,37 +14037,6 @@ function applyFontFamily(family) {
     runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)),
   );
 }
-/** Surfaces the compatibility-finding count from an import or export in the
- *  status chip; hidden when there is nothing to report. */
-function showCompatibilityFindings(count, phase) {
-  if (!compatibilityStatusEl) return;
-  compatibilityStatusEl.hidden = count === 0;
-  compatibilityStatusEl.textContent =
-    count === 0 ? "" : `${count.toLocaleString()} ${phase} finding${count === 1 ? "" : "s"}`;
-  compatibilityStatusEl.title =
-    count === 0
-      ? ""
-      : `${count.toLocaleString()} compatibility finding${count === 1 ? "" : "s"} reported during ${phase}`;
-}
-
-/** Fills the Save-format selector with every registered exporter, defaulting to
- *  the format the document was opened as (so a round-trip save keeps the format). */
-function populateSaveFormats() {
-  if (!saveFormatEl || !doc) return;
-  saveFormatEl.replaceChildren();
-  for (const formatId of doc.availableExportFormats()) {
-    const option = document.createElement("option");
-    option.value = formatId;
-    option.textContent = formatInfo(formatId).label;
-    saveFormatEl.append(option);
-  }
-  saveFormatEl.value = currentSourceFormat;
-  if (!saveFormatEl.value && saveFormatEl.options.length > 0) {
-    saveFormatEl.selectedIndex = 0;
-  }
-  saveFormatEl.disabled = saveFormatEl.options.length === 0;
-}
-
 /** Serializes the edited document through the selected registered exporter and
  *  downloads it. Saving back to the source format preserves unchanged bytes where
  *  safe; a different target uses the semantic writer. */
@@ -14058,7 +14044,7 @@ function populateSaveFormats() {
  *  downloads it. Saving back to the source format preserves unchanged bytes where
  *  safe; a different target uses the semantic writer. Shared by the Save button,
  *  the ⌘S shortcut, and the File ▸ Export-as menu entries. */
-function exportDocumentAs(targetFormat) {
+function exportDocumentAs(targetFormat, intent = "export") {
   if (!doc || !targetFormat) return;
   try {
     let artifact;
@@ -14076,19 +14062,14 @@ function exportDocumentAs(targetFormat) {
     const extension = artifact.suggestedExtension;
     const findings = compatibilityOccurrenceCount(artifact.reportJson);
     artifact.free();
-    const blob = new Blob([bytes], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = downloadNameForFormat(currentName, extension);
-    a.click();
-    URL.revokeObjectURL(url);
+    const saved = downloadBytes(bytes, mimeType, downloadNameForFormat(currentName, extension), document);
+    hostSession?.noteWrite(intent, { format: targetFormat, name: saved, bytes: bytes.length });
     markDocumentSaved();
-    showCompatibilityFindings(findings, "export");
+    showCompatibilityFindings(compatibilityStatusEl, findings, "export");
     setStatus(
       findings === 0
-        ? `Saved ${a.download}`
-        : `Saved ${a.download} with ${findings.toLocaleString()} compatibility finding${findings === 1 ? "" : "s"}`,
+        ? `Saved ${saved}`
+        : `Saved ${saved} with ${findings.toLocaleString()} compatibility finding${findings === 1 ? "" : "s"}`,
     );
   } catch (err) {
     console.error(err);
@@ -14098,7 +14079,7 @@ function exportDocumentAs(targetFormat) {
 
 /** Saves using the format chosen in the Save-format selector (default: source). */
 function saveDocument() {
-  exportDocumentAs(saveFormatEl && saveFormatEl.value ? saveFormatEl.value : currentSourceFormat);
+  exportDocumentAs(saveFormatEl && saveFormatEl.value ? saveFormatEl.value : currentSourceFormat, "save");
 }
 saveBtn?.addEventListener("click", saveDocument);
 
@@ -14843,35 +14824,6 @@ async function addWordToDictionary(word) {
   );
 }
 
-/** The character to actually insert for `key` at `node`/`offset`. Returns `key`
- *  unchanged for everything that is not a straight quote, and whenever the
- *  preference is off — so the user can always type a literal quote for code. */
-function smartQuoteFor(key, node, offset) {
-  if (!smartQuotesEnabled || (key !== '"' && key !== "'")) return key;
-  if (!doc || !node) return key;
-  // Offset 0 is the start of the paragraph: nothing precedes, so it opens.
-  let previous = "";
-  if (offset > 0) {
-    try {
-      // Read the whole prefix and take its last code point. `offset` is an
-      // engine offset — a UTF-8 BYTE index — so `offset - 1` is only the
-      // preceding character when that character is ASCII. After "Müller",
-      // "café" or any Cyrillic/CJK word it lands INSIDE a multi-byte character;
-      // the engine's clamp then snaps it forward past `offset`, `copyText`
-      // returns "", and an empty prefix reads as start-of-paragraph — so every
-      // apostrophe typed after a non-ASCII letter came out as an opening quote
-      // (docs/104 HF-055). Never synthesize an engine offset in JS: `offset`
-      // itself is the caret the last EditResult reported, and 0 is a boundary by
-      // definition, so those are the only two this can name.
-      const prefix = doc.copyText(node, 0, node, offset);
-      previous = [...prefix].at(-1) ?? "";
-    } catch {
-      return key; // an engine that cannot read the position gets the literal key
-    }
-  }
-  return smartQuoteChar(key, previous);
-}
-
 document.addEventListener("keydown", async (e) => {
   if (!doc) return;
   // The canvas editor owns keystrokes only while its focus owner is active.
@@ -15255,11 +15207,13 @@ document.addEventListener("keydown", async (e) => {
     // Straight quotes become typographic ones, decided from what precedes the
     // insertion point — the start of the replaced range when there is a
     // selection, since that is what the quote will actually follow.
-    const typed = smartQuoteFor(
-      key,
-      range ? (anchor.offset <= focus.offset ? anchor.node : focus.node) : focus.node,
-      range ? Math.min(anchor.offset, focus.offset) : focus.offset,
-    );
+    const quoteNode = range ? (anchor.offset <= focus.offset ? anchor.node : focus.node) : focus.node;
+    const quoteOffset = range ? Math.min(anchor.offset, focus.offset) : focus.offset;
+    const typed = smartQuoteForTyped(key, {
+      enabled: smartQuotesEnabled,
+      offset: quoteOffset,
+      readPrefix: () => doc.copyText(quoteNode, 0, quoteNode, quoteOffset),
+    });
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
       if (reviewMode === "suggesting" && anchor.node !== focus.node) {
@@ -16627,3 +16581,22 @@ const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
   onSelect: (mode) => setChromeMode(mode),
 });
 setChromeMode(chromeMode, { persist: false });
+
+// ---- The host contract: one session, two transports (`docs/126` phase 2) ----
+// `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT
+// SAME OBJECT behind `postMessage`, so the two can never answer differently.
+// Commands, events, refusals and gating all come from `host_contract.mjs`. The
+// registry handed over is the PALETTE's, so the API reaches what a person can
+// reach and no more; the gate runs before dispatch, because the API is a fourth
+// enforcement layer and must not be the unlocked one.
+hostSession = createHostSession({
+  capabilities: HOST_CAPS,
+  registry: () => editorCommands({ surface: "palette" }),
+  withheldMessage: () => t("capability.notGranted"),
+  revision: () => (revisionUnreadable ? null : currentRevision),
+  dirty: () => documentIsDirty(),
+  selection: () => (selection ? { anchor: { ...selection.anchor }, focus: { ...selection.focus }, hasRange: hasRange() } : null),
+  document: () => ({ name: currentName, format: currentSourceFormat }),
+});
+window.opendoc = hostSession;
+attachHostBridge({ session: hostSession, view: window });
