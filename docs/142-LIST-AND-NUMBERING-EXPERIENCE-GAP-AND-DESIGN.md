@@ -830,6 +830,24 @@ glyphs on the first line of all three paragraphs. `casual-doc-layout` is a dev-d
 `casual-doc-import` for that one guarantee: a marker is produced by layout, so a guard that
 cannot paginate cannot tell a fixed import from a broken one.
 
+**One adjacent reading was found and deliberately NOT changed, because it answers a
+different question in another lane's file.** `casual-doc-wasm` asks *"what marker shape
+does this paragraph have?"* — not *"is this level valid?"* — and it asks it by reading the
+**declared** abstract's `levels` directly, so it follows neither the `w:numStyleLink` nor
+the per-instance override:
+
+| Anchor | Consequence on a List-Style list, now that one imports |
+| --- | --- |
+| `pub fn list_style_at` (`crates/casual-doc-wasm/src/lib.rs`, the `abs.levels.iter().find(…).or_else(\|\| abs.levels.first())` read) | returns `""`, so the ribbon shows **no active list format** for a list the page is visibly numbering |
+| `pub fn set_list_format` (the `abstract_def.levels.iter_mut().find(…)` read) | refuses with *"numbering level not found"*, so the marker format of a List-Style list **cannot be changed** |
+
+Neither is silent and neither loses content — `set_list_format` refuses with a reason — and
+both were **unreachable** before LST-10 was fixed, because no such reference existed to ask
+about. They are reachable now, which makes this a real follow-up rather than a hypothetical:
+both should resolve through `NumberingResolver::level` like everything else. It is one line
+each, in `casual-doc-wasm/src/lib.rs` — the 26k-line module `SKILL.md` §7 says only one
+agent may own — so it belongs to the facade lane, not to this change.
+
 ### 1.14 Paste
 
 **External paste is genuinely good, and it stops at the body.**
