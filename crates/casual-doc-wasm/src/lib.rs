@@ -38373,10 +38373,42 @@ mod tests {
             "the host addresses this paragraph as eleven bytes: \"Page 7 of 9\""
         );
 
-        // " of 9" — the five bytes AFTER the field's one-byte result.
-        d.add_comment(&key, 6, &key, 11, "after the field", None, None, None)
-            .expect("comment the text after the field");
+        // Bytes 6..10 of "Page 7 of 9" — a range that ends BEFORE the paragraph's
+        // end, so it is still RESOLVABLE in the shortened space a
+        // field-charges-zero bug produces. Asserted first and deliberately: if the
+        // end-of-paragraph case below runs first, such a bug shows up only as a
+        // refusal (the range runs past the end of the short paragraph), and a
+        // refusal does not demonstrate what actually happened to users — a comment
+        // silently enclosing the wrong characters.
+        //
+        // Driven through `add_comment_inner` rather than the `#[wasm_bindgen]`
+        // method throughout: the binding's refusal builds a `JsValue`, which panics
+        // on a native target, so a failure here would report "cannot call
+        // wasm-bindgen imported functions" and destroy the reason. That is what
+        // this guard did when it was written, and it is why the refusal underneath
+        // it went undiagnosed through two takeovers.
+        d.add_comment_inner(&key, 6, &key, 10, "four bytes", None, None, None)
+            .expect("comment four bytes after the field");
+        let paragraph = find_paragraph(d.document.body(), node).expect("the paragraph");
+        assert_eq!(
+            commented_text(paragraph),
+            " of ",
+            "the host selected bytes 6..10 of \"Page 7 of 9\", which is \" of \". \
+             Charging the field zero bytes shifts the whole tail one byte left, so \
+             the SAME offsets enclose \"of 9\" — a comment on the wrong characters, \
+             with no refusal to notice"
+        );
 
+        // And the whole tail, to the paragraph's true length.
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert_eq!(
+            d.paragraph_length(&key),
+            11,
+            "the host still addresses this paragraph as eleven bytes"
+        );
+        d.add_comment_inner(&key, 6, &key, 11, "after the field", None, None, None)
+            .expect("comment the text after the field");
         let paragraph = find_paragraph(d.document.body(), node).expect("the paragraph");
         assert_eq!(
             commented_text(paragraph),
