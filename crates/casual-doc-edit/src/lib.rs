@@ -2154,7 +2154,7 @@ pub fn apply(
                 .clone();
             if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
                 para.inlines
-                    .retain(|i| !(is_object_node(i) && i.id() == *object));
+                    .retain(|i| !(is_removable_inline_node(i) && i.id() == *object));
                 // Removing the object can leave the two equal-property runs it kept
                 // apart adjacent, which the model forbids; coalesce them back so the
                 // original run is restored verbatim.
@@ -3355,6 +3355,24 @@ fn object_descr_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Str
 /// Whether `node` is a removable object (the target set of
 /// [`Operation::DeleteObject`]): an inline drawing, a floating anchored drawing, a
 /// text box, or a DrawingML group.
+/// Whether `node` is something the [`Operation::InsertInlineObject`] /
+/// [`Operation::RemoveInlineObject`] pair owns: every drawing object, **plus the
+/// explicit `w:br` break** that pair also authors.
+///
+/// Deliberately wider than [`is_object_node`], which is the *drawing* notion used
+/// by object selection and `DeleteObject`. A break must not become a selectable
+/// object -- but it is something `InsertInlineObject` inserts, so the removal that
+/// is that operation's inverse has to be able to find it, and it could not:
+/// `insert_line_break` (Shift+Enter) has been producing a `RemoveInlineObject`
+/// inverse that answered `NodeNotFound`, so a soft line break did not undo. Page
+/// and column breaks travel the same operation, so the same hole would have
+/// swallowed their undo too.
+///
+/// O(1).
+fn is_removable_inline_node(node: &InlineNode) -> bool {
+    is_object_node(node) || matches!(node, InlineNode::Break(_))
+}
+
 fn is_object_node(node: &InlineNode) -> bool {
     matches!(
         node,
@@ -5992,7 +6010,7 @@ fn locate_inline_object(blocks: &[BlockNode], object: NodeId) -> Option<(NodeId,
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0u32;
                 for inline in &paragraph.inlines {
-                    if is_object_node(inline) && inline.id() == object {
+                    if is_removable_inline_node(inline) && inline.id() == object {
                         return Some((paragraph.id, offset, inline.clone()));
                     }
                     offset = offset.saturating_add(inline_text_len(inline));

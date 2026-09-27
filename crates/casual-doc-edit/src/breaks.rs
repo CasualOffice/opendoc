@@ -103,6 +103,10 @@ pub enum BreakRefusal {
     InNote,
     /// The paragraph is in a comment definition.
     InComment,
+    /// The document declares no `w:sectPr` at all, so there is no section to
+    /// split. A DOCX always has a body-level one; a plain-text or JSON import may
+    /// not, and page setup is equally unavailable on such a document.
+    NoSectionToSplit,
 }
 
 impl BreakRefusal {
@@ -121,6 +125,10 @@ impl BreakRefusal {
             Self::InRunningContent => "refused: a break cannot be inserted in a header or footer",
             Self::InNote => "refused: a break cannot be inserted in a footnote or endnote",
             Self::InComment => "refused: a break cannot be inserted in a comment",
+            Self::NoSectionToSplit => {
+                "refused: this document declares no page setup, so it has no \
+                 section to split"
+            }
         }
     }
 }
@@ -300,7 +308,7 @@ pub fn section_split_site(doc: &Document, paragraph: NodeId) -> Result<SectionSp
     let sections = doc.definitions().sections.as_slice();
     let (first, rest) = sections
         .split_first()
-        .ok_or(BreakRefusal::NoSuchParagraph)?;
+        .ok_or(BreakRefusal::NoSectionToSplit)?;
     let first_id = first.id;
     if rest.is_empty() {
         // One boundary is the body-level one, so the caret is in it and no
@@ -431,4 +439,812 @@ pub fn section_break_ops(
         properties: Some(Box::new(SplitProperties { leading, trailing })),
     });
     ops
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{EditError, Operation, apply, block_visits, reset_block_visits};
+    use casual_doc_model::IdGenerator;
+    use casual_doc_model::v1::{
+        BlockSdt, Comment, CommentId, DefinitionMap, Definitions, HeaderFooter, HeaderFooterId,
+        HeaderFooterKind, HeaderFooterRef, InlineSdt, MarkRevision, MarkRevisionKind, Note, NoteId,
+        NumberFormat, PageMargins, PageNumbering, PageSize, Paragraph, PropChange, Run,
+        RunProperties, SdtProperties, SectionColumns, Table, TableCell, TableRow, TextBox,
+    };
+
+    fn ids() -> IdGenerator {
+        IdGenerator::new(9)
+    }
+
+    fn n(counter: u64) -> NodeId {
+        NodeId::from_parts(7, counter).expect("valid node id")
+    }
+
+    fn run(id: u64, text: &str) -> InlineNode {
+        InlineNode::Run(Run {
+            id: n(id),
+            properties: RunProperties::default().into(),
+            text: text.to_owned(),
+        })
+    }
+
+    fn para_with(id: u64, text: &str, properties: ParagraphProperties) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: n(id),
+            properties: properties.into(),
+            inlines: vec![run(id + 1, text)],
+        })
+    }
+
+    fn para(id: u64, text: &str) -> BlockNode {
+        para_with(id, text, ParagraphProperties::default())
+    }
+
+    /// A paragraph that ends section `section` — how a DOCX body marks a break.
+    fn terminator(id: u64, text: &str, section: SectionId) -> BlockNode {
+        para_with(
+            id,
+            text,
+            ParagraphProperties {
+                section_break: Some(section),
+                ..ParagraphProperties::default()
+            },
+        )
+    }
+
+    /// A US-Letter section boundary.
+    fn boundary(id: u64) -> SectionBoundary {
+        SectionBoundary {
+            id: SectionId::new(n(id)),
+            page_size: PageSize {
+                width_twips: 12_240,
+                height_twips: 15_840,
+            },
+            page_margins: PageMargins {
+                top_twips: 1_440,
+                bottom_twips: 1_440,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+                gutter_twips: None,
+            },
+            columns: SectionColumns {
+                count: 1,
+                space_twips: None,
+                separator: None,
+                equal_width: None,
+                columns: Vec::new(),
+            },
+            headers: Vec::new(),
+            footers: Vec::new(),
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: PageNumbering::default(),
+            doc_grid: Default::default(),
+            orientation: None,
+            paper_source: Default::default(),
+            page_borders: Default::default(),
+            line_numbering: Default::default(),
+            watermark: None,
+            footnote_props: Default::default(),
+            endnote_props: Default::default(),
+            text_direction: None,
+            bidi: false,
+            section_change: None,
+        }
+    }
+
+    fn document(body: Vec<BlockNode>, sections: Vec<SectionBoundary>) -> Document {
+        Document::new(
+            n(1_000),
+            body,
+            Definitions {
+                sections,
+                ..Definitions::default()
+            },
+        )
+        .expect("valid document")
+    }
+
+    /// One section, three paragraphs; the section is the body-level one that no
+    /// paragraph terminates.
+    fn one_section() -> Document {
+        document(
+            vec![para(10, "one"), para(20, "two"), para(30, "three")],
+            vec![boundary(500)],
+        )
+    }
+
+    /// Two sections: paragraph 20 terminates section 500, and section 600 is the
+    /// body-level one.
+    fn two_sections() -> Document {
+        document(
+            vec![
+                para(10, "one"),
+                terminator(20, "two", SectionId::new(n(500))),
+                para(30, "three"),
+            ],
+            vec![boundary(500), boundary(600)],
+        )
+    }
+
+    fn sections_of(doc: &Document) -> Vec<SectionId> {
+        doc.definitions()
+            .sections
+            .iter()
+            .map(|boundary| boundary.id)
+            .collect()
+    }
+
+    fn section_break_of(doc: &Document, paragraph: NodeId) -> Option<SectionId> {
+        crate::find_paragraph(doc.body(), paragraph)
+            .and_then(|found| found.properties.section_break)
+    }
+
+    /// Applies `ops` in order, returning the inverses in undo order.
+    fn apply_group(doc: &mut Document, ops: &[Operation]) -> Vec<Operation> {
+        let mut ids = ids();
+        let mut inverses: Vec<Operation> = ops
+            .iter()
+            .map(|op| apply(doc, &mut ids, op).expect("operation applies"))
+            .collect();
+        inverses.reverse();
+        inverses
+    }
+
+    // -----------------------------------------------------------------------
+    // Page and column breaks — the half that needed no new operation
+    // -----------------------------------------------------------------------
+
+    /// A page break is an inline `w:br`, authored by the operation that already
+    /// existed, and removed exactly by its existing inverse.
+    #[test]
+    fn a_page_break_is_an_inline_break_the_existing_operation_authors() {
+        let mut doc = one_section();
+        let before = doc.clone();
+        let op = insert_break_op(Pos::new(n(10), 1), n(4_000), BreakKind::Page);
+        let inverse = apply(&mut doc, &mut ids(), &op).expect("the break inserts");
+
+        let paragraph = crate::find_paragraph(doc.body(), n(10)).expect("paragraph 10");
+        let kinds: Vec<BreakKind> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Break(node) => Some(node.kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![BreakKind::Page],
+            "the paragraph must hold exactly one PAGE break, not a line break"
+        );
+
+        assert!(
+            matches!(inverse, Operation::RemoveInlineObject { .. }),
+            "the inverse is the existing inline-object removal, not a new operation"
+        );
+        apply(&mut doc, &mut ids(), &inverse).expect("the inverse applies");
+        assert_eq!(doc, before, "undo restores the document exactly");
+    }
+
+    /// A column break is the same operation with the other kind, so a single
+    /// mapping mistake cannot make both breaks the same thing.
+    #[test]
+    fn a_column_break_is_authored_as_a_column_break() {
+        let mut doc = one_section();
+        let op = insert_break_op(Pos::new(n(10), 3), n(4_001), BreakKind::Column);
+        apply(&mut doc, &mut ids(), &op).expect("the break inserts");
+        let paragraph = crate::find_paragraph(doc.body(), n(10)).expect("paragraph 10");
+        assert!(
+            paragraph
+                .inlines
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Break(node)
+                    if node.kind == BreakKind::Column)),
+            "a column break must be a COLUMN break: {:?}",
+            paragraph.inlines
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Section breaks
+    // -----------------------------------------------------------------------
+
+    /// In a one-section document the break appends a second boundary, the caret's
+    /// paragraph keeps the existing section, and the START TYPE the user picked
+    /// lands on the NEW, second section — the direction ECMA-376 and
+    /// `flow::section_break_forces_page` both read.
+    #[test]
+    fn the_start_type_lands_on_the_new_second_section() {
+        let mut doc = one_section();
+        let split = section_split_site(&doc, n(20)).expect("a body paragraph");
+        assert_eq!(split.current, SectionId::new(n(500)));
+        assert_eq!(split.next, None, "the caret is in the body-level section");
+        assert!(split.terminator.is_none(), "nothing terminates it yet");
+
+        let inherited = doc.definitions().sections[0].clone();
+        let new_section = SectionId::new(n(700));
+        let ops = section_break_ops(
+            Pos::new(n(20), 3),
+            &split,
+            &inherited,
+            new_section,
+            n(710),
+            SectionType::Continuous,
+        );
+        apply_group(&mut doc, &ops);
+
+        assert_eq!(
+            sections_of(&doc),
+            vec![SectionId::new(n(500)), new_section],
+            "the new boundary follows the one it was split out of"
+        );
+        assert_eq!(
+            doc.definitions().sections[0].section_type,
+            None,
+            "the section being split is not rewritten at all"
+        );
+        assert_eq!(
+            doc.definitions().sections[1].section_type,
+            Some(SectionType::Continuous),
+            "the kind the user picked describes how the NEW section starts"
+        );
+        assert_eq!(
+            section_break_of(&doc, n(20)),
+            Some(SectionId::new(n(500))),
+            "the leading half terminates the section the caret was in"
+        );
+        assert_eq!(
+            section_break_of(&doc, n(710)),
+            None,
+            "the trailing half is ordinary content of the new section"
+        );
+    }
+
+    /// The new section must carry the caret section's page-numbering FORMAT and
+    /// must not carry its `@start`: `w:start` means *restart numbering here*, and
+    /// `paginate::page_number_labels_for` restarts on exactly that field at a
+    /// section's first page — so copying it renumbers every page after the break.
+    #[test]
+    fn a_section_break_does_not_restart_page_numbering() {
+        let mut source = boundary(500);
+        source.page_numbering = PageNumbering {
+            format: Some(NumberFormat::LowerRoman),
+            start: Some(7),
+        };
+        let new = inherited_boundary(&source, SectionId::new(n(700)), SectionType::NextPage);
+        assert_eq!(
+            new.page_numbering.format,
+            Some(NumberFormat::LowerRoman),
+            "the number FORMAT is inherited — the pages look the same"
+        );
+        assert_eq!(
+            new.page_numbering.start, None,
+            "the restart is NOT inherited: page numbers continue across the break"
+        );
+    }
+
+    /// `w:sectPrChange` is a tracked format change recorded against the section it
+    /// sits on. A copy would be a second revision, with the same author, date and
+    /// id, claiming a section that has never been reformatted was.
+    #[test]
+    fn a_section_break_does_not_fabricate_a_tracked_format_change() {
+        let mut source = boundary(500);
+        source.section_change = Some(PropChange {
+            author: Some("Reviewer".to_owned()),
+            date: None,
+            revision_id: Some("11".to_owned()),
+            editor_group: None,
+            prior: Box::new(boundary(500)),
+        });
+        let new = inherited_boundary(&source, SectionId::new(n(700)), SectionType::NextPage);
+        assert!(
+            new.section_change.is_none(),
+            "the new section has no prior formatting, so it carries no revision"
+        );
+    }
+
+    /// Geometry, running-content references and the watermark are inherited, so
+    /// the break moves the text after it onto the page its start type asks for and
+    /// nowhere else.
+    #[test]
+    fn a_section_break_inherits_the_geometry_it_splits() {
+        let mut source = boundary(500);
+        source.headers = vec![HeaderFooterRef {
+            kind: HeaderFooterKind::Default,
+            reference: HeaderFooterId::new(n(800)),
+        }];
+        source.title_page = Some(true);
+        let new = inherited_boundary(&source, SectionId::new(n(700)), SectionType::NextPage);
+        assert_eq!(new.page_size, source.page_size, "same paper");
+        assert_eq!(new.page_margins, source.page_margins, "same margins");
+        assert_eq!(new.columns, source.columns, "same columns");
+        assert_eq!(
+            new.headers, source.headers,
+            "both sections keep the same running content (Word's link-to-previous)"
+        );
+        assert_eq!(new.title_page, source.title_page, "same first-page rule");
+    }
+
+    /// With a break in the middle of a section that already has a terminator, the
+    /// new boundary is spliced in BODY ORDER — between the two existing ones, not
+    /// appended — and the old terminator is retargeted at the new section, so
+    /// exactly one paragraph ends each section.
+    #[test]
+    fn the_new_boundary_is_spliced_in_body_order_and_the_terminator_moves() {
+        let mut doc = two_sections();
+        let split = section_split_site(&doc, n(10)).expect("a body paragraph");
+        assert_eq!(split.current, SectionId::new(n(500)));
+        assert_eq!(
+            split.next,
+            Some(SectionId::new(n(600))),
+            "section 600 follows the caret's section"
+        );
+        assert_eq!(
+            split.terminator.as_ref().map(|(node, _)| *node),
+            Some(n(20)),
+            "paragraph 20 terminates the caret's section today"
+        );
+
+        let inherited = doc.definitions().sections[0].clone();
+        let new_section = SectionId::new(n(700));
+        let ops = section_break_ops(
+            Pos::new(n(10), 1),
+            &split,
+            &inherited,
+            new_section,
+            n(710),
+            SectionType::NextPage,
+        );
+        apply_group(&mut doc, &ops);
+
+        assert_eq!(
+            sections_of(&doc),
+            vec![SectionId::new(n(500)), new_section, SectionId::new(n(600))],
+            "the new section sits between the two it was split between"
+        );
+        assert_eq!(
+            section_break_of(&doc, n(10)),
+            Some(SectionId::new(n(500))),
+            "the leading half ends the first section"
+        );
+        assert_eq!(
+            section_break_of(&doc, n(20)),
+            Some(new_section),
+            "the old terminator now ends the NEW section"
+        );
+    }
+
+    /// A break inside the LAST paragraph of a section: there is no separate
+    /// terminator to retarget, so the trailing half takes over the role. Getting
+    /// this wrong leaves the new section terminated by nothing while the first
+    /// section is terminated twice.
+    #[test]
+    fn a_break_in_a_sections_last_paragraph_hands_the_role_to_the_trailing_half() {
+        let mut doc = two_sections();
+        let split = section_split_site(&doc, n(20)).expect("a body paragraph");
+        assert!(
+            split.caret_terminates,
+            "paragraph 20 is the caret's section's own terminator"
+        );
+        assert!(
+            split.terminator.is_none(),
+            "so there is no OTHER paragraph to retarget"
+        );
+
+        let inherited = doc.definitions().sections[0].clone();
+        let new_section = SectionId::new(n(700));
+        let ops = section_break_ops(
+            Pos::new(n(20), 1),
+            &split,
+            &inherited,
+            new_section,
+            n(710),
+            SectionType::NextPage,
+        );
+        assert_eq!(ops.len(), 2, "two operations, not three");
+        apply_group(&mut doc, &ops);
+
+        assert_eq!(
+            section_break_of(&doc, n(20)),
+            Some(SectionId::new(n(500))),
+            "the leading half still ends the first section"
+        );
+        assert_eq!(
+            section_break_of(&doc, n(710)),
+            Some(new_section),
+            "and the trailing half ends the new one"
+        );
+    }
+
+    /// A tracked paragraph-mark insertion stays on the trailing half only
+    /// (docs/108 Decision 1): the leading half's mark is brand new — it is the one
+    /// that now carries the `w:sectPr`.
+    #[test]
+    fn a_tracked_paragraph_mark_is_not_charged_to_both_halves() {
+        let mut doc = document(
+            vec![
+                para(10, "one"),
+                para_with(
+                    20,
+                    "two",
+                    ParagraphProperties {
+                        mark_revision: Some(Box::new(MarkRevision {
+                            kind: MarkRevisionKind::Insertion,
+                            author: Some("Reviewer".to_owned()),
+                            date: None,
+                            revision_id: Some("3".to_owned()),
+                        })),
+                        ..ParagraphProperties::default()
+                    },
+                ),
+            ],
+            vec![boundary(500)],
+        );
+        let split = section_split_site(&doc, n(20)).expect("a body paragraph");
+        let inherited = doc.definitions().sections[0].clone();
+        let ops = section_break_ops(
+            Pos::new(n(20), 1),
+            &split,
+            &inherited,
+            SectionId::new(n(700)),
+            n(710),
+            SectionType::NextPage,
+        );
+        apply_group(&mut doc, &ops);
+
+        let leading = crate::find_paragraph(doc.body(), n(20)).expect("leading half");
+        let trailing = crate::find_paragraph(doc.body(), n(710)).expect("trailing half");
+        assert!(
+            leading.properties.mark_revision.is_none(),
+            "the leading half's paragraph mark is new, so it carries no revision"
+        );
+        assert!(
+            trailing.properties.mark_revision.is_some(),
+            "the original mark travelled to the trailing half"
+        );
+    }
+
+    /// The whole split is one exact inverse chain: undoing it restores the
+    /// document byte for byte, including the POSITION of the boundary in the
+    /// ordered section list. A restore that appended instead would leave the
+    /// sections out of body order, which silently re-geometries every page after
+    /// the break.
+    #[test]
+    fn a_section_break_undoes_exactly_including_the_list_position() {
+        let mut doc = two_sections();
+        let before = doc.clone();
+        let split = section_split_site(&doc, n(10)).expect("a body paragraph");
+        let inherited = doc.definitions().sections[0].clone();
+        let ops = section_break_ops(
+            Pos::new(n(10), 1),
+            &split,
+            &inherited,
+            SectionId::new(n(700)),
+            n(710),
+            SectionType::NextPage,
+        );
+        let inverses = apply_group(&mut doc, &ops);
+        assert_ne!(doc, before, "the break changed something");
+        for inverse in &inverses {
+            apply(&mut doc, &mut ids(), inverse).expect("the inverse applies");
+        }
+        assert_eq!(
+            doc, before,
+            "undoing the action restores the document exactly"
+        );
+    }
+
+    /// The splice operation removes as exactly as it inserts, in both directions,
+    /// on its own.
+    #[test]
+    fn splicing_a_boundary_is_its_own_inverse_in_both_directions() {
+        let mut doc = two_sections();
+        let before = doc.clone();
+        let insert = Operation::SpliceSectionBoundary {
+            at: Some(SectionId::new(n(600))),
+            boundary: Some(Box::new(boundary(700))),
+        };
+        let undo = apply(&mut doc, &mut ids(), &insert).expect("insert");
+        assert_eq!(
+            sections_of(&doc),
+            vec![
+                SectionId::new(n(500)),
+                SectionId::new(n(700)),
+                SectionId::new(n(600))
+            ],
+            "inserted before the boundary it names"
+        );
+        let redo = apply(&mut doc, &mut ids(), &undo).expect("remove");
+        assert_eq!(doc, before, "removal restores the document");
+        apply(&mut doc, &mut ids(), &redo).expect("re-insert");
+        assert_eq!(
+            sections_of(&doc),
+            vec![
+                SectionId::new(n(500)),
+                SectionId::new(n(700)),
+                SectionId::new(n(600))
+            ],
+            "redo restores the POSITION, not merely the membership"
+        );
+    }
+
+    /// The splice refuses rather than guessing: an unknown anchor, a request that
+    /// names nothing, and an id already in use all leave the document untouched.
+    #[test]
+    fn splicing_refuses_an_unknown_anchor_a_nameless_request_and_a_duplicate_id() {
+        let mut doc = two_sections();
+        let before = doc.clone();
+        for (op, expected) in [
+            (
+                Operation::SpliceSectionBoundary {
+                    at: Some(SectionId::new(n(999))),
+                    boundary: Some(Box::new(boundary(700))),
+                },
+                EditError::NodeNotFound,
+            ),
+            (
+                Operation::SpliceSectionBoundary {
+                    at: None,
+                    boundary: None,
+                },
+                EditError::Unsupported,
+            ),
+            (
+                Operation::SpliceSectionBoundary {
+                    at: None,
+                    boundary: Some(Box::new(boundary(600))),
+                },
+                EditError::Unsupported,
+            ),
+        ] {
+            assert_eq!(
+                apply(&mut doc, &mut ids(), &op),
+                Err(expected),
+                "{op:?} must be refused"
+            );
+            assert_eq!(doc, before, "a refused splice changes nothing");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Refusals
+    // -----------------------------------------------------------------------
+
+    /// Every container a caret reaches where a break would be stored and then
+    /// ignored is refused, and each refusal names its own container. Layout
+    /// charges a section break to a section only for a top-level body paragraph
+    /// (`document_layout::section_break_points` does not recurse) and only the body
+    /// paginator consumes `page_break_after`, so accepting any of these would be
+    /// silent loss.
+    #[test]
+    fn a_break_outside_the_body_flow_is_refused_by_name() {
+        let mut headers = DefinitionMap::default();
+        headers.insert(
+            HeaderFooterId::new(n(800)),
+            HeaderFooter {
+                blocks: vec![para(810, "running head")],
+            },
+        );
+        let mut footnotes = DefinitionMap::default();
+        footnotes.insert(
+            NoteId::new(n(820)),
+            Note {
+                blocks: vec![para(830, "note body")],
+            },
+        );
+        let mut comments = DefinitionMap::default();
+        comments.insert(
+            CommentId::new(n(840)),
+            Comment {
+                blocks: vec![para(850, "comment body")],
+                ..Comment::default()
+            },
+        );
+
+        let cell_paragraph = para(910, "in a cell");
+        let table = BlockNode::Table(Box::new(Table {
+            id: n(900),
+            properties: Default::default(),
+            grid: Vec::new(),
+            grid_change: None,
+            rows: vec![TableRow {
+                id: n(902),
+                properties: Default::default(),
+                cells: vec![TableCell {
+                    id: n(904),
+                    properties: Default::default(),
+                    blocks: vec![cell_paragraph],
+                }],
+            }],
+        }));
+
+        let text_box = BlockNode::Paragraph(Paragraph {
+            id: n(920),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::TextBox(Box::new(TextBox {
+                id: n(922),
+                hyperlink: None,
+                anchor: None,
+                relative_height: None,
+                extent: None,
+                fill: None,
+                border: None,
+                body_properties: Default::default(),
+                blocks: vec![para(930, "in a text box")],
+            }))],
+        });
+
+        let control = BlockNode::Sdt(Box::new(BlockSdt {
+            id: n(940),
+            properties: SdtProperties::default(),
+            blocks: vec![para(950, "in a content control")],
+        }));
+
+        let doc = Document::new(
+            n(1_000),
+            vec![para(10, "body"), table, text_box, control],
+            Definitions {
+                sections: vec![boundary(500)],
+                headers,
+                footnotes,
+                comments,
+                ..Definitions::default()
+            },
+        )
+        .expect("valid document");
+
+        for (node, expected) in [
+            (n(910), BreakRefusal::InTableCell),
+            (n(930), BreakRefusal::InTextBox),
+            (n(950), BreakRefusal::InContentControl),
+            (n(810), BreakRefusal::InRunningContent),
+            (n(830), BreakRefusal::InNote),
+            (n(850), BreakRefusal::InComment),
+            (n(9_999), BreakRefusal::NoSuchParagraph),
+        ] {
+            assert_eq!(
+                break_site(&doc, node),
+                BreakSite::Elsewhere(expected),
+                "{node} must be refused as {expected:?}"
+            );
+            assert_eq!(
+                section_split_site(&doc, node),
+                Err(expected),
+                "and a section break must refuse there too, with the same reason"
+            );
+            assert!(
+                !expected.reason().is_empty(),
+                "every refusal carries a sentence"
+            );
+        }
+
+        // The control: a body paragraph is accepted, so the guard above is not
+        // simply refusing everything.
+        assert_eq!(break_site(&doc, n(10)), BreakSite::Body(0));
+    }
+
+    /// A text box nested inside an INLINE content control is still refused.
+    ///
+    /// The reason degrades to `NoSuchParagraph` rather than `InTextBox`, because
+    /// the crate's shared inline walk (`find_paragraph_in_inlines`) does not
+    /// descend into `InlineNode::Sdt` — a pre-existing gap, reported rather than
+    /// widened here, since widening that walk changes what every other operation
+    /// can reach. What matters for **no silent loss** is that the position is
+    /// refused and says something, and that is what this asserts.
+    #[test]
+    fn a_paragraph_in_a_text_box_inside_an_inline_control_is_still_refused() {
+        let doc = Document::new(
+            n(1_000),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: n(20),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Sdt(Box::new(InlineSdt {
+                    id: n(22),
+                    properties: SdtProperties::default(),
+                    inlines: vec![InlineNode::TextBox(Box::new(TextBox {
+                        id: n(24),
+                        hyperlink: None,
+                        anchor: None,
+                        relative_height: None,
+                        extent: None,
+                        fill: None,
+                        border: None,
+                        body_properties: Default::default(),
+                        blocks: vec![para(30, "deep")],
+                    }))],
+                }))],
+            })],
+            Definitions {
+                sections: vec![boundary(500)],
+                ..Definitions::default()
+            },
+        )
+        .expect("valid document");
+        let site = break_site(&doc, n(30));
+        assert!(
+            matches!(site, BreakSite::Elsewhere(_)),
+            "a paragraph inside an inline control is not body flow: {site:?}"
+        );
+        let BreakSite::Elsewhere(refusal) = site else {
+            unreachable!("asserted above");
+        };
+        assert!(!refusal.reason().is_empty(), "and it says something");
+    }
+
+    // -----------------------------------------------------------------------
+    // Complexity
+    // -----------------------------------------------------------------------
+
+    /// Resolving the section split must cost work proportional to the document,
+    /// not to its square.
+    ///
+    /// The guard is a **ratio**, not a clock: a millisecond threshold cannot tell
+    /// a quadratic from a slow constant and is flaky under load. Doubling the
+    /// document must roughly double the blocks examined; resolving each
+    /// paragraph's properties by id instead — the HF-184 shape — quadruples it.
+    #[test]
+    fn resolving_a_section_split_is_linear_in_the_document() {
+        fn visits(paragraphs: u64) -> u64 {
+            // Two sections, so the forward pass actually runs (a single-section
+            // document short-circuits), and the caret is the first paragraph so
+            // the pass covers the whole body.
+            // Ids start well clear of the document's own and of the section
+            // boundaries', so a longer fixture cannot collide with either.
+            let mut body = vec![para(100_000, "caret")];
+            for i in 1..paragraphs {
+                body.push(para(100_000 + i * 10, "filler"));
+            }
+            let last = 100_000 + (paragraphs - 1) * 10;
+            body[(paragraphs - 1) as usize] = terminator(last, "end", SectionId::new(n(500)));
+            let doc = document(body, vec![boundary(500), boundary(600)]);
+            reset_block_visits();
+            let split = section_split_site(&doc, n(100_000)).expect("a body paragraph");
+            assert_eq!(split.current, SectionId::new(n(500)));
+            block_visits()
+        }
+
+        let small_n = 400;
+        let small = visits(small_n);
+        let large = visits(small_n * 2);
+        assert!(
+            small > 0,
+            "the counter must observe the walk, or this guard cannot fail"
+        );
+        assert!(
+            large < small * 3,
+            "work must roughly double, not quadruple: {small} visits at {small_n} \
+             paragraphs and {large} at {}",
+            small_n * 2
+        );
+    }
+
+    /// A single-section document resolves the split without walking the body at
+    /// all: with one boundary the caret can only be in it. This is the common
+    /// case, and it is the one that has to stay O(1) on a million-paragraph file.
+    #[test]
+    fn a_single_section_document_resolves_the_split_without_walking_forward() {
+        fn visits(paragraphs: u64) -> u64 {
+            let body = (0..paragraphs)
+                .map(|i| para(100_000 + i * 10, "filler"))
+                .collect();
+            let doc = document(body, vec![boundary(500)]);
+            reset_block_visits();
+            section_split_site(&doc, n(100_000)).expect("a body paragraph");
+            block_visits()
+        }
+        // `break_site` still has to locate the caret's paragraph, so the count is
+        // not zero; what must not grow is any SECOND pass. The caret is the first
+        // paragraph, so a forward pass would add the whole body again.
+        let small = visits(400);
+        let large = visits(800);
+        assert!(
+            large < small * 3,
+            "one pass, not two: {small} visits at 400 paragraphs and {large} at 800"
+        );
+    }
 }

@@ -3780,19 +3780,30 @@ impl WasmDocument {
         offset: u32,
         kind: &str,
     ) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
+        self.insert_break_inner(node, offset, kind).map_err(to_js)
+    }
+
+    /// [`Self::insert_break`] with a plain message, so native tests exercise the
+    /// same path — including its refusals, which a `JsValue` cannot carry off-wasm.
+    fn insert_break_inner(
+        &mut self,
+        node: &str,
+        offset: u32,
+        kind: &str,
+    ) -> Result<EditResult, String> {
+        let nid = NodeId::from_str(node).map_err(|_| format!("invalid node id: {node}"))?;
         let (kind, history) = match kind {
             "page" => (BreakKind::Page, HistoryKind::PageBreak),
             "column" => (BreakKind::Column, HistoryKind::ColumnBreak),
-            other => return Err(to_js(format!("unsupported break kind: {other}"))),
+            other => return Err(format!("unsupported break kind: {other}")),
         };
         if let BreakSite::Elsewhere(refusal) = break_site(&self.document, nid) {
-            return Err(to_js(refusal.reason().to_owned()));
+            return Err(refusal.reason().to_owned());
         }
         let break_id = self
             .edit_ids
             .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
+            .map_err(|_| "id space exhausted".to_owned())?;
         self.apply_action_as(
             vec![casual_doc_edit::breaks::insert_break_op(
                 Pos::new(nid, offset),
@@ -3801,7 +3812,6 @@ impl WasmDocument {
             )],
             history,
         )
-        .map_err(to_js)
     }
 
     /// A **section break** at the caret. `start` is the new section's start type —
@@ -3835,33 +3845,45 @@ impl WasmDocument {
         offset: u32,
         start: &str,
     ) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
+        self.insert_section_break_inner(node, offset, start)
+            .map_err(to_js)
+    }
+
+    /// [`Self::insert_section_break`] with a plain message, for the same reason
+    /// [`Self::insert_break_inner`] exists.
+    fn insert_section_break_inner(
+        &mut self,
+        node: &str,
+        offset: u32,
+        start: &str,
+    ) -> Result<EditResult, String> {
+        let nid = NodeId::from_str(node).map_err(|_| format!("invalid node id: {node}"))?;
         let start = match start {
             "nextPage" => SectionType::NextPage,
             "continuous" => SectionType::Continuous,
             "evenPage" => SectionType::EvenPage,
             "oddPage" => SectionType::OddPage,
-            other => return Err(to_js(format!("unsupported section break: {other}"))),
+            other => return Err(format!("unsupported section break: {other}")),
         };
         let split = section_split_site(&self.document, nid)
-            .map_err(|refusal| to_js(refusal.reason().to_owned()))?;
+            .map_err(|refusal| refusal.reason().to_owned())?;
         let inherited = self
             .document
             .definitions()
             .sections
             .iter()
             .find(|boundary| boundary.id == split.current)
-            .ok_or_else(|| to_js("refused: the caret's section is not defined".to_owned()))?
+            .ok_or_else(|| "refused: the caret's section is not defined".to_owned())?
             .clone();
         let new_section = SectionId::new(
             self.edit_ids
                 .next_id()
-                .map_err(|_| to_js("id space exhausted".into()))?,
+                .map_err(|_| "id space exhausted".to_owned())?,
         );
         let new_paragraph = self
             .edit_ids
             .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
+            .map_err(|_| "id space exhausted".to_owned())?;
         let ops = section_break_ops(
             Pos::new(nid, offset),
             &split,
@@ -3871,7 +3893,6 @@ impl WasmDocument {
             start,
         );
         self.apply_action_caret_as(ops, Pos::new(new_paragraph, 0), HistoryKind::SectionBreak)
-            .map_err(to_js)
     }
 
     /// Backspace at a collapsed caret: deletes the character before `offset`, or —
@@ -37105,5 +37126,436 @@ mod tests {
             "the table arrived rather than being refused"
         );
         d.document.validate().expect("valid after the paste");
+    }
+
+    // -----------------------------------------------------------------------
+    // Authored breaks — page, column, section (`docs/130` 4.3, OO-022)
+    // -----------------------------------------------------------------------
+
+    /// The absolute page index `node` is laid out on, or `None`. Reads the real
+    /// paginated layout, so these guards assert where the text ENDS UP rather than
+    /// which markup was written.
+    fn page_of(doc: &WasmDocument, node: NodeId) -> Option<usize> {
+        (0..doc.page_count() as usize).find(|index| {
+            doc.body_page_at(*index).is_some_and(|page| {
+                page.placed
+                    .iter()
+                    .any(|placed| placed.fragment.node_id() == node)
+            })
+        })
+    }
+
+    /// A one-section US-Letter document of `paragraphs` short lines, written and
+    /// re-opened through the real package path so its boundary is a real
+    /// `w:sectPr`. A plain-text import declares none at all, which is a refusal
+    /// case of its own rather than a fixture.
+    fn sectioned_document(paragraphs: u64) -> WasmDocument {
+        use casual_doc_model::v1::{Definitions, PageMargins, PageSize, SectionBoundary};
+        let id = |n: u64| NodeId::from_parts(n, 311).expect("valid node id");
+        let paragraph = |n: u64, text: &str| {
+            BlockNode::Paragraph(Paragraph {
+                id: id(n),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: id(n + 1),
+                    properties: RunProperties::default().into(),
+                    text: text.to_owned(),
+                })],
+            })
+        };
+        let body = (0..paragraphs)
+            .map(|i| paragraph(100 + i * 10, &format!("Line {i}")))
+            .collect();
+        let section = SectionBoundary {
+            id: SectionId::new(id(9)),
+            page_size: PageSize {
+                width_twips: 12_240,
+                height_twips: 15_840,
+            },
+            page_margins: PageMargins {
+                top_twips: 1_440,
+                bottom_twips: 1_440,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+                gutter_twips: None,
+            },
+            columns: default_section_columns(),
+            headers: Vec::new(),
+            footers: Vec::new(),
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: Default::default(),
+            doc_grid: Default::default(),
+            orientation: None,
+            paper_source: Default::default(),
+            page_borders: Default::default(),
+            line_numbering: Default::default(),
+            watermark: None,
+            footnote_props: Default::default(),
+            endnote_props: Default::default(),
+            text_direction: None,
+            bidi: false,
+            section_change: None,
+        };
+        let document = Document::new(
+            id(1),
+            body,
+            Definitions {
+                sections: vec![section],
+                ..Definitions::default()
+            },
+        )
+        .expect("valid document");
+        let package = write_document(&document, &BTreeMap::new()).expect("write");
+        open_document(&package).expect("open a one-section document")
+    }
+
+    /// The ordered section ids of a document's boundaries.
+    fn section_ids(doc: &WasmDocument) -> Vec<NodeId> {
+        doc.document
+            .definitions()
+            .sections
+            .iter()
+            .map(|boundary| boundary.id.node_id())
+            .collect()
+    }
+
+    /// **The guarantee**: the text after an inserted page break starts on the next
+    /// page. Not "a `w:br` was written" — a break the paginator ignored would pass
+    /// that and fail this.
+    #[test]
+    fn the_text_after_an_inserted_page_break_starts_on_the_next_page() {
+        let mut d = plain_text_document(3);
+        let paragraphs = body_paragraphs(&d);
+        let (first, text) = paragraphs[0].clone();
+        let (second, _) = paragraphs[1];
+        assert_eq!(d.page_count(), 1, "three short lines fit one page");
+        assert_eq!(page_of(&d, second), Some(0), "and start out together");
+
+        d.insert_break_inner(&first.to_string(), text.len() as u32, "page")
+            .expect("a page break inserts at the end of a body paragraph");
+
+        assert_eq!(d.page_count(), 2, "the document now paginates to two pages");
+        assert_eq!(
+            page_of(&d, second),
+            Some(1),
+            "and the following paragraph is on page 2"
+        );
+
+        // And it undoes: the inverse of an inline-object insert has to be able to
+        // FIND the break, which is the pre-existing defect this lane fixed.
+        d.undo().expect("undo");
+        assert_eq!(d.page_count(), 1, "undo brings the page back");
+        assert_eq!(page_of(&d, second), Some(0));
+    }
+
+    /// The same operation pair carries Shift+Enter, and its undo was broken in
+    /// exactly the same way: `is_object_node` did not list `InlineNode::Break`, so
+    /// the `RemoveInlineObject` inverse answered `NodeNotFound` and the break
+    /// stayed in the document. Fixing the family, not the case.
+    #[test]
+    fn a_soft_line_break_undoes_as_well_as_a_page_break() {
+        let mut d = plain_text_document(2);
+        let (first, text) = body_paragraphs(&d)[0].clone();
+        let before = d.paragraph_text(first);
+        d.insert_line_break(&first.to_string(), text.len() as u32)
+            .expect("a line break inserts");
+        d.undo().expect("undo a line break");
+        assert_eq!(
+            d.paragraph_text(first),
+            before,
+            "undoing Shift+Enter removes the break"
+        );
+        d.document.validate().expect("valid after undo");
+    }
+
+    /// A column break is not a page break: it is authored as `BreakKind::Column`,
+    /// which the paginator answers by advancing a column rather than a page.
+    #[test]
+    fn a_column_break_is_authored_as_a_column_break() {
+        let mut d = plain_text_document(3);
+        let (first, text) = body_paragraphs(&d)[0].clone();
+        d.insert_break_inner(&first.to_string(), text.len() as u32, "column")
+            .expect("a column break inserts");
+        let kinds: Vec<BreakKind> = find_paragraph(d.document.body(), first)
+            .expect("paragraph")
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Break(node) => Some(node.kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, vec![BreakKind::Column]);
+        assert_eq!(
+            d.undo_label(),
+            "Column break",
+            "and the undo entry says what it was"
+        );
+    }
+
+    /// An unknown break kind is refused rather than silently treated as a line
+    /// break.
+    #[test]
+    fn an_unknown_break_kind_is_refused() {
+        let mut d = plain_text_document(2);
+        let (first, _) = body_paragraphs(&d)[0].clone();
+        assert!(
+            d.insert_break_inner(&first.to_string(), 0, "sausage")
+                .is_err(),
+            "an unrecognised kind must not insert anything"
+        );
+        assert!(
+            d.insert_section_break_inner(&first.to_string(), 0, "sausage")
+                .is_err(),
+            "nor an unrecognised section start"
+        );
+    }
+
+    /// **The guarantee**: a next-page section break puts the content after it on a
+    /// new page, a continuous one does not, and neither changes the page geometry.
+    #[test]
+    fn a_section_break_starts_where_its_start_type_says_and_changes_no_geometry() {
+        for (start, expected_pages) in [("continuous", 1u32), ("nextPage", 2)] {
+            let mut d = sectioned_document(3);
+            let paragraphs = body_paragraphs(&d);
+            let (first, text) = paragraphs[0].clone();
+            let (second, _) = paragraphs[1];
+            let size_before = d.page_size(0).expect("page 0 size");
+            let size_before = (size_before.width_twip(), size_before.height_twip());
+
+            d.insert_section_break_inner(&first.to_string(), text.len() as u32, start)
+                .unwrap_or_else(|_| panic!("a {start} section break inserts"));
+
+            assert_eq!(
+                d.page_count(),
+                expected_pages,
+                "a {start} break must paginate to {expected_pages} page(s)"
+            );
+            assert_eq!(
+                page_of(&d, second),
+                Some((expected_pages - 1) as usize),
+                "and put the following paragraph there"
+            );
+            let last = d.page_size(d.page_count() - 1).expect("last page size");
+            assert_eq!(
+                (last.width_twip(), last.height_twip()),
+                size_before,
+                "the new section inherits the geometry, so no page changes size"
+            );
+            d.document.validate().expect("valid after a section break");
+        }
+    }
+
+    /// **The guarantee**: the whole section split is ONE undo step. Three
+    /// operations, one history entry — a break that undid in two would leave the
+    /// document holding a section nothing terminates.
+    #[test]
+    fn a_section_break_undoes_in_one_step() {
+        let mut d = sectioned_document(3);
+        let before_sections = section_ids(&d);
+        let before_paragraphs = body_paragraphs(&d);
+        let (first, text) = before_paragraphs[0].clone();
+
+        d.insert_section_break_inner(&first.to_string(), text.len() as u32, "nextPage")
+            .expect("a section break inserts");
+        assert_eq!(
+            d.undo_label(),
+            "Section break",
+            "the history entry names the gesture"
+        );
+        assert_eq!(
+            section_ids(&d).len(),
+            before_sections.len() + 1,
+            "one more section"
+        );
+        assert_eq!(
+            body_paragraphs(&d).len(),
+            before_paragraphs.len() + 1,
+            "and one more paragraph"
+        );
+
+        d.undo().expect("undo");
+        assert_eq!(
+            section_ids(&d),
+            before_sections,
+            "ONE undo takes the section back out"
+        );
+        assert_eq!(
+            body_paragraphs(&d),
+            before_paragraphs,
+            "and the same undo takes the paragraph split with it"
+        );
+        assert!(
+            !d.can_undo(),
+            "there is nothing left to undo: the split was one entry, not two"
+        );
+        d.document.validate().expect("valid after undo");
+    }
+
+    /// Redo puts the whole split back, also in one step, and the boundary lands in
+    /// the same list position.
+    #[test]
+    fn a_section_break_redoes_in_one_step() {
+        let mut d = sectioned_document(3);
+        let (first, text) = body_paragraphs(&d)[0].clone();
+        d.insert_section_break_inner(&first.to_string(), text.len() as u32, "nextPage")
+            .expect("a section break inserts");
+        let after = section_ids(&d);
+        d.undo().expect("undo");
+        d.redo().expect("redo");
+        assert_eq!(section_ids(&d), after, "redo restores the ordered list");
+        assert_eq!(d.page_count(), 2, "and the pagination that went with it");
+        d.document.validate().expect("valid after redo");
+    }
+
+    /// A second break inside the FIRST section of a two-section document splices
+    /// its boundary between the existing two, so pages keep their sections in body
+    /// order. Appending instead would re-geometry every page after the break.
+    #[test]
+    fn a_second_section_break_splices_its_boundary_in_body_order() {
+        let mut d = sectioned_document(4);
+        let paragraphs = body_paragraphs(&d);
+        let (second, second_text) = paragraphs[1].clone();
+        d.insert_section_break_inner(&second.to_string(), second_text.len() as u32, "nextPage")
+            .expect("the first section break inserts");
+        let [original, appended]: [NodeId; 2] = section_ids(&d)
+            .try_into()
+            .expect("two sections after the first break");
+
+        let (first, first_text) = body_paragraphs(&d)[0].clone();
+        d.insert_section_break_inner(&first.to_string(), first_text.len() as u32, "continuous")
+            .expect("a second section break inserts");
+        let ids = section_ids(&d);
+        assert_eq!(ids.len(), 3, "three sections");
+        assert_eq!(ids[0], original, "the first section keeps its place");
+        assert_eq!(
+            ids[2], appended,
+            "and the body-level section stays last — the new one went in between"
+        );
+        d.document.validate().expect("valid after two breaks");
+    }
+
+    /// Refusals, with a reason, everywhere a break would be stored and then
+    /// ignored — and the document is left untouched. `SAMPLE_DOCX` carries a
+    /// header, so the running-content case is a real position in a real file.
+    #[test]
+    fn a_break_outside_the_body_flow_is_refused_with_a_reason() {
+        let mut d = open_document(SAMPLE_DOCX).expect("open the sample");
+        let before = d.document.clone();
+        let header_paragraph = d
+            .document
+            .definitions()
+            .headers
+            .iter()
+            .flat_map(|(_, header)| header.blocks.iter())
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph.id),
+                _ => None,
+            });
+        let Some(header_paragraph) = header_paragraph else {
+            panic!("the sample document has a header with a paragraph");
+        };
+
+        for kind in ["page", "column"] {
+            let error = d
+                .insert_break_inner(&header_paragraph.to_string(), 0, kind)
+                .expect_err("a break in a header must be refused");
+            assert!(
+                error.contains("header or footer"),
+                "the refusal must say WHERE: {error:?}"
+            );
+        }
+        let error = d
+            .insert_section_break_inner(&header_paragraph.to_string(), 0, "nextPage")
+            .expect_err("a section break in a header must be refused");
+        assert!(
+            error.contains("header or footer"),
+            "the refusal must say WHERE: {error:?}"
+        );
+        assert_eq!(
+            d.document, before,
+            "a refused break leaves the document exactly as it was"
+        );
+    }
+
+    /// A document that declares no page setup at all — what a plain-text import
+    /// produces — has no section to split, and says exactly that. `setPageSetup`
+    /// is equally unavailable there (it needs an existing section id), so this is
+    /// consistent with the rest of the product rather than a hole in this feature.
+    /// A page break still works: it needs no section.
+    #[test]
+    fn a_section_break_needs_a_section_and_says_so_when_there_is_none() {
+        let mut d = plain_text_document(3);
+        assert!(
+            d.document.definitions().sections.is_empty(),
+            "a plain-text import declares no w:sectPr, or this guard proves nothing"
+        );
+        let (first, text) = body_paragraphs(&d)[0].clone();
+        let error = d
+            .insert_section_break_inner(&first.to_string(), text.len() as u32, "nextPage")
+            .expect_err("there is no section to split");
+        assert!(
+            error.contains("no page setup"),
+            "the refusal must name the reason: {error}"
+        );
+        assert!(
+            d.insert_break_inner(&first.to_string(), text.len() as u32, "page")
+                .is_ok(),
+            "a page break needs no section, so it must still work"
+        );
+    }
+
+    /// **The guarantee**: an authored page break and an authored section break
+    /// survive export and reopen. A break that wrote nothing, or wrote markup the
+    /// importer does not read back, would pass every in-memory guard above.
+    #[test]
+    fn authored_breaks_survive_export_and_reopen() {
+        let mut d = sectioned_document(3);
+        let paragraphs = body_paragraphs(&d);
+        let (first, first_text) = paragraphs[0].clone();
+        let (third, third_text) = paragraphs[2].clone();
+
+        d.insert_section_break(&first.to_string(), first_text.len() as u32, "nextPage")
+            .expect("a section break inserts");
+        d.insert_break(&third.to_string(), third_text.len() as u32, "page")
+            .expect("a page break inserts");
+        let pages = d.page_count();
+
+        let package = write_document(&d.document, &BTreeMap::new()).expect("export");
+        let reopened = open_document(&package).expect("reopen the exported package");
+
+        let sections = &reopened.document.definitions().sections;
+        assert_eq!(sections.len(), 2, "both sections came back");
+        assert_eq!(
+            sections[1].section_type,
+            Some(SectionType::NextPage),
+            "and the new section's start type with them"
+        );
+        let page_breaks: usize = reopened
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(&paragraph.inlines),
+                _ => None,
+            })
+            .flatten()
+            .filter(
+                |inline| matches!(inline, InlineNode::Break(node) if node.kind == BreakKind::Page),
+            )
+            .count();
+        assert_eq!(
+            page_breaks, 1,
+            "the w:br type=page came back as a page break"
+        );
+        assert_eq!(
+            reopened.page_count(),
+            pages,
+            "and the reopened document paginates the same way"
+        );
     }
 }
