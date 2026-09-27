@@ -430,11 +430,15 @@ form?.addEventListener("change", (event) => {
 });
 
 // `input` as well as `change`, so the colour picker and the name field are live
-// while they are being used rather than on blur.
+// while they are being used rather than on blur. Narrowed to the BRAND fields on
+// purpose: a checkbox fires `input` and then `change`, and letting both through
+// would repaint twice for one click — the second one for nothing, since the first
+// already remounted.
 form?.addEventListener("input", (event) => {
   const target = event.target;
-  if (target.matches?.("[data-brand-accent]")) mirrorAccent(target.value, "[data-brand-accent-hex]");
-  else if (target.matches?.("[data-brand-accent-hex]")) mirrorAccent(target.value, "[data-brand-accent]");
+  if (!target.matches?.("[data-brand-name], [data-brand-accent], [data-brand-accent-hex]")) return;
+  if (target.matches("[data-brand-accent]")) mirrorAccent(target.value, "[data-brand-accent-hex]");
+  else if (target.matches("[data-brand-accent-hex]")) mirrorAccent(target.value, "[data-brand-accent]");
   schedule();
 });
 
