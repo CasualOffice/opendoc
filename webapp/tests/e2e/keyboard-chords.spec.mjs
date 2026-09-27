@@ -13,6 +13,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   mirrorBlocks,
+  openCommandPalette,
   moveCaretToDocStart,
   MOD,
 } from "./fixtures.mjs";
@@ -170,49 +171,111 @@ test("a chord whose command cannot run says why instead of doing nothing", async
   await expect(page.locator("#linkDialog")).toBeHidden();
 });
 
-test("every chord the palette advertises is one the editor can run", async ({ page }) => {
-  await gotoEditor(page);
-  await clickIntoFirstPage(page);
-  await page.keyboard.press(`${MOD}+Shift+p`);
-  await expect(page.locator("#cmdPalette")).toBeVisible();
+// Both keymaps, from either host. `data-command-shortcut` holds the RENDERED
+// label — `formatShortcut(chord)`, which is identity on Apple and "Ctrl+Shift+P"
+// everywhere else — while `KEYMAP` declares the chord in Apple glyphs. The first
+// version of this test compared the two directly, so it passed on a Mac (where
+// the rendering is a no-op) and reported all 37 advertised chords as unbound on
+// the Linux CI runner, which is where it ran:
+//
+//     Ctrl+S is printed by the palette but is in no keymap row
+//     Ctrl+Z is printed by the palette but is in no keymap row
+//     … 35 more
+//
+// That is the identity this test exists to guard, failing in the guard itself.
+// The comparison now renders the declaration the same way the palette does, and
+// both keymaps are driven from either host by telling the editor which keyboard
+// it is in front of — because a chord table with a per-platform row is a thing no
+// single-platform run can check, and this one had a per-platform row (⌃Space).
+const KEYBOARDS = {
+  apple: {
+    platform: "MacIntel",
+    uaPlatform: "macOS",
+    ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  },
+  standard: {
+    platform: "Linux x86_64",
+    uaPlatform: "Linux",
+    ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  },
+};
 
-  // The surfaces and the dispatcher read ONE table, so what the palette prints
-  // must be exactly what the dispatcher would match. Asked of the running app
-  // rather than of the module, so a build that shipped a stale copy of either
-  // side fails here.
-  const mismatches = await page.evaluate(async () => {
-    const { KEYMAP, chordCommand } = await import("/src/keymap.mjs");
-    const { keyboardPlatform, parseShortcut } = await import("/src/keyboard.mjs");
-    const platform = keyboardPlatform(navigator);
-    const advertised = [...document.querySelectorAll("#cmdList [data-command-shortcut]")].map(
-      (el) => el.dataset.commandShortcut,
-    );
-    const out = [];
-    for (const label of new Set(advertised)) {
-      const row = KEYMAP.find((r) => r.chord === label && (!r.platform || r.platform === platform));
-      if (!row) {
-        out.push(`${label} is printed by the palette but is in no keymap row`);
-        continue;
+/** Makes `keyboardPlatform()` resolve to one keymap regardless of the host.
+ *
+ *  All three hints are overridden because `keyboardPlatform` joins them and
+ *  matches /mac/ anywhere in the result — overriding only the user agent leaves
+ *  `navigator.platform` saying "MacIntel" and the spoof silently does nothing. */
+function useKeyboard({ platform, uaPlatform, ua }) {
+  for (const [name, value] of [
+    ["platform", platform],
+    ["userAgent", ua],
+    ["userAgentData", { platform: uaPlatform }],
+  ]) {
+    Object.defineProperty(navigator, name, { configurable: true, get: () => value });
+  }
+}
+
+for (const [keyboard, hints] of Object.entries(KEYBOARDS)) {
+  test(`every chord the palette advertises is one the editor can run (${keyboard} keyboard)`, async ({
+    page,
+  }) => {
+    await page.addInitScript(useKeyboard, hints);
+    await gotoEditor(page);
+    await clickIntoFirstPage(page);
+    // The palette is opened through a real surface rather than its own chord: the
+    // chord's modifier is the thing under test on one of these two runs, and a
+    // test that cannot open its own subject would fail for the wrong reason.
+    await openCommandPalette(page);
+
+    // The surfaces and the dispatcher read ONE table, so what the palette prints
+    // must be exactly what the dispatcher would match. Asked of the running app
+    // rather than of the module, so a build that shipped a stale copy of either
+    // side fails here.
+    const result = await page.evaluate(async () => {
+      const { KEYMAP, chordCommand } = await import("/src/keymap.mjs");
+      const { keyboardPlatform, parseShortcut, formatShortcut } = await import(
+        "/src/keyboard.mjs"
+      );
+      const platform = keyboardPlatform(navigator);
+      const advertised = [...document.querySelectorAll("#cmdList [data-command-shortcut]")].map(
+        (el) => el.dataset.commandShortcut,
+      );
+      const out = [];
+      for (const label of new Set(advertised)) {
+        const row = KEYMAP.find(
+          (r) =>
+            formatShortcut(r.chord, platform) === label &&
+            (!r.platform || r.platform === platform),
+        );
+        if (!row) {
+          out.push(`${label} is printed by the palette but is in no keymap row`);
+          continue;
+        }
+        const wanted = parseShortcut(row.chord);
+        if (!wanted.mod && !wanted.control && !wanted.alt) continue;
+        const apple = platform === "apple";
+        const event = {
+          key: wanted.key,
+          metaKey: apple ? wanted.mod : false,
+          ctrlKey: apple ? wanted.control : wanted.mod || wanted.control,
+          altKey: wanted.alt,
+          shiftKey: wanted.shift,
+        };
+        if (chordCommand(event, platform, { inEditor: true }) !== row.command) {
+          out.push(`${label} is printed for ${row.command} but does not dispatch to it`);
+        }
       }
-      const wanted = parseShortcut(row.chord);
-      if (!wanted.mod && !wanted.control && !wanted.alt) continue;
-      const apple = platform === "apple";
-      const event = {
-        key: wanted.key,
-        metaKey: apple ? wanted.mod : false,
-        ctrlKey: apple ? wanted.control : wanted.mod || wanted.control,
-        altKey: wanted.alt,
-        shiftKey: wanted.shift,
-      };
-      if (chordCommand(event, platform, { inEditor: true }) !== row.command) {
-        out.push(`${label} is printed for ${row.command} but does not dispatch to it`);
-      }
-    }
-    return { mismatches: out, count: advertised.length };
+      return { mismatches: out, count: advertised.length, platform };
+    });
+
+    // Without this the spoof could be a no-op and the second run would silently
+    // be a duplicate of the first — the shape of unfailable guard this repo has
+    // shipped before (`105` CQ-003).
+    expect(result.platform, "the editor did not adopt the emulated keyboard").toBe(keyboard);
+    expect(result.count, "the palette advertises no chords at all").toBeGreaterThan(25);
+    expect(result.mismatches).toEqual([]);
   });
-  expect(mismatches.count, "the palette advertises no chords at all").toBeGreaterThan(25);
-  expect(mismatches.mismatches).toEqual([]);
-});
+}
 
 // ---- History through the chord ----------------------------------------------
 //
