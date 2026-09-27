@@ -205,16 +205,17 @@ export const WITHHELD = [
   {
     source: "docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md",
     reason:
-      "Tells the reader, in its overview and in present tense, that developers " +
-      "install OpenDoc via `npm install @casualoffice/document-runtime`. No such " +
-      "package exists: the package this repository ships is " +
-      "`@casualoffice/opendoc-embed` (packages/opendoc-embed/package.json), and " +
-      "this document's own Phase 3 task list records publishing the other name to " +
-      "npm as future work. A self-contained paragraph that an assistant will quote " +
-      "as an install command, and that fails for whoever runs it, is exactly the " +
-      "defect `tests/site_claims.test.mjs` guards the landing page against. The " +
-      "architecture is worth publishing once the install line names a package that " +
-      "exists; reported for the owner to file rather than edited here.",
+      "ONE blocker left, and it is not the one that put it here. It was withheld " +
+      "because its overview told a reader, in the present tense, to `npm install " +
+      "@casualoffice/document-runtime` — a package that does not exist. That is " +
+      "FIXED (2026-09-27): the install line now names `@casualoffice/opendoc-embed`, " +
+      "which ships, and marks the other name as the future full-runtime package it " +
+      "is. What still refuses it is this generator's own head check: the heading " +
+      "makes an 85-character page title against the site's 20-70, and an 85-character " +
+      "title truncates in a search result. Retitling somebody else's architecture " +
+      "document is an authoring decision, not a publishing one, so it is reported " +
+      "rather than done here — `109` HF-202. Shorten the heading and this publishes " +
+      "with no other change.",
   },
   {
     source: "docs/40-FONT-MANAGEMENT-DESIGN.md",
