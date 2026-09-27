@@ -224,7 +224,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  ceiling to 16,589 underneath it. That is the merge trap the notes above record
  *  three times, and it is why this number is a measurement of the merged file and
  *  never arithmetic on two branches. */
-/** Lowered to 16,559 by the version history UI (`docs/139`, `docs/140`; HF-068 /
+/** Lowered to 16,545 by the version history UI (`docs/139`, `docs/140`; HF-068 /
  *  `105` OO-004). The file was AT its ceiling with zero slack again, and the
  *  surface needed lines for the preview swap, the store's four seams and the
  *  command — so THREE extractions paid for it, every one of them worth having on
@@ -242,7 +242,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  lowered this number to 16,574 underneath the branch. Carrying the branch's own
  *  earlier figure forward would have been arithmetic on two branches' numbers,
  *  which the note above says is always wrong. */
-const MAIN_JS_LINE_CEILING = 16559;
+const MAIN_JS_LINE_CEILING = 16545;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

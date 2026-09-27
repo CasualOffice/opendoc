@@ -3130,7 +3130,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
     railOutline.disabled = false;
     railPages.disabled = false;
-    reflectVersionEntry();
+    versionHistory.reflect();
     populateStyles();
     populateTableStyles();
     dropEl.hidden = true;
@@ -16192,8 +16192,6 @@ async function showVersionPreview(previewDoc) {
  *  one user action, one point in the timeline. */
 let activatingRestore = false;
 
-const viewVersionsBtn = document.getElementById("viewVersionsBtn");
-
 const versionHistory = createVersionHistory({
   parse: (bytes) => open(bytes),
   showPreview: (previewDoc) => showVersionPreview(previewDoc),
@@ -16207,11 +16205,10 @@ const versionHistory = createVersionHistory({
     } finally {
       activatingRestore = false;
     }
-    // Restored content is Edited/Unsaved until the host saves it (`docs/139`
-    // §8.5 step 7). `openBytes` re-baselines dirty tracking onto the bytes it
-    // opened, and for a restore that baseline is a lie: the file on disk is
-    // still the old one. Same flag as a recovered draft, because it is the same
-    // fact — this document has never been written out anywhere.
+    // Edited/Unsaved until the host saves it (`docs/139` §8.5 step 7):
+    // `openBytes` re-baselines dirty tracking onto the bytes it opened, and for a
+    // restore that baseline is a lie — the file on disk is still the old one.
+    // Same flag as a recovered draft, because it is the same fact.
     restoredFromDraft = true;
     setDocumentState("edited");
   },
@@ -16220,7 +16217,11 @@ const versionHistory = createVersionHistory({
     name: currentName,
     docKey: draftDocKey,
     revision: revisionUnreadable ? null : currentRevision,
-    engine: engineVersion(),
+    // Only with a document, and that guard is load-bearing: `applySettings` asks
+    // this for `unavailableReason` at module init, BEFORE `boot()` has awaited
+    // `init()`, and `engineVersion()` on an uninstantiated wasm module throws
+    // `__wbindgen_add_to_stack_pointer` of undefined and kills boot outright.
+    engine: doc ? engineVersion() : "",
     actor: settings.authorName.trim(),
     hasDocument: Boolean(doc),
   }),
@@ -16234,23 +16235,8 @@ const versionHistory = createVersionHistory({
     // mutually exclusive for the reason Outline and Pages are: the canvas is
     // never squeezed from both sides at once.
     if (isOpen && !reviewSidebar.hidden) toggleReview(false);
-    viewVersionsBtn?.setAttribute("aria-pressed", String(isOpen));
   },
 });
-
-viewVersionsBtn?.addEventListener("click", () => void versionHistory.toggle());
-
-/** The View band's entry: enabled, or DISABLED WITH THE REASON. One function,
- *  called from the three moments the answer can change — a document opening,
- *  Settings changing, and the language changing (a reason in the previous
- *  language is a reason nobody asked for). O(1). */
-function reflectVersionEntry() {
-  if (!viewVersionsBtn) return;
-  const reason = versionHistory.unavailableReason();
-  viewVersionsBtn.disabled = Boolean(reason);
-  viewVersionsBtn.title = reason || t("versionHistory.command");
-  versionHistory.reflect();
-}
 
 /**
  * Pushes the host's reviewer identity into the open document through the
@@ -16304,7 +16290,7 @@ function applySettings() {
   // Version history rides on the autosave switch (ADR-038 / `docs/139` §18
   // question 2: one switch must not promise what the other has stopped doing),
   // so both switches and the retention numbers change what this entry says.
-  reflectVersionEntry();
+  versionHistory.reflect();
   if (spellCheckToggle) spellCheckToggle.checked = settings.spellCheck !== false;
   if (grammarCheckToggle) grammarCheckToggle.checked = settings.grammarCheck !== false;
   applyActiveAuthorToDocument();
@@ -16420,7 +16406,7 @@ void startLocalisation({
     // The timeline's rows, day headings and disclosure are all script-built from
     // locale-shaped values, and the View entry's disabled reason is a sentence —
     // so this panel is one of the surfaces a relabel has to reach.
-    reflectVersionEntry();
+    versionHistory.reflect();
   },
 });
 

@@ -146,6 +146,10 @@ export function createVersionHistory({
   const policyEl = document.getElementById("versionPanelPolicy");
   const namedOnlyBox = document.getElementById("versionNamedOnly");
   const closeBtn = document.getElementById("versionPanelClose");
+  // The View band's entry. This module owns its pressed state and its disabled
+  // reason, so it owns the element: two owners of one button is how a control
+  // comes to say one thing and do another.
+  const railButton = document.getElementById("viewVersionsBtn");
   const banner = document.getElementById("versionPreviewBanner");
   const bannerText = document.getElementById("versionPreviewBannerText");
   const bannerBack = document.getElementById("versionPreviewBack");
@@ -745,6 +749,7 @@ export function createVersionHistory({
     if (!panel || isOpen()) return;
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel.hidden = false;
+    railButton?.setAttribute("aria-pressed", "true");
     onOpenChange(true);
     await refresh();
     body?.focus();
@@ -756,6 +761,7 @@ export function createVersionHistory({
     if (!panel || !isOpen()) return;
     await closePreview();
     panel.hidden = true;
+    railButton?.setAttribute("aria-pressed", "false");
     onOpenChange(false);
     const back = returnFocus;
     returnFocus = null;
@@ -786,6 +792,7 @@ export function createVersionHistory({
   });
 
   closeBtn?.addEventListener("click", () => void close());
+  railButton?.addEventListener("click", () => void toggle());
   bannerBack?.addEventListener("click", () => void closePreview());
   namedOnlyBox?.addEventListener("change", () => renderList());
   actions.restore?.addEventListener("click", () => void queue(() => restore(selectedId)));
@@ -868,13 +875,27 @@ export function createVersionHistory({
       });
     },
 
-    /** Settings or the locale changed: the capture interval, the row words and
-     *  the disclosure all follow. The rows are rebuilt rather than left stale
-     *  because their day headings, origins and timestamps are all locale-shaped
-     *  — a panel that stayed in the previous language would be the one surface
-     *  the relabel missed. O(rows). */
+    /**
+     * A document opened, Settings changed, or the locale changed: the capture
+     * interval, the ribbon entry, the row words and the disclosure all follow.
+     *
+     * The ribbon entry is reflected HERE rather than in `main.js` because this
+     * module already owns that button's pressed state, and "enabled, or disabled
+     * with the reason" is the same question `unavailableReason` answers for the
+     * File row and the palette — one function, so the three surfaces cannot come
+     * to disagree about why version history is unavailable.
+     *
+     * The rows are rebuilt rather than left stale because their day headings,
+     * origins and timestamps are all locale-shaped: a panel that stayed in the
+     * previous language would be the one surface a relabel missed. O(rows).
+     */
     reflect() {
       capturePolicy.intervalMs = retention().intervalMs;
+      const reason = unavailableReason();
+      if (railButton) {
+        railButton.disabled = Boolean(reason);
+        railButton.title = reason || t("versionHistory.command");
+      }
       if (!isOpen()) return;
       renderList();
       void reflectSummary();
