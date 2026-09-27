@@ -1,4 +1,5 @@
-// The five cheap table gestures from `docs/141`, driven as gestures.
+// The six cheap table rows from `docs/141` — TBL-01 … TBL-05 and TBL-08's interim
+// refusal — driven as gestures.
 //
 // Every assertion here is about the DOCUMENT or about what a person can see, not
 // about a function returning Ok. That distinction is the reason this file exists:
