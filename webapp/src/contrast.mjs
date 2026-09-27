@@ -285,20 +285,31 @@ export function auditPalette(palette) {
 }
 
 /** The nearest value to `ink` that clears `floor` against `ground`, kept on the
- *  same hue by scaling the channels towards black or towards white — whichever
- *  direction the ground is not. Null when even the extreme fails, which happens
- *  on a mid-grey ground and is worth saying rather than suggesting `#000000`
+ *  same hue by scaling the channels towards black or towards white.
+ *
+ *  BOTH directions are walked, in step, and the first hit wins — so the answer is
+ *  the nearest passing value rather than the nearest value in a direction guessed
+ *  from the ground's luminance. Guessing was wrong in a case that matters: white
+ *  ink on a mid-bright brand orange (`#f5a524`, luminance just under the 0.5
+ *  midpoint) was walked towards white, where it already was, so the refusal
+ *  reported "no value on this hue" while `#000000` on that orange clears 10:1.
+ *  A refusal that withholds the fix a host needs is a refusal that gets patched
+ *  around.
+ *
+ *  Null only when NEITHER extreme passes, which is real — a mid-grey ground has
+ *  no legible ink at 4.5:1 — and is worth saying rather than suggesting a value
  *  that also fails. */
 function nearestLegible(ink, ground, floor) {
-  const towardsWhite = relativeLuminance(ground) < 0.5;
   for (let step = 1; step <= 256; step += 1) {
     const t = step / 256;
-    const candidate = {
-      r: ink.r + (towardsWhite ? (255 - ink.r) * t : -ink.r * t),
-      g: ink.g + (towardsWhite ? (255 - ink.g) * t : -ink.g * t),
-      b: ink.b + (towardsWhite ? (255 - ink.b) * t : -ink.b * t),
-    };
-    if (contrastRatio(candidate, ground) >= floor) return toHex(candidate);
+    for (const towardsWhite of [false, true]) {
+      const candidate = {
+        r: ink.r + (towardsWhite ? (255 - ink.r) * t : -ink.r * t),
+        g: ink.g + (towardsWhite ? (255 - ink.g) * t : -ink.g * t),
+        b: ink.b + (towardsWhite ? (255 - ink.b) * t : -ink.b * t),
+      };
+      if (contrastRatio(candidate, ground) >= floor) return toHex(candidate);
+    }
   }
   return null;
 }

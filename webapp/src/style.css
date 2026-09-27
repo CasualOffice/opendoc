@@ -9112,7 +9112,7 @@ body:not(.doc-loaded) .drop-title {
   border-color: var(--accent, var(--line));
 }
 
-/* ---- Region composition (docs/126 phase 3, ADR-037) ------------------------
+/* ---- Region composition (docs/126 phase 3, ADR-038) ------------------------
    A host chooses which chrome its container paints, and a region a role has no
    business with is ABSENT, not dimmed. `docs/126`'s container policy draws the
    line: "never, for you" is composition and is silent; "not right now" is state
