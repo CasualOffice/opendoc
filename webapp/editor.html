@@ -670,7 +670,6 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.tableContentsNeedsField.title" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="A table of contents needs field evaluation and update, which the engine does not expose yet" aria-label="Table of contents" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
               <button data-i18n-title="panelReferences.createRenameGoBookmark.title" data-i18n-label="panelReferences.bookmark.label" id="refBookmarkBtn" type="button" class="fmt fmt-big" title="Create, rename, or go to a bookmark" aria-label="Bookmark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">bookmark</span><span data-i18n="refBookmarkBtn.bookmarks" class="fmt-big-label">Bookmarks</span></button>
-              <button data-i18n-title="panelReferences.crossReferenceNeedsRef.title" data-i18n-label="panelReferences.crossReference.label" id="refCrossRefBtn" type="button" class="fmt fmt-big" title="A cross-reference needs the REF field engine, which does not exist yet" aria-label="Cross-reference" disabled><span class="ms" aria-hidden="true">swap_calls</span><span data-i18n="refCrossRefBtn.crossReference" class="fmt-big-label">Cross-reference</span></button>
             </div>
             <span data-i18n="panelReferences.navigation" class="rgroup-label">Navigation</span>
           </div>
@@ -680,6 +679,24 @@
               <button data-i18n-title="panelReferences.insertEndnote.title" data-i18n-label="panelReferences.endnote.label" id="refEndnoteBtn" type="button" class="fmt fmt-big" title="Insert an endnote" aria-label="Endnote" disabled><span class="ms" aria-hidden="true">menu_book</span><span data-i18n="refEndnoteBtn.endnote" class="fmt-big-label">Endnote</span></button>
             </div>
             <span data-i18n="panelReferences.notes" class="rgroup-label">Notes</span>
+          </div>
+          <!-- Word's References ▸ Captions group, which is where Insert Caption
+               and Cross-reference belong together: a cross-reference is the
+               thing a caption exists to be referred to by, and the pair shared
+               a group in Word for that reason. Cross-reference moved here out of
+               Navigation, where it had been parked while it was unavailable. -->
+          <div class="rgroup" data-group="ref-captions" data-ribbon-pinned>
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelReferences.insertCaption.title" data-i18n-label="panelReferences.insertCaption.label" id="refCaptionBtn" type="button" class="fmt fmt-big" title="Insert a numbered caption for a picture, table or equation" aria-label="Insert caption" aria-haspopup="dialog" aria-controls="captionDialog" disabled><span class="ms" aria-hidden="true">closed_caption</span><span data-i18n="tablePropertiesPanel.caption" class="fmt-big-label">Caption</span></button>
+              <button data-i18n-title="panelReferences.insertCrossReference.title" data-i18n-label="panelReferences.crossReference.label" id="refCrossRefBtn" type="button" class="fmt fmt-big" title="Insert a reference to a caption, heading, bookmark or note" aria-label="Cross-reference" aria-haspopup="dialog" aria-controls="crossRefDialog" disabled><span class="ms" aria-hidden="true">swap_calls</span><span data-i18n="refCrossRefBtn.crossReference" class="fmt-big-label">Cross-reference</span></button>
+              <!-- Word has no equivalent button, and does not need one: it
+                   recomputes fields on print, on F9 and on open. Ours deliberately
+                   do NOT renumber on a Backspace, because that would make a
+                   keystroke O(document) — so the product has to offer the fix, or
+                   "dirty rather than silently stale" is just "stale". -->
+              <button data-i18n-title="panelReferences.updateCaptionNumbers.title" data-i18n-label="panelReferences.updateCaptionNumbers.label" id="refUpdateCaptionsBtn" type="button" class="fmt fmt-big" title="Renumber every caption whose number is out of date" aria-label="Update caption numbers" disabled><span class="ms" aria-hidden="true">format_list_numbered</span><span data-i18n="panelReferences.renumber" class="fmt-big-label">Renumber</span></button>
+            </div>
+            <span data-i18n="panelReferences.captions" class="rgroup-label">Captions</span>
           </div>
           <div class="rgroup" data-group="ref-fields">
             <div class="rgroup-ctl">
@@ -1394,6 +1411,147 @@
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="dropCapCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" type="submit" form="dropCapForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- References ▸ Insert caption. Word's own dialog, in Word's order, and
+         ONLYOFFICE's `CaptionDialog.js` is the same shape: caption text, the
+         label combo with New/Delete beside it, position, exclude-label,
+         numbering format, then the chapter-number switch with its heading level
+         and separator.
+
+         ONE DELIBERATE ADDITION. Word's Caption box is PREFILLED with "Figure 1"
+         and the author types after it, so the composed caption is visible while
+         they type; `CaptionDialog.js:206-212` even pins the caret behind that
+         prefix so it cannot be edited. Our field holds only the author's own
+         text, which is a better input (nothing to protect, nothing to delete by
+         accident) and a worse display: the label, the number, the format and the
+         chapter switch would all be invisible until after the insert. So the
+         whole caption is shown live in `#captionPreview` instead.
+
+         ONE DELIBERATE DIVERGENCE. ONLYOFFICE disables Position when nothing is
+         selected (`CaptionDialog.js:148`) because its caption properties need an
+         object. The engine's `insertCaption` takes the position for any block,
+         so above/below is meaningful for the caret's own paragraph too and the
+         control stays live. -->
+    <div id="captionDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="captionTitle" aria-describedby="captionDescription">
+      <section class="dialog-card caption-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="captionDialog.insertCaption" id="captionTitle">Insert caption</h2>
+              <p data-i18n="captionDialog.numberedLabelItem" id="captionDescription">A numbered label for the picture, table or paragraph you are captioning.</p>
+            </div>
+          </div>
+          <button data-i18n-title="fieldDialog.close.title" data-i18n-label="captionDialog.closeInsertCaption.label" id="captionClose" type="button" class="dialog-close" title="Close" aria-label="Close insert caption">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <form id="captionForm" class="dialog-body caption-body">
+          <label data-i18n="captionDialog.captionText" class="dialog-field">Caption text<input data-i18n-placeholder="captionDialog.wiringDiagram.placeholder" id="captionText" type="text" maxlength="255" placeholder=": Wiring diagram" autocomplete="off" /></label>
+          <div class="dialog-field-grid">
+            <label data-i18n="captionDialog.label" class="dialog-field">Label<select id="captionLabel" class="dialog-select"></select></label>
+            <label data-i18n="layoutPositionBtn.position" class="dialog-field">Position<select id="captionPosition" class="dialog-select">
+              <option data-i18n="captionDialog.belowSelectedItem" value="below">Below selected item</option>
+              <option data-i18n="captionDialog.aboveSelectedItem" value="above">Above selected item</option>
+            </select></label>
+          </div>
+          <div class="caption-label-actions">
+            <button data-i18n="captionDialog.newLabel" id="captionNewLabelBtn" type="button" class="dialog-button">New label…</button>
+            <button data-i18n="captionDialog.deleteLabel" id="captionDeleteLabelBtn" type="button" class="dialog-button">Delete label</button>
+          </div>
+          <div id="captionNewLabelRow" class="bookmark-add-row" hidden>
+            <input data-i18n-label="captionDialog.newLabelName.label" id="captionNewLabelInput" type="text" maxlength="64" autocomplete="off" aria-label="New label name" />
+            <button data-i18n="bookmarkAddForm.add" id="captionAddLabelBtn" type="button" class="dialog-button">Add</button>
+          </div>
+          <label class="dialog-check"><input id="captionExcludeLabel" type="checkbox" /><span data-i18n="captionDialog.excludeLabelFromCaption">Exclude label from caption</span></label>
+          <label data-i18n="lineNumbersMenu.numbering" class="dialog-field">Numbering<select id="captionNumberFormat" class="dialog-select">
+            <option data-i18n="captionDialog.numberFormat.arabic" value="arabic">1, 2, 3, …</option>
+            <option data-i18n="captionDialog.numberFormat.lowerLetter" value="lowerLetter">a, b, c, …</option>
+            <option data-i18n="captionDialog.numberFormat.upperLetter" value="upperLetter">A, B, C, …</option>
+            <option data-i18n="captionDialog.numberFormat.lowerRoman" value="lowerRoman">i, ii, iii, …</option>
+            <option data-i18n="captionDialog.numberFormat.upperRoman" value="upperRoman">I, II, III, …</option>
+          </select></label>
+          <label class="dialog-check"><input id="captionIncludeChapter" type="checkbox" /><span data-i18n="captionDialog.includeChapterNumber">Include chapter number</span></label>
+          <div class="dialog-field-grid">
+            <label data-i18n="captionDialog.chapterStartsWithStyle" class="dialog-field">Chapter starts with style<select id="captionChapterLevel" class="dialog-select" disabled></select></label>
+            <label data-i18n="captionDialog.useSeparator" class="dialog-field">Use separator<select id="captionSeparator" class="dialog-select" disabled>
+              <option data-i18n="captionDialog.separator.hyphen" value="hyphen">- (hyphen)</option>
+              <option data-i18n="captionDialog.separator.period" value="period">. (period)</option>
+              <option data-i18n="captionDialog.separator.colon" value="colon">: (colon)</option>
+              <option data-i18n="captionDialog.separator.emDash" value="emDash">— (long dash)</option>
+              <option data-i18n="captionDialog.separator.enDash" value="enDash">– (dash)</option>
+            </select></label>
+          </div>
+          <p data-i18n="captionDialog.chapterNumberComesFrom" id="captionChapterNote" class="dialog-field-note" hidden>The chapter number is taken from the nearest heading of that level, so the preview shows # in its place.</p>
+          <p class="caption-preview-row"><span data-i18n="captionDialog.preview" class="caption-preview-label">Preview</span><output id="captionPreview" class="caption-preview"></output></p>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="linkDialog.cancel" id="captionCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="appMenuBar.insert" id="captionInsert" type="submit" form="captionForm" class="dialog-button dialog-button-primary">Insert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- References ▸ Cross-reference. ONLYOFFICE's `CrossReferenceDialog.js` is
+         Word's dialog and this is the same one: the reference type, the
+         "Insert reference to" combo whose options change with that type
+         (`CrossReferenceDialog.js:289-350`), insert-as-hyperlink checked by
+         default (`:152-156`, `value: true`), the include-above/below switch, and
+         the "For which …" target list whose heading changes with the type.
+
+         Insert does NOT close the dialog. Word's does not, and neither does
+         ONLYOFFICE's (`insertReference()` at `:238` never calls `close()`),
+         because a document usually needs several references in a row.
+
+         "Include above/below" (`:158-161`) is live exactly where Word offers it
+         — the rule is `aboveBelowEnabled` in `cross_reference_model.mjs` — and
+         greyed with its own reason where Word does not, or where this build's
+         `insertCrossReference` does not yet carry the argument.
+
+         "Separate numbers with" (`:163-176`) is ABSENT. It applies only to a
+         full-context paragraph number, the engine's insert takes no separator,
+         and nothing else in this dialog hints that one exists — an absent option
+         is not a dead control. -->
+    <div id="crossRefDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="crossRefTitle" aria-describedby="crossRefDescription">
+      <section class="dialog-card crossref-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="panelReferences.crossReference.label" id="crossRefTitle">Cross-reference</h2>
+              <p data-i18n="crossRefDialog.pointSomethingElse" id="crossRefDescription">Point at a caption, heading, bookmark or note elsewhere in this document.</p>
+            </div>
+          </div>
+          <button data-i18n-title="fieldDialog.close.title" data-i18n-label="crossRefDialog.closeCrossReference.label" id="crossRefClose" type="button" class="dialog-close" title="Close" aria-label="Close cross-reference">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body crossref-body">
+          <div class="dialog-field-grid">
+            <label data-i18n="crossRefDialog.referenceType" class="dialog-field">Reference type<select id="crossRefType" class="dialog-select"></select></label>
+            <label data-i18n="crossRefDialog.insertReferenceTo" class="dialog-field">Insert reference to<select id="crossRefTo" class="dialog-select"></select></label>
+          </div>
+          <label class="dialog-check"><input id="crossRefHyperlink" type="checkbox" checked /><span data-i18n="crossRefDialog.insertAsHyperlink">Insert as hyperlink</span></label>
+          <label class="dialog-check" id="crossRefAboveBelowRow"><input id="crossRefAboveBelow" type="checkbox" disabled /><span data-i18n="crossRefDialog.includeAboveBelow">Include above/below</span></label>
+          <div class="crossref-targets">
+            <!-- Filled by the module: the heading changes with the reference
+                 type ("For which heading", "For which footnote"), so its English
+                 is a script-side key rather than markup that would be overwritten
+                 the moment the dialog opens. -->
+            <span id="crossRefWhich" class="bookmark-list-head"></span>
+            <ul id="crossRefList" class="bookmark-list crossref-list" role="listbox" aria-labelledby="crossRefWhich"></ul>
+            <p data-i18n="crossRefDialog.nothingOfThisType" id="crossRefEmpty" class="bookmark-empty" hidden>Nothing of this type in the document yet.</p>
+          </div>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="crossRefDialog.oneUndoableActionEach" class="dialog-note">One undoable action each; the dialog stays open.</span>
+          <div class="dialog-actions">
+            <button data-i18n="fieldDialog.close.title" id="crossRefDone" type="button" class="dialog-button">Close</button>
+            <button data-i18n="appMenuBar.insert" id="crossRefInsert" type="button" class="dialog-button dialog-button-primary" disabled>Insert</button>
           </div>
         </footer>
       </section>

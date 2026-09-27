@@ -66,6 +66,34 @@ const DIALOGS = [
       await page.locator(".cmd-item", { hasText: /drop cap/i }).first().click();
     },
   },
+  {
+    id: "captionDialog",
+    name: "Insert caption",
+    // The TALLEST state, deliberately: Word's dialog has eight rows and ours adds
+    // a preview line and a chapter note, and the chapter note only appears once
+    // "Include chapter number" is on. Measuring the default state would measure
+    // the easy one — the same reason the Watermark row above checks its text half.
+    async open(page) {
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refCaptionBtn").click();
+      await page.locator("#captionIncludeChapter").check();
+      await page.locator("#captionNewLabelBtn").click();
+    },
+  },
+  {
+    id: "crossRefDialog",
+    name: "Cross-reference",
+    // A heading reference: six options in the combo and a target list with rows
+    // in it, which is the state that has height. The blank-document fixture has
+    // headings, so the list is not empty.
+    async open(page) {
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refCrossRefBtn").click();
+      await page.locator("#crossRefType").selectOption("k:heading");
+    },
+  },
 ];
 
 for (const dialog of DIALOGS) {

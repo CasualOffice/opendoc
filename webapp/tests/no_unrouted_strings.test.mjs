@@ -48,11 +48,39 @@ const CEILINGS = new Map([
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  // 338 after `109` UX-005: the table-style chooser's "No table style" became one
-  // `NO_TABLE_STYLE` constant serving both the chooser row and the new palette
-  // row, so one meaning stopped being two literals. Lowered rather than left at
-  // 342, because slack nobody reclaims is room for the file to grow back free.
-  ["src/main.js", 338],
+  // 342 → 338 in `109` UX-005: the table-style chooser's "No table style" became
+  // one `NO_TABLE_STYLE` constant serving both the chooser row and the new palette
+  // row, so one meaning stopped being two literals.
+  //
+  // 338 → the number below in OO-005 (captions and cross-references). Out: the
+  // object right-click menu's nine labels, which moved with the menu itself (next
+  // entry); the Outline panel's empty sentence and the cross-reference command's
+  // "not possible yet" reason, both routed now; and the right-click menu's own
+  // Increase/Decrease indent rows, which now call the Home band's existing keys —
+  // those rows are built on right-click, long after the catalogue is installed, so
+  // unlike the surface table they CAN call `t()`. In: the References palette rows'
+  // "Insert caption" and "Update caption numbers", because that table's labels are
+  // read at import, before a catalogue exists, so English there is the same
+  // deliberate debt every other row in it carries.
+  //
+  // MEASURED from the rebased file. The first attempt at this number was 325,
+  // reached by subtracting both lanes' reclaims from 342 — and this gate rejected
+  // it: the real count is 327, because `main` also brought in two draft-recovery
+  // template literals (the "Restore …" and "Delete the recovered draft of …"
+  // confirmations) that neither branch's arithmetic knew about. That is the merge
+  // trap `module_seams.test.mjs` records, caught by the guard rather than by CI,
+  // and it is why this number is a measurement and never a calculation.
+  //
+  // 327 is still a real lowering: `main` had 338 and this branch had 328. The two
+  // draft-recovery strings are pre-existing debt that became visible here, not debt
+  // this change added, and they are left for whoever owns that dialog.
+  ["src/main.js", 327],
+  // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
+  // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
+  // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here
+  // with the menu builder, so this is the same debt in a new place, not a new
+  // debt — main.js came down by more than nine in the same commit.
+  ["src/object_context_menu.mjs", 9],
   ["src/pages_panel.mjs", 4],
   // The sixteen highlight labels ("Bright green", "Gray 50%", …). They were
   // sixteen of `main.js`'s 364 and moved here with the table, so this is the

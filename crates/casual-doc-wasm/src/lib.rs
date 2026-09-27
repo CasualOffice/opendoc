@@ -102,6 +102,11 @@ use wasm_bindgen::prelude::*;
 
 mod window;
 
+// Captions and cross-references (`docs/105` OO-005). Its own module rather than
+// more of this file: it is one feature with one document walk, and this file is
+// already 35k lines and is owned by other lanes.
+mod references;
+
 use window::BodyLayout;
 use window::WindowedBody;
 
@@ -22315,9 +22320,26 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // position is a neutral placeholder.
         Operation::CreateBookmark { start, .. } => *start,
         Operation::DeleteBookmark { .. } | Operation::RenameBookmark { .. } => Pos::new(doc_id, 0),
-        // A field is zero-width in the edit anchor space; the caret rests at the
-        // insertion point (immediately before the new field).
-        Operation::InsertField { at, .. } => *at,
+        // A field is NOT zero-width in the edit anchor space — this comment used to
+        // say it was, and that was the whole defect. A field's cached result is part
+        // of the paragraph's plain text (`node_plain_text` recurses into
+        // `Field::inlines`), so the caret rests AFTER it, which is where a reader
+        // who just inserted a field expects to keep typing and what Word does.
+        //
+        // Resting it at `at` put it immediately BEFORE the new field. That was
+        // invisible for as long as a field's own glyphs carried no caret stops —
+        // the caret fell back to some other position in the line and happened to
+        // land somewhere plausible — and `insert-surface.spec.mjs`'s "leaves the
+        // caret immediately after the field" assertion passed while asserting the
+        // opposite of what the code did. It became visible the moment a cached-result
+        // field started flowing as ordinary text (`105` OO-005), which is the right
+        // way round: the layout now agrees with the model, and the model always said
+        // those bytes were there.
+        Operation::InsertField { at, field } => Pos::new(
+            at.node,
+            at.offset
+                .saturating_add(casual_doc_layout::flow::node_plain_text(&field.inlines).len() as u32),
+        ),
         // `RemoveField` only ever runs as an `InsertField` inverse (undo); rest the
         // caret where the removed field was — its inverse carries that position.
         Operation::RemoveField { .. } => match inverse {
@@ -25946,9 +25968,23 @@ mod tests {
         const CEILING: usize = 16;
 
         type Read = fn(&WasmDocument);
-        let reads: [(&str, Read); 5] = [
+        let reads: [(&str, Read); 8] = [
             ("documentOutline", |d| {
                 let _ = d.document_outline();
+            }),
+            // The three reads captions and cross-references add (`105` OO-005).
+            // They enumerate the whole document by definition, which is exactly
+            // why they belong in this table and not in a guard of their own.
+            ("captionEntries — the cross-reference picker", |d| {
+                let _ = d.caption_entries();
+            }),
+            ("captionLabels — the Insert Caption dialog", |d| {
+                let _ = d.caption_labels();
+            }),
+            ("referenceTargets — every reference type", |d| {
+                for kind in ["heading", "bookmark", "footnote", "endnote", "Figure"] {
+                    let _ = d.reference_targets(kind);
+                }
             }),
             ("accessibilityTreeWindow", |d| {
                 let _ = d.accessibility_tree_window(0, 600);

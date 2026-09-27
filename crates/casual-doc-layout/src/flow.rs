@@ -3471,10 +3471,39 @@ fn collect_items_with_measure<'a>(
             InlineNode::Field(field) => {
                 // A legacy checkbox form field (`w:ffData/w:checkBox`) paints a box
                 // glyph reflecting its state — like Word (and the SDT checkbox
-                // above) — rather than its empty text result. Other field kinds
-                // flow their (recomputable) cached value.
+                // above) — rather than its empty text result.
                 if let Some(glyph) = form_checkbox_glyph_run(field, ctx) {
                     out.push(FlowItem::Run(glyph));
+                } else if matches!(field_kind(&field.instruction), FieldKind::Passthrough) {
+                    // A field the post-pagination field pass does NOT recompute
+                    // (everything but `PAGE`/`NUMPAGES`) has a cached result that is
+                    // already final, and that result IS the paragraph's model text
+                    // (`append_node_plain_text` above reports it). So it flows as
+                    // ordinary inline content, through the same recursion as a
+                    // hyperlink's or a revision's children, rather than as a
+                    // [`FlowItem::Field`] marker.
+                    //
+                    // Two defects this closes, both of which only bite once a field
+                    // appears in body text rather than in a header:
+                    //
+                    // 1. **A fielded paragraph does not soft-wrap.** Any
+                    //    `FlowItem::Field` routes the whole paragraph to
+                    //    `shape_fielded_paragraph`, which lays out one line per
+                    //    hard break by construction. A caption — `Figure ` + a `SEQ`
+                    //    field + the author's sentence — therefore ran off the page
+                    //    instead of wrapping. Measured before this change: one line
+                    //    for a caption whose text needs three.
+                    // 2. **A cached result that is not a run or a tab was dropped.**
+                    //    The marker's value comes from `cached_result_text`, which
+                    //    handles only `Run` and `Tab`; a field whose result carried a
+                    //    symbol, a break or a drawing lost it. The recursion handles
+                    //    every inline kind because it is the same code the paragraph
+                    //    itself uses.
+                    //
+                    // `PAGE`/`NUMPAGES` still become markers: their value is not
+                    // model text and is recomputed per page, so they cannot be
+                    // pre-shaped (see `FieldAnchor::atomic`).
+                    collect_items_with_measure(&field.inlines, out, shaper, width, ctx, intrinsic);
                 } else {
                     out.push(field_item(field, ctx));
                 }

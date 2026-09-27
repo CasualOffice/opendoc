@@ -149,8 +149,19 @@ const SRC = new URL("../src/", import.meta.url);
  *  the others were about to change — the merge trap the notes above record three
  *  times. With those merged, 16,779 is the merged measurement and 16,721 is this
  *  round's. Leaving the 58 lines of slack would hand the next change free growth,
- *  which is the one thing a ratchet exists to refuse. */
-const MAIN_JS_LINE_CEILING = 16721;
+ *  which is the one thing a ratchet exists to refuse.
+ *  Lowered to 16,629 by OO-005 (captions and cross-references). The file was AT
+ *  its ceiling with ZERO slack and the round needed a References surface row, two
+ *  dialog hosts and a shared object-menu row builder, so it paid with two
+ *  extractions rather than with whitespace — the mistake the 17,054 note above
+ *  records. What came out: the 156-line OBJECT right-click menu, which reached
+ *  the application through nothing but functions and so became a pure module
+ *  with its own node test (it had none), and the Outline panel's row builder,
+ *  which is the same enumeration the References tab is about and took its one
+ *  English sentence into the catalogue on the way. Both are worth more than the
+ *  lines: 156 lines of menu policy now have a test, and `buildOutline` is
+ *  answerable without a browser. */
+const MAIN_JS_LINE_CEILING = 16629;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -169,6 +180,18 @@ const PURE_MODULES = [
   // half — walking `data-i18n` attributes — is `localize.mjs`.
   "i18n.mjs",
   "contrast.mjs",
+  // The caption / cross-reference VOCABULARY: which "Insert reference to"
+  // options a reference type offers, when Word offers "Include above/below",
+  // and what a caption will read as. Word's own rules, with no widget attached,
+  // so `cross_reference_model.test.mjs` can drive every type in node — and
+  // ONLYOFFICE carries the same mapping as a switch inside a Backbone view,
+  // where nothing can test it.
+  "cross_reference_model.mjs",
+  // The object right-click menu. It builds plain command descriptors and reaches
+  // the application only through its `io`, which is what lets
+  // `object_context_menu.test.mjs` assert what a picture, a shape and a text box
+  // offer, in each review mode, without a browser.
+  "object_context_menu.mjs",
   "edit_errors.mjs",
   // The field vocabulary: the kind table plus the host-side result formatter.
   // No DOM and no engine, so "what does a date field cache" is a node question.

@@ -77,4 +77,59 @@ export const EN_STRINGS = Object.freeze({
   // application. A reason, not a silent absence — the UI floor forbids a
   // control that is simply missing with no explanation.
   "capability.embedded": "This editor is embedded in another application",
+  // The Outline panel's empty state. It moved into the catalogue when the panel's
+  // rows moved to `outline_panel.mjs`: the module takes its vocabulary as input,
+  // so this is the one place the sentence is written down.
+  "outline.noHeadings": "No headings yet. Apply a Heading style to build an outline.",
+  // References ▸ Insert caption (OO-005). The dialog's own labels are in the
+  // markup beside their English; these are the ones a script composes.
+  "captionDialog.headingLevel": "Heading {level}",
+  "captionDialog.labelNameRequired": "Type a name for the new label.",
+  "captionDialog.labelNotRemovable":
+    "That label is either built in or already used by a caption in this document.",
+  "caption.inserted": "Caption inserted.",
+  // References ▸ Cross-reference. The reference TYPES and the "For which …"
+  // heading are script-built because the type list includes one row per caption
+  // label the document uses, which is document data rather than chrome.
+  "crossRefDialog.type.heading": "Heading",
+  "crossRefDialog.type.bookmark": "Bookmark",
+  "crossRefDialog.type.footnote": "Footnote",
+  "crossRefDialog.type.endnote": "Endnote",
+  "crossRefDialog.forWhich.caption": "For which caption",
+  "crossRefDialog.forWhich.heading": "For which heading",
+  "crossRefDialog.forWhich.bookmark": "For which bookmark",
+  "crossRefDialog.forWhich.footnote": "For which footnote",
+  "crossRefDialog.forWhich.endnote": "For which endnote",
+  // "Insert reference to". The SAME underlying reference is worded differently
+  // per type, exactly as Word words it — "Heading number" and "Paragraph number"
+  // are one engine value seen from two reference types.
+  "crossRefDialog.refTo.entireCaption": "Entire caption",
+  "crossRefDialog.refTo.labelAndNumber": "Only label and number",
+  "crossRefDialog.refTo.captionText": "Only caption text",
+  "crossRefDialog.refTo.pageNumber": "Page number",
+  "crossRefDialog.refTo.aboveBelow": "Above/below",
+  "crossRefDialog.refTo.headingText": "Heading text",
+  "crossRefDialog.refTo.headingNumber": "Heading number",
+  "crossRefDialog.refTo.headingNumberNoContext": "Heading number (no context)",
+  "crossRefDialog.refTo.headingNumberFullContext": "Heading number (full context)",
+  "crossRefDialog.refTo.bookmarkText": "Bookmark text",
+  "crossRefDialog.refTo.paragraphNumber": "Paragraph number",
+  "crossRefDialog.refTo.paragraphNumberNoContext": "Paragraph number (no context)",
+  "crossRefDialog.refTo.paragraphNumberFullContext": "Paragraph number (full context)",
+  "crossRefDialog.refTo.footnoteNumber": "Footnote number",
+  "crossRefDialog.refTo.endnoteNumber": "Endnote number",
+  // Why "Include above/below" is greyed. Two different reasons, because "Word
+  // does not offer it here" and "the engine cannot do it yet" are not the same
+  // answer and a reader can act on one of them.
+  "crossRefDialog.aboveBelowNotForThis":
+    "Word does not offer above/below for this kind of reference",
+  "crossRefDialog.aboveBelowUnavailable":
+    "Including above/below needs an argument the engine’s insert operation does not take yet",
+  "crossReference.inserted": "Cross-reference inserted.",
+  // References ▸ Update caption numbers, and the one place Insert caption refuses.
+  // Both are DISABLED-STATE reasons, which is why they are sentences a reader can
+  // act on rather than error text.
+  "caption.numbersAlreadyRight": "Every caption already shows the right number",
+  "caption.bodyOnly": "A caption can only go in the document body, not in a header, footer or note",
+  "caption.numbersUpdated": "Caption numbers updated.",
 });
