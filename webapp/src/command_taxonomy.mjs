@@ -183,7 +183,11 @@ export const APP_MENU_SECTIONS = {
     ["table.insert.rowAbove", "table.insert.rowBelow", "table.insert.columnLeft", "table.insert.columnRight"],
     ["table.delete.row", "table.delete.column", "table.delete.table"],
     ["table.select.row", "table.select.column", "table.select.table"],
-    ["table.merge", "table.split"],
+    // Merge, then the two ways out of one. `table.unmerge` is the gesture Word
+    // and Google Docs both put on the right-click menu of a merged cell, and it
+    // had no reachable path at all: the split dialog's smallest legal value is
+    // 1x2, so no number a person could type unmerged a cell (`docs/141` TBL-02).
+    ["table.merge", "table.unmerge", "table.split"],
     ["table.distribute.rows", "table.distribute.columns"],
     ["table.sort.ascending", "table.sort.descending"],
     ["table.cellFormat", "table.properties"],
@@ -225,6 +229,7 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.select.column", "Select column"],
   ["table.select.table", "Select table"],
   ["table.merge", "Merge cells"],
+  ["table.unmerge", "Unmerge cells"],
   ["table.split", "Split cell…"],
   ["table.distribute.rows", "Distribute rows"],
   ["table.distribute.columns", "Distribute columns"],

@@ -34,6 +34,80 @@ export const TABLE_DISTRIBUTE_ACTIONS = Object.freeze({
   columns: (doc, node) => doc.distributeTableColumns(node),
 });
 
+/** A Table-band control's precondition BEYOND "the caret is in a table", by the
+ *  selector that names it, most specific first.
+ *
+ *  `docs/141` TBL-03: band buttons shipped disabled with no stated reason while
+ *  the very same commands explain themselves in the Table menu, so a merged
+ *  table presented a grey Sort button whose tooltip still read "Sort rows
+ *  ascending" — a disabled control with no reason cannot be told from a broken
+ *  one (`SKILL.md` §10). The rules live here, next to the operations they gate,
+ *  rather than as five hand-written loops inside `updateToolbar`.
+ *
+ *  `[data-table-select="column"]` is in this table because the MENU already
+ *  gates `table.select.column` on a regular grid and the band did not — one
+ *  capability answering differently on two surfaces is the parity defect
+ *  `109` UX-005 exists to end, not a separate feature.
+ */
+export const TABLE_BAND_PRECONDITIONS = Object.freeze([
+  ['[data-table-action*="column"]', "regular"],
+  ['[data-table-select="column"]', "regular"],
+  ['[data-table-distribute="rows"]', "rowHeights"],
+  ['[data-table-distribute="columns"]', "regular"],
+  ["[data-table-sort]", "regular"],
+  ["#mergeCellsBtn", "cellSelection"],
+]);
+
+/** Precondition -> the catalogue key for the sentence that explains it.
+ *
+ *  KEYS, not sentences: this module is imported by a unit test with no DOM and
+ *  no catalogue, and the band's reasons have to be the SAME sentences the Table
+ *  menu shows. `en_strings.mjs` holds each of them once. */
+export const TABLE_BAND_REASON_KEYS = Object.freeze({
+  inTable: "table.reason.caretOutsideTable",
+  regular: "table.reason.merged",
+  rowHeights: "table.reason.rowHeights",
+  cellSelection: "table.reason.mergeSelection",
+});
+
+/**
+ * Every button in the band, with whether it is available and — when it is not —
+ * the catalogue key for the reason.
+ *
+ * "The caret is in a table" is checked first and reported first: with the caret
+ * in a paragraph, "Unavailable for merged or spanned tables" would be true of
+ * nothing and would send the reader looking for a merge.
+ *
+ * @param {{querySelectorAll: Function}} root the band element.
+ * @param {{inTable?: boolean, regular?: boolean, rowHeightRule?: string,
+ *          hasCellSelection?: boolean}} context what the caret's table is,
+ *        taken from the ONE `tableInfo` the caller already holds.
+ * @returns {Array<{control: object, enabled: boolean, reasonKey: string}>}
+ *
+ * Complexity: O(controls in the band) — nineteen — and it reads no document.
+ * The caller's single `tableInfo` stays the only engine call on this path.
+ */
+export function tableBandStates(root, context) {
+  const inTable = context.inTable === true;
+  const met = {
+    inTable,
+    regular: context.regular === true,
+    rowHeights: ["exact", "atLeast"].includes(context.rowHeightRule),
+    cellSelection: context.hasCellSelection === true,
+  };
+  return [...root.querySelectorAll("button")].map((control) => {
+    const requires = TABLE_BAND_PRECONDITIONS.find(([selector]) =>
+      control.matches(selector),
+    )?.[1];
+    const unmet = !inTable ? "inTable" : requires && !met[requires] ? requires : "";
+    return {
+      control,
+      enabled: !unmet,
+      reasonKey: unmet ? TABLE_BAND_REASON_KEYS[unmet] : "",
+    };
+  });
+}
+
 /** Wires the band.
  *
  *  Everything the handlers need is injected, so the module never reaches for a

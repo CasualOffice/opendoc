@@ -329,4 +329,38 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.clear.cancel": "Keep the history",
   "versionHistory.clear.done.one": "Deleted {count} version and freed {size}.",
   "versionHistory.clear.done.other": "Deleted {count} versions and freed {size}.",
+
+  // ---- Tables (docs/141) ---------------------------------------------------
+  // The four reasons a Table-band control can be unavailable. They were already
+  // the MENU's sentences, written as literals in `tableToolCommands`, while the
+  // band kept its authored tooltip and explained nothing (TBL-03). One source
+  // for one sentence, so band and menu cannot drift into disagreeing about the
+  // same precondition.
+  "table.reason.caretOutsideTable": "Place the caret in a table",
+  "table.reason.merged": "Unavailable for merged or spanned tables",
+  "table.reason.rowHeights": "Rows need a fixed or minimum height before distribution",
+  "table.reason.mergeSelection": "Select a row, column, or table before merging",
+  // Unmerge is offered whenever the table HAS a merge somewhere, because
+  // `TableInfo` reports no per-cell merge state (TBL-20) — `regular` is a
+  // whole-table boolean. A table with no merge at all can therefore be refused
+  // before the engine is asked.
+  "table.reason.noMergedCells": "This table has no merged cells",
+  // Tab in the last cell appends a row, the way Word and Google Docs do. The
+  // caret lands in the new row's first cell, which is a jump worth announcing:
+  // the live region is the only channel a reader who cannot see it has.
+  "table.rowAppended": "Row added at the end of the table",
+  "table.atFirstCell": "The caret is already in the first cell of the table",
+  // INTERIM (TBL-08). Cell shading, vertical alignment and the cell-border
+  // presets act on the caret's cell alone, so with a row or column selected the
+  // gesture formatted one cell and nothing said so. Refusing is the honest
+  // interim until a cell range can be formatted as one.
+  "table.cellFormatOneCell":
+    "Shading, alignment and cell borders apply to one cell — put the caret in the cell to format it",
+  // The row/column/table selection's own status line. It was built as
+  // `Selected table ${mode}`, the one table status line that was not localised
+  // at all, and glueing a translated noun onto a fixed verb is what these three
+  // keys exist to avoid.
+  "table.selectedRow": "Row selected",
+  "table.selectedColumn": "Column selected",
+  "table.selectedTable": "Table selected",
 });
