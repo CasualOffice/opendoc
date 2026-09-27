@@ -286,8 +286,9 @@ const MODALS = [
     // and the same `createNamePrompt` contract as Create a style, which is the
     // point: one implementation of "ask for one bounded line of text", so the
     // staged-result dance that keeps Escape from leaving the promise pending
-    // exists once. Reached through the panel, because that is the only place it
-    // is offered — a version has to be selected before it can be named.
+    // exists once. Reached through the row's own ⋮ menu, because that is where
+    // a version's actions live — naming acts on one version, so it belongs to
+    // that version's row rather than to a bar that has to be told which row.
     id: "versionNameDialog",
     name: "Name this version",
     opener: null,
@@ -297,8 +298,8 @@ const MODALS = [
       await runFilePageCommand(page, "file.versionHistory");
       const row = page.locator("#versionPanelBody .version-item").first();
       await expect(row).toBeVisible();
-      await row.click();
-      await page.locator("#versionNameBtn").click();
+      await row.locator(".version-item-menu").click();
+      await page.locator('#versionRowMenu [data-command-id="version.name"]').click();
     },
   },
   {

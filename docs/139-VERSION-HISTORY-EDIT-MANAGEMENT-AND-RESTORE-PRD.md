@@ -24,11 +24,12 @@ from what §8 sketched.
 | §8 | As built | Why it differs |
 | --- | --- | --- |
 | 8.1 "the editor opens a right-side panel without changing the document" | as specified | — |
-| 8.1 entry points: File, the last-saved status, the palette, the host API | File ▸ Version history, the **View band's panel toggle**, the palette, **⌘⌥⇧H**, and the host API through the same command id | The last-saved status pill is `display: none` below 620px and is the first thing a narrow window sheds, so it cannot be a durable second surface. A View-band button is beside the editor's other two panel toggles and is present at every width the ribbon is. ⌘⌥⇧H is Google Docs' own chord. |
+| 8.1 entry points: File, the last-saved status, the palette, the host API | File ▸ Version history, the **View band's panel toggle**, the **left rail's Versions button**, the palette, **⌘⌥⇧H**, and the host API through the same command id | The last-saved status pill is `display: none` below 620px and is the first thing a narrow window sheds, so it cannot be a durable second surface. A View-band button is beside the editor's other two panel toggles and is present at every width the ribbon is. ⌘⌥⇧H is Google Docs' own chord. The rail entry was left out of the first round on the grounds that File and View were enough; the owner overruled that, and the rail is where this editor's panels live — a panel with no rail entry was the odd one out. All faces run the one `file.versionHistory` command and share one pressed state. |
 | 8.1 each row shows author(s) | each row shows time, origin and size; the **author is stored and not displayed** | Version-level actor only, which §17 VH-1 requires ("no per-change attribution claim yet"). The local browser profile has exactly one actor, so a column reading "You" on every row would be noise pretending to be information. It appears the moment a second actor can exist. |
 | 8.2 a group can be expanded to show its constituent points | day groups only; **no within-day collapsing**, so nothing needs expanding | Grouping that hides rows behind a count nobody can expand is worse than no grouping. Within-day session grouping arrives with the commit log (§17 VH-4), which is what can tell one session from another. |
-| 8.3 Name this version | as specified, through a real dialog | — |
-| 8.4 preview shows Compare, Make a copy, Download | preview shows **Back to current** and **Restore this version**; Compare and the two copies are **present-and-disabled** or absent, per the status note above | — |
+| 8.3 Name this version | as specified, through a real dialog, from the row's own **⋮ menu** and from **F2** | — |
+| §14 "row menus work by keyboard" | each entry carries a **⋮ menu** holding Restore, Name, Keep, Show changes and Delete, opened by the ⋮, by right-click, by Shift+F10 and by the ContextMenu key | The first round put these five in a bar under the list instead, and recorded a real reason: a `role="option"` may not hold an interactive child. With one or two versions that bar was most of the panel, four of its five buttons were disabled until a row was selected, and all five were detached from the row they acted on. The owner rejected it. The list is now a **`role="grid"`** — the pattern whose cells may be interactive — with a roving tabindex, Up/Down across rows and Left/Right across the entry and its ⋮. The day group is a `rowgroup` and carries no `aria-label`; every row names its own full instant instead, which the guard checks against the row's own `title`. |
+| 8.4 preview shows Compare, Make a copy, Download | preview shows **Back to current** and **Restore this version**; Compare and the two copies are **present-and-disabled** or absent, per the status note above | This row claimed the preview bar carried Restore before it did — Restore was in the action bar, and the bar is what the reader saw. It is now really on the bar, which is also Restore's second surface and is contextual, so it is never a resting disabled control. |
 | 8.5 restore contract, all eight steps | steps 1-7 as specified; step 8 (Undo treats Restore as one action) **not built** | The pre-restore version IS stored, which is what makes both in-session Undo and after-reload reversal possible later. Today, reversing a restore means restoring the pre-restore version — which is in the timeline, named "Before a restore". |
 | 8.7 a visible **Clear version history** control reporting the freed size | as specified, in the panel's footer | — |
 
@@ -480,6 +481,21 @@ Unmerged branches are shown explicitly rather than collapsed into a false linear
 
 - The history panel is a labelled landmark with a real list/tree structure.
 - Group expand/collapse, filters, version selection, and row menus work by keyboard.
+  **Met.** The list is a `role="grid"` with a roving tabindex: Up/Down walk rows
+  (which selects, and so previews), Left/Right walk the entry and its ⋮, Enter on
+  the ⋮ opens the menu, and Shift+F10 and the ContextMenu key open it from the
+  entry. A listbox could not carry the menu — `role="option"` forbids an
+  interactive child — so the structure changed rather than the requirement.
+- Every per-version action is reachable from at least two surfaces: Restore from
+  the row menu and the preview bar; Name from the row menu and **F2**; Delete
+  from the row menu and **Delete**; Keep and Show changes from the ⋮ and from the
+  row's right-click / Shift+F10 menu. Clear version history acts on the timeline
+  rather than on a row and stays in the panel's footer.
+- The panel keeps the keyboard when a preview opens beneath it. Swapping the
+  document sets the review mode, which focuses the editing surface; without a
+  compensating step a keyboard reader was ejected from the timeline 220 ms after
+  each arrow press. Guarded by a test that waits for the preview banner before it
+  asks where focus is, so it cannot pass by racing the defect.
 - Preview focus moves to a version banner, and **Back to current** restores the prior
   document focus/selection when still valid.
 - Change overlays have screen-reader text and are never color-only.
