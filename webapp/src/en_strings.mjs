@@ -176,4 +176,141 @@ export const EN_STRINGS = Object.freeze({
   "paste.loss.note": "footnote references",
   "paste.loss.fieldRange": "field codes",
   "paste.loss.trackedMove": "tracked moves",
+
+  // ── Version history (docs/139, docs/140, ADR-038/ADR-039) ──────────────────
+  //
+  // `version_history.mjs` returns status CODES and no English at all, because a
+  // storage layer that hard-codes sentences cannot be localised. This is the
+  // other half of that promise: one sentence per code, and the mapping lives in
+  // `version_policy.mjs` as literal `t()` calls so `build-locale.mjs` can see
+  // them.
+  //
+  // Every refusal below names the WAY OUT, because that is the whole reason the
+  // store distinguishes them. A quota-exhausted browser and a budget wedged by
+  // named versions are both "no new version was kept", and the answers are
+  // "free some space" and "unname one" — a single generic sentence would send
+  // half the readers to the wrong place.
+  "history.status.recorded": "Version saved to this document’s history.",
+  "history.status.notDue": "No new version yet — versions are kept at intervals, not on every edit.",
+  "history.status.unchanged": "Nothing has changed since the last version.",
+  "history.status.pruned": "Older versions were released to stay inside the retention policy.",
+  "history.status.restorePrepared":
+    "Ready to restore — the document on screen has been kept as a version first.",
+  "history.status.restoreCommitted":
+    "Restored. The version you replaced is still in this document’s history.",
+  "history.status.fullPinned":
+    "Version history is full and every version left is named, so none can be released. Stop keeping one to make room.",
+  "history.status.overBudget":
+    "This document is larger than all the space version history is allowed. Raise the storage budget in Settings to keep versions of it.",
+  "history.status.quotaExhausted":
+    "This browser is out of storage, so the version was not kept. Free some space, or save the document to a file.",
+  "history.status.storeUnavailable":
+    "This browser would not open local storage, so no versions are being kept.",
+  "history.status.evicted":
+    "This browser cleared its local storage, so the versions kept for this document are gone.",
+  "history.status.staleHead":
+    "Another tab changed this document’s history. Close version history and open it again to see where it is now.",
+  "history.status.missingCheckpoint":
+    "That version’s contents are no longer stored, so it cannot be opened or restored.",
+  "history.status.corruptCheckpoint":
+    "That version’s contents are damaged and were not opened. The rest of the timeline is unaffected.",
+  "history.status.nameRejected": "Give the version a name of between 1 and 120 characters.",
+  "history.status.pinLimit":
+    "As many versions are being kept as the policy allows. Stop keeping one before naming another.",
+  "history.status.unknownVersion": "That version is no longer in this document’s history.",
+  "history.status.unknownOperation": "That restore is no longer in progress. Start it again from the timeline.",
+  // The fallback, and a REFUSAL rather than a confirmation: the cost of an
+  // unnecessary toast is small and the cost of silence about somebody's lost
+  // work is not.
+  "history.status.unknownFailure": "That version could not be saved, and the reason is not known.",
+
+  // Why a version exists. The words are the reader's, not the store's: the kind
+  // is `import` and the sentence is "Opened".
+  "versionHistory.kind.import": "Opened",
+  "versionHistory.kind.saved": "Saved",
+  "versionHistory.kind.named": "Named",
+  "versionHistory.kind.auto": "Autosaved",
+  "versionHistory.kind.manual": "Version created",
+  "versionHistory.kind.preRestore": "Before a restore",
+  "versionHistory.kind.restore": "Restored",
+  "versionHistory.kind.recovery": "Recovered",
+
+  // The two relative day headings everybody recognises, and no others: "3 days
+  // ago" as a group heading makes a timeline harder to read, and docs/139 §14
+  // forbids a relative label standing in for the exact date.
+  "versionHistory.day.today": "Today",
+  "versionHistory.day.yesterday": "Yesterday",
+
+  "versionHistory.command": "Version history",
+  "versionHistory.current": "Current version",
+  "versionHistory.isNamed": "Named",
+  "versionHistory.empty":
+    "No versions yet. Versions are kept as you edit, and whenever you save.",
+  "versionHistory.emptyNamed": "No named versions. Name a version to find it here later.",
+  "versionHistory.needsSelection": "Select a version in the list first",
+  "versionHistory.headNotRestorable": "This is the current version — there is nothing to restore",
+  "versionHistory.headNotDeletable":
+    "This is the current version — it is the only one that still describes the document",
+  // Present, disabled, and honest. Comparing two versions is docs/140's H3 and
+  // is not built; a button that silently did nothing would be worse than this.
+  "versionHistory.action.showChangesUnavailable":
+    "Comparing one version with another is not built yet",
+
+  // The counts and the policy, under the list. A person who cannot see the bound
+  // cannot trust the promise (docs/139 §12).
+  "versionHistory.kept.one": "{count} version kept",
+  "versionHistory.kept.other": "{count} versions kept",
+  "versionHistory.footerDetail": "{size} in this browser · {named} of {limit} named",
+  "versionHistory.retention":
+    "Versions are kept for at least {days} days, up to {count} of them. Named versions are kept until you delete them.",
+
+  // Why the entry point is disabled. Five different reasons, because the way out
+  // of each is different and a reader can only act on the specific one.
+  "versionHistory.disabled.noDocument": "Open a document to see its version history",
+  "versionHistory.disabled.setting": "Version history is off. Turn it on in Settings.",
+  "versionHistory.disabled.autosave":
+    "Version history follows autosave, which is off. Turn autosave on in Settings.",
+  "versionHistory.disabled.embedded":
+    "Version history is off in an embedded editor — the page that embeds it owns storage.",
+  "versionHistory.disabled.noStore": "This browser refused local storage ({message})",
+
+  // Preview. The banner names WHEN, because a read-only canvas with no date on
+  // it is indistinguishable from a locked document.
+  "versionHistory.preview.banner": "Previewing the version from {when} — read-only.",
+  "versionHistory.preview.readOnly":
+    "You are looking at an earlier version; go back to current to change the document",
+  "versionHistory.preview.failed": "That version could not be opened: {message}",
+
+  // Restore. The confirmation is where the reader is TOLD that restoring is not
+  // destructive, which is why it is a sentence and not a warning glyph.
+  "versionHistory.restore.title": "Restore this version?",
+  "versionHistory.restore.message":
+    "“{name}” replaces what is on screen. Nothing is lost: the document you have now is kept as a version of its own first, and every version after this one stays in the timeline.",
+  "versionHistory.restore.confirm": "Restore",
+  "versionHistory.restore.cancel": "Keep current",
+  "versionHistory.restore.note": "The restored document is unsaved until you save it to a file.",
+  "versionHistory.restore.cannotKeepCurrent":
+    "The document on screen could not be kept as a version ({message}), so it was not replaced.",
+  "versionHistory.restore.failed": "That version could not be restored: {message}",
+  "versionHistory.restored":
+    "Restored the version from {when}. The document you replaced is still in the timeline.",
+
+  "versionHistory.named": "Named this version “{name}”.",
+  "versionHistory.pinned": "This version is now kept until you say otherwise.",
+  "versionHistory.unpinned": "This version can now be released by the retention policy.",
+  "versionHistory.deleted": "Deleted that version.",
+
+  "versionHistory.delete.title": "Delete this version?",
+  "versionHistory.delete.message":
+    "The contents of “{name}” are deleted from this browser. This cannot be undone.",
+  "versionHistory.delete.confirm": "Delete version",
+  "versionHistory.delete.cancel": "Keep it",
+
+  "versionHistory.clear.title": "Delete every version of this document?",
+  "versionHistory.clear.message":
+    "The whole timeline for this document is deleted from this browser, named versions included. This cannot be undone.",
+  "versionHistory.clear.confirm": "Delete history",
+  "versionHistory.clear.cancel": "Keep the history",
+  "versionHistory.clear.done.one": "Deleted {count} version and freed {size}.",
+  "versionHistory.clear.done.other": "Deleted {count} versions and freed {size}.",
 });
