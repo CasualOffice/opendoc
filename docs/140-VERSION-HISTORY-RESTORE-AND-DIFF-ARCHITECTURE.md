@@ -379,6 +379,37 @@ Quota or unavailable IndexedDB transitions history to a visible degraded state. 
 editing continues, autosave behavior follows doc 112, and the UI says that new versions
 cannot be retained. It does not delete pinned versions automatically to make space.
 
+**As built.** `captureVersion` releases one eligible version and retries once, then returns
+`history.quotaExhausted`. Every refusal code is classified by `historyStatusKind`, which
+returns the `status_channel.mjs` kind `"error"` — and that kind is what routes a message to
+the assertive live region *and* to the viewport toast even while the footer is visible, which
+matters because the footer's draft pill is the first thing a narrow window sheds. Nothing
+pinned is released at any point. A store that was expected to hold versions and comes back
+empty is reported through `storageStatus({expectVersions})` as `history.evicted` rather than
+as an empty timeline, because a browser dropping the origin's IndexedDB is a loss and has to
+read as one.
+
+### 7.5 How this attaches to the autosave path
+
+Recorded here so the wiring lane does not have to re-derive it. The storage layer is
+deliberately not wired: `webapp/src/main.js` is at its line ceiling with zero slack and is
+owned by another lane, so these are the call sites and nothing more.
+
+| Where in `main.js` | What it calls | Why there |
+| --- | --- | --- |
+| `writeDraft`, after `store.putDraft` succeeded | `capturePolicy.shouldCapture({reason, revision, now})`, then `history.captureVersion` with the **same `snapshot.bytes`** | the artifact is already exported and already verified at that point; capturing anywhere else would export the document twice |
+| `markDocumentSaved` | the same pair with `reason: "save"` | an explicit Save is always a version (ADR-038) |
+| `openBytes` / `adoptDraftDocument` | `history.openLineage({docKey, name})`, then a capture with `reason: "open"` | the import baseline, and the point at which a reopened file rejoins its own timeline |
+| boot, after the recovery bar | `history.resolvePendingRestores()` and `history.sweep()` | a prepared restore left by a killed tab, and the age window, are both boot-time work |
+| the existing `statusChannel.publish` | `historyStatusKind(status)` as the kind | one feedback channel, and the refusal/confirmation distinction is already its own |
+
+The English lives in the catalogue, not in the module: each `HISTORY_STATUS` code needs one
+sentence in `en_strings.mjs` and its translations. The codes are
+`history.recorded / notDue / unchanged / pruned / restorePrepared / restoreCommitted` and the
+refusals `fullPinned / overBudget / quotaExhausted / storeUnavailable / evicted / staleHead /
+missingCheckpoint / corruptCheckpoint / nameRejected / pinLimit / unknownVersion /
+unknownOperation`.
+
 ## 8. Native and embedded storage port
 
 The host-facing `HistoryStore` responsibilities are conceptual:
