@@ -45,6 +45,10 @@ import {
   resolveCapabilities,
   sandboxTokensFor,
 } from "../src/capabilities.mjs";
+import { REGIONS, resolveRegions } from "../src/capabilities.mjs";
+import { OVERRIDABLE, auditBrand, normalize as normalizeBrand } from "./build-brand.mjs";
+import { readPalettes } from "./palette_source.mjs";
+import { RELEASE } from "../../packages/opendoc-embed/src/release.mjs";
 import {
   COMMAND_CONTRACT,
   COMMAND_FAMILIES,
@@ -82,6 +86,14 @@ const SOURCES = Object.freeze({
   // `host_contract.mjs` and fails in both directions — which is the only guard on
   // this page that a browser cannot run.
   contractParity: join(REPO, "crates", "casual-doc-sdk", "src", "host_parity.rs"),
+  // `docs/126` phase 3. The white-label configuration, the generator that validates
+  // it, and the editor markup whose ribbon groups decide how fine a host's chrome
+  // selection can be.
+  brandExample: join(WEBAPP, "brand.example.json"),
+  brandGenerator: join(WEBAPP, "tools", "build-brand.mjs"),
+  brandTest: join(WEBAPP, "tests", "brand.test.mjs"),
+  whiteLabelGate: join(WEBAPP, "tests", "e2e", "white-label.spec.mjs"),
+  editorMarkup: join(WEBAPP, "editor.html"),
 });
 
 /** What each capability is, in one clause.
@@ -558,6 +570,113 @@ function evidenceRows() {
 
 // ── The page ───────────────────────────────────────────────────────────────
 
+/** How many ribbon groups carry no `data-group`, which is what decides whether a
+ *  host could address one.
+ *
+ *  Counted from the markup rather than stated, because the page says the number and
+ *  a number typed onto a page is the next one that drifts. The day somebody labels
+ *  the remaining groups, this falls and the page's "does not do yet" bullet has to
+ *  come down with it — which is the whole point of deriving it. */
+export function unnamedRibbonGroups(source = read(SOURCES.editorMarkup)) {
+  const groups = [...source.matchAll(/<div class="rgroup[^"]*"([^>]*)>/g)];
+  if (groups.length < 20) {
+    throw new Error("build-embed-docs: too few .rgroup elements found; the scan is looking wrong");
+  }
+  return groups.filter(([, attrs]) => !/\bdata-group=/.test(attrs)).length;
+}
+
+/** The worked example, with its long explanatory notes folded away.
+ *
+ *  Verbatim values, trimmed comments. The `//`-keyed notes in that file are written
+ *  for whoever edits it and run to several lines each; a code panel is for showing
+ *  the SHAPE, and a reader who wants the reasoning follows the link in the caption.
+ *  Nothing is re-typed: every line comes out of the committed file. */
+function brandExampleShown() {
+  const source = read(SOURCES.brandExample);
+  const kept = source
+    .split("\n")
+    .filter((line) => !/^\s*"\/\/[^"]*":/.test(line))
+    .join("\n")
+    // Two blank-ish artefacts of dropping a note from the head of a block.
+    .replace(/\{\n(\s*)\}/g, "{}");
+  return kept.trimEnd();
+}
+
+/** A real refusal, produced by running the validator now.
+ *
+ *  A plausible first attempt rather than a contrived one: a bright brand orange with
+ *  white text on it, and a grey that looks fine on white in a design tool. Generated
+ *  rather than pasted, so the page cannot describe a message the code no longer
+ *  emits — the defect `docs/99` §9 exists to prevent, in its prose form. */
+function sampleRefusal() {
+  const { themes } = readPalettes();
+  const config = normalizeBrand(
+    {
+      version: 1,
+      name: "Northwind Docs",
+      theme: {
+        tokens: { "--accent": "#f5a524", "--accent-ink": "#ffffff" },
+        light: { "--muted": "#9aa0a6" },
+        dark: {},
+      },
+    },
+    themes,
+  );
+  const { failures } = auditBrand(config, themes);
+  if (!failures.length) {
+    throw new Error("build-embed-docs: the sample palette no longer fails, so the page would lie");
+  }
+  return ["$ node webapp/tools/build-brand.mjs", "brand.json was refused:"]
+    .concat(failures.map((reason) => `  - ${reason}`))
+    .join("\n");
+}
+
+/** Region → what it is, and whether the two reading roles show it.
+ *
+ *  The two columns are asked of `resolveRegions`, so the page cannot disagree with
+ *  the authority about what a `readonly` container has. The description is the only
+ *  authored column, and a missing one FAILS rather than publishing a blank cell. */
+const REGION_MEANINGS = Object.freeze({
+  brand: "Our name and mark in the top bar.",
+  title: "The document name, and renaming it.",
+  menu: "The application menu bar — one of the two navigation axes.",
+  ribbon: "The whole tabbed ribbon, strip and bands together.",
+  "band.file": "The File page: open, save, export, print, properties, settings.",
+  "band.home": "Character and paragraph formatting, styles, clipboard, undo.",
+  "band.insert": "Tables, pictures, shapes, links, comments, headers, symbols.",
+  "band.layout": "Page setup, margins, columns, spacing, watermark, arrange.",
+  "band.references": "Captions, cross-references, contents, footnotes, fields.",
+  "band.review": "Tracked changes, comments, proofing, the review mode control.",
+  "band.view": "Outline, zoom, page setup, showing changes.",
+  "band.table": "The contextual table band, present when the caret is in a table.",
+  rail: "The left navigation rail: outline and page thumbnails.",
+  status: "The status bar: counts, page number, language, mode.",
+  zoom: "The zoom cluster in the status bar.",
+  find: "The find and replace card.",
+  selection: "The floating toolbar above a selection.",
+  settings: "The settings dialog and the gear that opens it.",
+});
+
+function regionRows() {
+  const readonly = resolveRegions({ mode: "readonly", framed: true });
+  const preview = resolveRegions({ mode: "preview", framed: true });
+  const unexplained = REGIONS.filter((id) => !REGION_MEANINGS[id]);
+  if (unexplained.length) {
+    throw new Error(`build-embed-docs: regions with no description: ${unexplained.join(", ")}`);
+  }
+  const extra = Object.keys(REGION_MEANINGS).filter((id) => !REGIONS.includes(id));
+  if (extra.length) {
+    throw new Error(`build-embed-docs: described regions that do not exist: ${extra.join(", ")}`);
+  }
+  const mark = (on) => (on ? "yes" : "—");
+  return REGIONS.map((id) => [
+    `<code>${escape(id)}</code>`,
+    escape(REGION_MEANINGS[id]),
+    mark(readonly.has(id)),
+    mark(preview.has(id)),
+  ]);
+}
+
 /** Region name → generated HTML. */
 function regions() {
   const pack = packed();
@@ -638,6 +757,28 @@ function regions() {
     "role-table": table(["Role", "Review mode", "Grants"], roleRows()),
     "legacy-table": table(["Legacy name", "Relationship", "Grants"], legacyRows()),
     "chrome-table": table(["Capability", "Command id", "What it decides"], chromeRows()),
+    // ── docs/126 phase 3 ────────────────────────────────────────────────────
+    // The worked example, verbatim from the committed file rather than retyped:
+    // `tests/brand.test.mjs` generates from this exact JSON and audits the result,
+    // and `tests/e2e/white-label.spec.mjs` serves what it produces into a real
+    // editor. So the snippet on the page is the input to a test that runs in CI,
+    // which is the only kind of example `docs/99` §9 permits.
+    "brand-config": codePanel(
+      `${rel(SOURCES.brandExample)} — a white-label, and the input to its own guard`,
+      brandExampleShown(),
+    ),
+    // A REAL refusal, produced at generate time by running the validator on a
+    // palette that fails. Not a transcript somebody pasted: the day the message
+    // changes, this page changes with it, and the day the validator stops refusing,
+    // `brand.test.mjs` goes red first.
+    "brand-refusal": codePanel(
+      `${rel(SOURCES.brandGenerator)} — what a failing palette is told`,
+      sampleRefusal(),
+    ),
+    "region-table": table(
+      ["Region", "What it is", "readonly", "preview"],
+      regionRows(),
+    ),
     "evidence-table": table(["File", "Lane", "The test"], evidenceRows()),
   };
 }
@@ -669,6 +810,15 @@ function claims() {
     "refusal-code-count": String(REFUSAL_CODES.length),
     "verb-count": String(PROTOCOL.requests.length),
     "verbs": PROTOCOL.requests.join(" "),
+    // `docs/126` phase 3.
+    "region-count": String(REGIONS.length),
+    "band-count": String(REGIONS.filter((id) => id.startsWith("band.")).length),
+    "unnamed-group-count": String(unnamedRibbonGroups()),
+    "overridable-token-count": String(OVERRIDABLE.length),
+    "reading-region-count": String(resolveRegions({ mode: "readonly", framed: true }).size),
+    "preview-region-count": String(resolveRegions({ mode: "preview", framed: true }).size),
+    "release-engine": RELEASE.engine,
+    "release-licence": RELEASE.licence,
   };
 }
 

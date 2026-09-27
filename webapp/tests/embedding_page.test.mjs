@@ -38,6 +38,9 @@ import {
   sandboxTokensFor,
 } from "../src/capabilities.mjs";
 import { OPENDOC_EDITOR_TAG, OpenDocEditorElement } from "../src/embed_element.mjs";
+import { REGIONS, resolveRegions } from "../src/capabilities.mjs";
+import { auditBrand, normalize as normalizeBrand } from "../tools/build-brand.mjs";
+import { readPalettes } from "../tools/palette_source.mjs";
 import {
   COMMAND_CONTRACT,
   HOST_EVENTS,
@@ -200,6 +203,12 @@ test("every code panel was extracted from the file its caption names", () => {
   for (const { caption, code } of panels()) {
     const path = captionedFile(caption);
     if (path.endsWith(".test.mjs")) continue; // the shell panel, checked below
+    // The refusal panel is OUTPUT, not source: it is what `build-brand.mjs` prints
+    // when a host's palette fails AA, produced by running the validator at generate
+    // time. Exempted the same way the install panel is, and checked the other way
+    // round in its own test below — every line must be a refusal the validator
+    // really emits, re-derived there without going through the generator.
+    if (path.endsWith("build-brand.mjs") && /failing palette/.test(caption)) continue;
     const source = read(join(REPO, path));
     const [first] = code.split("\n");
     assert.ok(
@@ -544,4 +553,86 @@ test("the gates the page names are armed", () => {
     /tests\/\*\.test\.mjs/,
     "test:unit must still collect tests/*.test.mjs",
   );
+});
+
+// ---- docs/126 phase 3: white-labelling ---------------------------------------
+
+test("the refusal the page shows is one the validator really emits", () => {
+  // The panel the extraction rule exempts, checked the other way round — the same
+  // shape as the install panel above. The page shows OUTPUT, so "every line is in
+  // the source file" is the wrong question; "the validator really says this" is the
+  // right one, and it is asked by running the validator here rather than by trusting
+  // the generator that wrote the panel.
+  const panel = panels().find(({ caption }) => /failing palette/.test(caption));
+  assert.ok(panel, "the page must show what a failing palette is told");
+
+  const { themes } = readPalettes();
+  const config = normalizeBrand(
+    {
+      version: 1,
+      name: "Northwind Docs",
+      theme: {
+        tokens: { "--accent": "#f5a524", "--accent-ink": "#ffffff" },
+        light: { "--muted": "#9aa0a6" },
+        dark: {},
+      },
+    },
+    themes,
+  );
+  const { failures } = auditBrand(config, themes);
+  assert.ok(failures.length >= 4, "the sample palette no longer fails, so the page would lie");
+  for (const reason of failures) {
+    assert.ok(panel.code.includes(reason), `the page omits a refusal the validator emits: ${reason}`);
+  }
+  for (const line of panel.code.split("\n")) {
+    const reason = line.replace(/^\s*-\s*/, "").trim();
+    if (!reason || reason.startsWith("$") || reason.endsWith("refused:")) continue;
+    assert.ok(failures.includes(reason), `the page shows a refusal the validator does not emit: ${reason}`);
+  }
+  // And it carries the three things a refusal has to carry to be actionable.
+  assert.match(panel.code, /measures \d+\.\d+:1/, "no measured ratio");
+  assert.match(panel.code, /must clear 4\.5:1/, "no floor");
+  assert.match(panel.code, /#[0-9a-f]{6} would pass/, "no value that would work");
+});
+
+test("the configuration the page shows is the committed example, values intact", () => {
+  // Verbatim values. The panel folds away the long `//`-keyed notes because a code
+  // panel is for showing the shape, but every VALUE must be the committed one — a
+  // white-label example that does not match the file the guards generate from is an
+  // example nobody executes.
+  const panel = panels().find(({ caption }) => /brand\.example\.json/.test(caption));
+  assert.ok(panel, "the page must show the worked example");
+  const source = readFileSync(join(WEBAPP, "brand.example.json"), "utf8");
+  for (const line of panel.code.split("\n")) {
+    if (!line.trim()) continue;
+    assert.ok(source.includes(line.trim()), `the panel shows a line not in the file: ${line.trim()}`);
+  }
+  // The notes are folded away, and nothing else is: every non-note line survives.
+  const kept = source
+    .split("\n")
+    .filter((line) => line.trim() && !/^\s*"\/\//.test(line))
+    .map((line) => line.trim());
+  const shown = new Set(panel.code.split("\n").map((line) => line.trim()));
+  const dropped = kept.filter((line) => !shown.has(line) && line !== "{}");
+  assert.deepEqual(dropped, [], "the panel drops configuration a host would need");
+});
+
+test("the region table states what the authority resolves, not what the page says", () => {
+  const regions = REGIONS;
+  const table = page.slice(page.indexOf("@generated region-table"), page.indexOf("@end region-table"));
+  const readonly = resolveRegions({ mode: "readonly", framed: true });
+  const preview = resolveRegions({ mode: "preview", framed: true });
+  for (const id of regions) {
+    const at = table.indexOf(`<code>${id}</code>`);
+    assert.ok(at > 0, `${id} has no row`);
+    const row = table.slice(at, table.indexOf('<div class="disp-row"', at + 1) >>> 0 || undefined);
+    const cells = [...row.matchAll(/<div class="disp-cell">([^<]*)</g)].map((m) => m[1].trim());
+    assert.equal(cells.length, 3, `${id}'s row has ${cells.length} cells, not 3`);
+    // The last two cells are the two reading roles, in that order.
+    assert.equal(cells[1] === "yes", readonly.has(id), `${id}'s readonly cell disagrees`);
+    assert.equal(cells[2] === "yes", preview.has(id), `${id}'s preview cell disagrees`);
+  }
+  // `readonly` has no ribbon and no band, on the page as in the authority.
+  assert.equal(readonly.has("ribbon"), false);
+  assert.ok(regions.filter((id) => id.startsWith("band.")).every((id) => !readonly.has(id)));
 });

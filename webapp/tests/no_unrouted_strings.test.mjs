@@ -99,7 +99,16 @@ const CEILINGS = new Map([
   // `crates/casual-doc-sdk/src/host_parity.rs` (the only guard on that page a
   // browser cannot run) and one more "does not do yet" item saying plainly that the
   // crate declares this vocabulary and does not run the editor. Measured.
-  ["embedding.page.html", 310],
+  //
+  // 310 -> 349 with `docs/126` phase 3's white-labelling section: how a host renames
+  // the product, supplies a palette, chooses the chrome and reads what they
+  // installed, plus an eighteen-row region table and two generated code panels (the
+  // worked configuration, and a real refusal produced by running the validator).
+  // Two stale sections came DOWN with it — the "today's limit" callout that said a
+  // per-capability list was not accepted, and the one that said both reading roles
+  // got the editing chrome dimmed — because both had become false, and a page that
+  // understates is as wrong as one that overstates (`docs/99` §9.6). Measured.
+  ["embedding.page.html", 349],
   ["fidelity.page.html", 84],
   ["index.page.html", 157],
   // The shared header and footer, counted where they are AUTHORED. The generated
@@ -385,7 +394,7 @@ test("how much the code exemptions suppress is measured, per file", () => {
   // behaviour is not a measurement.
   const SUPPRESSED = {
     "docs.page.html": 2,
-    "embedding.page.html": 2,
+    "embedding.page.html": 4,
     "index.page.html": 2,
   };
   const measured = {};
