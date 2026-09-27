@@ -13,6 +13,7 @@ mod ids;
 mod intern;
 mod metadata;
 mod migration;
+mod numbering;
 mod properties;
 mod table;
 
@@ -23,6 +24,7 @@ pub use ids::*;
 pub use intern::*;
 pub use metadata::*;
 pub use migration::*;
+pub use numbering::*;
 pub use properties::*;
 pub use table::*;
 

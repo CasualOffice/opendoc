@@ -37,7 +37,7 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | ✅ | Math func / accent / limits | `m:func`,`m:acc`,`m:limLow/Upp` | common | S | `MathExpression::Function` → `crates/casual-doc-layout/src/flow.rs`#`fn layout_math_expression` |
 | ✅ | Run theme color + tint/shade *(partial)* | `w:color@themeColor/@themeTint/@themeShade` | ubiquitous | M | `apply_tint_shade` → `crates/casual-doc-layout/src/flow.rs`#`fn run_color` |
 | ✅ | Percentage table/cell width (AutoFit) | `w:tblW`/`w:tcW@type=pct\|auto` | ubiquitous | M | unconsumed `width_type` (FID-P-04) — the solver reads `dxa_twips()` only, so `Pct`/`Auto` collapse to content sizing |
-| ✅ | Reusable list-style linkage | `w:numStyleLink`,`w:styleLink` | common | M | `num_style_link` → `crates/casual-doc-layout/src/numbering.rs`#`fn resolve_abstract` |
+| ✅ | Reusable list-style linkage | `w:numStyleLink`,`w:styleLink` | common | M | `num_style_link` → `crates/casual-doc-model/src/v1/numbering.rs`#`fn effective_abstract` (the one authority; the layout, the model validator and the DOCX importer all resolve through it — `docs/142` LST-10) |
 | ✅ | Shape/picture rotation | `a:xfrm@rot` | common | M | `rotation` → `crates/casual-doc-render/src/lib.rs`#`fn object_transform` |
 | ✅ | Line dash + arrowheads *(partial)* | `a:prstDash`,`a:headEnd/tailEnd` | common | M | `DashStyle` → `crates/casual-doc-render/src/lib.rs`#`fn dash_pattern` |
 | ✅ | Doc-default footnote/endnote props | `w:settings/w:footnotePr` | common | M | `footnote_props` → `crates/casual-doc-layout/src/note_numbering.rs`#`fn resolve_props` |
@@ -64,7 +64,7 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | ✅ | Tracked property-change markers | `w:pPrChange`/`w:rPrChange`/`w:tblPrChange`/`w:trPrChange`/`w:tcPrChange`/`w:tblGridChange` | M | `prop_change` → `crates/casual-doc-wasm/src/lib.rs`#`fn track_paragraph_change` — paragraph/run only; the four table-level variants have no consumer |
 | ✅ | Paragraph text direction | `w:pPr/w:textDirection` | S | unconsumed `text_direction` (FID-P-04) — one writing-mode axis through flow, composition, hit-testing and caret |
 | ✅ | Clear tab | `w:tab@val=clear` (`TabAlignment::Clear`) | S | `TabAlignment::Clear` → `crates/casual-doc-layout/src/tabs.rs`#`fn resolve_next_stop` |
-| ✅ | Full per-instance level override | `w:lvlOverride/w:lvl` (full level, not just startOverride) | M | `definition` → `crates/casual-doc-layout/src/numbering.rs`#`fn effective_level` |
+| ✅ | Full per-instance level override | `w:lvlOverride/w:lvl` (full level, not just startOverride) | M | `definition` → `crates/casual-doc-model/src/v1/numbering.rs`#`fn level_of` |
 | ✅ | Page-number format → enum | `w:pgNumType@fmt`/`@start` | S | `page_numbering` → `crates/casual-doc-layout/src/paginate.rs`#`fn page_number_label_at` |
 | ✅ | Section-properties revision | `w:sectPrChange` | M | unconsumed `section_change` (FID-P-04) |
 | ✅ | Wrap polygon | `wp:wrapPolygon` | M | unconsumed `wrap_polygon` (FID-P-04) |

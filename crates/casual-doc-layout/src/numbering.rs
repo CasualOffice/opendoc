@@ -31,13 +31,19 @@
 //!
 //! The abstract and level a paragraph paints are resolved, not read straight off
 //! the instance: a `w:numStyleLink` on the abstract is followed to the List-Style
-//! paragraph style and on to the abstract that actually defines the levels (the
-//! reusable-definition side carries the matching `w:styleLink`; the follow is
-//! bounded so a cycle cannot loop), a per-instance `w:lvlOverride/w:lvl` full
-//! redefinition (its own numFmt/lvlText/start/suff/justification and properties)
-//! replaces the abstract level, and a `w:startOverride` still wins over that
-//! effective level's start. Override resolution applies to substituted deeper
-//! levels (`%n`) too.
+//! paragraph style and on to the abstract that actually defines the levels, and a
+//! per-instance `w:lvlOverride/w:lvl` full redefinition (its own
+//! numFmt/lvlText/start/suff/justification and properties) replaces the abstract
+//! level. **This module does not implement either indirection.** Both live in
+//! `casual_doc_model::v1::NumberingResolver`, the single authority the model's
+//! validator and the DOCX importer also resolve through — three separate
+//! implementations of one rule is exactly how a document the renderer could paint
+//! came to be dropped on import and rejected by validation (`docs/142`
+//! LST-10/LST-34).
+//!
+//! What this module still owns is the *counter* half: a `w:startOverride` wins
+//! over the resolved level's start, and override resolution applies to
+//! substituted deeper levels (`%n`) too.
 //!
 //! ## Deferrals
 //!
@@ -52,6 +58,9 @@ use casual_doc_model::v1::{
 };
 // Kept on a separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::NumberingInstance;
+// Same rule: the ONE numbering resolver (the authority for which level a
+// `w:numPr` paints) goes on its own line.
+use casual_doc_model::v1::NumberingResolver;
 
 use crate::text::{GlyphRun, Line, LineLayout};
 use crate::units::{Point, Twip};
@@ -111,14 +120,15 @@ impl NumberingState {
         definitions: &Definitions,
         reference: &NumberingRef,
     ) -> Option<ResolvedMarker> {
-        let instance = definitions.numbering.get(&reference.instance)?;
+        // The one resolver (`casual_doc_model::v1::NumberingResolver`) owns BOTH
+        // indirections — the `w:numStyleLink` List-Style follow and the
+        // per-instance `w:lvlOverride/w:lvl` redefinition. This module used to
+        // implement them itself, which is how the importer and the model came to
+        // answer the same question two other ways (`docs/142` LST-10/LST-34).
+        let resolver = definitions.numbering_resolver();
+        let instance = resolver.instance(reference.instance)?;
         let declared = definitions.abstract_numbering.get(&instance.abstract_ref)?;
-        // Follow a `w:numStyleLink` List-Style indirection to the abstract that
-        // actually defines the levels.
-        let abstract_num = resolve_abstract(definitions, declared);
-        // The effective level: a per-instance `w:lvlOverride/w:lvl` full
-        // redefinition replaces the (linked) abstract level (format/text/start/…).
-        let level = effective_level(instance, abstract_num, reference.level)?;
+        let level = resolver.level_of(instance, declared, reference.level)?;
 
         // A per-instance start override (`w:startOverride`) wins over the
         // effective level's own `w:start`.
@@ -144,11 +154,13 @@ impl NumberingState {
             if *inst != reference.instance || *lvl <= advanced {
                 return true;
             }
-            let restart = effective_level(instance, abstract_num, *lvl).and_then(|l| l.lvl_restart);
+            let restart = resolver
+                .level_of(instance, declared, *lvl)
+                .and_then(|l| l.lvl_restart);
             !level_resets_on(restart, advanced, *lvl)
         });
 
-        let text = self.format_marker(reference.instance, instance, abstract_num, level);
+        let text = self.format_marker(resolver, reference.instance, instance, declared, level);
 
         Some(ResolvedMarker {
             text,
@@ -172,9 +184,10 @@ impl NumberingState {
     /// A bullet level renders its `lvlText` glyph verbatim.
     fn format_marker(
         &self,
+        resolver: NumberingResolver<'_>,
         instance_id: NumberingInstanceId,
         instance: &NumberingInstance,
-        abstract_num: &AbstractNumbering,
+        declared: &AbstractNumbering,
         level: &NumberingLevel,
     ) -> String {
         let template = level.lvl_text.as_deref().unwrap_or("");
@@ -198,9 +211,10 @@ impl NumberingState {
                     chars.next();
                     let target = (digit - 1) as u8;
                     out.push_str(&self.format_level_value(
+                        resolver,
                         instance_id,
                         instance,
-                        abstract_num,
+                        declared,
                         level,
                         target,
                     ));
@@ -218,13 +232,14 @@ impl NumberingState {
     /// level is `isLgl`, which forces every substituted value to decimal.
     fn format_level_value(
         &self,
+        resolver: NumberingResolver<'_>,
         instance_id: NumberingInstanceId,
         instance: &NumberingInstance,
-        abstract_num: &AbstractNumbering,
+        declared: &AbstractNumbering,
         current: &NumberingLevel,
         target: u8,
     ) -> String {
-        let target_level = effective_level(instance, abstract_num, target);
+        let target_level = resolver.level_of(instance, declared, target);
         let start = target_level.map_or(1, |l| l.start as u32);
         let value = self
             .counters
@@ -240,65 +255,6 @@ impl NumberingState {
         };
         format_number(value, fmt)
     }
-}
-
-/// The level a paragraph paints for `level` of `instance`: a per-instance
-/// `w:lvlOverride/w:lvl` full redefinition when the instance carries one,
-/// otherwise the abstract definition's level.
-fn effective_level<'a>(
-    instance: &'a NumberingInstance,
-    abstract_num: &'a AbstractNumbering,
-    level: u8,
-) -> Option<&'a NumberingLevel> {
-    instance
-        .overrides
-        .iter()
-        .find(|o| o.level == level)
-        .and_then(|o| o.definition.as_ref())
-        .or_else(|| level_def(abstract_num, level))
-}
-
-/// Finds the definition for `level` in an abstract numbering (levels are stored in
-/// document order, not necessarily dense or sorted).
-fn level_def(abstract_num: &AbstractNumbering, level: u8) -> Option<&NumberingLevel> {
-    abstract_num.levels.iter().find(|l| l.level == level)
-}
-
-/// Follows a `w:numStyleLink` List-Style indirection to the abstract that
-/// actually defines the levels.
-///
-/// An abstract may defer its numbering to a numbering-defining paragraph style
-/// (`w:numStyleLink`), whose `w:pPr/w:numPr` points back at the instance — and so
-/// the abstract — that holds the real levels (the reusable-definition side
-/// carries the matching `w:styleLink`). The follow is bounded, and a self-link is
-/// short-circuited, so a `numStyleLink`/`styleLink` cycle cannot loop forever.
-fn resolve_abstract<'a>(
-    definitions: &'a Definitions,
-    abstract_num: &'a AbstractNumbering,
-) -> &'a AbstractNumbering {
-    let mut current = abstract_num;
-    for _ in 0..8 {
-        let Some(style_id) = current.num_style_link else {
-            break;
-        };
-        let Some(style) = definitions.styles.get(&style_id) else {
-            break;
-        };
-        let Some(reference) = style.paragraph.as_ref().and_then(|p| p.numbering) else {
-            break;
-        };
-        let Some(instance) = definitions.numbering.get(&reference.instance) else {
-            break;
-        };
-        let Some(next) = definitions.abstract_numbering.get(&instance.abstract_ref) else {
-            break;
-        };
-        if std::ptr::eq(next, current) {
-            break;
-        }
-        current = next;
-    }
-    current
 }
 
 /// Whether a deeper level (its own `w:ilvl` = `self_level`) restarts its counter

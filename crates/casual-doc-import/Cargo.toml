@@ -16,6 +16,14 @@ quick-xml.workspace = true
 
 [dev-dependencies]
 zip.workspace = true
+# TEST-ONLY, and only for one guarantee: that a list imported from a Word List
+# Style actually reaches the page with a marker on it. `docs/142` LST-10 was
+# silent precisely because every test in reach of the importer could assert at
+# most "the reference resolved" — the marker is produced by the layout engine, so
+# a guard that cannot paginate cannot tell a fixed import from a broken one. The
+# edge is acyclic (`casual-doc-layout` depends only on `casual-doc-model`) and
+# dev-only, so nothing ships it.
+casual-doc-layout.workspace = true
 
 [lints]
 workspace = true

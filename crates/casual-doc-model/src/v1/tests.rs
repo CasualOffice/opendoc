@@ -419,6 +419,80 @@ fn undefined_numbering_level_reference_is_rejected() {
     ));
 }
 
+/// A snapshot in Word's List-Style shape: `..0a` defers to the paragraph style
+/// `..0c` with `numStyleLink` and declares NO level, `..0d` carries the level
+/// behind the matching `styleLink`, instance `..0b` is what the body paragraph
+/// uses and `..0e` is the one the style names.
+fn list_style_snapshot(body_level: u8) -> Vec<u8> {
+    format!(
+        "{{\"schemaVersion\":1,\"documentId\":\"00000000000000030000000000000001\",\
+         \"body\":[{{\"type\":\"paragraph\",\"id\":\"00000000000000030000000000000002\",\
+           \"properties\":{{\"numbering\":{{\"instance\":\"0000000000000000000000000000000b\",\"level\":{body_level}}}}},\"inlines\":[]}}],\
+         \"definitions\":{{\
+           \"styles\":{{\"0000000000000000000000000000000c\":{{\"kind\":\"paragraph\",\"name\":\"My List Style\",\
+             \"paragraph\":{{\"numbering\":{{\"instance\":\"0000000000000000000000000000000e\",\"level\":0}}}}}}}},\
+           \"abstractNumbering\":{{\
+             \"0000000000000000000000000000000a\":{{\"levels\":[],\"numStyleLink\":\"0000000000000000000000000000000c\"}},\
+             \"0000000000000000000000000000000d\":{{\"levels\":[{{\"level\":0,\"start\":1}}],\"styleLink\":\"0000000000000000000000000000000c\"}}}},\
+           \"numbering\":{{\
+             \"0000000000000000000000000000000b\":{{\"abstractRef\":\"0000000000000000000000000000000a\"}},\
+             \"0000000000000000000000000000000e\":{{\"abstractRef\":\"0000000000000000000000000000000d\"}}}}}}}}"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_level_reached_only_through_a_num_style_link_is_accepted() {
+    // `docs/142` LST-34: validation used to require the level to be a `w:lvl` of
+    // the abstract the instance NAMES, which refuses the shape every Word List
+    // Style writes — and which the layout engine renders. Validation, layout and
+    // import now share one predicate (`NumberingResolver::level`), so the document
+    // is accepted here exactly because it is paintable there.
+    let document = Document::from_json(&list_style_snapshot(0), SnapshotLimits::default())
+        .expect("a List-Style reference must validate");
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("the snapshot's body is one paragraph");
+    };
+    let reference = paragraph
+        .properties
+        .numbering
+        .expect("the paragraph keeps its reference");
+    let level = document
+        .definitions()
+        .numbering_resolver()
+        .level(reference)
+        .expect("the accepted reference is the one the resolver resolves");
+    assert_eq!(level.level, 0);
+    // Relaxing the rule did not make it vacuous: a level NO reachable definition
+    // declares is still rejected.
+    assert!(matches!(
+        expect_invalid(&list_style_snapshot(4)),
+        ModelError::NumberingLevelUndefined { level: 4, .. }
+    ));
+}
+
+#[test]
+fn a_start_override_on_a_num_style_link_instance_is_accepted() {
+    // The override half of the same rule. A `w:startOverride` on a List-Style
+    // instance targets a level the deferring abstract does not declare, so the
+    // override check refused the document for a list the renderer restarts
+    // correctly.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{
+              "styles":{"0000000000000000000000000000000c":{"kind":"paragraph","name":"My List Style",
+                "paragraph":{"numbering":{"instance":"0000000000000000000000000000000e","level":0}}}},
+              "abstractNumbering":{
+                "0000000000000000000000000000000a":{"levels":[],"numStyleLink":"0000000000000000000000000000000c"},
+                "0000000000000000000000000000000d":{"levels":[{"level":0,"start":1}],"styleLink":"0000000000000000000000000000000c"}},
+              "numbering":{
+                "0000000000000000000000000000000b":{"abstractRef":"0000000000000000000000000000000a",
+                  "overrides":[{"level":0,"start":7}]},
+                "0000000000000000000000000000000e":{"abstractRef":"0000000000000000000000000000000d"}}}}"#;
+    Document::from_json(json, SnapshotLimits::default())
+        .expect("a startOverride on a List-Style instance must validate");
+}
+
 #[test]
 fn section_geometry_domains_are_enforced() {
     let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",

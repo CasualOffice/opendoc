@@ -426,7 +426,11 @@ test("how much English the reference pages put on the site, measured and publish
   // this site. Eight sentences of English replacing an instruction nobody could
   // complete is a trade worth recording rather than hiding. 2,095 once `docs/126`
   // recorded phase 3's outcome in its own section, which is the whole point of that
-  // document and is published as `reference/embeddability-plan.html`. Editing a
+  // document and is published as `reference/embeddability-plan.html`. 2109 once
+  // `docs/35-DISPOSITION-TAXONOMY.md` recorded why `w:lvl@w:tplc` and
+  // `w:lvl@w:tentative` are REPORTED where `w:nsid`/`w:tmpl` are excluded — the
+  // two attributes the numbering importer had been dropping in silence, against
+  // the rule that whole document exists to state (`docs/142` LST-31). Editing a
   // published document
   // already fails `build-doc-pages --check` until the pages are regenerated, so
   // the same commit that regenerates them updates this figure — one number, in
@@ -438,8 +442,8 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2095,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2,095). That ` +
+    2109,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2109). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),

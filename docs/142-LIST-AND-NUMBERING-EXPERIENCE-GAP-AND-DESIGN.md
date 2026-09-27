@@ -720,10 +720,12 @@ emitting a bare `<w:pPr/>` for a `Some(default)`. Six export round-trip tests an
 tests name numbering. `docs/44`'s row **P1F-6** (*"only `ilvl`+`start`;
 `numFmt`/`lvlText`/`lvlJc`/`suff` dropped"*) is marked Done and is Done.
 
-**But one import mapping silently strips lists from a whole class of real Word documents.**
+**One import mapping silently stripped lists from a whole class of real Word
+documents. FIXED — LST-10/LST-31/LST-34 are closed; the account below is kept
+because it is the reasoning, and §1.13a records what replaced it.**
 
-`fn resolve` in `crates/casual-doc-import/src/numbering.rs` refuses a `w:numPr` whose `ilvl`
-is not in a per-instance `valid_levels` set:
+`fn resolve` in `crates/casual-doc-import/src/numbering.rs` used to refuse a `w:numPr`
+whose `ilvl` was not in a per-instance `valid_levels` set:
 
 ```rust
 pub(crate) fn resolve(&self, num_id: &str, level: u8) -> Option<NumberingRef> {
@@ -746,19 +748,24 @@ Word's List Styles produce exactly the second shape `[K]`: one `w:abstractNum` c
 `b"numPr"` close arm reports the feature, and **every paragraph of the list arrives as a
 plain paragraph with no marker.**
 
-The bitter part: `crates/casual-doc-layout/src/numbering.rs` has `fn resolve_abstract`, which
+The bitter part: `crates/casual-doc-layout/src/numbering.rs` had `fn resolve_abstract`, which
 follows `w:numStyleLink` through the style to the defining abstract, bounded against cycles,
-and it is **tested twice** — `fn num_style_link_resolves_through_to_the_defining_abstract`
-and `fn num_style_link_cycle_terminates`. The renderer can do it and the importer never hands
-it anything to do it with. `grep -c 'numStyleLink' crates/casual-doc-import/src/tests.rs`
-returns **0**.
+and it was **tested twice** — `fn num_style_link_resolves_through_to_the_defining_abstract`
+and `fn num_style_link_cycle_terminates`. The renderer could do it and the importer never
+handed it anything to do it with. `grep -c 'numStyleLink' crates/casual-doc-import/src/tests.rs`
+returned **0**. (Both figures have moved: the follow is now
+`NumberingResolver::effective_abstract` in `casual-doc-model`, those two layout tests call it
+through the layout as before, and the importer's count is no longer 0 — §1.13a.)
 
 A second asymmetry in the same family: `fn resolve_numbering_level` in
-`crates/casual-doc-model/src/v1/document.rs` validates a `NumberingRef` against
-`abstract_num.levels` only, so the **model rejects** (`ModelError::NumberingLevelUndefined`)
-a shape the **layout renders**. Nothing produces that shape today, because the importer drops
-it first — but it means the fix to `fn resolve` must move the validator too, or importing a
-fixed document will fail validation instead of losing a marker.
+`crates/casual-doc-model/src/v1/document.rs` validated a `NumberingRef` against
+`abstract_num.levels` only, so the **model rejected**
+(`ModelError::NumberingLevelUndefined`) a shape the **layout renders**. Nothing produced
+that shape, because the importer dropped it first — but it meant the fix to `fn resolve`
+had to move the validator too, or importing a fixed document would fail validation
+instead of losing a marker. It was driven red exactly that way before the fix landed:
+with only the importer following the link, `import_package` returns
+`Model(NumberingLevelUndefined { .., level: 0 })` and the whole document is refused.
 
 **Grade: engine** for the import mapping (it is model/import semantics, not facade), and it
 is the most serious row in this document: silent-by-default fidelity loss on documents users
@@ -770,7 +777,7 @@ Other losses, for completeness, all verified:
 | --- | --- | --- |
 | `w:numPicBullet`, `w:lvlPicBulletId` | not modelled | **yes** — `reporter.report(b"numPicBullet")` then the subtree is skipped as one finding; `lvlPicBulletId` via the element catch-all |
 | `w:legacy` / `w:legacyIndent` / `w:legacySpace` | not modelled anywhere (`grep -rn 'legacyIndent' crates/` → 0) | yes, via the catch-all |
-| `w:tplc`, `w:tentative` | **attributes**, and `numbering.rs` never calls `report_attribute` (`grep -c report_attribute …/numbering.rs` → **0**) | **no — silently dropped**. A reporting hole: the catch-all sees elements only |
+| `w:tplc`, `w:tentative` | **attributes** of `w:lvl` | **yes, since LST-31 was fixed** — `lvl/@tplc` and `lvl/@tentative`, `degraded`, through `fn report_unmodeled_attributes`. Until then `numbering.rs` never called `report_attribute` at all and the catch-all saw elements only. `numFmt/@format` (the custom format picture) was found in the same pass and is reported too. `docs/35` records why these are reported where `w:nsid`/`w:tmpl` are excluded |
 | `w:nsid`, `w:tmpl` | dropped by policy, `fn carries_no_meaning` | by policy, `docs/35` |
 | numbering part byte-retention | `word/numbering.xml` is in the `consumed` set, so it is excluded from opaque retention and regenerated from the model in `ImportMode::Semantic` | — |
 | ODF `text:continue-numbering` / `text:continue-list` | dropped; each top-level `text:list` gets a fresh instance | **yes** — `"odf.list.continuation"`, Degraded |
@@ -779,6 +786,67 @@ Other losses, for completeness, all verified:
 | ODF: the 2nd..nth paragraph of a `text:list-item` | loses list membership entirely — `fn list_numbering` returns early `if !item.first_paragraph` | **no finding at all** |
 | DOCX→ODT: `lvl_restart`, `pstyle`, `multi_level_type`, `num_style_link`, `style_link`, `overrides[].definition` | `fn register_numbering`'s loss check omits all six | **no** |
 | RTF `\pn` legacy lists | omitted | yes — `"rtf.list.legacy-pn"` |
+
+### 1.13a How LST-10, LST-31 and LST-34 were closed
+
+**One resolver, in the model, and the other two derive from it.** The rule now lives in
+`casual_doc_model::v1::NumberingResolver` (`crates/casual-doc-model/src/v1/numbering.rs`):
+
+| Reader | What it does now |
+| --- | --- |
+| `Document::validate` | accepts a reference exactly when `NumberingResolver::level` resolves it; the override check in `fn validate_numbering` goes through `fn level_of` |
+| `casual-doc-layout` | paints the level `fn level_of` returns. Its own `fn resolve_abstract`, `fn effective_level` and `fn level_def` are **deleted**, not duplicated |
+| `casual-doc-import` | admits a `w:numPr` exactly when `NumberingResolver::level` resolves it; the per-instance `valid_levels` table is **gone** |
+
+The model is the authority because it owns the error that *defines* invalidity
+(`ModelError::NumberingLevelUndefined`). The other two do not agree with it; they call it.
+That matters because this repository has fixed the same shape three times
+(`inline_text_len`, `append_node_plain_text`, `inline_anchor_len_for_review`), and deleting
+one duplicate does not stop a fourth appearing — only having no second implementation does.
+
+Two asymmetries §1.13 listed separately fall out of the same change: a level supplied
+**only** by a `w:lvlOverride/w:lvl` redefinition now resolves in all three readings, and a
+`w:startOverride` on a List-Style instance no longer fails validation.
+
+Complexity, since import is the caller: `level()` is one B-tree lookup plus at most eight
+`numStyleLink` hops plus a scan of the effective abstract's levels (nine in OOXML), called
+once per `w:numPr` — linear in paragraphs, quadratic in neither abstracts nor levels. The
+hop bound plus a self-link check is what keeps a `numStyleLink`/`styleLink` cycle from
+looping.
+
+**No silent repair, either.** When the link cannot be followed — a dangling
+`w:numStyleLink`, or a cycle — the list is not quietly demoted under the generic `numPr`
+finding: `numStyleLink` is reported `invalid` on its own, so the report names which
+indirection broke.
+
+**The fixture.** No document in `fixtures/corpus` carries the shape, and neither does any
+document in the owner's local sample set — `grep -c numStyleLink word/numbering.xml` returns
+0 for all of them — so the guard builds the package itself:
+`crates/casual-doc-import/tests/list_style_markers.rs` assembles the real Word List-Style
+numbering part (level-less `numStyleLink` abstract, `styleLink` abstract, two `w:num`s, the
+List Style's own `w:numPr`), imports it, **validates** it, asserts the document text
+`"1. Alpha\n2. Bravo\na) Charlie\n"`, and then paginates it and asserts a marker run with
+glyphs on the first line of all three paragraphs. `casual-doc-layout` is a dev-dependency of
+`casual-doc-import` for that one guarantee: a marker is produced by layout, so a guard that
+cannot paginate cannot tell a fixed import from a broken one.
+
+**One adjacent reading was found and deliberately NOT changed, because it answers a
+different question in another lane's file.** `casual-doc-wasm` asks *"what marker shape
+does this paragraph have?"* — not *"is this level valid?"* — and it asks it by reading the
+**declared** abstract's `levels` directly, so it follows neither the `w:numStyleLink` nor
+the per-instance override:
+
+| Anchor | Consequence on a List-Style list, now that one imports |
+| --- | --- |
+| `pub fn list_style_at` (`crates/casual-doc-wasm/src/lib.rs`, the `abs.levels.iter().find(…).or_else(\|\| abs.levels.first())` read) | returns `""`, so the ribbon shows **no active list format** for a list the page is visibly numbering |
+| `pub fn set_list_format` (the `abstract_def.levels.iter_mut().find(…)` read) | refuses with *"numbering level not found"*, so the marker format of a List-Style list **cannot be changed** |
+
+Neither is silent and neither loses content — `set_list_format` refuses with a reason — and
+both were **unreachable** before LST-10 was fixed, because no such reference existed to ask
+about. They are reachable now, which makes this a real follow-up rather than a hypothetical:
+both should resolve through `NumberingResolver::level` like everything else. It is one line
+each, in `casual-doc-wasm/src/lib.rs` — the 26k-line module `SKILL.md` §7 says only one
+agent may own — so it belongs to the facade lane, not to this change.
 
 ### 1.14 Paste
 
@@ -993,7 +1061,7 @@ author it either (§1.7), so this is a lead over them as well as a Word-parity r
 | Enter-ends-list, Backspace-outdents | **nothing** |
 | Mixed selections (§1.8) | **nothing** |
 | Counters across a section break (§1.10) | **nothing** |
-| `numStyleLink` on **import** (§1.13) | **nothing** — `grep -c numStyleLink crates/casual-doc-import/src/tests.rs` → 0 |
+| `numStyleLink` on **import** (§1.13) | **good, since LST-10 was fixed** — four import tests (resolution, dangling link, cycle, override-only level), two model validation tests, one export round-trip test, and one end-to-end guard that paginates (`crates/casual-doc-import/tests/list_style_markers.rs`). Recount with `grep -c numStyleLink crates/casual-doc-import/src/tests.rs`, which was 0 |
 | `listFormatAt` → `setListFormat` token asymmetry (§1.17) | **nothing** |
 | A level > 0 surviving a `toggleList` (§1.18) | **nothing** — and it does not survive |
 
@@ -1022,7 +1090,7 @@ L = a lane-month or a new type in a shared crate.
 | 7 | **LST-07** | Mixed selections: refused one way, silently indented the other, and the button reports a definite state (1.8) | `[S]` `Document.js:8799` | UI-only | S | — |
 | 8 | **LST-08** | `listFormatAt` can return a token `setListFormat` rejects; an imported `ordinal` list shows no checked cell and cannot be restored (1.17) | — | facade | XS | — |
 | 9 | **LST-09** | `restart_list` breaks at the first deeper item, so restarting a multilevel list leaves two items numbered `1.` (1.6) | `[K]` | facade | S | — |
-| 10 | **LST-10** | **A `w:numStyleLink`-only abstract loses every marker on import**, although `fn resolve_abstract` follows the link and is tested twice (1.13) | `[K]` for Word's output shape | **engine** | S | — |
+| 10 | **LST-10** | ~~**A `w:numStyleLink`-only abstract loses every marker on import**~~ **FIXED** — one resolver in `casual-doc-model` now answers for import, model and layout (§1.13a) | `[K]` for Word's output shape | **engine** | S | — |
 | 11 | **LST-11** | Changing a list level is reachable from **one** surface (Tab), or from Increase Indent, which does not say so. No command id, no chord, no level picker (0.5, 1.9) | `[S]` they have a nine-item picker | UI-only | S | — |
 | 12 | **LST-12** | No autoformat: typing `1. ` or `- ` stays literal (1.5) | `[S]` in detail | UI-only + facade | M | — |
 | 13 | **LST-13** | Restart is hard-coded to 1; no "set numbering value" (1.6) | `[S]` `api.js:4366` | facade+UI | S | — |
@@ -1043,10 +1111,10 @@ L = a lane-month or a new type in a shared crate.
 | 28 | **LST-28** | The bullet cycle is `• ◦ ▪ –` mod 4, so levels 0 and 4 are identical; Word `• o ▪`, Docs `• ○ ■` (1.2) | `[K]` | facade | XS | — |
 | 29 | **LST-29** | A checklist marker's tap target is the glyph's own box, under WCAG 2.5.8's 24×24; `pointerType` has zero occurrences in `webapp/src` (1.16) | WCAG 2.2 | UI-only | S | — |
 | 30 | **LST-30** | Restart, Continue and the marker galleries are absent from the compact (mobile) toolbar (1.16) | `[K]` | UI-only | XS | — |
-| 31 | **LST-31** | `w:tplc` / `w:tentative` are dropped **silently**: `numbering.rs` never calls `report_attribute` (1.13) | no-silent-loss rule | **engine** | XS | — |
+| 31 | **LST-31** | ~~`w:tplc` / `w:tentative` are dropped **silently**~~ **FIXED** — `lvl/@tplc`, `lvl/@tentative` and `numFmt/@format` are reported `degraded`; the policy is recorded in `docs/35` (§1.13) | no-silent-loss rule | **engine** | XS | — |
 | 32 | **LST-32** | ODF: `text:list-header` unhandled and possibly a hard import failure; `text:display-levels` lost; the 2nd+ paragraph of a `text:list-item` loses membership with **no finding** (1.13) | — | **engine** | M | — |
 | 33 | **LST-33** | DOCX→ODT silently drops `lvl_restart`, `pstyle`, `multi_level_type`, `num_style_link`, `style_link` and `overrides[].definition` (1.13) | no-silent-loss rule | facade | S | — |
-| 34 | **LST-34** | The model's `resolve_numbering_level` is stricter than the layout's `effective_level`, so fixing LST-10 without moving the validator turns a dropped list into a rejected document (1.13) | — | **engine** | XS | gates LST-10 |
+| 34 | **LST-34** | ~~The model's `resolve_numbering_level` is stricter than the layout's `effective_level`~~ **FIXED in the same change as LST-10** — the validator now derives from the shared resolver, and the rejection was driven red first to prove the gate was real (§1.13a) | — | **engine** | XS | gated LST-10 |
 | 35 | **LST-35** | An endnote rendered as trailing body content shares the body's counters while the same endnote rendered as a note does not (1.10) | — | **engine** | S | **UNVERIFIED** |
 | 36 | **LST-36** | No test drives Tab, Enter-ends-list, Backspace-outdents, a mixed selection, `adjust_list_level` at all, or any indent method (1.20) | test gap | UI-only | S | every row above |
 | 37 | **LST-37** | `w:numPicBullet` and `w:legacy*` are not modelled at all — reported, so not silent, but a lossy round trip for legacy-authored lists (1.13) | — | **engine** | M | — |
@@ -1610,7 +1678,7 @@ documents (`docs/49, 50, 70, 72, 73, 74, 75, 89, 90, 91, 92`).
 | **130** §11.1 | *"Five leaf capabilities are wired twice"* | **Seven.** `paragraph.restart` and `paragraph.continue` are two more of the same shape (§0.5, LST-27) |
 | **44** row P1F-6 | *"Numbering — only `ilvl`+`start`; `numFmt`/`lvlText`/`lvlJc`/`suff` dropped"*, **Done** | Done and correct for import/export. **But `lvlJc` has no layout consumer**, so "not dropped" means "round-trips", not "renders" — `SKILL.md` §9.4's distinction, and worth a footnote on a closed row |
 | **08** ADR register | *"The closed set is 51 variants."* | **53** (§0.4). `docs/141` §0.4 already published 53; this is the second document to derive it |
-| **35** | the `w:nsid`/`w:tmpl` silent-drop policy row, with an explicit *"Open question, recorded rather than settled"* | Accurate, and the habit to copy. **But `w:tplc` and `w:tentative` are dropped silently and are *not* in the policy row** — `numbering.rs` never calls `report_attribute`, so they fall through an element-only catch-all (LST-31) |
+| **35** | the `w:nsid`/`w:tmpl` silent-drop policy row, with an explicit *"Open question, recorded rather than settled"* | Accurate, and the habit to copy. The gap this document found — `w:tplc`/`w:tentative` dropped silently and absent from the policy row — is **closed**: they are reported, and `docs/35` now carries the paragraph saying why they are reported where `nsid`/`tmpl` are excluded (LST-31) |
 | **110** RTF profile | `\*\pn` legacy lists unsupported; *"alternate names, level indents and follow characters, list templates"* dropped | Accurate, and it **reports** (`"rtf.list.legacy-pn"`). The best-behaved of the import profiles on lists |
 
 **Accurate as written:** `docs/107` §4's budget (which this document uses as the constraint it
@@ -1628,7 +1696,8 @@ themed row rather than 37, **five must survive individually**:
 
 - **LST-10** — the `w:numStyleLink` import hole. It is silent fidelity loss on real documents,
   it is the only row here that costs a user data they already have, and it makes a tested engine
-  capability unreachable. **File it at P1 or above and file it alone.**
+  capability unreachable. **File it at P1 or above and file it alone.** *Filed as `docs/109`
+  HF-225 and **fixed**, together with LST-34 (which gated it) and LST-31 — see §1.13a.*
 - **LST-06** — one list per session. It gates LST-13 and LST-21 and it is what a user meets
   first.
 - **LST-01** — the `1.1.1.` default. Three constants; the single highest value-per-line row.
@@ -1734,8 +1803,8 @@ asserts counters across a section break.
 | **22** numbering unit tests | `grep -c '#\[test\]' crates/casual-doc-layout/src/numbering.rs`. **Not** `grep -cE '^    fn '`, which returns 30 because it also counts six test helpers and the module's own functions (§0.3, correction 5) |
 | **26** facade list refusal strings | read `pub fn toggle_list`, `adjust_list_level`, `restart_list`, `continue_list_inner`, `set_list_format`, `toggle_checklist_item`, `fn apply_marker_spec`, `fn order_endpoints`, `fn apply_paragraph_props_as`, `fn apply_indent_props`, `fn node_id_msg` |
 | **22** numbering element names parsed on import | `grep -oE '^\s+b"[a-zA-Z]+"' crates/casual-doc-import/src/numbering.rs \| tr -d ' ' \| sort -u \| wc -l` |
-| **0** `report_attribute` calls in the numbering importer | `grep -c report_attribute crates/casual-doc-import/src/numbering.rs` |
-| **0** import tests naming `numStyleLink` | `grep -c numStyleLink crates/casual-doc-import/src/tests.rs` |
+| **0** `report_attribute` calls in the numbering importer — **as measured when this document shipped; LST-31 fixed it and the recipe now returns a non-zero count** | `grep -c report_attribute crates/casual-doc-import/src/numbering.rs` |
+| **0** import tests naming `numStyleLink` — **as measured when this document shipped; LST-10 fixed it and the recipe now returns a non-zero count** | `grep -c numStyleLink crates/casual-doc-import/src/tests.rs` |
 | **0** layout consumers of `lvl_jc` | `grep -rn 'lvl_jc' crates/casual-doc-layout/src \| grep -v 'lvl_jc: None' \| wc -l`. **The unfiltered form returns 7 and every one is a `field: None` test-fixture initialiser** (§0.3, correction 4) |
 | **0** layout consumers of `pstyle` | `grep -rn 'pstyle' crates/casual-doc-layout/src \| grep -v 'pstyle: None' \| grep -v 'explicit_pstyle' \| wc -l`. The unfiltered form returns 8: seven `pstyle: None` initialisers and one unrelated test *name* |
 | **3** layout reads of `is_lgl` (a real consumer, for contrast) | `grep -rn 'is_lgl' crates/casual-doc-layout/src \| grep -v 'is_lgl: false' \| wc -l` |

@@ -1937,6 +1937,208 @@ fn numbering_reference_resolves_to_a_definition() {
     assert!(!features(&import).contains(&"numFmt"));
 }
 
+/// The styles part, numbering part and body of a Word **List Style** document:
+/// `abstractNum 0` defers to the List Style with `w:numStyleLink` and declares no
+/// level of its own, `abstractNum 1` carries the levels behind the matching
+/// `w:styleLink`, and the style's own `w:pPr/w:numPr` is the hop between them.
+///
+/// Shared by the resolution, reporting and override tests below so they cannot
+/// drift on to three different approximations of the shape.
+const LIST_STYLE_STYLES: &[u8] = br#"<w:styles xmlns:w="urn:w">
+    <w:style w:type="paragraph" w:styleId="MyListStyle"><w:name w:val="My List Style"/>
+        <w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr>
+    </w:style>
+</w:styles>"#;
+
+const LIST_STYLE_NUMBERING: &[u8] = br#"<w:numbering xmlns:w="urn:w">
+    <w:abstractNum w:abstractNumId="0"><w:numStyleLink w:val="MyListStyle"/></w:abstractNum>
+    <w:abstractNum w:abstractNumId="1"><w:styleLink w:val="MyListStyle"/>
+        <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>
+            <w:lvlText w:val="%1."/></w:lvl>
+    </w:abstractNum>
+    <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+</w:numbering>"#;
+
+const LIST_STYLE_BODY: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+        <w:r><w:t>item</w:t></w:r></w:p>
+</w:body></w:document>"#;
+
+fn import_with_styles_and_numbering(document: &[u8], styles: &[u8], numbering: &[u8]) -> Import {
+    import_with_sources(
+        document,
+        Some(styles),
+        Some(numbering),
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_num_style_link_abstract_resolves_through_to_the_defining_levels() {
+    // `docs/142` LST-10. The instance the body uses names an abstract with NO
+    // `w:lvl` at all; its levels are two hops away, through the List Style. The
+    // importer used to require the level to be a child of the named abstract, so
+    // the reference was dropped and the list lost every marker, silently.
+    let import =
+        import_with_styles_and_numbering(LIST_STYLE_BODY, LIST_STYLE_STYLES, LIST_STYLE_NUMBERING);
+
+    let reference = paragraph(&import, 0)
+        .properties
+        .numbering
+        .expect("a List-Style paragraph must keep its numbering reference");
+    assert_eq!(reference.level, 0);
+    // And the resolved level is the one behind the link, not an invented default.
+    let definitions = import.document.definitions();
+    let level = definitions
+        .numbering_resolver()
+        .level(reference)
+        .expect("the level resolves through the numStyleLink");
+    assert_eq!(level.lvl_text.as_deref(), Some("%1."));
+    assert_eq!(level.num_fmt, Some(NumberFormat::Decimal));
+    // Nothing was reported: the list is modeled, not lost.
+    assert!(!features(&import).contains(&"numPr"));
+    assert!(!features(&import).contains(&"numStyleLink"));
+}
+
+#[test]
+fn a_dangling_num_style_link_is_reported_not_silently_unnumbered() {
+    // No silent REPAIR either: when the link cannot be followed, the list is not
+    // quietly demoted to plain paragraphs under the generic `numPr` finding — the
+    // broken indirection is named, so the report says which hop failed.
+    let styles: &[u8] = br#"<w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="MyListStyle"><w:name w:val="My List Style"/></w:style>
+    </w:styles>"#;
+    let import = import_with_styles_and_numbering(LIST_STYLE_BODY, styles, LIST_STYLE_NUMBERING);
+
+    assert_eq!(paragraph(&import, 0).properties.numbering, None);
+    assert!(
+        features(&import).contains(&"numStyleLink"),
+        "an unfollowable List-Style link must be its own finding; got {:?}",
+        features(&import)
+    );
+}
+
+#[test]
+fn a_num_style_link_cycle_terminates_and_is_reported() {
+    // Two abstracts whose List Styles point at each other. The bounded follow
+    // must not loop, and the outcome is a finding rather than a default.
+    let styles: &[u8] = br#"<w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="StyleA"><w:name w:val="A"/>
+            <w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr></w:style>
+        <w:style w:type="paragraph" w:styleId="StyleB"><w:name w:val="B"/>
+            <w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr></w:style>
+    </w:styles>"#;
+    let numbering: &[u8] = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:numStyleLink w:val="StyleA"/>
+            <w:styleLink w:val="StyleB"/></w:abstractNum>
+        <w:abstractNum w:abstractNumId="1"><w:numStyleLink w:val="StyleB"/>
+            <w:styleLink w:val="StyleA"/></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+        <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+    </w:numbering>"#;
+    let import = import_with_styles_and_numbering(LIST_STYLE_BODY, styles, numbering);
+
+    assert_eq!(paragraph(&import, 0).properties.numbering, None);
+    assert!(
+        features(&import).contains(&"numStyleLink"),
+        "a numStyleLink cycle must be named, not defaulted; got {:?}",
+        features(&import)
+    );
+}
+
+#[test]
+fn a_level_supplied_only_by_an_instance_override_resolves() {
+    // The second half of the same asymmetry (`docs/142` §1.13): a level the
+    // abstract never declares but a per-instance `w:lvlOverride/w:lvl`
+    // redefinition supplies. The layout painted it; import refused it and the
+    // model rejected it. All three now resolve it through one predicate.
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>
+            <w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/>
+            <w:lvlOverride w:ilvl="3"><w:lvl w:ilvl="3"><w:start w:val="1"/>
+                <w:numFmt w:val="upperRoman"/><w:lvlText w:val="%4."/></w:lvl></w:lvlOverride>
+        </w:num>
+    </w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="3"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:t>deep</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+
+    let reference = paragraph(&import, 0)
+        .properties
+        .numbering
+        .expect("an override-supplied level must resolve");
+    assert_eq!(reference.level, 3);
+    let level = import
+        .document
+        .definitions()
+        .numbering_resolver()
+        .level(reference)
+        .expect("the override's own redefinition is the level");
+    assert_eq!(level.num_fmt, Some(NumberFormat::UpperRoman));
+    assert!(!features(&import).contains(&"numPr"));
+}
+
+#[test]
+fn level_attributes_the_model_cannot_carry_are_reported_not_dropped() {
+    // `docs/142` LST-31. `numbering.rs` never called `report_attribute`, so the
+    // element-only catch-all could not see an attribute on an element the parser
+    // handles: `w:tplc`, `w:tentative` and the custom `w:numFmt@w:format` picture
+    // went out with no finding at all, against the no-silent-loss rule.
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0">
+            <w:lvl w:ilvl="0" w:tplc="04090001" w:tentative="1">
+                <w:start w:val="1"/><w:numFmt w:val="custom" w:format="001, 002, 003, ..."/>
+                <w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:t>item</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+
+    for feature in ["lvl/@tplc", "lvl/@tentative", "numFmt/@format"] {
+        assert!(
+            features(&import).contains(&feature),
+            "{feature} is not modeled and must be reported; got {:?}",
+            features(&import)
+        );
+    }
+    // And the level itself is still modeled: reporting an attribute must not
+    // become a claim that the element was lost.
+    assert!(paragraph(&import, 0).properties.numbering.is_some());
+    for feature in ["lvl", "numPr", "start", "lvlText"] {
+        assert!(
+            !features(&import).contains(&feature),
+            "{feature} is modeled and must not be reported"
+        );
+    }
+    // The ids this parser consumes are not invented as losses.
+    for feature in ["lvl/@ilvl", "num/@numId", "abstractNum/@abstractNumId"] {
+        assert!(
+            !features(&import).contains(&feature),
+            "{feature} is consumed and must not be reported"
+        );
+    }
+}
+
 #[test]
 fn instance_start_override_is_imported_not_dropped() {
     // `<w:num><w:lvlOverride w:ilvl><w:startOverride w:val>` restarts a list at a
