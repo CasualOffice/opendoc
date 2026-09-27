@@ -30,6 +30,13 @@ import {
 } from "../src/command_taxonomy.mjs";
 
 const source = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+// The `table.*` command tree moved to its own module (`docs/141`; the ratchet note
+// in `module_seams.test.mjs`), while `table.style.none` is still declared in
+// `main.js` beside the style chooser that generates the per-document rows. Both
+// files, or the extraction would have silently emptied the set this test compares
+// and every assertion below would have passed on nothing.
+const tableSource =
+  source + readFileSync(new URL("../src/table_commands.mjs", import.meta.url), "utf8");
 
 test("no command has two menu homes", () => {
   const duplicated = [...menuHomes().entries()].filter(([, menus]) => menus.length > 1);
@@ -68,12 +75,16 @@ test("the Table menu covers every structural table command", () => {
   const parents = new Set(["table.insert", "table.delete", "table.select", "table.layout"]);
   const built = new Set(
     [
-      ...source.matchAll(/tableMutation\("(table\.[\w.]+)"/g),
-      ...source.matchAll(/id: "(table\.[\w.]+)"/g),
+      ...tableSource.matchAll(/tableMutation\("(table\.[\w.]+)"/g),
+      ...tableSource.matchAll(/id: "(table\.[\w.]+)"/g),
     ]
       .map((m) => m[1])
       .filter((id) => !parents.has(id)),
   );
+  // The set this compares must not be able to go empty: an extraction that moved
+  // the tree out from under the regex would otherwise green every assertion below
+  // while checking nothing at all.
+  assert.ok(built.size > 15, `only ${built.size} table commands found — the extraction moved them`);
 
   const inMenu = new Set(menuCommandIds("table"));
   assert.deepEqual(

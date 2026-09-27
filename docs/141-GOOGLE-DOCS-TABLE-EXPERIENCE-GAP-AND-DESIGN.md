@@ -1,14 +1,19 @@
 # 141 — Google Docs table experience: gap analysis and design
 
-**Status:** Design, complete. **Opened:** 2026-09-28. **Owner:** unassigned.
+**Status:** Design, complete. **First build landed: TBL-01…TBL-05, plus an interim for
+TBL-08.** **Opened:** 2026-09-28. **Owner:** unassigned.
 **Scope:** the *interaction* quality of table editing in OpenDoc measured against Google
-Docs, plus the design for the three lanes that close most of it. Docs-only: this document
-changes no code.
+Docs, plus the design for the three lanes that close most of it.
 
 **Why this exists.** The owner's words: *"table experience is pathetic in our platform .. we
 need complete table editing experience of google docs and try to provide that experience"*.
 
-**This is not a feature inventory.** We already ship **19 invocable table commands** plus 4
+> **§0.9 records what the first build changed, and what it falsified in this document.**
+> Read it before quoting any row below: six of the §1 findings are now closed, one §4.0
+> spec was wrong in a way that only writing it revealed, and building surfaced a new
+> refusal defect that was not in §1 at all.
+
+**This is not a feature inventory.** We already ship **20 invocable table commands** plus 4
 submenu containers (§0.3), a contextual Table ribbon tab with 19 controls, a live right-side
 table properties inspector, a Google-Docs-shaped grid-picker table inserter, table sorting and
 table formulas — the last two of which ONLYOFFICE does not have at all. Listing commands again
@@ -67,10 +72,15 @@ guard sees and the number published here cannot drift:
 
 ```sh
 cd <repo>
-grep -oE '(id: |tableMutation\()"table\.[A-Za-z.]+"' webapp/src/main.js \
+# The tree moved OUT of main.js in the first build (§0.9); `table.style.none` stayed
+# behind, beside the style chooser that generates the per-document rows, so both
+# files are read. `menu_taxonomy.test.mjs` reads the same pair.
+grep -ohE '(id: |tableMutation\()"table\.[A-Za-z.]+"' \
+    webapp/src/main.js webapp/src/table_commands.mjs \
   | grep -oE 'table\.[A-Za-z.]+' | sort -u          # the ids
-grep -oE '(id: |tableMutation\()"table\.[A-Za-z.]+"' webapp/src/main.js \
-  | grep -oE 'table\.[A-Za-z.]+' | sort -u | wc -l  # => 23
+grep -ohE '(id: |tableMutation\()"table\.[A-Za-z.]+"' \
+    webapp/src/main.js webapp/src/table_commands.mjs \
+  | grep -oE 'table\.[A-Za-z.]+' | sort -u | wc -l  # => 24
 ```
 
 **The widely-quoted "24 table commands" is wrong twice, and this document's own first draft
@@ -81,15 +91,17 @@ containers** built in `tableToolCommands` with a `submenu:` and no `run`. So:
 
 | Figure | Value |
 | --- | --- |
-| `table.*` ids in `main.js` | **23** |
-| …minus the 4 submenu containers | **19 invocable table commands** |
-| plus `insert.table` (insert namespace) | **20** |
+| `table.*` ids in `main.js` + `table_commands.mjs` | **24** (23 before `table.unmerge` landed) |
+| …minus the 4 submenu containers | **20 invocable table commands** |
+| plus `insert.table` (insert namespace) | **21** |
 | plus one generated `table.style.<name>` per table style the open document defines | variable — `for (const name of doc.listTableStyles?.() ?? [])` |
 
-Every one of the 19 appears in `webapp/src/command_taxonomy.mjs` (grep `table: [`) and is
-reachable from the contextual Table ribbon band, the application Table menu, the canvas
-context menu and the command palette — four surfaces, comfortably past the ≥2 floor
-(`SKILL.md` §10). There are **no table keyboard shortcuts**: `grep -n shortcut
+Every one of the 20 appears in `webapp/src/command_taxonomy.mjs` (grep `table: [`) and is
+reachable from the application Table menu, the canvas context menu and the command palette;
+all but `table.unmerge` are also on the contextual Table ribbon band. Three surfaces minimum,
+comfortably past the ≥2 floor (`SKILL.md` §10) — and no design in this document spends band
+width, so the new command deliberately did not either. There are **no table keyboard
+shortcuts**: `grep -n shortcut
 webapp/src/main.js | grep -i table` returns only comments, and `webapp/src/keymap.mjs` has no
 table chord.
 
@@ -172,6 +184,79 @@ a direct-manipulation gap cannot be closed by a button.
 | **facade+UI** | `crates/casual-doc-wasm` needs a new export or a new parameter; model and layout already suffice |
 | **engine** | a model field, a layout consumer, an op, or a selection type is genuinely missing |
 | **reachability-only** | we ship it and it works, but not from where the user reaches for it |
+
+### 0.9 What the first build changed, and what it falsified here
+
+The six cheapest rows shipped as one PR in `webapp/**` only. **No engine operation was
+added** and no `crates/**` file was touched, which is the claim §2 makes about this end of
+the table and it held.
+
+| Row | State | Where it is now |
+| --- | --- | --- |
+| **TBL-01** Tab in the last cell | **closed** | appends a row through the existing `insertRow`; Shift+Tab in the first cell says so |
+| **TBL-02** unmerge unreachable | **closed** | `table.unmerge`, menu + context + palette |
+| **TBL-03** band disabled with no reason | **closed** | `tableBandStates` in `webapp/src/table_band.mjs`; all 19 buttons |
+| **TBL-04** raw engine prose on the status line | **closed for the bypass**, open for the wording — see below |
+| **TBL-05** a left-click destroys a row selection | **closed** |
+| **TBL-08** row formatting hits one cell | **interim only**: it now REFUSES with a reason. The real fix is still the facade query |
+
+**Three §1 findings are now false as written.** §1.8's *"Unmerge is built and unreachable"*;
+§1.11 Hole 1 (*"the RIBBON states no reason at all"*), Hole 2 (`runNodeEdit` printing
+`err.message`) and Hole 3 (*"the Tab boundary is silently swallowed"*); §1.11's *"two wording
+drifts"* — `#mergeCellsBtn`'s unreachable handler and its divergent copy of the merge
+sentence are deleted; and §1.17 (*"the table selection is destroyed by a left-click"*).
+§1.16 is still true about the SCOPE of cell formatting, but no longer true that *"nothing
+refuses, so nothing explains"*.
+
+**One §4.0 spec was wrong, and only writing it showed how.** TBL-02's line says the row
+should be *"`enabled` only when the pointed-at cell is merged"*. That is not knowable in the
+webapp: §1.8's own last paragraph records that `TableInfo` reports no per-cell merge state
+(TBL-20), and the document asks for something its own audit says is impossible. What shipped
+uses the whole-table `regular` flag — offered whenever the table holds a merge ANYWHERE,
+refused up front with *"This table has no merged cells"* on a regular grid, and left to the
+engine's own `"cell is not merged"` for the remaining case. TBL-20 is what upgrades this from
+correct to precise.
+
+**TBL-01's spec carried an unnecessary second step.** It says to follow the insert with
+`navToPosition(doc.moveTableCell(focus.node, true), false)`. That is both redundant and
+wrong: `insert_row` already sets the caret through `apply_action_caret` to the new row's
+first cell — the destination the gesture means — and calling `moveTableCell` afterwards would
+walk the document again (three walks, §1.13) from a node whose grid has just been rewritten.
+
+**TBL-04's second half was not done, deliberately.** The spec asks to *"extend
+`webapp/src/edit_errors.mjs` with the table sentences"*. Neither available shape is
+acceptable: that module is pure and catalogue-free by design, so sentences added there would
+be unrouted English in a round whose point includes localisation; and a remembered list of
+engine strings is the exact defect the module's own `EXPLAINED` comment argues against
+(*"a list is a second place to update"*). The routing fix shipped, so no internal vocabulary
+reaches the reader and every refusal is localised — but a table refusal through `runNodeEdit`
+now reads as the generic sentence, which is less specific than the engine's own wording was.
+**The correct fix is TBL-24 on the engine side**: prefix those 15 free-form strings with
+`refused: ` and they pass through verbatim as real sentences, through a channel that already
+exists. That is a `casual-doc-wasm` change and is not this row's to make.
+
+**A refusal defect this document did not contain, found by building TBL-03.** The reason a
+disabled control states goes into its `title`, which is the only channel a disabled button
+has. It was then being erased. `armTip` parks `title` in `data-tip-title` and REMOVES the
+attribute while the pointer is on the control; `disarmTip` put the parked copy back
+unconditionally. So a reason written while a control was hovered was replaced, permanently,
+by the name of what the control would have done — measured on `#mergeCellsBtn`, disabled and
+still advertising *"Merge selected cells"*. **This was never table-specific**: `LAYOUT_SURFACE`
+and `REFERENCE_SURFACE` write their reasons the same way, so §1.11's *"Quality 1, good"*
+grade was overstated for every band. Both halves are fixed — `disarmTip` no longer overwrites
+a newer title, and `tipContentFor` prefers a disabled control's title over its `aria-label`,
+because the reason is the only thing worth saying about a control that cannot run.
+
+**One parity fix fell out of writing the rules down once.** `table.select.column` was gated
+on a regular grid in the MENU and not in the band. It is now gated in both, from one
+declaration — the `109` UX-005 shape rather than a separate row.
+
+**Two notes for whoever writes the next table spec here.** The accessibility mirror is a
+WINDOW around the caret and the `rich` fixture has a nested table of its own, so
+`querySelector("#a11yDocument table")` reads a different table as the caret moves — find the
+table by a marker typed into it. And every rect these designs will paint is an `.overlay`
+child that `drawSelection` destroys and rebuilds, so `boundingBox()` must go through
+`fixtures.mjs`'s `stableBox` and every model read through `expect.poll`.
 
 ---
 
@@ -419,19 +504,21 @@ reached from a menu. Four real sub-gaps remain inside it:
 | Gesture | Docs `[K]` | Ours | Anchor | Grade |
 | --- | --- | --- | --- | --- |
 | Tab / Shift+Tab across cells | moves and **selects the target cell's contents** | moves, caret at **offset 0**, nothing selected | the `key === "Tab"` branch in `webapp/src/main.js` calls `doc.moveTableCell(focus.node, !e.shiftKey)` then `navToPosition(c, false)`; `fn move_table_cell` returns a caret at offset 0 | UI-only |
-| **Tab in the last cell** | **appends a row** and moves into its first cell | **silent no-op** | the same branch wraps the call in `try { … } catch { }` whose comment reads *"First/last-cell boundaries are expected no-ops for this navigation slice."*; the facade throws `"no adjacent table cell"`, and `fn move_table_cell`'s own doc comment says it does not create a row | UI-only |
-| Shift+Tab in the first cell | leaves the table | silent no-op, same `catch` | as above | UI-only |
+| **Tab in the last cell** | **appends a row** and moves into its first cell | **appends a row** — SHIPPED (§0.9, TBL-01) | the `catch` now runs `insertRow(from, true)` through `runEdit({ gate: true })`, and the engine's own `apply_action_caret` lands the caret in the new row's first cell. It used to be an empty `catch { }` whose comment read *"First/last-cell boundaries are expected no-ops for this navigation slice."* | done |
+| Shift+Tab in the first cell | leaves the table | says so — `t("table.atFirstCell")` — rather than nothing. Leaving the table is still not offered | as above | UI-only (the exit) |
 | Arrow up/down crossing cells | works | works, but through a recovery path | `navCaret` comment: *"The engine still dead-ends going UP out of a table… `recoverVerticalMove` takes the engine's answer whenever it really moved and only otherwise finds the neighbouring line by hit-testing"* | — |
 | Arrow left/right at a cell edge | crosses into the adjacent cell | **UNVERIFIED** — `doc.moveCaret(node, offset, "left")` is the only path and its cell-boundary behaviour was not exercised here | `navCaret` | — |
 | Enter inside a cell | new paragraph in the cell | **UNVERIFIED** — no table-specific branch in the Enter path | — | — |
 | Ctrl/Cmd+A in a cell | selects the whole document | selects the **cell's contents first**, the document on a second press, with a status line saying so | `selectAll` in `webapp/src/main.js` calls `doc.cellTextRange(focus.node)`; status *"Cell contents selected — choose Select All again to select the document"* | **we are ahead** |
 | Any structural table edit from the keyboard alone | Docs has none either | none | — | parity |
 
-**Tab-in-last-cell is the cheapest high-value row in this whole document**: the engine call
-(`insertRow(node, true)`) and the command (`table.insert.rowBelow`) both already exist, and
-the change is to replace one empty `catch` with a forward branch. It is also the single most
-habitual table gesture in any word processor, so its absence is felt on the first table a
-user builds.
+**Tab-in-last-cell was the cheapest high-value row in this whole document**, and it shipped
+first for that reason: the engine call (`insertRow(node, true)`) and the command
+(`table.insert.rowBelow`) both already existed, and the change was to replace one empty
+`catch` with a forward branch. It is also the single most habitual table gesture in any word
+processor, so its absence was felt on the first table a user built. **What remains on this row
+is TBL-07** — the destination cell's contents are still not selected, so Tab moves a caret
+where Docs and Word hand you the value to overtype.
 
 ### 1.8 Merge and unmerge
 
@@ -444,7 +531,13 @@ user builds.
 | **Unmerge** | right-click, **Unmerge cells**, shown only on a merged cell | **not reachable at all** | see below |
 | Split into R x C | yes, a small dialog | yes, a dialog (`#splitCellDialog`, defaults 1 row by 2 columns) | `toggleSplitCellDialog`, `applySplitCell` |
 
-**Unmerge is built and unreachable — `SKILL.md` §9.4 again, and this one is a one-line fix.**
+> **CLOSED by the first build (§0.9).** `table.unmerge` now calls
+> `splitMergedCell(node)` with one argument, from the Table menu, the canvas context menu
+> and the palette; `#splitCellBtn`'s label is corrected. The paragraph below is kept as the
+> record of what was wrong and why, because the ARITY is the whole of it and a reader who
+> loses that will reintroduce it. `table_commands.test.mjs` asserts the argument list.
+
+**Unmerge was built and unreachable — `SKILL.md` §9.4 again, and this one is a one-line fix.**
 The facade signature is `splitMergedCell(node, requested_rows?, requested_columns?)` with
 `Option<u32>` parameters, and `fn split_table_cell_counts` opens:
 
@@ -550,8 +643,12 @@ and by `webapp/src/command_menu.mjs` for the palette:
 - *"Rows need a fixed or minimum height before distribution"* — distribute rows;
 - *"Select a row, column, or table before merging"* — merge.
 
-**Hole 1: the RIBBON states no reason at all.** `updateToolbar` sets `disabled` on the Table
-band's controls and never touches their `title`, which keeps its authored text:
+> **Holes 1, 2 and 3 are CLOSED by the first build, and it found a fourth that made Quality 1
+> an overstatement for every band (§0.9): the hover tooltip was overwriting the reasons.**
+> The three descriptions stay as the record of the mechanism.
+
+**Hole 1: the RIBBON stated no reason at all.** `updateToolbar` set `disabled` on the Table
+band's controls and never touched their `title`, which kept its authored text:
 
 ```js
 for (const control of tableRibbon.querySelectorAll("[data-table-sort]")) {
@@ -758,9 +855,16 @@ vertical alignment and of every border preset. There is no code path that iterat
 of a `tableSelection`.
 
 Docs `[K]` applies shading, borders and alignment to the whole selected block; so does Word.
-The consequence for us is worse than a missing feature, because the gesture appears to work:
+The consequence for us was worse than a missing feature, because the gesture appeared to work:
 the row lights up with the selection fill, the user clicks a shading swatch, and one cell
-changes. Nothing refuses, so nothing explains.
+changes. Nothing refused, so nothing explained.
+
+> **Half-closed by the first build (§0.9).** The three cell-scoped families now go through
+> `runCellEdit`, which REFUSES with a reason while a row/column/table selection is live rather
+> than formatting the caret's cell and implying success. The scope gap itself is untouched:
+> the facade query below is still what closes it. Table-scoped commands (`setTableBorder`,
+> the formula, the properties panel) deliberately stay on `runNodeEdit`, because a cell
+> selection does not change what they mean.
 
 **Grade: UI-only.** `doc.setCellShading(node, …)`, `setCellVerticalAlign`, `setCellBorder` all
 take a node, and `doc.tableSelectionRects(node, mode)` already knows which cells are in the
@@ -771,7 +875,7 @@ loops. So: **facade+UI** if done properly, UI-only if done by re-deriving anchor
 the facade route — `table_selection_anchors` is already the single source of truth and a
 second implementation in JS is the "two mechanisms for one rule" defect.
 
-### 1.17 The table selection is destroyed by a left-click
+### 1.17 The table selection is destroyed by a left-click — CLOSED (§0.9)
 
 `tableSelection = null` appears at 14 sites in `main.js` (recipe: `grep -c 'tableSelection =
 null' webapp/src/main.js`), including in `onPointerDown` — so **any left-click on the canvas,
@@ -812,46 +916,50 @@ grade plus the surface area. Ties break towards the row that unblocks another ro
 **Cost key.** XS = under a day, one call site. S = a few days, one module. M = a lane-week.
 L = a lane-month or a new type in a shared crate.
 
-| # | id | Gap | Docs evidence | Class | Cost | Unblocks |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | **TBL-01** | Tab in the last cell is a silent no-op; Docs appends a row (1.7, 1.11) | `[K]` | UI-only | XS | — |
-| 2 | **TBL-02** | Unmerge is unreachable — no value in the split dialog unmerges a cell, while `split_table_cell` is built and tested (1.8) | `[K]` | UI-only | XS | — |
-| 3 | **TBL-03** | Nine of the Table band's 19 buttons ship disabled with **no stated reason**, while the same commands explain themselves in the menu (1.11 Hole 1) | §10 rule | UI-only | XS | — |
-| 4 | **TBL-04** | `runNodeEdit` prints raw engine prose on the status line, bypassing `edit_errors.mjs` (1.11 Hole 2) | §10 rule | UI-only | XS | — |
-| 5 | **TBL-05** | A left-click destroys a row/column selection, including a click inside its own fill (1.17) | `[K]` | UI-only | XS | TBL-08 |
-| 6 | **TBL-06** | `w:cantSplit` ("allow row to break across pages") is honoured by layout and written by nothing (1.15) | Word/Docs both have it `[K]` | facade+UI | XS | — |
-| 7 | **TBL-07** | Tab moves the caret to offset 0 instead of selecting the destination cell's contents (1.7) | `[K]` | UI-only | XS | — |
-| 8 | **TBL-08** | Cell shading, vertical align and borders apply to **one cell** even with a row selected (1.16) | `[K]` | facade+UI | S | — |
-| 9 | **TBL-09** | Column/row handles exist only for the table the **caret** is in — you must click into a table before it is manipulable (1.1) | `[S]` ONLYOFFICE hit-tests by point; `[K]` Docs too | facade+UI | M | TBL-10, TBL-11, TBL-12 |
-| 10 | **TBL-10** | The column drag **widens the table** instead of moving the border; the neighbour absorbs nothing (1.1) | `[K]` | facade+UI | S | — |
-| 11 | **TBL-11** | No row-boundary hit zone at all; row height is menu-only (1.1) | `[S]` `[K]` | facade+UI | M | — |
-| 12 | **TBL-12** | No edge strips, so `table.select.row` / `.column` have no pointer path (1.3) | `[S]` `[K]` | facade+UI | M | TBL-13, TBL-14 |
-| 13 | **TBL-13** | No hover `+` insert affordance between rows or columns (1.2) | `[K]` Docs only | UI-only *after* TBL-12 | S | — |
-| 14 | **TBL-14** | No drag-to-reorder for a row or column (1.4) | `[K]` | facade+UI | M | — |
-| 15 | **TBL-15** | Table facade calls are O(document) ×3 and handle painting is `R×(C−1)×O(pages)` per redraw (1.13) | `docs/107` §4 | facade | M | blocks TBL-09 |
-| 16 | **TBL-16** | No rectangular cell-range selection anywhere in the stack (1.5) | `[K]` | **engine** + facade + UI | L | TBL-17 |
-| 17 | **TBL-17** | Merge is limited to row/column/table although `merge_regular_table_selection` already takes `(r0,r1,c0,c1)` (1.5, 1.8) | `[K]` | facade+UI | S *after* TBL-16 | — |
-| 18 | **TBL-18** | Touch: the only table gesture is a 10px handle; `pointerType` has zero occurrences in `webapp/src`; the compact toolbar has no table commands (1.14) | WCAG 2.5.5/2.5.8 | UI-only | M | — |
-| 19 | **TBL-19** | The merged-table cliff: one merge removes nine capabilities (1.12) | `[K]` neither Docs nor Word does this | **engine** (column ops) + facade+UI (resize/sort/select) | L | — |
-| 20 | **TBL-20** | `tableInfo` reports no per-cell merge state, so no UI can correctly offer Unmerge for the pointed-at cell (1.8) | — | facade | XS | TBL-02 quality |
-| 21 | **TBL-21** | `w:tblLook` — Header Row / Total Row / First Column / Banded Rows toggles — honoured by the cascade, written by nothing (1.15) | `[K]` Docs has header-row + banding | facade+UI | M | — |
-| 22 | **TBL-22** | Distribute rows refuses auto-height rows although the measured heights are in `FlowedTableRow.height` (1.15) | `[K]` Docs distributes measured heights | facade | S | — |
-| 23 | **TBL-23** | The contextual Table tab never auto-activates (1.6) | Word `[K]`; Docs has no ribbon | UI-only | XS | — |
-| 24 | **TBL-24** | Facade refusals are free-form unlocalised English with no code; a host cannot branch on them (1.11 Hole 4) | — | facade | M | — |
-| 25 | **TBL-25** | Silent clamping: out-of-range width/height/row-count requests succeed at a different value (1.11 Hole 5) | — | facade | S | — |
-| 26 | **TBL-26** | `insertTable` hardcodes `container: None`, so no table can be inserted into a cell, header, footer or text box (1.15) | `[K]` Docs allows nested tables | facade | M | — |
-| 27 | **TBL-27** | `setTableCellMargins` takes one value for all four sides; `TableInfo.cellMarginTwips` returns `-1` when they differ, so a non-uniform table reads as "unset" (1.15) | `[K]` | facade+UI | S | — |
-| 28 | **TBL-28** | Header-row repeat acts on the active row only; no way to mark rows 1–2 in one gesture, and no context-menu toggle (1.10) | `[K]` | facade+UI | S | — |
-| 29 | **TBL-29** | Per-row `w:jc` and `w:bidiVisual` are honoured by layout, written by nothing (1.15) | — | facade+UI | S | — |
-| 30 | **TBL-30** | Band *period* (`w:tblStyleRowBandSize` / `ColBandSize`) has **no layout consumer**, so a Banded Rows toggle would have to re-stamp `cnfStyle` on every row after every insert (1.15) | — | **engine** | M | quality of TBL-21 |
-| 31 | **TBL-31** | The insert-table grid picker maxes at 8×10 with no numeric fallback; a 12×3 table must be grown row by row (§3) | Word has a numeric dialog `[K]` | UI-only | XS | — |
-| 32 | **TBL-32** | No double-click-on-border autofit (Word and Docs both size a column to its content this way) | `[K]` | facade+UI | S | needs TBL-09 |
-| 33 | **TBL-33** | No table move/drag handle at the top-left (Word has one; **Docs does not**, so this is not a Docs-parity row) | `[S]` ONLYOFFICE has `TableOutlineDr` | facade+UI | M | — |
-| 34 | **TBL-34** | Column resize has no width readout during the drag, although object resize does (`object-resize-readout`) | `[K]` Docs shows none either; Word does | UI-only | XS | — |
-| 35 | **TBL-35** | Handles are painted and draggable in Viewing and Suggesting; the refusal arrives only on pointer-up (1.1) | §10 rule | UI-only | XS | — |
-| 36 | **TBL-36** | `plainTableInfo` keeps 5 of `tableInfo`'s 20 fields, so the context menu cannot disable "Delete row" on a one-row table before the engine refuses (1.9) | §10 rule | UI-only | XS | — |
-| 37 | **TBL-37** | Column resize is never actually **dragged** by any test; only the handle's position is asserted, in `painted-layout-consistency.spec.mjs` | test gap | UI-only | S | — |
-| 38 | **TBL-38** | Table formula UI (`#tableFormula`, `#tableFormulaApply`) has **zero** test coverage: `grep -rn 'tableFormula' webapp/tests/` returns nothing | test gap | UI-only | S | — |
+**The `Status` column is the only part of this table the first build changed** — the grades,
+costs and orderings all held. `SHIPPED` means the gesture is now the competitive one and a
+guard drives it; `INTERIM` means it refuses honestly and the row stays open (§0.9).
+
+| # | id | Gap | Docs evidence | Class | Cost | Status | Unblocks |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | **TBL-01** | Tab in the last cell is a silent no-op; Docs appends a row (1.7, 1.11) | `[K]` | UI-only | XS | **SHIPPED** | — |
+| 2 | **TBL-02** | Unmerge is unreachable — no value in the split dialog unmerges a cell, while `split_table_cell` is built and tested (1.8) | `[K]` | UI-only | XS | **SHIPPED** | — |
+| 3 | **TBL-03** | Nine of the Table band's 19 buttons ship disabled with **no stated reason**, while the same commands explain themselves in the menu (1.11 Hole 1) | §10 rule | UI-only | XS | **SHIPPED** | — |
+| 4 | **TBL-04** | `runNodeEdit` prints raw engine prose on the status line, bypassing `edit_errors.mjs` (1.11 Hole 2) | §10 rule | UI-only | XS | **SHIPPED** (bypass; wording -> TBL-24) | — |
+| 5 | **TBL-05** | A left-click destroys a row/column selection, including a click inside its own fill (1.17) | `[K]` | UI-only | XS | **SHIPPED** | TBL-08 |
+| 6 | **TBL-06** | `w:cantSplit` ("allow row to break across pages") is honoured by layout and written by nothing (1.15) | Word/Docs both have it `[K]` | facade+UI | XS | open | — |
+| 7 | **TBL-07** | Tab moves the caret to offset 0 instead of selecting the destination cell's contents (1.7) | `[K]` | UI-only | XS | open | — |
+| 8 | **TBL-08** | Cell shading, vertical align and borders apply to **one cell** even with a row selected (1.16) | `[K]` | facade+UI | S | **INTERIM** (refuses) | — |
+| 9 | **TBL-09** | Column/row handles exist only for the table the **caret** is in — you must click into a table before it is manipulable (1.1) | `[S]` ONLYOFFICE hit-tests by point; `[K]` Docs too | facade+UI | M | open | TBL-10, TBL-11, TBL-12 |
+| 10 | **TBL-10** | The column drag **widens the table** instead of moving the border; the neighbour absorbs nothing (1.1) | `[K]` | facade+UI | S | open | — |
+| 11 | **TBL-11** | No row-boundary hit zone at all; row height is menu-only (1.1) | `[S]` `[K]` | facade+UI | M | open | — |
+| 12 | **TBL-12** | No edge strips, so `table.select.row` / `.column` have no pointer path (1.3) | `[S]` `[K]` | facade+UI | M | open | TBL-13, TBL-14 |
+| 13 | **TBL-13** | No hover `+` insert affordance between rows or columns (1.2) | `[K]` Docs only | UI-only *after* TBL-12 | S | open | — |
+| 14 | **TBL-14** | No drag-to-reorder for a row or column (1.4) | `[K]` | facade+UI | M | open | — |
+| 15 | **TBL-15** | Table facade calls are O(document) ×3 and handle painting is `R×(C−1)×O(pages)` per redraw (1.13) | `docs/107` §4 | facade | M | open | blocks TBL-09 |
+| 16 | **TBL-16** | No rectangular cell-range selection anywhere in the stack (1.5) | `[K]` | **engine** + facade + UI | L | open | TBL-17 |
+| 17 | **TBL-17** | Merge is limited to row/column/table although `merge_regular_table_selection` already takes `(r0,r1,c0,c1)` (1.5, 1.8) | `[K]` | facade+UI | S *after* TBL-16 | open | — |
+| 18 | **TBL-18** | Touch: the only table gesture is a 10px handle; `pointerType` has zero occurrences in `webapp/src`; the compact toolbar has no table commands (1.14) | WCAG 2.5.5/2.5.8 | UI-only | M | open | — |
+| 19 | **TBL-19** | The merged-table cliff: one merge removes nine capabilities (1.12) | `[K]` neither Docs nor Word does this | **engine** (column ops) + facade+UI (resize/sort/select) | L | open | — |
+| 20 | **TBL-20** | `tableInfo` reports no per-cell merge state, so no UI can correctly offer Unmerge for the pointed-at cell (1.8) | — | facade | XS | open | TBL-02 quality |
+| 21 | **TBL-21** | `w:tblLook` — Header Row / Total Row / First Column / Banded Rows toggles — honoured by the cascade, written by nothing (1.15) | `[K]` Docs has header-row + banding | facade+UI | M | open | — |
+| 22 | **TBL-22** | Distribute rows refuses auto-height rows although the measured heights are in `FlowedTableRow.height` (1.15) | `[K]` Docs distributes measured heights | facade | S | open | — |
+| 23 | **TBL-23** | The contextual Table tab never auto-activates (1.6) | Word `[K]`; Docs has no ribbon | UI-only | XS | open | — |
+| 24 | **TBL-24** | Facade refusals are free-form unlocalised English with no code; a host cannot branch on them (1.11 Hole 4) | — | facade | M | open | — |
+| 25 | **TBL-25** | Silent clamping: out-of-range width/height/row-count requests succeed at a different value (1.11 Hole 5) | — | facade | S | open | — |
+| 26 | **TBL-26** | `insertTable` hardcodes `container: None`, so no table can be inserted into a cell, header, footer or text box (1.15) | `[K]` Docs allows nested tables | facade | M | open | — |
+| 27 | **TBL-27** | `setTableCellMargins` takes one value for all four sides; `TableInfo.cellMarginTwips` returns `-1` when they differ, so a non-uniform table reads as "unset" (1.15) | `[K]` | facade+UI | S | open | — |
+| 28 | **TBL-28** | Header-row repeat acts on the active row only; no way to mark rows 1–2 in one gesture, and no context-menu toggle (1.10) | `[K]` | facade+UI | S | open | — |
+| 29 | **TBL-29** | Per-row `w:jc` and `w:bidiVisual` are honoured by layout, written by nothing (1.15) | — | facade+UI | S | open | — |
+| 30 | **TBL-30** | Band *period* (`w:tblStyleRowBandSize` / `ColBandSize`) has **no layout consumer**, so a Banded Rows toggle would have to re-stamp `cnfStyle` on every row after every insert (1.15) | — | **engine** | M | open | quality of TBL-21 |
+| 31 | **TBL-31** | The insert-table grid picker maxes at 8×10 with no numeric fallback; a 12×3 table must be grown row by row (§3) | Word has a numeric dialog `[K]` | UI-only | XS | open | — |
+| 32 | **TBL-32** | No double-click-on-border autofit (Word and Docs both size a column to its content this way) | `[K]` | facade+UI | S | open | needs TBL-09 |
+| 33 | **TBL-33** | No table move/drag handle at the top-left (Word has one; **Docs does not**, so this is not a Docs-parity row) | `[S]` ONLYOFFICE has `TableOutlineDr` | facade+UI | M | open | — |
+| 34 | **TBL-34** | Column resize has no width readout during the drag, although object resize does (`object-resize-readout`) | `[K]` Docs shows none either; Word does | UI-only | XS | open | — |
+| 35 | **TBL-35** | Handles are painted and draggable in Viewing and Suggesting; the refusal arrives only on pointer-up (1.1) | §10 rule | UI-only | XS | open | — |
+| 36 | **TBL-36** | `plainTableInfo` keeps 5 of `tableInfo`'s 20 fields, so the context menu cannot disable "Delete row" on a one-row table before the engine refuses (1.9) | §10 rule | UI-only | XS | open | — |
+| 37 | **TBL-37** | Column resize is never actually **dragged** by any test; only the handle's position is asserted, in `painted-layout-consistency.spec.mjs` | test gap | UI-only | S | open | — |
+| 38 | **TBL-38** | Table formula UI (`#tableFormula`, `#tableFormulaApply`) has **zero** test coverage: `grep -rn 'tableFormula' webapp/tests/` returns nothing | test gap | UI-only | S | open | — |
 
 ### 2.1 The shape of the table
 
@@ -909,20 +1017,28 @@ The eight cheapest rows in §2 are each one call site, and their §1 subsections
 everything a lane needs. Restated here as one-line specs so the queue can be worked from the
 top without reading back:
 
+> **Six of the eight have shipped (§0.9), and building them found three of these specs wrong:
+> TBL-02's enablement rule is not knowable in the webapp, TBL-01's second step is redundant
+> and harmful, and TBL-04's second half has no acceptable shape on this side of the facade.**
+> Each row below carries the correction; §0.9 has the reasoning. TBL-06 and TBL-07 were not
+> built and their specs stand as written.
+
 | id | The change |
 | --- | --- |
-| **TBL-01** | In the `key === "Tab"` branch, replace the empty `catch` with: if `forward` and the caret is in the table's **last** cell, `await runEdit(() => doc.insertRow(anchorOfLastRow, true), { gate: true })` then `navToPosition(doc.moveTableCell(focus.node, true), false)`. If `!forward` and it is the first cell, keep the no-op but say so: `setStatus("The caret is already in the first cell")`. Drives the existing `insertRow`. Gate stays `{ gate: true }` so Suggesting still refuses with its existing reason. |
-| **TBL-02** | Add an `Unmerge cells` row to `tableToolCommands`, `enabled` only when the pointed-at cell is merged, `run: () => runEdit(() => doc.splitMergedCell(context.anchor.node), { gate: true })` — **no** second and third argument, which is what reaches `split_table_cell`. New command id `table.unmerge`, added to `APP_MENU_SECTIONS.table` and `TABLE_MENU_LABELS` beside `table.split`, plus the existing `#splitCellBtn` group gains no button: reachability is menu + context + palette = three surfaces, no band width spent. Correct the `#splitCellBtn` title from *"Split current merged cell"* to *"Split cell into rows and columns"*. |
-| **TBL-03** | In `updateToolbar`, wherever a Table-band control's `disabled` is set from `!tableInfo?.regular` or a rule check, set `control.title` to the same string the menu uses (`"Unavailable for merged or spanned tables"`, `"Rows need a fixed or minimum height before distribution"`) and restore `authoredTitle(control)` when enabled — the helper already exists and `#tableStyleBtn` already uses it. Add a unit guard asserting no Table-band control is ever `disabled` with its authored title still showing. |
-| **TBL-04** | Change `runNodeEdit`'s catch from `setStatus(err?.message ?? …)` to `setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error")` — the same call `runEdit` makes. Then extend `webapp/src/edit_errors.mjs` with the table sentences, and add a guard that no `setStatus` call in `main.js` passes a raw `err.message`. |
-| **TBL-05** | In `onPointerDown`, before clearing, keep the table selection when `tableSelectionContainsClientPoint(event.clientX, event.clientY)` — the function already exists and the `contextmenu` handler already uses it. Also delete `#mergeCellsBtn`'s unreachable click handler and its divergent copy of the merge sentence (1.11). |
+| **TBL-01** | **SHIPPED.** In the `key === "Tab"` branch, replace the empty `catch` with: if `forward`, `await runEdit(() => doc.insertRow(from, true), { gate: true })` — `moveTableCell` can only throw *"no adjacent table cell"* there, because `inTable` has already answered the other throw, so a forward Tab that fails IS a Tab in the last cell and no separate last-cell test is needed. If `!forward`, keep the no-op but say so: `setStatus(t("table.atFirstCell"))`. Gate stays `{ gate: true }` so Suggesting still refuses with its existing reason. **CORRECTION:** this row originally also asked for `navToPosition(doc.moveTableCell(focus.node, true), false)` after the insert. Do not: `insert_row`'s own `apply_action_caret` already puts the caret in the new row's first cell, and re-walking the document from a node whose grid has just been rewritten is both redundant and three more walks (§1.13). |
+| **TBL-02** | **SHIPPED.** Add an `Unmerge cells` row to the table command tree, `run: () => runEdit(() => doc.splitMergedCell(context.anchor.node), { gate: true })` — **no** second and third argument, which is what reaches `split_table_cell`. New command id `table.unmerge`, added to `APP_MENU_SECTIONS.table` and `TABLE_MENU_LABELS` beside `table.split`; the `#splitCellBtn` group gains no button, so reachability is menu + context + palette = three surfaces, no band width spent. Correct the `#splitCellBtn` title from *"Split current merged cell"* to *"Split cell into rows and columns"*. **CORRECTION:** this row said `enabled` only when the POINTED-AT cell is merged. That is not knowable here — §1.8's own last paragraph records that `TableInfo` reports no per-cell merge state (TBL-20). What shipped keys off the whole-table `regular` flag: offered whenever the table holds a merge anywhere, refused up front with `t("table.reason.noMergedCells")` on a regular grid. TBL-20 makes it precise. |
+| **TBL-03** | **SHIPPED**, as a declaration rather than five loops: `TABLE_BAND_PRECONDITIONS` / `TABLE_BAND_REASON_KEYS` / `tableBandStates` in `webapp/src/table_band.mjs`, next to the operations they gate, and `updateToolbar` sets `control.title = enabled ? authoredTitle(control, platform) : t(reasonKey)` over all 19 buttons. The reasons are catalogue KEYS, so the band and the menu read one entry each. **TWO ADDITIONS the row did not predict:** the hover tooltip was erasing every reason it wrote (§0.9), and `table.select.column` was gated on a regular grid in the menu and not in the band. |
+| **TBL-04** | **SHIPPED in part.** Change `runNodeEdit`'s catch from `setStatus(err?.message ?? …)` to `setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error")` — the same call `runEdit` makes. **CORRECTION:** the rest of this row — *"extend `edit_errors.mjs` with the table sentences"* — was NOT done and should not be. That module is pure and catalogue-free, so sentences there would be unrouted English; and a remembered list of engine strings is the defect its own `EXPLAINED` comment argues against. The reader now gets a localised generic sentence instead of the facade's wording, which is less specific — **TBL-24 on the engine side is the fix**: prefix those 15 strings with `refused: ` and they pass through verbatim. |
+| **TBL-05** | **SHIPPED.** In `onPointerDown`, before clearing, keep the table selection when `tableSelectionContainsClientPoint(event.clientX, event.clientY)` — the function already exists and the `contextmenu` handler already uses it, and it returns on `!tableSelection` before querying the engine, so the ordinary click path gains no document walk. A DRAG (`updateDragSelection`, once `moved` is set) still clears it, because a drag builds a text range. Also delete `#mergeCellsBtn`'s unreachable click handler and its divergent copy of the merge sentence (1.11). |
 | **TBL-06** | Add `cantSplit` (or the positive `allowRowBreak`) to `applyTableProperties`'s serde struct, one checkbox in the inspector's **Current row** section — *"Allow this row to break across pages"* — and a context-menu toggle under `table.layout`. No engine work: `flow.rs` reads `row.properties.cant_split` and `paginate.rs` honours it, guarded. |
 | **TBL-07** | After `navToPosition(c, false)` in the Tab branch, select the destination cell's contents with the existing `doc.cellTextRange(c.node)` — the same call `selectAll` makes — and fall back to the collapsed caret when it reports `found: false` (a cell holding a text-box story). |
-| **TBL-08** | Add `tableSelectionAnchorNodes(node, mode) -> Vec<String>` to the facade, returning `fn table_selection_anchors`'s existing list rather than the rects derived from it; then have `runNodeEdit` loop it when a `tableSelection` is live. **Do not** re-derive the anchors in JS — that is a second implementation of one rule. |
+| **TBL-08** | Add `tableSelectionAnchorNodes(node, mode) -> Vec<String>` to the facade, returning `fn table_selection_anchors`'s existing list rather than the rects derived from it; then have the cell-scoped path loop it when a `tableSelection` is live. **Do not** re-derive the anchors in JS — that is a second implementation of one rule. **INTERIM SHIPPED:** `runCellEdit` refuses with `t("table.cellFormatOneCell")` while a selection is live, so the gesture no longer formats one cell and implies success. The three cell-scoped families moved onto it; `setTableBorder`, the formula and the properties panel stay on `runNodeEdit`, because a cell selection does not change what they mean. |
 
-Also fix, while in the area: `setStatus(\`Selected table ${mode}\`)` in `selectTableContext`
-is a raw template literal, not a `t()` call, so the one status line the table selection
-produces is **not localised**.
+Also fixed while in the area: `setStatus(\`Selected table ${mode}\`)` in `selectTableContext`
+was a raw template literal, not a `t()` call, so the one status line the table selection
+produces was **not localised**. It is now one key per mode (`table.selectedRow` /
+`.selectedColumn` / `.selectedTable`) rather than a fixed verb with a translated noun glued
+on, which a language that puts the state first cannot use.
 
 The three designs below are the top three rows that a lane cannot build without design.
 
@@ -1546,10 +1662,14 @@ Three `docs/109` rows are genuinely open and directly relevant to this document:
 
 Per the brief, this document does not edit `docs/104`, `105`, `109` or `14`. The rows to file:
 
-**New rows (interaction):** TBL-01 … TBL-38 from §2. If they are filed as a single themed row
-rather than 38, the three that must survive individually are **TBL-01** (Tab appends a row),
-**TBL-02** (unmerge unreachable) and **TBL-16** (cell-range selection), because the first two are
-XS and the third gates six others.
+**New rows (interaction):** TBL-01 … TBL-38 from §2. **TBL-01 … TBL-05 have SHIPPED and need
+no row** (§0.9); TBL-08 shipped only an interim refusal and stays open with its facade query
+named. Of the rest, the one that must survive individually is **TBL-16** (cell-range
+selection), because it gates six others. **Two rows the build promoted:** **TBL-20**
+(`TableInfo` has no per-cell merge state) is now what stands between Unmerge being correct and
+being precise, and **TBL-24** (facade refusal codes) is what makes a table refusal specific
+again rather than generic — both were filed as quality refinements and are now the direct
+successors of shipped work.
 
 **Close or amend as already fixed:** UX-008, UX-012 (both halves), UX-015's table-gallery clause;
 and reconcile FID-L-13 between `105` and `109`.

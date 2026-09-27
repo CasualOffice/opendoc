@@ -182,7 +182,8 @@ import { createPointerHover } from "./pointer_hover.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
-import { bindTableBand } from "./table_band.mjs";
+import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
+import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
 import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
@@ -309,7 +310,11 @@ const tableBorderColor = document.getElementById("tableBorderColor");
 const tableAlign = document.getElementById("tableAlign");
 const tableContext = document.getElementById("tableContext");
 const tableRibbon = document.querySelector(".table-ribbon");
-const tableRibbonControls = [...tableRibbon.querySelectorAll("button")];
+// The band's authored tooltips, captured at BOOT before any catalogue exists —
+// the same fallback the Layout and References bands take. Without it, restoring a
+// title after a disabled state could hand back the REASON the control was given
+// (`docs/141` TBL-03), because `authoredTitle` falls back to the live `title`.
+for (const control of tableRibbon.querySelectorAll("button")) control.dataset.enabledTitle = control.title;
 const tablePropertiesBtn = document.getElementById("tablePropertiesBtn");
 const tableStyleBtn = document.getElementById("tableStyleBtn");
 const tableStyleMenu = document.getElementById("tableStyleMenu");
@@ -1120,10 +1125,20 @@ let tipTimer = 0;
 let tipTarget = null;
 
 function tipContentFor(el) {
-  const raw = (el.dataset.tipTitle ?? el.getAttribute("title") ?? "").trim();
+  // The LIVE title first, the parked copy only as a fallback. `armTip` removes the
+  // attribute for the duration of the hover, so anything written during that park
+  // — a disabled control's stated reason, above all — is NEWER than the parked
+  // copy, and reading the parked one showed the stale name (`docs/141` TBL-03).
+  const raw = (el.getAttribute("title") || el.dataset.tipTitle || "").trim();
   const label = (el.getAttribute("aria-label") ?? "").trim();
   const match = raw.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
-  const name = (label || (match ? match[1] : raw)).trim();
+  const own = match ? match[1] : raw;
+  // A DISABLED control's title is the REASON it cannot run, and that reason is the
+  // only thing worth saying about it — so it outranks the control's own name here.
+  // Hovering a grey Sort button and reading "Sort rows ascending" is the §10 defect
+  // itself: the tooltip is the one channel a disabled control has, and it was
+  // spending it on what the button would have done.
+  const name = ((el.disabled ? own : "") || label || own).trim();
   // The parenthetical is a shortcut only if it reads like one. "(3×3)" and
   // "(compact view)" are part of the name, and translating them would have
   // printed nonsense in the shortcut slot.
@@ -1176,7 +1191,14 @@ function armTip(el) {
 
 function disarmTip(el) {
   if (el && el.dataset.tipTitle != null) {
-    el.setAttribute("title", el.dataset.tipTitle);
+    // …unless something wrote a NEWER title while the attribute was parked. It is
+    // removed for the whole hover, so a live `title` here is by definition newer
+    // than the parked copy. Restoring the parked copy regardless is how a disabled
+    // control's stated reason was silently and PERMANENTLY replaced by the name of
+    // what it would have done — in every band, for every reason the chrome writes,
+    // and only on controls the user had hovered, which is every control they were
+    // asking about (`docs/141` TBL-03).
+    if (!el.getAttribute("title")) el.setAttribute("title", el.dataset.tipTitle);
     delete el.dataset.tipTitle;
   }
   if (tipTarget === el || !el) {
@@ -6224,7 +6246,17 @@ function onPointerDown(page, event) {
   }
   pendingFormat = null; // a click moves the caret → disarm typing format
   verticalGoal.clear(); // …and puts the caret in a column of its own choosing
-  tableSelection = null;
+  // …but a click INSIDE the accent fill of the row/column/table you just selected
+  // keeps that selection (`docs/141` TBL-05). Every left-click cleared it, so a
+  // user who selected a row and then clicked it to "confirm" lost it silently and
+  // Merge cells went grey again. Google Docs keeps a cell block until you click
+  // OUTSIDE it or start typing; the `contextmenu` handler already asks this exact
+  // question through the same helper.
+  //
+  // O(1) when there is no table selection — `tableSelectionContainsClientPoint`
+  // returns on `!tableSelection` before it queries the engine — so the ordinary
+  // click path gains no document walk (`docs/107` §4).
+  if (!tableSelectionContainsClientPoint(event.clientX, event.clientY)) tableSelection = null;
   dragging = true;
   pointerGesture = {
     page,
@@ -6370,6 +6402,10 @@ function updateDragSelection(event) {
     ) > 4
   ) {
     pointerGesture.moved = true;
+    // A drag builds a TEXT range, which supersedes a row/column/table selection.
+    // Pointer-down inside the fill keeps the selection (`docs/141` TBL-05); the
+    // moment the gesture turns into a drag it is no longer a confirming click.
+    tableSelection = null;
   }
   const page = pageFromClientPoint(event.clientX, event.clientY);
   if (!page) return;
@@ -6972,10 +7008,20 @@ function decideContextRevision(revision, accept) {
   );
 }
 
+/** One catalogue key per selection mode. `Selected table ${mode}` was the single
+ *  table status line with no catalogue entry at all (`docs/141` §4.0), and
+ *  glueing a translated noun onto a fixed English verb is what a key per mode
+ *  avoids: a language that puts the state first needs the whole sentence. */
+const TABLE_SELECTION_STATUS = Object.freeze({
+  row: "table.selectedRow",
+  column: "table.selectedColumn",
+  table: "table.selectedTable",
+});
+
 function selectTableContext(node, mode) {
   tableSelection = { node, mode };
   drawSelection();
-  setStatus(`Selected table ${mode}`);
+  setStatus(t(TABLE_SELECTION_STATUS[mode] ?? "table.selectedTable"));
   focusEditorSurface();
 }
 
@@ -7031,175 +7077,27 @@ function openContextLink(link) {
 // contextual Table ribbon tab and the right-click menu, so typing "insert row"
 // or "merge cells" into the palette found nothing. Word reaches all of them from
 // Tell Me, and Docs files them under Format ▸ Table.
-function tableToolCommands(context) {
-  // Structural table edits rewrite the grid, which the engine cannot represent as
-  // a tracked change, so Suggesting disables them with that as the stated reason.
-  const structuralEnabled = !context.suggesting;
-  const structuralReason = structuralEnabled
-    ? ""
-    : "This structural change cannot be tracked in Suggesting mode";
-  const regular = context.table.regular;
-  const selectedTable = tableSelection
-    ? plainTableInfo(tableSelection.node)?.table
-    : "";
-  const hasTableSelection =
-    !!selectedTable && selectedTable === context.table.table;
-  const columnsReason = regular
-    ? structuralReason
-    : "Unavailable for merged or spanned tables";
-  const tableMutation = (id, label, run, options = {}) => ({
-    id,
-    label,
-    group: options.group ?? "op",
-    enabled:
-      structuralEnabled &&
-      (options.regular !== true || regular) &&
-      (options.enabled ?? true),
-    disabledReason:
-      !structuralEnabled
-        ? structuralReason
-        : options.regular === true && !regular
-          ? columnsReason
-          : options.enabled === false
-            ? options.disabledReason
-            : "",
-    danger: options.danger,
-    run,
-  });
+// The table command tree lives in `table_commands.mjs`; this is the one place the
+// editor's own bindings are handed to it. Every binding is read at CALL time, so
+// the tree reflects the state the menu is opening over rather than boot state.
+const TABLE_COMMAND_HOST = {
+  doc: () => doc,
+  tableSelection: () => tableSelection,
+  clearTableSelection: () => {
+    tableSelection = null;
+  },
+  plainTableInfo,
+  runEdit: (thunk, options) => runEdit(thunk, options),
+  selectTableContext,
+  openSplitCellDialog: () => toggleSplitCellDialog(true),
+  openCellFormat: () => {
+    selectRibbonTab("table");
+    tableBtn.click();
+  },
+  openTableProperties: () => toggleTableProperties(true),
+};
 
-  const insertSubmenu = [
-    tableMutation("table.insert.rowAbove", "Row above",
-      () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
-      { group: "row" }),
-    tableMutation("table.insert.rowBelow", "Row below",
-      () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
-      { group: "row" }),
-    tableMutation("table.insert.columnLeft", "Column left",
-      () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
-      { regular: true, group: "col" }),
-    tableMutation("table.insert.columnRight", "Column right",
-      () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
-      { regular: true, group: "col" }),
-  ];
-  const deleteSubmenu = [
-    tableMutation("table.delete.row", "Delete row",
-      () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
-      { danger: true, group: "cell" }),
-    tableMutation("table.delete.column", "Delete column",
-      () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
-      { danger: true, regular: true, group: "cell" }),
-    tableMutation("table.delete.table", "Delete table",
-      () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
-      { danger: true, group: "table" }),
-  ];
-  const selectSubmenu = [
-    {
-      id: "table.select.row",
-      label: "Select row",
-      group: "sel",
-      run: () => selectTableContext(context.anchor.node, "row"),
-    },
-    {
-      id: "table.select.column",
-      label: "Select column",
-      group: "sel",
-      enabled: regular,
-      disabledReason: regular ? "" : columnsReason,
-      run: () => selectTableContext(context.anchor.node, "column"),
-    },
-    {
-      id: "table.select.table",
-      label: "Select table",
-      group: "sel",
-      run: () => selectTableContext(context.anchor.node, "table"),
-    },
-  ];
-  const layoutSubmenu = [
-    tableMutation("table.distribute.rows", "Distribute rows",
-      () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
-      {
-        regular: true,
-        group: "distribute",
-        enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
-        disabledReason: "Rows need a fixed or minimum height before distribution",
-      }),
-    tableMutation("table.distribute.columns", "Distribute columns",
-      () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
-      { regular: true, group: "distribute" }),
-    tableMutation("table.sort.ascending", "Sort ascending",
-      () => runEdit(() => doc.sortTable(context.anchor.node, "ascending", context.table?.column ?? -1), { gate: true }),
-      { regular: true, group: "sort" }),
-    tableMutation("table.sort.descending", "Sort descending",
-      () => runEdit(() => doc.sortTable(context.anchor.node, "descending", context.table?.column ?? -1), { gate: true }),
-      { regular: true, group: "sort" }),
-  ];
-
-  return [
-    {
-      id: "table.insert",
-      label: "Insert",
-      group: "table",
-      icon: "tableInsert",
-      submenu: insertSubmenu,
-    },
-    {
-      id: "table.delete",
-      label: "Delete",
-      group: "table",
-      icon: "tableDelete",
-      submenu: deleteSubmenu,
-    },
-    tableMutation("table.merge", "Merge cells",
-      async () => {
-        await runEdit(() =>
-          doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
-        tableSelection = null;
-      },
-      {
-        group: "table",
-        enabled: hasTableSelection,
-        disabledReason: "Select a row, column, or table before merging",
-      }),
-    tableMutation("table.split", "Split cell…",
-      () => toggleSplitCellDialog(true),
-      { group: "table" }),
-    {
-      id: "table.select",
-      label: "Select",
-      group: "table-select",
-      icon: "tableSelect",
-      submenu: selectSubmenu,
-    },
-    {
-      id: "table.layout",
-      label: "Autofit & sort",
-      group: "table-select",
-      icon: "tableLayout",
-      submenu: layoutSubmenu,
-    },
-    {
-      id: "table.cellFormat",
-      label: "Cell formatting…",
-      group: "table-properties",
-      icon: "paragraph",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => {
-        selectRibbonTab("table");
-        tableBtn.click();
-      },
-    },
-    {
-      id: "table.properties",
-      label: "Table properties…",
-      group: "table-properties",
-      icon: "settings",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => toggleTableProperties(true),
-    },
-  ];
-}
+const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
 
 function buildContextCommands(context) {
   // Right-clicking a selected drawing/image/text box shows OBJECT commands, not
@@ -9098,31 +8996,28 @@ function updateToolbar() {
     !hasSel || listKind !== "numbered" || !doc.canContinueList(selection.focus.node);
   // The contextual Table ribbon is enabled only inside a table; regular-grid
   // column commands stay unavailable on merged/spanned tables rather than
-  // failing after the user clicks them.
+  // failing after the user clicks them. WITH A STATED REASON, from the same
+  // catalogue entry the Table menu reads (`docs/141` TBL-03): the five
+  // hand-written loops that used to live here set `disabled` and never touched
+  // `title`, so a disabled Sort button still advertised "Sort rows ascending"
+  // and the reader had no way to tell an unmet precondition from a broken build.
+  // `title` is the only channel a disabled button has — it takes no focus and
+  // fires no events — which is the argument `LAYOUT_SURFACE` above already makes.
   const inTable = hasSel && doc && doc.inTable(selection.focus.node);
   const tableInfo = inTable ? doc.tableInfo(selection.focus.node) : null;
-  for (const control of tableRibbonControls) control.disabled = !inTable;
-  tableStyleBtn.disabled = !inTable;
+  for (const { control, enabled, reasonKey } of tableBandStates(tableRibbon, {
+    inTable,
+    regular: tableInfo?.regular,
+    rowHeightRule: tableInfo?.rowHeightRule,
+    hasCellSelection: !!tableSelection,
+  })) {
+    control.disabled = !enabled;
+    control.title = enabled ? authoredTitle(control, EDITOR_KEYBOARD_PLATFORM) : t(reasonKey);
+  }
+  // The one band control with a DYNAMIC enabled title, so it is written after the
+  // sweep above rather than fighting it.
   const activeTableStyle = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
-  tableStyleBtn.title = activeTableStyle
-    ? t("table.styleNamed", { name: activeTableStyle })
-    : authoredTitle(tableStyleBtn);
-  for (const control of tableRibbon.querySelectorAll(
-    '[data-table-action*="column"]',
-  )) {
-    control.disabled = !inTable || !tableInfo?.regular;
-  }
-  for (const control of tableRibbon.querySelectorAll("[data-table-distribute]")) {
-    control.disabled =
-      !inTable ||
-      !tableInfo?.regular ||
-      (control.dataset.tableDistribute === "rows" &&
-        !["exact", "atLeast"].includes(tableInfo.rowHeightRule));
-  }
-  for (const control of tableRibbon.querySelectorAll("[data-table-sort]")) {
-    control.disabled = !inTable || !tableInfo?.regular;
-  }
-  mergeCellsBtn.disabled = !inTable || !tableSelection;
+  if (activeTableStyle) tableStyleBtn.title = t("table.styleNamed", { name: activeTableStyle });
   tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
   if (!tablePropertiesPanel.hidden) {
     if (!tableInfo?.found) toggleTableProperties(false);
@@ -10833,7 +10728,11 @@ function runNodeEdit(thunk) {
     res = thunk(selection.focus.node);
   } catch (err) {
     console.warn("edit ignored:", err?.message ?? err);
-    setStatus(err?.message ?? "Table change could not be applied", "error");
+    // Through the SAME policy function `runEdit` uses (`docs/141` TBL-04). This
+    // used to put `err.message` straight on the status line, so the facade's own
+    // vocabulary reached the reader — a failed cell-border change could announce
+    // "column width requires a regular table" — and none of it was localised.
+    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error");
     return false;
   }
   const dirty = res.dirtyPages;
@@ -10850,8 +10749,33 @@ function runNodeEdit(thunk) {
   return true;
 }
 
-function tableContextLabel(info) {
-  return `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
+/** The CELL-scoped half of the cell-format popover — shading, vertical alignment
+ *  and the four cell-border presets.
+ *
+ *  INTERIM, and deliberately a refusal (`docs/141` TBL-08). Each of these commits
+ *  through `runNodeEdit`, which passes `selection.focus.node` — the CARET's
+ *  paragraph, one cell — and nothing in the product iterates a row/column/table
+ *  selection's cells. So *Select row → shade* shaded one cell while the accent
+ *  fill still claimed the whole row, and nothing refused, which reads as a broken
+ *  feature rather than an unsupported one. Formatting one cell and implying
+ *  success is worse than saying no, so this says no with the reason.
+ *
+ *  CLOSED BY TBL-08's real fix: a facade `tableSelectionAnchorNodes(node, mode)`
+ *  returning `fn table_selection_anchors`' existing node-id list, after which
+ *  this loops it. Re-deriving those anchors in JS would be a second
+ *  implementation of one rule and is explicitly not the route.
+ *
+ *  Table-scoped commands (`setTableBorder`, the formula, the properties panel)
+ *  stay on `runNodeEdit`: a cell selection does not change what they mean.
+ *
+ *  Complexity: O(1) — one boolean read, no document walk. */
+function runCellEdit(thunk) {
+  if (tableSelection) {
+    setStatus(t("table.cellFormatOneCell"), "error");
+    focusEditorSurface();
+    return false;
+  }
+  return runNodeEdit(thunk);
 }
 
 function reflectTableMenu() {
@@ -10888,11 +10812,13 @@ bindTableBand({
 });
 
 onButton(mergeCellsBtn, async () => {
-  if (!selection || !doc) return;
-  if (!tableSelection) {
-    setStatus("Select a table row, column, or table first", "error");
-    return;
-  }
+  // The "select something first" branch that used to be here was UNREACHABLE —
+  // the button is disabled whenever `tableSelection` is null — and it carried a
+  // second, divergent copy of the menu's own sentence ("Select a table row,
+  // column, or table first" against "Select a row, column, or table before
+  // merging"). The band's disabled reason is now that one sentence, from the
+  // catalogue (`docs/141` TBL-03, TBL-05).
+  if (!selection || !doc || !tableSelection) return;
   await runEdit(() => doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
   tableSelection = null;
   updateToolbar();
@@ -10951,20 +10877,20 @@ onButton(splitCellConfirm, () => void applySplitCell());
 
 cellShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(cellShade.value);
-  runNodeEdit((n) => doc.setCellShading(n, r, g, b, false));
+  runCellEdit((n) => doc.setCellShading(n, r, g, b, false));
 });
-onButton(cellShadeNone, () => runNodeEdit((n) => doc.setCellShading(n, 0, 0, 0, true)));
+onButton(cellShadeNone, () => runCellEdit((n) => doc.setCellShading(n, 0, 0, 0, true)));
 const cellVAlignGroup = bindRadioGroup(cellVAlign, {
   attr: "data-valign",
   onSelect: (valign) => {
-    runNodeEdit((n) => doc.setCellVerticalAlign(n, valign));
+    runCellEdit((n) => doc.setCellVerticalAlign(n, valign));
     reflectTableMenu();
   },
 });
 for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
   onButton(b, () => {
     const [r, g, bl] = hexToRgb(cellBorderColor.value);
-    runNodeEdit((n) => doc.setCellBorder(n, b.dataset.cellborder, r, g, bl, 8));
+    runCellEdit((n) => doc.setCellBorder(n, b.dataset.cellborder, r, g, bl, 8));
     reflectTableMenu();
   });
 }
@@ -12507,7 +12433,9 @@ function editorCommands(context = { surface: "palette" }) {
     // builds the greyed rows from the same label map the live rows use, and
     // `menu_taxonomy` fails if that map and the real command set disagree.
     cmds.push(
-      ...tableMenuPlaceholders(doc ? "Place the caret in a table" : "Open a document first"),
+      // The same sentence the BAND shows for the same precondition, from the one
+      // catalogue entry (`docs/141` TBL-03).
+      ...tableMenuPlaceholders(doc ? t("table.reason.caretOutsideTable") : "Open a document first"),
     );
   }
   // Object commands, on the same terms. Everything a selected image, shape or
@@ -14890,12 +14818,28 @@ document.addEventListener("keydown", async (e) => {
     e.preventDefault();
     pendingFormat = null;
     if (doc.inTable(selection.focus.node)) {
+      const from = selection.focus.node;
+      let target = null;
       try {
-        const c = doc.moveTableCell(selection.focus.node, !e.shiftKey);
-        navToPosition(c, false);
+        // ONLY the engine call is guarded, so a throw from `navToPosition` can
+        // never be mistaken for "we are at the boundary" and append a row.
+        target = doc.moveTableCell(from, !e.shiftKey);
       } catch {
-        // First/last-cell boundaries are expected no-ops for this navigation slice.
+        // THE TABLE BOUNDARY (`docs/141` TBL-01). `moveTableCell` throws only
+        // "no adjacent table cell" here — `inTable` has already answered the
+        // other throw — so a forward Tab that fails is a Tab in the LAST cell,
+        // and Word and Google Docs both append a row for it. The engine's own
+        // caret lands in the new row's first cell (`insert_row`'s
+        // `apply_action_caret`), which is exactly where the gesture means to go,
+        // so nothing here moves the caret a second time.
+        //
+        // This used to be an empty `catch {}`: the only table gesture in the
+        // product that refused with nothing at all — no row, no message, no
+        // console line — which a reader cannot tell from a broken build.
+        if (e.shiftKey) setStatus(t("table.atFirstCell"));
+        else if (await runEdit(() => doc.insertRow(from, true), { gate: true })) setStatus(t("table.rowAppended"));
       }
+      if (target) navToPosition(target, false);
       return;
     }
     if (reviewMode === "suggesting") {

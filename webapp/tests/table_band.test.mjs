@@ -13,10 +13,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  TABLE_BAND_PRECONDITIONS,
+  TABLE_BAND_REASON_KEYS,
   TABLE_ROW_COLUMN_ACTIONS,
   TABLE_DISTRIBUTE_ACTIONS,
   bindTableBand,
+  tableBandStates,
+  tableContextLabel,
 } from "../src/table_band.mjs";
+import { EN_STRINGS } from "../src/en_strings.mjs";
 
 const html = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
 
@@ -168,4 +173,168 @@ test("nothing happens with no caret, and nothing throws", () => {
   });
   clicks.get(deleteRow)();
   assert.deepEqual(calls, [], "no document, no caret, no edit — and no throw");
+});
+
+// ---- Disabled with a REASON (`docs/141` TBL-03) ------------------------------
+// Band buttons shipped disabled with no stated reason, while the very same
+// commands explain themselves in the Table menu and the palette. The rules are now
+// a declaration, so "does every disabled band control name its precondition" is
+// answerable here rather than only in a browser — and it has to hold for EVERY
+// control, which is the class fix rather than the instance (`SKILL.md` §10).
+
+/** A control the enablement sweep can read: `matches` against the small selector
+ *  vocabulary the rules use, plus the `id` and `dataset` the real buttons carry. */
+function bandControl({ id = "", dataset = {} } = {}) {
+  return {
+    id,
+    dataset,
+    disabled: false,
+    title: "",
+    matches(selector) {
+      if (selector.startsWith("#")) return this.id === selector.slice(1);
+      const attribute = selector.match(/data-table-([a-z]+)/)?.[1];
+      if (!attribute) return false;
+      const key = `table${attribute[0].toUpperCase()}${attribute.slice(1)}`;
+      const value = this.dataset[key];
+      if (value === undefined) return false;
+      const wanted = selector.match(/[*^$]?="([^"]+)"/)?.[1];
+      if (wanted === undefined) return true;
+      return selector.includes('*="') ? value.includes(wanted) : value === wanted;
+    },
+  };
+}
+
+const bandRoot = (controls) => ({ querySelectorAll: () => controls });
+
+/** The buttons the MARKUP really declares, so these tests cannot pass on a
+ *  convenient subset. Derived from `editor.html`, never typed out. */
+function realBandControls() {
+  return [...tablePanel().matchAll(/<button([^>]*)>/g)].map((match) => {
+    const attributes = match[1];
+    const id = attributes.match(/\bid="([^"]+)"/)?.[1] ?? "";
+    const dataset = {};
+    for (const [, name, value] of attributes.matchAll(/\bdata-table-([a-z]+)="([^"]*)"/g)) {
+      dataset[`table${name[0].toUpperCase()}${name.slice(1)}`] = value;
+    }
+    return bandControl({ id, dataset });
+  });
+}
+
+test("with the caret outside a table, every band button is disabled AND says why", () => {
+  const controls = realBandControls();
+  assert.equal(controls.length, 19, "the band is nineteen buttons; re-measure if the markup changed");
+  const states = tableBandStates(bandRoot(controls), { inTable: false });
+  assert.equal(states.length, 19);
+  for (const state of states) {
+    assert.equal(state.enabled, false);
+    assert.equal(
+      state.reasonKey,
+      "table.reason.caretOutsideTable",
+      "outside a table the reason is the caret, never the merge — 'Unavailable for " +
+        "merged or spanned tables' would be true of nothing and send the reader hunting",
+    );
+  }
+});
+
+test("a merged table names the merge, and only for the commands the merge gates", () => {
+  const controls = realBandControls();
+  const states = tableBandStates(bandRoot(controls), {
+    inTable: true,
+    regular: false,
+    rowHeightRule: "exact",
+    hasCellSelection: true,
+  });
+  const merged = states.filter((state) => state.reasonKey === "table.reason.merged");
+  assert.deepEqual(
+    merged
+      .map((state) =>
+        state.control.dataset.tableAction ??
+        state.control.dataset.tableSelect ??
+        state.control.dataset.tableDistribute ??
+        state.control.dataset.tableSort)
+      .sort(),
+    [
+      "ascending",
+      "column",
+      "columns",
+      "delete-column",
+      "descending",
+      "insert-column-left",
+      "insert-column-right",
+    ],
+    "exactly the column-axis commands are gated on a regular grid — the same set the " +
+      "Table menu gates, which is the parity this declaration exists to keep",
+  );
+  // And the row-axis commands stay live: one merge must not disable the whole band.
+  for (const key of ["insert-row-above", "insert-row-below", "delete-row", "delete-table"]) {
+    const state = states.find((entry) => entry.control.dataset.tableAction === key);
+    assert.equal(state.enabled, true, `${key} does not depend on a regular grid`);
+    assert.equal(state.reasonKey, "");
+  }
+  const merge = states.find((state) => state.control.id === "mergeCellsBtn");
+  assert.equal(merge.enabled, true, "a live cell selection enables Merge");
+});
+
+test("distribute rows names the height rule rather than the merge", () => {
+  const rows = bandControl({ dataset: { tableDistribute: "rows" } });
+  const [state] = tableBandStates(bandRoot([rows]), {
+    inTable: true,
+    regular: true,
+    rowHeightRule: "auto",
+  });
+  assert.equal(state.enabled, false);
+  assert.equal(state.reasonKey, "table.reason.rowHeights");
+});
+
+test("Merge says to select something first, in the band's own words", () => {
+  const merge = bandControl({ id: "mergeCellsBtn" });
+  const [state] = tableBandStates(bandRoot([merge]), {
+    inTable: true,
+    regular: true,
+    rowHeightRule: "exact",
+    hasCellSelection: false,
+  });
+  assert.equal(state.enabled, false);
+  assert.equal(state.reasonKey, "table.reason.mergeSelection");
+});
+
+test("every reason key the rules can produce is declared in the catalogue", () => {
+  // A key with no entry renders as the key itself — deliberately ugly, and this is
+  // where it gets caught rather than in a screenshot (`i18n.mjs` `t`).
+  for (const key of Object.values(TABLE_BAND_REASON_KEYS)) {
+    assert.ok(key in EN_STRINGS, `${key} is produced by the band but absent from en_strings.mjs`);
+  }
+  // …and every precondition the table names has a sentence, in both directions.
+  for (const [, requires] of TABLE_BAND_PRECONDITIONS) {
+    assert.ok(
+      TABLE_BAND_REASON_KEYS[requires],
+      `the precondition "${requires}" has no sentence — it would disable a control silently`,
+    );
+  }
+});
+
+test("the context hint names the grid, the caret's cell, and a merge when there is one", () => {
+  // The hint is the one place a reader learns the table is merged BEFORE a command
+  // refuses, so "does it say so" is a property worth holding rather than a string
+  // three e2e specs happen to match on. 1-based in the words, 0-based in the model.
+  assert.equal(
+    tableContextLabel({ rows: 3, columns: 3, row: 0, column: 1, regular: true }),
+    "3×3 table · row 1, column 2",
+  );
+  assert.equal(
+    tableContextLabel({ rows: 3, columns: 3, row: 0, column: 0, regular: false }),
+    "3×3 table · row 1, column 1 · merged/spanned",
+  );
+});
+
+test("every band button can have its authored title restored", () => {
+  // The band writes the REASON into `title` while disabled and restores the
+  // authored one when enabled, and `authoredTitle` prefers `data-i18n-title`. A
+  // button without one falls back to the live `title` — which by then is the
+  // reason — so this is the property that keeps the restore honest.
+  const missing = [...tablePanel().matchAll(/<button([^>]*)>/g)]
+    .map((match) => match[1])
+    .filter((attributes) => !/\bdata-i18n-title="/.test(attributes))
+    .map((attributes) => attributes.match(/\b(id|data-table-[a-z]+)="([^"]*)"/)?.[0] ?? attributes.trim());
+  assert.deepEqual(missing, [], "a band button with no data-i18n-title cannot get its tooltip back");
 });

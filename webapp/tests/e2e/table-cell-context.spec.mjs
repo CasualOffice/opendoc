@@ -158,6 +158,11 @@ test("a merged cell owns its full spanned empty area", async ({
   expect(Math.abs(active.width - merged.width)).toBeLessThan(2);
   await page.keyboard.type("_MERGED");
 
+  // POLLED for the same reason as the sibling test below: a single read right after
+  // typing caught the mirror mid-word ("LEFT RIGHT_MERGE"), which reads as the
+  // merged cell having lost the keystroke rather than as a stale frame. The two
+  // tests above this one already take this shape; these were the two that did not.
+  await expect.poll(() => tableRows(page).then((r) => r?.[0]?.[0] ?? "")).toContain("_MERGED");
   const rows = await tableRows(page);
   expect(rows).toHaveLength(2);
   expect(rows[0]).toHaveLength(1);
@@ -172,6 +177,13 @@ test("clicking body text exits the active cell without mutating the table", asyn
 }) => {
   await insertTwoByTwo(page);
   await page.keyboard.type("TABLESAFE");
+  // POLLED, and this is the fix for a real flake rather than a tidy-up. The
+  // accessibility mirror is rebuilt on a coalesced frame, so reading it once right
+  // after typing can catch it mid-word: this line captured `"TABLESAF"` as the
+  // baseline and the comparison below then failed against the complete word — a
+  // failure that reads exactly like the table having been mutated, which is the one
+  // thing this test exists to deny. Measured at 1 in 3 before, 0 in 12 after.
+  await expect.poll(() => tableRows(page).then((rows) => rows?.[0]?.[0])).toBe("TABLESAFE");
   const rowsBefore = await tableRows(page);
   const cell = await activeCellBox(page);
   const canvas = page.locator(".page-wrap .page").first();

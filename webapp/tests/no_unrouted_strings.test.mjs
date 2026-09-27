@@ -172,7 +172,24 @@ const CEILINGS = new Map([
   // on/off, and the failure message and the two status lines became keys. The new
   // module therefore carries ZERO unrouted strings and needs no entry here, which
   // is the direction this table is for. Measured, not calculated.
-  ["src/main.js", 325],
+  // 325 -> 312 in the cheap table round (`docs/141`). Out through the catalogue:
+  // the four sentences that say why a table command is unavailable, which the
+  // Table MENU already had and the Table BAND did not (TBL-03) and which are now
+  // one entry each read by both; and `Selected table ${mode}`, the one table
+  // status line with no catalogue entry at all. Out by deletion: `#mergeCellsBtn`'s
+  // unreachable "Select a table row, column, or table first" — a second, divergent
+  // copy of the menu's sentence on a branch the button's own `disabled` made
+  // unreachable. Out by extraction: six command labels that moved with
+  // `table_commands.mjs` (next entry), which is the same debt relocated and not
+  // debt removed. In: nothing — every sentence this round adds is a `t()` key.
+  // Measured, not calculated.
+  ["src/main.js", 312],
+  // The nine `label:`/`disabledReason:` literals that moved out of `main.js` with
+  // the `table.*` command tree. Same debt in a new place, not a new debt: `main.js`
+  // came down by more than nine in the same commit. They stay English because this
+  // table's sibling labels do (`TABLE_MENU_LABELS` is read at import, before a
+  // catalogue exists); routing the whole family is its own piece of work.
+  ["src/table_commands.mjs", 9],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
   // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here
