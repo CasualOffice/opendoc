@@ -14968,6 +14968,41 @@ fn inline_descent(inline: &InlineNode) -> InlineDescent<'_> {
     }
 }
 
+/// The inline children an inline contains IN THE SAME PARAGRAPH, or `None` when it
+/// has none. **O(1)**.
+///
+/// This is [`InlineDescent::Inlines`] on its own, for the walks that must follow
+/// only that axis: anything measuring or addressing offsets within one paragraph.
+/// A `TextBox`'s or a `Group`'s paragraphs are separate stories with their own
+/// offset spaces, so following them would produce an offset in one paragraph for a
+/// node that lives in another.
+pub(crate) fn contained_inlines(inline: &InlineNode) -> Option<&[InlineNode]> {
+    match inline_descent(inline) {
+        InlineDescent::Inlines(inlines) => Some(inlines),
+        InlineDescent::Blocks(_) | InlineDescent::Group(_) | InlineDescent::Leaf => None,
+    }
+}
+
+/// Every block story an inline owns, at any container depth — both the `TextBox`
+/// and the `Group` axis of [`inline_descent`], plus the inline containers that can
+/// hold either. **O(inlines in the subtree)**.
+///
+/// For the walks that ask "is this node anywhere under this paragraph", where a
+/// text box's own paragraphs count.
+pub(crate) fn inline_block_stories<'a>(
+    inlines: &'a [InlineNode],
+    visit: &mut impl FnMut(&'a [BlockNode]),
+) {
+    for inline in inlines {
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => inline_block_stories(nested, visit),
+            InlineDescent::Blocks(blocks) => visit(blocks),
+            InlineDescent::Group(children) => group_block_stories(children, visit),
+            InlineDescent::Leaf => {}
+        }
+    }
+}
+
 /// Every block story a group's children own, in paint order — the `Group` axis of
 /// [`inline_descent`] flattened. **O(children in the subtree)**; a picture or a
 /// shape is a leaf.
@@ -32914,7 +32949,11 @@ mod tests {
 
     /// Builds a `WasmDocument` around a constructed `Document` (paginated, so the
     /// float-placement pass runs and `object_boxes` can see anchored objects).
-    fn wasm_document(document: Document) -> WasmDocument {
+    ///
+    /// `pub(crate)` so `references.rs`'s guards build their fixtures the same way
+    /// rather than growing a second, subtly different constructor — the shape this
+    /// whole branch is about.
+    pub(crate) fn wasm_document(document: Document) -> WasmDocument {
         // A document under test carries the bytes for the pictures it declares.
         // The DOCX writer no longer writes a zero-byte media part behind a live
         // `/image` relationship (FID-R-06): a reference whose bytes it was not
@@ -38490,32 +38529,103 @@ mod tests {
         );
     }
 
-    /// There must be exactly ONE family of anchor-length functions in this file.
+    /// The PRODUCTION code of this crate — every file of it — declares exactly one
+    /// family of inline-length functions.
     ///
-    /// The behavioural guards above catch a second answer that DISAGREES. This
-    /// one catches a second answer at the moment it is written, which is cheaper
-    /// and is the failure mode this class actually has: three times now someone
-    /// needed the length in a context the canonical function could not be called
-    /// from, and wrote a private copy that started out agreeing.
+    /// This is what makes a FOURTH answer to "how long is this paragraph" fail the
+    /// build, and it is the deliverable rather than a convenience. The behavioural
+    /// guard above catches a second answer that DISAGREES, which is one round of
+    /// the defect too late; this one catches a second answer at the moment it is
+    /// written, which is the failure mode this class actually has. Three times now
+    /// someone needed the length in a context the canonical function could not be
+    /// called from and wrote a private copy that started out agreeing and drifted.
     ///
-    /// If a genuinely new one is needed it has to be added to this list
-    /// deliberately, with its reason — which is the review this class has never
-    /// had.
+    /// Three things the version this replaces got wrong, each of which is a way a
+    /// source guard silently stops guarding:
+    ///
+    /// 1. **It matched its own name.** `there_is_exactly_one_anchor_length_family`
+    ///    contains `anchor_len`, so the guard failed on arrival and the only way to
+    ///    make it pass was to list a test in the family. Cutting each file at its
+    ///    `#[cfg(test)] mod` fixes that properly: a guard should scan the code it
+    ///    guards and nothing else, and now no test name can enter the list however
+    ///    it is spelled.
+    /// 2. **It read `lib.rs` only.** A fourth copy written in `references.rs` or in
+    ///    a new module would not have been seen — and `references.rs` is exactly
+    ///    where a paragraph's offsets are computed. Every `.rs` file in `src/` is
+    ///    read now, so a new file is covered the day it is added rather than the
+    ///    day someone remembers to list it.
+    /// 3. **It reported an unsorted, unlabelled list.** The failure now names the
+    ///    file and line of the newcomer, because a guard whose message does not say
+    ///    where the problem is gets satisfied by editing the expectation.
+    ///
+    /// What it cannot do, stated so it is not mistaken for more than it is: it is a
+    /// NAME guard over ONE crate. A fourth answer called something else entirely is
+    /// caught only by `every_review_length_answer_agrees_on_one_paragraph`, and a
+    /// fourth answer in another crate is caught by neither —
+    /// `casual_doc_edit::inline_text_len` and
+    /// `casual_doc_layout::flow::append_node_plain_text` already disagree with
+    /// `inline_anchor_len` about `Tab`, `Math` and `NoteReference` (the table on
+    /// `inline_anchor_len` enumerates it). Reconciling those three is a cross-crate
+    /// change and an open row, not something this guard can assert.
     #[test]
     fn there_is_exactly_one_anchor_length_family() {
-        const SOURCE: &str = include_str!("lib.rs");
-        let declared: Vec<&str> = SOURCE
-            .lines()
-            .map(str::trim)
-            .filter_map(|line| {
-                line.strip_prefix("fn ")
-                    .or_else(|| line.strip_prefix("pub fn "))
-            })
-            .filter_map(|rest| rest.split('(').next())
-            .filter(|name| name.contains("anchor_len") || name.ends_with("_text_len"))
+        /// A declaration in the family: a function whose name is spelled the way
+        /// every member of this family has been spelled.
+        fn family_member(line: &str) -> Option<&str> {
+            let rest = line
+                .trim()
+                .strip_prefix("pub ")
+                .unwrap_or_else(|| line.trim());
+            let rest = rest.strip_prefix("pub(crate) ").unwrap_or(rest);
+            let name = rest.strip_prefix("fn ")?.split('(').next()?;
+            let matches = name.contains("anchor_len")
+                || name.ends_with("_text_len")
+                || name.ends_with("_byte_len")
+                || name.ends_with("_text_length");
+            matches.then_some(name)
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&src)
+            .expect("the crate's own source directory is readable")
+            .map(|entry| entry.expect("a readable directory entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect();
+        files.sort();
+        assert!(
+            files.len() >= 3,
+            "expected to scan every source file of this crate, found {files:?} — a \
+             guard that reads no files passes for the wrong reason"
+        );
+
+        let mut declared: Vec<String> = Vec::new();
+        for path in &files {
+            let text = std::fs::read_to_string(path).expect("a readable source file");
+            // Production code only. A test helper is not a second answer the engine
+            // can call, and including the test module is how this guard came to
+            // match its own name.
+            let production = match text.find("\n#[cfg(test)]\nmod ") {
+                Some(cut) => &text[..cut],
+                None => &text[..],
+            };
+            let name = path
+                .file_name()
+                .expect("a source file has a name")
+                .to_string_lossy()
+                .into_owned();
+            for (index, line) in production.lines().enumerate() {
+                if let Some(found) = family_member(line) {
+                    declared.push(format!("{name}:{}: {found}", index + 1));
+                }
+            }
+        }
+
+        let names: Vec<&str> = declared
+            .iter()
+            .filter_map(|row| row.rsplit(' ').next())
             .collect();
         assert_eq!(
-            declared,
+            names,
             vec![
                 // The single answer, and the one helper it owns.
                 "inline_anchor_len",
@@ -38523,9 +38633,500 @@ mod tests {
                 "field_anchor_len",
             ],
             "a new function answering \"how many bytes does this inline occupy\" \
-             has appeared. Three copies of this question have already disagreed \
-             and mis-placed comment markers; call `inline_anchor_len` instead, or \
-             add the new one here with the reason it cannot"
+             has appeared. Three copies of this question have already disagreed and \
+             mis-placed comment markers. Call `inline_anchor_len` instead; if it \
+             genuinely cannot be called from where you are, precompute an index and \
+             pass it (that is what `NoteAnchorLengths` is), and if there is truly no \
+             alternative, add the new name here WITH ITS REASON. Declarations found: \
+             {declared:?}"
+        );
+    }
+
+    // ---- The inline container set: one walk per subsystem, all six containers --
+    // An `InlineNode` can CONTAIN other inlines (`Hyperlink`, `Field`, `Revision`,
+    // `Sdt`) or its own block stories (`TextBox`, `Group`). Every walk below used
+    // to implement three or four of those and stop, and the symptom was always
+    // content plainly on the page that one subsystem could not see. The guards
+    // assert the GUARANTEE — "it can be selected", "it is not silent", "it is
+    // findable" — rather than the shape of a returned vector, because the vector is
+    // the mechanism and the mechanism is what changed.
+
+    /// The OOXML relationship type of an embedded chart part, so the fixtures below
+    /// carry the real one rather than a plausible-looking string.
+    const EMBEDDED_CHART_RELATIONSHIP: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+
+    /// A paragraph holding the same drawing three ways: bare, inside an inline
+    /// content control, and inside a field's cached result. All three are painted
+    /// by `collect_items`, which recurses through both wrappers.
+    fn drawings_in_wrappers_document() -> (Document, [NodeId; 3]) {
+        use casual_doc_model::v1::{
+            Definitions, Drawing, Field, FieldKind, FieldUpdateState, InlineSdt, MediaId,
+            MediaReference, SdtProperties,
+        };
+
+        let media = MediaId::new(NodeId::from_parts(61, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId61".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(61, next).unwrap()
+        };
+        let drawing = |id: NodeId| {
+            InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
+                opacity: None,
+                id,
+                media,
+                extent: Some(Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                }),
+                crop: None,
+                descr: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            }))
+        };
+        let bare = id();
+        let in_control = id();
+        let in_field = id();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: id(),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                drawing(bare),
+                InlineNode::Sdt(Box::new(InlineSdt {
+                    id: id(),
+                    properties: SdtProperties::default(),
+                    inlines: vec![drawing(in_control)],
+                })),
+                // A passthrough instruction: `PAGE`/`NUMPAGES` become atomic
+                // markers and would not paint their result at all, so the fixture
+                // would prove nothing about the descent.
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "MERGEFIELD Figure".to_owned(),
+                    kind: FieldKind::Other {
+                        keyword: "MERGEFIELD".to_owned(),
+                    },
+                    inlines: vec![drawing(in_field)],
+                    form: None,
+                    update: FieldUpdateState::default(),
+                })),
+            ],
+        });
+        let document = Document::new(
+            NodeId::from_parts(61, 1).unwrap(),
+            vec![paragraph],
+            definitions,
+        )
+        .expect("a valid wrapped-drawing document");
+        (document, [bare, in_control, in_field])
+    }
+
+    /// An image inside an inline content control or a field result can be
+    /// selected.
+    ///
+    /// `collect_para_objects` descended `Hyperlink` and `Revision` only, so the
+    /// model node of such an image never entered the map `object_boxes`
+    /// correlates painted boxes against — and an object with no box has no
+    /// selection handles at all: it cannot be clicked, moved, resized, or given
+    /// alt text, while being visibly on the page. Asserted through
+    /// `object_boxes`, which is what the host asks, rather than through the map.
+    #[test]
+    fn an_image_inside_a_content_control_or_a_field_can_be_selected() {
+        let (document, [bare, in_control, in_field]) = drawings_in_wrappers_document();
+        let d = wasm_document(document);
+        let boxes = d.object_boxes();
+        let selectable: Vec<NodeId> = boxes.iter().map(|object| object.subject).collect();
+        assert!(
+            selectable.contains(&bare),
+            "the fixture must paint a bare inline image, or this guard cannot tell \
+             a missing descent from a missing image ({selectable:?})"
+        );
+        for (node, where_it_is) in [
+            (in_control, "an inline content control"),
+            (in_field, "a field's cached result"),
+        ] {
+            assert!(
+                selectable.contains(&node),
+                "an image inside {where_it_is} is on the page with no selection \
+                 handles: it cannot be clicked, moved, resized or given alt text. \
+                 Selectable objects were {selectable:?}"
+            );
+        }
+        assert!(
+            boxes
+                .iter()
+                .all(|object| object.kind == "image" && !object.anchored),
+            "all three are INLINE images; a float would be reported through \
+             `page.anchored` instead and must not be mixed into this map"
+        );
+    }
+
+    /// A chart whose cached preview is what layout paints can be selected.
+    ///
+    /// A preview-bearing `EmbeddedObject` flows as a `FlowItem::Image`, exactly
+    /// like a drawing, so it produced a painted image box with no model node to
+    /// correlate against and therefore no handles. A preview-LESS one paints as a
+    /// text run and correctly has none, which the second half asserts — so this
+    /// guard fails if the fix over-reaches as well as if it under-reaches.
+    #[test]
+    fn a_chart_with_a_cached_preview_can_be_selected() {
+        use casual_doc_model::v1::{
+            Definitions, EmbeddedKind, EmbeddedObject, EmbeddedPart, MediaId, MediaReference,
+        };
+
+        let media = MediaId::new(NodeId::from_parts(62, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId62".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/chart-preview.png".to_owned(),
+            },
+        );
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(62, next).unwrap()
+        };
+        let chart = |id: NodeId, preview: Option<MediaId>| {
+            InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                id,
+                kind: EmbeddedKind::Chart,
+                part: EmbeddedPart {
+                    relationship_id: "rId7".to_owned(),
+                    relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
+                    part_name: "word/charts/chart1.xml".to_owned(),
+                },
+                extra_parts: Vec::new(),
+                preview,
+                extent: Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                },
+                prog_id: None,
+            }))
+        };
+        let with_preview = id();
+        let without_preview = id();
+        let document = Document::new(
+            NodeId::from_parts(62, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: id(),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![
+                    chart(with_preview, Some(media)),
+                    chart(without_preview, None),
+                ],
+            })],
+            definitions,
+        )
+        .expect("a valid chart document");
+
+        let d = wasm_document(document);
+        let selectable: Vec<NodeId> = d
+            .object_boxes()
+            .into_iter()
+            .map(|object| object.subject)
+            .collect();
+        assert!(
+            selectable.contains(&with_preview),
+            "a chart painted as its cached preview picture has no selection \
+             handles ({selectable:?})"
+        );
+        assert!(
+            !selectable.contains(&without_preview),
+            "a chart with NO preview paints as its `[chart]` label text, not as an \
+             image box; claiming an image box for it would let it steal a real \
+             image's slot and hand the wrong node to the handles ({selectable:?})"
+        );
+    }
+
+    /// An equation, a chart and a footnote marker each reach assistive technology
+    /// as something rather than as silence.
+    ///
+    /// Layout paints all three. The projection emitted nothing for any of them, so
+    /// a reader heard the paragraph before the chart and the one after it and
+    /// nothing in between — the defect the `Image` node was added to fix for
+    /// drawings, still open for every other paintable kind. §10's UI floor requires
+    /// screen-reader-operable per phase.
+    #[test]
+    fn an_equation_a_chart_and_a_note_marker_are_not_silent() {
+        use casual_doc_model::v1::{
+            Definitions, EmbeddedKind, EmbeddedObject, EmbeddedPart, Math, Note, NoteReference,
+        };
+
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(63, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let note = NoteId::new(NodeId::from_parts(63, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: id(),
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run(id(), "the note body")],
+                })],
+            },
+        );
+        let document = Document::new(
+            NodeId::from_parts(63, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: id(),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![
+                    run(id(), "before"),
+                    InlineNode::Math(Box::new(Math {
+                        id: id(),
+                        omml: "<m:oMath/>".to_owned(),
+                        text: "E=mc^2".to_owned(),
+                        expression: None,
+                    })),
+                    InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                        id: id(),
+                        kind: EmbeddedKind::Chart,
+                        part: EmbeddedPart {
+                            relationship_id: "rId7".to_owned(),
+                            relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
+                            part_name: "word/charts/chart1.xml".to_owned(),
+                        },
+                        extra_parts: Vec::new(),
+                        preview: None,
+                        extent: Extent {
+                            width_emu: 914_400,
+                            height_emu: 914_400,
+                        },
+                        prog_id: None,
+                    })),
+                    InlineNode::NoteReference(NoteReference {
+                        id: id(),
+                        kind: NoteKind::Footnote,
+                        note,
+                    }),
+                    run(id(), "after"),
+                ],
+            })],
+            definitions,
+        )
+        .expect("a valid mixed-inline document");
+
+        let d = wasm_document(document);
+        let tree = d.accessibility_tree();
+        assert!(
+            tree.contains("before") && tree.contains("after"),
+            "the fixture's ordinary text must reach the mirror, or this guard \
+             cannot tell an empty projection from a missing arm: {tree}"
+        );
+        assert!(
+            tree.contains("[E=mc^2]"),
+            "the equation reaches assistive technology as nothing. It is painted \
+             as `[E=mc^2]`; the mirror must read back what is on the page: {tree}"
+        );
+        assert!(
+            tree.contains("[footnote 1]"),
+            "the footnote marker reaches assistive technology as nothing, so a \
+             reader cannot tell a note is referenced here or which one: {tree}"
+        );
+        assert!(
+            tree.contains("\"image\""),
+            "the chart reaches assistive technology as nothing. With no `descr` in \
+             the model it is an UNLABELLED graphic, which a screen reader must \
+             still announce rather than pass over: {tree}"
+        );
+    }
+
+    /// Text in a box inside an inline content control is findable.
+    ///
+    /// `collect_text_box_text` — which feeds `findText` — descended `TextBox`,
+    /// `Hyperlink`, `Field` and `Group` and stopped, so the pair it missed was
+    /// `Sdt` and `Revision`: text on screen, editable, and unsearchable.
+    #[test]
+    fn text_in_a_box_inside_a_content_control_is_findable() {
+        use casual_doc_model::v1::{InlineSdt, SdtProperties, TextBox};
+
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(64, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let boxed = |id: NodeId, inner: NodeId, run_id: NodeId, text: &str| {
+            InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
+                id,
+                anchor: None,
+                relative_height: None,
+                extent: Some(Extent {
+                    width_emu: 1_828_800,
+                    height_emu: 914_400,
+                }),
+                fill: None,
+                border: None,
+                body_properties: casual_doc_model::v1::TextBoxBodyProperties::default(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: inner,
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run(run_id, text)],
+                })],
+            }))
+        };
+        let first = id();
+        let plain_box = boxed(id(), first, id(), "findmeplain");
+        let second = id();
+        let controlled = InlineNode::Sdt(Box::new(InlineSdt {
+            id: id(),
+            properties: SdtProperties::default(),
+            inlines: vec![boxed(id(), second, id(), "findmecontrolled")],
+        }));
+        let anchor = id();
+        let document = Document::new(
+            NodeId::from_parts(64, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: anchor,
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![run(id(), "body"), plain_box, controlled],
+            })],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid text-box document");
+
+        let d = wasm_document(document);
+        let start = anchor.to_string();
+        let plain = d.find_text("findmeplain", &start, 0, true, false);
+        assert!(
+            plain.found(),
+            "the fixture must find text in a plain inline text box, or this guard \
+             cannot tell a missing descent from a broken search"
+        );
+        let controlled = d.find_text("findmecontrolled", &start, 0, true, false);
+        assert!(
+            controlled.found(),
+            "text in a box inside an inline content control is unsearchable while \
+             being on the page and editable"
+        );
+        assert_eq!(
+            controlled.start_node(),
+            second.to_string(),
+            "the match is reported against the paragraph inside the box, which is \
+             the node the caret has to move to"
+        );
+    }
+
+    /// `"Page 123 of 9"`: like [`page_field_paragraph`] but with a three-byte
+    /// cached result, so an offset strictly inside the field exists.
+    fn wide_field_paragraph() -> (WasmDocument, NodeId) {
+        use casual_doc_model::v1::{Field, FieldKind, FieldUpdateState};
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(65, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let node = id();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: node,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                run(id(), "Page "),
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "PAGE".to_owned(),
+                    kind: FieldKind::Page,
+                    inlines: vec![run(id(), "123")],
+                    form: None,
+                    update: FieldUpdateState::default(),
+                })),
+                run(id(), " of 9"),
+            ],
+        });
+        let document = Document::new(
+            NodeId::from_parts(65, 1).unwrap(),
+            vec![paragraph],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid wide-field document");
+        (wasm_document(document), node)
+    }
+
+    /// A comment range whose endpoint falls INSIDE something unsplittable is still
+    /// refused, and says so where a native guard can read it.
+    ///
+    /// The other half of the `add_comment` fix. Measuring every inline made ranges
+    /// on inline BOUNDARIES work; an offset in the middle of a field's cached
+    /// result still has no representable marker position, and the refusal must
+    /// survive rather than be widened into placing the marker somewhere plausible.
+    /// Driven through `add_comment_inner`, because the `#[wasm_bindgen]` method's
+    /// refusal builds a `JsValue` and panics on a native target before any
+    /// assertion can read the message.
+    #[test]
+    fn a_comment_range_inside_a_field_result_is_refused_with_a_readable_reason() {
+        // "Page 7 of 9": a range that ENCLOSES the one-byte field ends on a
+        // boundary and must be accepted now that every inline is measured.
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert!(
+            d.add_comment_inner(&key, 0, &key, 6, "spans the field", None, None, None)
+                .is_ok(),
+            "a range that encloses the whole field ends on an inline boundary"
+        );
+
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert!(
+            d.add_comment_inner(&key, 0, &key, 11, "everything", None, None, None)
+                .is_ok(),
+            "commenting the whole paragraph must work once every inline is measured"
+        );
+
+        // A field whose cached result is three bytes, so an offset strictly inside
+        // it exists to aim at. "Page 123 of 9": the field occupies 5..8.
+        let (mut d, node) = wide_field_paragraph();
+        let key = node.to_string();
+        let error = d
+            .add_comment_inner(&key, 0, &key, 6, "half a field", None, None, None)
+            .expect_err("an offset inside a field's result has no marker position");
+        assert_eq!(
+            error, COMMENT_RANGE_REFUSAL,
+            "the refusal must be the one constant the host shows, readable on a \
+             native target rather than destroyed by a `JsValue` panic"
         );
     }
 }

@@ -217,30 +217,25 @@ fn sequence_format(instruction: &str) -> CaptionNumberFormat {
 }
 
 /// The cached result text of the first `SEQ` field in an inline tree — the number
-/// a reader currently sees. O(inlines).
+/// a reader currently sees. O(inlines in the paragraph's own subtree).
+///
+/// Descent is [`crate::contained_inlines`]'s, so it reaches a `SEQ` nested in any
+/// depth of hyperlink, field, tracked revision or inline content control, and
+/// cannot fall out of step with [`sequence_of`]: a caption this function cannot
+/// read the cached number of, but `sequence_of` can identify, is a caption the
+/// picker lists with an empty number.
 fn sequence_cached_number(inlines: &[InlineNode]) -> String {
     fn find(inlines: &[InlineNode]) -> Option<String> {
         for inline in inlines {
-            match inline {
-                InlineNode::Field(field) if matches!(field.kind, FieldKind::Seq { .. }) => {
-                    return Some(node_plain_text(&field.inlines));
-                }
-                InlineNode::Hyperlink(link) => {
-                    if let Some(found) = find(&link.inlines) {
-                        return Some(found);
-                    }
-                }
-                InlineNode::Revision(revision) => {
-                    if let Some(found) = find(&revision.inlines) {
-                        return Some(found);
-                    }
-                }
-                InlineNode::Sdt(sdt) => {
-                    if let Some(found) = find(&sdt.inlines) {
-                        return Some(found);
-                    }
-                }
-                _ => {}
+            if let InlineNode::Field(field) = inline
+                && matches!(field.kind, FieldKind::Seq { .. })
+            {
+                return Some(node_plain_text(&field.inlines));
+            }
+            if let Some(nested) = crate::contained_inlines(inline)
+                && let Some(found) = find(nested)
+            {
+                return Some(found);
             }
         }
         None
@@ -251,35 +246,32 @@ fn sequence_cached_number(inlines: &[InlineNode]) -> String {
 /// The first `SEQ` field in an inline tree, as `(sequence name, instruction)`.
 /// A caption is identified by having one — which is exactly how Word identifies
 /// one for a table of figures, and is why it works on a caption a different
-/// producer wrote. O(inlines).
+/// producer wrote. O(inlines in the paragraph's own subtree).
+///
+/// A caption inside a hyperlink, a tracked insertion, an inline content control or
+/// another field's result is still a caption, and descent is
+/// [`crate::contained_inlines`]'s so the set of wrappers searched is the complete
+/// one rather than the three that were written out here.
+///
+/// It deliberately does NOT follow the `TextBox`/`Group` axis, and that is the
+/// difference between this and the other walks in this file. A caption inside a
+/// text box is a paragraph OF ITS OWN inside that box; it is identified when the
+/// paragraph walk reaches it. Descending here would instead label the paragraph
+/// that merely *anchors* the box as a caption, so one caption would be counted
+/// twice and the numbering would run 1, 1, 2. The reason a caption in a box was
+/// missing from the Table of Figures was the paragraph walk — `visit_text_box_paragraphs`
+/// skipping `Sdt` and `Revision` — not this function.
 fn sequence_of(inlines: &[InlineNode]) -> Option<(String, String)> {
     for inline in inlines {
-        match inline {
-            InlineNode::Field(field) => {
-                if let FieldKind::Seq { name } = &field.kind {
-                    return Some((name.clone(), field.instruction.clone()));
-                }
-            }
-            // A caption inside a hyperlink or a tracked insertion is still a
-            // caption; the wrappers that can hold one are searched rather than
-            // skipped, because a caption in a review-tracked document is the
-            // normal case and skipping it would silently lose it from the list.
-            InlineNode::Hyperlink(link) => {
-                if let Some(found) = sequence_of(&link.inlines) {
-                    return Some(found);
-                }
-            }
-            InlineNode::Revision(revision) => {
-                if let Some(found) = sequence_of(&revision.inlines) {
-                    return Some(found);
-                }
-            }
-            InlineNode::Sdt(sdt) => {
-                if let Some(found) = sequence_of(&sdt.inlines) {
-                    return Some(found);
-                }
-            }
-            _ => {}
+        if let InlineNode::Field(field) = inline
+            && let FieldKind::Seq { name } = &field.kind
+        {
+            return Some((name.clone(), field.instruction.clone()));
+        }
+        if let Some(nested) = crate::contained_inlines(inline)
+            && let Some(found) = sequence_of(nested)
+        {
+            return Some(found);
         }
     }
     None
@@ -289,56 +281,112 @@ fn sequence_of(inlines: &[InlineNode]) -> Option<(String, String)> {
 /// total length, the offset just past its first `SEQ` field, and every
 /// `_Ref`-prefixed bookmark's extent.
 ///
-/// Offsets are derived by re-running `node_plain_text` over each prefix of the
-/// inline list rather than by re-implementing its rules. That is O(inlines^2) in
-/// the paragraph, and it is deliberate: this runs for the two paragraphs a command
-/// names, never per paragraph of the document, and the authoritative definition of
-/// "the paragraph's plain text" is that one function — a second implementation of
-/// it here would drift, and an offset that disagrees with it by one byte is an
-/// edit applied in the wrong place.
+/// Offsets are derived from `node_plain_text` rather than by re-implementing its
+/// rules: the authoritative definition of "the paragraph's plain text" is that one
+/// function, and an offset that disagrees with it by one byte is an edit applied in
+/// the wrong place. Each inline contributes `node_plain_text` of itself, which for
+/// the four inline containers is exactly the sum of its children's contributions
+/// (`append_node_plain_text` recurses through all four), so descending and
+/// accumulating gives the same total as measuring the container whole.
+///
+/// **The walk descends a paragraph's inline containers.** It used to look at
+/// top-level inlines only, so a `_Ref…` bookmark pair or a `SEQ` field nested in a
+/// hyperlink, an inline content control or a tracked insertion was invisible: the
+/// bookmark could not be reused, `after_sequence` was `None`, and an inserted
+/// cross-reference to that caption resolved to nothing. `Field` is descended for
+/// the bookmark markers inside a field result but its own `SEQ` detection stays at
+/// the outermost `SEQ`, which is the caption's.
+///
+/// It does NOT follow the `TextBox`/`Group` axis: a box's paragraphs have their own
+/// offset spaces, and an offset from one of them addressed against this paragraph
+/// would place a bookmark somewhere else entirely.
+///
+/// A legacy form CHECKBOX field is the one container whose plain text is not its
+/// children's (layout synthesises a single glyph), so it is not descended — a
+/// bookmark inside one has no representable offset here.
+///
+/// **O(inlines in the paragraph's subtree)**, one pass; it runs for the two
+/// paragraphs a command names, never per paragraph of the document. The previous
+/// shape re-ran `node_plain_text` over every prefix, which was O(inlines²).
 fn paragraph_offsets(
     paragraph: &Paragraph,
     bookmarks: &casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
 ) -> (u32, Option<u32>, Vec<(BookmarkId, u32, u32)>) {
-    let offset_at = |index: usize| node_plain_text(&paragraph.inlines[..index]).len() as u32;
-    let length = offset_at(paragraph.inlines.len());
-    let mut after_sequence = None;
-    let mut open: Vec<(BookmarkId, u32)> = Vec::new();
-    let mut extents: Vec<(BookmarkId, u32, u32)> = Vec::new();
-    for (index, inline) in paragraph.inlines.iter().enumerate() {
-        match inline {
-            InlineNode::Field(field)
-                if after_sequence.is_none() && matches!(field.kind, FieldKind::Seq { .. }) =>
-            {
-                after_sequence = Some(offset_at(index + 1));
-            }
-            InlineNode::BookmarkStart(marker) => {
-                if bookmarks
-                    .get(&marker.bookmark)
-                    .is_some_and(|bookmark| bookmark.name.starts_with(REFERENCE_BOOKMARK_PREFIX))
-                {
-                    open.push((marker.bookmark, offset_at(index)));
+    struct Walk<'a> {
+        bookmarks: &'a casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
+        offset: u32,
+        after_sequence: Option<u32>,
+        open: Vec<(BookmarkId, u32)>,
+        extents: Vec<(BookmarkId, u32, u32)>,
+    }
+
+    impl Walk<'_> {
+        fn inlines(&mut self, inlines: &[InlineNode]) {
+            for inline in inlines {
+                let own_len = node_plain_text(core::slice::from_ref(inline)).len() as u32;
+                match inline {
+                    InlineNode::BookmarkStart(marker) => {
+                        if self
+                            .bookmarks
+                            .get(&marker.bookmark)
+                            .is_some_and(|b| b.name.starts_with(REFERENCE_BOOKMARK_PREFIX))
+                        {
+                            self.open.push((marker.bookmark, self.offset));
+                        }
+                    }
+                    InlineNode::BookmarkEnd(marker) => {
+                        if let Some(position) = self
+                            .open
+                            .iter()
+                            .position(|(bookmark, _)| *bookmark == marker.bookmark)
+                        {
+                            let (bookmark, start) = self.open.remove(position);
+                            self.extents.push((bookmark, start, self.offset));
+                        }
+                    }
+                    _ => {}
+                }
+                let sequence = matches!(inline,
+                    InlineNode::Field(field) if matches!(field.kind, FieldKind::Seq { .. }));
+                if sequence && self.after_sequence.is_none() {
+                    // The boundary is past the whole field, label and number, so
+                    // the caption's own text starts here.
+                    self.after_sequence = Some(self.offset.saturating_add(own_len));
+                    self.offset = self.offset.saturating_add(own_len);
+                    continue;
+                }
+                match crate::contained_inlines(inline) {
+                    // A form checkbox's painted glyph is not its children's text,
+                    // so its interior has no offsets in this space.
+                    Some(_)
+                        if matches!(inline, InlineNode::Field(field)
+                            if field.form.is_some()) =>
+                    {
+                        self.offset = self.offset.saturating_add(own_len);
+                    }
+                    Some(nested) => self.inlines(nested),
+                    None => self.offset = self.offset.saturating_add(own_len),
                 }
             }
-            InlineNode::BookmarkEnd(marker) => {
-                if let Some(position) = open
-                    .iter()
-                    .position(|(bookmark, _)| *bookmark == marker.bookmark)
-                {
-                    let (bookmark, start) = open.remove(position);
-                    extents.push((bookmark, start, offset_at(index)));
-                }
-            }
-            _ => {}
         }
     }
+
+    let mut walk = Walk {
+        bookmarks,
+        offset: 0,
+        after_sequence: None,
+        open: Vec::new(),
+        extents: Vec::new(),
+    };
+    walk.inlines(&paragraph.inlines);
+    let length = walk.offset;
     // A bookmark whose end marker is in a later paragraph covers this paragraph to
     // its end; reporting it as zero-length would make us reuse it for a reference
     // that then shows nothing.
-    for (bookmark, start) in open {
-        extents.push((bookmark, start, length));
+    for (bookmark, start) in std::mem::take(&mut walk.open) {
+        walk.extents.push((bookmark, start, length));
     }
-    (length, after_sequence, extents)
+    (length, walk.after_sequence, walk.extents)
 }
 
 /// Rewrites the cached result of the first `SEQ` field in `inlines` to `number`,
@@ -410,6 +458,17 @@ fn caption_target_refusal(document: &Document, target: NodeId) -> Option<&'stati
 /// anything inside one of its paragraphs (a selected picture or text box), so a
 /// host that has a picture selected does not have to work out which paragraph
 /// anchors it.
+///
+/// "Inside one of its paragraphs" now includes a text box's or a group's own block
+/// content, because [`inlines_hold`] follows that axis. What it does NOT do is
+/// return the text box as the CONTAINER: the caption for a picture in a box lands
+/// in the body beside the block that anchors the box. That is not a judgement
+/// about where a caption belongs — it is what the engine can address.
+/// `Operation::InsertBlocks` resolves `container` through
+/// `find_container_blocks_mut`, which handles table cells and block-level SDTs and
+/// has no text-box case, so returning the box's id would build a path that always
+/// fails `NodeNotFound`, which is a dead control with extra steps. Inserting inside
+/// a box needs that container support first; reported as a row.
 fn locate_block(document: &Document, node: NodeId) -> Option<(Option<NodeId>, usize)> {
     fn search(
         blocks: &[BlockNode],
@@ -455,17 +514,59 @@ fn locate_block(document: &Document, node: NodeId) -> Option<(Option<NodeId>, us
     search(document.body(), None, node)
 }
 
-/// Whether an inline tree holds the node `id`, at any depth. O(inlines).
+/// Whether an inline tree holds the node `id`, at any depth — including inside a
+/// text box's or a group's own block content. **O(nodes in the paragraph's
+/// subtree)**, one pass, no by-id lookup.
+///
+/// It searched the four inline-in-inline containers only, so a picture selected
+/// inside a text box or a DrawingML group was not "held" by any paragraph and
+/// `locate_block` refused: Insert Caption on the most ordinary floated figure in
+/// Word — a picture in a text box with its caption beneath — answered "a caption
+/// attaches to something in the document body".
+///
+/// Both descent axes are followed here because the question is containment, not
+/// offsets. The caption still goes in the BODY, beside the block that anchors the
+/// box, not inside the box: `Operation::InsertBlocks` resolves a container id
+/// through `find_container_blocks_mut`, which knows table cells and block-level
+/// SDTs and does not know a text box, so naming the box as the container would
+/// build a path that always fails `NodeNotFound`. Placing a caption inside a text
+/// box needs that engine-side container support and is reported as a row rather
+/// than half-built here.
 fn inlines_hold(inlines: &[InlineNode], id: NodeId) -> bool {
-    inlines.iter().any(|inline| {
-        inline.id() == id
-            || match inline {
-                InlineNode::Hyperlink(link) => inlines_hold(&link.inlines, id),
-                InlineNode::Revision(revision) => inlines_hold(&revision.inlines, id),
-                InlineNode::Sdt(sdt) => inlines_hold(&sdt.inlines, id),
-                InlineNode::Field(field) => inlines_hold(&field.inlines, id),
-                _ => false,
-            }
+    if inlines.iter().any(|inline| inline.id() == id) {
+        return true;
+    }
+    for inline in inlines {
+        if let Some(nested) = crate::contained_inlines(inline)
+            && inlines_hold(nested, id)
+        {
+            return true;
+        }
+    }
+    let mut found = false;
+    crate::inline_block_stories(inlines, &mut |blocks| {
+        found = found || blocks_hold(blocks, id);
+    });
+    found
+}
+
+/// Whether a block list holds the node `id`, at any depth — the block half of
+/// [`inlines_hold`]. **O(nodes in the subtree)**.
+fn blocks_hold(blocks: &[BlockNode], id: NodeId) -> bool {
+    blocks.iter().any(|block| match block {
+        BlockNode::Paragraph(paragraph) => {
+            paragraph.id == id || inlines_hold(&paragraph.inlines, id)
+        }
+        BlockNode::Table(table) => {
+            table.id == id
+                || table.rows.iter().any(|row| {
+                    row.cells
+                        .iter()
+                        .any(|cell| cell.id == id || blocks_hold(&cell.blocks, id))
+                })
+        }
+        BlockNode::Sdt(sdt) => sdt.id == id || blocks_hold(&sdt.blocks, id),
+        BlockNode::AltChunk(chunk) => chunk.id == id,
     })
 }
 
@@ -1088,12 +1189,22 @@ impl WasmDocument {
     /// `document_scans` would NOT have caught that, because it is a linear search
     /// over a table rather than a second scan of the document. Not every quadratic
     /// in this area is a scan.
+    ///
+    /// The per-paragraph part descends the paragraph's inline containers, because a
+    /// bookmark start marker inside a hyperlink, an inline content control or a
+    /// tracked insertion is an authored bookmark like any other, and leaving it out
+    /// meant the cross-reference picker offered no row for it — the same top-level
+    /// blind spot as `paragraph_offsets`, one function along. O(inlines in the
+    /// paragraph's subtree) per paragraph, so the whole walk stays O(document).
     fn bookmark_targets(&self) -> Vec<TargetRecord> {
-        let mut rows = Vec::new();
-        let bookmarks = &self.document.definitions().bookmarks;
-        let mut order = 0usize;
-        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
-            for inline in &paragraph.inlines {
+        fn collect(
+            inlines: &[InlineNode],
+            bookmarks: &casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
+            node: NodeId,
+            order: usize,
+            rows: &mut Vec<TargetRecord>,
+        ) {
+            for inline in inlines {
                 if let InlineNode::BookmarkStart(marker) = inline
                     && let Some(bookmark) = bookmarks.get(&marker.bookmark)
                     // Word hides its own `_Ref`/`_Toc` bookkeeping bookmarks from
@@ -1101,12 +1212,28 @@ impl WasmDocument {
                     && !bookmark.name.starts_with('_')
                 {
                     rows.push(TargetRecord {
-                        node: paragraph.id,
+                        node,
                         order,
                         text: bookmark.name.clone(),
                     });
                 }
+                if let Some(nested) = crate::contained_inlines(inline) {
+                    collect(nested, bookmarks, node, order, rows);
+                }
             }
+        }
+
+        let mut rows = Vec::new();
+        let bookmarks = &self.document.definitions().bookmarks;
+        let mut order = 0usize;
+        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            collect(
+                &paragraph.inlines,
+                bookmarks,
+                paragraph.id,
+                order,
+                &mut rows,
+            );
             order += 1;
         });
         rows
@@ -2135,6 +2262,451 @@ mod tests {
             one, two,
             "reading the captions scanned the document {one} times at 120 paragraphs \
              and {two} times at 240 — the cost grows with the document"
+        );
+    }
+
+    // ---- A paragraph's inline containers are descended, on every reference path -
+    // Four walks in this file stopped at a paragraph's top-level inlines or at
+    // three of the four inline containers. The guards below assert the guarantee a
+    // user would notice — a caption is listed, a bookmark is offered, a cross
+    // reference resolves to text, Insert Caption is not refused — rather than the
+    // shape of what a walk returned.
+
+    /// Ids for a fixture, from one space so nothing collides with the sample.
+    fn fixture_ids(space: u64) -> impl FnMut() -> NodeId {
+        let mut next = 1u64;
+        move || {
+            next += 1;
+            NodeId::from_parts(space, next).unwrap()
+        }
+    }
+
+    /// A hyperlink target for a fixture whose point is the WRAPPER, not where it
+    /// points.
+    fn fixture_link_target() -> casual_doc_model::v1::HyperlinkTarget {
+        casual_doc_model::v1::HyperlinkTarget::Internal(casual_doc_model::v1::InternalTarget {
+            anchor: "Anywhere".to_owned(),
+        })
+    }
+
+    fn fixture_run(id: NodeId, text: &str) -> InlineNode {
+        InlineNode::Run(casual_doc_model::v1::Run {
+            id,
+            properties: casual_doc_model::v1::RunProperties::default().into(),
+            text: text.to_owned(),
+        })
+    }
+
+    fn fixture_paragraph(id: NodeId, inlines: Vec<InlineNode>) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id,
+            properties: casual_doc_model::v1::ParagraphProperties::default().into(),
+            inlines,
+        })
+    }
+
+    /// A `SEQ Figure` field whose cached result reads `number`.
+    fn fixture_seq(id: NodeId, result: NodeId, number: &str) -> InlineNode {
+        InlineNode::Field(Box::new(casual_doc_model::v1::Field {
+            id,
+            instruction: "SEQ Figure \\* ARABIC".to_owned(),
+            kind: FieldKind::Seq {
+                name: "Figure".to_owned(),
+            },
+            inlines: vec![fixture_run(result, number)],
+            form: None,
+            update: casual_doc_model::v1::FieldUpdateState::default(),
+        }))
+    }
+
+    fn fixture_text_box(id: NodeId, blocks: Vec<BlockNode>) -> InlineNode {
+        InlineNode::TextBox(Box::new(casual_doc_model::v1::TextBox {
+            hyperlink: None,
+            id,
+            anchor: None,
+            relative_height: None,
+            extent: Some(casual_doc_model::v1::Extent {
+                width_emu: 2_743_200,
+                height_emu: 1_828_800,
+            }),
+            fill: None,
+            border: None,
+            body_properties: casual_doc_model::v1::TextBoxBodyProperties::default(),
+            blocks,
+        }))
+    }
+
+    fn fixture_sdt(id: NodeId, inlines: Vec<InlineNode>) -> InlineNode {
+        InlineNode::Sdt(Box::new(casual_doc_model::v1::InlineSdt {
+            id,
+            properties: casual_doc_model::v1::SdtProperties::default(),
+            inlines,
+        }))
+    }
+
+    /// A caption paragraph inside a text box that itself sits inside an inline
+    /// content control — the box a figure caption is authored in, in a document
+    /// whose fields a producer wrapped in a control.
+    ///
+    /// This is the case the whole caption feature could not see: the paragraph walk
+    /// (`visit_text_box_paragraphs`) descended `TextBox`, `Hyperlink`, `Field` and
+    /// `Group` and missed `Sdt` and `Revision`, so the caption paragraph inside the
+    /// box was never visited and the caption was absent from `captionEntries`, from
+    /// the cross-reference picker, and from renumbering.
+    #[test]
+    fn a_caption_in_a_box_inside_a_content_control_is_listed_and_numbered() {
+        let mut id = fixture_ids(71);
+        let plain_caption = id();
+        let boxed_caption = id();
+        let document = Document::new(
+            NodeId::from_parts(71, 1).unwrap(),
+            vec![
+                // A plain body caption first, so the numbering has something to
+                // count from and the guard can tell "not found" from "found but
+                // mis-numbered".
+                fixture_paragraph(
+                    plain_caption,
+                    vec![
+                        fixture_run(id(), "Figure "),
+                        fixture_seq(id(), id(), "1"),
+                        fixture_run(id(), ": in the body"),
+                    ],
+                ),
+                fixture_paragraph(
+                    id(),
+                    vec![fixture_sdt(
+                        id(),
+                        vec![fixture_text_box(
+                            id(),
+                            vec![fixture_paragraph(
+                                boxed_caption,
+                                vec![
+                                    fixture_run(id(), "Figure "),
+                                    fixture_seq(id(), id(), "1"),
+                                    fixture_run(id(), ": in a box in a control"),
+                                ],
+                            )],
+                        )],
+                    )],
+                ),
+            ],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid boxed-caption document");
+
+        let d = crate::tests::wasm_document(document);
+        let rows = captions(&d);
+        assert!(
+            rows.iter().any(|(_, _, text)| text.contains("in the body")),
+            "the fixture's plain caption must be listed, or this guard cannot tell \
+             a missing descent from a broken scan: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|(_, _, text)| text.contains("in a box in a control")),
+            "a caption in a text box inside an inline content control is missing \
+             from the caption list, so it is missing from the cross-reference \
+             picker and from a Table of Figures: {rows:?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|(_, _, text)| text.contains("in a box in a control"))
+                .map(|(_, number, _)| number.as_str()),
+            Some("1"),
+            "the boxed caption's CACHED number is what the document shows, and it \
+             shows 1; renumbering is what changes it, and renumbering could not see \
+             it either: {rows:?}"
+        );
+        // And renumbering can now reach it: two captions of one label cannot both
+        // be 1, so an update must produce work.
+        let mut d = d;
+        let (ops, first) = d.caption_renumber_operations();
+        assert!(
+            first.is_some() && !ops.is_empty(),
+            "two captions of the same label both cached as 1 must be stale; a \
+             renumber that produces nothing means one of them is invisible"
+        );
+    }
+
+    /// A cross-reference to a caption whose `SEQ` field sits inside a hyperlink
+    /// resolves to the caption's text, not to nothing.
+    ///
+    /// `paragraph_offsets` looked at top-level inlines only, so for such a caption
+    /// `after_sequence` was `None` and every reference kind fell back to the whole
+    /// paragraph — Word's "Only label and number" and "Only caption text" silently
+    /// became "Entire caption", which is three rows in a dialog that do the same
+    /// thing.
+    #[test]
+    fn a_seq_inside_a_hyperlink_still_splits_label_from_caption_text() {
+        let mut id = fixture_ids(72);
+        let caption = id();
+        let caret = id();
+        let document = Document::new(
+            NodeId::from_parts(72, 1).unwrap(),
+            vec![
+                fixture_paragraph(
+                    caption,
+                    vec![InlineNode::Hyperlink(Box::new(
+                        casual_doc_model::v1::Hyperlink {
+                            id: id(),
+                            target: fixture_link_target(),
+                            tooltip: None,
+                            inlines: vec![
+                                fixture_run(id(), "Figure "),
+                                fixture_seq(id(), id(), "1"),
+                            ],
+                        },
+                    ))],
+                ),
+                fixture_paragraph(caret, vec![fixture_run(id(), "see ")]),
+            ],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid hyperlinked-caption document");
+
+        let mut d = crate::tests::wasm_document(document);
+        // Append the caption's own text after the field, inside the link, so the
+        // label/number boundary has text on both sides of it.
+        {
+            let BlockNode::Paragraph(paragraph) = &mut d.document.body_mut()[0] else {
+                panic!("the caption paragraph");
+            };
+            let InlineNode::Hyperlink(link) = &mut paragraph.inlines[0] else {
+                panic!("the hyperlink");
+            };
+            link.inlines
+                .push(fixture_run(NodeId::from_parts(72, 90).unwrap(), ": Wiring"));
+        }
+
+        let scan = d.scan_references(ScanRequest {
+            interest: &[caption],
+            keep_inlines: false,
+        });
+        let found = scan.found(caption).expect("the caption is in the scan");
+        assert_eq!(
+            found.length,
+            "Figure 1: Wiring".len() as u32,
+            "the paragraph's length must count text nested in the hyperlink, or the \
+             bookmark a reference creates stops short of what it names"
+        );
+        assert_eq!(
+            found.after_sequence,
+            Some("Figure 1".len() as u32),
+            "the boundary between the caption's label-and-number and its own text \
+             is the end of the `SEQ` field, and a `SEQ` inside a hyperlink is still \
+             the caption's `SEQ`"
+        );
+    }
+
+    /// A `_Ref` bookmark nested inside a hyperlink is found and reused, so ten
+    /// references to one figure carry one bookmark rather than ten.
+    ///
+    /// The extent scan was top-level only, so a bookmark Word itself had written
+    /// inside the link of a hyperlinked cross-reference was invisible and every new
+    /// reference minted another `_Ref…` over the same range.
+    #[test]
+    fn a_reference_bookmark_nested_in_a_hyperlink_is_reused() {
+        use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkStart};
+
+        let mut id = fixture_ids(73);
+        let bookmark = casual_doc_model::v1::BookmarkId::new(NodeId::from_parts(73, 800).unwrap());
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        definitions.bookmarks.insert(
+            bookmark,
+            Bookmark {
+                name: format!("{REFERENCE_BOOKMARK_PREFIX}123456789"),
+            },
+        );
+        let caption = id();
+        let document = Document::new(
+            NodeId::from_parts(73, 1).unwrap(),
+            vec![fixture_paragraph(
+                caption,
+                vec![InlineNode::Hyperlink(Box::new(
+                    casual_doc_model::v1::Hyperlink {
+                        id: id(),
+                        target: fixture_link_target(),
+                        tooltip: None,
+                        inlines: vec![
+                            InlineNode::BookmarkStart(BookmarkStart { id: id(), bookmark }),
+                            fixture_run(id(), "Figure 1"),
+                            InlineNode::BookmarkEnd(BookmarkEnd { id: id(), bookmark }),
+                        ],
+                    },
+                ))],
+            )],
+            definitions,
+        )
+        .expect("a valid nested-bookmark document");
+
+        let d = crate::tests::wasm_document(document);
+        let scan = d.scan_references(ScanRequest {
+            interest: &[caption],
+            keep_inlines: false,
+        });
+        assert_eq!(
+            scan.reference_bookmark(caption, 0, "Figure 1".len() as u32),
+            Some(bookmark),
+            "a `_Ref` bookmark inside a hyperlink covers the same characters as one \
+             beside it, and must be reused for a reference over that range rather \
+             than duplicated"
+        );
+    }
+
+    /// A picture selected inside a text box resolves to the body block that
+    /// anchors the box, so a caption has somewhere to go.
+    ///
+    /// `inlines_hold` searched the four inline-in-inline containers only, so a node
+    /// inside a text box's own block content was not "held" by any paragraph and
+    /// `locate_block` returned `None` — the insertion point for Word's most
+    /// ordinary floated figure, a picture in a box, could not be computed at all.
+    ///
+    /// **Insert Caption on such a picture is still refused, one layer above this,
+    /// and the guard says so rather than pretending otherwise.**
+    /// `caption_target_refusal` asks `casual_doc_edit::surface_of`, whose
+    /// `blocks_contain` matches paragraph, table, row and cell ids and does not
+    /// descend a paragraph's inline text boxes, so it answers "not in the document"
+    /// and the command refuses before `locate_block` is consulted. That function is
+    /// in another lane's crate, so it is reported as a row instead of edited here —
+    /// and the assertion below pins the refusal that is CURRENTLY correct behaviour
+    /// for this engine, so the day `surface_of` learns text boxes this guard fails
+    /// and is updated deliberately rather than silently passing on a changed
+    /// meaning.
+    #[test]
+    fn a_picture_inside_a_text_box_resolves_to_the_block_that_anchors_it() {
+        use casual_doc_model::v1::{Definitions, Drawing, MediaId, MediaReference};
+
+        let mut id = fixture_ids(74);
+        let media = MediaId::new(NodeId::from_parts(74, 800).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId74".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let picture = id();
+        let document = Document::new(
+            NodeId::from_parts(74, 1).unwrap(),
+            vec![fixture_paragraph(
+                id(),
+                vec![fixture_text_box(
+                    id(),
+                    vec![fixture_paragraph(
+                        id(),
+                        vec![InlineNode::Drawing(Box::new(Drawing {
+                            hyperlink: None,
+                            opacity: None,
+                            id: picture,
+                            media,
+                            extent: Some(casual_doc_model::v1::Extent {
+                                width_emu: 914_400,
+                                height_emu: 914_400,
+                            }),
+                            crop: None,
+                            descr: None,
+                            border: None,
+                            flip_h: false,
+                            flip_v: false,
+                            rotation: None,
+                        }))],
+                    )],
+                )],
+            )],
+            definitions,
+        )
+        .expect("a valid boxed-picture document");
+
+        let d = crate::tests::wasm_document(document);
+        assert_eq!(
+            locate_block(&d.document, picture),
+            Some((None, 0)),
+            "a picture selected inside a text box must resolve to the body block \
+             that anchors the box — index 0 of the body, with no `InsertBlocks` \
+             container, because the engine cannot address a text box as a container"
+        );
+        assert_eq!(
+            caption_target_refusal(&d.document, picture),
+            Some("the caption's target is not in the document"),
+            "Insert Caption is still refused for a boxed picture, by \
+             `casual_doc_edit::surface_of`, which does not descend a paragraph's \
+             inline text boxes. Reported as a row; when it does, update this guard \
+             deliberately"
+        );
+    }
+
+    /// An authored bookmark inside a hyperlink is offered as a cross-reference
+    /// target.
+    ///
+    /// `bookmark_targets` looked at a paragraph's top-level inlines, so a bookmark
+    /// an author had placed over linked text simply had no row in the picker — a
+    /// capability present in the model and unreachable from the product.
+    #[test]
+    fn a_bookmark_inside_a_hyperlink_is_offered_as_a_target() {
+        use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkStart};
+
+        let mut id = fixture_ids(75);
+        let nested = casual_doc_model::v1::BookmarkId::new(NodeId::from_parts(75, 800).unwrap());
+        let top_level = casual_doc_model::v1::BookmarkId::new(NodeId::from_parts(75, 801).unwrap());
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        for (bookmark, name) in [(nested, "InsideTheLink"), (top_level, "BesideTheLink")] {
+            definitions.bookmarks.insert(
+                bookmark,
+                Bookmark {
+                    name: name.to_owned(),
+                },
+            );
+        }
+        let document = Document::new(
+            NodeId::from_parts(75, 1).unwrap(),
+            vec![fixture_paragraph(
+                id(),
+                vec![
+                    InlineNode::BookmarkStart(BookmarkStart {
+                        id: id(),
+                        bookmark: top_level,
+                    }),
+                    fixture_run(id(), "plain"),
+                    InlineNode::BookmarkEnd(BookmarkEnd {
+                        id: id(),
+                        bookmark: top_level,
+                    }),
+                    InlineNode::Hyperlink(Box::new(casual_doc_model::v1::Hyperlink {
+                        id: id(),
+                        target: fixture_link_target(),
+                        tooltip: None,
+                        inlines: vec![
+                            InlineNode::BookmarkStart(BookmarkStart {
+                                id: id(),
+                                bookmark: nested,
+                            }),
+                            fixture_run(id(), "linked"),
+                            InlineNode::BookmarkEnd(BookmarkEnd {
+                                id: id(),
+                                bookmark: nested,
+                            }),
+                        ],
+                    })),
+                ],
+            )],
+            definitions,
+        )
+        .expect("a valid bookmark document");
+
+        let d = crate::tests::wasm_document(document);
+        let rows = d.reference_targets("bookmark");
+        assert!(
+            rows.iter().any(|row| row.contains("BesideTheLink")),
+            "the fixture's top-level bookmark must be offered, or this guard cannot \
+             tell a missing descent from a broken picker: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("InsideTheLink")),
+            "a bookmark an author placed over linked text is not offered as a \
+             cross-reference target, so it is in the document and unreachable from \
+             the product: {rows:?}"
         );
     }
 }
