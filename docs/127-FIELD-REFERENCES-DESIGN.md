@@ -110,6 +110,68 @@ model, so a build that cached the wrong number still listed the right one and ev
 numbering guard passed. That was found by mutating the numbering and watching the
 guards stay green.
 
+## 4a. The other half of the contract: which results a person may edit
+
+§4 says when a cached result is *stale*. It did not say when one is **editable**,
+and the answer was being decided separately by four primitives in
+`casual-doc-edit` that disagreed. Reported from the running editor: editing the
+total page count in `sample.docx`'s footer answered "That edit isn't supported
+for this selection yet", the host's one generic sentence for an unexplained
+refusal. On the same two bytes, typing between the digits *reported success* and
+appended the character at the end of the paragraph.
+
+The rule follows from §5 rather than being invented beside it. `PAGE`/`NUMPAGES`
+keep their markers and are restamped per page, so their cached result
+**corresponds to no model characters**; every other field's result *is* the
+paragraph's model text and flows as ordinary inline content. So:
+
+| field | cached result | an interior edit |
+| --- | --- | --- |
+| `PAGE`, `NUMPAGES` | restamped per page; not model text | refused, naming the calculated value and the gesture that works |
+| `FORMCHECKBOX` | none — layout synthesises the box glyph | refused (toggled through its own command instead) |
+| everything else (`TOC`, `SEQ`, `REF`, `PAGEREF`, `STYLEREF`, `FORMTEXT`, …) | is the model text the page shows | **edited in place**, like a hyperlink's or an SDT's children |
+
+`casual-doc-model`'s `PaginatedField` is the single home of the `PAGE`/`NUMPAGES`
+rule; `casual-doc-layout`'s `field_kind` projects onto its own three-way enum and
+`casual-doc-edit` reads the same predicate. It had two homes before and the wasm
+anchor-width helper is a third that still parses the keyword itself.
+
+**Where this diverges from Word, deliberately.** Word lets you type into a
+`PAGE`/`NUMPAGES` result and keeps the typing until the next field update — the
+same behaviour as the documented "edit your table of contents and lose it when you
+update" gotcha. Here the restamp is unconditional and happens on every
+pagination, so there is no interval in which the typing is visible: accepting it
+would store characters the reader never sees, which is the silent loss
+`AGENTS.md` forbids. `w:dirty` cannot close that gap — it tells a reader a result
+is stale, not that a manual edit should survive a restamp — and the fixture's own
+footer fields arrive with neither `w:fldLock` nor `w:dirty` set, so the flag was
+never what refused the edit. Word and Docs agree on the gesture that *does* pin a
+literal number, and it is the one the refusal names: select the whole field and
+type over it, which replaces the field with fixed text (Word's Ctrl+Shift+F9
+unlink reaches the same end).
+
+A **paragraph break** inside any field's result stays refused, whatever the
+field: a complex field is one `fldChar begin … end` span and cannot straddle two
+`w:p`. It now says so.
+
+Two defects found while establishing the above, both recorded because neither is
+about fields as such:
+
+- `split_paragraph` emptied the paragraph with `std::mem::take` *before* a split
+  that can fail. Pressing Enter inside a field result therefore destroyed the
+  paragraph's entire content and returned `Err` before building an inverse, so
+  undo had nothing to restore. It now splits a copy and commits on success.
+- the reflection walk (`flatten_run_segments`) kept its own list of
+  editing-transparent wrappers, and a field was not on it. Typing inside a
+  `FORMTEXT` blank inherited the field run's formatting while the toolbar read
+  the paragraph's defaults at the same caret. Both walks now read one rule.
+
+Still open, and not closed by this: **formatting** a `PAGE`/`NUMPAGES` result is a
+silent no-op. Layout shapes the restamped value with the first cached-result run's
+style, so bolding a page number *should* work and instead does nothing — the
+range walks skip a non-transparent field, and unlike an edit this one has no
+refusal to show.
+
 ## 5. The layout change this required, and why it removed a path rather than adding one
 
 A caption is a field plus a sentence, and **a paragraph containing a field did not
