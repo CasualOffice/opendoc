@@ -257,7 +257,7 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 | Track changes (on/off for me, on/off global) | `ReviewChanges.js:340-351`, menu `:569-600` | `review.mode.suggesting` | Present but weaker — no per-user vs global split |
 | Display Mode (markup / simple markup / final / original) | `ReviewChanges.js:383-433` | `view.showChanges` + `docs/93` policy | Present but weaker — two states, not four |
 | Previous / Next change | `:356-375` | `review.previous`, `review.next` | Present |
-| Accept (current / all) · Reject (current / all) | `:287-310`, menus `:604-631` | `review.acceptNext`, `review.rejectNext`, `review.acceptAll`, `review.rejectAll` | Present |
+| Accept (current / all) · Reject (current / all), as split buttons | `:287-310`, menus `:604-631` | `review.acceptNext`, `review.rejectNext`, `review.acceptAll`, `review.rejectAll` | Present but weaker — our four ids are four buttons, not two split buttons, and `review.acceptAtCaret` / `review.rejectAtCaret` exist in the registry with **no surface but the palette**. That is the recorded gap HF-179, and it is the only genuine single-surface capability in the whole registry (`webapp/tests/e2e/one-axis-navigation.spec.mjs:301-307`, `docs/122`:240) |
 | Comment | `controller/Toolbar.js:4085` | `review.comment` | Present |
 | Remove comment (current / mine / all) | `:498-508`, menu `:717-737` | `review.comment.delete` (current only) | Present but weaker — §4.7 |
 | Resolve comment (current / mine / all) | `:511-521`, menu `:739-759` | `review.comment.resolve` (current only) | Present but weaker — §4.7 |
