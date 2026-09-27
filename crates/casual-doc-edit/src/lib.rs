@@ -12355,22 +12355,22 @@ mod tests {
         .expect("valid document");
         let mut ids = IdGenerator::new(9);
 
-        let resized = Some(Extent {
+        let resized = Extent {
             width_emu: 1_828_800,
             height_emu: 914_400,
-        });
+        };
         let inverse = apply(
             &mut d,
             &mut ids,
             &Operation::SetExtent {
                 object,
-                extent: resized,
+                extent: Some(resized),
             },
         )
         .expect("a previewed chart inside a field result is resizable");
         assert_eq!(
             embedded_extent(&d, object),
-            resized.expect("the request carried a size"),
+            resized,
             "the resize must reach the embedded object inside the field's result"
         );
         apply(&mut d, &mut ids, &inverse).expect("the inverse applies");
