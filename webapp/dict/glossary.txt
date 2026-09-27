@@ -96,6 +96,7 @@ LGPL
 LLM
 LOC
 LRU
+LST
 LTR
 LayoutNG
 LibreOffice
@@ -155,6 +156,7 @@ RGBA
 RSS
 RTF
 RTL
+Reachability
 Roadmap
 Roboto
 RunProperties
@@ -232,6 +234,7 @@ auditable
 auth
 authorable
 autofit
+autoformat
 autosave
 autoshape
 backend
@@ -247,6 +250,7 @@ bolds
 bool
 booleans
 breakpoint
+buildable
 bypassable
 callout
 callouts
@@ -301,6 +305,7 @@ editability
 embeddability
 embeddable
 embeddings
+enablement
 encodings
 endnote
 endnotes
@@ -337,6 +342,7 @@ hlinkClick
 hostable
 hotfix
 href
+hscroll
 html
 iOS
 idempotency
@@ -350,6 +356,7 @@ integrators
 intra
 invariants
 invertible
+invocable
 kashida
 keepLines
 keepNext
@@ -366,6 +373,7 @@ lossy
 macOS
 margined
 max
+memoized
 meta
 metafile
 metafiles
@@ -392,6 +400,7 @@ ooxml
 opencalc
 opendoc
 org
+outdents
 overpaint
 pPr
 pageBreakBefore
@@ -484,13 +493,16 @@ tooltips
 tri
 twip
 twips
+unauthorable
 uncached
 unclipped
 undecodable
 undoable
+undos
 ungated
 unicode
 unlink
+unlocalised
 unmapped
 unmerged
 unmodeled
@@ -516,6 +528,7 @@ webapp
 webview
 whitespace
 widthless
+workaround
 worktree
 writerfilter
 xml
