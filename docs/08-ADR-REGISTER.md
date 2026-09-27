@@ -607,6 +607,62 @@ owed before OT (ADR-033) regardless.
 - No engine operation was added (ADR-030 I2): the contract composes existing registry
   commands.
 
+## ADR-037 — Break insertion adds exactly one operation, for creating a section boundary
+
+**Status:** Accepted and implemented (`docs/130` §4.3, OO-022). Design and the full
+inheritance table: the module header of `crates/casual-doc-edit/src/breaks.rs`, which is where
+it stays current; operation: `Operation::SpliceSectionBoundary`.
+
+**Context:** `docs/130` ranked "insert a page, column or section break" first among the
+ONLYOFFICE toolbar gaps and classified it **engine** — "there is no break-insertion
+operation". ADR-030 invariant I2 keeps the op set closed, so the question was how much of it
+genuinely needed a new operation. Captions and the paragraph-spanning field each landed with
+none; #635 added two and had to argue for them.
+
+**Decision:**
+
+1. **Page and column breaks add nothing.** `w:br` is an inline node, so authoring one is the
+   existing `InsertInlineObject` / `RemoveInlineObject` pair that Shift+Enter already uses,
+   and layout has always paginated an *imported* page break. The gap was authoring, not
+   capability.
+2. **A section break adds exactly one operation**, `SpliceSectionBoundary`, because every
+   other `SetSection*` operation edits a boundary that already exists: a section could be
+   reformatted and never created. It is **one** variant rather than an insert/remove pair
+   because `Some`/`None` makes it its own inverse in both directions — the shape
+   `SetStyleDefinition` already uses for the style registry — and it anchors on `SectionId`,
+   never on a list index, so the anchor is a node id like every other operation's (doc 45 I3).
+3. **The caret's section keeps its identity and keeps the content before the break**; the
+   content after it becomes the new section. This is what holds the addition to one operation:
+   the existing boundary is never rewritten, so nothing has to set its start type. Per
+   ECMA-376 a boundary's `w:type` says how *that* section starts, which is also how
+   `flow::section_break_forces_page` already reads it, so the kind the user picks belongs on
+   the new, second section.
+4. **The new boundary inherits everything except four fields** — a fresh `id`, the chosen
+   `section_type`, a cleared `page_numbering.start` (it means *restart numbering here*;
+   copying it would silently renumber every page after the break) and a cleared
+   `section_change` (a tracked format change recorded against the section it sits on; a copy
+   would fabricate a second identical revision). Identical geometry on both sides is the
+   point: a break moves the following text onto the page its start type asks for and nowhere
+   else.
+5. **Where a break cannot be honoured it refuses with a reason.** Layout charges a section
+   break to a section only on a top-level body paragraph and only the body paginator consumes
+   a forced break, so a table cell, text box, content control, header/footer, note or comment
+   each get their own sentence rather than a stored break nothing reads. Two of those —
+   a table cell and a body-level content control — are **stricter than Word**, deliberately
+   and recorded in the code.
+
+**Consequences:**
+
+- The closed set is 51 variants. A `SpliceSectionBoundary` transforms as an ordered-list
+  insert/remove anchored on a section id, which is what OT (ADR-033) will need of it.
+- The whole section split is three operations in one `apply_action_caret_as` group, so it is
+  one history entry and undoes in one step. A break that undid in two would be a defect.
+- A document that declares no `w:sectPr` at all — a plain-text or JSON import — has no section
+  to split and refuses with its own reason. That is consistent with `setPageSetup`, which is
+  equally unavailable there because it needs an existing section id; materialising the implicit
+  body section is separate work.
+- `Blank Page` is no longer blocked: it is two page breaks, and needs no engine work.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

@@ -43,6 +43,9 @@ use casual_doc_model::v1::{Field, FieldKind};
 use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
+// Section-break authoring (`docs/130` §4.3): the boundary `SpliceSectionBoundary`
+// carries, and the start type a new section takes.
+use casual_doc_model::v1::SectionBoundary;
 
 // Captions and cross-references: the OOXML field markup (`SEQ`, `REF`, `PAGEREF`,
 // `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005). Its own module
@@ -67,6 +70,17 @@ pub mod references;
 // module's own items are not in scope, and every intra-doc link in it fails
 // `RUSTDOCFLAGS="-D warnings" cargo doc`.
 pub mod clone;
+
+// Page, column and section break authoring (`docs/130` §4.3, OO-022). Its own
+// module because the interesting part is not the mutation — a page break reuses
+// `InsertInlineObject` — but the section-split rules: which half is new, what the
+// new boundary inherits, and where a break refuses. Those are worth one screen of
+// prose next to the code that implements them.
+//
+// A plain comment, not a doc comment, for the reason `references` above carries
+// one: a doc comment here resolves in the crate root's scope and every intra-doc
+// link in it fails `RUSTDOCFLAGS="-D warnings" cargo doc`.
+pub mod breaks;
 
 std::thread_local! {
     /// Per-thread, so a parallel test run never reads another test's scans and
@@ -685,6 +699,40 @@ pub enum Operation {
         orientation: Option<PageOrientation>,
         /// The column layout to install.
         columns: SectionColumns,
+    },
+    /// Insert a section boundary into the document's ordered section list, or
+    /// remove one — the vehicle inserting a **section break** needs.
+    ///
+    /// Every other `SetSection*` operation edits a boundary that already exists,
+    /// so before this variant a section could be reformatted but never created:
+    /// `docs/130` §4.3's finding that no operation authors a break was, for the
+    /// section case, exactly this hole. Page and column breaks needed nothing new
+    /// (see [`breaks`]); this is the one addition, and it is one variant rather
+    /// than an insert/remove pair because — like
+    /// [`Operation::SetStyleDefinition`], which does the same job for the style
+    /// registry — `Some`/`None` makes it its own inverse in both directions.
+    ///
+    /// - `boundary` = `Some`: insert it immediately **before** the boundary `at`
+    ///   names, or append when `at` is `None`. Inverse: the same operation with
+    ///   `at` naming the inserted boundary and `boundary` `None`.
+    /// - `boundary` = `None`: remove the boundary `at` names. Inverse: the same
+    ///   operation carrying the removed boundary, positioned before whatever
+    ///   followed it — so a section split undoes exactly, list order included.
+    ///
+    /// Positions are named by [`SectionId`], never by list index, so the anchor is
+    /// a node id like every other operation's (doc 45 I3). Rejected, leaving the
+    /// document unchanged, when `at` names no section, when both fields are `None`,
+    /// when the inserted boundary's id is already in use, or when the result does
+    /// not validate. O(sections) — the list holds one entry per `w:sectPr`, not one
+    /// per block.
+    SpliceSectionBoundary {
+        /// The existing boundary this operation is positioned at: the one the new
+        /// boundary goes before, or the one to remove. `None` with a `Some`
+        /// boundary appends.
+        at: Option<SectionId>,
+        /// The boundary to insert (its id must be fresh), or `None` to remove the
+        /// boundary `at` names.
+        boundary: Option<Box<SectionBoundary>>,
     },
     /// Install, replace, or remove a style definition in the document's style
     /// registry (`word/styles.xml`). `Some(style)` inserts (create) or replaces
@@ -1796,6 +1844,63 @@ pub fn apply(
                 columns: previous.3,
             })
         }
+        Operation::SpliceSectionBoundary { at, boundary } => {
+            let sections = &mut doc.definitions_mut().sections;
+            let position = match at {
+                Some(id) => Some(
+                    sections
+                        .iter()
+                        .position(|candidate| candidate.id == *id)
+                        .ok_or(EditError::NodeNotFound)?,
+                ),
+                None => None,
+            };
+            match boundary {
+                Some(boundary) => {
+                    // A duplicate id would make two boundaries indistinguishable to
+                    // every lookup-by-id in layout and export, so it is refused here
+                    // rather than left to `validate`, which reports it as an
+                    // anonymous uniqueness failure.
+                    if sections.iter().any(|candidate| candidate.id == boundary.id) {
+                        return Err(EditError::Unsupported);
+                    }
+                    let index = position.unwrap_or(sections.len());
+                    sections.insert(index, (**boundary).clone());
+                    if doc.validate().is_err() {
+                        // Take it straight back out: a boundary the model refuses
+                        // must not survive the report.
+                        doc.definitions_mut().sections.remove(index);
+                        return Err(EditError::Unsupported);
+                    }
+                    Ok(Operation::SpliceSectionBoundary {
+                        at: Some(boundary.id),
+                        boundary: None,
+                    })
+                }
+                None => {
+                    // Removal needs a target; `at: None, boundary: None` names
+                    // nothing at all.
+                    let index = position.ok_or(EditError::Unsupported)?;
+                    let removed = sections.remove(index);
+                    // The inverse puts it back before whatever now occupies its
+                    // place, so list order is restored exactly and not merely the
+                    // membership.
+                    let follower = doc
+                        .definitions()
+                        .sections
+                        .get(index)
+                        .map(|candidate| candidate.id);
+                    if doc.validate().is_err() {
+                        doc.definitions_mut().sections.insert(index, removed);
+                        return Err(EditError::Unsupported);
+                    }
+                    Ok(Operation::SpliceSectionBoundary {
+                        at: follower,
+                        boundary: Some(Box::new(removed)),
+                    })
+                }
+            }
+        }
         Operation::SetStyleDefinition { id, style } => {
             let styles = &mut doc.definitions_mut().styles;
             let previous = match style {
@@ -2049,7 +2154,7 @@ pub fn apply(
                 .clone();
             if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
                 para.inlines
-                    .retain(|i| !(is_object_node(i) && i.id() == *object));
+                    .retain(|i| !(is_removable_inline_node(i) && i.id() == *object));
                 // Removing the object can leave the two equal-property runs it kept
                 // apart adjacent, which the model forbids; coalesce them back so the
                 // original run is restored verbatim.
@@ -3250,6 +3355,24 @@ fn object_descr_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Str
 /// Whether `node` is a removable object (the target set of
 /// [`Operation::DeleteObject`]): an inline drawing, a floating anchored drawing, a
 /// text box, or a DrawingML group.
+/// Whether `node` is something the [`Operation::InsertInlineObject`] /
+/// [`Operation::RemoveInlineObject`] pair owns: every drawing object, **plus the
+/// explicit `w:br` break** that pair also authors.
+///
+/// Deliberately wider than [`is_object_node`], which is the *drawing* notion used
+/// by object selection and `DeleteObject`. A break must not become a selectable
+/// object -- but it is something `InsertInlineObject` inserts, so the removal that
+/// is that operation's inverse has to be able to find it, and it could not:
+/// `insert_line_break` (Shift+Enter) has been producing a `RemoveInlineObject`
+/// inverse that answered `NodeNotFound`, so a soft line break did not undo. Page
+/// and column breaks travel the same operation, so the same hole would have
+/// swallowed their undo too.
+///
+/// O(1).
+fn is_removable_inline_node(node: &InlineNode) -> bool {
+    is_object_node(node) || matches!(node, InlineNode::Break(_))
+}
+
 fn is_object_node(node: &InlineNode) -> bool {
     matches!(
         node,
@@ -5887,7 +6010,7 @@ fn locate_inline_object(blocks: &[BlockNode], object: NodeId) -> Option<(NodeId,
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0u32;
                 for inline in &paragraph.inlines {
-                    if is_object_node(inline) && inline.id() == object {
+                    if is_removable_inline_node(inline) && inline.id() == object {
                         return Some((paragraph.id, offset, inline.clone()));
                     }
                     offset = offset.saturating_add(inline_text_len(inline));
