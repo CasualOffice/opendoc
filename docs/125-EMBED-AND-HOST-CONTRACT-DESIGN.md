@@ -170,7 +170,11 @@ partly there.
 
 ### 3.1 Two embed shapes, one contract (owner decision: both)
 
-- **Direct module** — `import { createEditor } from "@casualoffice/document-runtime"`.
+- **Direct module** — `import "@casualoffice/opendoc-embed/define"`, which registers
+  `<opendoc-editor>`. (This said `createEditor` from `@casualoffice/document-runtime`
+  until `docs/126` phase 3; neither the function nor that package has ever existed.
+  A custom element is what shipped, because it works in React, Vue and plain HTML
+  with no binding layer.)
   This is the differentiator: ONLYOFFICE **cannot** do it, because their format
   I/O is `x2t` and `core/X2tConverter/build/` has only `Android/` and `Qt/` —
   no WASM build. We are a library; they are a hosted app.

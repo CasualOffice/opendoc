@@ -27,6 +27,10 @@
     "./client": {
       "types": "./types/index.d.ts",
       "import": "./src/host_client.mjs"
+    },
+    "./release": {
+      "types": "./types/index.d.ts",
+      "import": "./src/release.mjs"
     }
   },
   "files": [

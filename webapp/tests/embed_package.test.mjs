@@ -69,8 +69,20 @@ test("every module in the package is its webapp/src authority, verbatim", () => 
   // one rule diverge (SKILL.md §8). Enumerated from the package rather than from
   // a list here, so a module added to the package without an authority fails
   // this rather than sitting unchecked.
-  const copies = readdirSync(join(PACKAGE, "src")).filter((name) => /\.(mjs|js)$/.test(name));
-  assert.ok(copies.length >= 3, `only ${copies.length} module(s) in the package`);
+  //
+  // `release.mjs` is the one module that is DERIVED rather than copied — its
+  // fields come from `package.json`, `Cargo.toml` and the host contract, not from a
+  // `webapp/src` twin — so it is excluded here and re-derived by its own test
+  // below. Excluded by NAME rather than by "has no authority", because "skip
+  // anything with no authority" would silently exempt the next module somebody
+  // forgets to give one.
+  const DERIVED = new Set(["release.mjs"]);
+  const all = readdirSync(join(PACKAGE, "src")).filter((name) => /\.(mjs|js)$/.test(name));
+  const copies = all.filter((name) => !DERIVED.has(name));
+  assert.ok(copies.length >= 3, `only ${copies.length} copied module(s) in the package`);
+  for (const name of DERIVED) {
+    assert.ok(all.includes(name), `${name} is exempted from the verbatim rule but is not there`);
+  }
   for (const name of copies) {
     const authority = readFileSync(join(WEBAPP, "src", name), "utf8");
     const copy = readFileSync(join(PACKAGE, "src", name), "utf8");
@@ -243,5 +255,59 @@ test("the package packs, installs, and imports — not just claims to", async ()
     assert.equal(out.element, "function");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// ---- Release and provenance (`docs/126` phase 3) -----------------------------
+// Every field in `src/release.mjs` is re-derived here FROM ITS SOURCE, not compared
+// with itself. `docs/99` §9 rule 1: a published number is generated from a committed
+// artifact or it is not published — and a host reads these to say which build they
+// are running in a bug report, so a wrong one costs somebody an afternoon.
+//
+// The three versions are deliberately NOT collapsed into one. They answer different
+// questions, and the guard is that each is what its own source says rather than that
+// they agree with each other.
+
+test("the release module is what its sources say, field by field", async () => {
+  const { RELEASE } = await import(join(PACKAGE, "src", "release.mjs"));
+  const { CONTRACT_VERSION } = await import(join(WEBAPP, "src", "host_contract.mjs"));
+  const cargo = readFileSync(join(REPO, "Cargo.toml"), "utf8");
+  const engine = cargo.match(/^\[workspace\.package\][\s\S]*?^version = "([^"]+)"/m)?.[1];
+
+  assert.equal(RELEASE.package, manifest.name);
+  assert.equal(RELEASE.version, manifest.version);
+  assert.equal(RELEASE.licence, manifest.license);
+  assert.equal(RELEASE.repository, manifest.repository.url);
+  assert.equal(RELEASE.contract, CONTRACT_VERSION);
+  assert.ok(engine, "the Cargo workspace version is no longer readable, so this guard checks nothing");
+  assert.equal(RELEASE.engine, engine);
+  // Frozen: a host that could mutate what they report is a host whose bug report
+  // names a build that never existed.
+  assert.equal(Object.isFrozen(RELEASE), true);
+});
+
+test("the release module claims no build commit, because a committed file cannot know one", () => {
+  // The provenance trap, stated as an assertion. `stamp-assets.py` stamps
+  // `GITHUB_SHA` at DEPLOY time; a committed file carrying a commit hash would be
+  // fabricated provenance of exactly the kind `docs/99` §9 exists to prevent, and
+  // it would be wrong for every build after the one that wrote it.
+  const source = readFileSync(join(PACKAGE, "src", "release.mjs"), "utf8");
+  const withoutUrls = source.replace(/https?:\/\/\S+/g, "");
+  assert.equal(
+    /\b[0-9a-f]{7,40}\b/.test(withoutUrls),
+    false,
+    "release.mjs carries something that looks like a commit hash",
+  );
+  assert.match(source, /stamped at DEPLOY time/);
+});
+
+test("the release module is reachable as a subpath, and typed", () => {
+  // A fact a host cannot import is a fact they will hardcode.
+  assert.ok(manifest.exports["./release"], "no ./release export condition");
+  assert.equal(manifest.exports["./release"].import, "./src/release.mjs");
+  const types = readFileSync(join(PACKAGE, "types", "index.d.ts"), "utf8");
+  assert.match(types, /export declare const RELEASE: \{/);
+  for (const field of ["package", "version", "contract", "engine", "licence", "repository"]) {
+    assert.match(types, new RegExp(`readonly ${field}:`), `RELEASE.${field} is untyped`);
   }
 });
