@@ -14,11 +14,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-const { scanMarkup, scanScript, scanTree, totalSites, unroutableStrings } = await import(
-  "../tools/string_sites.mjs"
-);
+const { codeBlocks, scanMarkup, scanScript, scanTree, totalSites, unroutableStrings } =
+  await import("../tools/string_sites.mjs");
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -31,6 +31,34 @@ const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
  *  `en_strings.mjs` one surface at a time. */
 const CEILINGS = new Map([
   ["editor.html", 16],
+  // ---- The SITE (`109` HF-190) --------------------------------------------
+  // These are not new debt. They are debt that was invisible: `scanTree` read
+  // `editor.html` and `src/*.{js,mjs}` and nothing else, so every `*.page.html`
+  // and every shared partial sat outside the gate entirely — about five hundred
+  // unrouted strings, against an `editor.html` ceiling of sixteen, with no number
+  // anywhere that would have said so.
+  //
+  // MEASURED, each one, by running this scanner over the file. Nothing here is
+  // arithmetic: a report handed over approximate figures (embedding ~202, index
+  // ~159, fidelity ~84, docs ~56, ~501 site-wide) and every one of them is off by
+  // a little, which is exactly why the rule in this file is that a ceiling is a
+  // measurement and never a calculation. The real numbers are below; part of the
+  // gap is the `<pre><code>` exemption landing with them.
+  //
+  // No translation work ships with these. The point is that the debt becomes a
+  // number that can only go down. Note that the site is not localised in any other
+  // sense either — no per-language pages, no `hreflang` — so routing these strings
+  // is the first half of a larger piece of work, not a loose end.
+  ["docs.page.html", 54],
+  ["embedding.page.html", 204],
+  ["fidelity.page.html", 84],
+  ["index.page.html", 157],
+  // The shared header and footer, counted where they are AUTHORED. The generated
+  // `*.html` pages inline them, so counting those would charge the same fourteen
+  // strings once per page and make one edit to a partial move four ceilings.
+  ["_partials/site-footer.html", 4],
+  ["_partials/site-header.html", 10],
+  // ---- The editor's scripts -------------------------------------------------
   ["src/a11y_mirror.mjs", 1],
   ["src/blank_document.mjs", 8],
   ["src/bookmark_manager.mjs", 6],
@@ -141,6 +169,66 @@ test("the total is published, so the remaining debt is a number and not a feelin
     total <= budget,
     `${total} unrouted strings against a budget of ${budget}`,
   );
+});
+
+// ---- The code-block exemption ---------------------------------------------
+// The site pages embed extracted Rust, JavaScript and shell — most of it
+// GENERATED from the code it documents by `tools/build-embed-docs.mjs` — and
+// `npm pack` is not translated into eighteen languages. Left counted, that debt
+// could never legitimately come down, and a ratchet nobody can turn gets deleted.
+//
+// So the exemption is structural rather than an allowlist entry: `<pre><code>`.
+// The two tests below hold both halves of that — it covers code, and it cannot be
+// stretched over prose — plus a measured bound on how much it suppresses, so
+// wrapping a paragraph in `<pre><code>` to silence the gate shows up as a number
+// that moved rather than as nothing at all.
+
+test("the exemption covers code, and cannot be stretched over prose", () => {
+  // Code inside `<pre><code>` is not a translation site.
+  assert.deepEqual(scanMarkup('<pre><code>let greeting = "hello there";</code></pre>'), []);
+  // Including the syntax-highlighting spans, whose text IS the code. Skipping only
+  // the `<pre>` would have counted every keyword and string literal instead.
+  assert.deepEqual(
+    scanMarkup(
+      '<pre><code><span class="kw">let</span> x = <span class="str">"hello there"</span>;</code></pre>',
+    ),
+    [],
+  );
+  // `<pre>` ALONE is not enough. Preformatted prose — a transcript, a poem, a
+  // wrapped paragraph — keeps counting, which is what stops this covering a family
+  // it was never argued for.
+  assert.equal(scanMarkup("<pre>Once upon a time there was a document.</pre>").length, 1);
+  // The `<pre>`'s own attributes are still read: a caption is prose.
+  assert.equal(scanMarkup('<pre title="Shell commands"><code>npm pack</code></pre>').length, 1);
+  // And the exemption ends where the block does.
+  assert.equal(
+    scanMarkup("<pre><code>npm pack</code></pre><p>Install the package first.</p>").length,
+    1,
+  );
+  // An unterminated `<pre>` exempts nothing, rather than everything after it — so
+  // BOTH the code and the prose count (2, not 1). Failing open is the right
+  // direction for a scanner: a false positive costs one argued allowlist entry, a
+  // false negative is a string that ships untranslated.
+  assert.equal(scanMarkup("<pre><code>npm pack<p>Install the package first.</p>").length, 2);
+});
+
+test("how much the code-block exemption suppresses is measured, per file", () => {
+  // MEASURED by scanning each block on its own. If somebody wraps real prose in
+  // `<pre><code>` — the one way a structural exemption can be abused — this number
+  // rises and the test fails, so the abuse has to be argued instead of being
+  // invisible. Files absent from the expectation have no `<pre><code>` at all.
+  const SUPPRESSED = {
+    "docs.page.html": 2,
+    "embedding.page.html": 1,
+    "index.page.html": 2,
+  };
+  const measured = {};
+  for (const file of [...CEILINGS.keys()].filter((name) => name.endsWith(".html"))) {
+    const source = readFileSync(join(WEBAPP, file), "utf8");
+    const sites = codeBlocks(source).reduce((sum, block) => sum + scanMarkup(block).length, 0);
+    if (sites) measured[file] = sites;
+  }
+  assert.deepEqual(measured, SUPPRESSED);
 });
 
 // ---- The scanner itself, because a gate nobody trusts gets deleted ---------
