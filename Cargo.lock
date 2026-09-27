@@ -81,6 +81,7 @@ name = "casual-doc-edit"
 version = "0.0.1"
 dependencies = [
  "casual-doc-import",
+ "casual-doc-layout",
  "casual-doc-model",
  "casual-doc-ooxml",
  "serde_json",
