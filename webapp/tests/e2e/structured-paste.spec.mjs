@@ -161,7 +161,7 @@ async function pasteGeneratedImage(page) {
   });
 }
 
-// The silent-loss defect, in the browser (`docs/128` §2). A logo in a table cell
+// The silent-loss defect, in the browser (`docs/129` §2). A logo in a table cell
 // is the ordinary shape of a letterhead, and the structured clipboard carries the
 // picture VERBATIM — `copyStructured` serialises the selected body blocks with no
 // inline filter at all. The paste then rebuilt each paragraph through a four-arm

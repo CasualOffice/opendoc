@@ -1,5 +1,5 @@
 // What the editor says when a structured paste carried the content but not every
-// reference (`docs/128` §2).
+// reference (`docs/129` §2).
 //
 // These are the assertions that make the report worth having. The engine drops
 // ten markers in five families because a second copy of each is a defect rather

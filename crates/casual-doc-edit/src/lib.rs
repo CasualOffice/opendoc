@@ -54,7 +54,7 @@ use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 // documentation lives in its file, as `//!`.
 pub mod references;
 
-// The one total structural deep copy in the tree (`docs/128` §2): clone a block
+// The one total structural deep copy in the tree (`docs/129` §2): clone a block
 // subtree, re-minting every node id, preserving every inline variant, and
 // reporting the reference markers a same-document copy cannot duplicate. Its own
 // module so the exhaustive match that makes a new `InlineNode` variant a COMPILE

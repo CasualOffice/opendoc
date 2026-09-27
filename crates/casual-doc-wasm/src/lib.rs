@@ -14,9 +14,9 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::ParagraphIndex;
-// A separate `use` line: the total structural deep copy (`docs/128` §2).
-use casual_doc_edit::clone::{CloneReport, clone_block_with_fresh_ids};
+// A separate `use` line: the total structural deep copy (`docs/129` §2).
 use casual_doc_edit::SplitProperties;
+use casual_doc_edit::clone::{CloneReport, clone_block_with_fresh_ids};
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
@@ -12510,11 +12510,15 @@ impl WasmDocument {
     /// method plus a local `sanitize_inlines` that matched four of `InlineNode`'s
     /// 29 variants behind a `_ => {}` arm, so a structured paste silently
     /// discarded every picture, every field, text boxes, groups, embedded objects,
-    /// math, symbols, and every reference marker (`docs/128` §2). The report it
+    /// math, symbols, and every reference marker (`docs/129` §2). The report it
     /// fills is the five reference families a same-document copy cannot duplicate;
     /// [`paste_structured`](Self::paste_structured) hands it to the host so the
     /// degradation is *reported* rather than swallowed.
-    fn fresh_block(&mut self, block: &BlockNode, report: &mut CloneReport) -> Result<BlockNode, String> {
+    fn fresh_block(
+        &mut self,
+        block: &BlockNode,
+        report: &mut CloneReport,
+    ) -> Result<BlockNode, String> {
         clone_block_with_fresh_ids(block, &mut self.edit_ids, report)
             .ok_or_else(|| "id space exhausted".to_string())
     }
@@ -36114,8 +36118,7 @@ mod tests {
     /// way a real document puts an image next to text.
     fn picture_in_table_document() -> (Document, NodeId, NodeId) {
         use casual_doc_model::v1::{
-            Definitions, Drawing, Field, FieldKind, MediaReference, TableLook,
-            TableRowProperties,
+            Definitions, Drawing, Field, FieldKind, MediaReference, TableLook, TableRowProperties,
         };
 
         let media = MediaId::new(NodeId::from_parts(21, 900).unwrap());
@@ -36441,7 +36444,9 @@ mod tests {
                 kind: EmbeddedKind::Chart,
                 part: EmbeddedPart {
                     relationship_id: "rId40".to_owned(),
-                    relationship_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart".to_owned(),
+                    relationship_type:
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                            .to_owned(),
                     part_name: "word/charts/chart1.xml".to_owned(),
                 },
                 extra_parts: Vec::new(),
@@ -36567,26 +36572,11 @@ mod tests {
                 leader: PositionalTabLeader::None,
             }),
             // The ten markers of the five families that cannot be duplicated.
-            InlineNode::BookmarkStart(BookmarkStart {
-                id: id(),
-                bookmark,
-            }),
-            InlineNode::BookmarkEnd(BookmarkEnd {
-                id: id(),
-                bookmark,
-            }),
-            InlineNode::CommentRangeStart(CommentRangeStart {
-                id: id(),
-                comment,
-            }),
-            InlineNode::CommentRangeEnd(CommentRangeEnd {
-                id: id(),
-                comment,
-            }),
-            InlineNode::CommentReference(CommentReference {
-                id: id(),
-                comment,
-            }),
+            InlineNode::BookmarkStart(BookmarkStart { id: id(), bookmark }),
+            InlineNode::BookmarkEnd(BookmarkEnd { id: id(), bookmark }),
+            InlineNode::CommentRangeStart(CommentRangeStart { id: id(), comment }),
+            InlineNode::CommentRangeEnd(CommentRangeEnd { id: id(), comment }),
+            InlineNode::CommentReference(CommentReference { id: id(), comment }),
             InlineNode::NoteReference(NoteReference {
                 id: id(),
                 kind: NoteKind::Footnote,
@@ -36935,7 +36925,10 @@ mod tests {
         let mut d = wasm_document(document);
         let source = cell_paragraph.to_string();
         let json = d.copy_structured(&source, 0, &source, 0);
-        assert!(!json.is_empty(), "the table copies as a structured fragment");
+        assert!(
+            !json.is_empty(),
+            "the table copies as a structured fragment"
+        );
         let target = destination.to_string();
         let target_len = d.paragraph_length(&target);
         let result = d

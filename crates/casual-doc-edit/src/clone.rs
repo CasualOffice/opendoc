@@ -1,5 +1,5 @@
 //! A **total** structural deep copy of block content, with every `NodeId`
-//! re-minted (`docs/128` §2).
+//! re-minted (`docs/129` §2).
 //!
 //! # Why this exists as its own module
 //!
@@ -160,9 +160,9 @@ pub fn clone_block_with_fresh_ids(
             cloned.inlines = clone_inlines(&paragraph.inlines, ids, report)?;
             Some(BlockNode::Paragraph(cloned))
         }
-        BlockNode::Table(table) => Some(BlockNode::Table(Box::new(clone_table(
-            table, ids, report,
-        )?))),
+        BlockNode::Table(table) => {
+            Some(BlockNode::Table(Box::new(clone_table(table, ids, report)?)))
+        }
         BlockNode::Sdt(sdt) => {
             let mut cloned = sdt.clone();
             cloned.id = ids.next()?;
@@ -288,7 +288,7 @@ fn clone_inlines(
                 out.push(InlineNode::Symbol(cloned));
             }
             InlineNode::HorizontalRule(rule) => {
-                let mut cloned = rule.clone();
+                let mut cloned = *rule;
                 cloned.id = ids.next()?;
                 out.push(InlineNode::HorizontalRule(cloned));
             }
@@ -520,7 +520,7 @@ mod tests {
     /// The exhaustive `match` in `clone_inlines` is already a compile error when a
     /// 30th `InlineNode` variant appears — but the cheapest way to "fix" that
     /// compile error is to add a `_ => {}`, which is precisely the defect
-    /// (`docs/128` §2). So the rebuild functions are read from source and a
+    /// (`docs/129` §2). So the rebuild functions are read from source and a
     /// catch-all in one of them fails the build.
     ///
     /// `node_ids_of_blocks`'s read-only traversal is allowed one, and is named
