@@ -19,6 +19,7 @@ import {
   TABLE_DISTRIBUTE_ACTIONS,
   bindTableBand,
   tableBandStates,
+  tableContextLabel,
 } from "../src/table_band.mjs";
 import { EN_STRINGS } from "../src/en_strings.mjs";
 
@@ -310,6 +311,20 @@ test("every reason key the rules can produce is declared in the catalogue", () =
       `the precondition "${requires}" has no sentence — it would disable a control silently`,
     );
   }
+});
+
+test("the context hint names the grid, the caret's cell, and a merge when there is one", () => {
+  // The hint is the one place a reader learns the table is merged BEFORE a command
+  // refuses, so "does it say so" is a property worth holding rather than a string
+  // three e2e specs happen to match on. 1-based in the words, 0-based in the model.
+  assert.equal(
+    tableContextLabel({ rows: 3, columns: 3, row: 0, column: 1, regular: true }),
+    "3×3 table · row 1, column 2",
+  );
+  assert.equal(
+    tableContextLabel({ rows: 3, columns: 3, row: 0, column: 0, regular: false }),
+    "3×3 table · row 1, column 1 · merged/spanned",
+  );
 });
 
 test("every band button can have its authored title restored", () => {

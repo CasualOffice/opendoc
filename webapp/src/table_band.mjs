@@ -108,6 +108,26 @@ export function tableBandStates(root, context) {
   });
 }
 
+/**
+ * The band's context hint: `"3×3 table · row 1, column 2 · merged/spanned"`.
+ *
+ * It lives here rather than in `main.js` because it is the band's own hint
+ * (`#tableContext`) and the properties panel's, and because a sentence the chrome
+ * BUILDS is testable only where it is a function of its inputs. It is also the one
+ * place a reader learns that this table is merged before a command refuses, which
+ * is why it names that state at all.
+ *
+ * Still English: the separators and the two nouns want a catalogue entry with
+ * ordered placeholders rather than four concatenated fragments, and that is a
+ * `t()` design of its own. Recorded here rather than left as an accident.
+ *
+ * @param {{rows: number, columns: number, row: number, column: number,
+ *          regular: boolean}} info one `tableInfo`, already held by the caller.
+ */
+export function tableContextLabel(info) {
+  return `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
+}
+
 /** Wires the band.
  *
  *  Everything the handlers need is injected, so the module never reaches for a

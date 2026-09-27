@@ -182,7 +182,7 @@ import { createPointerHover } from "./pointer_hover.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
-import { bindTableBand, tableBandStates } from "./table_band.mjs";
+import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
 import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
 import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
 import { BRAND } from "./brand.mjs";
@@ -10778,10 +10778,6 @@ function runCellEdit(thunk) {
   return runNodeEdit(thunk);
 }
 
-function tableContextLabel(info) {
-  return `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
-}
-
 function reflectTableMenu() {
   if (!doc || !selection) return;
   const node = selection.focus.node;
@@ -14823,8 +14819,11 @@ document.addEventListener("keydown", async (e) => {
     pendingFormat = null;
     if (doc.inTable(selection.focus.node)) {
       const from = selection.focus.node;
+      let target = null;
       try {
-        navToPosition(doc.moveTableCell(from, !e.shiftKey), false);
+        // ONLY the engine call is guarded, so a throw from `navToPosition` can
+        // never be mistaken for "we are at the boundary" and append a row.
+        target = doc.moveTableCell(from, !e.shiftKey);
       } catch {
         // THE TABLE BOUNDARY (`docs/141` TBL-01). `moveTableCell` throws only
         // "no adjacent table cell" here — `inTable` has already answered the
@@ -14838,10 +14837,9 @@ document.addEventListener("keydown", async (e) => {
         // product that refused with nothing at all — no row, no message, no
         // console line — which a reader cannot tell from a broken build.
         if (e.shiftKey) setStatus(t("table.atFirstCell"));
-        else if (await runEdit(() => doc.insertRow(from, true), { gate: true })) {
-          setStatus(t("table.rowAppended"));
-        }
+        else if (await runEdit(() => doc.insertRow(from, true), { gate: true })) setStatus(t("table.rowAppended"));
       }
+      if (target) navToPosition(target, false);
       return;
     }
     if (reviewMode === "suggesting") {
