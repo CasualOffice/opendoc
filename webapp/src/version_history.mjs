@@ -250,7 +250,10 @@ export function resolveRetention(settings = {}) {
  *          incomingBytes?: number}} options
  * @returns {{prune: string[], wedged: boolean, reason: string}}
  */
-export function planRetention(versions, { retention, now, protectedIds, incomingBytes = 0 } = {}) {
+export function planRetention(
+  versions,
+  { retention, now, protectedIds, incomingBytes = 0, incoming = incomingBytes > 0 } = {},
+) {
   const guarded = protectedIds ?? new Set();
   const rows = (versions ?? []).filter(Boolean);
   const eligible = rows
@@ -280,7 +283,13 @@ export function planRetention(versions, { retention, now, protectedIds, incoming
   // list they read, which is exactly why they are separate passes.
   const sacrificial = [...eligible].reverse().filter((row) => !prune.has(row.versionId));
 
-  const liveCount = () => rows.filter((row) => !prune.has(row.versionId)).length + (incomingBytes > 0 ? 1 : 0);
+  // `incoming` counts the row about to be written; `incomingBytes` is what it
+  // will cost. They are separate because a RESTORE adds a row and no bytes — it
+  // points at an artifact already stored — and deriving the count from the bytes
+  // let a restore push a lineage one version past its ceiling. The default keeps
+  // the ordinary capture's meaning; `commitRestore` overrides it.
+  const liveCount = () =>
+    rows.filter((row) => !prune.has(row.versionId)).length + (incoming ? 1 : 0);
   const liveBytes = () =>
     rows.reduce((sum, row) => (prune.has(row.versionId) ? sum : sum + (row.bytes ?? 0)), 0) +
     incomingBytes;
@@ -540,6 +549,33 @@ export async function openHistoryStore({
     return idbRequest(store.get(lineageId));
   }
 
+  /**
+   * Version ids a prepared operation is holding, which no sweep may prune.
+   *
+   * `docs/140` §13 lists "artifacts referenced by active previews, drafts,
+   * branches, or prepared operations" among the things retention must never
+   * touch, and this is the half of that list this layer can enforce. It is not
+   * decoration: a restore of the OLDEST version starts by capturing the current
+   * state, that capture is what pushes the lineage over its ceiling, and the
+   * oldest version is precisely what the sweep would then release — so without
+   * this the artifact being restored is deleted between prepare and commit, and
+   * the restore fails with a missing checkpoint. Found by the guard "a restore at
+   * the cap leaves no artifact that nothing points at", not by reading the code.
+   *
+   * O(prepared operations), which is bounded because a resolved operation is
+   * retired at the next boot.
+   */
+  async function leasedVersionIds(ops, lineageId) {
+    const all = await idbRequest(ops.getAll());
+    const leased = new Set();
+    for (const op of all) {
+      if (op.state !== "prepared" || op.lineageId !== lineageId) continue;
+      if (op.targetVersionId) leased.add(op.targetVersionId);
+      if (op.preRestoreVersionId) leased.add(op.preRestoreVersionId);
+    }
+    return leased;
+  }
+
   /** One version row, or null. O(1). */
   async function getVersionRow(versionId) {
     const tx = db.transaction(VERSION_META_STORE, "readonly");
@@ -706,8 +742,12 @@ export async function openHistoryStore({
 
         // The head of record is protected only while it is still the head: the
         // version being written becomes the new one, so the old head is ordinary
-        // history the moment this transaction commits.
+        // history the moment this transaction commits. What IS protected is
+        // whatever a prepared restore is holding.
         const guarded = new Set(protectedIds ?? []);
+        for (const id of await leasedVersionIds(tx.objectStore(HISTORY_OPS_STORE), lineageId)) {
+          guarded.add(id);
+        }
         const plan = planRetention(existing, {
           retention,
           now,
@@ -869,6 +909,9 @@ export async function openHistoryStore({
       const rows = await readLineageVersions(metas, lineageId);
       const guarded = new Set(protectedIds ?? []);
       if (lineage?.headVersionId) guarded.add(lineage.headVersionId);
+      for (const id of await leasedVersionIds(tx.objectStore(HISTORY_OPS_STORE), lineageId)) {
+        guarded.add(id);
+      }
       const plan = planRetention(rows, { retention, now, protectedIds: guarded });
       const freedCheckpoints = new Set();
       for (const id of plan.prune) {
@@ -933,6 +976,11 @@ export async function openHistoryStore({
           retention,
           now,
           actor,
+          // The target has to survive its own restore. The prepared record does
+          // not exist yet — it is written below, once there is something to
+          // record — so this capture cannot learn the lease from the store and
+          // is told explicitly.
+          protectedIds: [versionId],
         });
         if (!captured.ok) return captured;
         preRestore = captured.version;
@@ -1010,8 +1058,10 @@ export async function openHistoryStore({
         now,
         protectedIds: guarded,
         // The restore points at an artifact that is already stored, so it costs
-        // one metadata row and no new bytes. Counting its bytes again would make
-        // the budget refuse a restore it has room for.
+        // one metadata ROW and no new bytes. Counting its bytes again would make
+        // the budget refuse a restore it has room for; not counting the row at
+        // all let the restore push the lineage one version past its ceiling.
+        incoming: true,
         incomingBytes: 0,
       });
       if (plan.wedged) return result(plan.reason);
@@ -1035,8 +1085,21 @@ export async function openHistoryStore({
         engine: source?.engine ?? "",
         actor: operation.actor ?? "",
       };
-      for (const id of plan.prune) metas.delete(id);
+      const orphaned = new Set();
+      for (const id of plan.prune) {
+        metas.delete(id);
+        const row = rows.find((r) => r.versionId === id);
+        if (row?.checkpointId && row.checkpointId !== operation.targetCheckpointId) {
+          orphaned.add(row.checkpointId);
+        }
+      }
       metas.put(version);
+      // The restore's own row is written before the reachability check, so the
+      // target's artifact counts as referenced by it. Freeing here matters as
+      // much as it does in `captureVersion`: an artifact nothing points at is
+      // exactly the quota problem the retention policy exists to bound, and a
+      // restore that pruned without freeing would leak one per restore.
+      for (const id of orphaned) await freeCheckpointIfUnreferenced(metas, blobs, id);
       documents.put({ ...lineage, headVersionId: version.versionId, updatedAt: now });
       ops.put({ ...operation, state: "committed", completedAt: now, resultVersionId: version.versionId });
       await idbCommitted(tx);
@@ -1066,6 +1129,12 @@ export async function openHistoryStore({
      * is still what the operation expected, so it is resumable and reported as
      * such; or the head is neither, so somebody else moved on and the operation
      * is abandoned. O(prepared operations).
+     *
+     * The first outcome cannot arise from `commitRestore` in this store, because
+     * that advances the head and marks the operation in ONE transaction. It is
+     * kept for a record this schema did not write — a host adapter, or an older
+     * version of this code — because resolving such a row by abandoning it would
+     * report a completed restore as a failed one.
      */
     async resolvePendingRestores({ now = Date.now() } = {}) {
       const tx = db.transaction([HISTORY_OPS_STORE, DOCUMENTS_STORE], "readwrite");

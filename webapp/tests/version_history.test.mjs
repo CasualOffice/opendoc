@@ -766,6 +766,46 @@ test("a corrupt or missing checkpoint is reported, never opened", async () => {
   store.close();
 });
 
+test("a restore at the cap leaves no artifact that nothing points at", async () => {
+  // The condition: a full store, so both the pre-restore capture and the restore
+  // itself have to prune to fit. An artifact left behind by a prune is invisible
+  // — it costs quota, no row mentions it, and nothing would ever free it.
+  const { store, db, lineageId } = await seeded(policy().maxCount);
+  const rows = await store.listVersions(lineageId);
+  const target = rows[rows.length - 1];
+  const prepared = await store.prepareRestore({
+    lineageId,
+    versionId: target.versionId,
+    idempotencyKey: "restore-at-cap",
+    current: { bytes: new Uint8Array(2048).fill(200), formatId: "docx", revision: 900 },
+    retention: policy(),
+    now: NOW + 60 * 60_000,
+  });
+  assert.equal(prepared.ok, true, prepared.status);
+  const committed = await store.commitRestore({
+    opId: prepared.operation.opId,
+    retention: policy(),
+    now: NOW + 61 * 60_000,
+  });
+  assert.equal(committed.ok, true, committed.status);
+
+  const after = await store.listVersions(lineageId);
+  assert.equal(after.length, policy().maxCount, "the ceiling still holds after a restore");
+  const referenced = new Set(after.map((row) => row.checkpointId));
+  const stored = new Set(db.stores.get("checkpoint_blobs").records.keys());
+  assert.deepEqual(
+    [...stored].filter((id) => !referenced.has(id)),
+    [],
+    "an artifact no version references is quota nobody can account for",
+  );
+  assert.deepEqual(
+    [...referenced].filter((id) => !stored.has(id)),
+    [],
+    "and a version whose artifact is gone is a row the restore path cannot load",
+  );
+  store.close();
+});
+
 // ── Housekeeping the user can see ────────────────────────────────────────────
 
 test("the head cannot be deleted, and an artifact goes only at reference count zero", async () => {
