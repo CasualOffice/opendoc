@@ -1,9 +1,9 @@
 //! Editing a field's cached result, driven against the repository's real
 //! `sample.docx` rather than a constructed fixture.
 //!
-//! The defect these guard was reported from the running editor: editing the
-//! **total page count** in a footer answered "That edit isn't supported for this
-//! selection yet" — the host's one generic sentence for any refusal the engine
+//! The defect these guard against was reported from the running editor: editing
+//! the **total page count** in a footer answered "That edit isn't supported for
+//! this selection yet" — the host's one generic sentence for any refusal the engine
 //! did not explain. `sample.docx`'s three footers each carry a `PAGE` and a
 //! `NUMPAGES` field in the four-part complex spelling (`fldChar begin` /
 //! `instrText` / `separate` / `end`, all inside a single `w:r`), which import
