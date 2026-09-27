@@ -638,6 +638,59 @@ mod tests {
     use super::*;
     use crate::{DetectionRequest, FormatRegistry, FormatSelection, builtin_registry};
 
+    /// A populated table-of-contents row, the way Word writes it: the entry text,
+    /// the dot-leader tab, and the `PAGEREF` field that yields the page number,
+    /// all inside one `w:hyperlink`.
+    const POPULATED_TOC: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:pStyle w:val="TOC1"/>
+            <w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+            <w:hyperlink w:anchor="_Toc100" w:history="1">
+                <w:r><w:t>First chapter</w:t></w:r>
+                <w:r><w:tab/></w:r>
+                <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc100 \h </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>2</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:hyperlink></w:p>
+        <w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+            <w:hyperlink w:anchor="_Toc101" w:history="1">
+                <w:r><w:t>Second chapter</w:t></w:r>
+                <w:r><w:tab/></w:r>
+                <w:fldSimple w:instr=" PAGEREF _Toc101 \h "><w:r><w:t>11</w:t></w:r></w:fldSimple>
+            </w:hyperlink></w:p>
+    </w:body></w:document>"#;
+
+    #[test]
+    fn a_table_of_contents_row_exports_the_page_number_it_shows() {
+        // The cached page number was ALREADY part of the row's visible text before
+        // OO-001 — as flattened plain text, because the PAGEREF field was dropped
+        // on import. Gaining the field must not cost the text it shows. This is the
+        // guard that catches a fix that models the field and loses its result, and
+        // it runs over a real product surface (Save as .txt), not a test-local
+        // flattener that could agree with a broken projection.
+        let document =
+            casual_doc_import::import_main_document_xml(POPULATED_TOC, Default::default())
+                .expect("the TOC body imports")
+                .document;
+        let resources = DocumentResources::default();
+        let exported = PlainTextAdapter::default()
+            .export(ExportRequest {
+                document: &document,
+                resources: &resources,
+                source: None,
+                source_unchanged: false,
+                mode: ExportMode::Semantic,
+            })
+            .expect("plain-text export");
+        assert_eq!(
+            String::from_utf8(exported.bytes).unwrap(),
+            "First chapter\t2\nSecond chapter\t11",
+            "the row's visible text is entry, leader tab, page number - unchanged \
+             by the PAGEREF becoming a field node"
+        );
+    }
+
     #[test]
     fn import_normalizes_newlines_bom_and_tabs_with_stable_ids() {
         let adapter = PlainTextAdapter::default();
