@@ -18,6 +18,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  MOD,
 } from "./fixtures.mjs";
 
 /** What actually holds focus once the user is editing, and whether it is a
@@ -141,7 +142,7 @@ test("beforeinput inserts text, which is the only path a soft keyboard has", asy
   // so it passed no matter what happened — the same unfailable-guard defect
   // this file exists to close (docs/105 CQ-003). It was caught by mutating the
   // beforeinput handler away and seeing the test stay green.
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+f" : "Control+f");
+  await page.keyboard.press(`${MOD}+f`);
   await page.locator("#findInput").fill(marker);
   await expect(page.locator("#findStatus")).toHaveText("1 match");
   await page.keyboard.press("Escape");
