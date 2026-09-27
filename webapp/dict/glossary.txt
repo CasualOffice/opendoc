@@ -402,7 +402,6 @@ premultiplied
 preprocessing
 prev
 quiesce
-rAF
 rPr
 radiogroup
 rastered
