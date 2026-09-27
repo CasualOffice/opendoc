@@ -342,8 +342,8 @@ function resolveFor(role) {
         </div>
         <!-- @end capability-table -->
         <p class="doc-body">
-          <span data-claim="role-count">5</span> roles are presets over that set,
-          in strictly increasing order of what they grant. The ordering is
+          The <span data-claim="role-count">5</span> roles are presets over that
+          set, in strictly increasing order of what they grant. The ordering is
           asserted, not described: a "higher" role quietly losing something a
           lower one had is the classic permissions defect, so the chain is proven
           monotone for every role there is and every role added later.
@@ -358,7 +358,7 @@ function resolveFor(role) {
           <div class="disp-row">
             <div class="disp-name"><code>preview</code></div>
             <div class="disp-cell"><code>viewing</code></div>
-            <div class="disp-cell">Nothing at all.<br />Sandbox: no tokens beyond the unconditional two</div>
+            <div class="disp-cell">Nothing at all.<br />Sandbox: no tokens beyond the unconditional ones</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>readonly</code></div>
@@ -392,7 +392,7 @@ function resolveFor(role) {
           and not the enforcement.
         </p>
         <p class="doc-body">
-          <span data-claim="preset-count">8</span> names are accepted in total:
+          In total, <span data-claim="preset-count">8</span> names are accepted:
           the roles, plus the older preset names that are a published URL
           contract. An unrecognised name falls back to the framed default rather
           than throwing, and never to more than it — a typo in a host's URL must

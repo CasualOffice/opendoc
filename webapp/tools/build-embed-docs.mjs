@@ -335,7 +335,7 @@ function roleRows() {
       `<code>${role}</code>`,
       `<code>${editingModeFor(capabilities)}</code>`,
       `${capabilities.size ? codeList(capabilities) : "Nothing at all."}<br />` +
-        `Sandbox: ${extra.length ? `adds ${codeList(extra)}` : "no tokens beyond the unconditional two"}`,
+        `Sandbox: ${extra.length ? `adds ${codeList(extra)}` : "no tokens beyond the unconditional ones"}`,
     ];
   });
 }
