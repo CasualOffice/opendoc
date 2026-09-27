@@ -154,10 +154,7 @@ export function createHeaderFooterSettings(io) {
           : doc.setEvenOddVariant(next);
       await io.applyEditResult(result);
     } catch (err) {
-      io.setStatus(
-        t("headerFooter.changeFailed", { message: err.message ?? err }),
-        "error",
-      );
+      io.setStatus(t("headerFooter.changeFailed", { message: err.message ?? err }), "error");
       return;
     }
     io.setStatus(
@@ -246,11 +243,7 @@ export function createHeaderFooterSettings(io) {
 
   /** One section's layout entry, by id. */
   function layoutOf(sectionId) {
-    return (
-      layoutSections()?.sections?.find(
-        (entry) => entry.section === sectionId,
-      ) ?? null
-    );
+    return layoutSections()?.sections?.find((entry) => entry.section === sectionId) ?? null;
   }
 
   /** Which band distances one section carries, resolved the way layout resolves
@@ -259,9 +252,7 @@ export function createHeaderFooterSettings(io) {
     current = section;
     const margins = section.pageMargins ?? {};
     headerFromTop.value = inchText(margins.headerTwips ?? DEFAULT_BAND_TWIPS);
-    footerFromBottom.value = inchText(
-      margins.footerTwips ?? DEFAULT_BAND_TWIPS,
-    );
+    footerFromBottom.value = inchText(margins.footerTwips ?? DEFAULT_BAND_TWIPS);
     // Numbering is per section too, so it repaints with the rest rather than only
     // on the first reflect — the two used to be one copy of these lines each,
     // which is how a Section dropdown comes to move some fields and not others.
@@ -282,8 +273,7 @@ export function createHeaderFooterSettings(io) {
     // silently become "decimal" the moment somebody presses Apply. The select is
     // left showing nothing and Apply preserves what was read (see `payload`).
     const token = state?.pageNumberFormat;
-    numberFormat.value =
-      typeof token === "string" && NUMBER_FORMATS.has(token) ? token : "";
+    numberFormat.value = typeof token === "string" && NUMBER_FORMATS.has(token) ? token : "";
   }
 
   /** Fills every control from the document. False when there is no section to
@@ -300,8 +290,7 @@ export function createHeaderFooterSettings(io) {
     }
     sectionSelect.value = list.current;
     paintSection(
-      list.sections.find((section) => section.section === list.current) ??
-        list.sections[0],
+      list.sections.find((section) => section.section === list.current) ?? list.sections[0],
     );
     const variants = variantState();
     diffFirst.checked = variants.firstPage === true;
@@ -311,8 +300,7 @@ export function createHeaderFooterSettings(io) {
     // is inherited and whose footer is not is a real document, so the box is only
     // ticked when BOTH are — and it says so by staying disabled either way.
     const bands = runningBands();
-    linkToPrevious.checked =
-      bands !== null && bands.headerLinked && bands.footerLinked;
+    linkToPrevious.checked = bands !== null && bands.headerLinked && bands.footerLinked;
     return true;
   }
 
@@ -367,9 +355,7 @@ export function createHeaderFooterSettings(io) {
     const doc = io.getDoc();
     if (!doc || !current) return;
     const list = sections();
-    const fresh = list?.sections?.find(
-      (section) => section.section === current.section,
-    );
+    const fresh = list?.sections?.find((section) => section.section === current.section);
     if (!fresh) return; // the section went away under us; say nothing, change nothing
 
     const headerTwips = distanceTwips(headerFromTop);
@@ -402,14 +388,10 @@ export function createHeaderFooterSettings(io) {
     // nothing for one, so reading the select back would drop it.
     const format = numberFormat.value || (state?.pageNumberFormat ?? null);
     const start = numberRestart.checked
-      ? Math.min(
-          1_000_000,
-          Math.max(0, Math.round(Number(numberStart.value) || 0)),
-        )
+      ? Math.min(1_000_000, Math.max(0, Math.round(Number(numberStart.value) || 0)))
       : null;
     const numberingChanged =
-      format !== (state?.pageNumberFormat ?? null) ||
-      start !== (state?.pageNumberStart ?? null);
+      format !== (state?.pageNumberFormat ?? null) || start !== (state?.pageNumberStart ?? null);
     if (numberingChanged) {
       await io.runEdit(
         () =>
@@ -431,9 +413,7 @@ export function createHeaderFooterSettings(io) {
 
   sectionSelect.addEventListener("change", () => {
     const list = sections();
-    const picked = list?.sections?.find(
-      (section) => section.section === sectionSelect.value,
-    );
+    const picked = list?.sections?.find((section) => section.section === sectionSelect.value);
     if (picked) paintSection(picked);
   });
 
@@ -459,12 +439,8 @@ export function createHeaderFooterSettings(io) {
     numberRestart.checked = true;
   });
 
-  el("headerFooterSettingsCancel").addEventListener("click", () =>
-    toggle(false),
-  );
-  el("headerFooterSettingsClose").addEventListener("click", () =>
-    toggle(false),
-  );
+  el("headerFooterSettingsCancel").addEventListener("click", () => toggle(false));
+  el("headerFooterSettingsClose").addEventListener("click", () => toggle(false));
   el("headerFooterSettingsApply").addEventListener("click", () => void apply());
 
   api.open = (open = true) => toggle(open);
