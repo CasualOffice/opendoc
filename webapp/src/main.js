@@ -1125,10 +1125,20 @@ let tipTimer = 0;
 let tipTarget = null;
 
 function tipContentFor(el) {
-  const raw = (el.dataset.tipTitle ?? el.getAttribute("title") ?? "").trim();
+  // The LIVE title first, the parked copy only as a fallback. `armTip` removes the
+  // attribute for the duration of the hover, so anything written during that park
+  // — a disabled control's stated reason, above all — is NEWER than the parked
+  // copy, and reading the parked one showed the stale name (`docs/141` TBL-03).
+  const raw = (el.getAttribute("title") || el.dataset.tipTitle || "").trim();
   const label = (el.getAttribute("aria-label") ?? "").trim();
   const match = raw.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
-  const name = (label || (match ? match[1] : raw)).trim();
+  const own = match ? match[1] : raw;
+  // A DISABLED control's title is the REASON it cannot run, and that reason is the
+  // only thing worth saying about it — so it outranks the control's own name here.
+  // Hovering a grey Sort button and reading "Sort rows ascending" is the §10 defect
+  // itself: the tooltip is the one channel a disabled control has, and it was
+  // spending it on what the button would have done.
+  const name = ((el.disabled ? own : "") || label || own).trim();
   // The parenthetical is a shortcut only if it reads like one. "(3×3)" and
   // "(compact view)" are part of the name, and translating them would have
   // printed nonsense in the shortcut slot.
@@ -1181,7 +1191,14 @@ function armTip(el) {
 
 function disarmTip(el) {
   if (el && el.dataset.tipTitle != null) {
-    el.setAttribute("title", el.dataset.tipTitle);
+    // …unless something wrote a NEWER title while the attribute was parked. It is
+    // removed for the whole hover, so a live `title` here is by definition newer
+    // than the parked copy. Restoring the parked copy regardless is how a disabled
+    // control's stated reason was silently and PERMANENTLY replaced by the name of
+    // what it would have done — in every band, for every reason the chrome writes,
+    // and only on controls the user had hovered, which is every control they were
+    // asking about (`docs/141` TBL-03).
+    if (!el.getAttribute("title")) el.setAttribute("title", el.dataset.tipTitle);
     delete el.dataset.tipTitle;
   }
   if (tipTarget === el || !el) {

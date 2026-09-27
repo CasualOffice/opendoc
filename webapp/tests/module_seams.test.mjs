@@ -242,12 +242,12 @@ const SRC = new URL("../src/", import.meta.url);
  *  lowered this number to 16,574 underneath the branch. Carrying the branch's own
  *  earlier figure forward would have been arithmetic on two branches' numbers,
  *  which the note above says is always wrong. */
-/** Lowered to 16,474 by the cheap table-experience round (`docs/141` TBL-01 …
+/** Lowered to 16,491 by the cheap table-experience round (`docs/141` TBL-01 …
  *  TBL-05). The file was AT its ceiling with zero slack again, and the round
- *  needed lines in five places — the Tab boundary, the unmerge command, a
- *  cell-scoped refusal, the band's disabled reasons, the pointer-down that stops
- *  destroying a row selection — so it paid with ONE extraction that is worth more
- *  than the lines:
+ *  needed lines in six places — the Tab boundary, the unmerge command, a
+ *  cell-scoped refusal, the band's disabled reasons, the hover tooltip that was
+ *  overwriting those reasons, and the pointer-down that stops destroying a row
+ *  selection — so it paid with ONE extraction that is worth more than the lines:
  *
  *    `table_commands.mjs`   the whole 187-line `table.*` command tree
  *
@@ -264,7 +264,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  Re-measured from the file AFTER rebasing onto `origin/main`, not before:
  *  arithmetic on two branches' numbers is the trap the notes above record
  *  four times. */
-const MAIN_JS_LINE_CEILING = 16474;
+const MAIN_JS_LINE_CEILING = 16491;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
