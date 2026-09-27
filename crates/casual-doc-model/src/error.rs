@@ -121,6 +121,25 @@ pub enum ModelError {
     RevisionNestingTooDeep(NodeId),
     /// A bookmark marker's reference did not resolve (v1).
     DanglingBookmarkRef(NodeId),
+    /// A field-range marker's reference did not resolve (v1). Carries the marker's
+    /// own id.
+    DanglingFieldRangeRef(NodeId),
+    /// A field-range marker had no partner in its block container (v1): a start
+    /// with no end, or an end with no open start. Carries the unmatched marker's
+    /// own id.
+    ///
+    /// Refused where the bookmark validator tolerates the same shape, and
+    /// deliberately so: Word reads everything after an unmatched `w:fldChar begin`
+    /// as field instruction text, so one missing `end` can blank the rest of the
+    /// document on open (`docs/128` §3).
+    UnbalancedFieldRange(NodeId),
+    /// A second start — or a second end — for one field range in the same block
+    /// container (v1). Carries the duplicate marker's own id.
+    DuplicateFieldRangeMarker(NodeId),
+    /// A field range opened inside another, or two field ranges that cross (v1).
+    /// Carries the offending start marker's own id. Nesting is refused for the same
+    /// reason [`ModelError::NestedField`] refuses it for the inline field.
+    OverlappingFieldRanges(NodeId),
     /// A content control (w:sdt) had no content (v1).
     EmptySdt(NodeId),
     /// A content control nested deeper than the supported bound (v1).
@@ -252,6 +271,18 @@ impl fmt::Display for ModelError {
             }
             Self::DanglingBookmarkRef(id) => {
                 write!(formatter, "bookmark reference {id} does not resolve")
+            }
+            Self::DanglingFieldRangeRef(id) => {
+                write!(formatter, "field range reference {id} does not resolve")
+            }
+            Self::UnbalancedFieldRange(id) => {
+                write!(formatter, "field range marker {id} has no matching partner")
+            }
+            Self::DuplicateFieldRangeMarker(id) => {
+                write!(formatter, "field range marker {id} is a duplicate")
+            }
+            Self::OverlappingFieldRanges(id) => {
+                write!(formatter, "field range at {id} nests in or crosses another")
             }
             Self::EmptySdt(id) => write!(formatter, "content control {id} has no content"),
             Self::SdtNestingTooDeep(id) => {

@@ -38,6 +38,8 @@ use casual_doc_model::v1::{
 // merge collisions with other agents editing this shared file.
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
+// Same rule: the paragraph-spanning field range's own imports go on their own line.
+use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -1210,7 +1212,7 @@ struct BodyParser<'a> {
     comment_ids: &'a BTreeMap<String, CommentId>,
     /// Document-global bookmark definitions accumulator (threaded across every
     /// part so body + notes + headers + footers + comments land in one table).
-    bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &'a mut ParsedDefinitions,
     /// Source `w:id` string -> allocated `BookmarkId`, for start/end pairing
     /// across paragraphs. Part-scoped (NOT swapped in `ContentFrame`): a bookmark
     /// opened in body flow and closed inside a text box still pairs.
@@ -1254,7 +1256,7 @@ impl<'a> BodyParser<'a> {
         ids: &'a mut IdGenerator,
         reporter: &'a mut Reporter,
         inputs: &ParseInputs<'a>,
-        bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+        parsed_defs: &'a mut ParsedDefinitions,
         note_container: Option<&'static [u8]>,
         config: ImportConfig,
     ) -> Self {
@@ -1384,12 +1386,38 @@ impl<'a> BodyParser<'a> {
             header_ids: inputs.header_ids,
             footer_ids: inputs.footer_ids,
             comment_ids: inputs.comment_ids,
-            bookmarks,
+            parsed_defs,
             bookmark_ids: BTreeMap::new(),
             math_depth: 0,
             math_writer: None,
             math_text: String::new(),
             math_in_t: false,
+        }
+    }
+}
+
+/// The definition tables that are discovered **during** a part's body parse rather
+/// than built ahead of it (as media is), and therefore accumulate document-globally
+/// across every part — body, notes, headers, footers, comments.
+///
+/// One bundle rather than one `&mut` parameter per table: every parse entry point
+/// already carries `#[allow(clippy::too_many_arguments)]`, and a second parallel
+/// parameter would have to be added to five signatures and six call sites for each
+/// new table. `docs/128` §4.
+pub(crate) struct ParsedDefinitions {
+    /// Bookmark names by id, shared by each `BookmarkStart`/`BookmarkEnd` pair.
+    pub bookmarks: DefinitionMap<BookmarkId, Bookmark>,
+    /// Paragraph-spanning complex field instructions by id, shared by each
+    /// `FieldRangeStart`/`FieldRangeEnd` pair.
+    pub field_ranges: DefinitionMap<FieldRangeId, FieldRange>,
+}
+
+impl ParsedDefinitions {
+    /// An empty bundle, for the start of a document import.
+    pub fn new() -> Self {
+        Self {
+            bookmarks: DefinitionMap::default(),
+            field_ranges: DefinitionMap::default(),
         }
     }
 }
@@ -1414,10 +1442,10 @@ pub(crate) fn parse<'a>(
     ids: &'a mut IdGenerator,
     reporter: &'a mut Reporter,
     inputs: ParseInputs<'a>,
-    bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &'a mut ParsedDefinitions,
     config: ImportConfig,
 ) -> Result<BodyParse, ImportError> {
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, config);
     parser.run(xml)?;
     // Unwind any text box left open by malformed input so the true body root is
     // restored, then finish a paragraph the unwind may have re-opened so its
@@ -1452,7 +1480,7 @@ pub(crate) fn parse_notes(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut ParsedDefinitions,
     container: &'static [u8],
     config: ImportConfig,
 ) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
@@ -1475,7 +1503,7 @@ pub(crate) fn parse_notes(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(container), config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(container), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -1513,7 +1541,7 @@ pub(crate) fn parse_header_footer(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut ParsedDefinitions,
     root: &'static [u8],
     config: ImportConfig,
 ) -> Result<HeaderFooterParse, ImportError> {
@@ -1534,7 +1562,7 @@ pub(crate) fn parse_header_footer(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, None, config);
     parser.hf_root = Some(root);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
@@ -1564,7 +1592,7 @@ pub(crate) fn parse_comments(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
-    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
+    parsed_defs: &mut ParsedDefinitions,
     config: ImportConfig,
 ) -> Result<Vec<(String, CommentId, Comment)>, ImportError> {
     let empty_notes = BTreeMap::new();
@@ -1584,7 +1612,7 @@ pub(crate) fn parse_comments(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(b"comment"), config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(b"comment"), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -2391,7 +2419,7 @@ impl BodyParser<'_> {
                             self.reporter.report(b"bookmarkStart");
                         } else {
                             let bookmark = BookmarkId::new(self.next_id()?);
-                            self.bookmarks.insert(bookmark, Bookmark { name });
+                            self.parsed_defs.bookmarks.insert(bookmark, Bookmark { name });
                             self.bookmark_ids.insert(source, bookmark);
                             self.push_segment(Segment::BookmarkStart { bookmark });
                             // A column bookmark (`w:colFirst`/`w:colLast`, a
