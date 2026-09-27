@@ -153,4 +153,20 @@ export const EN_STRINGS = Object.freeze({
   "caption.numbersAlreadyRight": "Every caption already shows the right number",
   "caption.bodyOnly": "A caption can only go in the document body, not in a header, footer or note",
   "caption.numbersUpdated": "Caption numbers updated.",
+  // What a structured paste says when it carried the content but not every
+  // reference. Five families cannot be duplicated inside one document — a
+  // bookmark name is unique, one comment has one anchored range, Word duplicates
+  // a footnote rather than re-pointing at it, a duplicate field-range marker is
+  // invalid, and one tracked move has one destination. `paste_loss.mjs` names
+  // them; `casual-doc-edit/src/clone.rs` records why each one cannot come across.
+  //
+  // One sentence with an `{items}` list rather than five sentences: which families
+  // a given paste degraded is not knowable in advance, and over-reporting is as
+  // false as under-reporting.
+  "paste.loss": "Pasted, without {items} — those cannot be duplicated inside one document.",
+  "paste.loss.bookmark": "bookmarks",
+  "paste.loss.comment": "comments",
+  "paste.loss.note": "footnote references",
+  "paste.loss.fieldRange": "field codes",
+  "paste.loss.trackedMove": "tracked moves",
 });

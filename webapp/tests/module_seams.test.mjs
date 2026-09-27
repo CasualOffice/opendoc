@@ -185,8 +185,23 @@ const SRC = new URL("../src/", import.meta.url);
  *  browser one. And the smart-quote decision, which moved into `text_rules.mjs`
  *  beside the rule it calls: its only hard part is that an engine offset is a
  *  UTF-8 BYTE index (`docs/104` HF-055), which is exactly what that module is
- *  for, and it is now answerable with a plain function instead of a document. */
-const MAIN_JS_LINE_CEILING = 16589;
+ *  for, and it is now answerable with a plain function instead of a document.
+ *  Lowered to MEASURED by the structured-paste loss fix (`docs/129` §2). The round
+ *  needed an import, a `pasteLossMessage` call and the comment saying why a
+ *  SUCCESSFUL paste reports as `"error"` — and the file was at its ceiling with
+ *  zero slack again, so it paid by removing a duplicated mechanism rather than by
+ *  whitespace: `pasteStructured` and `pasteExternalStructured` differed only in
+ *  which engine method they named and became one `runStructuredPaste(insert)`.
+ *  That is worth more than the lines. Two copies of a paste path is precisely
+ *  where the loss report gets wired into one and forgotten in the other — the
+ *  `expectEditorFocused` lesson (`SKILL` §10) applied before the second patch
+ *  rather than after it. RE-MEASURED from the merged file after rebasing onto
+ *  `origin/main` at aa91bd0: the first number this branch carried was 16,606,
+ *  measured against a `main` that then landed the host contract and took the
+ *  ceiling to 16,589 underneath it. That is the merge trap the notes above record
+ *  three times, and it is why this number is a measurement of the merged file and
+ *  never arithmetic on two branches. */
+const MAIN_JS_LINE_CEILING = MEASURED;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
