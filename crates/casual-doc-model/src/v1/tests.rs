@@ -435,6 +435,53 @@ fn section_geometry_domains_are_enforced() {
     ));
 }
 
+/// The band distances and the binding gutter are bounded like the four margins
+/// around them.
+///
+/// They were NOT, and the gap was unreachable: only import could produce them and
+/// import clamps (`casual-doc-import/src/body.rs`). It stopped being unreachable
+/// when a host gained fields for them — `SetSectionGeometry` carries the whole
+/// `PageMargins`, so a dialog could have installed a 17,361-inch header distance
+/// and layout would have computed a band taller than the page.
+#[test]
+fn section_band_distance_and_gutter_domains_are_enforced() {
+    let json = |margins: &str| {
+        format!(
+            r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},"inlines":[]}}],
+            "definitions":{{"sections":[{{"id":"0000000000000000000000000000000c",
+              "pageSize":{{"widthTwips":12240,"heightTwips":15840}},
+              "pageMargins":{{"topTwips":0,"bottomTwips":0,"startTwips":0,"endTwips":0,{margins}}},
+              "columns":{{"count":1}}}}]}}}}"#
+        )
+        .into_bytes()
+    };
+    for margins in [
+        r#""headerTwips":999999999"#,
+        r#""footerTwips":31681"#,
+        r#""gutterTwips":-1"#,
+    ] {
+        assert!(
+            matches!(
+                expect_invalid(&json(margins)),
+                ModelError::PropertyValueOutOfDomain {
+                    property: "section.page_margins"
+                }
+            ),
+            "{margins} must be refused"
+        );
+    }
+    // And the top of the domain is legal, so the guard bounds rather than bans.
+    assert!(
+        Document::from_json(
+            &json(r#""headerTwips":31680,"footerTwips":31680,"gutterTwips":31680"#),
+            SnapshotLimits::default(),
+        )
+        .is_ok(),
+        "22 inches is the bound, not one twip past it"
+    );
+}
+
 #[test]
 fn media_reference_fields_are_validated() {
     let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
