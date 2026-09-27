@@ -186,7 +186,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  beside the rule it calls: its only hard part is that an engine offset is a
  *  UTF-8 BYTE index (`docs/104` HF-055), which is exactly what that module is
  *  for, and it is now answerable with a plain function instead of a document.
- *  Lowered to MEASURED by the structured-paste loss fix (`docs/129` §2). The round
+ *  Lowered to 16,579 by the structured-paste loss fix (`docs/129` §2). The round
  *  needed an import, a `pasteLossMessage` call and the comment saying why a
  *  SUCCESSFUL paste reports as `"error"` — and the file was at its ceiling with
  *  zero slack again, so it paid by removing a duplicated mechanism rather than by
@@ -201,7 +201,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  ceiling to 16,589 underneath it. That is the merge trap the notes above record
  *  three times, and it is why this number is a measurement of the merged file and
  *  never arithmetic on two branches. */
-const MAIN_JS_LINE_CEILING = MEASURED;
+const MAIN_JS_LINE_CEILING = 16579;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
