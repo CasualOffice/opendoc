@@ -15,7 +15,8 @@ measurable budget (§4), not an aspiration.
 transactions), ADR-006 (collaboration is adapter-based), ADR-030 / `45` (extensibility
 invariants I1–I4), `24-TRANSACTION-SEMANTICS.md`, `25-NORMALIZED-SNAPSHOT-IO.md`,
 `26-SELECTION-FOUNDATION.md`, `59-V1-EDITING-OP-SET.md`, `82-REVIEW-IDENTITY-AND-HISTORY-DESIGN.md`,
-`106` Phase 6.
+`106` Phase 6, `143` provider/embed architecture, and `144` phased execution
+checklist.
 
 ---
 

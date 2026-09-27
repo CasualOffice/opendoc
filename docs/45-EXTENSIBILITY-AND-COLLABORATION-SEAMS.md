@@ -5,7 +5,8 @@
 Record the architectural **seams** that must be preserved so that three future
 layers can be added **as adapters, without a core rewrite**:
 
-1. **Collaboration** — Operational Transformation (OT) or CRDT concurrent editing.
+1. **Collaboration** — relay-ordered Operational Transformation (OT) is the
+   proposed first algorithm; a CRDT may remain a later adapter.
 2. **Agentic / AI** — MCP tool servers, agent-driven edits.
 3. **RAG / vector** — retrieval, embeddings, semantic search over document content.
 
@@ -96,7 +97,7 @@ a future CRDT position swap expensive. Mitigation is nearly free and is invarian
 **I3**: keep offset arithmetic behind the anchor abstraction. Cost to hold now ≈ a
 review habit; cost to fix later if violated ≈ a large mechanical refactor.
 
-## OT vs CRDT — deferred choice (future ADR)
+## OT vs CRDT — owner direction recorded, ADR still proposed
 
 | | OT | CRDT |
 |---|---|---|
@@ -105,9 +106,11 @@ review habit; cost to fix later if violated ≈ a large mechanical refactor.
 | Hard part | `transform` for every op-pair + convergence | position-ID bookkeeping + memory |
 | Fits | client-server (Google-Docs style) | local-first, offline, peer sync |
 
-The choice is a Phase-2 ADR (still listed under "Pending ADRs" in doc 08 as
-"collaboration operation model"). **This document does not choose** — it guarantees
-that either choice remains an additive adapter, not a rewrite.
+The owner selected OT over revisioned transactions on 2026-09-15; doc 107 and
+proposed ADR-033 define it. This is not yet an accepted or implemented support
+claim. The provider boundary remains neutral so a future CRDT can be evaluated
+without forking the editor. Docs 143–144 contain the current integration
+architecture and phased checklist.
 
 ## Review checklist (apply to every model/mutation PR from now)
 

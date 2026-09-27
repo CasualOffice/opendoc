@@ -50,7 +50,7 @@ it is what Phase 3 exists to make true rather than claimed.
 **What a host gets:** an installable thing they can put on a page, in a mode they
 choose, that cannot be talked out of that mode.
 
-* A single published artifact and a **custom element** (`<opendoc-editor>`), framework
+* A single installable artifact and a **custom element** (`<opendoc-editor>`), framework
   free. Framework bindings are explicitly *not* in this phase; a custom element works
   in React, Vue and plain HTML without any of them.
 * **Capability modes resolved before first paint.** `webapp/src/capabilities.mjs`

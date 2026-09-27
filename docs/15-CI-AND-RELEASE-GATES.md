@@ -4,7 +4,7 @@
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
 **MSRV:** Rust 1.88.0
-**Last updated:** 2026-08-04
+**Last updated:** 2026-09-28
 
 ## Purpose
 
@@ -259,9 +259,10 @@ summarization, embedded-model, or MCP support claim.
 
 ### Durable version-history, restore, and diff gates
 
-Docs 139–140 define proposed required v1 behavior, not current support. The existing
-Undo/Redo and doc 112 autosave/crash-recovery gates do not establish durable version
-history. Before the support matrix may claim it, CI must include:
+Docs 139–140 define the full phased behavior. Local H1/H2 history and restore are
+implemented and reachable; H3 structural diff, H4 unified commits/attribution, and H5
+collaboration integration are not. Before those remaining claims may graduate, CI must
+include:
 
 - version/checkpoint/commit schema compatibility, bounded decoding, unknown-version
   refusal, and deterministic metadata grouping tests;
@@ -294,8 +295,43 @@ history. Before the support matrix may claim it, CI must include:
 - crash/reload tests during checkpoint, compaction, version deletion, and restore, plus a
   browser-store schema upgrade from doc 112 without draft loss.
 
-Until these gates pass, current support is accurately described as session Undo/Redo,
-review history, and single-slot crash recovery—not durable version history or diff.
+Until the remaining gates pass, support is limited to the local H1/H2 behaviors named
+in docs 18 and 140. It does not include structural diff, shared history, collaborative
+restore, or durable per-change attribution.
+
+### Real-time collaboration and provider gates
+
+Docs 143–144 define an experimental architecture and execution plan, not current
+support. Collaboration may be claimed only after the applicable C0–C8 gates are
+blocking and green. Required evidence includes:
+
+- one operation vocabulary and a mechanically enforced one-transaction mutation path;
+- versioned operation/protocol golden vectors, bounded decode, negotiation, and
+  incompatible-client refusal;
+- deterministic simulator coverage for delay, reorder, duplicate, drop, partition,
+  reconnect, permission loss, stale bases, compaction, and corrupt checkpoints;
+- TP1 property tests, pairwise transform/fuzz coverage, deterministic tombstones, and
+  accepted table/review conflict semantics;
+- native/WASM replay and state-hash equality for two, five, and the eventual claimed
+  participant count;
+- provider conformance against both the reference relay and an independent fake;
+- authentication, revocation, tenant/document/branch isolation, origin, replay,
+  injection, rate/size, pre-auth resource, and malicious-presence tests;
+- late join, bounded catch-up, browser kill/reload, offline rebase, duplicate
+  submission, provider restart/failover, and recovery-artifact tests;
+- permission enforcement at provider, host contract, engine, and chrome layers;
+- collaboration-aware comments, suggestions, per-user undo, history, restore, and diff
+  race tests;
+- Chromium, Firefox, and WebKit multi-context runs plus declared keyboard,
+  screen-reader, high-contrast, reduced-motion, touch, and narrow-view journeys;
+- named-environment load/soak/chaos reports and the doc 107 B1–B7 budgets;
+- a network-interception proof that local-only editing sends nothing and a content
+  inspection proof that the default collaboration profile sends operations, not source
+  document files.
+
+No CI or support claim may treat lossy presence delivery as evidence that durable
+content commits are safe. The detailed ownership and per-phase checkboxes live in doc
+144.
 
 ## Release Gates
 
@@ -348,7 +384,8 @@ review history, and single-slot crash recovery—not durable version history or 
 | Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Comments and suggestions integrity | Partial | P1G-REVIEW-035 supplies numeric authored inline revision ids, scoped atomic review inverses, coalesced/bounded suggestion history, and fail-closed editor-group decisions. P1G-REVIEW-036 adds one deterministic Final-with-markup byte projection and standard one-copy `w:rPrChange` formatting with structured card deltas and import/export decisions. Doc 81 retains the pending full-schema/consumer, command-matrix, mixed-editing, scale, accessibility, and responsive gates in P1G-REVIEW-037 through P1G-REVIEW-039. |
-| Durable version history / restore / diff | Design only | Not implemented. Docs 139–140 define future fidelity-checkpoint, append-only restore, typed diff, attribution, capability, retention, offline, crash-atomicity, accessibility, and performance gates. Doc 112 covers crash-recovery drafts only. |
+| Durable version history / restore / diff | Partial | Local H1/H2 checkpoints, timeline/preview, naming/pinning/deletion, retention, and atomic append-only restore are implemented. H3 diff, H4 unified commits/attribution, and H5 collaboration remain gated by docs 139–140. |
+| Real-time collaboration / provider | Experimental design only | Not implemented or supported. Docs 143–144 and proposed ADR-033 define the future provider-neutral protocol, OT, relay, UX, history integration, and conformance gates. |
 | PDF semantic reconstruction | Experimental design only | Not implemented or supported. Doc 131 defines future evidence, privacy, offline, determinism, security, semantic, visual, editability, memory, cancellation, and browser-profile gates. Current PDF CI covers export only. |
 | Document assistance / semantic search / MCP | Experimental design only | Not implemented or supported. Doc 132 and proposed ADR-035 define future scenario, proposal, preservation, injection-resistance, semantic-index, retrieval/summarization-quality, privacy/offline, resource, cross-browser, MCP-conformance, authorization, approval, and optional-companion gates. |
 | Release artifacts | Not started | Define before beta. |

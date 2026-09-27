@@ -227,11 +227,33 @@ const observe = () => {
   };
 };
 
+/** An element whose id is minted per row, so two runs of the same command see
+ *  different ids for the same KIND of thing.
+ *
+ *  The version timeline is the first of these: each row is
+ *  `versionOption-ver-<uuid>`. This spec asks whether two SURFACES reach the same
+ *  command, and it compared raw id sets — so it failed on `main` the moment
+ *  version history shipped, reporting `viewVersionsBtn vs file.versionHistory`
+ *  with the two sets differing by one row. The surfaces were identical; the
+ *  version STORE had grown by one entry between the ribbon run and the palette
+ *  run, because opening the panel captured a version with nothing changed
+ *  (`109` HF-2xx, being fixed separately — and when it is, this normalisation
+ *  still belongs here, because a timeline that legitimately gains a row between
+ *  two activations must not read as a surface difference either).
+ *
+ *  Collapsing to the STEM keeps the claim intact: "a version row appeared" is
+ *  still compared, and would still fail if one surface produced rows and the
+ *  other did not. Only the identity of the particular rows is dropped. */
+const perRowId = /^(versionOption)-.*$/;
+const stem = (id) => id.replace(perRowId, "$1");
+
 /** The difference one activation made. Sets, not sequences, so the order the DOM
  *  happened to mutate in is not part of the claim. */
 function difference(before, after) {
-  const appeared = after.shown.filter((id) => !before.shown.includes(id));
-  const vanished = before.shown.filter((id) => !after.shown.includes(id));
+  const beforeShown = before.shown.map(stem);
+  const afterShown = after.shown.map(stem);
+  const appeared = [...new Set(afterShown.filter((id) => !beforeShown.includes(id)))];
+  const vanished = [...new Set(beforeShown.filter((id) => !afterShown.includes(id)))];
   const pressed = after.pressed.filter((entry) => !before.pressed.includes(entry));
   const changed = {};
   for (const key of ["undo", "redo", "words", "pages", "zoom", "status"]) {

@@ -15,6 +15,8 @@ the read-only preview — are settled in **ADR-040**.
 
 **Architectural decision:** refines the snapshot/replay portion of proposed ADR-033
 (doc 107). It does not accept ADR-033 or select a collaboration transport.
+Docs 143–144 define the later provider integration and make H3–H5 explicit C7
+dependencies; local H1/H2 do not require that provider.
 
 **Depends on:** docs 03, 05, 14, 15, 21, 24, 25, 27, 35, 45, 59, 71, 82,
 94–98, 107, 112, 116, 125, and 139.
@@ -917,4 +919,3 @@ may have no review markup.
 10. Cross-device lineage and actor identity without a mandatory account/server.
 11. Whether history archives need encryption/signing independent of host storage.
 12. How macro-bearing `.docm` checkpoints interact with the eventual macro policy.
-

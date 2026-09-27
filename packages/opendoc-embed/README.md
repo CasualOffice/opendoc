@@ -57,8 +57,13 @@ editing command **before** it reaches the engine, and says so in the result.
 
 ## Install
 
+The package is not published to a registry. Build and install the verified
+repository tarball for evaluation:
+
 ```sh
-npm install @casualoffice/opendoc-embed
+cd packages/opendoc-embed
+npm pack
+npm install ./casualoffice-opendoc-embed-0.1.0.tgz
 ```
 
 Zero runtime dependencies. Works in React, Vue, Svelte and plain HTML without a
@@ -169,23 +174,22 @@ editor.addEventListener("opendoc-capabilities", (event) => {
 ```
 
 `opendoc-capabilities` fires once per mount. It is the capability contract
-announcing itself, not the editor reporting on a document — the editor's own
-events (`ready`, `change`, `selection`, `save`, `export`, `error`, `refusal`)
-and a typed command surface are the next phase, and mixing the two into one
-channel now would make both harder to keep honest.
+announcing itself. The editor also exposes the typed host command/event contract
+described above; those events report document/session behavior without changing
+the capability event's meaning.
 
 ## What this does not do yet
 
 Stated plainly rather than left to be discovered:
 
-- **No command or event API.** You cannot yet tell the embedded editor to do
-  something, or be told what it did. That is one schema over two transports
-  (in-process and `postMessage`), and it is the next phase.
 - **No way to hand it your document.** `editor-src` takes the editor's own
   query parameters; there is no host-supplied document URL or byte array yet.
-- **No white-labelling, theming or chrome selection.** The design tokens are a
-  deliberate system, so that is a token seam rather than a restyle, and it comes
-  with the release work.
+- **No real-time collaboration.** There is no collaboration adapter, relay,
+  remote-presence surface, or multiplayer support claim. Docs 143–144 are an
+  experimental architecture and phased checklist only.
+- **White-labelling is build-time, not a runtime remote theme service.** The host
+  may compose supported chrome regions and build theme/brand assets; runtime
+  arbitrary CSS injection is deliberately not a contract.
 - **No framework bindings**, by choice — see above.
 - **Not published.** This package is built and installable from a tarball
   (`npm pack`); no CI job publishes it to a registry yet.

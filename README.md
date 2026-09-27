@@ -248,6 +248,9 @@ architecture, behavior, and compatibility. Good entry points:
 [SDK API](docs/05-SDK-API-SPEC.md) ·
 [roadmap](docs/06-ROADMAP-AND-DELIVERY.md) ·
 [editor architecture (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md) ·
+[experimental co-editing architecture](docs/143-EMBEDDED-COEDITING-RESEARCH-AND-INTEGRATION-ARCHITECTURE.md) ·
+[co-editing phased checklist](docs/144-COEDITING-PHASED-IMPLEMENTATION-PLAN-AND-CHECKLIST.md) ·
+[experimental capability portfolio](docs/145-EXPERIMENTAL-CAPABILITY-PORTFOLIO-ROADMAP-AND-CHECKLIST.md) ·
 [execution tracker](docs/14-EXECUTION-TRACKER.md).
 
 ## Contributing

@@ -543,6 +543,10 @@ it appears in a design document.
 Current status is **C0 design**. C1 and C2 are blocking architecture work, not
 tasks to hide inside a networking PR.
 
+The review-sized slices, dependencies, evidence rules, end-to-end scenarios,
+and tickable C0–C8 acceptance checklists live in doc 144. A checkbox there is
+execution evidence, not a support claim; doc 18 remains authoritative for support.
+
 ## 15. Required CI additions before a support claim
 
 - one-operation-vocabulary and every-mutation-through-transaction guards;

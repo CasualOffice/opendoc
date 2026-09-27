@@ -22,7 +22,13 @@ present tense, so a reader following this document ran `npm install` against not
 
 OpenDoc is designed as a **deterministic, headless document engine** written in Rust, compiled to **WebAssembly (WASM)**, and exposed to host environments through stable TypeScript, Rust, and C ABI interfaces.
 
-This specification details the architecture and in-depth implementation plan for distributing OpenDoc as an **embeddable, customizable SDK** that third-party developers can install — today via `npm install @casualoffice/opendoc-embed`, which is the published package — to embed high-fidelity DOCX previewers, single-user editors, multiplayer co-editing, MCP AI agent tools, and custom plugin extensions into their applications.
+This specification describes the long-term architecture for distributing OpenDoc
+as an **embeddable, customizable SDK**. The repository currently builds
+`@casualoffice/opendoc-embed` and verifies its tarball; it does not prove that a
+public registry release exists. The custom element, capability contract, host
+commands/events, and white-label seams are implemented. Multiplayer co-editing,
+document assistance, and MCP remain separate experimental designs and are not
+implemented or supported.
 
 ---
 
@@ -63,7 +69,9 @@ In Read-Only / Preview mode (`{ readOnly: true }`), the runtime acts strictly as
 ## 3. Transactional Single-User & Co-Editing Architecture
 
 ### 3.1 Operational Invariants
-Co-editing (real-time multiplayer) and single-user transactional editing are built on the four foundational invariants defined in [docs/45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md](file:///Users/sachin/Desktop/melp/services/opendoc-fixes/docs/45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md):
+Co-editing (real-time multiplayer) and single-user transactional editing are
+designed around the four foundational invariants defined in
+[doc 45](45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md):
 
 ```rust
 // Invariant I1: Single Mutation Choke Point
@@ -76,8 +84,12 @@ pub trait ExecutionContext {
 * **Invariant I2 (Closed, Invertible Ops):** `Operation` is a closed, serializable enum where every variant has an exact deterministic `inverse()`.
 * **Invariant I3 (Stable Anchor Identity):** Block and inline nodes key on 128-bit `NodeId` anchors, insulating operation offsets from global document array index shifts.
 
-### 3.2 Real-Time Collaboration Adapter (`@casualoffice/collaboration-yjs`)
-Host platforms enable co-editing by binding the OpenDoc transaction event journal (`SequencedEvent`) to a CRDT / OT sync layer:
+### 3.2 Proposed provider-neutral collaboration boundary
+
+No collaboration adapter package ships today, and no Yjs package name is
+reserved. The current proposal binds the unified OpenDoc transaction journal to
+a versioned `CollaborationAdapter`; a host may implement that port using the
+reference relay or another provider that passes the same conformance suite.
 
 ```
  [ Local User ]                                 [ Remote Peer ]
@@ -85,8 +97,8 @@ Host platforms enable co-editing by binding the OpenDoc transaction event journa
   (Keystroke)                                    (Remote Op)
        v                                               v
 +--------------+     SequencedEvent      +---------------------------+
-| Local Session| ----------------------> | @casualoffice/            |
-| .apply(op)   |                         | collaboration-yjs Adapter |
+| Local Session| ----------------------> | CollaborationAdapter      |
+| .apply(op)   |                         | (host/provider selected)  |
 +--------------+                         +---------------------------+
        |                                               |
        | Transformed Op                                v
@@ -94,7 +106,9 @@ Host platforms enable co-editing by binding the OpenDoc transaction event journa
 ```
 
 1. **Transaction Event Streaming:** Each committed transaction emits a `SequencedEvent` carrying the committed revision, operation delta, and affected `NodeId` anchors.
-2. **Operational Transformation / CRDT Rebase:** The Yjs/Automerge adapter transforms incoming remote ops against local pending ops using `transform(op_a, op_b)`.
+2. **Operational Transformation:** proposed ADR-033 selects relay-ordered OT over
+   revisioned transactions. A CRDT remains possible later behind the same port;
+   it is not the first implementation.
 3. **Remote Presence & Carets:** Remote user selection ranges and carets are rendered as non-mutating visual overlay layers using custom user colors and names.
 
 ---
@@ -199,9 +213,14 @@ profiles, topology options, open decisions, and graduation gates.
 * **Tasks:** Implement keyboard/IME input handlers, caret blinking geometry, command dispatcher (`session.execute()`), queryable command state API, undo/redo stack, and `.docx` file export.
 * **Exit Gate:** Complete edit cycle (load → edit → undo → save → reopen) passes 100% of semantic round-trip tests.
 
-### Phase 4: Co-Editing & Collaboration Layer (Weeks 11–14)
-* **Tasks:** Develop `@casualoffice/collaboration-yjs` adapter; implement `transform(op_a, op_b)` concurrent operation rebasing; render remote carets/selections; build offline sync queue.
-* **Exit Gate:** 5 concurrent clients typing simultaneously converge to identical document snapshots without operational errors.
+### Phase 4: Co-Editing & Collaboration Layer
+
+The former Weeks 11–14/Yjs estimate is superseded. Docs 143–144 define the
+current experimental architecture and C0–C8 execution checklist: first unify the
+operation/transaction path and complete host document I/O, then prove the
+provider-neutral protocol against a deterministic simulator, then implement OT,
+the optional relay, presence, history/restore/diff integration, and integrator
+hardening. No collaboration implementation begins from this older calendar.
 
 ### Phase 5: Customization & Plugin Architecture (Weeks 15–18)
 * **Tasks:** Build `@casualoffice/react` and `@casualoffice/vue` headless bindings; design plugin registration framework (`engine.registerPlugin()`); build modular UI component library.

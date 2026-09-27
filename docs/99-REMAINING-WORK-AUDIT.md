@@ -55,7 +55,7 @@ overstate the deferred work.
 | 3 | Authoring-model completeness | Sections, styles, note options, fields, drawing geometry, picture content/effects, text-box body properties, and typed run properties are represented deterministically and mutate only through commands/transactions |
 | 4 | Missing editing parity | The high-value authoring controls in §2 ship against the completed model rather than as host-only state |
 | 5 | Stable public SDK | The editor-proven commands and errors become a consolidated, versioned embedding boundary |
-| 6 | OT/CRDT | Collaboration is designed over stable commands, transactions, identities, and selection semantics |
+| 6 | Collaboration | Proposed relay-ordered OT is designed over stable commands, transactions, identities, and selection semantics; docs 143–144 define integration and execution |
 
 PDF, GPU rendering, Tauri, worker threading, plugin ABI, canonical CBOR, and
 collaboration are not active editor-milestone work. The current SDK receives
@@ -179,7 +179,7 @@ the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pi
 | Tauri desktop shell + host fonts | `P1G-004`. Deliberately after the browser-first work |
 | Worker threading (SAB + OffscreenCanvas) | `P1G-005` |
 | Stable public SDK surfaces | Internal crates are unpublished by design while contracts move |
-| Collaboration adapters | Phase 5. Seams reserved by ADR-030 / doc 45; the OT-vs-CRDT decision is still open |
+| Collaboration adapters | Later phase. Seams are reserved by ADR-030/doc 45; the owner selected OT, proposed ADR-033/doc 107 designs it, and docs 143–144 define the provider-neutral architecture and gated plan. Nothing is implemented. |
 
 ### Pending decisions (docs 08)
 

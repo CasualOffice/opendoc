@@ -59,6 +59,7 @@ EOF
 EPUB
 Embeddability
 Embeddable
+Embeddings
 Endnote
 Esc
 FFI
@@ -166,6 +167,7 @@ Roboto
 RunProperties
 Rustdoc
 SAB
+SBOM
 SDK
 SDS
 SDT
@@ -175,6 +177,7 @@ SIL
 SVG
 SaaS
 Sdt
+ShareDB
 SharedArrayBuffer
 SmartArt
 TBL
@@ -195,6 +198,7 @@ Unicode
 UnlimitedOCR
 Untrusted
 VBA
+VLM
 VML
 Vello
 Virtualized
@@ -207,6 +211,7 @@ WOPI
 WYSIWYG
 WebAssembly
 WebGPU
+WebKit
 WebSocket
 WordArt
 WordprocessingML
@@ -246,6 +251,7 @@ autosave
 autoshape
 backend
 backends
+backpressure
 basedOn
 bbox
 bidi
@@ -286,9 +292,12 @@ customXml
 customizable
 debounce
 decodable
+deduplication
 del
+deployable
 deps
 desync
+desynchronized
 dev
 dialogs
 diff
@@ -441,6 +450,7 @@ rasters
 reachability
 rebase
 rebased
+rebuildable
 recalc
 rect
 rects
@@ -460,6 +470,7 @@ resizable
 restorable
 resumable
 reviewable
+revisioned
 roadmap
 rtf
 rustdoc
@@ -497,6 +508,7 @@ tarball
 tblpPr
 teardown
 textbox
+tickable
 tombstoned
 toolchain
 tooltip
@@ -513,6 +525,7 @@ undos
 ungated
 unicode
 unlink
+unlinked
 unlocalised
 unmapped
 unmerged

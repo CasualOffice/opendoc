@@ -5,6 +5,10 @@
 `106` Phase 4. Blocks: HF-109, CQ-010, RM-02, and Phase 4 — which `106` calls
 "the wedge".
 
+**Collaboration boundary:** this document owns the outer host seam, not the
+real-time provider. Docs 143–144 extend it with an experimental provider-neutral
+co-editing architecture and phased checklist. No collaboration support is implied.
+
 Every figure below was re-derived on the date of writing. Where an existing doc
 disagrees, this document says so rather than repeating it.
 
