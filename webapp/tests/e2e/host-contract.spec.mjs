@@ -174,7 +174,18 @@ test(`a ${NOBODY} host drives every command over BOTH transports and changes not
 
   const disagreements = [];
   const notWithheld = [];
+  const undeclared = [];
   for (const id of ids) {
+    // An id the contract does not declare is the FIRST test's finding, and this
+    // sweep must report it rather than dereference a null row: a guard whose
+    // failure mode is a TypeError inside a loop tells the next reader about
+    // JavaScript instead of about the contract. Measured — the rebase onto a
+    // `main` carrying #635's `layout.headerFooterSettings` failed here exactly
+    // that way.
+    if (commandContract(id) === null) {
+      undeclared.push(id);
+      continue;
+    }
     const verb = BLOCKS_THE_RENDERER.has(id) ? "query" : "execute";
     // In process: a direct reference into the frame, which a host can hold
     // because `sandboxTokensFor` grants `allow-same-origin`.
@@ -205,6 +216,11 @@ test(`a ${NOBODY} host drives every command over BOTH transports and changes not
   expect(
     [...BLOCKS_THE_RENDERER.keys()].filter((id) => !ids.includes(id)),
     "a command is skipped that the editor no longer offers",
+  ).toEqual([]);
+  expect(
+    undeclared,
+    "the editor offers commands the host contract does not declare, so this sweep could not " +
+      "check what they require",
   ).toEqual([]);
   expect(disagreements, "the two transports are not the same contract").toEqual([]);
   expect(
@@ -281,18 +297,44 @@ test("a refusal the CHROME makes is a refusal the API makes", async ({ page }) =
   // and the whole layering is theatre.
   await page.goto("/embed.html");
   const { frame } = await mountEmbedPanel(page, "element", "readonly");
-  const leaked = await frame.evaluate(async () => {
-    const out = [];
+  const before = await engineStats(frame);
+  expect(before.words, "the document has no words to protect").not.toBe("0 words");
+  const outcome = await frame.evaluate(async () => {
+    const out = { leaked: [], withheld: [] };
     for (const command of window.opendoc.describe().commands) {
       if (command.available) continue;
       // The chrome refuses it, either because the host withheld the capability or
       // because it cannot run right now. Either way the API must not run it.
       const result = await window.opendoc.execute(command.id);
-      if (result.ok) out.push(command.id);
+      if (result.ok) out.leaked.push(command.id);
+      if (result.refusal?.code === "capability-withheld") out.withheld.push(command.id);
     }
     return out;
   });
-  expect(leaked, "the API ran commands the chrome refuses").toEqual([]);
+  expect(outcome.leaked, "the API ran commands the chrome refuses").toEqual([]);
+  // The refusals came from the GATE and not from the chrome's "not right now": a
+  // `readonly` host is the case #632 was about, and the distinction between "never,
+  // for you" and "not just now" is the one that keeps the API from being a hole
+  // with a lock behind it. Asserted as a COUNT with a floor rather than as a list,
+  // because the list is state — which commands are momentarily unavailable depends
+  // on where the caret is — while "a reader is refused the editing half of the
+  // product by the gate" is the guarantee.
+  expect(
+    outcome.withheld.length,
+    "nothing was refused by the capability gate, so this proves only that the chrome " +
+      "disabled some buttons",
+  ).toBeGreaterThan(50);
+  expect(
+    outcome.withheld.filter((id) => id.startsWith("format.") || id.startsWith("edit.")).length,
+    "no editing command was refused by the gate for a reader",
+  ).toBeGreaterThan(5);
+  // And the document is untouched, read from the engine rather than from the
+  // canvas: every command the chrome refuses was fired at a reader's session.
+  await page.waitForTimeout(400);
+  expect(
+    await engineStats(frame),
+    "a readonly host changed the document through the API",
+  ).toEqual(before);
   // And the converse control: something the chrome DOES offer really does run,
   // so this test cannot pass on an editor where nothing works at all.
   const printable = await frame.evaluate(() => window.opendoc.query("file.print"));

@@ -475,6 +475,79 @@ last-writer-wins). A tombstoned operation is **reported through the disposition 
 - A CRDT adapter remains possible later behind the same seam for peer-to-peer or
   partition-tolerant merge, which relay-ordered OT deliberately does not attempt.
 
+## ADR-034 — The host contract is one schema with two transports, gated as a fourth door
+
+**Status:** Accepted and implemented (`docs/126` phase 2). Schema:
+`webapp/src/host_contract.mjs`; Rust declaration: `crates/casual-doc-sdk/src/host.rs`.
+Design: `125-EMBED-AND-HOST-CONTRACT-DESIGN.md`, `05-SDK-API-SPEC.md` §§4-8.
+
+**Decision:** A host commands the editor and hears about it through **one schema**, from
+which both transports are built: the in-process session a host holds a reference to, and the
+`postMessage` bridge. The bridge is an envelope plus an origin check over the in-process
+session — not a second implementation — so a verb, a command, an event or a refusal code
+cannot exist on one transport and be missing from the other. Five decisions follow from it:
+
+1. **A command id is the addressing unit.** The editor's registry is already reached by id
+   (`runCommandById`, `keymap.mjs`, 111 ribbon controls with `data-command`), so a host uses
+   the same ids a person's keyboard does. Value commands whose members are generated from the
+   document, the font inventory or markup (measured: 93 of 214 ids on the `rich` fixture) are
+   declared as **family prefixes**, the same two kinds `ribbon_faces.mjs` distinguishes —
+   never a third vocabulary.
+2. **Capabilities gate the API, not just the chrome.** The gate runs BEFORE dispatch, so a
+   host without `edit` never reaches a command's `run`. This is the **fourth** enforcement
+   layer after the browser sandbox, the engine's Viewing choke point and the chrome's
+   disabled-with-a-reason, and it must not be the unlocked one — `109` HF-632 was exactly that
+   lie one layer down (a `readonly` embed offered Save, ran it, no download fired, and the
+   status line said "Saved").
+3. **A refusal is a VALUE, not only a toast.** `execute` resolves `{ok: false, refusal}` with
+   a machine-readable `code`; the same refusal is also emitted as an event, from one place, so
+   a host that awaits and a host that listens learn the same thing. A host that cannot hear a
+   refusal re-issues it forever.
+4. **`postMessage` never posts to a wildcard.** The editor's own origin is always accepted;
+   additional origins are named explicitly by the deployment (`?hostOrigin=`); `*` and `null`
+   are rejected rather than honoured, so a typo narrows the allowlist. An unknown origin gets
+   no reply at all — an error reply tells a prober what the frame is. (ONLYOFFICE posts
+   everything to `"*"` under a literal `// TODO: specify explicit origin`, and has no
+   correlation id, so their host cannot learn whether a command was refused.)
+5. **Events carry handles, never documents.** `change` carries a revision integer and a dirty
+   flag; `save`/`export` carry a format, a name and a byte COUNT. Per-interaction work stays
+   O(1) in document size (`docs/107` §4), and a host that wants bytes asks for them.
+
+**Deliberate deviation from `docs/125` §8.** That section sketched a ten-event set and said
+host events would be `casual_doc_sdk::RuntimeEvent`-derived with `ErrorCode` as the refusal
+vocabulary. What shipped is `docs/126`'s named minimum — `ready`, `change`, `selection`,
+`save`, `export`, `error`, `refusal` — because that is the owner's own list and it is what a
+host needs to drive an editor rather than a transaction log. The refusal codes are **not**
+`ErrorCode` in different clothes: they answer why a *host command* was refused
+(`unknown-command`, `capability-withheld`, `unavailable`, `engine-refused`, `threw`,
+`bad-request`, `timeout`), where `ErrorCode` answers how an engine operation failed. The two
+are related by `HostRefusal::for_error`, which maps every `ErrorCode` onto one of them, so a
+native host and a browser host branch on one vocabulary.
+
+**The Rust facade declares the vocabulary and does not run the editor.** `casual-doc-sdk`
+carries the events, refusal codes, verbs and version, `HostEvent::from(&RuntimeEvent)` is the
+derivation `125` §8 asked for, and `host_parity.rs` reads the editor's schema and fails in
+both directions. Convergence of the runtime is **not** in this ADR: the live editing path
+applies `casual-doc-edit`'s ops directly and references `casual_doc_transaction` zero times
+(`109` CQ-002, `docs/125` §9 row 5, graded **L**), and that unification is ADR-005's debt,
+owed before OT (ADR-033) regardless.
+
+**Consequences:**
+
+- Adding a command to the editor without declaring it — or declaring one the editor does not
+  offer — fails the build, in three states a family needs (caret, table, object).
+- A command declared ungated is checked against the ENGINE (run as `owner`, revision and
+  counts must not move), because every other assertion reads `requires` from the contract and
+  so cannot see a mis-declaration.
+- The contract version is a compatibility surface: additive changes (a command, an event, a
+  refusal code) do not bump it; a changed requirement, a lost payload field or a new envelope
+  shape does.
+- Three commands (`file.print`, `file.open`, `insert.image`) hand control to the operating
+  system and are exercised with `query` rather than `execute`, with a coverage assertion so a
+  skip cannot outlive its command.
+- No engine operation was added (ADR-030 I2): the contract composes existing registry
+  commands.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

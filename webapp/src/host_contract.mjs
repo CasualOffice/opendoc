@@ -305,6 +305,12 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.watermark", "mutate"),
   exact("layout.firstPageVariant", "mutate"),
   exact("layout.evenOddVariant", "mutate"),
+  // Word's Header & Footer ▸ Options, plus the position and page-numbering fields.
+  // A dialog, and still a mutation: what it writes is `w:titlePg`,
+  // `w:evenAndOddHeaders`, the header/footer distances and the section's page
+  // numbering — the same switches the two variant toggles above write, which is why
+  // they share one implementation (`header_footer_settings.mjs`).
+  exact("layout.headerFooterSettings", "mutate"),
   exact("layout.arrange.position", "mutate"),
   exact("layout.arrange.wrap", "mutate"),
   exact("layout.arrange.bringForward", "mutate"),
