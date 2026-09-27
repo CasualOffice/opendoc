@@ -34,7 +34,15 @@ export const DRAFT_DB_NAME = "opendoc-drafts";
  *  explain. `docs/104` HF-068 says it outright: *same store as HF-011 — not a
  *  second store*. The upgrade creates only what is missing, so an existing
  *  tab's drafts survive it untouched — which is the whole point of doing it as
- *  a version bump instead of a delete-and-recreate. */
+ *  a version bump instead of a delete-and-recreate.
+ *
+ *  The cost of any bump, paid once per deploy and stated here so it is not
+ *  rediscovered as a bug: a tab still running the OLD build holds a connection
+ *  at the old version, so the new tab's upgrade is blocked. `openDatabase`
+ *  rejects on `onblocked` and the editor reports `Autosave unavailable` with the
+ *  reason until the stale tab closes. That is the right end state — a refusal
+ *  that says so beats a silent half-migration — and it is why the number moves
+ *  only when the schema genuinely gains something. */
 export const DRAFT_DB_VERSION = 3;
 export const META_STORE = "meta";
 export const BYTES_STORE = "bytes";
