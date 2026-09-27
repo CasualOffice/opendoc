@@ -21,6 +21,7 @@ import {
   clickIntoFirstPage,
   mirrorBlocks,
   setReviewMode,
+  stableBox,
   MOD,
 } from "./fixtures.mjs";
 
@@ -396,6 +397,59 @@ test("Include above/below is live where Word offers it, greyed with a reason whe
   // fields and a space, and they are one action.
   await page.keyboard.press(`${MOD}+z`);
   await expectSomeBlock(page, /\bbelow/i, false);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// ≥2 surfaces, and specifically the surfaces WORD and ONLYOFFICE put it on.
+// `one-axis-navigation.spec.mjs` already refuses a palette-only command, and the
+// ribbon plus the palette would satisfy it — but ONLYOFFICE puts Insert caption on
+// the picture, table and equation context menus (`DocumentHolderExt.js:46`)
+// because right-clicking the figure is how a reader reaches it, and a rule
+// satisfied in the abstract is not the same as the affordance being there.
+test("Insert caption is on the right-click menu of a table cell and of a picture", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The menu is created in script and has no id; `.editor-context-menu` is what
+  // every other context-menu spec addresses it by.
+  const menu = page.locator(".editor-context-menu");
+  const row = menu.locator('[data-command-id="reference.caption"]');
+
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertTableBtn").click();
+  await expect(page.locator("#insertTableMenu")).toBeVisible();
+  await page.locator('.gc[data-r="2"][data-c="2"]').click();
+  await expect(page.locator("#tabTable")).toBeEnabled();
+
+  // Keyboard route to the menu, so this is not a mouse-gated claim.
+  await page.locator("#pages").focus();
+  await page.waitForFunction(() => document.activeElement?.id === "editorTextInput");
+  await page.keyboard.press("Shift+F10");
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(page.locator("#captionDialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // A selected picture: the OBJECT menu, which is a different builder.
+  await page.goto("/editor.html?fixture=float");
+  await page.waitForFunction(() => document.querySelectorAll(".page-wrap").length > 0, null, {
+    timeout: 45_000,
+  });
+  const canvas = page.locator(".page-wrap .page").first();
+  // `stableBox`, not `boundingBox`: under load the canvas reports null and the
+  // failure then reads like a broken editor rather than a busy machine.
+  const box = await stableBox(canvas);
+  await canvas.click({ button: "right", position: { x: box.width * 0.14, y: box.height * 0.11 } });
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
+  await expect(row).toBeVisible();
+  // FIRST in the object menu, as it is first in ONLYOFFICE's.
+  const order = await menu
+    .locator(".menu-item")
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.commandId));
+  expect(order[0]).toBe("reference.caption");
 
   expect(consoleErrors).toEqual([]);
 });
