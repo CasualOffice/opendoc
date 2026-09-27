@@ -5854,19 +5854,80 @@ body.is-format-painting .page-wrap * {
   font-weight: 650;
 }
 
-/* 44px minimum, so the row is a touch target and not only a mouse target: the
-   owner has said mobile is supported, and this list has no hover affordance at
-   all — every action is a real button in the bar below. */
+/* A grid row: the entry, and the ⋮ that carries the entry's own actions. 44px
+   minimum for both, so each is a touch target and not only a mouse target — the
+   owner has said mobile is supported, and the ⋮ is painted at every width rather
+   than revealed on hover, because a hover affordance is no affordance on a
+   phone. */
 .version-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+}
+
+.version-item-entry {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-height: 44px;
   justify-content: center;
-  padding: 6px 9px;
-  border-radius: var(--radius-sm);
-  color: var(--ink);
+  padding: 6px 4px 6px 9px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   cursor: pointer;
+}
+
+.version-item-entry:focus-visible,
+.version-item-menu:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.version-item-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+/* 44x44, the touch floor, and always visible. `--muted` at rest so a column of
+   them does not compete with the version names beside them; full ink once the
+   row is where the reader is. */
+.version-item-menu {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.version-item-menu .ms {
+  font-size: var(--icon-compact);
+}
+
+.version-item:hover .version-item-menu,
+.version-item.is-active .version-item-menu {
+  color: inherit;
+}
+
+.version-item-menu:hover,
+.version-item-menu[aria-expanded="true"] {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* The row menu. No colour, radius or type of its own: it IS the editor's context
+   menu, rendered by the same `menu_render.mjs` the right-click menu uses, so a
+   second visual language for the same shape never appears. */
+.version-row-menu {
+  min-width: 200px;
 }
 
 .version-item:hover {
@@ -5916,19 +5977,6 @@ body.is-format-painting .page-wrap * {
 .version-item.is-active .version-item-current,
 .version-item.is-active .version-item-detail {
   color: inherit;
-}
-
-.version-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.version-actions .dialog-button {
-  width: 100%;
-  justify-content: center;
 }
 
 .version-foot {
@@ -7806,8 +7854,8 @@ body:not(.doc-loaded) .drop-title {
      getting a pattern of its own — `docs/139` §14 asks for exactly that, and an
      in-flow 320px panel at 390px would leave 70px of canvas beside it, which is a
      document nobody can read next to a timeline nobody asked to fill the screen.
-     As a drawer the actions bar stays reachable without hover, which is the
-     touch path. */
+     As a drawer each row's ⋮ stays a 44px target with no hover involved, which
+     is the touch path. */
   .side-panel.table-properties-panel,
   .side-panel.properties-panel,
   .side-panel.version-panel {
@@ -9325,11 +9373,12 @@ body.chrome-no-ribbon .ribbon-nav,
 body.chrome-no-rail .rail,
 body.chrome-no-rail #outlinePanel,
 body.chrome-no-rail #pagesPanel,
-/* Version history, withheld: the panel, its ribbon button and its preview bar.
+/* Version history, withheld: the panel, its two entry points and its preview bar.
    The COMMAND is withheld too, in `main.js`, because the palette and the ⌘⌥⇧H
    chord belong to no region and CSS cannot reach them. */
 body.chrome-no-history #versionPanel,
 body.chrome-no-history #viewVersionsBtn,
+body.chrome-no-history #railVersions,
 body.chrome-no-history #versionPreviewBanner,
 body.chrome-no-status .footer,
 body.chrome-no-zoom .zoom,

@@ -39,7 +39,16 @@ const EXPECTED = Object.freeze({
   menu: ['id="appMenuBar"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
-  history: ['id="versionPanel"', 'id="viewVersionsBtn"', 'id="versionPreviewBanner"'],
+  // Both durable entry points, not just the View band's: the rail's Versions
+  // button is the second face of the same command, and a region that took one
+  // away and left the other would be a host believing they had withheld a
+  // surface that is still on screen.
+  history: [
+    'id="versionPanel"',
+    'id="viewVersionsBtn"',
+    'id="railVersions"',
+    'id="versionPreviewBanner"',
+  ],
   status: ['class="footer"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],
@@ -70,6 +79,42 @@ test("every region names something that exists in editor.html", () => {
   );
   // The half that fails when the guard breaks rather than when the tree does.
   assert.equal(Object.keys(EXPECTED).length + REGIONS.filter((r) => r.startsWith("band.")).length, REGIONS.length);
+});
+
+// The half the table above could not check, and the reason it is here.
+//
+// `EXPECTED` lists what each region is supposed to reach, and the test above
+// proves each of those things EXISTS in the markup. Nothing proved the
+// stylesheet reaches it: the rule check below only asks whether the region class
+// is styled at all, so a region naming three elements and removing one passed.
+// Found when the rail's Versions button was added to the `history` region and
+// deleting its CSS rule left every guard green — a host would have believed they
+// had withheld the timeline and shipped an entry point straight into it.
+//
+// Each selector is derived from the same `EXPECTED` string the markup check
+// uses, so the two halves cannot drift apart: one declaration, two questions.
+const cssSelector = (needle) => {
+  const id = needle.match(/^id="([^"]+)"$/)?.[1];
+  if (id) return `#${id}`;
+  const className = needle.match(/^class="([^"]+)"$/)?.[1];
+  if (className) return `.${className.trim().split(/\s+/)[0]}`;
+  throw new Error(`${needle}: this guard cannot turn that into a CSS selector`);
+};
+
+test("every element a region names is really removed by that region's rule", () => {
+  const unreached = [];
+  for (const [id, needles] of Object.entries(EXPECTED)) {
+    for (const needle of needles) {
+      const rule = `body.${regionClass(id)} ${cssSelector(needle)}`;
+      if (!css.includes(rule)) unreached.push(rule);
+    }
+  }
+  assert.deepEqual(
+    unreached,
+    [],
+    "these elements are declared as part of a region and the stylesheet does not " +
+      "take them away, so withholding the region leaves them on screen",
+  );
 });
 
 test("every region has a rule that actually removes it", () => {

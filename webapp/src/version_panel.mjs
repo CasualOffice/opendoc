@@ -24,9 +24,55 @@
 // | Time and author on every entry | time, origin and size; author when known | version-level actor only. Per-CHANGE authorship needs the durable commit log (`docs/140` H4), and claiming it from a snapshot would be a guess |
 // | "Name this version", and a named-only filter | same | — |
 // | Selecting an entry previews it in the main canvas, read-only | same | arrow-key navigation previews after a short settle rather than on every keypress, because a preview parses a document and holding ↓ must not parse ten |
+// | A ⋮ menu on every entry carrying that entry's actions | same | — (see "The row actions" below: this row USED to read "an action bar below the list", and that difference is what the owner rejected) |
+// | Restore also offered prominently while previewing | on the preview bar, beside "Back to current" | — |
 // | Restore this version, current state kept as a version | same | Docs restores without confirming; this asks once, because the confirmation is where the reader is TOLD their current work is kept — see `confirmRestore` |
 // | "Show changes" diff toggle | present and disabled, with the reason | the structural diff is `docs/140` H3 and is not built. SKILL §10: a command that does not exist yet ships disabled with a reason, never as a button that does nothing |
 // | Make a copy / Download this version | not built | needs a format→MIME answer the export registry owns; `docs/139` VH-007 stays open, and the report says so rather than the panel implying it |
+//
+// ## The row actions, and why the list had to stop being a listbox
+//
+// The first round of this panel put all five actions in a bar under the list and
+// wrote down two reasons: a `role="option"` may not hold an interactive child,
+// and a bar has no hover affordance. Both are true. Neither survives contact with
+// the result, which the owner saw and rejected: with one or two versions the bar
+// was most of the panel, four of its five buttons were disabled until a row was
+// selected, and every one of them was detached from the row it acted on.
+//
+// The ARIA constraint was real, so the answer is the structure that does not have
+// it. The established pattern for "a list of selectable rows, each carrying its
+// own actions" is the **grid** — Gmail's message list, Drive's list view, the APG
+// grid pattern — a composite widget whose cells may be interactive and whose
+// focus is managed by a ROVING TABINDEX rather than `aria-activedescendant`. So:
+//
+//   `role="grid"`     the list                (`aria-selected` still on the row)
+//   `role="rowgroup"` one per day heading     (`group` is not a legal grid child)
+//   `role="row"`      one per version
+//   `role="gridcell"` the entry, and the ⋮
+//
+// A screen reader reads the row it lands on, and Right/Left step to the ⋮ and
+// back. The ⋮ takes REAL focus, so Enter opens its menu; Shift+F10 and the
+// ContextMenu key open the same menu without reaching for the ⋮ at all, and so
+// does a right-click. Nothing is hover-only: the ⋮ is always painted and is a
+// 44px target.
+//
+// The day heading stays `aria-hidden` and the day stays inside every row's
+// accessible name, as before. It lost its `aria-label` in the move, because
+// `rowgroup`'s support for a name is not something to bet a screen reader on when
+// the information is already in every row.
+//
+// ## Where each action's second surface is (SKILL §10: never one surface)
+//
+//   Restore         the row menu, and the preview bar's "Restore this version"
+//   Name            the row menu, and **F2** on the focused row
+//   Delete          the row menu, and **Delete** on the focused row
+//   Keep            the row menu, and the row's right-click / Shift+F10 menu
+//   Show changes    the same pair, both disabled with the reason
+//   Clear history   the panel footer (it acts on the timeline, not on a row)
+//
+// F2 and Delete are the two keys a list carries everywhere, and they are
+// ADVERTISED in the menu's shortcut column rather than left to be discovered —
+// an undiscoverable chord is not a second surface.
 //
 // ## What stays out of `main.js`
 //
@@ -48,8 +94,11 @@
 // document), exactly as opening a file is, and is serialised behind one token so
 // a fast reader cannot stack two parses.
 
+import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import { describeDraftSize } from "./drafts.mjs";
 import { t } from "./i18n.mjs";
+import { formatShortcut, matchesShortcut } from "./keyboard.mjs";
+import { focusMenuIndex, renderMenuLevel } from "./menu_render.mjs";
 import {
   CAPTURE_REASON,
   HISTORY_STATUS,
@@ -77,9 +126,26 @@ import {
  *  does not wait: the reader has already chosen. */
 const PREVIEW_SETTLE_MS = 220;
 
-/** `role="option"` ids have to be stable within one render and unique in the
- *  document, and a `versionId` is already both. */
+/** Row ids have to be stable within one render and unique in the document, and a
+ *  `versionId` is already both. Named `versionOption-…` since the rows were
+ *  options; the spelling is kept because it is what the specs and the panel's
+ *  `aria` wiring already say, and renaming it buys nothing. */
 const optionId = (versionId) => `versionOption-${versionId}`;
+
+/** The two row keys, declared in the same Apple notation every other chord in
+ *  this editor is declared in, so `matchesShortcut` binds exactly what
+ *  `formatShortcut` prints in the menu — one declaration, never two tables that
+ *  drift (`109` UX-006/UX-007).
+ *
+ *  They are PANEL-SCOPED and deliberately not in `keymap.mjs`: F2 and Delete are
+ *  the keys a list carries, not chords the application owns, and binding Delete
+ *  globally would be a document edit. */
+const NAME_KEY = "F2";
+const DELETE_KEY = "⌦";
+
+/** Which of a row's two cells the keyboard is on: the entry, or its ⋮. */
+const CELL_ENTRY = 0;
+const CELL_MENU = 1;
 
 /** A Material Symbols glyph, `aria-hidden` because it is decoration and the
  *  state it stands for is already in the option's accessible name.
@@ -146,21 +212,20 @@ export function createVersionHistory({
   const policyEl = document.getElementById("versionPanelPolicy");
   const namedOnlyBox = document.getElementById("versionNamedOnly");
   const closeBtn = document.getElementById("versionPanelClose");
-  // The View band's entry. This module owns its pressed state and its disabled
-  // reason, so it owns the element: two owners of one button is how a control
-  // comes to say one thing and do another.
-  const railButton = document.getElementById("viewVersionsBtn");
+  // The two durable toggles: the View band's button and the left rail's entry
+  // below Comments. This module owns both pressed states and both disabled
+  // reasons, so it owns both elements — two owners of one button is how a control
+  // comes to say one thing and do another, and two buttons for one command with
+  // two owners is that defect twice.
+  const entryPoints = [
+    document.getElementById("viewVersionsBtn"),
+    document.getElementById("railVersions"),
+  ].filter(Boolean);
   const banner = document.getElementById("versionPreviewBanner");
   const bannerText = document.getElementById("versionPreviewBannerText");
   const bannerBack = document.getElementById("versionPreviewBack");
-  const actions = {
-    restore: document.getElementById("versionRestoreBtn"),
-    name: document.getElementById("versionNameBtn"),
-    pin: document.getElementById("versionPinBtn"),
-    remove: document.getElementById("versionDeleteBtn"),
-    changes: document.getElementById("versionChangesBtn"),
-    clear: document.getElementById("versionClearBtn"),
-  };
+  const bannerRestore = document.getElementById("versionPreviewRestore");
+  const clearBtn = document.getElementById("versionClearBtn");
 
   /** The store, once. `null` until asked for; `storeReason` is non-empty once
    *  the browser has refused it, which is what the disabled entry point says. */
@@ -172,6 +237,14 @@ export function createVersionHistory({
   let headVersionId = null;
   let rows = [];
   let selectedId = "";
+  /** The cell the roving tabindex is on. A grid has exactly one tab stop. */
+  let activeCell = CELL_ENTRY;
+  /** The open row menu: the version it acts on, its DOM, its ⋮, and the level
+   *  record `menu_render.mjs` moves the keyboard through. */
+  let menuVersionId = "";
+  let rowMenuEl = null;
+  let menuButton = null;
+  let menuLevel = null;
   let previewVersionId = "";
   let previewDoc = null;
   /** Serialises preview work: two overlapping parses would race on `previewDoc`
@@ -259,6 +332,10 @@ export function createVersionHistory({
    * never walks the document (`docs/139` VH-001, SKILL §8).
    */
   function renderList() {
+    // Every row about to be replaced, including the one an open menu is anchored
+    // to. A menu left pointing at a detached button is a menu whose Escape has
+    // nowhere to give the keyboard back to.
+    closeRowMenu();
     body.replaceChildren();
     const namedOnly = Boolean(namedOnlyBox?.checked);
     const groups = groupVersions(rows, { now: Date.now(), namedOnly });
@@ -272,18 +349,22 @@ export function createVersionHistory({
         ? t("versionHistory.emptyNamed")
         : t("versionHistory.empty");
       body.append(empty);
-      body.removeAttribute("aria-activedescendant");
+      // With no rows there is no cell to be the grid's tab stop, so the grid
+      // itself takes the keyboard — otherwise opening an empty timeline would
+      // drop focus on `<body>`.
+      body.tabIndex = 0;
       reflectActions();
       return;
     }
+    body.tabIndex = -1;
     for (const group of groups) {
-      // `role="group"` with `aria-label`, and the visible heading hidden from
-      // the accessibility tree: a heading element is not a permitted child of a
-      // listbox, and the day is already in every option's accessible name.
+      // `role="rowgroup"`, because `group` is not a permitted child of a grid.
+      // The visible heading stays hidden from the accessibility tree and the day
+      // stays inside every row's accessible name, which is where it was already
+      // — so nothing is lost by `rowgroup` carrying no name of its own.
       const section = document.createElement("div");
       section.className = "version-group";
-      section.setAttribute("role", "group");
-      section.setAttribute("aria-label", group.label);
+      section.setAttribute("role", "rowgroup");
       const day = document.createElement("div");
       day.className = "version-group-day";
       day.setAttribute("aria-hidden", "true");
@@ -297,10 +378,16 @@ export function createVersionHistory({
     reflectSelection();
   }
 
-  /** One row. A `div[role=option]` rather than a button, because the list is a
-   *  single-select listbox and an interactive child inside an option is a shape
-   *  screen readers cannot describe — the actions live in the panel's action bar
-   *  instead, where they are also reachable by touch without hovering. */
+  /**
+   * One row: a `div[role=row]` holding two `gridcell`s — the entry, and the ⋮
+   * that carries this version's own actions.
+   *
+   * The entry cell is the one that carries the accessible name, because it is
+   * the cell focus lands on; putting the same sentence on the row as well would
+   * make a screen reader read the version twice for one arrow press.
+   *
+   * O(1) per row, and nothing here reads the document.
+   */
   function renderRow(row) {
     const text = versionRowText(row, {
       isHead: row.versionId === headVersionId,
@@ -309,11 +396,16 @@ export function createVersionHistory({
     const item = document.createElement("div");
     item.className = "version-item";
     item.id = optionId(row.versionId);
-    item.setAttribute("role", "option");
+    item.setAttribute("role", "row");
     item.setAttribute("aria-selected", "false");
     item.dataset.versionId = row.versionId;
-    item.setAttribute("aria-label", text.label);
-    item.title = text.timestamp;
+
+    const entry = document.createElement("div");
+    entry.className = "version-item-entry";
+    entry.setAttribute("role", "gridcell");
+    entry.tabIndex = -1;
+    entry.setAttribute("aria-label", text.label);
+    entry.title = text.timestamp;
 
     const head = document.createElement("div");
     head.className = "version-item-head";
@@ -343,30 +435,134 @@ export function createVersionHistory({
     if (text.exact) detail.dateTime = text.exact;
     detail.textContent = text.named ? `${text.clock} · ${text.detail}` : text.detail;
 
-    item.append(head, detail);
-    item.addEventListener("click", () => {
-      select(row.versionId);
+    entry.append(head, detail);
+    entry.addEventListener("click", () => {
+      select(row.versionId, CELL_ENTRY);
       // A click is a decision already made, so it does not wait out the settle.
       void openPreview(row.versionId);
+    });
+
+    // The ⋮. Always painted, never revealed by hover: a hover affordance is no
+    // affordance at all on a phone, and this list is one of the surfaces the
+    // narrow-screen drawer carries.
+    const actionCell = document.createElement("div");
+    actionCell.className = "version-item-actions";
+    actionCell.setAttribute("role", "gridcell");
+    const menuBtn = document.createElement("button");
+    menuBtn.type = "button";
+    menuBtn.className = "version-item-menu";
+    menuBtn.tabIndex = -1;
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-expanded", "false");
+    menuBtn.setAttribute("aria-label", t("versionHistory.rowActions", { when: text.timestamp }));
+    menuBtn.append(iconSpan("more_vert"));
+    menuBtn.addEventListener("click", () => {
+      // A second press on the same ⋮ closes it, which is what every menu button
+      // in this editor does and what a reader expects of one.
+      if (menuVersionId === row.versionId) return void closeRowMenu({ restoreFocus: true });
+      select(row.versionId, CELL_MENU);
+      openRowMenu(row.versionId);
+    });
+    actionCell.append(menuBtn);
+
+    item.append(entry, actionCell);
+    // The platform gesture, on the whole row: `docs/139` §14 asks for row menus
+    // that work by keyboard, and a right-click is the pointer half of the same
+    // affordance. Shift+F10 and the ContextMenu key are handled on the grid.
+    item.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      select(row.versionId, CELL_MENU);
+      openRowMenu(row.versionId, { x: event.clientX, y: event.clientY });
     });
     return item;
   }
 
-  /** Marks the selected option and points `aria-activedescendant` at it, which
-   *  is how a listbox tells a screen reader where it is without moving focus off
-   *  the list. O(rows). */
+  /**
+   * Marks the selected row and places the grid's ONE tab stop.
+   *
+   * A grid manages focus with a roving tabindex rather than
+   * `aria-activedescendant`, because its cells are really focusable — that is
+   * the whole reason this is a grid and not a listbox. Exactly one cell carries
+   * `tabindex="0"`: the active cell of the selected row, or the first row's
+   * entry when nothing is selected yet, so Tab always lands somewhere sensible.
+   *
+   * It never MOVES focus. Moving is the business of `moveActive`/`moveCell`,
+   * which the user drove; this runs on refreshes too, and a refresh that stole
+   * the keyboard would take it off whatever the user was doing.
+   *
+   * O(rows).
+   */
   function reflectSelection() {
-    let found = false;
-    for (const item of body.querySelectorAll(".version-item")) {
-      const active = item.dataset.versionId === selectedId;
+    const items = [...body.querySelectorAll(".version-item")];
+    const selected = items.find((item) => item.dataset.versionId === selectedId) ?? null;
+    const stop = selected ?? items[0] ?? null;
+    for (const item of items) {
+      const active = item === selected;
       item.setAttribute("aria-selected", String(active));
       item.classList.toggle("is-active", active);
       item.classList.toggle("is-previewing", item.dataset.versionId === previewVersionId);
-      if (active) found = true;
+      const cells = cellsOf(item);
+      const wanted = item === stop ? (selected ? activeCell : CELL_ENTRY) : -1;
+      cells.forEach((cell, index) => {
+        if (cell) cell.tabIndex = index === wanted ? 0 : -1;
+      });
     }
-    if (found) body.setAttribute("aria-activedescendant", optionId(selectedId));
-    else body.removeAttribute("aria-activedescendant");
     reflectActions();
+  }
+
+  /** A row's two cells, in keyboard order. O(1). */
+  function cellsOf(item) {
+    return [item.querySelector(".version-item-entry"), item.querySelector(".version-item-menu")];
+  }
+
+  /** The grid's single tab stop, or the grid itself when it is empty. */
+  function focusGrid() {
+    const cell = body.querySelector('.version-item [tabindex="0"]');
+    if (cell instanceof HTMLElement) cell.focus({ preventScroll: true });
+    else body.focus();
+  }
+
+  /**
+   * Runs work that swaps the document, and gives the panel its keyboard back.
+   *
+   * Swapping the document sets the review mode, and setting the review mode ends
+   * by focusing the editing surface — deliberately, because every other caller of
+   * that path has just changed how the document may be edited and wants the
+   * keyboard there. A reader arrowing through the timeline does not: the preview
+   * settles 220 ms after the last arrow press, so the NEXT ArrowDown would scroll
+   * the document instead of walking to the next version, and a keyboard user
+   * would be quietly ejected from the panel by the panel's own feature.
+   *
+   * Only when the panel HAD the keyboard, so a preview opened while the reader
+   * is typing in the document does not snatch it back.
+   *
+   * The panel's keyboard territory includes the ROW MENU, which is parented to
+   * `document.body` so it can paint over the canvas. Counting only
+   * `#versionPanel` fixed the arrow-key case and left the identical one a step
+   * further on: open a row's menu with the keyboard, and the preview the same
+   * arrow press scheduled settles 220 ms later and empties the menu of focus, so
+   * the next ArrowDown walks the document. Same defect, second doorway — so the
+   * question asked here is "does the timeline own the keyboard", not "is focus
+   * inside one element".
+   *
+   * Found by asserting which element really holds focus rather than
+   * `aria-activedescendant`, which does not move with it — the shipped listbox
+   * had the same defect and no guard that could see it.
+   */
+  async function keepingFocus(work) {
+    const owns = () => {
+      const el = document.activeElement;
+      if (!(el instanceof Node)) return false;
+      if (panel.contains(el)) return true;
+      return Boolean(rowMenuEl) && !rowMenuEl.hidden && rowMenuEl.contains(el);
+    };
+    const had = isOpen() && owns();
+    await work();
+    if (!had || owns()) return;
+    // Back where it was: into the menu when one is still open, onto the grid's
+    // tab stop otherwise.
+    if (menuLevel) focusMenuIndex(menuLevel, menuLevel.index);
+    else focusGrid();
   }
 
   /** The visible rows, in list order — what the arrow keys walk. O(rows). */
@@ -374,47 +570,31 @@ export function createVersionHistory({
     return [...body.querySelectorAll(".version-item")].map((item) => item.dataset.versionId);
   }
 
-  function selectedRow() {
-    return rows.find((row) => row.versionId === selectedId) ?? null;
-  }
-
   /**
-   * Enables each action, or disables it with the reason.
+   * The two controls that are not on a row: Clear version history, and the
+   * preview bar.
    *
-   * Every branch here produces a REASON. The alternative — hiding what cannot be
-   * done — leaves a reader unable to tell a permission from a bug, which SKILL
-   * §10 rules out and `capabilities.mjs` already refuses to do for review modes.
+   * Everything a SINGLE version can have done to it moved onto that version's
+   * own row menu, where it is built from the row that is really there — so there
+   * is no longer a bar of controls that has to be told, five times, that nothing
+   * is selected. Clear acts on the whole timeline and stays in the footer; it is
+   * still disabled WITH A REASON when there is no timeline to clear (SKILL §10).
+   *
+   * The preview bar's Restore needs no enabled/disabled branch at all: the head
+   * cannot be previewed (`openPreview` returns early), so whenever this bar is on
+   * screen the version behind it is restorable.
+   *
    * O(1).
    */
   function reflectActions() {
-    const row = selectedRow();
     const previewing = Boolean(previewVersionId);
-    const needs = t("versionHistory.needsSelection");
-    const set = (button, allowed, reason) => {
-      if (!button) return;
-      button.disabled = !allowed;
-      if (allowed) button.removeAttribute("title");
-      else button.title = reason;
-    };
-    set(
-      actions.restore,
-      Boolean(row) && row.versionId !== headVersionId,
-      row ? t("versionHistory.headNotRestorable") : needs,
-    );
-    set(actions.name, Boolean(row), needs);
-    set(actions.pin, Boolean(row), needs);
-    set(actions.remove, Boolean(row) && row.versionId !== headVersionId, row ? t("versionHistory.headNotDeletable") : needs);
-    // Present, disabled, and honest about why: the structural diff is `docs/140`
-    // H3 and is not built.
-    set(actions.changes, false, t("versionHistory.action.showChangesUnavailable"));
-    set(actions.clear, rows.length > 0, t("versionHistory.empty"));
-    // A toggle button with a FIXED label, and the state in aria-pressed, which
-    // is what aria-pressed is for. A label that flipped between keeping and not
-    // keeping would be a control whose NAME changes under a screen-reader user's
-    // cursor — and the applier that walks data-i18n on a locale change would
-    // overwrite a script-set label anyway.
-    actions.pin?.setAttribute("aria-pressed", String(Boolean(row?.pinned)));
+    if (clearBtn) {
+      clearBtn.disabled = rows.length === 0;
+      if (rows.length > 0) clearBtn.removeAttribute("title");
+      else clearBtn.title = t("versionHistory.empty");
+    }
     if (bannerBack) bannerBack.hidden = !previewing;
+    if (bannerRestore) bannerRestore.hidden = !previewing;
     if (banner) banner.hidden = !previewing;
   }
 
@@ -457,12 +637,31 @@ export function createVersionHistory({
 
   // ── Preview ────────────────────────────────────────────────────────────────
 
-  function select(versionId) {
+  function select(versionId, cell = activeCell) {
     selectedId = versionId;
+    activeCell = cell;
     reflectSelection();
   }
 
-  /** Moves the active option and schedules its preview. Arrow keys settle; see
+  /** Left/Right across a row's two cells, which is how a grid's keyboard reaches
+   *  the ⋮ without a pointer. Selects the first row when nothing is selected, so
+   *  a first ArrowRight is not silently ignored. O(rows).
+   *
+   *  NOT mirrored for right-to-left locales, and that is a recorded gap rather
+   *  than an oversight: no keyboard navigation in this chrome mirrors — the
+   *  command menu, the glyph picker and the radio groups all read ArrowRight as
+   *  "next" — so mirroring only here would make this one widget the outlier. It
+   *  is one rule for the whole chrome or none, and that rule is its own piece of
+   *  work. */
+  function moveCell(delta) {
+    const ids = visibleIds();
+    if (ids.length === 0) return;
+    const target = selectedId || ids[0];
+    select(target, Math.min(CELL_MENU, Math.max(CELL_ENTRY, activeCell + delta)));
+    focusGrid();
+  }
+
+  /** Moves the active row and schedules its preview. Arrow keys settle; see
    *  `PREVIEW_SETTLE_MS`. O(rows). */
   function moveActive(delta, absolute = null) {
     const ids = visibleIds();
@@ -472,8 +671,8 @@ export function createVersionHistory({
     // stepping from an imagined position: ArrowDown selects the newest version,
     // ArrowUp the oldest. Stepping from a notional index 0 made the first
     // ArrowDown select the SECOND row and skip the newest version entirely —
-    // found by `version-history-panel.spec.mjs`, which reads
-    // `aria-activedescendant` rather than trusting the list looked right.
+    // found by `version-history-panel.spec.mjs`, which reads which cell really
+    // holds the keyboard rather than trusting the list looked right.
     const next =
       absolute !== null
         ? absolute < 0
@@ -486,9 +685,191 @@ export function createVersionHistory({
           : Math.min(ids.length - 1, Math.max(0, at + delta));
     select(ids[next]);
     body.querySelector(`#${CSS.escape(optionId(ids[next]))}`)?.scrollIntoView({ block: "nearest" });
+    // A grid moves REAL focus, so the cell the tab stop just landed on has to
+    // take it — `aria-activedescendant` is what a listbox uses, and this list
+    // stopped being one when its rows gained a menu button.
+    focusGrid();
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => void openPreview(ids[next]), PREVIEW_SETTLE_MS);
   }
+
+  // ── The row menu ───────────────────────────────────────────────────────────
+
+  /**
+   * The actions for ONE version, as menu descriptors.
+   *
+   * Built from the row record the panel already holds, so opening a menu is
+   * O(1) in document size and O(1) in stored-version count — it reads no
+   * checkpoint and walks no document (`docs/139` VH-001, SKILL §8).
+   *
+   * Every row that cannot run says WHY, exactly as the bar this replaced did:
+   * the head is not restorable and not deletable because it is the document,
+   * and Show changes is `docs/140` H3 and is not built.
+   */
+  function rowMenuEntries(row) {
+    const id = row.versionId;
+    const isHead = id === headVersionId;
+    return [
+      {
+        id: "version.restore",
+        group: "restore",
+        label: t("versionPanel.restoreThisVersion"),
+        enabled: !isHead,
+        disabledReason: t("versionHistory.headNotRestorable"),
+        run: () => void queue(() => restore(id)),
+      },
+      {
+        id: "version.name",
+        group: "edit",
+        label: t("versionPanel.nameThisVersion"),
+        shortcut: NAME_KEY,
+        run: () => void queue(() => nameVersion(id)),
+      },
+      {
+        id: "version.keep",
+        group: "edit",
+        // A checked row rather than a label that flips between keeping and not
+        // keeping: a menu states the STATE and Word and Docs both do it this
+        // way, and a control whose name changes under a screen-reader user is
+        // the thing the action bar's note was avoiding. `aria-checked` is set on
+        // the rendered row below.
+        label: t("versionPanel.keepThisVersion"),
+        // The tick in the icon gutter every row already reserves, so the state
+        // is visible as well as announced — `aria-checked` alone is a state only
+        // a screen reader can read.
+        icon: row.pinned ? "accept" : undefined,
+        run: () => void queue(() => setPinned(id, !row.pinned)),
+      },
+      {
+        id: "version.changes",
+        group: "edit",
+        label: t("versionPanel.showChanges"),
+        enabled: false,
+        disabledReason: t("versionHistory.action.showChangesUnavailable"),
+        run: () => {},
+      },
+      {
+        id: "version.delete",
+        group: "danger",
+        label: t("versionPanel.deleteThisVersion"),
+        shortcut: DELETE_KEY,
+        danger: true,
+        enabled: !isHead,
+        disabledReason: t("versionHistory.headNotDeletable"),
+        run: () => void queue(() => removeVersion(id)),
+      },
+    ];
+  }
+
+  /** The one menu element, made once and reused: a menu per row would be one
+   *  detached popup per version in the timeline. */
+  function ensureRowMenu() {
+    if (rowMenuEl) return rowMenuEl;
+    rowMenuEl = document.createElement("div");
+    rowMenuEl.id = "versionRowMenu";
+    rowMenuEl.className = "context-menu version-row-menu";
+    rowMenuEl.hidden = true;
+    rowMenuEl.setAttribute("role", "menu");
+    rowMenuEl.addEventListener("keydown", onRowMenuKey);
+    document.body.append(rowMenuEl);
+    return rowMenuEl;
+  }
+
+  /**
+   * Opens a row's menu, anchored under its ⋮ or at a right-click point.
+   *
+   * Reuses the editor's context-menu machinery whole — `normalizeMenuEntries`
+   * for the separators, `renderMenuLevel` for the rows, `focusMenuIndex` for the
+   * roving focus and `clampContextMenuPosition` so it never opens off-screen —
+   * rather than growing a second menu implementation beside it.
+   *
+   * O(entries): five rows, no document access.
+   */
+  function openRowMenu(versionId, at = null) {
+    const row = rows.find((candidate) => candidate.versionId === versionId);
+    if (!row) return;
+    closeRowMenu();
+    const el = ensureRowMenu();
+    const entries = normalizeMenuEntries(rowMenuEntries(row));
+    el.setAttribute("aria-label", t("versionPanel.actionsSelectedVersion.label"));
+    el.hidden = false;
+    renderMenuLevel(el, entries, 0, MENU_HOOKS);
+    for (const item of el.querySelectorAll('[data-command-id="version.keep"]')) {
+      item.setAttribute("role", "menuitemcheckbox");
+      item.setAttribute("aria-checked", String(Boolean(row.pinned)));
+    }
+    menuVersionId = versionId;
+    menuButton =
+      body.querySelector(`#${CSS.escape(optionId(versionId))} .version-item-menu`) ?? null;
+    menuButton?.setAttribute("aria-expanded", "true");
+    // Right-aligned under the ⋮, which is where a menu button's menu belongs;
+    // a right-click uses the pointer instead.
+    const box = menuButton?.getBoundingClientRect();
+    const anchor = at ?? {
+      x: (box?.right ?? 0) - el.offsetWidth,
+      y: (box?.bottom ?? 0) + 2,
+    };
+    const position = clampContextMenuPosition(
+      anchor.x,
+      anchor.y,
+      el.offsetWidth,
+      el.offsetHeight,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    el.style.left = `${position.left}px`;
+    el.style.top = `${position.top}px`;
+    menuLevel = { el, entries, index: -1, parentButton: null };
+    focusMenuIndex(menuLevel, moveMenuIndex(entries, -1, 1));
+  }
+
+  /** Closes it. Idempotent, because a re-render, a light dismiss, an activation,
+   *  Escape and closing the panel all reach it. */
+  function closeRowMenu({ restoreFocus = false } = {}) {
+    if (!rowMenuEl || rowMenuEl.hidden) return;
+    rowMenuEl.hidden = true;
+    rowMenuEl.replaceChildren();
+    menuLevel = null;
+    menuVersionId = "";
+    const button = menuButton;
+    menuButton = null;
+    button?.setAttribute("aria-expanded", "false");
+    if (!restoreFocus) return;
+    if (button?.isConnected) button.focus({ preventScroll: true });
+    else focusGrid();
+  }
+
+  /** The keyboard inside the menu, the same contract the editor's context menu
+   *  keeps: arrows move, Home/End jump, Escape and Tab close and give the
+   *  keyboard back to the ⋮ it came from. */
+  function onRowMenuKey(event) {
+    if (!menuLevel) return;
+    const { entries, index } = menuLevel;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      focusMenuIndex(menuLevel, moveMenuIndex(entries, index, event.key === "ArrowDown" ? 1 : -1));
+    } else if (event.key === "Home" || event.key === "End") {
+      focusMenuIndex(menuLevel, moveMenuIndex(entries, index, event.key === "Home" ? "first" : "last"));
+    } else if (event.key === "Escape" || event.key === "ArrowLeft" || event.key === "Tab") {
+      closeRowMenu({ restoreFocus: true });
+    } else {
+      return;
+    }
+    event.preventDefault();
+  }
+
+  /** What `menu_render.mjs` needs from its host. No submenus here, so the hover
+   *  hook only moves the highlight. */
+  const MENU_HOOKS = {
+    shortcutText: (spec) => formatShortcut(spec),
+    onHover: (_depth, index) => {
+      if (menuLevel) focusMenuIndex(menuLevel, index);
+    },
+    onActivate: (_depth, _button, entry) => {
+      if (!entry || entry.enabled === false) return;
+      closeRowMenu({ restoreFocus: true });
+      entry.run();
+    },
+  };
 
   /**
    * Opens a version in an isolated read-only preview (`docs/139` §8.4).
@@ -541,7 +922,7 @@ export function createVersionHistory({
     if (bannerText) {
       bannerText.textContent = t("versionHistory.preview.banner", { when: words.timestamp });
     }
-    await showPreview(next, row);
+    await keepingFocus(() => showPreview(next, row));
     // Freed AFTER the swap: the canvas held the old preview until `showPreview`
     // returned, and freeing before that would hand the renderer a dead wrapper.
     previous?.free();
@@ -557,7 +938,7 @@ export function createVersionHistory({
     previewVersionId = "";
     const previous = previewDoc;
     previewDoc = null;
-    await showPreview(null, null);
+    await keepingFocus(() => showPreview(null, null));
     previous?.free();
     reflectSelection();
   }
@@ -759,19 +1140,23 @@ export function createVersionHistory({
     if (!panel || isOpen()) return;
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel.hidden = false;
-    railButton?.setAttribute("aria-pressed", "true");
+    for (const entry of entryPoints) entry.setAttribute("aria-pressed", "true");
     onOpenChange(true);
     await refresh();
-    body?.focus();
+    // The grid's tab stop, not the grid: a grid manages focus with a roving
+    // tabindex, and landing on the container would leave a screen reader
+    // announcing a list with nothing in it.
+    focusGrid();
   }
 
   /** Closes the panel, leaves the preview behind, and gives the keyboard back to
    *  whatever opened it — or to the editing surface when that element is gone. */
   async function close() {
     if (!panel || !isOpen()) return;
+    closeRowMenu();
     await closePreview();
     panel.hidden = true;
-    railButton?.setAttribute("aria-pressed", "false");
+    for (const entry of entryPoints) entry.setAttribute("aria-pressed", "false");
     onOpenChange(false);
     const back = returnFocus;
     returnFocus = null;
@@ -783,16 +1168,36 @@ export function createVersionHistory({
     else await open();
   }
 
+  // The grid's keyboard. Up/Down walk rows and select (which previews),
+  // Left/Right walk the two cells, and the three gestures that open a row's menu
+  // — Shift+F10, the ContextMenu key and Enter on the ⋮ — all reach the same
+  // menu the pointer does.
   body?.addEventListener("keydown", (event) => {
+    const onMenuButton =
+      event.target instanceof HTMLElement && event.target.closest(".version-item-menu") !== null;
     if (event.key === "ArrowDown") moveActive(1);
     else if (event.key === "ArrowUp") moveActive(-1);
     else if (event.key === "Home") moveActive(0, 1);
     else if (event.key === "End") moveActive(0, -1);
+    else if (event.key === "ArrowRight") moveCell(1);
+    else if (event.key === "ArrowLeft") moveCell(-1);
     else if (event.key === "Enter" || event.key === " ") {
+      // On the ⋮ the browser's own click does it; handling it here as well would
+      // open the menu and then immediately toggle it shut.
+      if (onMenuButton) return;
       // Enter and Space open the selection NOW, without the settle: a keyboard
       // reader who has arrowed to a row and pressed Enter has decided.
       clearTimeout(settleTimer);
       if (selectedId) void openPreview(selectedId);
+    } else if ((event.key === "F10" && event.shiftKey) || event.key === "ContextMenu") {
+      if (selectedId) openRowMenu(selectedId);
+    } else if (matchesShortcut(NAME_KEY, event)) {
+      if (selectedId) void queue(() => nameVersion(selectedId));
+    } else if (matchesShortcut(DELETE_KEY, event)) {
+      // The head is the document; deleting it is refused for the same reason its
+      // menu row is disabled, and silently doing nothing would be worse than the
+      // menu row that says so.
+      if (selectedId && selectedId !== headVersionId) void queue(() => removeVersion(selectedId));
     } else if (event.key === "Escape") {
       void close();
     } else {
@@ -801,17 +1206,27 @@ export function createVersionHistory({
     event.preventDefault();
   });
 
-  closeBtn?.addEventListener("click", () => void close());
-  railButton?.addEventListener("click", () => void toggle());
-  bannerBack?.addEventListener("click", () => void closePreview());
-  namedOnlyBox?.addEventListener("change", () => renderList());
-  actions.restore?.addEventListener("click", () => void queue(() => restore(selectedId)));
-  actions.name?.addEventListener("click", () => void queue(() => nameVersion(selectedId)));
-  actions.pin?.addEventListener("click", () =>
-    void queue(() => setPinned(selectedId, !selectedRow()?.pinned)),
+  // Light dismiss, on `pointerdown` — the phase every dismissable surface in this
+  // editor uses, because `mousedown` never fires for a pen or a consumed touch
+  // contact (`light-dismiss-contract.spec.mjs`). The ⋮ itself is excluded so its
+  // own click can close a menu it already opened rather than reopening it.
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!rowMenuEl || rowMenuEl.hidden) return;
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && (rowMenuEl.contains(target) || menuButton?.contains(target))) return;
+      closeRowMenu();
+    },
+    true,
   );
-  actions.remove?.addEventListener("click", () => void queue(() => removeVersion(selectedId)));
-  actions.clear?.addEventListener("click", () => void queue(() => clearHistory()));
+
+  closeBtn?.addEventListener("click", () => void close());
+  for (const entry of entryPoints) entry.addEventListener("click", () => void toggle());
+  bannerBack?.addEventListener("click", () => void closePreview());
+  bannerRestore?.addEventListener("click", () => void queue(() => restore(previewVersionId)));
+  namedOnlyBox?.addEventListener("change", () => renderList());
+  clearBtn?.addEventListener("click", () => void queue(() => clearHistory()));
 
   return {
     isOpen,
@@ -889,11 +1304,11 @@ export function createVersionHistory({
      * A document opened, Settings changed, or the locale changed: the capture
      * interval, the ribbon entry, the row words and the disclosure all follow.
      *
-     * The ribbon entry is reflected HERE rather than in `main.js` because this
-     * module already owns that button's pressed state, and "enabled, or disabled
-     * with the reason" is the same question `unavailableReason` answers for the
-     * File row and the palette — one function, so the three surfaces cannot come
-     * to disagree about why version history is unavailable.
+     * The two ribbon/rail entries are reflected HERE rather than in `main.js`
+     * because this module already owns their pressed state, and "enabled, or
+     * disabled with the reason" is the same question `unavailableReason` answers
+     * for the File row and the palette — one function, so the four surfaces
+     * cannot come to disagree about why version history is unavailable.
      *
      * The rows are rebuilt rather than left stale because their day headings,
      * origins and timestamps are all locale-shaped: a panel that stayed in the
@@ -902,9 +1317,9 @@ export function createVersionHistory({
     reflect() {
       capturePolicy.intervalMs = retention().intervalMs;
       const reason = unavailableReason();
-      if (railButton) {
-        railButton.disabled = Boolean(reason);
-        railButton.title = reason || t("versionHistory.command");
+      for (const entry of entryPoints) {
+        entry.disabled = Boolean(reason);
+        entry.title = reason || t("versionHistory.command");
       }
       if (!isOpen()) return;
       renderList();

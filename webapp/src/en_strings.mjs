@@ -243,6 +243,22 @@ export const EN_STRINGS = Object.freeze({
 
   "versionHistory.command": "Version history",
   "versionHistory.current": "Current version",
+
+  // The row menu: the five actions a single version can have done to it, and
+  // the name of the ⋮ that opens them.
+  //
+  // They were five buttons in `editor.html` until the actions moved onto the row
+  // they act on, so the KEYS are unchanged and every catalogue already answers
+  // them — what moved is where the English is written down, which is here for a
+  // string a script builds. The ⋮'s name carries the version's own timestamp,
+  // because "More actions" repeated once per row names nothing.
+  "versionHistory.rowActions": "Actions for the version from {when}",
+  "versionPanel.restoreThisVersion": "Restore this version",
+  "versionPanel.nameThisVersion": "Name this version…",
+  "versionPanel.keepThisVersion": "Keep this version",
+  "versionPanel.showChanges": "Show changes",
+  "versionPanel.deleteThisVersion": "Delete this version",
+  "versionPanel.actionsSelectedVersion.label": "Actions for the selected version",
   "versionHistory.isNamed": "Named",
   "versionHistory.empty":
     "No versions yet. Versions are kept as you edit, and whenever you save.",
