@@ -4199,6 +4199,117 @@ mod semantic_tests {
     }
 
     #[test]
+    fn a_word_list_style_list_survives_the_semantic_round_trip() {
+        // `docs/142` LST-10, export half. The shape a Word List Style writes: one
+        // abstract that defers with `w:numStyleLink` and declares NO level, one
+        // that answers it behind `w:styleLink`, and the List Style's own
+        // `w:pPr/w:numPr` as the hop between them.
+        //
+        // The sibling test above uses an abstract that carries a level *and* both
+        // links, so it never exercised the level-less deferring abstract — the
+        // only shape whose marker depends on the writer re-emitting two abstracts
+        // and two `w:num`s. If the writer collapsed either, a save would convert
+        // the marked list back into the unmarked one this change just fixed, and
+        // nothing would have said so.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+                <w:r><w:t>item</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="MyListStyle"><w:name w:val="My List Style"/>
+                <w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr>
+            </w:style>
+        </w:styles>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="0"><w:numStyleLink w:val="MyListStyle"/></w:abstractNum>
+            <w:abstractNum w:abstractNumId="1"><w:styleLink w:val="MyListStyle"/>
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>
+                    <w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+            <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+            ("word/numbering.xml", numbering),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        /// The `lvlText` of the level the paragraph at `index` actually paints,
+        /// resolved through the one authority — `None` when the list lost its
+        /// marker.
+        fn marker_template(document: &casual_doc_model::v1::Document, index: usize) -> Option<String> {
+            let casual_doc_model::v1::BlockNode::Paragraph(paragraph) = &document.body()[index]
+            else {
+                return None;
+            };
+            let reference = paragraph.properties.numbering?;
+            document
+                .definitions()
+                .numbering_resolver()
+                .level(reference)?
+                .lvl_text
+                .clone()
+        }
+
+        assert_eq!(
+            marker_template(&m1, 0).as_deref(),
+            Some("%1."),
+            "the imported List-Style paragraph resolves to the linked level"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        assert_eq!(
+            marker_template(&m2, 0).as_deref(),
+            Some("%1."),
+            "a numStyleLink list must still resolve after write -> reopen"
+        );
+        assert_eq!(
+            m1, m2,
+            "the level-less numStyleLink abstract and its defining abstract are a fixed point"
+        );
+        // The writer really did emit a level-less abstract rather than inlining
+        // the levels into the deferring one.
+        let deferring = m2
+            .definitions()
+            .abstract_numbering
+            .iter()
+            .find(|(_, a)| a.num_style_link.is_some())
+            .map(|(_, a)| a)
+            .expect("the deferring abstract survives");
+        assert!(
+            deferring.levels.is_empty(),
+            "the deferring abstract must stay level-less; export must not inline the link"
+        );
+    }
+
+    #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
         // settings.xml carrying the modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,

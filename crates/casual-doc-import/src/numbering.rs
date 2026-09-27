@@ -1,5 +1,17 @@
 //! Numbering-part parsing: OOXML abstractNum/num string ids -> deterministic v1
 //! ids, and w:numPr resolution. Mirrors the styles pattern.
+//!
+//! Two rules this module does **not** own:
+//!
+//! - **Which levels a `w:numPr` may name.** That is
+//!   `casual_doc_model::v1::NumberingResolver`, the one authority the model's
+//!   validator and the layout engine also resolve through
+//!   ([`Numbering::resolve`], `docs/142` LST-10/LST-34).
+//! - **Whether an unmapped element is a loss.** That is
+//!   `crate::noop::carries_no_meaning`, routed inside `Reporter::report`.
+//!
+//! What it does own, besides the mapping, is naming the *attribute*-level losses
+//! the element catch-all cannot see ([`report_unmodeled_attributes`], LST-31).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -482,6 +494,7 @@ fn on_start(
         // `w:lvlOverride/w:lvl` redefinition; both feed the same `current_level`
         // machinery. The override's `w:lvl@ilvl` defaults to the override target.
         b"lvl" if state.current_abstract.is_some() || state.current_override_ilvl.is_some() => {
+            report_unmodeled_attributes(reporter, local, element);
             state.current_level = Some(RawLevel {
                 level: attribute_value(element, b"ilvl")
                     .and_then(|value| value.parse().ok())
@@ -498,10 +511,13 @@ fn on_start(
             }
         }
         // Level detail: number format/text/justify/suffix and the legal flag.
-        b"numFmt" if state.current_level.is_some() => match number_format(element) {
-            Some(format) => set_level(state, |level| level.num_fmt = Some(format)),
-            None => reporter.report(local),
-        },
+        b"numFmt" if state.current_level.is_some() => {
+            report_unmodeled_attributes(reporter, local, element);
+            match number_format(element) {
+                Some(format) => set_level(state, |level| level.num_fmt = Some(format)),
+                None => reporter.report(local),
+            }
+        }
         b"lvlText" if state.current_level.is_some() => {
             match attribute_value(element, b"val").filter(|value| value.len() <= 255) {
                 Some(text) => set_level(state, |level| level.lvl_text = Some(text)),
@@ -631,6 +647,65 @@ fn on_start(
             reporter.report(local);
         }
         _ => {}
+    }
+}
+
+/// Reports the **attributes** of an otherwise-modeled numbering element whose
+/// meaning the model does not carry (`docs/142` LST-31).
+///
+/// Until this existed, `numbering.rs` never called
+/// [`Reporter::report_attribute`](crate::report::Reporter::report_attribute) at
+/// all: the catch-all at the end of `on_start` sees **elements only**, so an
+/// attribute on an element the parser *does* handle fell through it and was
+/// dropped in silence. `word/numbering.xml` is in the consumed set and is
+/// regenerated from the model on a semantic save, so there is no byte retention
+/// behind these either — they are gone, and the no-silent-loss rule (`SKILL.md`
+/// §12, and competitive advantage #2 in §1) says the report has to say so.
+///
+/// What is reported, and why each is a real loss:
+///
+/// - **`w:lvl@w:tplc`** — the level's list-template code. Word writes one on
+///   nearly every authored level; 18 of them in one document of the owner's
+///   sample set, 54 in another. It keys the level back to the entry in the user's
+///   List Library, so a save drops the gallery association.
+/// - **`w:lvl@w:tentative`** — this level was created as a placeholder and Word
+///   may discard it if it is never used. Dropping it makes a tentative level
+///   permanent on reopen, which is a behaviour difference, not bookkeeping.
+/// - **`w:numFmt@w:format`** — the custom number-format picture used when
+///   `w:val="custom"`. The typed model carries only the token, so the picture
+///   that decides what the marker actually reads is lost.
+///
+/// What is deliberately **not** reported, so this does not become a source of
+/// false losses (HF-174 put 621 of those in front of the owner):
+///
+/// - `w:lvl@w:ilvl`, `w:num@w:numId`, `w:abstractNum@w:abstractNumId` and
+///   `w:lvlOverride@w:ilvl` — every one is consumed and modeled.
+/// - `w:nsid` / `w:tmpl` — dropped **by policy** as List-Library gallery keys
+///   (`crate::noop::carries_no_meaning`, and `docs/35`). They are elements, so
+///   they never reached this function; the distinction is recorded here because
+///   `w:tplc` is the same *kind* of identifier and is nonetheless reported: a
+///   `tplc` sits on a level the user can still see and edit, and `35`'s policy
+///   row covers only the two abstract-level GUIDs.
+/// - Anything on an element this parser does not model at all: the element
+///   itself is already one finding, and naming its attributes too would report
+///   one loss twice.
+///
+/// Complexity: O(A) in the attributes of the one element being opened (three
+/// name comparisons each), so O(1) per element and linear in the part overall.
+fn report_unmodeled_attributes(
+    reporter: &mut Reporter,
+    local: &[u8],
+    element: &BytesStart<'_>,
+) {
+    const UNMODELED: &[(&[u8], &[u8])] = &[
+        (b"lvl", b"tplc"),
+        (b"lvl", b"tentative"),
+        (b"numFmt", b"format"),
+    ];
+    for (element_name, attribute) in UNMODELED {
+        if *element_name == local && attribute_value(element, attribute).is_some() {
+            reporter.report_attribute(local, attribute);
+        }
     }
 }
 
