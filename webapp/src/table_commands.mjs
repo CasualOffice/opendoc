@@ -171,9 +171,13 @@ export function tableToolCommands(context, host) {
     // `grid_span`/`vertical_merge` across the span and back-fills the vacated
     // cells. Every existing call site passed two integers, and the engine refuses
     // 1x1 ("choose more than one row or column to split the cell"), so no value a
-    // person could type into the split dialog unmerged anything. The third
-    // argument is not `undefined` for tidiness — `Option<u32>` is what the facade
-    // takes, and `None`/`None` is the branch that means "unmerge".
+    // person could type into the split dialog unmerged anything.
+    //
+    // THE ARITY IS THE FEATURE. The counts are `Option<u32>`, so omitting them is
+    // how JavaScript says `None`, and `None`/`None` is the branch that unmerges.
+    // Passing anything at all — a number, or `undefined` written out for
+    // symmetry — lands in the split path instead. `table_commands.test.mjs`
+    // asserts the argument list for that reason and not the return value.
     //
     // Offered whenever the table is IRREGULAR, i.e. holds a merge somewhere.
     // `TableInfo` reports no per-cell merge state (TBL-20), so "is THIS cell
