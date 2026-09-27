@@ -11,6 +11,31 @@ use crate::{ModelError, NodeId, SnapshotError, SnapshotLimits, enforce_limit};
 /// The schema version stamped on authored and migrated v1 documents.
 pub const SCHEMA_VERSION_V1: u32 = 1;
 
+/// Which inline wrapper's children are being validated, threaded through
+/// `Document::validate_inlines`.
+///
+/// This was a `bool` (`in_wrapper`) while the rule it encoded was "no wrapper
+/// inside any wrapper". It is an enum because that rule is no longer symmetric:
+/// a field is legal inside a hyperlink — every real table of contents relies on
+/// it, because Word writes the row's `PAGEREF` field inside the row's
+/// `w:hyperlink` — while a field inside a *field* and a hyperlink inside anything
+/// stay refused. A boolean cannot distinguish "which parent", so it could only
+/// answer both questions the same way; naming the parent lets each wrapper arm
+/// state its own admissible parents and leaves every other refusal untouched.
+///
+/// Transparent range wrappers (`Revision`, inline `Sdt`) pass their own value
+/// through unchanged: they neither impose nor clear the leaf-only rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InlineWrapper {
+    /// Paragraph level: every inline kind is admissible here.
+    None,
+    /// Inside a `w:hyperlink`. Admits a field; refuses a nested hyperlink.
+    Hyperlink,
+    /// Inside a field's cached result. Leaf inlines only — refuses both a
+    /// hyperlink and a further field.
+    Field,
+}
+
 /// A normalized schema v1 document.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -848,7 +873,7 @@ impl Document {
                 self.validate_inlines(
                     &paragraph.inlines,
                     paragraph.id,
-                    false,
+                    InlineWrapper::None,
                     textbox_depth,
                     0,
                     sdt_depth,
@@ -1042,20 +1067,21 @@ impl Document {
 
     /// Validates one inline sequence. A drawing, hyperlink, field, or text box is a
     /// hard merge boundary (it resets adjacent-run tracking, like a tab or break).
-    /// `in_wrapper` is set while validating a hyperlink's or field's own children,
-    /// so a nested wrapper (hyperlink or field inside either) is rejected — this
-    /// bounds inline nesting to one wrapper level. `textbox_depth` carries the
-    /// enclosing text-box nesting; a text box's blocks restart the table budget.
-    /// `revision_depth` bounds tracked-change (`w:ins`/`w:del`) wrapper nesting; a
-    /// revision is transparent to `in_wrapper` (it neither imposes nor clears the
-    /// leaf-only rule), so only nested revisions bump it. `sdt_depth` bounds
-    /// content-control (`w:sdt`) nesting; an inline sdt is likewise transparent to
-    /// `in_wrapper`, so only nested sdts bump it.
+    /// `wrapper` names the enclosing inline wrapper — [`InlineWrapper::None`] at
+    /// paragraph level, otherwise the hyperlink or field whose own children are
+    /// being validated — and each wrapper arm asks that enum which parents it may
+    /// sit in, so inline nesting stays bounded to one *refused* level per kind.
+    /// `textbox_depth` carries the enclosing text-box nesting; a text box's blocks
+    /// restart the table budget. `revision_depth` bounds tracked-change
+    /// (`w:ins`/`w:del`) wrapper nesting; a revision is transparent to `wrapper`
+    /// (it neither imposes nor clears the leaf-only rule), so only nested revisions
+    /// bump it. `sdt_depth` bounds content-control (`w:sdt`) nesting; an inline sdt
+    /// is likewise transparent to `wrapper`, so only nested sdts bump it.
     fn validate_inlines(
         &self,
         inlines: &[InlineNode],
         owner: NodeId,
-        in_wrapper: bool,
+        wrapper: InlineWrapper,
         textbox_depth: u32,
         revision_depth: u32,
         sdt_depth: u32,
@@ -1164,7 +1190,7 @@ impl Document {
                     previous_run_properties = None;
                 }
                 InlineNode::Hyperlink(link) => {
-                    if in_wrapper {
+                    if wrapper != InlineWrapper::None {
                         return Err(ModelError::NestedHyperlink(link.id));
                     }
                     check_hyperlink_target(&link.target)?;
@@ -1180,7 +1206,7 @@ impl Document {
                     self.validate_inlines(
                         &link.inlines,
                         link.id,
-                        true,
+                        InlineWrapper::Hyperlink,
                         textbox_depth,
                         revision_depth,
                         sdt_depth,
@@ -1188,7 +1214,16 @@ impl Document {
                     previous_run_properties = None;
                 }
                 InlineNode::Field(field) => {
-                    if in_wrapper {
+                    // A field is legal at paragraph level and inside a hyperlink —
+                    // and nowhere else. Every real table of contents puts its
+                    // `PAGEREF` field inside the row's `w:hyperlink` (Word writes it
+                    // that way, and `CT_Hyperlink`'s content model is `EG_PContent`,
+                    // which admits `w:fldSimple` and `w:r`), so refusing it there
+                    // cost the field on import: the cached page number survived as
+                    // flattened text and the TOC could never be updated again.
+                    // A field inside a FIELD stays refused — that is genuine
+                    // unbounded nesting with no interchange meaning here.
+                    if wrapper == InlineWrapper::Field {
                         return Err(ModelError::NestedField(field.id));
                     }
                     check_domain(
@@ -1199,11 +1234,14 @@ impl Document {
                     validate_field_kind(&field.kind)?;
                     check_form_field(field)?;
                     // A field's cached result may be empty; when present it is
-                    // validated as leaf inlines (in_wrapper rejects any wrapper).
+                    // validated as leaf inlines — `InlineWrapper::Field` refuses a
+                    // hyperlink and a field alike, so the leaf-only rule inside a
+                    // field is exactly what it always was, including for a field
+                    // that itself sits inside a hyperlink.
                     self.validate_inlines(
                         &field.inlines,
                         field.id,
-                        true,
+                        InlineWrapper::Field,
                         textbox_depth,
                         revision_depth,
                         sdt_depth,
@@ -1300,14 +1338,14 @@ impl Document {
                     {
                         check_domain(!value.is_empty() && value.len() <= 64, "revision.date")?;
                     }
-                    // A revision is a transparent range marker: `in_wrapper` passes
+                    // A revision is a transparent range marker: `wrapper` passes
                     // through unchanged (it may wrap a hyperlink/field at top level,
                     // and may itself sit inside one), and only nested revisions bump
                     // `revision_depth`.
                     self.validate_inlines(
                         &revision.inlines,
                         revision.id,
-                        in_wrapper,
+                        wrapper,
                         textbox_depth,
                         revision_depth + 1,
                         sdt_depth,
@@ -1323,13 +1361,13 @@ impl Document {
                     }
                     check_sdt_properties(&sdt.properties)?;
                     // An inline sdt is a transparent range wrapper (like a
-                    // revision): `in_wrapper` passes through unchanged (it may wrap
+                    // revision): `wrapper` passes through unchanged (it may wrap
                     // a hyperlink/field and may itself sit inside one), and only
                     // nested sdts bump `sdt_depth`.
                     self.validate_inlines(
                         &sdt.inlines,
                         sdt.id,
-                        in_wrapper,
+                        wrapper,
                         textbox_depth,
                         revision_depth,
                         sdt_depth + 1,
