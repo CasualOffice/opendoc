@@ -1443,6 +1443,44 @@ deliberately out of scope, and D-3 must not be called done on touch until it exi
 
 ---
 
+### 4.4 Two constraints that landed on `main` while this was written
+
+Both arrived in `docs/109` on 2026-09-28 and both bind §4, so they are restated rather than
+left to be rediscovered.
+
+**`HF-186` — every design in §4 paints into `.overlay`, and that layer already breaks a guard.**
+`command-activation-contract`'s inert-control assertion cannot fail: on a document with a caret,
+**8 unrelated DOM mutations arrive within 3s of idle** — five `childList` on `.overlay`, plus
+`#statusToast`'s `class`/`hidden`/`childList` — so `effects.length > 0` is satisfied by
+background churn. It was proven by making **the Table band's sort control a complete no-op**
+while the table sweep still passed. And the obvious fix does not work, for a reason that is
+this document's problem specifically: ignoring `.overlay` also ignores a genuine selection
+effect, because **`table.select.row` paints its accent fill into that same layer.**
+
+The consequence for §4: D-1's boundary handles, D-2's strips, insert targets and drop indicator,
+and D-3's cell rects are all `.overlay` children, so each design **increases** the churn that
+already defeats that guard. Two rules follow.
+
+1. **No design in §4 may be verified by `command-activation-contract`.** Each carries its own
+   assertions (§4.1.9, §4.2.7, §4.3.9), which assert the *guarantee* — the neighbour column
+   shrank, the row landed at index 1, nine cells are shaded — not "some DOM mutation happened".
+   That is the `SKILL.md` §10 rule about asserting the guarantee rather than the mechanism, and
+   here it is also the only assertion that can fail.
+2. **Prefer one overlay child per gesture to many.** D-1 paints a zone's handle only while it is
+   armed rather than a handle per boundary at rest (§4.1.3), which is the right call for
+   affordance reasons anyway and happens to add no resting churn. D-2's insert targets are
+   hover-only for the same reason.
+
+**`HF-216` — six in-tree comments still state the wrong ribbon figure.** `webapp/embed.html`,
+`webapp/src/main.js`, `webapp/src/style.css` (twice), `layout-references-surface.spec.mjs` and
+`ribbon-legibility.spec.mjs` each still say "~55px of slack", and two of them cite `docs/63` and
+`docs/64` as the source — so a reader checking §0.6 against the code will find six statements
+contradicting it. §0.6 is the correct figure and `ribbon-width-budget.spec.mjs` is the artifact
+that derives it; the six comments are HF-216's job, not this document's. Noted so the conflict
+does not read as an error here.
+
+---
+
 ## 5. What the eleven existing table documents now get wrong
 
 All eleven shipped — there is no abandoned table design among `docs/49, 50, 70, 72, 73, 74, 75,
@@ -1486,11 +1524,11 @@ banner; `docs/104` is archived and holds no open table row.
 
 | Row | What it says | Why it is false now |
 | --- | --- | --- |
-| **UX-008** (`105`, `109` row 102) | *"`insert.table` is two different products behind one id"* — ribbon a grid picker, menu/palette a silent 3×3 | Fixed in code: `id: "insert.table"` has `run: () => insertTableBtn.click()`, so every surface opens the **same** grid picker. Its `104` twin HF-148 is already marked Fixed (#528); `105`/`109` were never updated |
-| **UX-012** (`105`, `109` row 110), first half | *"No Table menu on the menu bar"* | `APP_MENU_SECTIONS.table` exists with 19 ids and `menu_taxonomy.test.mjs` asserts set equality with the real command set **in both directions** |
+| **UX-008** (`105`, `109`) | *"`insert.table` is two different products behind one id"* — ribbon a grid picker, menu/palette a silent 3×3 | Fixed in code: `id: "insert.table"` has `run: () => insertTableBtn.click()`, so every surface opens the **same** grid picker. Its `104` twin HF-148 is already marked Fixed (#528); `105`/`109` were never updated |
+| **UX-012** (`105`, `109`), first half | *"No Table menu on the menu bar"* | `APP_MENU_SECTIONS.table` exists with 19 ids and `menu_taxonomy.test.mjs` asserts set equality with the real command set **in both directions** |
 | **UX-012**, second half | *"the palette hides table commands on complex tables"* | It does not hide them — it shows them **disabled with the reason** `"Unavailable for merged or spanned tables"` (the `columnsReason` ladder in `tableMutation`) |
-| **UX-015** (`105`, `109` row 111) | lists the table style gallery as single-surface | `table.style.none` is in the Table menu, and it and the generated `table.style.<name>` rows are in the palette |
-| **FID-L-13** | `105` says Open; `109` row 116 says Partly fixed with the `noWrap` evidence | cross-tracker drift; `109` is the authority. `fitText` and cell `textDirection`-as-rotation are genuinely still open (`text_direction` is read **only** as a no-wrap exemption and rotates nothing) |
+| **UX-015** (`105`, `109`) | lists the table style gallery as single-surface | `table.style.none` is in the Table menu, and it and the generated `table.style.<name>` rows are in the palette |
+| **FID-L-13** | `105` says Open; `109` says Partly fixed with the `noWrap` evidence | cross-tracker drift; `109` is the authority. `fitText` and cell `textDirection`-as-rotation are genuinely still open (`text_direction` is read **only** as a no-wrap exemption and rotates nothing) |
 
 Three `docs/109` rows are genuinely open and directly relevant to this document:
 
