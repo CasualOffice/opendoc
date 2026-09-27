@@ -61,6 +61,57 @@ export async function gotoEditor(page) {
 }
 
 /**
+ * Waits for a FRAMED editor to have booted the engine, opened its document and
+ * finished its first render — `gotoEditor`'s condition, asked of a frame.
+ *
+ * Here rather than inside one embed spec because two of them need it, and two
+ * copies of "is this editor ready" is how one of them ends up waiting for less.
+ */
+export async function waitForFramedEditor(frame) {
+  await frame.waitForFunction(
+    () => {
+      const status = document.getElementById("status");
+      return (
+        status !== null &&
+        !status.classList.contains("error") &&
+        document.querySelectorAll(".page-wrap").length > 0 &&
+        document.body.dataset.fontsReady === "true"
+      );
+    },
+    null,
+    { timeout: 45_000 },
+  );
+}
+
+/**
+ * Mounts one panel of `embed.html` at `role` and returns its live frame.
+ *
+ * Nothing on that page boots on load: each editor holds a ~100 MB WebAssembly
+ * instance and starting two unasked costs a visitor 200 MB. So the host activates
+ * on a click, which is also what makes a spec using this a test of a host DRIVING
+ * an embed rather than of a page that happens to contain one.
+ *
+ * @param {"iframe"|"element"} kind which of the two mounting styles to drive.
+ * @param {string} role one of the five capability roles.
+ */
+export async function mountEmbedPanel(page, kind, role) {
+  const panel = page.locator(`[data-embed="${kind}"]`);
+  await panel.locator("[data-role-select]").selectOption(role);
+  await panel.locator("[data-mount]").click();
+  const iframe = panel.locator("iframe");
+  await expect(iframe).toHaveCount(1);
+  const frame = await (await iframe.elementHandle()).contentFrame();
+  await waitForFramedEditor(frame);
+  // Bring the panel into the HOST's viewport. Playwright scrolls within a frame
+  // but cannot scroll the page the frame is clipped by, so a control that is
+  // perfectly visible inside a below-the-fold embed reports "outside of the
+  // viewport" forever. A host's own user has exactly the same problem, which is
+  // why the fix belongs here rather than in a `force: true`.
+  await panel.scrollIntoViewIfNeeded();
+  return { panel, frame };
+}
+
+/**
  * How many pages the DOCUMENT has, read from the status bar the user reads.
  *
  * Not `.page-wrap` count: the viewer materializes a sheet only for the pages
