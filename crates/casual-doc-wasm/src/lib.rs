@@ -9192,6 +9192,10 @@ impl WasmDocument {
     /// may hold several paragraphs. Single- and cross-paragraph deletion share it,
     /// so both follow docs/86 decision 2 the same way: the author's own pending
     /// insertions are removed outright and only accepted text is suggested deleted.
+    // Eight arguments because `NoteAnchorLengths` is PASSED rather than looked
+    // up: that is the whole point of the index (build once, query O(1)), and the
+    // alternative to the parameter is the linear scan per reference it replaced.
+    #[allow(clippy::too_many_arguments)]
     fn suggest_deletion_into_body(
         &mut self,
         notes: &NoteAnchorLengths,
@@ -10911,6 +10915,10 @@ impl WasmDocument {
 
     /// [`Self::accessibility_tree_window`]'s walk: counts every block so `total`
     /// is the document's real size, and projects only those inside the window.
+    // Eight arguments because `NoteAnchorLengths` is PASSED rather than looked
+    // up: that is the whole point of the index (build once, query O(1)), and the
+    // alternative to the parameter is the linear scan per reference it replaced.
+    #[allow(clippy::too_many_arguments)]
     fn collect_a11y_window(
         &self,
         blocks: &[BlockNode],
@@ -16365,7 +16373,7 @@ fn collect_review_comment_anchors_inner(
                 let mut offset = 0;
                 for inline in &paragraph.inlines {
                     collect_review_comment_inline(
-                        &notes,
+                        notes,
                         inline,
                         paragraph.id,
                         para_len,
@@ -18404,6 +18412,10 @@ fn collect_review_group_members(
     }
 }
 
+// Eight arguments because `NoteAnchorLengths` is PASSED rather than looked up:
+// that is the whole point of the index (build once, query O(1)), and the
+// alternative to the parameter is the linear scan per reference it replaced.
+#[allow(clippy::too_many_arguments)]
 fn collect_review_group_inline(
     notes: &NoteAnchorLengths,
     inline: &InlineNode,
@@ -18718,6 +18730,10 @@ fn review_split_top_level_run(
     offset == cursor
 }
 
+// Eight arguments because `NoteAnchorLengths` is PASSED rather than looked up:
+// that is the whole point of the index (build once, query O(1)), and the
+// alternative to the parameter is the linear scan per reference it replaced.
+#[allow(clippy::too_many_arguments)]
 fn collect_review_comment_inline(
     notes: &NoteAnchorLengths,
     inline: &InlineNode,
@@ -18749,7 +18765,7 @@ fn collect_review_comment_inline(
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
                 collect_review_comment_inline(
-                    &notes, child, node, para_len, offset, projected, starts, out,
+                    notes, child, node, para_len, offset, projected, starts, out,
                 );
             }
         }
@@ -18760,7 +18776,7 @@ fn collect_review_comment_inline(
                     .contributes_to(ReviewProjection::FinalWithMarkup);
             for child in &revision.inlines {
                 collect_review_comment_inline(
-                    &notes,
+                    notes,
                     child,
                     node,
                     para_len,
@@ -18774,7 +18790,7 @@ fn collect_review_comment_inline(
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
                 collect_review_comment_inline(
-                    &notes, child, node, para_len, offset, projected, starts, out,
+                    notes, child, node, para_len, offset, projected, starts, out,
                 );
             }
         }
