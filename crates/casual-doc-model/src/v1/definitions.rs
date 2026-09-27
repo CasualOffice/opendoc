@@ -15,6 +15,8 @@ use super::PropChange;
 use super::{FontName, Rgba};
 // Same rule: the paragraph-spanning field range's own imports go on their own line.
 use super::{FieldKind, FieldRangeId};
+// Same rule: the field update attributes go on their own line.
+use super::FieldUpdateState;
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -1013,6 +1015,12 @@ pub struct FieldRange {
     /// authoritative; this is a convenience for consumers.
     #[serde(default)]
     pub kind: FieldKind,
+    /// The `w:fldLock` / `w:dirty` update attributes, read from the range's
+    /// `w:fldChar` markers. The same type the inline field carries, so a field
+    /// promoted from inline to range (or read back either way) cannot change its
+    /// update semantics by changing its encoding.
+    #[serde(default, skip_serializing_if = "FieldUpdateState::is_empty")]
+    pub update: FieldUpdateState,
 }
 
 /// A media reference (its id is the map key).

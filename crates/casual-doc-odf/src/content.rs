@@ -21,6 +21,7 @@ use casual_doc_model::v1::{
     HorizontalAnchor, HorizontalPosition, VerticalAlign, VerticalAnchor, VerticalPosition,
     WrapDistances, WrapMode,
 };
+use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
@@ -11289,12 +11290,15 @@ fn build_inlines(
                     children,
                 }))
             }
+            // ODF has no counterpart to `w:fldLock` / `w:dirty`, so an
+            // imported ODF field is neither locked nor dirty.
             InlineDraft::Field(kind) => InlineNode::Field(Box::new(Field {
                 id,
                 instruction: field_instruction(kind),
                 kind: kind.clone(),
                 inlines: Vec::new(),
                 form: None,
+                update: FieldUpdateState::default(),
             })),
             InlineDraft::CommentReference(index) => {
                 InlineNode::CommentReference(CommentReference {
@@ -11364,6 +11368,7 @@ fn build_inlines(
                         keyword: instruction.to_owned(),
                     },
                     inlines: Vec::new(),
+                    update: FieldUpdateState::default(),
                     form: Some(FormFieldData {
                         name: control.name.clone(),
                         enabled: None,

@@ -41,6 +41,7 @@ use casual_doc_model::v1::NumberFormat;
 // Same rule: the paragraph-spanning field range's own imports go on their own line.
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
+use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -109,6 +110,8 @@ enum Segment {
         children: Vec<Segment>,
         /// Legacy form-field configuration (`w:ffData`), if this field carried one.
         form: Option<FormFieldData>,
+        /// The `w:fldLock` / `w:dirty` update attributes this field declared.
+        update: FieldUpdateState,
     },
     /// A fully-built text box (its inner ids are already allocated).
     TextBox(TextBox),
@@ -842,6 +845,10 @@ struct FieldAccumulator {
     /// a complex `fldChar begin` field can carry one). `None` until `w:ffData`
     /// opens; finalized into `FormFieldData` when the field commits.
     form: Option<FormFieldBuilder>,
+    /// The `w:fldLock` / `w:dirty` attributes seen so far, merged across the
+    /// field's markers (`w:fldSimple` carries them once; a complex field may
+    /// carry them on any `w:fldChar`).
+    update: FieldUpdateState,
 }
 
 /// A legacy form field's configuration (`w:ffData`) while it is being parsed.
@@ -2532,12 +2539,25 @@ impl BodyParser<'_> {
                     None => self.reporter.report(local),
                 }
             }
-            // A complex field is delimited by field characters inside runs.
+            // A complex field is delimited by field characters inside runs. Each
+            // marker may carry `w:fldLock`/`w:dirty` (`CT_FldChar`), so the flags
+            // are read off every marker and merged rather than only off the
+            // `begin` Word happens to write them on.
             b"fldChar" if self.run_open => {
+                let update = field_update_state(element);
                 match attribute_value(element, b"fldCharType").as_deref() {
-                    Some("begin") => self.begin_field(),
-                    Some("separate") => self.separate_field(),
-                    Some("end") => self.close_field(),
+                    Some("begin") => {
+                        self.begin_field();
+                        self.merge_field_update(update);
+                    }
+                    Some("separate") => {
+                        self.separate_field();
+                        self.merge_field_update(update);
+                    }
+                    Some("end") => {
+                        self.merge_field_update(update);
+                        self.close_field();
+                    }
                     _ => {}
                 }
             }
@@ -6697,6 +6717,7 @@ impl BodyParser<'_> {
                 simple: false,
                 segments: Vec::new(),
                 form: None,
+                update: FieldUpdateState::default(),
             });
             self.wrapper_order.push(WrapperKind::Field);
         } else {
@@ -6717,6 +6738,7 @@ impl BodyParser<'_> {
                 simple: true,
                 segments: Vec::new(),
                 form: None,
+                update: field_update_state(element),
             });
             self.wrapper_order.push(WrapperKind::Field);
         } else {
@@ -6732,6 +6754,38 @@ impl BodyParser<'_> {
         {
             field.in_result = true;
         }
+    }
+
+    /// Folds one `w:fldChar` marker's `w:fldLock`/`w:dirty` attributes into the
+    /// field they belong to.
+    ///
+    /// Three destinations, in the order the markers can arrive:
+    ///
+    /// - the open inline field, which is the ordinary case;
+    /// - the open field RANGE's definition, when the marker is the `end` of a
+    ///   field that outlived its paragraph and was promoted (`docs/128` §4) — the
+    ///   accumulator is gone by then, so the flags go to the registered
+    ///   `FieldRange` instead of being dropped;
+    /// - nothing, for a marker with no field at all, which is unmatched markup;
+    ///   set flags there are REPORTED rather than swallowed, since a stray
+    ///   `w:fldLock` is author intent we cannot place.
+    ///
+    /// O(1) — a `DefinitionMap` lookup on the one open range, never a scan.
+    fn merge_field_update(&mut self, update: FieldUpdateState) {
+        if let Some(field) = self.field.as_mut() {
+            field.update.merge(update);
+            return;
+        }
+        if update.is_empty() {
+            return;
+        }
+        if let Some((range, _)) = self.open_field_range
+            && let Some(definition) = self.parsed_defs.field_ranges.get_mut(&range)
+        {
+            definition.update.merge(update);
+            return;
+        }
+        self.reporter.report(b"fldChar");
     }
 
     /// Closes the outermost field on `fldChar end` or `</w:fldSimple>`, committing
@@ -6800,6 +6854,7 @@ impl BodyParser<'_> {
                     instruction: field.instruction,
                     children,
                     form,
+                    update: field.update,
                 });
             }
         }
@@ -7070,6 +7125,7 @@ impl BodyParser<'_> {
             FieldRange {
                 instruction: field.instruction,
                 kind,
+                update: field.update,
             },
         );
         self.push_segment(Segment::FieldRangeStart { field: range });
@@ -7510,6 +7566,7 @@ impl BodyParser<'_> {
                 instruction,
                 children,
                 form,
+                update,
             } => {
                 let id = self.next_id()?;
                 let mut inlines = Vec::with_capacity(children.len());
@@ -7523,6 +7580,7 @@ impl BodyParser<'_> {
                     kind,
                     inlines,
                     form,
+                    update,
                 })))
             }
             Segment::Math {
@@ -8703,5 +8761,21 @@ mod vml_fill_tests {
                 a: 255
             }))
         );
+    }
+}
+
+/// Reads a field element's `w:fldLock` / `w:dirty` update attributes.
+///
+/// Shared by `w:fldSimple` (`CT_SimpleField`) and every `w:fldChar`
+/// (`CT_FldChar`), which declare the same pair — so the two encodings cannot read
+/// them differently. An absent attribute is `false`, which is the schema default;
+/// it is not an assertion that the field is updatable, which is why
+/// `FieldUpdateState::merge` ORs rather than overwrites.
+///
+/// O(attributes on the element).
+fn field_update_state(element: &BytesStart<'_>) -> FieldUpdateState {
+    FieldUpdateState {
+        locked: is_true(attribute_value(element, b"fldLock").as_deref()),
+        dirty: is_true(attribute_value(element, b"dirty").as_deref()),
     }
 }

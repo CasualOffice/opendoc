@@ -65,6 +65,7 @@ fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
         kind: casual_doc_model::v1::FieldKind::parse(instruction),
         inlines: vec![run(id + 1, cached)],
         form: None,
+        update: Default::default(),
     }))
 }
 
@@ -185,6 +186,7 @@ fn a_cached_result_that_is_not_plain_text_is_no_longer_dropped() {
                 properties: RunProperties::default().into(),
             }))],
             form: None,
+            update: Default::default(),
         }))],
     )]);
     let glyphs: usize = lines(&document)

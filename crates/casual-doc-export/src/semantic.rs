@@ -33,6 +33,7 @@ use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::strip_xml_forbidden;
 use casual_doc_model::v1::BookmarkId;
 use casual_doc_model::v1::DrawingHyperlink;
+use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::PageSize;
 use casual_doc_model::v1::SectionId;
 use casual_doc_model::v1::Watermark;
@@ -720,6 +721,13 @@ pub fn export_document_with_retained_parts(
     // the `w:sectPr` references, so the reference and the part agree by
     // construction rather than by two lists being kept in step.
     let plan = watermark_plan(definitions, &available_media);
+    // Which running bodies a `w:sectPr` actually references. A body no section
+    // resolves to is not written: see `referenced_running_bodies`. The watermark
+    // plan is unaffected — `plan.in_header` is keyed by ids taken from
+    // `section.headers`, so a part carrying a watermark is referenced by
+    // construction, and `plan.synthesized` invents parts that are not in this table
+    // at all and carry their own `w:headerReference`.
+    let (referenced_headers, referenced_footers) = referenced_running_bodies(definitions);
     for _ in 0..plan.conflicts {
         // Two sections with different watermarks sharing one header part: the
         // first in document order won, and this says so rather than letting a
@@ -745,11 +753,49 @@ pub fn export_document_with_retained_parts(
             Disposition::OmittedNotRetained,
         );
     }
+    // An orphaned running body is dropped rather than written, and the drop is
+    // NAMED: the bytes leave the package, so this is reported loss and not silent
+    // loss even though no reader ever displayed them. One entry per region rather
+    // than per body — the feature identity is the same and the report is a set.
+    for (region, orphans) in [
+        (
+            "docx.export.header.unreferenced_dropped",
+            definitions
+                .headers
+                .iter()
+                .filter(|(id, _)| !referenced_headers.contains(id))
+                .count(),
+        ),
+        (
+            "docx.export.footer.unreferenced_dropped",
+            definitions
+                .footers
+                .iter()
+                .filter(|(id, _)| !referenced_footers.contains(id))
+                .count(),
+        ),
+    ] {
+        if orphans > 0 {
+            reporter.record_construct(
+                region,
+                "word/document.xml",
+                "sectPr",
+                None,
+                Disposition::OmittedNotRetained,
+            );
+        }
+    }
     // Headers then footers, each a part with an id-derived relationship id the
-    // section's `w:sectPr` references. Emitted in ascending-id order so the
+    // section's `w:sectPr` references. A body no section references is skipped —
+    // `referenced_running_bodies` says why. Emitted in ascending-id order so the
     // importer (which keys by relationship order) re-allocates matching ids.
     let mut header_parts = 0usize;
-    for (index, (id, header)) in definitions.headers.iter().enumerate() {
+    for (index, (id, header)) in definitions
+        .headers
+        .iter()
+        .filter(|(id, _)| referenced_headers.contains(id))
+        .enumerate()
+    {
         let part_name = format!("word/header{}.xml", index + 1);
         // The watermark this part carries, if any: the shape is built per PART
         // because the image relationship it names has to be one this part declares.
@@ -829,7 +875,12 @@ pub fn export_document_with_retained_parts(
             .with_own_media(own_media),
         );
     }
-    for (index, (id, footer)) in definitions.footers.iter().enumerate() {
+    for (index, (id, footer)) in definitions
+        .footers
+        .iter()
+        .filter(|(id, _)| referenced_footers.contains(id))
+        .enumerate()
+    {
         let (bytes, own_rels, own_media) =
             header_footer_xml("w:ftr", &footer.blocks, definitions, &available_media, None)?;
         extras.push(
@@ -2030,6 +2081,59 @@ const WATERMARK_LINE_HEIGHT_EM: f64 = 1.2;
 
 /// Twips per point (`ST_TwipsMeasure` is 1/20 pt).
 const TWIPS_PER_POINT: f64 = 20.0;
+
+/// The running-body ids some `w:sectPr` in the written package will actually
+/// reference — header ids and footer ids, separately.
+///
+/// # Why the exporter needs this at all
+///
+/// `Definitions::headers` / `::footers` are a table of bodies, not a list of parts
+/// to write. A body nobody references is legal OOXML (Word leaves such parts
+/// behind too) but it is also unbounded: turning Link to Previous off and on *n*
+/// times mints *n* bodies, and a writer that emits every table entry writes all of
+/// them on every save. `docs/128` (Link to Previous) named that and left the choice
+/// to this file; the choice is a reachability pass here, so the invariant holds for
+/// an orphan from *any* source — an edit op, an import of a file that already
+/// carried one, or a future op nobody has written yet — instead of being re-checked
+/// at each op site.
+///
+/// # What counts as a reference
+///
+/// Every `w:sectPr` this writer emits comes from a `SectionBoundary` in
+/// `Definitions::sections`: the body's trailing section, a paragraph's section
+/// break (resolved against the same table), and a `w:sectPrChange`'s prior
+/// snapshot. So the reachable set is the union of each section's `headers` and
+/// `footers` refs plus those of every prior snapshot in its `section_change`
+/// chain. A prior snapshot counts: its refs are written into the revision record,
+/// and a relationship with no part behind it is a broken package (FID-R-06).
+///
+/// Linkage by *absence* needs nothing here: a section that inherits a running body
+/// adds no reference of its own, it resolves to an earlier section's, which is
+/// already in the set.
+///
+/// # Complexity
+///
+/// O(sections + section-change depth), with a bounded number of refs per section
+/// (at most one per page type per region). The caller's filter is then O(parts ·
+/// log parts). Nothing walks the document body.
+fn referenced_running_bodies(
+    defs: &Definitions,
+) -> (BTreeSet<HeaderFooterId>, BTreeSet<HeaderFooterId>) {
+    let mut headers = BTreeSet::new();
+    let mut footers = BTreeSet::new();
+    for section in &defs.sections {
+        let mut boundary = Some(section);
+        while let Some(current) = boundary {
+            headers.extend(current.headers.iter().map(|href| href.reference));
+            footers.extend(current.footers.iter().map(|fref| fref.reference));
+            boundary = current
+                .section_change
+                .as_ref()
+                .map(|change| change.prior.as_ref());
+        }
+    }
+    (headers, footers)
+}
 
 /// A header part synthesized purely to carry a watermark: the section it serves,
 /// the page type its `w:headerReference` claims, and the relationship id both the
@@ -3845,6 +3949,99 @@ fn write_section_note_props(
     Ok(())
 }
 
+/// Emits the three runs that open a complex field: `fldChar begin` (carrying the
+/// `w:ffData` block when the field is a legacy form field, and the
+/// `w:fldLock`/`w:dirty` update attributes when it declares them), the
+/// `w:instrText` instruction, and `fldChar separate`.
+///
+/// **This is the only spelling any field is written in.** The inline
+/// `InlineNode::Field` and the paragraph-spanning `FieldRangeStart` marker both
+/// come through here, so the two encodings cannot drift: a field that fits in a
+/// paragraph and one that spans several produce the same markers, in the same
+/// order, with the same attributes. It replaced a second writer that emitted
+/// `w:fldSimple` for ordinary inline fields — `docs/128` section 5a, the gap that
+/// shape recorded.
+///
+/// The update attributes go on the `begin` marker. `CT_FldChar` allows them on any
+/// marker, Word writes them on `begin`, and one marker is where a reader looks;
+/// the importer merges whatever it finds on any of the three, so the choice is not
+/// load-bearing for our own round trip.
+///
+/// `w:instrText` is written even inside a tracked deletion, where Word writes
+/// `w:delInstrText`. `CT_R` admits both, so the output is schema-valid either way;
+/// `w:instrText` is chosen because the importer reads it and does not read
+/// `w:delInstrText`, so the alternative would lose a deleted field's instruction on
+/// reopen. Recorded as a deliberate difference from Word rather than left ambiguous.
+///
+/// O(1) in document size: four writes plus the form block, independent of the
+/// field's cached result (which the caller writes between this and
+/// `write_field_epilogue`).
+fn write_field_prologue(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    instruction: &str,
+    update: FieldUpdateState,
+    form: Option<&FormFieldData>,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    let mut begin = start("w:fldChar");
+    begin.push_attribute(("w:fldCharType", "begin"));
+    if update.locked {
+        begin.push_attribute(("w:fldLock", "true"));
+    }
+    if update.dirty {
+        begin.push_attribute(("w:dirty", "true"));
+    }
+    match form {
+        // A `w:ffData` block makes the marker an element with children rather than
+        // an empty one.
+        Some(form) => {
+            w.write_event(Event::Start(begin)).map_err(pkg)?;
+            write_form_field_data(w, form)?;
+            w.write_event(Event::End(BytesEnd::new("w:fldChar")))
+                .map_err(pkg)?;
+        }
+        None => w.write_event(Event::Empty(begin)).map_err(pkg)?,
+    }
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    let mut instr = start("w:instrText");
+    instr.push_attribute(("xml:space", "preserve"));
+    w.write_event(Event::Start(instr)).map_err(pkg)?;
+    w.write_event(Event::Text(BytesText::new(&strip_xml_forbidden(
+        instruction,
+    ))))
+    .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:instrText")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    let mut separate = start("w:fldChar");
+    separate.push_attribute(("w:fldCharType", "separate"));
+    w.write_event(Event::Empty(separate)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits the run that closes a complex field (`fldChar end`).
+///
+/// Unconditional, and the counterpart of `write_field_prologue` for both the
+/// inline field and the range's end marker: an unmatched `begin` makes Word read
+/// the rest of the document as instruction text, while a stray `end` is inert.
+///
+/// O(1).
+fn write_field_epilogue(w: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    let mut end = start("w:fldChar");
+    end.push_attribute(("w:fldCharType", "end"));
+    w.write_event(Event::Empty(end)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
 /// Emits a legacy form field's `w:ffData` block (inside a complex field's
 /// `fldChar begin`), in `CT_FFData` order: name, enabled, calcOnExit, entry/exit
 /// macros, help/status text, then the one kind-specific payload.
@@ -5408,63 +5605,27 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:hyperlink")))
                 .map_err(pkg)?;
         }
-        // A field. An ordinary field is a self-contained `w:fldSimple`. A legacy
-        // form field carries a `w:ffData` block, which is only valid inside a
-        // complex field's `fldChar begin` — so it is re-emitted as the four-run
-        // complex-field sequence begin(+ffData) / instrText / separate / end,
-        // with the cached result between separate and end.
-        InlineNode::Field(field) => match &field.form {
-            None => {
-                let mut el = start("w:fldSimple");
-                el.push_attribute(("w:instr", field.instruction.as_str()));
-                w.write_event(Event::Start(el)).map_err(pkg)?;
-                for child in &field.inlines {
-                    write_inline(w, child, ctx, in_deletion)?;
-                }
-                w.write_event(Event::End(BytesEnd::new("w:fldSimple")))
-                    .map_err(pkg)?;
+        // A field, in the only spelling this writer emits: the four-run complex
+        // sequence begin / instrText / separate / end, with the cached result
+        // between `separate` and `end`, and a legacy form field's `w:ffData`
+        // inside the `begin`.
+        //
+        // This used to write an ordinary field as a self-contained `w:fldSimple`
+        // and only a form field as the complex sequence, which normalized every
+        // complex field in the corpus down to the simple spelling. Word writes the
+        // complex spelling for every field it produces, `w:fldSimple` exists only
+        // as a shorthand for a field with nothing nested in it, and anywhere
+        // `w:fldSimple` is legal (`EG_PContent`) a `w:r` is legal too — so the
+        // simple spelling buys nothing and costs the fidelity gap `docs/128` §5a
+        // recorded. One writer now serves the inline field and the
+        // paragraph-spanning range alike.
+        InlineNode::Field(field) => {
+            write_field_prologue(w, &field.instruction, field.update, field.form.as_ref())?;
+            for child in &field.inlines {
+                write_inline(w, child, ctx, in_deletion)?;
             }
-            Some(form) => {
-                // `fldChar begin` carrying the ffData block.
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut begin = start("w:fldChar");
-                begin.push_attribute(("w:fldCharType", "begin"));
-                w.write_event(Event::Start(begin)).map_err(pkg)?;
-                write_form_field_data(w, form)?;
-                w.write_event(Event::End(BytesEnd::new("w:fldChar")))
-                    .map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
-                // The field instruction (`w:instrText`, whitespace preserved).
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut instr = start("w:instrText");
-                instr.push_attribute(("xml:space", "preserve"));
-                w.write_event(Event::Start(instr)).map_err(pkg)?;
-                w.write_event(Event::Text(BytesText::new(&field.instruction)))
-                    .map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:instrText")))
-                    .map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
-                // `fldChar separate`, then the cached-result inlines.
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut separate = start("w:fldChar");
-                separate.push_attribute(("w:fldCharType", "separate"));
-                w.write_event(Event::Empty(separate)).map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
-                for child in &field.inlines {
-                    write_inline(w, child, ctx, in_deletion)?;
-                }
-                // `fldChar end`.
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut end = start("w:fldChar");
-                end.push_attribute(("w:fldCharType", "end"));
-                w.write_event(Event::Empty(end)).map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
-            }
-        },
+            write_field_epilogue(w)?;
+        }
         // A tracked-change or tracked-move run wrapper. Its own runs are deleted
         // text when this deletes (a `Deletion` or a move-source `MoveFrom`) or
         // when already inside a deletion; an insertion or move-destination keeps
@@ -5529,44 +5690,14 @@ fn write_inline(
         // such a document first, so it is unreachable from a valid model.
         InlineNode::FieldRangeStart(marker) => {
             if let Some(range) = ctx.defs.field_ranges.get(&marker.field) {
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut begin = start("w:fldChar");
-                begin.push_attribute(("w:fldCharType", "begin"));
-                w.write_event(Event::Empty(begin)).map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut instr = start("w:instrText");
-                instr.push_attribute(("xml:space", "preserve"));
-                w.write_event(Event::Start(instr)).map_err(pkg)?;
-                w.write_event(Event::Text(BytesText::new(&strip_xml_forbidden(
-                    &range.instruction,
-                ))))
-                .map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:instrText")))
-                    .map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
-                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-                let mut separate = start("w:fldChar");
-                separate.push_attribute(("w:fldCharType", "separate"));
-                w.write_event(Event::Empty(separate)).map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:r")))
-                    .map_err(pkg)?;
+                write_field_prologue(w, &range.instruction, range.update, None)?;
             }
         }
         // The end marker writes the field's epilogue. Unconditional, unlike the
         // start: a `begin` already written needs its `end` whatever the definition
         // table says, because an unmatched `begin` makes Word read the rest of the
         // document as instruction text.
-        InlineNode::FieldRangeEnd(_) => {
-            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
-            let mut end = start("w:fldChar");
-            end.push_attribute(("w:fldCharType", "end"));
-            w.write_event(Event::Empty(end)).map_err(pkg)?;
-            w.write_event(Event::End(BytesEnd::new("w:r")))
-                .map_err(pkg)?;
-        }
+        InlineNode::FieldRangeEnd(_) => write_field_epilogue(w)?,
         // A tracked-move range marker (zero-width). The pairing `w:id` and the
         // move `w:name` are re-emitted verbatim; `w:author`/`w:date` restore the
         // move metadata. The start/end pair is self-contained (the shared

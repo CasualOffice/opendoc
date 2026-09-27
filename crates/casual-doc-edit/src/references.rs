@@ -639,6 +639,9 @@ fn field_node(
         kind,
         inlines,
         form: None,
+        // Neither locked nor dirty: the cached result was just computed, and
+        // freezing a field is a later author decision.
+        update: casual_doc_model::v1::FieldUpdateState::default(),
     })
 }
 
