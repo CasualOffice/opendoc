@@ -5085,19 +5085,21 @@ fn push_run_segments<'a>(inlines: &'a [InlineNode], cum: &mut u32, out: &mut Vec
                     properties: &run.properties,
                 });
             }
-            InlineNode::Hyperlink(link) => push_run_segments(&link.inlines, cum, out),
-            InlineNode::Revision(revision)
-                if revision
-                    .kind
-                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
-            {
-                push_run_segments(&revision.inlines, cum, out);
-            }
-            InlineNode::Revision(_) => {}
-            InlineNode::Sdt(sdt) => push_run_segments(&sdt.inlines, cum, out),
-            other => {
-                *cum = cum.saturating_add(inline_text_len(other));
-            }
+            // The wrapper set comes from [`transparent_children`] rather than a
+            // second hand-maintained list beside it. It WAS such a list, and it
+            // had drifted: the write side descended into a field's cached result
+            // and this one did not, so a caret inside a `FORMTEXT` blank reported
+            // the paragraph's default formatting to the toolbar while typing
+            // there correctly inherited the field run's. One rule, one place.
+            //
+            // Identical to the old arms for every other kind: a non-contributing
+            // revision is not transparent and its `inline_text_len` is 0, so the
+            // `None` branch advances the cursor by nothing, exactly as the
+            // explicit `Revision(_) => {}` arm did.
+            _ => match transparent_children(inline) {
+                Some(children) => push_run_segments(children, cum, out),
+                None => *cum = cum.saturating_add(inline_text_len(inline)),
+            },
         }
     }
 }

@@ -28,7 +28,10 @@
 
 use std::str::FromStr as _;
 
-use casual_doc_edit::{EditError, FieldRefusal, Operation, Pos, Range, apply, find_paragraph_any};
+use casual_doc_edit::{
+    EditError, FieldRefusal, Operation, Pos, Range, apply, caret_format, find_paragraph_any,
+    format_state,
+};
 use casual_doc_import::ImportConfig;
 use casual_doc_model::v1::{BlockNode, Document, Field, FieldKind, InlineNode};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -491,10 +494,57 @@ fn only_the_pagination_dependent_fields_refuse_an_interior_edit() {
     }
 }
 
+/// The read side must see what the write side edits.
+///
+/// Making an editable field's result reachable by the edit primitives is only
+/// half a capability: the toolbar's bold/italic state at a caret, and the
+/// formatting new typing there inherits, come from the reflection walk. That walk
+/// kept its OWN list of editing-transparent wrappers and a field was not on it,
+/// so a caret inside a field result reported the paragraph's defaults — B looked
+/// off over bold text, and pressing it "turned on" what was already on. Both
+/// walks now read one rule.
+#[test]
+fn the_toolbar_sees_the_formatting_inside_an_editable_field_result() {
+    let document = one_field_document_styled(" TOC \\o \"1-3\" ", "AB", true);
+    let node = all_paragraph_ids(&document)[0];
+
+    assert!(
+        caret_format(&document, node, 1).bold,
+        "a caret inside the field result inherits the result run's bold",
+    );
+    assert!(
+        format_state(
+            &document,
+            Range {
+                start: Pos::new(node, 0),
+                end: Pos::new(node, 2),
+            },
+        )
+        .bold,
+        "and a range over it reports bold uniformly",
+    );
+
+    // The negative half, so the assertions above cannot pass by returning `true`
+    // for everything.
+    let plain = one_field_document_styled(" TOC ", "AB", false);
+    let plain_node = all_paragraph_ids(&plain)[0];
+    assert!(!caret_format(&plain, plain_node, 1).bold);
+}
+
 /// One paragraph holding one field whose cached result is `result`.
 fn one_field_document(instruction: &str, result: &str) -> Document {
+    one_field_document_styled(instruction, result, false)
+}
+
+/// [`one_field_document`] with the cached result's run optionally bold, for the
+/// reflection guard.
+fn one_field_document_styled(instruction: &str, result: &str, bold: bool) -> Document {
     use casual_doc_model::v1::{Definitions, Paragraph, ParagraphProperties, Run, RunProperties};
     let id = |counter: u64| NodeId::from_parts(9, counter).unwrap();
+    let properties = RunProperties {
+        bold: bold.then_some(true),
+        ..RunProperties::default()
+    };
     let field = Field {
         id: id(3),
         instruction: instruction.to_owned(),
@@ -505,7 +555,7 @@ fn one_field_document(instruction: &str, result: &str) -> Document {
         kind: FieldKind::parse(instruction),
         inlines: vec![InlineNode::Run(Run {
             id: id(4),
-            properties: RunProperties::default().into(),
+            properties: properties.into(),
             text: result.to_owned(),
         })],
         form: None,
