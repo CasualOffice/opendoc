@@ -253,12 +253,18 @@ test("the Styles gallery applies a real style and stays inside the band's width 
   expect(rows).toBe(defined);
   await page.keyboard.press("Escape");
 
-  // The width budget, stated as a number rather than as "the same width as the
-  // control above it" — there is no control above it any more. 234px is what the
-  // group measured when it still carried the select, and the Home band had 10px of
-  // slack at 1280px, so the group must not grow past that or a whole group is exiled
-  // into the "⋯" overflow. The no-horizontal-scrollbar rule at the top of this file
-  // is the other half of the same guarantee.
+  // The styles group must not grow. 234px is what it measured when it still
+  // carried the select, and keeping it there is what makes the replacement a
+  // like-for-like swap rather than a widening.
+  //
+  // The JUSTIFICATION that used to be written here was wrong and is now deleted:
+  // it said the Home band "had 10px of slack at 1280px" and that growing past
+  // 234px would exile a group into the "⋯" overflow. Measured, the band has ~288px
+  // of headroom, and growing a group produces a HORIZONTAL SCROLLBAR — the
+  // overflow button tracks viewport width, not content width. So the cap here is
+  // about this control's own footprint, not about a band that was about to
+  // overflow. The budget itself is derived in `ribbon-width-budget.spec.mjs`; the
+  // no-horizontal-scrollbar rule at the top of this file is the real second half.
   const groupWidth = await page.evaluate(
     () =>
       document.querySelector('[data-group="styles"]').getBoundingClientRect()
