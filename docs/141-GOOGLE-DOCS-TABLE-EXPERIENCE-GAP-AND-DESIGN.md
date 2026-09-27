@@ -855,11 +855,18 @@ L = a lane-month or a new type in a shared crate.
 
 ### 2.1 The shape of the table
 
-- **UI-only: 17 rows.** More than half, and they include every one of the six cheapest.
-- **facade+UI: 14 rows.**
-- **facade alone: 5 rows.**
-- **engine: 3 rows** — TBL-16 (the cell-selection type), TBL-19 (merge-tolerant column ops),
-  TBL-30 (band period). Recipe: count the `Class` column of §2.
+Counted off the `Class` column above, enumerated so the figures are checkable rather than
+asserted:
+
+| Class | Count | Rows |
+| --- | --- | --- |
+| **UI-only** | **15** | TBL-01, 02, 03, 04, 05, 07, 13, 18, 23, 31, 34, 35, 36, 37, 38 |
+| **facade+UI** | **14** | TBL-06, 08, 09, 10, 11, 12, 14, 17, 21, 27, 28, 29, 32, 33 |
+| **facade alone** | **6** | TBL-15, 20, 22, 24, 25, 26 |
+| **engine** (each also needing facade and UI) | **3** | TBL-16 (the cell-selection type), TBL-19 (merge-tolerant column ops), TBL-30 (band period) |
+
+15 + 14 + 6 + 3 = 38. Five of the six cheapest rows are UI-only; the sixth (TBL-06,
+`w:cantSplit`) needs one serde field.
 
 That distribution is the headline for planning: **the table experience is not blocked on the
 engine.** Two of the three engine rows are quality refinements of rows that can ship without
@@ -1433,3 +1440,167 @@ deliberately out of scope, and D-3 must not be called done on touch until it exi
 5. `Shift+Right` within one cell still extends a **text** selection. *Mutation:* make the cell
    switch unconditional and this must go red — the guard that stops D-3 from breaking ordinary
    typing.
+
+---
+
+## 5. What the eleven existing table documents now get wrong
+
+All eleven shipped — there is no abandoned table design among `docs/49, 50, 70, 72, 73, 74, 75,
+89, 90, 91, 92`. What has gone stale is the **deferral prose**: seven of the eleven still tell a
+reader that something is deferred, refused or unsupported which the code now does. That matters
+because a deferral is how the next lane decides what to build, and a stale one either duplicates
+finished work or hides a capability nobody knows is there.
+
+**Nothing below is edited by this document.** Each row states the sentence and the anchor that
+disproves it, and §6 files them.
+
+| Doc | The sentence that is now false | What the code does | Anchor |
+| --- | --- | --- | --- |
+| **49** | *"This slice does not add table-style cascade, cell spacing, bidi/alignment, floating tables, or styled/segmented border paint."* | **all five** have since landed | `fn active_table_regions` (`cascade.rs`), `fn cell_box_spacing` (`block.rs`), `tbl_bidi_visual` in `flow.rs`, `crates/casual-doc-layout/src/table_float.rs` (24 fns), `struct ResolvedBorderSegment` (`block.rs`) |
+| **49** | *"Differently styled side segments within one vertical merge continue to use the restart cell's side appearance."* | `docs/50` §6 explicitly reversed this — a vertical-merge restart copies the closing edge **and its resolved segments** from the final continuation | `struct ResolvedBorderSegment { offset, length, edge }` |
+| **50** | deferral: *"non-zero cell-spacing conflict behavior"* | shipped as `docs/92` | `fn cell_box_spacing`, `CellBoxSpacing` |
+| **50** | deferral: *"table-style/conditional-format border cascade"* | shipped as `docs/89` | `cascade.rs` `TableStyleLayer.table_borders` / `.cell_borders` |
+| **70** | *"split into five groups"* (the Table band) | **six** labelled groups plus a context hint — `Style` was added, and `Rows & columns` absorbed distribute and sort, both of which doc 70 deferred | `sed -n '/id="panelTable"/,/id="panelView"/p' webapp/editor.html \| grep rgroup-label` |
+| **70** | *"The ribbon stays one row and horizontally scrolls at narrow widths."* | it does **not** scroll — groups collapse into the shared `⋯` overflow, and `ribbon-width-budget.spec.mjs` treats any band hscroll as a **failure** | `ribbon-width-budget.spec.mjs`; `docs/64` |
+| **70** | deferrals: *"distribute rows/columns, multi-count split-cell UI, styles gallery, sort, formulas, captions, alt-text authoring"* | **seven of the eight shipped.** Only *"arbitrary rectangular drag selection"* has not — which is TBL-16, the deepest row in §2 | `data-table-distribute`, `#splitCellRows`/`#splitCellColumns`, `#tableStyleMenu`, `data-table-sort`, `#tableFormula`, `#tableCaption`, `#tableDescription` |
+| **72** | *"vertical and multi-row subdivision remains explicitly rejected until row insertion/removal can be made container-safe."* | multi-row split shipped: `split_table_cell_counts` accepts up to 20 rows and calls `split_cell_rows_phase` when `rows > 1`, exercised by the e2e case *"split an ordinary cell into a rows x columns grid (Word Split Cells)"*. What is **still** refused is far narrower — splitting a **vertically merged** cell | `fn split_table_cell_counts`; the refusal string `"splitting a vertically merged cell is not supported"` |
+| **73** | *"It sorts by the first cell's plain text using Unicode case-folded lexical order"* | it sorts by **the caret's own column** (`column < 0` means "the caret's"), and there is a guard named for exactly that. Two smaller drifts: the comparison is `to_lowercase()`, not Unicode case-folding; and there is an undocumented refusal `"sorting requires at least two data rows"`. The doc also omits `HistoryKind::TableStructure` | `js_name = sortTable`; the e2e test *"table sort keys off the column containing the caret, not always the first"* |
+| **89** | deferrals: *"table alignment/bidi layout"*, *"non-zero cell-spacing conflict behavior"*, *"floating-table placement"* | all three shipped (`docs/91`, `docs/92`, `table_float.rs` — the last for top-level body tables; nested and running-content positioning is genuinely still open, `docs/109` FID-L-07b) | as above |
+| **89** | deferral: *"no-wrap/fit-text"* | **half** shipped — `w:noWrap` is consumed; `fit_text` has **zero** consumers (recipe: `grep -rn fit_text crates/casual-doc-layout crates/casual-doc-render \| wc -l` → 0), so that half is still honest | `fn cell_no_wrap_applies` in `flow.rs` |
+| **91** | deferral: *"floating tables"* | shipped for top-level body tables | `crates/casual-doc-layout/src/table_float.rs` |
+
+**Accurate as written:** `docs/92`, `docs/74`, `docs/75`. `docs/90`'s four remaining deferrals
+(natural-size media probing, chart/OLE parsing, anchored floats in table width, Word's full
+preferred-width negotiation) could not be disproved and are marked **UNVERIFIED** — `docs/105`
+OO-014 independently records charts as undrawn, which is consistent with them still standing.
+
+**`docs/91` is the best-maintained of the eleven** and shows the habit that would have prevented
+the rest: it carries its own correction inline — *"Cell spacing subsequently landed in
+`P1F-TBL-CELL-SPACING` (doc 92)"*. A deferral list that names the doc that later closed each item
+does not rot.
+
+### 5.1 Three tracker rows about tables are stale in the other direction
+
+Reported here rather than edited, per the brief. **`docs/109` is the live queue** per its own
+banner; `docs/104` is archived and holds no open table row.
+
+| Row | What it says | Why it is false now |
+| --- | --- | --- |
+| **UX-008** (`105`, `109` row 102) | *"`insert.table` is two different products behind one id"* — ribbon a grid picker, menu/palette a silent 3×3 | Fixed in code: `id: "insert.table"` has `run: () => insertTableBtn.click()`, so every surface opens the **same** grid picker. Its `104` twin HF-148 is already marked Fixed (#528); `105`/`109` were never updated |
+| **UX-012** (`105`, `109` row 110), first half | *"No Table menu on the menu bar"* | `APP_MENU_SECTIONS.table` exists with 19 ids and `menu_taxonomy.test.mjs` asserts set equality with the real command set **in both directions** |
+| **UX-012**, second half | *"the palette hides table commands on complex tables"* | It does not hide them — it shows them **disabled with the reason** `"Unavailable for merged or spanned tables"` (the `columnsReason` ladder in `tableMutation`) |
+| **UX-015** (`105`, `109` row 111) | lists the table style gallery as single-surface | `table.style.none` is in the Table menu, and it and the generated `table.style.<name>` rows are in the palette |
+| **FID-L-13** | `105` says Open; `109` row 116 says Partly fixed with the `noWrap` evidence | cross-tracker drift; `109` is the authority. `fitText` and cell `textDirection`-as-rotation are genuinely still open (`text_direction` is read **only** as a no-wrap exemption and rotates nothing) |
+
+Three `docs/109` rows are genuinely open and directly relevant to this document:
+
+- **HF-165** — arrow keys skip a whole table whose cells lie outside the current column, because
+  `move_vertical` prefers candidates whose cell x-range contains the affinity *globally*. Related
+  to 1.7's arrow-key row and to `navCaret`'s `recoverVerticalMove` patch.
+- **HF-204** — a page break inside a table cell is refused where Word splits the row.
+- **FID-L-23** — the line breaker splits a line that fits its measure exactly, so **a cell can
+  wrap one line short of its own intrinsic width**. That is a table-visible defect that no amount
+  of interaction work will fix.
+
+---
+
+## 6. Rows to file — the owner applies these centrally
+
+Per the brief, this document does not edit `docs/104`, `105`, `109` or `14`. The rows to file:
+
+**New rows (interaction):** TBL-01 … TBL-38 from §2. If they are filed as a single themed row
+rather than 38, the three that must survive individually are **TBL-01** (Tab appends a row),
+**TBL-02** (unmerge unreachable) and **TBL-16** (cell-range selection), because the first two are
+XS and the third gates six others.
+
+**Close or amend as already fixed:** UX-008, UX-012 (both halves), UX-015's table-gallery clause;
+and reconcile FID-L-13 between `105` and `109`.
+
+**Doc corrections (§5):** `docs/49` compatibility boundary and its final paragraph; `docs/50`
+deferrals 3 and 4; `docs/70`'s group count, its ribbon-scroll rule, and seven of its eight
+deferrals; `docs/72`'s follow-up paragraph; `docs/73`'s opening sentence plus the two drifts and
+the missing refusal; `docs/89`'s three shipped deferrals and the half-shipped fourth; `docs/91`'s
+floating-table deferral. **`docs/70` is the one that matters most**, because it is the only
+interaction document of the eleven and its deferral list is what a lane would read before
+starting any of §4.
+
+**Engine rows worth their own entry:** `Operation::SetTableRowProperties` (every row-level change
+today clones and replaces the whole table through `ReplaceTable` — an O(table) undo payload for a
+one-flag change, which will matter for OT granularity, ADR-033); merge-tolerant
+`InsertColumn`/`DeleteColumn` (TBL-19); a layout consumer for
+`row_band_size`/`col_band_size` (TBL-30).
+
+**Test rows:** TBL-37 (nothing drags a column) and TBL-38 (the table formula UI has zero
+coverage — `grep -rn 'tableFormula' webapp/tests/` returns nothing, so the whole of `docs/75`'s
+UI is unexercised in the webapp suite).
+
+---
+
+## 7. What this document deliberately leaves out
+
+- **Any code change.** Every code domain was occupied when this was written: `webapp/**` by SDK
+  Phase 3, `webapp/src/drafts.mjs` by version history, `crates/casual-doc-wasm` by a container-set
+  lane, and `casual-doc-edit|model|layout|import|export|odf` by a footer-field lane. §4 is
+  buildable as written; none of it was built here.
+- **Table *rendering* fidelity.** `docs/49, 50, 89, 90, 91, 92` own it and are strong (§3). The
+  open rendering rows — FID-L-07b (nested/running-content floating tables), FID-L-21 (a ~240 twip
+  bottom-edge divergence), FID-L-23 (a cell wrapping one line short) — are real and are not
+  restated here beyond §5.1, because they are not what the owner's report is about.
+- **Table of contents / table of figures** (`docs/109` OO-001). "Table" in a different sense.
+- **Table formulas beyond the current four functions** (`docs/105` OO-008, blocked on cell
+  references and ranges). An engine capability row, not an interaction row.
+- **Touch text-selection grips.** D-3's touch path needs them and they do not exist for text
+  either (`grep -rn 'selection-grip\|selHandle\|selectionHandle' webapp/src/` → zero hits). That
+  is a general selection row, larger than this document, and D-3 explicitly must not be called
+  done on touch until it lands (§4.3.7).
+- **A localisation sweep.** Two unlocalised table strings were found in passing
+  (`Selected table ${mode}`, and `runNodeEdit`'s raw engine message) and are filed as TBL-04 and
+  a note in §4.0, but the product's wider `t()` coverage was not audited.
+- **A `data-command` stamping pass on the Table band.** §0.3 found the band carries no
+  `data-command`, so ribbon reachability is not machine-checkable for tables. That is `docs/105`
+  UX-005's residue and belongs to that row, not to this one — but no design in §4 may assume a
+  SURFACE table exists.
+- **ONLYOFFICE's table UI as a target.** Their border hit-testing is ahead of ours (1.1, 1.3) and
+  is cited where it informs a design, but the brief's bar is Google Docs and in most rows Docs is
+  ahead of both.
+- **Any visual or token change.** `docs/63` says propose, do not restyle. Every design in §4
+  reuses an existing class (`.table-col-resize-handle`, `.table-col-resize-preview`,
+  `.table-cell-selection`) or an existing CSS cursor keyword. The two places a design would
+  benefit from a new visual — a custom strip-arrow cursor bitmap, and any resting chrome on a
+  hovered table — are named as such and left for the owner.
+- **A number for how much faster D-1 makes things.** §1.13 and §4.1.1 publish the *complexity*
+  and the call-count arithmetic, which are derivable from the two functions cited. A millisecond
+  figure would have needed a code change to instrument, and `SKILL.md` §8 asks for a doubling
+  guard rather than a timing threshold anyway.
+
+---
+
+## 8. Every published number, and how to re-derive it
+
+| Number | Recipe |
+| --- | --- |
+| 23 `table.*` ids / 19 invocable | `grep -oE '(id: \|tableMutation\()"table\.[A-Za-z.]+"' webapp/src/main.js \| grep -oE 'table\.[A-Za-z.]+' \| sort -u \| wc -l`, minus the 4 `submenu:` containers |
+| 53 v1 ops / 9 table ops | `awk '/^pub enum Operation \{/,/^\}/' crates/casual-doc-edit/src/lib.rs \| grep -oE '^    [A-Z][A-Za-z0-9]* \{' \| tr -d ' {' \| wc -l` and `… \| grep -cE 'Row\|Column\|Table'` |
+| 425 facade exports / 66 table-related | brace-match every `#[wasm_bindgen]` `impl` block in `crates/casual-doc-wasm/src/lib.rs` and list its `pub fn`s with any `js_name` override. A plain `grep js_name` under-counts: wasm-bindgen exports a `pub fn` without `js_name` under its snake_case name, and several `TableInfo` getters have none |
+| 19 Table-band buttons | `awk '/id="panelTable"/,/id="panelView"/' webapp/editor.html \| grep -c '<button'`; cross-check `TABLE_FACES` in `webapp/src/ribbon_faces.mjs` (18 `face` + 1 `chooser`) |
+| 6 labelled Table-band groups | `sed -n '/id="panelTable"/,/id="panelView"/p' webapp/editor.html \| grep -c rgroup-label` |
+| 32 pointer targets, 4 of them table | `CURSOR_TARGETS` in `webapp/src/pointer_cursor.mjs`; `pointer_cursor.test.mjs` lists the `unprobed` rows back |
+| 64 `drawSelection()` call sites | `grep -c 'drawSelection()' webapp/src/main.js` |
+| 14 `tableSelection = null` sites | `grep -c 'tableSelection = null' webapp/src/main.js` |
+| 0 `pointerType` reads in the webapp | `grep -rn 'pointerType' webapp/src/ \| wc -l` |
+| 0 table commands in the compact toolbar | `grep -c 'table\.' webapp/src/compact_toolbar.mjs` |
+| 0 `fit_text` layout consumers | `grep -rn fit_text crates/casual-doc-layout crates/casual-doc-render \| wc -l` |
+| `cant_split` has no authoring writer | `grep -rn cant_split crates/ \| grep '\.rs:'` → 11 lines: import ×3, export, RTF, model ×2, one `flow.rs` read, one `paginate.rs` test |
+| `row_band_size` has no layout consumer | `grep -rn 'row_band_size\|col_band_size' crates/ --include='*.rs'` → import, export, model only |
+| 9 orphan facade setters | `grep -rIl --exclude-dir=node_modules --exclude-dir=pkg "\bsetTableRowHeight\b" webapp packages` (and the same for the other eight) → no hits |
+| Handle geometry: 10px / ±5px | `.overlay .table-col-resize-handle` in `webapp/src/style.css` |
+| Commit dead zone: 8 twips; UI floor: 72 twips | `finishTableColumnResize` and `updateTableColumnResize` in `webapp/src/main.js` |
+| Facade clamps: 1..31 680 twips; 1..50 rows, 1..20 columns | `set_table_column_width_at`, `set_table_row_height`, `insert_table` in `crates/casual-doc-wasm/src/lib.rs` |
+| Handle painting cost: `R × (C−1)` page-tree scans | read `fn table_column_resize_handles` (its `for row … for col …` over `layout.cell_rect`) together with `LayoutSnapshot::cell_rect` in `crates/casual-doc-layout/src/hittest.rs` (its `for page … for placed …`) |
+| Ribbon: ~288px Home headroom, 120px floor, 1017px minimum viewport | `webapp/tests/e2e/ribbon-width-budget.spec.mjs` — grow the last `.rgroup` with a pad in 4px steps, predicate = nothing exiled **and** no hscroll; logged as `RIBBON_HOME_HEADROOM_AT_1280` |
+| ONLYOFFICE: ±3px border tolerance, three select zones, no mobile border hit-testing | `reference/sdkjs/word/Editor/Table.js:3515` (`IsTableBorder`) and `CTable.prototype.private_CheckHitInBorder` (`nRadius = GetMMPerDot(3)`, `RowSelection` / `ColumnSelection` / `CellSelection`, `IsMobileVersion()`) |
+| WCAG target sizes: 24×24 (2.5.8), 44×44 (2.5.5) | W3C WCAG 2.2, not a competitor claim |
+
+**Every Google Docs behaviour in this document is tagged `[K]` and is knowledge, not a
+citation** — see §0.2. There is no Docs source in this environment and it cannot be run from
+here. Where a `[K]` row turns out to be wrong, the row is wrong; the anchors on our side are not.
