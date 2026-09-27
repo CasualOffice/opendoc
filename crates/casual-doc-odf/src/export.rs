@@ -1697,19 +1697,46 @@ impl Writer {
             match inline {
                 InlineNode::Revision(revision) => match revision.kind {
                     RevisionKind::Insertion => {
-                        self.assign_revision(revision);
+                        self.assign_revision(revision, None);
                         // An insertion's children ARE emitted in the body.
                         self.collect_revisions_in_inlines(&revision.inlines);
                     }
                     RevisionKind::Deletion => {
-                        // A deletion's content is flattened into its region, not
-                        // emitted in the body — so assign a region only when there
-                        // is flattenable content (an empty flatten would emit an
-                        // unresolvable marker), and do NOT recurse (a nested
-                        // revision would orphan-declare its own region that no body
-                        // marker references).
-                        if !flatten_inline_text(&revision.inlines).is_empty() {
-                            self.assign_revision(revision);
+                        // A deletion's content is flattened into its region rather
+                        // than emitted in the body, so the flatten happens HERE,
+                        // once, and its text is handed to `assign_revision` (the
+                        // region is the only place deleted content survives). Do
+                        // NOT recurse — a nested revision would orphan-declare a
+                        // region no body marker references.
+                        //
+                        // The region (and therefore the body's `text:change`
+                        // marker) is declared whenever the flatten produced text.
+                        // `flatten_inline_text` now projects every text-bearing
+                        // inline kind — a field result, a symbol, an equation, the
+                        // hyphens, a positional tab, a text box, a group text box —
+                        // so a deletion made only of symbols keeps its region and
+                        // its marker instead of vanishing.
+                        //
+                        // A deletion with NO text projection at all (only a
+                        // drawing, an embedded object, a horizontal rule, or bare
+                        // anchors) still declares nothing: our own importer models a
+                        // `text:change` only when its region carries deleted text
+                        // (`content.rs`, `meta.deleted`), so emitting an empty
+                        // region would write output this writer's own reader drops —
+                        // breaking the export fixed point that
+                        // `deletion_wrapping_non_text_content_stays_idempotent`
+                        // guards. The tracked change is therefore dropped, and that
+                        // is reported here as a loss of the CHANGE, distinct from
+                        // `odt.export.revision`, which only says its content
+                        // degraded.
+                        let budget = self.limits.max_recursion_depth;
+                        let deleted =
+                            flatten_inline_text(&revision.inlines, &mut self.reporter, budget);
+                        if deleted.is_empty() {
+                            self.reporter
+                                .record("odt.export.deleted_revision", ModelOutcome::Omitted);
+                        } else {
+                            self.assign_revision(revision, Some(deleted));
                         }
                     }
                     _ => self.collect_revisions_in_inlines(&revision.inlines),
@@ -1741,7 +1768,11 @@ impl Writer {
         }
     }
 
-    fn assign_revision(&mut self, revision: &Revision) {
+    /// Records `revision`'s `text:change-id` and its `text:tracked-changes`
+    /// region. `deleted_text` is `Some` (possibly empty) exactly for a deletion,
+    /// whose content lives in the region rather than the body; the caller has
+    /// already flattened it so the walk stays single-pass. Complexity: O(1).
+    fn assign_revision(&mut self, revision: &Revision, deleted_text: Option<String>) {
         if self.revision_change_ids.contains_key(&revision.id) {
             return;
         }
@@ -1760,8 +1791,11 @@ impl Writer {
             .insert(revision.id, change_id.clone());
         // A deletion declares its content in the region (the body carries only a
         // point marker); an insertion's content stays in the body.
-        let deleted_text = (revision.kind == RevisionKind::Deletion)
-            .then(|| flatten_inline_text(&revision.inlines));
+        debug_assert_eq!(
+            deleted_text.is_some(),
+            revision.kind == RevisionKind::Deletion,
+            "a deletion carries its flattened region text; nothing else does"
+        );
         self.revision_regions.push(RevisionRegion {
             change_id,
             author: revision.author.clone(),
@@ -5593,7 +5627,6 @@ fn field_projects_inlines(field: &Field) -> bool {
     }
 }
 
-/// One region to declare in `text:tracked-changes`. `deleted_text` is `Some` for
 /// A form control to declare in `office:forms`.
 #[derive(Clone, Debug)]
 enum FormControlOut {
@@ -5605,6 +5638,7 @@ enum FormControlOut {
     DropDown(Vec<String>),
 }
 
+/// One region to declare in `text:tracked-changes`. `deleted_text` is `Some` for
 /// a deletion (whose content lives in the region, not the body) and `None` for an
 /// insertion.
 #[derive(Clone, Debug)]
@@ -5615,25 +5649,204 @@ struct RevisionRegion {
     deleted_text: Option<String>,
 }
 
-/// Flattens a revision's inline content to plain text (concatenating run text and
-/// recursing into wrappers) — the deleted content projection written into a
-/// `text:deletion` region.
-fn flatten_inline_text(inlines: &[InlineNode]) -> String {
+/// Flattens a revision's inline content into the plain-text projection written
+/// into its `text:deletion` region — the only place a tracked deletion's content
+/// survives in ODT, because ODF declares deleted content in the leading
+/// `text:tracked-changes` block instead of inline.
+///
+/// Every `InlineNode` kind is decided explicitly rather than falling through a
+/// wildcard: a text-bearing kind contributes its characters (`write_text` turns
+/// `\t`/`\n` into `text:tab`/`text:line-break` and space runs into `text:s`), a
+/// transparent wrapper is recursed into, and a kind with no plain-text
+/// projection contributes nothing and is reported through `reporter`. Nothing is
+/// invented for a non-text object: injecting a drawing's alt text here would
+/// make *rejecting* the deletion restore alt text as literal characters, which
+/// is a corruption rather than a recovery.
+///
+/// Complexity: O(n) in the nodes reachable from `inlines`, each visited once and
+/// appended to a single buffer. `budget` bounds recursion.
+fn flatten_inline_text(inlines: &[InlineNode], reporter: &mut Reporter, budget: usize) -> String {
     let mut text = String::new();
+    push_flattened_inlines(&mut text, inlines, reporter, budget);
+    text
+}
+
+/// Appends the flattened plain-text projection of `inlines` to `out`.
+/// See [`flatten_inline_text`] for the per-kind decisions.
+fn push_flattened_inlines(
+    out: &mut String,
+    inlines: &[InlineNode],
+    reporter: &mut Reporter,
+    budget: usize,
+) {
+    let Some(budget) = budget.checked_sub(1) else {
+        reporter.record("odt.export.deleted_content.depth", ModelOutcome::Omitted);
+        return;
+    };
     for inline in inlines {
         match inline {
-            InlineNode::Run(run) => text.push_str(&run.text),
-            InlineNode::Tab(_) => text.push('\t'),
-            InlineNode::Break(_) => text.push('\n'),
-            InlineNode::Hyperlink(link) => text.push_str(&flatten_inline_text(&link.inlines)),
+            // Carried: the characters the reader saw deleted.
+            InlineNode::Run(run) => out.push_str(&run.text),
+            InlineNode::Tab(_) => out.push('\t'),
+            InlineNode::Break(_) => out.push('\n'),
+            InlineNode::NoBreakHyphen(_) => out.push('\u{2011}'),
+            InlineNode::SoftHyphen(_) => out.push('\u{00ad}'),
+            // Carried, with the wrapper itself degraded: a deletion region is a
+            // text run, so a link target, a field's field-ness, a symbol's font,
+            // an equation's structure, and a box's geometry cannot ride along.
             InlineNode::Revision(revision) => {
-                text.push_str(&flatten_inline_text(&revision.inlines))
+                push_flattened_inlines(out, &revision.inlines, reporter, budget);
             }
-            InlineNode::Sdt(sdt) => text.push_str(&flatten_inline_text(&sdt.inlines)),
-            _ => {}
+            InlineNode::Sdt(sdt) => push_flattened_inlines(out, &sdt.inlines, reporter, budget),
+            InlineNode::Hyperlink(link) => {
+                reporter.record("odt.export.deleted_hyperlink", ModelOutcome::Degraded);
+                push_flattened_inlines(out, &link.inlines, reporter, budget);
+            }
+            InlineNode::Field(field) => {
+                // The field's cached RESULT is the text that was deleted; ODF has
+                // no field element inside a deletion region.
+                reporter.record("odt.export.deleted_field", ModelOutcome::Degraded);
+                push_flattened_inlines(out, &field.inlines, reporter, budget);
+            }
+            InlineNode::Symbol(symbol) => {
+                reporter.record("odt.export.deleted_symbol_font", ModelOutcome::Degraded);
+                if let Some(character) = char::from_u32(symbol.char) {
+                    out.push(character);
+                }
+            }
+            InlineNode::Math(math) => {
+                reporter.record("odt.export.deleted_math", ModelOutcome::Degraded);
+                out.push_str(&math.text);
+            }
+            InlineNode::PositionalTab(_) => {
+                reporter.record("odt.export.deleted_positional_tab", ModelOutcome::Degraded);
+                out.push('\t');
+            }
+            InlineNode::TextBox(text_box) => {
+                reporter.record("odt.export.deleted_text_box", ModelOutcome::Degraded);
+                push_flattened_blocks(out, &text_box.blocks, reporter, budget);
+            }
+            InlineNode::Group(group) => {
+                reporter.record("odt.export.deleted_group", ModelOutcome::Degraded);
+                push_flattened_group(out, &group.children, reporter, budget);
+            }
+            // No plain-text projection: contributes nothing, reported so the
+            // deletion's loss is disclosed rather than silent.
+            InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) => {
+                reporter.record("odt.export.deleted_drawing", ModelOutcome::Omitted);
+            }
+            InlineNode::EmbeddedObject(_) => {
+                reporter.record("odt.export.deleted_embedded_object", ModelOutcome::Omitted);
+            }
+            InlineNode::HorizontalRule(_) => {
+                reporter.record("odt.export.deleted_horizontal_rule", ModelOutcome::Omitted);
+            }
+            InlineNode::NoteReference(_) => {
+                reporter.record("odt.export.deleted_note_reference", ModelOutcome::Omitted);
+            }
+            InlineNode::NoteNumberMark(_) => {
+                reporter.record("odt.export.deleted_note_number_mark", ModelOutcome::Omitted);
+            }
+            // Zero-width anchors. They carry no characters, but rejecting the
+            // deletion cannot restore them from a text-only region, so the loss
+            // is real and reported.
+            InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {
+                reporter.record("odt.export.deleted_bookmark", ModelOutcome::Omitted);
+            }
+            InlineNode::CommentReference(_)
+            | InlineNode::CommentRangeStart(_)
+            | InlineNode::CommentRangeEnd(_) => {
+                reporter.record("odt.export.deleted_comment_anchor", ModelOutcome::Omitted);
+            }
+            InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => {
+                reporter.record("odt.export.deleted_move_range", ModelOutcome::Omitted);
+            }
+            InlineNode::FieldRangeStart(_) | InlineNode::FieldRangeEnd(_) => {
+                reporter.record("odt.export.deleted_field_range", ModelOutcome::Omitted);
+            }
         }
     }
-    text
+}
+
+/// Appends the flattened plain-text projection of block content (a deleted text
+/// box or a deleted group's text box) to `out`, separating paragraphs with `\n`
+/// and table cells with `\t` — the same separators the importer's deletion
+/// capture reads back. Complexity: O(n) in the reachable nodes.
+fn push_flattened_blocks(
+    out: &mut String,
+    blocks: &[BlockNode],
+    reporter: &mut Reporter,
+    budget: usize,
+) {
+    let Some(budget) = budget.checked_sub(1) else {
+        reporter.record("odt.export.deleted_content.depth", ModelOutcome::Omitted);
+        return;
+    };
+    let mut first = true;
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if !first {
+                    out.push('\n');
+                }
+                first = false;
+                push_flattened_inlines(out, &paragraph.inlines, reporter, budget);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    if !first {
+                        out.push('\n');
+                    }
+                    first = false;
+                    for (index, cell) in row.cells.iter().enumerate() {
+                        if index != 0 {
+                            out.push('\t');
+                        }
+                        push_flattened_blocks(out, &cell.blocks, reporter, budget);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if !first {
+                    out.push('\n');
+                }
+                first = false;
+                push_flattened_blocks(out, &sdt.blocks, reporter, budget);
+            }
+            BlockNode::AltChunk(_) => {
+                reporter.record("odt.export.deleted_alt_chunk", ModelOutcome::Omitted);
+            }
+        }
+    }
+}
+
+/// Appends the flattened plain-text projection of a deleted group's children to
+/// `out`. Only a group text box (and a nested group containing one) carries text;
+/// a picture or a geometric shape has none. Complexity: O(n) in the reachable
+/// nodes.
+fn push_flattened_group(
+    out: &mut String,
+    children: &[GroupChild],
+    reporter: &mut Reporter,
+    budget: usize,
+) {
+    let Some(budget) = budget.checked_sub(1) else {
+        reporter.record("odt.export.deleted_content.depth", ModelOutcome::Omitted);
+        return;
+    };
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                push_flattened_blocks(out, &text_box.blocks, reporter, budget);
+            }
+            GroupChild::Group(group) => {
+                push_flattened_group(out, &group.children, reporter, budget);
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {
+                reporter.record("odt.export.deleted_group_shape", ModelOutcome::Omitted);
+            }
+        }
+    }
 }
 
 /// Whether `value` is a valid XML NCName (a usable `text:change-id`): non-empty,
