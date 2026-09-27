@@ -2289,6 +2289,23 @@ fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
     ] {
         check_domain((0..=31_680).contains(&margin), "section.page_margins")?;
     }
+    // The band distances and the binding gutter, to the same 22in domain as the
+    // four margins around them. They were unchecked while only IMPORT could
+    // produce them, and import clamps (`casual-doc-import/src/body.rs`) — so the
+    // gap was unreachable. It stops being unreachable the moment a host can set
+    // them: `SetSectionGeometry` carries the whole `PageMargins`, so without
+    // this a dialog could install a 999,999,999-twip header distance and layout
+    // would compute a band taller than the page.
+    for distance in [
+        section.page_margins.header_twips,
+        section.page_margins.footer_twips,
+        section.page_margins.gutter_twips,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain((0..=31_680).contains(&distance), "section.page_margins")?;
+    }
     check_domain(
         (1..=64).contains(&section.columns.count),
         "section.column_count",
