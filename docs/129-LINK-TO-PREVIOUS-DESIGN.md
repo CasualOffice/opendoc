@@ -1,4 +1,4 @@
-# 128 — Link to Previous: design, and why it is not shipped yet
+# 129 — Link to Previous: design, and why it is not shipped yet
 
 Status: **design; the control ships read-only.** This is the document
 `webapp/src/header_footer_settings.mjs` and `webapp/editor.html` cite as the reason the

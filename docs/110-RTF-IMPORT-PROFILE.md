@@ -2,7 +2,7 @@
 
 **Status:** Accepted for first implementation increment
 **Date:** 2026-09-20
-**Parent:** `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`
+**Parent:** `135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`
 **Siblings:** `95-ODT-IMPORT-PROFILE.md`, `96-ODT-EXPORT-PROFILE.md`, `21-PARSER-LIMITS.md`
 
 ## 1. Purpose and scope
@@ -469,7 +469,7 @@ This increment is complete only when:
 - Microsoft, *Rich Text Format (RTF) Specification, version 1.9.1* (2008).
 - Microsoft, *[MS-OI29500]* for the WordprocessingML semantics the normalized
   model mirrors.
-- `docs/94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` for the adapter contract
+- `docs/135-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` for the adapter contract
   and the two-axis compatibility outcome vocabulary.
 - `docs/21-PARSER-LIMITS.md` for the house rule that every admission bound is
   host-configurable beneath a compiled hard ceiling.

@@ -41,7 +41,7 @@
 //     markup for why: in OOXML a section inherits by OMITTING a reference, so
 //     unlinking has to materialise a deep copy of the inherited body with fresh
 //     node ids, and the op that points a reference exists while the copy does
-//     not. `docs/128` designs it, and records two things that audit found: the
+//     not. `docs/129` designs it, and records two things that audit found: the
 //     only deep copy in the tree is the CLIPBOARD's, which drops 23 of the 27
 //     inline kinds — the page number and the logo among them — and the
 //     garbage-collection `docs/85` §8.4 assumed on re-link does not exist. A live

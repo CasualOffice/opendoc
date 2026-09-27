@@ -23,13 +23,20 @@
 //     mechanical can read a citation's intent. The mitigation is a habit, not a
 //     test: WRITE THE DOC IN THE SAME COMMIT AS THE CITATION, so the number is
 //     claimed in the tree the moment it is claimed in a comment.
-//   * An AMBIGUOUS number. `docs/` currently holds two documents numbered 83, 86,
-//     94, 95, 105 and 114, one of which (105) is among the most-cited numbers in
-//     the tree. Such a citation resolves to two files and the reader has to guess
-//     which. This test
-//     deliberately accepts them rather than reddening on arrival — renaming a
-//     document is a separate change, and a guard that has to be suppressed to
-//     land is a guard nobody trusts. Reported, not enforced.
+//   * A citation naming a doc that exists but is about something ELSE — see
+//     above; nothing mechanical reads intent.
+//
+// AMBIGUOUS NUMBERS ARE NOW ENFORCED, by the second test below. When this guard
+// was written `docs/` held two documents numbered 83, 86, 94, 95, 105 and 114,
+// and it deliberately accepted them, on the reasoning that renaming a document
+// was a separate change and a guard that must be suppressed to land is a guard
+// nobody trusts. That separate change has now happened: seven collisions were
+// resolved (the six above plus three documents all numbered 128), the minority
+// side of each pair moved to 129-138, and the number stayed with whichever
+// document the citations in the tree actually meant — 129 of 129 bare `docs/105`
+// citations mean the audit tracker, 54 of 54 `docs/114` mean the spell-check
+// design, all 16 `docs/94` mean the oracle harness. So the exception is gone and
+// the rule is a build failure.
 //
 // Buildless, in the existing `npm run test:unit` lane, the same as
 // `tracker_counts.test.mjs`.
@@ -119,7 +126,18 @@ test("every docs/NNN citation names a document that exists", () => {
   let citations = 0;
   for (const file of sourceFiles()) {
     const text = readFileSync(file, "utf8");
-    for (const match of text.matchAll(/docs\/(\d{1,3})/g)) {
+    for (const match of text.matchAll(/docs\/(\d{1,3})(?!\d)/g)) {
+      // An external URL that happens to contain `/docs/` is not a citation of
+      // ours. This guard read the dated path segment in a
+      // `modelcontextprotocol.io/docs/<date>/...` link as a three-digit document
+      // number and failed on a document that cites the MCP spec correctly. The
+      // `(?!\d)` above is the general half of the fix — a four-digit path segment
+      // is not a three-digit doc number — and this is the other half, for a URL
+      // that really does contain a short number. (Written without an example of
+      // the bad citation on purpose: this guard scans its own source too, so an
+      // illustrative `docs/NNN` in a comment here is itself a dangling one.)
+      const token = /(\S*)$/.exec(text.slice(Math.max(0, match.index - 200), match.index))[1];
+      if (token.includes("://")) continue;
       citations += 1;
       const number = Number(match[1]);
       if (present.has(number)) continue;
@@ -151,5 +169,95 @@ test("every docs/NNN citation names a document that exists", () => {
     `${dangling.size} citation(s) name a document that does not exist. Either write the ` +
       `document or remove the reference — a comment pointing at a missing design doc is ` +
       `the docs/99 §9.2 defect class:\n${report}`,
+  );
+});
+
+// A document number is an ADDRESS, so two documents may not share one.
+//
+// The test above checks that a citation resolves to something. This one checks
+// that it resolves to exactly ONE thing, which is the half that was missing and
+// the reason it was missing is worth writing down: nothing checked, so seven
+// collisions accumulated without anybody deciding to create one. Three documents
+// ended up numbered 128 in a single day — one of them cited 33 times from Rust,
+// one cited twice from the webapp, one cited nowhere — and a reader following
+// `docs/128` §4 had no way to know which file that meant.
+//
+// It is not a cosmetic problem. `docs/105` was cited 129 times and resolved to
+// both the audit tracker and a cancelled chrome design; `crates/.../lib.rs`
+// pointed at "`docs/83`" meaning review projection while sixteen other citations
+// of `docs/83` meant SDK packaging. A wrong address is worse than a missing one,
+// because the reader finds a real file and believes it.
+test("no two documents claim the same number", () => {
+  const byNumber = new Map();
+  for (const name of readdirSync(join(repoRoot, "docs"))) {
+    const match = /^(\d+)-/.exec(name);
+    if (!match) continue; // `PHASE-1A-…-TRACKER.md` is deliberately unnumbered.
+    const number = Number(match[1]);
+    if (!byNumber.has(number)) byNumber.set(number, []);
+    byNumber.get(number).push(name);
+  }
+
+  // The same self-check the citation test carries: a walk that finds nothing
+  // would otherwise pass by failing to look.
+  assert.ok(
+    byNumber.size > 100,
+    `only ${byNumber.size} numbered docs found — the scan is looking in the wrong place`,
+  );
+
+  const collisions = [...byNumber.entries()]
+    .filter(([, names]) => names.length > 1)
+    .sort(([a], [b]) => a - b);
+  assert.deepEqual(
+    collisions.map(([number, names]) => `docs/${number}: ${names.sort().join(" + ")}`),
+    [],
+    "two or more documents claim the same number, so every `docs/NNN` citation of it is " +
+      "ambiguous. Renumber the one the tree's citations do NOT mean — count them first, " +
+      "because the number belongs to whichever document readers are already pointing at",
+  );
+});
+
+// A document's own heading must agree with its number.
+//
+// The renaming that closed the collisions above moved ten files and left every
+// one of their H1s stating the OLD number, so `docs/137` opened with
+// "# 105 — Dual chrome" — the same wrong-address defect, inside the change that
+// was fixing it. Nine of the ten, caught by looking rather than by any guard.
+//
+// This is the cheap half of "does a citation mean what it says": a reader who
+// follows `docs/137` and finds a heading numbered 105 cannot tell whether they
+// have the right file, the wrong file, or a file that was renamed and not
+// finished. Not every document uses the `# NNN — Title` form, and one that does
+// not is left alone; the assertion is only that a document which states a number
+// states its OWN.
+test("a document's heading states its own number", () => {
+  const wrong = [];
+  let checked = 0;
+  for (const name of readdirSync(join(repoRoot, "docs")).sort()) {
+    const file = /^(\d+)-.*\.md$/.exec(name);
+    if (!file) continue;
+    const first = readFileSync(join(repoRoot, "docs", name), "utf8").split("\n", 1)[0];
+    const heading = /^#\s+(\d+)\s*[—–-]\s*(.*)$/.exec(first);
+    if (!heading) continue; // A document that does not number its heading is fine.
+    checked += 1;
+    if (heading[1] !== file[1]) wrong.push(`${name} opens "# ${heading[1]} — ${heading[2]}"`);
+  }
+
+  // The half that fails when the guard breaks rather than when the tree does.
+  // 68 documents use the `# NNN — Title` form today. The floor is set BELOW that
+  // measurement rather than at a round guess: my first attempt asserted 80 and
+  // failed on arrival, which is the cheap version of the mistake this file keeps
+  // finding in other guards — a number chosen for how it reads instead of for
+  // what was counted.
+  assert.ok(
+    checked > 60,
+    `only ${checked} numbered headings found — the scan is looking in the wrong place, and ` +
+      "a guard that finds no headings passes by failing to look",
+  );
+  assert.deepEqual(
+    wrong,
+    [],
+    "a document's heading states a different number than its filename. Renaming a document " +
+      "means renaming it in its own first line too, or a reader cannot tell whether they have " +
+      "the right file",
   );
 });

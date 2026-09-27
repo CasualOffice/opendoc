@@ -6,6 +6,12 @@
 **Primary Implementation:** Rust (`crates/casual-doc-sdk`, `crates/casual-doc-wasm`)  
 **NPM Package:** `@casualoffice/document-runtime`  
 
+> **Status correction (2026-09-27):** the MCP/AI wording originally in section 5
+> and Phase 6 described an aspiration as if it already shipped. OpenDoc does **not**
+> currently provide an MCP server, semantic index, embedded AI model, or document-
+> assistance API. Doc 132 and proposed ADR-035 are authoritative for that experimental
+> scope. Nothing there is accepted, implemented, supported, or committed to v1.
+
 ---
 
 ## 1. Overview & Architectural Goals
@@ -131,28 +137,47 @@ Capabilities available to plugins:
 
 ---
 
-## 5. MCP (Model Context Protocol) & AI Agent Integration
+## 5. Experimental Document Assistance, Semantic Search, and MCP
 
-### 5.1 Overview
-OpenDoc provides native support for AI agents (Claude, Gemini, custom LLMs) via an official Model Context Protocol (MCP) server package (`@casualoffice/mcp-server`).
+### 5.1 Current status and product boundary
 
-### 5.2 MCP Tool Capabilities
-The MCP server exposes standard tools over the SDK boundary:
+This capability is **not implemented or supported**. The earlier package name and raw
+tool list were conceptual placeholders, not released APIs.
 
-| MCP Tool Name | Description | SDK Primitive |
-| :--- | :--- | :--- |
-| `read_document_snapshot` | Reads full or section-bounded document model as JSON/Markdown | `session.snapshot()` |
-| `search_document_content` | Performs keyword or semantic search over document text | `session.search(query)` |
-| `apply_document_edits` | Applies structured text insertions, deletions, or formatting | `session.apply(op)` |
-| `add_document_annotation` | Attaches AI review comments, suggestions, or inline diffs | `session.addComment()` |
+The proposed architecture begins with user jobs: understand and summarize; rewrite,
+proofread, translate, shorten, or expand an explicit selection; transform text, lists,
+and tables; apply deterministic formatting; add anchored review findings; and execute
+larger workflows through an inspectable plan. A shared Document Assistance Layer owns
+scope resolution, bounded context, provider policy, proposal validation, preview, and
+commit. UI features, host integrations, local models, and external agents use that
+same layer.
 
-### 5.3 AI Sidecar Metadata Isolation (Invariant I4)
-All AI-derived data (vector embeddings, semantic chunking indices, RAG metadata, and unaccepted AI revision suggestions) are stored in an **auxiliary sidecar database keyed by `NodeId`**. 
+### 5.2 Semantic retrieval and sidecar isolation
 
-This isolation guarantees that:
-* Original `.docx` files remain 100% compliant with standard Microsoft Word schema specifications.
-* AI operations never cause silent document data loss.
-* Users can review, accept, or reject AI-proposed changes visually in the document canvas.
+Structure-aware chunks, embeddings, summaries, provider metadata, and unaccepted
+proposals belong in a rebuildable sidecar keyed by `NodeId` and range—not in the
+normalized document or OOXML preservation envelope. Browser-local profiles run
+document-size work in Workers, prefer hybrid lexical plus vector retrieval, update
+incrementally from committed transactions, and rebuild after an event gap. Local-only
+profiles may not silently fall back to a remote provider.
+
+### 5.3 MCP is an optional adapter
+
+MCP is evaluated only after the assistance and stable SDK boundaries exist. It can
+project bounded document resources, read/search/summarize tools, and proposal-oriented
+mutation tools over the same services. It does not define product capabilities, embed
+the model runtime, own the semantic index, or expose an unrestricted
+`apply_document_edits` bypass. Every mutable result remains a typed proposal that the
+host previews and approves before one normal transaction commit.
+
+An embedded browser assistant calls the application API directly. A native/headless
+MCP server can use a local process transport. Connecting an external desktop agent to
+an active browser session would require a separately accepted, explicitly paired local
+companion with origin/session binding and revocable least-privilege access; it is not
+implied by the WASM package.
+
+See doc 132 and proposed ADR-035 for scenarios, contracts, threat model, execution
+profiles, topology options, open decisions, and graduation gates.
 
 ---
 
@@ -178,9 +203,9 @@ This isolation guarantees that:
 * **Tasks:** Build `@casualoffice/react` and `@casualoffice/vue` headless bindings; design plugin registration framework (`engine.registerPlugin()`); build modular UI component library.
 * **Exit Gate:** Third-party developer can build a custom editor with custom toolbar buttons and custom validation rules using only public SDK APIs.
 
-### Phase 6: MCP Server & AI Agent Tools (Weeks 19–21)
-* **Tasks:** Implement `@casualoffice/mcp-server`; expose MCP tools (`read_document_snapshot`, `apply_document_edits`); build `NodeId`-keyed AI sidecar store (Invariant I4).
-* **Exit Gate:** LLM agent inspects document via MCP tools and applies valid formatting edits with 0% schema violations.
+### Phase 6: Experimental Document Assistance, Semantic Retrieval & Optional MCP
+* **Tasks:** No implementation is scheduled. First resolve doc 132's DAI-0 owner decisions, unify the public mutation path, define the versioned scope/proposal contracts, and validate a read-only browser-local retrieval spike. MCP may be considered afterward as an optional adapter, beginning read-only.
+* **Exit Gate:** This phase cannot start from this timeline alone. It requires accepted ADR-035 plus the proposal safety, preservation, privacy/offline, injection-resistance, retrieval-quality, resource, cross-browser, and MCP conformance/authorization gates in docs 132 and 15. No package or tool name is reserved before that decision.
 
 ### Phase 7: Developer Portal, CI Gates & NPM Release (Weeks 22–24)
 * **Tasks:** Set up automated visual regression tests (Playwright) and benchmark gates; launch interactive documentation portal with live CodeSandbox demos; publish `@casualoffice/document-runtime` to npm.

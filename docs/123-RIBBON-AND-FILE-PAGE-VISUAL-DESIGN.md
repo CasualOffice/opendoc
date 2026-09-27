@@ -6,7 +6,7 @@ reference uses), `109` UX-026 (the File page's pane only ever shows Info).
 
 ## 0. Why this document exists
 
-[Doc 105](105-DUAL-CHROME-DESIGN.md) settled the fidelity question — *"similar to
+[Doc 137](137-DUAL-CHROME-DESIGN.md) settled the fidelity question — *"similar to
 OnlyOffice or LibreOffice… not exact copy"* — and then specified **structure only**:
 which tabs exist, which groups they hold, what the File surface contains. [Doc
 122](122-ONE-AXIS-NAVIGATION-DESIGN.md) did the same for navigation, and did it from

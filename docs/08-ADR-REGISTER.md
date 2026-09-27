@@ -555,6 +555,8 @@ owed before OT (ADR-033) regardless.
 - internal text storage: rope, piece tree, or chunked sequence;
 - ~~collaboration operation model: OT vs CRDT~~ — superseded by **ADR-033** (proposed; owner decision 2026-09-15; see doc 107);
 - ~~PDF generation backend~~ — superseded by **ADR-031** (Phase 0 accepted and implemented; see doc 98);
+- PDF semantic reconstruction and browser OCR — **ADR-034 proposed experimental**;
+- document assistance, local semantic retrieval, and MCP adapter — **ADR-035 proposed experimental**;
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
 - whether layout uses fixed-point units internally.
