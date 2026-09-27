@@ -231,6 +231,15 @@ export const COMMAND_CONTRACT = Object.freeze([
   // withheld `autosave` has no drafts of this visitor's typing, and offering to
   // restore some would be offering work from a session the host refused to keep.
   exact("file.recoverDrafts", "autosave"),
+  // Version history, for the same reason and the same capability: the timeline is
+  // written by the autosave path (ADR-038), so a host that withheld `autosave`
+  // has no versions of this visitor's work and opening a panel over an empty
+  // store would promise a past that was never kept. The panel it opens can
+  // RESTORE, which replaces the document — but that is gated where it belongs,
+  // on the capability that wrote the versions in the first place; a host who
+  // granted `autosave` and not `edit` gets a timeline whose restore lands in a
+  // Viewing-mode session, which is the same answer every other mutation gets.
+  exact("file.versionHistory", "autosave"),
 
   // ---- edit ---------------------------------------------------------------
   exact("edit.undo", "mutate"),
