@@ -1,9 +1,15 @@
 # 139 — Version History, Edit Management, Restore, and Diff PRD
 
-**Status:** Proposed product requirements; documentation only. Not implemented or
-supported unless a requirement is separately recorded as current behavior below.
+**Status:** Accepted product requirements. **The durable local storage half of VH-1 and
+VH-2 is implemented** — version store, capture trigger, naming and pinning, retention with
+its configuration, and atomic restore, in `webapp/src/version_history.mjs` on the schema-v3
+draft database. It is **not yet reachable from the product**: there is no panel, no menu
+entry and no wired command, so no requirement below may be quoted as shipped user-facing
+behaviour. Everything else here — preview, copy/download, diff, attribution, collaboration —
+remains proposed.
 
-**Opened:** 2026-09-27.
+**Opened:** 2026-09-27. Retention and the questions in §18 settled by **ADR-038**
+(2026-09-28).
 
 **Related:** docs 24, 27, 68, 71, 79, 82, 86, 105 OO-004/OO-007,
 107, 112, 125, and 140.
@@ -404,7 +410,13 @@ therefore at least as sensitive as the document itself.
 
 Required policy:
 
-- host-owned retention window and byte budget with an engine-enforced hard ceiling;
+- host-owned retention window and byte budget with an engine-enforced hard ceiling. **As
+  built (ADR-038), that is three bounds and they are not the same kind of rule:** a version
+  **count** cap and a **byte** budget are ceilings that always apply and prune the oldest
+  eligible version first, while the **age window** is a promise to keep versions for at least
+  that long — the newest few survive it whatever their age, because age-only pruning would
+  empty the timeline of a document nobody had touched for a week. Defaults: 25 versions,
+  7 days, a floor of 3, 120 MB, at most 15 named;
 - named versions pinned until explicitly removed or policy-forced with disclosure;
 - content bytes never included in telemetry by default;
 - local browser history is origin-scoped and local-only;
@@ -527,11 +539,22 @@ of a separate tracked-comparison document. This does not block safe local versio
 
 ## 18. Open product decisions
 
-1. Default local-history byte budget and minimum retained time by desktop/mobile profile.
-2. Whether a top-level local editor enables history by default alongside autosave.
-3. Whether explicit Save always creates a visible version or only a checkpoint boundary.
-4. Whether unnamed versions can be manually pinned without receiving a name.
-5. Whether named-version count receives a product limit in addition to the byte ceiling.
+Questions 1 through 5 are **settled by ADR-038** and implemented; the answers are recorded
+here rather than only in the ADR because this is the document a reader checks first.
+
+1. **Settled.** Defaults are 25 versions / 7 days / a 3-version floor / 120 MB / 15 named,
+   configurable in `settings_defaults.mjs` and clamped to engine hard ceilings. A single
+   mobile/desktop split is deliberately not introduced: the byte budget is the device-sensitive
+   bound and it is already a setting a host can lower.
+2. **Settled: yes**, on by default and tied to the autosave switch — a data-safety net nobody
+   turns on is not one, and one switch must not promise what the other has stopped doing.
+3. **Settled: always a version.** It is the point a user recognises, and content-addressed
+   checkpoints make a no-change Save cost one ~300-byte row rather than a second copy of the
+   document.
+4. **Settled: yes.** Pinning is available without a label; the label makes a version findable,
+   the pin makes it durable, and they are separable operations.
+5. **Settled: yes**, a pin limit of 15 against the count cap of 25. It exists so that pins can
+   never fill the store and leave automatic capture permanently refused.
 6. Whether Restore requires a modal confirmation every time or may skip it when current is
    already checkpointed and unchanged.
 7. Which diff families form the first public completeness claim.

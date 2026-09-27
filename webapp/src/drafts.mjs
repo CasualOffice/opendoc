@@ -25,18 +25,48 @@
 
 export const DRAFT_DB_NAME = "opendoc-drafts";
 
-/** Version 2 adds the personal spelling dictionary (`docs/114` §4).
+/** Version 2 added the personal spelling dictionary (`docs/114` §4); version 3
+ *  adds durable version history (`docs/139`/`docs/140`, HF-068 / OO-004).
  *
  *  The store lives in THIS database rather than a second one because there is
  *  one browser-storage decision here (D-1: one store, the opencalc shape) and
  *  a second database would be a second thing to migrate, quota, clear and
- *  explain. The upgrade creates only what is missing, so an existing tab's
- *  drafts survive it untouched — which is the whole point of doing it as a
- *  version bump instead of a delete-and-recreate. */
-export const DRAFT_DB_VERSION = 2;
+ *  explain. `docs/104` HF-068 says it outright: *same store as HF-011 — not a
+ *  second store*. The upgrade creates only what is missing, so an existing
+ *  tab's drafts survive it untouched — which is the whole point of doing it as
+ *  a version bump instead of a delete-and-recreate. */
+export const DRAFT_DB_VERSION = 3;
 export const META_STORE = "meta";
 export const BYTES_STORE = "bytes";
 export const WORDS_STORE = "words";
+
+// ── Version history (schema v3) ──────────────────────────────────────────────
+//
+// Four stores, shaped by `docs/140` §7.1. The split between metadata and bytes
+// is the same one drafts use and for the same reason: listing versions must cost
+// kilobytes, so nothing that lists them may touch a checkpoint artifact.
+
+/** One row per document lineage: its identity, its head version, and the
+ *  `documentKey` hint used to rejoin a lineage when the file is reopened. */
+export const DOCUMENTS_STORE = "documents";
+
+/** One row per version — a few hundred bytes. Indexed by lineage (the panel's
+ *  only query) and by checkpoint (reference counting before a blob is freed). */
+export const VERSION_META_STORE = "version_meta";
+
+/** Immutable checkpoint artifacts, keyed by content hash. Content-addressed so
+ *  two versions with identical bytes — Save, then Name this version — share one
+ *  blob instead of storing the document twice. */
+export const CHECKPOINT_STORE = "checkpoint_blobs";
+
+/** Prepared multi-step history operations, so a restore interrupted between its
+ *  steps is resolvable at the next boot rather than guessed at
+ *  (`docs/140` §9.6). */
+export const HISTORY_OPS_STORE = "history_ops";
+
+export const VERSION_LINEAGE_INDEX = "by_lineage";
+export const VERSION_CHECKPOINT_INDEX = "by_checkpoint";
+export const DOCUMENTS_KEY_INDEX = "by_doc_key";
 
 /** How long a draft is kept before it is pruned. The docs-repo reference uses
  *  the same 24 hours; a draft older than a day is far more likely to be a
@@ -386,8 +416,9 @@ export class DraftScheduler {
   }
 }
 
-/** Promise wrapper for one IDB request. */
-function request(rq) {
+/** Promise wrapper for one IDB request. Exported for the version store, which
+ *  lives in this same database and must not carry a second copy of it. */
+export function idbRequest(rq) {
   return new Promise((resolve, reject) => {
     rq.onsuccess = () => resolve(rq.result);
     rq.onerror = () => reject(rq.error);
@@ -396,8 +427,9 @@ function request(rq) {
 
 /** Promise for a transaction actually committing — `oncomplete`, not the last
  *  request's `onsuccess`. A put that succeeds in a transaction that then aborts
- *  is not a draft on disk. */
-function committed(tx) {
+ *  is not a draft on disk, and it is not a version either: the whole atomicity
+ *  claim in `version_history.mjs` rests on awaiting THIS rather than a put. */
+export function idbCommitted(tx) {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -425,6 +457,42 @@ function upgradeDraftDatabase(database) {
     // without a read, and "is this word known" is one `get`.
     database.createObjectStore(WORDS_STORE);
   }
+  if (!database.objectStoreNames.contains(DOCUMENTS_STORE)) {
+    const documents = database.createObjectStore(DOCUMENTS_STORE, { keyPath: "lineageId" });
+    // Not unique: two different files can hash to one `documentKey`, and two
+    // lineages of one file exist as soon as a copy is made. The index narrows
+    // the rejoin candidates; `openLineage` still checks the name.
+    documents.createIndex(DOCUMENTS_KEY_INDEX, "docKey", { unique: false });
+  }
+  if (!database.objectStoreNames.contains(VERSION_META_STORE)) {
+    const versions = database.createObjectStore(VERSION_META_STORE, { keyPath: "versionId" });
+    versions.createIndex(VERSION_LINEAGE_INDEX, "lineageId", { unique: false });
+    versions.createIndex(VERSION_CHECKPOINT_INDEX, "checkpointId", { unique: false });
+  }
+  if (!database.objectStoreNames.contains(CHECKPOINT_STORE)) {
+    // Out-of-line keys, because the key IS the content hash: a second version
+    // with identical bytes cannot store a second copy of the document.
+    database.createObjectStore(CHECKPOINT_STORE);
+  }
+  if (!database.objectStoreNames.contains(HISTORY_OPS_STORE)) {
+    database.createObjectStore(HISTORY_OPS_STORE, { keyPath: "opId" });
+  }
+}
+
+/**
+ * Opens the shared database, creating or upgrading its schema.
+ *
+ * Exported because version history lives in the SAME database (schema v3) and
+ * must not carry a second copy of the upgrade: two openers that disagree about
+ * the schema is how one of them races the other into a version conflict, and
+ * the comment above `openWordStore` already records that rule for the third
+ * consumer. O(1) — an upgrade defines stores, it never walks rows.
+ *
+ * `indexedDB` is injected for the same reason everywhere here: so the rules run
+ * in node with no browser.
+ */
+export function openDraftDatabase(indexedDB = globalThis.indexedDB, name = DRAFT_DB_NAME) {
+  return openDatabase(indexedDB, name);
 }
 
 /** Opens the shared database. `indexedDB` is injected for the same reason
@@ -461,7 +529,7 @@ export async function openWordStore({
      *  the very most; read once at boot and kept in memory after that. */
     async list() {
       const tx = db.transaction(WORDS_STORE, "readonly");
-      const keys = await request(tx.objectStore(WORDS_STORE).getAllKeys());
+      const keys = await idbRequest(tx.objectStore(WORDS_STORE).getAllKeys());
       return keys.map(String);
     },
 
@@ -469,13 +537,13 @@ export async function openWordStore({
     async add(word, addedAt = Date.now()) {
       const tx = db.transaction(WORDS_STORE, "readwrite");
       tx.objectStore(WORDS_STORE).put({ word, addedAt }, word);
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     async remove(word) {
       const tx = db.transaction(WORDS_STORE, "readwrite");
       tx.objectStore(WORDS_STORE).delete(word);
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     /** Empties the personal dictionary. Until a management surface exists
@@ -484,7 +552,7 @@ export async function openWordStore({
     async clear() {
       const tx = db.transaction(WORDS_STORE, "readwrite");
       tx.objectStore(WORDS_STORE).clear();
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     close() {
@@ -511,19 +579,19 @@ export async function openDraftStore({
     /** Every meta row. Kilobytes: the snapshots live in the other store. */
     async listMeta() {
       const tx = db.transaction(META_STORE, "readonly");
-      return request(tx.objectStore(META_STORE).getAll());
+      return idbRequest(tx.objectStore(META_STORE).getAll());
     },
 
     /** One meta row. */
     async readMeta(slotId) {
       const tx = db.transaction(META_STORE, "readonly");
-      return request(tx.objectStore(META_STORE).get(slotId));
+      return idbRequest(tx.objectStore(META_STORE).get(slotId));
     },
 
     /** The snapshot for a slot, or undefined. */
     async readBytes(slotId) {
       const tx = db.transaction(BYTES_STORE, "readonly");
-      return request(tx.objectStore(BYTES_STORE).get(slotId));
+      return idbRequest(tx.objectStore(BYTES_STORE).get(slotId));
     },
 
     /** Writes a draft: meta and bytes in ONE transaction across both stores, so
@@ -532,7 +600,7 @@ export async function openDraftStore({
       const tx = db.transaction([META_STORE, BYTES_STORE], "readwrite");
       tx.objectStore(META_STORE).put(meta);
       tx.objectStore(BYTES_STORE).put(bytes, meta.slotId);
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     /** Refreshes only the heartbeat, so other tabs can see this slot is alive.
@@ -540,23 +608,23 @@ export async function openDraftStore({
     async touch(slotId, heartbeatAt) {
       const tx = db.transaction(META_STORE, "readwrite");
       const store = tx.objectStore(META_STORE);
-      const meta = await request(store.get(slotId));
+      const meta = await idbRequest(store.get(slotId));
       if (meta) store.put({ ...meta, heartbeatAt });
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     async deleteSlot(slotId) {
       const tx = db.transaction([META_STORE, BYTES_STORE], "readwrite");
       tx.objectStore(META_STORE).delete(slotId);
       tx.objectStore(BYTES_STORE).delete(slotId);
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     async clear() {
       const tx = db.transaction([META_STORE, BYTES_STORE], "readwrite");
       tx.objectStore(META_STORE).clear();
       tx.objectStore(BYTES_STORE).clear();
-      await committed(tx);
+      await idbCommitted(tx);
     },
 
     close() {

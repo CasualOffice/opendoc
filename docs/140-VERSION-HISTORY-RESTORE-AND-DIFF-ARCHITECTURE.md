@@ -1,9 +1,13 @@
 # 140 — Version History, Restore, and Diff Architecture
 
-**Status:** Proposed architecture for discussion; documentation only. Not implemented
-or accepted as a support claim.
+**Status:** Accepted for the local storage layer, and **implemented** for H1's store and
+H2's restore coordinator (`webapp/src/version_history.mjs`, schema v3 in
+`webapp/src/drafts.mjs`). H3 (diff), H4 (unified commits) and H5 (collaboration) remain
+proposed. Nothing here is a support claim: the layer is not reachable from the editor yet.
+Decisions this document left open about identity, retention and restore atomicity are
+settled in **ADR-038**.
 
-**Opened:** 2026-09-27.
+**Opened:** 2026-09-27. Storage layer landed 2026-09-28.
 
 **Product requirements:** doc 139.
 
@@ -273,9 +277,14 @@ The edit path records constant-size commit metadata and schedules work. Serializ
 hashing, compression, semantic projection, diff, and storage pruning never execute inside
 the keystroke transaction.
 
-Where available, a Worker performs compression, hashing, and storage preparation. WASM
-model export remains on the thread/profile the runtime supports, scheduled after quiescence
-and bounded by doc 116. Future worker-owned runtime execution can move it without changing
+Where available, a Worker performs compression, hashing, and storage preparation. **As
+built**, hashing is `crypto.subtle.digest("SHA-256", bytes)` rather than a Worker: the
+browser computes it off the JavaScript thread already, and it is awaited *before* the
+IndexedDB transaction opens, because awaiting a non-IDB promise inside a live transaction
+lets it auto-commit underneath the caller. WASM model export remains on the thread/profile
+the runtime supports, scheduled after quiescence and bounded by doc 116 — and version capture
+adds none of its own: it reuses the artifact the doc 112 autosave path has already exported,
+so a captured version costs one hash and one transaction, not a second export. Future worker-owned runtime execution can move it without changing
 the contract.
 
 ### 6.3 Compression
@@ -311,6 +320,14 @@ logical stores such as:
 - `semantic_projections` for optional diff projections;
 - `commits` for durable commit envelopes when transaction unification lands;
 - `pins`/`leases` or equivalent metadata required for compaction and active previews.
+
+**As built (schema v3):** `documents`, `version_meta` (indexed by lineage and by checkpoint),
+`checkpoint_blobs` keyed by the SHA-256 of the artifact, and `history_ops` for prepared
+restores. Two corrections to the list above. A **pin is a boolean field on the version row**,
+not a `pins` store: it protects exactly that row, and a separate store would be a second
+thing to keep consistent with it. `semantic_projections` and `commits` are **not created** —
+an empty store is a claim that something is being written to it, and neither the diff
+projection (H3) nor the durable commit envelope (H4) exists yet.
 
 The database name is legacy implementation detail; public APIs refer to `HistoryStore`.
 
@@ -551,7 +568,14 @@ All lists are paginated and bounded. Events never carry whole document snapshots
 
 ## 13. Retention and compaction
 
-Retention works from a byte budget plus policy, not a raw version count.
+Retention works from a byte budget, a version count and an age window — **three bounds,
+two kinds of rule**. This sentence previously read "a byte budget plus policy, *not* a raw
+version count"; the owner's ruling on 2026-09-27 ("for version around 20-30 or retain for
+7 days") overrides that, and ADR-038 records how the three are reconciled: the **count and
+the byte budget are ceilings** that always apply and release the oldest eligible version
+first, while the **age window is a floor on retention** rather than a deletion deadline — the
+newest `keepFloor` versions survive it whatever their age, because a document nobody touched
+for a week must not lose its entire past.
 
 Never automatically prune:
 
@@ -631,19 +655,27 @@ limits, never values above engine hard ceilings.
 
 ### H1 — Snapshot history without false attribution
 
-- extend the doc 112 store through a schema migration;
-- source-format checkpoint manifest and validation;
-- metadata timeline, naming/pinning, preview, copy/download, retention;
-- version-level actor only; no per-change author claim;
-- no mutation required except metadata.
+- extend the doc 112 store through a schema migration; **landed** (schema v3, additive);
+- source-format checkpoint manifest and validation; **landed** — content-addressed artifact
+  plus format/mode/findings/engine/revision metadata, verified on read;
+- metadata timeline, naming/pinning, preview, copy/download, retention; **timeline, naming,
+  pinning and retention landed. Preview, copy and download are NOT built** — they need the
+  editor session, which this lane deliberately did not touch;
+- version-level actor only; no per-change author claim; **held to**;
+- no mutation required except metadata; **held to**.
 
 ### H2 — Atomic restore
 
-- restore coordinator and prepared record;
-- compare-and-set head, pre-restore checkpoint, idempotency;
-- active-session atomic switch through the host/session command boundary;
-- one-step session Undo and after-reload reversal;
-- crash/failure injection and fidelity corpus.
+- restore coordinator and prepared record; **landed**;
+- compare-and-set head, pre-restore checkpoint, idempotency; **landed**;
+- active-session atomic switch through the host/session command boundary; **NOT built** —
+  `commitRestore` hands the validated bytes back and the session swap is the wiring lane's;
+- one-step session Undo and after-reload reversal; **NOT built** (the pre-restore version is
+  stored, which is what makes both possible later);
+- crash/failure injection and fidelity corpus; **failure injection landed** in
+  `webapp/tests/version_history.test.mjs` and
+  `webapp/tests/e2e/version-history-store.spec.mjs`; the format-fidelity corpus is not run
+  against checkpoints yet.
 
 ### H3 — Structural diff
 
@@ -770,7 +802,9 @@ may have no review markup.
    replacement backdoor.
 4. Whether H2's session switch is sufficient or Restore must be a Tier-3 operation from its
    first implementation.
-5. Browser byte budget and retention defaults per device class.
+5. ~~Browser byte budget and retention defaults per device class.~~ **Settled by ADR-038**:
+   25 versions / 7 days / floor 3 / 120 MB / 15 named, configurable and clamped. No device
+   class split; the byte budget is the device-sensitive bound and a host can lower it.
 6. Whether DOCX/ODT ZIP checkpoints should ever receive outer compression.
 7. Canonical semantic projection format before CBOR is implemented.
 8. Structural matching algorithm and thresholds for moves/renames without stable IDs.
