@@ -1449,15 +1449,20 @@
           </button>
         </header>
         <form id="captionForm" class="dialog-body caption-body">
-          <label data-i18n="captionDialog.captionText" class="dialog-field">Caption text<input data-i18n-placeholder="captionDialog.wiringDiagram.placeholder" id="captionText" type="text" maxlength="255" placeholder=": Wiring diagram" autocomplete="off" /></label>
-          <div class="dialog-field-grid">
-            <label data-i18n="captionDialog.label" class="dialog-field">Label<select id="captionLabel" class="dialog-select"></select></label>
+          <!-- Caption text with Position beside it, and the Label combo carrying its
+               own Add/Delete buttons — ONLYOFFICE's arrangement
+               (`CaptionDialog.js:65-85`). Stacked full-width, this read as a wall:
+               a 596px text input above 98px selects, with the two buttons orphaned
+               on a 596x34 strip of their own. -->
+          <div class="caption-text-row">
+            <label data-i18n="captionDialog.captionText" class="dialog-field">Caption text<input data-i18n-placeholder="captionDialog.wiringDiagram.placeholder" id="captionText" type="text" maxlength="255" placeholder=": Wiring diagram" autocomplete="off" /></label>
             <label data-i18n="layoutPositionBtn.position" class="dialog-field">Position<select id="captionPosition" class="dialog-select">
               <option data-i18n="captionDialog.belowSelectedItem" value="below">Below selected item</option>
               <option data-i18n="captionDialog.aboveSelectedItem" value="above">Above selected item</option>
             </select></label>
           </div>
-          <div class="caption-label-actions">
+          <div class="caption-label-row">
+            <label data-i18n="captionDialog.label" class="dialog-field">Label<select id="captionLabel" class="dialog-select"></select></label>
             <button data-i18n="captionDialog.newLabel" id="captionNewLabelBtn" type="button" class="dialog-button">New label…</button>
             <button data-i18n="captionDialog.deleteLabel" id="captionDeleteLabelBtn" type="button" class="dialog-button">Delete label</button>
           </div>
@@ -1466,7 +1471,7 @@
             <button data-i18n="bookmarkAddForm.add" id="captionAddLabelBtn" type="button" class="dialog-button">Add</button>
           </div>
           <label class="dialog-check"><input id="captionExcludeLabel" type="checkbox" /><span data-i18n="captionDialog.excludeLabelFromCaption">Exclude label from caption</span></label>
-          <label data-i18n="lineNumbersMenu.numbering" class="dialog-field">Numbering<select id="captionNumberFormat" class="dialog-select">
+          <label data-i18n="lineNumbersMenu.numbering" class="dialog-field caption-numbering">Numbering<select id="captionNumberFormat" class="dialog-select">
             <option data-i18n="captionDialog.numberFormat.arabic" value="arabic">1, 2, 3, …</option>
             <option data-i18n="captionDialog.numberFormat.lowerLetter" value="lowerLetter">a, b, c, …</option>
             <option data-i18n="captionDialog.numberFormat.upperLetter" value="upperLetter">A, B, C, …</option>
@@ -1474,7 +1479,7 @@
             <option data-i18n="captionDialog.numberFormat.upperRoman" value="upperRoman">I, II, III, …</option>
           </select></label>
           <label class="dialog-check"><input id="captionIncludeChapter" type="checkbox" /><span data-i18n="captionDialog.includeChapterNumber">Include chapter number</span></label>
-          <div class="dialog-field-grid">
+          <div class="caption-pair">
             <label data-i18n="captionDialog.chapterStartsWithStyle" class="dialog-field">Chapter starts with style<select id="captionChapterLevel" class="dialog-select" disabled></select></label>
             <label data-i18n="captionDialog.useSeparator" class="dialog-field">Use separator<select id="captionSeparator" class="dialog-select" disabled>
               <option data-i18n="captionDialog.separator.hyphen" value="hyphen">- (hyphen)</option>
@@ -1531,7 +1536,7 @@
           </button>
         </header>
         <div class="dialog-body crossref-body">
-          <div class="dialog-field-grid">
+          <div class="caption-pair">
             <label data-i18n="crossRefDialog.referenceType" class="dialog-field">Reference type<select id="crossRefType" class="dialog-select"></select></label>
             <label data-i18n="crossRefDialog.insertReferenceTo" class="dialog-field">Insert reference to<select id="crossRefTo" class="dialog-select"></select></label>
           </div>
