@@ -303,6 +303,27 @@ measuring:
 Already-compressed container formats may receive little benefit. The manifest records the
 codec and uncompressed hash. There is always a bounded no-compression profile.
 
+**As built: no compression, with the reason rather than a guess.** The artifacts are the
+document's own DOCX/ODT bytes, which are already deflated ZIP containers, so doc 112's
+measured 37× on *normalized JSON* does not transfer to them; and content-addressed
+checkpoints removed the cost that made many-snapshot storage look expensive in the first
+place — a Save followed by *Name this version* shares one blob. Measured on this branch
+through the real editor and the real store
+(`webapp/tests/e2e/version-history-store.spec.mjs`, which annotates both numbers on every
+run):
+
+| Document | Stored artifact | Metadata row | Capture (hash + transaction) |
+| --- | --- | --- | --- |
+| `opendoc-demo.docx` (the e2e fixture) | 16,095 B | 461 B | 1 ms |
+| `sample.docx` (real producer, 14 pages) | 1,013,783 B | 463 B | 2 ms |
+
+The second agrees with doc 112 §3.1's 1,012,199 B for the same export, which is the check
+that matters: a version is not a new artifact, it is *that* artifact plus a row. At the
+default ceilings that is ~25 MB of history for this document, and ~59 MB for the 471-page,
+320,000-word case doc 112 measured at 2,375,316 B — both inside the 120 MB budget, so the
+count is normally the binding constraint. Recompression of ZIP artifacts remains §20
+question 6; it now has a baseline to beat.
+
 ## 7. Browser storage architecture
 
 ### 7.1 Reuse the existing persistence seam

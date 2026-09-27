@@ -489,6 +489,16 @@ measure checkpoint creation, metadata list, preview open, diff time, restore tim
 and storage on small, 500-paragraph, 8,000-paragraph, media-heavy, and pathological corpus
 documents before setting release thresholds.
 
+**Measured so far** (`webapp/tests/e2e/version-history-store.spec.mjs`, annotated on every
+run): capturing a version of `sample.docx` — a real producer file — stores a 1,013,783 B
+artifact and a 463 B metadata row and costs 2 ms of hash plus one IndexedDB transaction,
+because the artifact is the one autosave has already exported rather than a second export.
+The 5-second autosave tick itself does **zero** store work and constant work in the number of
+stored versions (`webapp/tests/version_history.test.mjs` counts store requests rather than
+milliseconds). Preview, diff and restore-into-the-session are not built, so they are not
+measured; the 1.3-million-paragraph case from doc 116 is not measured against history yet and
+must be before any release threshold is published.
+
 ## 16. Success metrics
 
 Release evidence must show:
