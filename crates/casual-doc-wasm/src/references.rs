@@ -1884,6 +1884,68 @@ mod tests {
         );
     }
 
+    /// Inserting a field leaves the caret AFTER it, not before it.
+    ///
+    /// The engine rested it at the insertion point and a comment there asserted "a
+    /// field is zero-width in the edit anchor space" — which is false: a field's
+    /// cached result is part of the paragraph's plain text, because
+    /// `node_plain_text` recurses into `Field::inlines`. The caret therefore landed
+    /// immediately BEFORE the field a reader had just inserted.
+    ///
+    /// It was invisible for as long as a field's own glyphs carried no caret stops:
+    /// the caret fell back to another position in the line and landed somewhere
+    /// plausible, and the e2e assertion "the insert leaves the caret immediately
+    /// after the field" passed while the code did the opposite. That is the
+    /// green-for-the-wrong-reason failure `SKILL.md` §4 is about, and it surfaced
+    /// only when a cached-result field started flowing as ordinary text (OO-005) and
+    /// the layout began agreeing with the model.
+    ///
+    /// This guard asserts the MODEL OFFSET, not pixels: the geometry follows from
+    /// it, and a pixel assertion is what let the defect hide in the first place.
+    #[test]
+    fn inserting_a_field_leaves_the_caret_after_it() {
+        let mut document = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let target = first_body_paragraph(&document);
+
+        // A cached-result field: the engine has no clock, so the host supplies the
+        // already-formatted string — and its length is what the caret must clear.
+        let result = document
+            .insert_field(&target, 0, "author", Some("Ada Lovelace".to_owned()))
+            .expect("insert an author field");
+        assert_eq!(
+            result.node(),
+            target,
+            "the caret stays in the same paragraph"
+        );
+        assert_eq!(
+            result.offset(),
+            "Ada Lovelace".len() as u32,
+            "the caret must rest past the field's cached text, so the next character \
+             typed lands after the field and not before it"
+        );
+
+        // And the same for a caption's SEQ field, which is the shape OO-005 inserts:
+        // the caret lands at the start of the new caption paragraph, so this asserts
+        // the sibling guarantee rather than repeating the one above.
+        let caption = document
+            .insert_caption(
+                &target,
+                "Figure",
+                ": Wiring diagram".to_owned(),
+                "below",
+                false,
+                "arabic",
+                0,
+                "hyphen",
+            )
+            .expect("insert a caption");
+        assert_eq!(
+            caption.offset(),
+            0,
+            "a caption's caret rests at the start of the caption paragraph it made"
+        );
+    }
+
     /// A caption's number can go stale, the engine says which, and a reader can fix
     /// it — the "dirty, not silently stale" contract.
     ///
