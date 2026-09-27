@@ -12209,7 +12209,16 @@ impl WasmDocument {
                     if let Some(snapshot) = snapshot {
                         self.document = snapshot;
                     }
-                    return Err(format!("{error:?}"));
+                    // A refusal the ENGINE has already written as a sentence
+                    // passes through verbatim (it carries the host's `refused: `
+                    // marker); everything else is internal vocabulary the host
+                    // translates. Without this, a Backspace inside a footer's
+                    // page-count field arrived as the debug name `FieldResult(…)`
+                    // and the host showed its one generic sentence, which blames
+                    // the selection for a calculated value.
+                    return Err(error
+                        .reason()
+                        .map_or_else(|| format!("{error:?}"), str::to_owned));
                 }
             };
             caret = caret_after(op, &inverse, &self.document);

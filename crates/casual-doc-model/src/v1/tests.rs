@@ -1817,6 +1817,50 @@ fn empty_field_instruction_is_rejected() {
     ));
 }
 
+/// `PaginatedField::parse` is the allocation-free predicate the edit layer runs
+/// per keystroke; `FieldKind::parse` is the full classification. They answer the
+/// same question about `PAGE`/`NUMPAGES` and must never disagree — one of them
+/// deciding a footer's field is recomputed while the other decides it is not is
+/// how a restamped value becomes editable, or an editable one refused.
+///
+/// The list deliberately includes the shapes that separate the two readings:
+/// mixed case, a switch with no space, a quoted keyword, an empty instruction,
+/// and keywords that merely START with `PAGE`.
+#[test]
+fn the_paginated_field_predicate_never_disagrees_with_the_full_classification() {
+    for instruction in [
+        " PAGE ",
+        "PAGE",
+        "page",
+        "PAGE \\* MERGEFORMAT",
+        "PAGE\\*MERGEFORMAT",
+        " NUMPAGES ",
+        "numpages",
+        "NUMPAGES \\# 0",
+        "\"PAGE\"",
+        "\"NUMPAGES\" \\* Arabic",
+        "PAGEREF _Ref1 \\h",
+        "PAGES",
+        " TOC \\o \"1-3\" \\h \\z \\u ",
+        " SEQ Figure \\* ARABIC ",
+        " STYLEREF 1 \\s ",
+        "",
+        "   ",
+        "\\* MERGEFORMAT",
+    ] {
+        let expected = match FieldKind::parse(instruction) {
+            FieldKind::Page => Some(PaginatedField::PageNumber),
+            FieldKind::NumPages => Some(PaginatedField::PageCount),
+            _ => None,
+        };
+        assert_eq!(
+            PaginatedField::parse(instruction),
+            expected,
+            "the two readings of {instruction:?} disagree",
+        );
+    }
+}
+
 #[test]
 fn field_kind_parses_each_common_kind() {
     assert_eq!(FieldKind::parse(" PAGE "), FieldKind::Page);

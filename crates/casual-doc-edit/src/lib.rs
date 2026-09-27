@@ -35,6 +35,7 @@ use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
 use casual_doc_model::v1::PageNumbering;
 use casual_doc_model::v1::PageVerticalAlignment;
+use casual_doc_model::v1::PaginatedField;
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
@@ -1058,6 +1059,133 @@ pub enum EditError {
     InvalidField,
     /// A field id does not resolve to a field at paragraph top level.
     FieldNotFound,
+    /// The edit lands inside a field's cached result and the field will not take
+    /// it. Carries the reason, because "that edit isn't supported for this
+    /// selection yet" is actively wrong about this one: the selection is fine,
+    /// the CONTENT is a calculated value.
+    FieldResult(FieldRefusal),
+}
+
+impl EditError {
+    /// The refusal already written as a sentence for the reader, when this
+    /// variant has one.
+    ///
+    /// The `refused: ` prefix is the host's marker for "already explained, pass
+    /// it through verbatim" (`webapp/src/edit_errors.mjs`), the same contract
+    /// [`crate::BreakRefusal::reason`] uses. Every other variant is internal
+    /// vocabulary the host must translate, and returns `None`.
+    ///
+    /// O(1).
+    #[must_use]
+    pub const fn reason(self) -> Option<&'static str> {
+        match self {
+            Self::FieldResult(refusal) => Some(refusal.reason()),
+            _ => None,
+        }
+    }
+}
+
+/// Why an edit that fell inside a field's cached result was refused.
+///
+/// A field's cached result is the value the producer last computed. For most
+/// fields that value is what the reader sees, so it is ordinary editable text
+/// and this enum never comes up. Two things are different:
+///
+/// * a `PAGE`/`NUMPAGES` result is **restamped from pagination** on every layout
+///   pass ([`casual_doc_model::v1::PaginatedField`]), so text stored there is
+///   text no page would ever show;
+/// * no field's result may be **split across a paragraph break**, because a
+///   complex field is one `fldChar begin … end` span and cannot straddle two
+///   `w:p`.
+///
+/// Where this diverges from Word, deliberately: Word lets you type into a
+/// `PAGE`/`NUMPAGES` result and keeps the typing until the next field update,
+/// which is the documented "edit your TOC and lose it on update" behaviour. Here
+/// the restamp is unconditional and happens on every pagination, so there is no
+/// interval in which the typing is visible — accepting it would store characters
+/// the reader never sees, which is the silent loss `AGENTS.md` forbids. Word and
+/// Docs agree on the gesture that *does* work, and it is the one the sentences
+/// below name: select the whole field and type over it, which replaces the field
+/// with fixed text (Word's Ctrl+Shift+F9 unlink reaches the same end).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldRefusal {
+    /// A partial edit inside a `PAGE` field's result.
+    PageNumberIsCalculated,
+    /// A partial edit inside a `NUMPAGES` field's result.
+    PageCountIsCalculated,
+    /// A paragraph break falling inside any field's cached result.
+    FieldCannotBeSplit,
+    /// A partial range edit inside a field's result that this slice does not
+    /// carry into the field yet (delete/clear across a field boundary).
+    PartialResultNotEditable,
+}
+
+impl FieldRefusal {
+    /// The user-facing reason, in the voice the engine's other refusals use and
+    /// carrying the `refused: ` marker the host passes through verbatim.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::PageNumberIsCalculated => {
+                "refused: the page number is calculated as the document is laid out — \
+                 select the whole number and type over it to replace the field with \
+                 fixed text"
+            }
+            Self::PageCountIsCalculated => {
+                "refused: the total page count is calculated from the document — \
+                 select the whole number and type over it to replace the field with \
+                 fixed text"
+            }
+            Self::FieldCannotBeSplit => {
+                "refused: a field's result cannot be split across two paragraphs — \
+                 put the paragraph break before or after the field"
+            }
+            Self::PartialResultNotEditable => {
+                "refused: only part of a field's result is selected — select the \
+                 whole field to replace it"
+            }
+        }
+    }
+}
+
+/// The field whose cached result **strictly** contains `offset` and whose result
+/// is not editable in place, if any.
+///
+/// Strict at both ends on purpose: an offset AT a field's leading or trailing
+/// edge belongs to the text beside the field, which is what keeps typing
+/// immediately before or after a page number working (and is the caret position
+/// at the end of `sample.docx`'s footer).
+///
+/// O(the paragraph's top-level inlines) — the same offset walk every other rule
+/// in this function does, and bounded by one paragraph's width, never the
+/// document.
+fn opaque_field_containing(inlines: &[InlineNode], offset: u32) -> Option<&Field> {
+    let mut cum = 0u32;
+    for inline in inlines {
+        let start = cum;
+        cum = start.saturating_add(inline_text_len(inline));
+        if let InlineNode::Field(field) = inline
+            && !field_result_is_editable(field)
+            && offset > start
+            && offset < cum
+        {
+            return Some(field);
+        }
+    }
+    None
+}
+
+/// The refusal a partial edit inside `field`'s cached result earns: the
+/// calculated-value sentence for `PAGE`/`NUMPAGES`, else the
+/// select-the-whole-field one.
+///
+/// O(the field instruction's leading token) — no document walk.
+fn field_result_refusal(field: &Field) -> FieldRefusal {
+    match PaginatedField::parse(&field.instruction) {
+        Some(PaginatedField::PageNumber) => FieldRefusal::PageNumberIsCalculated,
+        Some(PaginatedField::PageCount) => FieldRefusal::PageCountIsCalculated,
+        None => FieldRefusal::PartialResultNotEditable,
+    }
 }
 
 /// Applies `op` to `doc`, returning the inverse operation (for undo). `ids` mints
@@ -5023,21 +5151,50 @@ fn transparent_children(inline: &InlineNode) -> Option<&[InlineNode]> {
             Some(&revision.inlines)
         }
         InlineNode::Sdt(sdt) => Some(&sdt.inlines),
-        // A `FORMTEXT` field's result is the blank a person fills in - the
-        // whole point of the control - so text lands INSIDE it rather than
-        // beside it, and the filled value stays part of the field when the
-        // document is written back.
-        InlineNode::Field(field) if is_text_form_field(field) => Some(&field.inlines),
+        // A field whose cached result is the text the reader sees - a `FORMTEXT`
+        // blank a person fills in, a `TOC`, a `SEQ`, a `REF`. Text lands INSIDE
+        // it rather than beside it, and the edited value stays part of the field
+        // when the document is written back.
+        InlineNode::Field(field) if field_result_is_editable(field) => Some(&field.inlines),
         _ => None,
     }
 }
 
-/// Whether this field is a legacy `FORMTEXT` - the only field whose result a
-/// person is allowed to type into.
+/// Whether this field's cached result is the text the reader sees, and so may be
+/// edited in place.
 ///
-/// A `PAGE` or `NUMPAGES` result is recomputed from the layout and typing into
-/// it would be overwritten; a `FORMCHECKBOX` has no content at all. Word
-/// refuses both.
+/// Two fields say no, for two different reasons:
+///
+/// * a `PAGE`/`NUMPAGES` result is **restamped from pagination** on every layout
+///   pass, so it is not model text at all and an edit there would store
+///   characters no page shows (`casual-doc-layout`'s `flow.rs` routes exactly
+///   these two to a [`FieldKind::Page`]/`NumPages` marker and shapes the value
+///   itself; every other field's result flows as ordinary inline content);
+/// * a `FORMCHECKBOX` holds no content — layout synthesises one box character
+///   from the field's state, so there is nothing in its result to edit.
+///
+/// Everything else is editable, which is what Word does: a field result is
+/// ordinary text you may type into, and an update recomputes it. The
+/// [`FieldRefusal`] doc comment records where we deliberately differ.
+///
+/// O(the field instruction's leading token).
+fn field_result_is_editable(field: &Field) -> bool {
+    if PaginatedField::parse(&field.instruction).is_some() {
+        return false;
+    }
+    !matches!(
+        field.form.as_ref().map(|form| &form.kind),
+        Some(FormFieldKind::CheckBox(_))
+    )
+}
+
+/// Whether this field is a legacy `FORMTEXT` — the field whose result is a blank
+/// a person fills in, so BOTH of its boundaries belong to the field.
+///
+/// Distinct from [`field_result_is_editable`], which asks the weaker question
+/// "is this result ordinary text": a `TOC` result is editable but typing at its
+/// trailing edge belongs outside it, whereas typing at the trailing edge of a
+/// form blank is the whole point of the blank.
 fn is_text_form_field(field: &Field) -> bool {
     field
         .form
@@ -5078,7 +5235,7 @@ fn transparent_children_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineNo
             Some(&mut revision.inlines)
         }
         InlineNode::Sdt(sdt) => Some(&mut sdt.inlines),
-        InlineNode::Field(field) if is_text_form_field(field) => Some(&mut field.inlines),
+        InlineNode::Field(field) if field_result_is_editable(field) => Some(&mut field.inlines),
         _ => None,
     }
 }
@@ -5229,6 +5386,13 @@ fn reject_partial_atomic(inlines: &[InlineNode], start: u32, end: u32) -> Result
             match inline {
                 InlineNode::Run(_) => {}
                 _ if transparent_children(inline).is_some() => {}
+                // A field whose result is not editable in place is atomic like a
+                // tab — but unlike a tab it has a reason a reader can act on, and
+                // the generic "not supported for this selection" sentence sends
+                // them hunting a selection that will never work.
+                InlineNode::Field(field) => {
+                    return Err(EditError::FieldResult(field_result_refusal(field)));
+                }
                 _ => return Err(EditError::Unsupported),
             }
         }
@@ -5279,6 +5443,20 @@ fn insert_text(
             return Err(EditError::Unsupported);
         };
         return insert_text(&mut field.inlines, local, text, ids);
+    }
+
+    // An offset STRICTLY inside a field whose result is not editable in place —
+    // a `PAGE`/`NUMPAGES` result restamped from pagination, or a `FORMCHECKBOX`'s
+    // synthesised glyph — reaches none of the rules below: no top-level run
+    // contains it, no run boundary touches it, and no top-level inline starts
+    // there. It therefore fell all the way through to the "insert a fresh run at
+    // the matching top-level position" fallback, whose loop cannot match an
+    // offset interior to an inline and so appended the character at the END of
+    // the paragraph. Typing inside the footer's page count put the character
+    // after the field, which is silent misplacement: the edit reported success
+    // and landed somewhere the reader did not ask for. Refuse, with the reason.
+    if let Some(field) = opaque_field_containing(inlines, offset) {
+        return Err(EditError::FieldResult(field_result_refusal(field)));
     }
 
     let segs = run_segments(inlines);
@@ -5448,7 +5626,14 @@ fn remove_covered_in(
         if s < end && e > start {
             // Partial overlap. Runs were boundary-split by the caller, so this is
             // a transparent wrapper we descend into; an atomic leaf here cannot be
-            // split and is refused.
+            // split and is refused — with the field's own reason when it is a
+            // field, so a Backspace inside a page-count result says why instead of
+            // blaming the selection.
+            if transparent_children(&inlines[i]).is_none()
+                && let InlineNode::Field(field) = &inlines[i]
+            {
+                return Err(EditError::FieldResult(field_result_refusal(field)));
+            }
             let Some(children) = transparent_children_mut(&mut inlines[i]) else {
                 return Err(EditError::Unsupported);
             };
@@ -5486,8 +5671,18 @@ fn split_paragraph(
         if offset > paragraph_text_len(para) {
             return Err(EditError::OffsetOutOfRange);
         }
-        let inlines = std::mem::take(&mut para.inlines);
-        let (left, right) = split_inlines(inlines, offset, ids)?;
+        // Split a COPY and commit only once it has succeeded. `std::mem::take`
+        // here emptied the paragraph before a split that can fail — and one can:
+        // an offset inside a field's cached result is refused, because a complex
+        // field is one `fldChar begin … end` span and cannot straddle two `w:p`.
+        // Pressing Enter inside `sample.docx`'s TOC field therefore returned an
+        // error with the paragraph's entire content already gone, and no inverse
+        // recorded (the op returns `Err` before it builds one), so undo had
+        // nothing to restore. The same shape the `DeleteText` arm records above.
+        //
+        // O(the paragraph's inlines) per Enter — bounded by one paragraph, never
+        // the document, and the arm already clones `properties` beside it.
+        let (left, right) = split_inlines(para.inlines.clone(), offset, ids)?;
         let properties = para.properties.clone();
         para.inlines = left;
         blocks.insert(
@@ -5795,6 +5990,14 @@ fn split_inlines(
                         tail.inlines = rc;
                         right.push(InlineNode::Sdt(tail));
                     }
+                }
+                // A complex field is ONE `fldChar begin … end` span, so its result
+                // cannot straddle two `w:p` — splitting it would leave two
+                // half-fields neither Word nor this engine could read back. Still
+                // refused (it was `Unsupported`), but now it says so, and the
+                // reader's next move is to put the break outside the field.
+                InlineNode::Field(_) => {
+                    return Err(EditError::FieldResult(FieldRefusal::FieldCannotBeSplit));
                 }
                 _ => return Err(EditError::Unsupported),
             }
