@@ -7,6 +7,7 @@ APIs
 APP
 ASCII
 Alt
+App
 Arial
 AutoCorrect
 AutoFit
@@ -77,6 +78,7 @@ HLD
 HTML
 HTTP
 HarfBuzz
+Hocuspocus
 Hotfix
 Hunspell
 ICU
@@ -89,6 +91,7 @@ InteropGrabBag
 Invariants
 JPEG
 JSON
+JWT
 JavaScript
 KiB
 Knuth
@@ -100,6 +103,7 @@ LST
 LTR
 LayoutNG
 LibreOffice
+Lifecycle
 Linebender
 MAX
 MCE
@@ -169,6 +173,7 @@ SDTs
 SHA
 SIL
 SVG
+SaaS
 Sdt
 SharedArrayBuffer
 SmartArt
@@ -198,9 +203,11 @@ WAI
 WASM
 WCAG
 WMF
+WOPI
 WYSIWYG
 WebAssembly
 WebGPU
+WebSocket
 WordArt
 WordprocessingML
 XML
@@ -287,6 +294,7 @@ dialogs
 diff
 diffable
 diffed
+differentiator
 diffs
 discoverability
 discoverable
@@ -455,6 +463,7 @@ reviewable
 roadmap
 rtf
 rustdoc
+sandboxed
 schemas
 scrollable
 scrollbar
@@ -484,7 +493,9 @@ superset
 svg
 swappable
 tabindex
+tarball
 tblpPr
+teardown
 textbox
 tombstoned
 toolchain
@@ -525,6 +536,7 @@ virtualized
 vml
 wasm
 webapp
+websocket
 webview
 whitespace
 widthless
