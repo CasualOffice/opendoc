@@ -1554,9 +1554,29 @@ body.modal-open {
   cursor: pointer;
 }
 
-.dialog-button:hover {
+.dialog-button:hover:not(:disabled) {
   border-color: var(--muted);
   background: var(--bg-2);
+}
+
+/* A disabled dialog button has to LOOK disabled.
+ *
+ * `.dialog-button` had no `:disabled` rule and its `:hover` applied regardless,
+ * so a button that ships disabled-with-a-reason rendered identically to a live
+ * one — same ink, `opacity: 1`, `cursor: pointer` — and lit up on hover. Found
+ * by screenshotting the version-history panel: "Show changes" is genuinely
+ * `disabled` and carries the right title ("Comparing one version with another
+ * is not built yet"), and it was indistinguishable from "Restore this version"
+ * beside it. `SKILL.md` §10's rule is that a command which cannot run ships
+ * disabled WITH A REASON rather than as a button that does nothing — a reason
+ * only a tooltip can reveal, on a control that looks live, is the second half of
+ * that rule unmet.
+ *
+ * The values are the ones the rest of the chrome already uses (`.btn:disabled`,
+ * `.save-format:disabled`), not new ones: one treatment for one meaning. */
+.dialog-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .dialog-button-primary {
