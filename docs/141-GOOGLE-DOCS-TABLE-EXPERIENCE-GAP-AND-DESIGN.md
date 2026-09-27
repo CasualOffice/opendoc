@@ -891,3 +891,545 @@ to the editing experience, and it is the reason the owner's report can be true a
 as eleven table design documents being shipped and accurate: **those eleven documents are about
 layout and paint, not about the pointer.** Only `docs/70` is about interaction, and its own
 deferral list (§5) says so.
+
+---
+
+## 4. The designs
+
+### 4.0 Rows 1–8 need no design beyond their own row
+
+The eight cheapest rows in §2 are each one call site, and their §1 subsections already contain
+everything a lane needs. Restated here as one-line specs so the queue can be worked from the
+top without reading back:
+
+| id | The change |
+| --- | --- |
+| **TBL-01** | In the `key === "Tab"` branch, replace the empty `catch` with: if `forward` and the caret is in the table's **last** cell, `await runEdit(() => doc.insertRow(anchorOfLastRow, true), { gate: true })` then `navToPosition(doc.moveTableCell(focus.node, true), false)`. If `!forward` and it is the first cell, keep the no-op but say so: `setStatus("The caret is already in the first cell")`. Drives the existing `insertRow`. Gate stays `{ gate: true }` so Suggesting still refuses with its existing reason. |
+| **TBL-02** | Add an `Unmerge cells` row to `tableToolCommands`, `enabled` only when the pointed-at cell is merged, `run: () => runEdit(() => doc.splitMergedCell(context.anchor.node), { gate: true })` — **no** second and third argument, which is what reaches `split_table_cell`. New command id `table.unmerge`, added to `APP_MENU_SECTIONS.table` and `TABLE_MENU_LABELS` beside `table.split`, plus the existing `#splitCellBtn` group gains no button: reachability is menu + context + palette = three surfaces, no band width spent. Correct the `#splitCellBtn` title from *"Split current merged cell"* to *"Split cell into rows and columns"*. |
+| **TBL-03** | In `updateToolbar`, wherever a Table-band control's `disabled` is set from `!tableInfo?.regular` or a rule check, set `control.title` to the same string the menu uses (`"Unavailable for merged or spanned tables"`, `"Rows need a fixed or minimum height before distribution"`) and restore `authoredTitle(control)` when enabled — the helper already exists and `#tableStyleBtn` already uses it. Add a unit guard asserting no Table-band control is ever `disabled` with its authored title still showing. |
+| **TBL-04** | Change `runNodeEdit`'s catch from `setStatus(err?.message ?? …)` to `setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error")` — the same call `runEdit` makes. Then extend `webapp/src/edit_errors.mjs` with the table sentences, and add a guard that no `setStatus` call in `main.js` passes a raw `err.message`. |
+| **TBL-05** | In `onPointerDown`, before clearing, keep the table selection when `tableSelectionContainsClientPoint(event.clientX, event.clientY)` — the function already exists and the `contextmenu` handler already uses it. Also delete `#mergeCellsBtn`'s unreachable click handler and its divergent copy of the merge sentence (1.11). |
+| **TBL-06** | Add `cantSplit` (or the positive `allowRowBreak`) to `applyTableProperties`'s serde struct, one checkbox in the inspector's **Current row** section — *"Allow this row to break across pages"* — and a context-menu toggle under `table.layout`. No engine work: `flow.rs` reads `row.properties.cant_split` and `paginate.rs` honours it, guarded. |
+| **TBL-07** | After `navToPosition(c, false)` in the Tab branch, select the destination cell's contents with the existing `doc.cellTextRange(c.node)` — the same call `selectAll` makes — and fall back to the collapsed caret when it reports `found: false` (a cell holding a text-box story). |
+| **TBL-08** | Add `tableSelectionAnchorNodes(node, mode) -> Vec<String>` to the facade, returning `fn table_selection_anchors`'s existing list rather than the rects derived from it; then have `runNodeEdit` loop it when a `tableSelection` is live. **Do not** re-derive the anchors in JS — that is a second implementation of one rule. |
+
+Also fix, while in the area: `setStatus(\`Selected table ${mode}\`)` in `selectTableContext`
+is a raw template literal, not a `t()` call, so the one status line the table selection
+produces is **not localised**.
+
+The three designs below are the top three rows that a lane cannot build without design.
+
+---
+
+### 4.1 Design D-1 — the table chrome layer (TBL-09, TBL-10, TBL-11; fixes TBL-15 and TBL-35 on the way)
+
+**The named pattern, first.** This is a **hover router over a canvas surface**, and this
+repository has already written one: `webapp/src/pointer_cursor.mjs`'s own header says *"A canvas
+surface needs a HOVER ROUTER — ask the engine what is under the point, decide from that, write
+the answer onto the canvas."* D-1 is the second half of that same router — not only the cursor
+but the *chrome*. The second pattern it needs is a **per-page spatial index** built once per
+layout revision and invalidated on `dirtyPages`: plain indexing plus memoisation, which is what
+turns the current `R×(C−1)` document walks into one page walk.
+
+No third pattern is being invented.
+
+#### 4.1.1 The one facade addition
+
+```
+tableChromeOnPage(pageNumber: u32) -> String   // JSON
+```
+
+JSON, not a flat `Vec<i32>`, because the payload must carry table **NodeIds** and the flat-ints
+convention cannot; `applyTableProperties(node, propertiesJson)` already establishes JSON as this
+facade's structured-payload idiom, so this is not a new shape.
+
+```json
+{ "tables": [ {
+    "node": "<hex NodeId>", "rows": 3, "columns": 4, "regular": true,
+    "x": 1440, "y": 2160, "w": 8640, "h": 2880,
+    "colEdges": [ { "i": 0, "x": 3600, "y": 2160, "h": 2880, "outer": false }, … ],
+    "rowEdges": [ { "i": 0, "x": 1440, "y": 3120, "w": 8640, "outer": false }, … ],
+    "rowStrip": { "x": 1152, "w": 288 },
+    "colStrip": { "y": 1872, "h": 288 },
+    "cells":    [ { "r": 0, "c": 0, "node": "<hex>", "x": …, "y": …, "w": …, "h": …,
+                    "gridSpan": 1, "vMerge": "none" }, … ]
+  } ] }
+```
+
+All coordinates page-local twips, the same convention as every existing geometry call. One call
+per **page**, for **every** table painted on it, including continuation pages of a table that
+spans a break (the existing `BTreeMap<(page, col), …>` coalescing in
+`table_column_resize_handles` already proves that per-page-per-column shape is right).
+
+**It must be built from the LAYOUT, not from the model.** One walk of `page.placed`'s fragment
+tree yields every `BlockFragment::TableRow` on the page with its cells and rects — which is
+exactly what `find_cell_rect` already recurses through, one cell at a time. Turning that
+one-cell lookup inside out is the whole perf fix:
+
+| | today | with D-1 |
+| --- | --- | --- |
+| calls into the layout per table | `R × (C−1)` | 1 |
+| cost of each | O(placed fragments across all resident pages) | O(fragments on this page) |
+| total for a 20×5 table | 80 whole-page-tree scans | one page walk |
+| document walks for `tableInfo` | 3 | unchanged (out of scope; TBL-15's remainder) |
+
+Memoise on `(pageNumber, revision)`. `EditResult` already exposes `revision` and `dirtyPages`,
+so the invalidation channel exists and nothing new is needed. **State the complexity in the doc
+comment** — `SKILL.md` §8 requires it: *"O(fragments on `pageNumber`), memoised per layout
+revision."*
+
+#### 4.1.2 The one other facade addition — correct border semantics
+
+```
+moveTableColumnBoundary(node, boundaryIndex: u32, deltaTwips: i32, mode: &str) -> EditResult
+```
+
+- `mode = "border"` (the default, and what an **internal** boundary drag uses): column
+  `boundaryIndex` grows by `delta`, column `boundaryIndex + 1` shrinks by `delta`, **the table's
+  total width does not change**. This is the Docs behaviour `[K]` and the fix for TBL-10.
+- `mode = "table"` (what the **outer right** boundary uses): column `boundaryIndex` grows by
+  `delta` and the table grows with it — today's `setTableColumnWidthAt` behaviour, kept because
+  it is the right answer for the outer edge.
+- Both write `grid[i].width_twips` **and** every row's `cells[i].properties.width`, exactly as
+  `set_table_column_width_at` already does, and commit **one** `Operation::ReplaceTable` under
+  `HistoryKind::TableResize` — so one drag is one undo entry, as it is today.
+- The minimum column width moves **into the facade** as one constant, `MIN_COLUMN_TWIPS = 72`
+  (0.05 in, today's JS floor). Right now 72 lives in `updateTableColumnResize` and the facade
+  clamps to 1 — two floors for one rule.
+
+`setTableColumnWidthAt` stays, because the inspector's absolute **Preferred width** field needs
+it. Two calls, two genuinely different questions ("move this border" vs "make this column
+exactly this wide"), not two ways to do one thing.
+
+Row height needs **no** new facade method: `setTableRowHeight(node, heightTwips, rule)` already
+exists and currently has **zero webapp callers** (1.6). D-1 makes it live, which retires one of
+the nine orphan setters.
+
+#### 4.1.3 Hit zones
+
+Resolved in JS against `tableChromeOnPage`, on `pointermove`, through the existing
+`webapp/src/pointer_hover.mjs` scheduler so it is already rAF-throttled and already the place
+the cursor is decided.
+
+| Zone | Geometry | Cursor | Pointer-down starts |
+| --- | --- | --- | --- |
+| internal column boundary | `x = colEdges[i].x ± 5px`, `y` within `[colEdges[i].y, +h]` | `col-resize` | `moveTableColumnBoundary(…, "border")` drag |
+| outer right boundary | the last `colEdges` entry with `outer: true`, ±5px | `col-resize` | `moveTableColumnBoundary(…, "table")` drag |
+| internal row boundary | `y = rowEdges[i].y ± 5px`, `x` within `[rowEdges[i].x, +w]` | `row-resize` | `setTableRowHeight` drag on row `i` |
+| outer bottom boundary | last `rowEdges` with `outer: true` | `row-resize` | `setTableRowHeight` on the last row |
+
+- **±5px, not ONLYOFFICE's ±3px** — keep the tolerance we already ship
+  (`.table-col-resize-handle { width: 10px; margin-left: -5px }`), because it is measurably more
+  forgiving and is one of the few places we lead (§3).
+- **At a crossing, the ROW boundary wins.** This is a decision, not an accident: ONLYOFFICE
+  tests `Border = 0` (top) and `2` (bottom) before `3`/`1` (left/right) in
+  `private_CheckHitInBorder`, so a corner there resolves to the horizontal edge, and a user
+  travelling along a row edge should not have the gesture change under them at every column.
+  Record it in the `CURSOR_TARGETS` row's `why`.
+- **Do not paint any resting chrome.** The border is already drawn by the raster; the cursor
+  change *is* the affordance, which is what Docs does `[K]` and what avoids proposing a visual
+  change the owner has not approved (`docs/63`). Hover reuses the existing
+  `.table-col-resize-handle::after` accent wash; a `.table-row-resize-handle` gets the same
+  treatment rotated. No new design token.
+
+**`pointer_cursor.mjs` must gain the rows for this**, because that module throws on an
+unrecognised overlay target by construction. Concretely: promote `table-row-boundary` from
+`owner: "unprobed"` to `owner: "css"` with `selector: ".overlay .table-row-resize-handle"`, and
+add `drag-table-row` mirroring the existing `drag-table-column`. `pointer_cursor.test.mjs` lists
+the `unprobed` rows back, so this is the guard that will tell the lane it is done.
+
+#### 4.1.4 States
+
+```
+idle ──hover a boundary──▶ armed (cursor + wash)
+armed ──pointerdown──▶ dragging (guide follows, clamped)
+dragging ──pointerup, |delta| ≥ 8 twips──▶ committed (one undo entry, announced)
+dragging ──pointerup, |delta| < 8 twips──▶ abandoned (no edit, no message)
+dragging ──pointercancel / blur──▶ abandoned
+idle ──Viewing or Suggesting──▶ never armed (see refusals)
+```
+
+Two fixes inside the `dragging` state:
+
+- **The guide spans the TABLE, not the page.** Today `startTableColumnResize` sets the preview
+  height from `page.overlay.clientHeight`; use `colEdges[i].y` and `.h`. The row-axis guide is
+  the same, on `rowEdges[i].x` and `.w`.
+- **The guide clamps; it does not refuse.** When the shrinking neighbour reaches
+  `MIN_COLUMN_TWIPS`, the guide stops moving and the pointer keeps going. A toast per pixel of
+  over-drag would be noise, and the 8-twip dead zone already establishes "a movement that
+  changes nothing produces nothing."
+
+#### 4.1.5 Refusals — and TBL-35, which this fixes
+
+Today the handles are painted and draggable in Viewing and Suggesting and the refusal arrives
+only on pointer-up, which is a dead control that looks live. New rule: **the chrome layer is
+armed only when the edit would be accepted.**
+
+| Situation | Behaviour |
+| --- | --- |
+| Viewing mode | zone not armed; cursor stays `text`. A click is an ordinary caret placement — no message, because nothing was offered |
+| Suggesting mode | zone not armed; **a click in the zone** sets `"This structural change cannot be tracked in Suggesting mode"` — the string that already exists in `tableToolCommands` — so the user learns why the gesture they expected is absent |
+| shrinking neighbour at the floor | guide clamps, silently (above) |
+| a merged/spanned table | until TBL-19, column boundaries are not armed; a click in the zone sets `"Unavailable for merged or spanned tables"`, the string that already exists. **Row** boundaries ARE armed, because `setTableRowHeight` has no regularity gate |
+
+Every string above already exists in the product. **This design introduces no new refusal
+wording**, which is deliberate: 1.11 found four variants of one sentence already.
+
+#### 4.1.6 Keyboard equivalent — required, not optional
+
+- `Alt+Shift+Right` / `Alt+Shift+Left` — widen / narrow the caret's column by one grid step
+  (36 twips = 0.025 in), through `moveTableColumnBoundary(node, col, ±36, "border")`.
+- `Alt+Shift+Down` / `Alt+Shift+Up` — grow / shrink the caret's row by 36 twips, through
+  `setTableRowHeight(node, h ± 36, "atLeast")`.
+- **The lane must re-check the chords before binding them.** Measured today:
+  `webapp/src/keymap.mjs` declares 36 chords and only two use Alt — `alt+h` and
+  `command+alt+a` — so `alt+shift+arrow` is free. `chord_portability.test.mjs` is the guard, and
+  specs must derive labels from the `shortcutHint` fixture, never assert Mac glyphs
+  (`docs/105` UX-009).
+- Even without the chord the ≥2-surface floor is already met: the inspector's `#tableColumnWidth`
+  and `#tableRowHeight` fields are keyboard-operable today, and `table.distribute.*` is on four
+  surfaces.
+
+#### 4.1.7 Touch equivalent — required
+
+Hover does not exist on touch, and `grep -rn 'pointerType' webapp/src/` returns **zero** hits
+today, so this is the first `pointerType` read in the product (TBL-18).
+
+On a **tap inside a table** with `event.pointerType === "touch"`, paint a persistent pill on each
+internal boundary of *that* table: **24 CSS px** across the boundary (WCAG 2.5.8 Target Size
+Minimum), centred on the visible portion of the edge, one per boundary rather than one
+continuous strip so two adjacent boundaries never merge into one target. The pills persist while
+the caret is in that table and disappear with it — the same lifetime the column handles already
+have. Drag a pill to resize; the same guide, the same clamp, the same commit.
+
+ONLYOFFICE `[S]` returns `null` from `IsTableBorder` under `IsMobileVersion()`, i.e. they have
+**no** table border interaction on mobile at all, so this is a lead rather than a catch-up.
+
+#### 4.1.8 Accessibility
+
+- **The result must reach AT.** On commit, announce through the existing status channel:
+  `setStatus(t("table.columnWidthSet", { width: … }))` / `t("table.rowHeightSet", …)`, which
+  `webapp/src/status_channel.mjs` already routes to a live region. Localised via `t()`, unlike
+  the existing `Selected table ${mode}` (§4.0).
+- **No new tab stops.** The chrome paints no focusable elements. Putting 40 handles in the tab
+  order would flood it; the keyboard path is §4.1.6 plus the inspector. The existing overlay
+  handles carry `pointer-events: auto` and no `tabindex`, which is already correct, and nothing
+  focusable gains `aria-hidden` (axe `aria-hidden-focus`).
+
+#### 4.1.9 How it is proven — and the mutation
+
+`SKILL.md` §4: a guard that cannot fail is worse than none. TBL-37 records that **no test drags
+a column today**; only the handle's resting position is asserted, in
+`painted-layout-consistency.spec.mjs`.
+
+1. **Border semantics.** Drag an internal boundary right by a known amount; assert column `i`'s
+   width grew by it, column `i+1`'s shrank by it, and the **table width is unchanged** (read
+   through `tableInfo` / the a11y mirror). *Mutation:* set `mode` back to `"table"` and the
+   table-width assertion must go red.
+2. **Row resize.** Drag a row boundary down; assert the row's `rowHeightTwips` grew and
+   `rowHeightRule` became `atLeast`. *Mutation:* drop the `rule` argument and watch the rule
+   assertion fail.
+3. **Hover without the caret.** With the caret in a paragraph **before** the table, move the
+   pointer onto a column boundary and assert the computed cursor is `col-resize`. *Mutation:*
+   restore the `if (!doc?.inTable(focus.node)) return;` gate and it must go red. This is the
+   guard for the row the owner's report is actually about.
+4. **Complexity, not milliseconds** (`SKILL.md` §8). Build tables of R and 2R rows and assert
+   the work `tableChromeOnPage` does roughly **doubles**, not quadruples. *Mutation:* reintroduce
+   a per-cell `cell_rect` call and the doubling assertion must fail.
+5. **Armed-only-when-accepted.** In Viewing, assert the boundary's computed cursor is `text` and
+   a click there places a caret; in Suggesting, assert the click produces the existing
+   Suggesting reason. *Mutation:* arm the zone unconditionally and both must go red.
+
+Note for the lane: `table-editing-ux.spec.mjs` is on the known-flaky list under worker
+contention (`SKILL.md` §6) — re-run any failure in isolation before calling it a regression.
+
+---
+
+### 4.2 Design D-2 — the table gutter: edge strips, hover insert, drag reorder (TBL-12, TBL-13, TBL-14)
+
+**The named pattern.** A **gutter / header strip** — the spreadsheet row-and-column-header
+idiom — plus **drag-and-drop with a drop indicator**. Both are established, and the sibling
+`opencalc` already has the spreadsheet version; look there before inventing one.
+
+**D-2 needs no facade work of its own.** `tableChromeOnPage`'s `rowStrip` / `colStrip` / `cells`
+already carry everything, which is why D-1 is sequenced first. The only Rust change in D-2 is
+computing those two rects, which belongs in D-1's payload anyway.
+
+#### 4.2.1 Hit zones
+
+| Zone | Geometry | Cursor | Click | Drag |
+| --- | --- | --- | --- | --- |
+| **row strip** | `rowStrip.x`, `rowStrip.w` (≥ 12 CSS px, or the cell's start margin, whichever is larger), split per row at `rowEdges` | `cell` | `selectTableContext(rowCellNode, "row")` | extend across rows → a multi-row selection (**needs D-3**) |
+| **column strip** | `colStrip.y`, `colStrip.h`, split per column at `colEdges` | `cell` | `selectTableContext(colCellNode, "column")` | extend across columns (**needs D-3**) |
+| **insert target** | a 16px circle centred **on** a boundary, inside the strip, painted on hover only | `pointer` | `insertRow(node, below)` / `insertColumn(node, after)` | — |
+| **reorder grip** | the strip of an **already-selected** row or column | `move` | — | reorder that row/column |
+
+Cursor choices, stated because `pointer_cursor.mjs` will refuse an unnamed target:
+
+- **`cell` for the strips.** Docs uses a custom arrow bitmap `[K]`; we have no custom cursor
+  images for this and the CSS keyword whose meaning is "select a table cell" is `cell`. Adding a
+  data-URI cursor would be a visual change for the owner to approve, and `cell` is honest today.
+- **`move` for a reorder grip**, not `grab`. `pointer_cursor.mjs` already reserves `grab` for the
+  ruler-tab idiom and records that ONLYOFFICE reserves it for the hand/pan tool; `move` is what
+  this product already uses for "dragging this thing to a new position"
+  (`drag-object-move`, `object-movable`).
+
+New `CURSOR_TARGETS` rows required: `table-row-strip`, `table-column-strip`,
+`table-insert-target`, `drag-table-reorder`.
+
+#### 4.2.2 Two slices, because one of them needs D-3
+
+- **Slice 1 (buildable now):** single-row and single-column selection by click, the insert
+  targets, and reorder. All three are expressible in today's `tableSelection = { node, mode }`.
+- **Slice 2 (after D-3):** drag **along** a strip to select several rows or columns.
+  `tableSelectionRects(node, mode)` can only describe one row or one column, so a multi-row
+  selection has no representation until D-3's type exists. Saying this now stops a lane from
+  discovering it halfway.
+
+#### 4.2.3 Reorder — the mechanism, and why no new op
+
+`js_name = sortTable` already permutes `replacement.rows` and commits **one**
+`Operation::ReplaceTable` with node ids preserved. "Move row *i* to *j*" is the same transform
+with a different permutation, and for a merged table `ReplaceTable` is the *only* correct route
+because `Operation::DeleteColumn` calls `ensure_regular_table`. So:
+
+```
+moveTableRow(node, fromIndex: u32, toIndex: u32) -> EditResult       // HistoryKind::TableStructure
+moveTableColumn(node, fromIndex: u32, toIndex: u32) -> EditResult
+```
+
+Both are facade-level permutations of a cloned table. `moveTableColumn` must permute
+`table.grid` alongside every row's `cells`, and on a non-regular table it must permute **grid
+columns**, resolved through `fn cell_grid_start` — the same helper D-3 needs (§4.3.1).
+
+**Drop indicator.** A 2px line in the accent colour at the candidate boundary, reusing
+`.table-col-resize-preview`'s existing styling rather than a new class — again, no new token.
+
+**A repeating header row keeps its flag when moved.** `w:tblHeader` is a per-row property and
+Word repeats only the *leading* run of header rows, so moving a header row down simply stops it
+repeating. That is a **decision, not a refusal**: the flag travels with the row and nothing is
+said. Recorded so it is not later "fixed" into a refusal.
+
+#### 4.2.4 New command ids — the only ones this document proposes
+
+Four, because nothing in the registry moves a row or a column:
+
+```
+table.move.rowUp   table.move.rowDown   table.move.columnLeft   table.move.columnRight
+```
+
+- **Surfaces:** the existing `table.layout` ("Autofit & sort") context submenu, the application
+  Table menu (`APP_MENU_SECTIONS.table` + `TABLE_MENU_LABELS`), and the palette — three
+  surfaces, past the ≥2 floor.
+- **Ribbon width spent: none.** They go into a menu, not a band group. §0.6's budget is
+  untouched, which matters because the Table band already holds 19 controls.
+- `menu_taxonomy.test.mjs` asserts set equality between the parsed `table.*` ids and
+  `menuCommandIds("table")` **in both directions**, so forgetting either half fails the build —
+  that is this row's own guard and the lane does not need to write it.
+- The §0.3 count becomes 27 ids / 23 invocable. Re-derive it; do not carry that arithmetic
+  forward (`SKILL.md` §5a).
+
+#### 4.2.5 Refusals
+
+Every string already exists; reuse, do not add variants.
+
+| Situation | Behaviour |
+| --- | --- |
+| column strip on a merged/spanned table | strip not painted (`tableSelectionRects` returns empty for `"column"` there). A click in the region sets `"Unavailable for merged or spanned tables"` |
+| insert target in Suggesting | not painted; a click sets `"This structural change cannot be tracked in Suggesting mode"` |
+| insert target in Viewing | not painted; a click is an ordinary caret placement, no message |
+| reorder dropped on its own index | no-op, no message — the 8-twip dead-zone rule |
+| reorder a column on a merged table | armed, because `moveTableColumn` goes through `ReplaceTable` and does not need regularity — this is one place D-2 is *ahead* of the rest of the product's merged-table behaviour |
+
+#### 4.2.6 Keyboard and touch
+
+- **Keyboard:** select row/column is already on four surfaces; insert is already on four
+  surfaces; reorder is the four new commands above, so every D-2 gesture has a keyboard route
+  with no chord at all. A chord is optional and, if added, must not collide with D-1's
+  `alt+shift+arrow`.
+- **Touch:** a **long-press** on a row strip selects the row and paints a **44 CSS px** drag pill
+  (WCAG 2.5.5) at the strip's centre; drag the pill to reorder. Insert targets are **not** hover
+  targets on touch — paint them at 24px for the *selected* row/column only, so they have a
+  cause. Requires the same `pointerType` read as D-1.
+- **A11y:** announce a reorder — `setStatus(t("table.rowMoved", { from, to }))`. Selection already
+  announces, but see §4.0: that string is not localised today.
+
+#### 4.2.7 How it is proven — and the mutation
+
+1. Click the row strip; assert 4 `.table-cell-selection` rects appear for a 4-column table.
+   *Mutation:* make the strip resolve to the wrong row and the rect y-coordinates must diverge.
+2. Click an insert target between rows 1 and 2; assert the a11y mirror gains a row **at index 1**,
+   not at the caret. *Mutation:* pass the caret's node instead of the target's and the index
+   assertion must go red. This is the guard that distinguishes "insert where I am pointing" from
+   "insert where the caret is" — the whole point of the affordance.
+3. Reorder row 3 above row 2; assert the mirrored cell text order changed and the undo label is
+   a single `Undo Table structure`. *Mutation:* commit two ops instead of one and the single-undo
+   assertion must fail.
+4. Column strip on a merged table: assert no strip is painted and a click yields the existing
+   reason. *Mutation:* drop the `regular` gate and the "no strip" assertion must go red.
+
+---
+
+### 4.3 Design D-3 — rectangular cell-range selection (TBL-16, and TBL-17 falls out of it)
+
+**The named pattern.** An **anchor/focus selection over a 2-D grid, normalised to a rectangle** —
+the spreadsheet selection model. In-house prior art: `opencalc` (`../sheets`), which
+`SKILL.md`-adjacent notes call further ahead; and `TextSelection` in
+`crates/casual-doc-selection` already has the anchor/focus + `validate` + `mapped` shape to
+mirror. Nothing here is novel; the only genuinely new thing is the **merged-cell expansion
+rule**, and that is a correctness requirement rather than a design choice.
+
+#### 4.3.1 The engine change — one new type in a 215-line crate
+
+In `crates/casual-doc-selection/src/lib.rs`, beside `TextSelection`:
+
+```rust
+/// A rectangular block of table cells, as the user dragged it: `anchor` is the cell
+/// the gesture started in, `focus` the cell it is currently over. The rectangle is
+/// DERIVED on demand, never stored, so a grid edit cannot leave it stale.
+pub struct TableCellSelection { pub table: NodeId, pub anchor: NodeId, pub focus: NodeId }
+```
+
+with one method that is the whole reason this belongs in the engine:
+
+```rust
+/// The inclusive grid rectangle `(r0, r1, c0, c1)` this selection covers, in GRID
+/// columns, expanded until it contains every merged cell it touches.
+fn normalised(&self, table: &Table) -> Option<(usize, usize, usize, usize)>
+```
+
+Two rules inside it:
+
+1. **Cell index to grid column.** A row's `cells[i]` is not grid column `i` once any cell carries
+   `gridSpan`. `fn cell_grid_start(row, col_index)` in `crates/casual-doc-wasm/src/lib.rs`
+   already does this conversion and **must move down** into the shared crate, because
+   `merge_regular_table_selection` and this new method have to agree by construction. That move
+   is the one refactor D-3 requires.
+2. **Expand to whole merged cells,** iterating to a fixed point: if a `gridSpan > 1` or
+   `vMerge` cell straddles the rectangle's edge, grow the rectangle until it is contained. This
+   is what Docs and Word both do `[K]`, and it is the rule that makes "merge the selection"
+   always well-defined.
+
+**Why the selection crate and not the facade.** `SelectionError`, `validate` and `mapped` live
+there, and OT (ADR-033, `docs/107`) will have to transform a cell selection exactly as it
+transforms a text one. A facade-local implementation guarantees a second one later — the "prefer
+one mechanism over two" rule (`SKILL.md` §8).
+
+#### 4.3.2 The facade additions
+
+```
+setTableCellSelection(anchorCellNode, focusCellNode) -> TableSelectionInfo
+        // { found, table, r0, r1, c0, c1, cells, expanded }
+tableCellSelectionRects(anchorCellNode, focusCellNode) -> Vec<i32>   // stride 5, as today
+tableSelectionAnchorNodes(anchorCellNode, focusCellNode) -> Vec<String>
+mergeTableCellRange(anchorCellNode, focusCellNode) -> EditResult
+```
+
+- The existing three-mode `tableSelectionRects(node, mode)` and `mergeTableSelection(node, mode)`
+  are **left untouched**, so nothing regresses and the row/column/table paths keep their guards.
+- `mergeTableCellRange` calls `merge_regular_table_selection(original, r0, r1, c0, c1,
+  &mut self.edit_ids)` — **the existing helper, unchanged**. That is TBL-17, and it is a handful
+  of lines, because the engine already accepts an arbitrary rectangle and the facade simply never
+  offered one (1.5).
+- `tableSelectionAnchorNodes` is the same query TBL-08 needs; ship one, not two.
+- `expanded: true` tells the UI the rectangle grew, so it can say so rather than appearing to
+  select more than was dragged.
+
+#### 4.3.3 The UI
+
+`tableSelection` becomes one shape with a fourth mode, so `paintTableSelection`, the 14
+`tableSelection = null` sites and `tableSelectionContainsClientPoint` all keep working:
+
+```js
+// { mode: "row" | "column" | "table" | "cells", node, anchorCell?, focusCell? }
+```
+
+**The gesture.** In `updateDragSelection`, before its text branch: if pointer-down landed in a
+table cell and the current point resolves to a **different cell of the same table**, switch the
+gesture from text-drag to cell-drag — discard the text selection, set
+`{ mode: "cells", anchorCell, focusCell }`, and paint from `tableCellSelectionRects`.
+
+- **The threshold is the first crossing of a cell boundary, not a pixel distance.** A drag inside
+  one cell selects text; crossing a border switches to block selection. That is the Docs rule
+  `[K]` and it is what keeps both gestures reachable from one drag with no modifier.
+- **Crossing out of the table clamps to the edge cell** — reuse the clamping `updateDragSelection`
+  already applies at a story boundary (`pointerGesture.runningBand`, `pointerGesture.objectNode`),
+  rather than writing a second clamp.
+- The painted fill is the existing `.table-cell-selection` class. No new visual.
+
+#### 4.3.4 States
+
+```
+pointerdown in a cell ─▶ text-drag
+text-drag ──crossed a cell border, same table──▶ cell-drag   (text selection discarded)
+cell-drag ──moved back into the anchor cell──▶ cell-drag with a 1×1 rectangle
+             (NOT back to text-drag: a gesture that changes kind twice is unpredictable)
+cell-drag ──pointer leaves the table──▶ cell-drag, clamped to the edge cell
+cell-drag ──pointerup──▶ "cells" selection, announced
+```
+
+The one-way transition is a decision: once the gesture has become a block selection it stays
+one for the rest of the drag.
+
+#### 4.3.5 Refusals and one required rewording
+
+| Situation | Behaviour |
+| --- | --- |
+| merge a rectangle in a table that already has merges | `"Unavailable for merged or spanned tables"` — existing string, the `table_is_regular` gate (TBL-19) |
+| the rectangle expanded to contain a merged cell | **not** a refusal: `setStatus(t("table.selectionExpanded"))` — *"Selection expanded to include a merged cell"* |
+| a 1×1 rectangle with merge invoked | merge stays disabled, **but the existing reason must change** |
+
+**The required rewording.** `"Select a row, column, or table before merging"` enumerates exactly
+the three modes that will no longer be the only ones. It becomes **"Select two or more cells
+before merging"**, and `#mergeCellsBtn`'s unreachable duplicate (*"Select a table row, column, or
+table first"*) is deleted with TBL-05 rather than reworded — one sentence, one place.
+
+#### 4.3.6 Keyboard equivalent — required, and it changes existing behaviour
+
+- With the caret in a cell, `Shift+Arrow` that **would cross a cell boundary** starts a cell
+  selection anchored at the caret's cell — the keyboard mirror of the pointer rule.
+- Within a cell, `Shift+Arrow` keeps extending the text selection exactly as today.
+- **This changes behaviour that exists**, so it needs its own guard: `Shift+Down` on the last
+  line of a cell currently leaves the cell through `recoverVerticalMove`
+  (`webapp/src/caret_navigation.mjs`), and `navCaret`'s own comment records that the engine
+  *"dead-ends going UP out of a table"*. A spec must prove the in-cell text path still works
+  before and after.
+- `Ctrl+Shift+Space` (Word's Select Table) maps to the existing `table.select.table`, which is
+  already on four surfaces — so no new chord is strictly needed.
+
+#### 4.3.7 Touch equivalent
+
+**Honest gap in this design:** there is no touch text-selection grip in the product to build on.
+`grep -rn 'selection-grip\|selHandle\|selectionHandle' webapp/src/` returns **zero** hits, so the
+two-handle drag idiom a phone user expects does not exist for text either. D-3's touch path is
+therefore: **long-press a cell to anchor, then drag to extend**, with a 44px pill at the
+rectangle's bottom-right corner to adjust it afterwards. Building the general text-selection
+grips is a larger row than this design and is **not** claimed here — it is listed in §7 as
+deliberately out of scope, and D-3 must not be called done on touch until it exists.
+
+#### 4.3.8 Accessibility
+
+- Announce the block on pointer-up: `setStatus(t("table.cellsSelected", { rows, columns }))` —
+  *"Selected 3 rows by 2 columns"*.
+- **Mark the selection in the a11y mirror.** `webapp/src/a11y_mirror.mjs` already projects every
+  table into a real `<table>/<tr>/<td>`; set `aria-selected="true"` on the mirrored `<td>`s in
+  the rectangle. That is the channel by which assistive technology learns the block exists, and
+  without it a drag-only block selection is invisible to AT — which by `SKILL.md` §10 means not
+  done.
+
+#### 4.3.9 How it is proven — and the mutation
+
+1. Drag A1→C3 in a 5-column table; assert **9** `.table-cell-selection` rects and **zero**
+   `.highlight` rects. *Mutation:* remove the cell-boundary switch and the `.highlight` count
+   assertion must go red — that is the current behaviour, so the test is written against the bug
+   first and must be seen failing.
+2. Apply shading with the block selected; assert **9** cells shaded (through the mirror).
+   *Mutation:* revert `runNodeEdit` to `selection.focus.node` and it must drop to 1.
+3. Merge A1:C3; assert one cell with `gridSpan 3` and two `vMerge` continuations, and **one**
+   undo entry. *Mutation:* pass the row mode instead and the span must come out wrong.
+4. Drag a rectangle whose edge cuts a merged cell; assert `expanded === true`, the rectangle
+   grew, and the status line said so. *Mutation:* skip the fixed-point iteration and the
+   rectangle must come out too small.
+5. `Shift+Right` within one cell still extends a **text** selection. *Mutation:* make the cell
+   switch unconditional and this must go red — the guard that stops D-3 from breaking ordinary
+   typing.
