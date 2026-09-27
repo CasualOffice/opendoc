@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Export and Print Design — OpenDoc</title>
+    <meta name="description" content="Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/pdf-export-and-print.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="PDF Export and Print Design" />
+    <meta property="og:description" content="Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/pdf-export-and-print.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PDF Export and Print Design" />
+    <meta name="twitter:description" content="Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/pdf-export-and-print.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/pdf-export-and-print.html",
+            "name": "PDF Export and Print Design — OpenDoc",
+            "headline": "PDF Export and Print Design",
+            "description": "Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/pdf-export-and-print.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "PDF Export and Print Design",
+                "item": "https://opendoc.casualoffice.org/reference/pdf-export-and-print.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="pdf-export-and-print-design">PDF Export and Print Design</h1>
+        <p class="doc-lede">Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md"><code>docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body"><strong>Status:</strong> <strong>Phase 0 implemented</strong> in <code>crates/casual-doc-pdf</code> and reachable through the <code>casual-doc-io</code> export registry as <code>application.pdf</code>; Phase 1 (semantic features) and Phase 2 (tagged PDF / PDF-A) remain design-only. Everything below the <em>Implementation status</em> section is the original design, unchanged; its effort estimates now overstate what Phase 0 still costs, because Phase 0 is done. Read <em>Implementation status</em> for what actually exists, family by family, and for what is still missing. <strong>Date:</strong> 2026-08-05; implementation status updated 2026-09-26. <strong>Depends on:</strong> ADR-003 (backend-neutral display list); <code>casual-doc-layout::display::DisplayList</code>; <code>casual-doc-render</code> (tiny-skia backend, reference implementation); <code>paginate.rs</code> per-page display lists; <code>casual-doc-io</code> format registry; <code>40-FONT-MANAGEMENT-DESIGN.md</code>; <code>94-ORACLE-VISUAL-FIDELITY-HARNESS-DESIGN.md</code>; <code>21-PARSER-LIMITS.md</code>; <code>20-ERROR-CODE-REGISTRY.md</code>. <strong>Owner decision still required:</strong> the Phase-2 scope gate (§10 item 2). ADR-031 is resolved below. <strong>Addresses:</strong> <code>104</code> HF-030 (the output half), <code>105</code> RM-04 Phase 0. Still open after it: the print dialog (<code>105</code> OO-010), live-font parity, and the semantic features listed below.</p>
+        <h2 class="doc-h2" id="implementation-status-2026-09-21">Implementation status (2026-09-21)</h2>
+        <h3 class="doc-h3" id="what-exists">What exists</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Piece</th>
+        <th>Where</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Display-list transcription, container, xref, deterministic <code>/ID</code></td>
+        <td><code>crates/casual-doc-pdf/src/{writer,content}.rs</code></td>
+        </tr>
+        <tr>
+        <td>TrueType subsetting, <code>Type0</code>/CID font emission, <code>ToUnicode</code></td>
+        <td><code>crates/casual-doc-pdf/src/{subset,font}.rs</code></td>
+        </tr>
+        <tr>
+        <td>Image XObjects (JPEG passthrough, decode-and-Flate otherwise)</td>
+        <td><code>crates/casual-doc-pdf/src/picture.rs</code></td>
+        </tr>
+        <tr>
+        <td>A PDF reader the guards use to read the output back</td>
+        <td><code>crates/casual-doc-pdf/src/inspect.rs</code></td>
+        </tr>
+        <tr>
+        <td>Export-only <code>application.pdf</code> registry adapter</td>
+        <td><code>crates/casual-doc-io/src/pdf.rs</code></td>
+        </tr>
+        <tr>
+        <td>Guards</td>
+        <td><code>crates/casual-doc-pdf/tests/real_text_export.rs</code>, <code>casual-doc-io/src/pdf.rs</code> tests</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Entry points: <code>casual_doc_pdf::export_document</code> (lay out, then write) and <code>casual_doc_pdf::write_pdf</code> (write display lists a host already holds — the seam for a viewer that must not paginate twice).</p>
+        <h3 class="doc-h3" id="support-family-by-family">Support, family by family</h3>
+        <p class="doc-body">Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Family</th>
+        <th>State</th>
+        <th>Notes</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Text runs (<code>PaintItem::Glyphs</code>)</td>
+        <td><strong>Supported</strong></td>
+        <td><code>Type0</code>/<code>Identity-H</code>; the CIDs <em>are</em> the shaper's glyph ids, and per-glyph <code>TJ</code> adjustments reproduce the shaper's advances exactly. <code>w:w</code> character scaling maps to <code>Tz</code>.</td>
+        </tr>
+        <tr>
+        <td>Text extraction (select / search / copy)</td>
+        <td><strong>Supported</strong></td>
+        <td>A <code>ToUnicode</code> CMap per face. Its baseline is the inversion of the face's <code>cmap</code>; over it, the <strong>real source text</strong> of each glyph is resolved from the display list's cluster offsets against the document (<code>GlyphRun::node</code> names the paragraph; <code>crates/casual-doc-pdf/src/cluster.rs</code>), so a <strong>ligature</strong> maps to every character it stands for — <code>&lt;GID&gt; &lt;00660069&gt;</code> for <code>fi</code>, not the presentation form <code>U+FB01</code> the <code>cmap</code> inversion produced — and a <strong>substituted</strong> glyph the <code>cmap</code> cannot reach maps to its characters instead of to nothing. A multi-character cluster always wins over the inversion; a single-character one only fills a gap, because there the inversion is already exact while the model text can legitimately differ from the shaped text (<code>w:caps</code>, <code>w:vanish</code>). Still on the inversion alone: a run with no source characters (list marker, tab-leader fill, inline math box, recomputed <code>PAGE</code> field), a cluster drawn by several glyphs (see below), and any export driven through <code>write_pdf</code> without a <code>PdfTextSource</code>. <strong>The inversion-only path additionally requires the font source to serve the same face the shaper used</strong>: glyph ids mean nothing except against the face they were shaped with, so a caller that shapes with system fonts and then exports through <code>BundledFontSource</code> gets a text layer of unrelated code points, silently and with <code>unmapped_glyphs</code> reading 0. The cluster path is immune — it takes its characters from the model, not from the face. This is why <code>display_lists_without_a_document_still_export_a_text_layer</code> names a bundled face outright instead of asking for &quot;Calibri&quot; and relying on substitution: on Windows, which HAS Calibri, the shaper used the system face while the export embedded the bundled one, and the test extracted &quot;\u{2d8}\u{2fe}\u{24d}…&quot; for &quot;plain words&quot; — green on macOS and Linux, red only there. Anything neither source names is counted and reported as <code>pdf.font.unmapped_glyphs</code>, over the glyphs the document actually <strong>draws</strong>.</td>
+        </tr>
+        <tr>
+        <td>A cluster drawn by several glyphs (a decomposed <code>é</code>)</td>
+        <td><strong>Left to the per-glyph inversion, deliberately</strong></td>
+        <td><code>ToUnicode</code> is keyed by glyph id, not by position, so giving the cluster's whole text to its first glyph would emit that text again for every later glyph of the cluster that is itself mapped. Left alone the cluster copies as base-plus-marks, which is canonically equivalent to it. <code>bfrange</code> is not used: the crate's own reader supports <code>bfchar</code> only, and a range cannot express one glyph standing for several characters.</td>
+        </tr>
+        <tr>
+        <td>Font embedding and subsetting (TrueType <code>glyf</code>)</td>
+        <td><strong>Supported</strong></td>
+        <td>The glyph identity space is retained and unused outlines emptied; <code>cvt </code>/<code>fpgm</code>/<code>prep</code> are kept, composites closed transitively, and the PostScript name carries an <code>ABCDEF+</code> subset tag. A committed guard holds every embedded face for a one-page fixture under 40 KB.</td>
+        </tr>
+        <tr>
+        <td>Font embedding (CFF/OpenType outlines, collection members)</td>
+        <td><strong>Partial</strong></td>
+        <td>Embedded <strong>whole</strong> as <code>FontFile3 /OpenType</code>, not subset, and reported as <code>pdf.font.not_subsetted</code>. A CFF charstring subsetter is not written.</td>
+        </tr>
+        <tr>
+        <td>A face whose licence forbids embedding (<code>OS/2.fsType</code>)</td>
+        <td><strong>Supported, as a refusal</strong></td>
+        <td>The export fails, naming the face. No substitution, no outlines, no rasterized text, no silent drop. A face flagged no-subsetting is embedded whole with a finding.</td>
+        </tr>
+        <tr>
+        <td>Page geometry</td>
+        <td><strong>Supported</strong></td>
+        <td><code>/MediaBox</code> from pagination; twips → points with the y axis flipped. No device scale is applied anywhere: a PDF is resolution-free.</td>
+        </tr>
+        <tr>
+        <td>Rules, borders, table furniture, paragraph and run shading (<code>Rect</code>)</td>
+        <td><strong>Supported</strong></td>
+        <td>Vector <code>re</code> fills and strokes.</td>
+        </tr>
+        <tr>
+        <td><code>Ellipse</code>, <code>RoundedRect</code>, <code>Polygon</code>, <code>Line</code></td>
+        <td><strong>Supported</strong></td>
+        <td>Vector paths, Béziers for the curved forms.</td>
+        </tr>
+        <tr>
+        <td>Floating DrawingML shapes (<code>PaintItem::Shape</code>)</td>
+        <td><strong>Supported</strong></td>
+        <td>Solid and gradient fills, dashable outlines, rotation/flip as a <code>cm</code> matrix, and arrowheads built from the same construction the raster backend uses.</td>
+        </tr>
+        <tr>
+        <td>Gradients</td>
+        <td><strong>Supported</strong></td>
+        <td>Axial (<code>ShadingType 2</code>) and radial (<code>ShadingType 3</code>) with a stitched function over the stops — genuinely vector, no bitmap, sharp at any zoom.</td>
+        </tr>
+        <tr>
+        <td>Clips (<code>PushClip</code>/<code>PopClip</code>)</td>
+        <td><strong>Supported</strong></td>
+        <td><code>q … re W n … Q</code>, and the stream stays balanced even if a display list does not.</td>
+        </tr>
+        <tr>
+        <td>Constant alpha</td>
+        <td><strong>Supported</strong></td>
+        <td>One <code>ExtGState</code> per distinct alpha value.</td>
+        </tr>
+        <tr>
+        <td>Underline, strike-through, double strike</td>
+        <td><strong>Supported</strong></td>
+        <td>Derived from the face's own metrics, mirroring <code>casual-doc-render</code> including the <code>words</code>, <code>wavy</code>, <code>dotted</code>, <code>dashed</code>, <code>dotDash</code>, <code>double</code> and <code>thick</code> styles. The raster backend's one-<strong>device-pixel</strong> floor becomes a half-<strong>point</strong> floor, which is the only deliberate divergence: a device-pixel floor has no meaning in a resolution-free file.</td>
+        </tr>
+        <tr>
+        <td>Pictures (<code>PaintItem::Image</code>)</td>
+        <td><strong>Supported</strong></td>
+        <td>Embedded once as an XObject however often placed. JPEG bytes are stored verbatim as <code>DCTDecode</code> — no decode, no re-encode; everything else is decoded once to 8-bit RGB with an <code>/SMask</code> when it has alpha. A crop is a clip plus an oversized placement, so no sample is resampled. Rotation and flip become a <code>cm</code>. Decode limits match the raster backend's.</td>
+        </tr>
+        <tr>
+        <td>An undecodable or unserved picture</td>
+        <td><strong>Supported, as a report</strong></td>
+        <td>Draws the same bordered box with a corner-to-corner cross the raster backend draws, and reports <code>pdf.image.unresolved</code> / <code>pdf.image.missing_bytes</code>.</td>
+        </tr>
+        <tr>
+        <td>SVG pictures</td>
+        <td><strong>Not covered</strong></td>
+        <td>The native raster backend rasterizes them through <code>resvg</code>; the PDF path draws the placeholder instead.</td>
+        </tr>
+        <tr>
+        <td>Emphasis marks (<code>w:em</code>)</td>
+        <td><strong>Not covered</strong></td>
+        <td>The raster backend does not draw them either, so this is parity rather than a PDF gap.</td>
+        </tr>
+        <tr>
+        <td>Document metadata</td>
+        <td><strong>Supported, opt-in</strong></td>
+        <td><code>/Info</code> Title/Author/Subject/Keywords/CreationDate/ModDate from <code>DocumentProperties</code>. Dates come from the document; the clock is never read. No XMP packet yet.</td>
+        </tr>
+        <tr>
+        <td>Determinism</td>
+        <td><strong>Supported</strong></td>
+        <td>Identical input gives identical bytes: object numbering is assignment-ordered and the file <code>/ID</code> is a content hash.</td>
+        </tr>
+        <tr>
+        <td>Hyperlink annotations</td>
+        <td><strong>Not covered</strong></td>
+        <td>A link's <em>text</em> is exported; the clickable <code>/Annots</code> entry is not. Needs the §6 semantic side-channel.</td>
+        </tr>
+        <tr>
+        <td>Outline / bookmark tree, internal <code>GoTo</code> destinations</td>
+        <td><strong>Not covered</strong></td>
+        <td>Same dependency.</td>
+        </tr>
+        <tr>
+        <td>Page ranges, image-quality knob</td>
+        <td><strong>Not covered</strong></td>
+        <td></td>
+        </tr>
+        <tr>
+        <td>Tagged PDF (<code>/StructTreeRoot</code>, reading order, heading/list/table tags, alt text, <code>/Lang</code>)</td>
+        <td><strong>Not covered — a separate roadmap row</strong></td>
+        <td>Nothing here forecloses it: a structure tree would hang off the same per-page transcription, and list-marker runs are already flagged in the display list so they can be marked as artifacts.</td>
+        </tr>
+        <tr>
+        <td>PDF/A, encryption, comment/markup export</td>
+        <td><strong>Not covered</strong></td>
+        <td>Phase 2, still gated (§10).</td>
+        </tr>
+        <tr>
+        <td>RTL / bidi reading order in the text layer</td>
+        <td><strong>Partial</strong></td>
+        <td>Glyphs are placed in visual order at the right positions, so the <em>page</em> is correct; an extractor recovers visual, not logical, order.</td>
+        </tr>
+        <tr>
+        <td>Page background, footnote separators, headers and footers, text boxes, nested tables, floating art</td>
+        <td><strong>Supported by construction</strong></td>
+        <td>They are ordinary paint items in the same display list; the exporter has no notion of them and needs none, which is the point of transcribing the shared seam. Exercised end to end on the <code>real-producer-header-footer</code>, <code>real-producer-footnotes</code> and <code>real-producer-rich</code> (nested table) fixtures, whose text all comes back out of the file.</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h3 class="doc-h3" id="adr-031-pdf-writer-and-subsetter-build-vs-buy-resolved-hand-rolled-no-new-dependency">ADR-031 (PDF writer and subsetter, build vs buy) — resolved: hand-rolled, no new dependency</h3>
+        <p class="doc-body">Step 0 left this open. The decision taken is <strong>(A) hand-roll both</strong>, for a reason that only became visible once the problem was concrete:</p>
+        <ul class="doc-list">
+        <li>The subsetter does <strong>not</strong> need to renumber glyphs. Because the file addresses glyphs through <code>Identity-H</code> with <code>/CIDToGIDMap /Identity</code>, keeping the glyph identity space and emptying the outlines of unused glyphs is both simpler <em>and</em> stronger for parity than a renumbering subsetter — it removes the entire class of &quot;the PDF drew glyph 41 where the shaper chose 42&quot; defects. That is a few hundred lines, not the multi-sprint estimate this design assumed, because the expensive half of a general subsetter is the half we deliberately do not do.</li>
+        <li>The container is an object table, a cross-reference table and a trailer. Owning it is what makes byte-determinism a property of the code rather than a hope about a dependency's release notes.</li>
+        <li><code>deny.toml</code>, <code>unsafe_code = forbid</code> and the <code>dependency-policy</code> job all stay simple with zero new supply-chain surface.</li>
+        </ul>
+        <p class="doc-body">Three crates <strong>already in the tree</strong> are reused rather than added, so <code>Cargo.lock</code> gains no new package: <code>flate2</code> (<code>FlateDecode</code>; MIT OR Apache-2.0; already pulled by the <code>zip</code> stack), <code>skrifa</code> (font metrics and the <code>cmap</code> inversion; Apache-2.0 OR MIT; already pulled by <code>parley</code>/<code>fontique</code> and <code>casual-doc-render</code>) and <code>image</code> (picture decoding; MIT OR Apache-2.0; the same version and codec feature set <code>casual-doc-render</code> builds).</p>
+        <h3 class="doc-h3" id="reachability-what-is-wired-and-what-is-not">Reachability — what is wired and what is not</h3>
+        <p class="doc-body">&quot;Built&quot; is not &quot;reachable&quot; (<code>SKILL.md</code> §9 rule 4), so plainly:</p>
+        <ul class="doc-list">
+        <li><strong>Reachable now</strong> from any Rust host. <code>casual_doc_io::register_pdf_exporter(&amp;mut registry)</code> adds <code>application.pdf</code> to <code>FormatRegistry::export_formats()</code>, and <code>registry.export(...)</code> returns bytes, MIME type, suggested extension and a compatibility report in the same shape DOCX and ODT return. Registration is opt-in rather than part of <code>builtin_registry</code> so a host decides when PDF appears in its save-as list.</li>
+        <li><strong>Reachable from the product.</strong> The built-in registry includes the export-only PDF adapter, so <code>casual-doc-wasm</code> exposes <code>application.pdf</code> from <code>availableExportFormats()</code> and dispatches it through <code>exportAs(...)</code>. The web File surface offers <strong>Export as PDF…</strong> through the same <code>exportDocumentAs</code> path as the other formats. A browser regression downloads the file and checks the PDF 1.7 header, <code>Type0</code> text font, and <code>ToUnicode</code> map. Physical <strong>Print</strong> remains a separate 150-DPI raster path and is still open under <code>OO-010</code> / PDF-PRINT-0.</li>
+        </ul>
+        <h3 class="doc-h3" id="remaining-work-in-the-order-to-take-it">Remaining work, in the order to take it</h3>
+        <ol class="doc-list">
+        <li><strong>Font parity on the registry path.</strong> <code>export_document</code> paginates with a fresh shaper, so a host's <em>live</em> font registry (the browser's network-fetched CJK faces) cannot simply be handed over: those ids belong to a different registry and handing them over would embed the wrong face rather than a fallback. Either let a caller seed the export's pagination with an existing <code>FontRegistry</code>, or have the browser host drive <code>write_pdf</code> with the display lists it already holds. Until then the registry path embeds bundled and system-tier faces only.</li>
+        <li><strong>Exact <code>ToUnicode</code> — done for model text, open for the rest.</strong> <code>GlyphRun</code> carries a <code>node: Option&lt;NodeId&gt;</code> anchor (a fixed-size anchor, not a <code>String</code> per run) and the exporter resolves each glyph's cluster against that paragraph's own text, so ligature and substituted glyphs now map to their real characters. What is still on the <code>cmap</code> inversion alone, and would need work of its own: a run with no source characters at all (list marker, tab-leader fill, inline math box, recomputed <code>PAGE</code> field — none of these <em>has</em> model text to name, so this is a limit of the concept rather than a gap in the implementation), a cluster drawn by several glyphs, an offset where the model text and the shaped text diverge (<code>w:vanish</code> contributes model bytes but no glyphs, <code>w:caps</code> rewrites case — the same divergence that misplaces a caret in those paragraphs, so the fix belongs to the offset accounting, not here), and <code>write_pdf</code> called without a <code>PdfTextSource</code>, which the browser viewer seam will need once it drives export itself (item 1).</li>
+        <li><strong>Phase 1 semantics</strong> (§6): the <code>StructureTree</code> bridge first, then XMP metadata, hyperlink annotations, destinations, the outline tree and page ranges.</li>
+        <li><strong>CFF subsetting</strong>, so OpenType faces stop being embedded whole.</li>
+        <li><strong>Oracle extension</strong> (§9): diff the PDF's text layer and page geometry against the LibreOffice-PDF oracle.</li>
+        <li><strong>Fuzz targets</strong> for the subsetter and the picture path, as §9 specifies. The subsetter is the highest-risk surface here: it parses font bytes that came out of an imported document.</li>
+        </ol>
+        <h3 class="doc-h3" id="guards-and-the-mutations-that-drive-them-red">Guards, and the mutations that drive them red</h3>
+        <p class="doc-body">Each guard was driven red by mutating the production code before it was trusted (<code>SKILL.md</code> §4). The mutations used: dropping <code>/ToUnicode</code> from the font dictionary; shifting the text matrix by 10 pt; forcing whole-face embedding; skipping glyph emission entirely; deriving the file <code>/ID</code> from a counter; ignoring <code>OS/2.fsType</code>; dropping the placeholder mark; disabling picture de-duplication; dropping <code>/Title</code>; skipping the composite-glyph closure; claiming <code>can_import</code>; downgrading a degraded finding to <code>Mapped</code>; and — for the exact-<code>ToUnicode</code> guards — restoring the <code>cmap</code>-inversion-only map, and separately dropping the <code>GlyphRun::node</code> anchor the shaper populates. Both turn <code>&quot;Rich document-properties fixture body.&quot;</code> back into <code>&quot;…ﬁxture…&quot;</code> and <code>&quot;often afflicted by fjords&quot;</code> back into <code>&quot;oen aﬄicted by ords&quot;</code>, which is what the reader saw before the fix. Those two guards also assert the bundled face <strong>really substitutes</strong> — fewer glyphs than characters, and at least one drawn glyph genuinely outside the face's <code>cmap</code> — because without that the assertions would hold whether or not it did.</p>
+        <p class="doc-body">The guards assert the guarantee rather than the mechanism: the file is parsed back and interrogated the way a reader would — text extractable and matching the document, every run within 0.01 pt of where layout put it, fonts embedded and subset under a six-character tag, no page delivered as a picture, repeat exports byte-identical, and a lost picture reported through the registry's compatibility report.</p>
+        <h2 class="doc-h2" id="problem">Problem</h2>
+        <p class="doc-body">The engine can render a document to screen (<code>DisplayList</code> → <code>casual-doc-render</code> CPU raster) and paginate it against a LibreOffice oracle, but it cannot produce a <strong>PDF</strong>. The support matrix (<code>18-SUPPORT-MATRIX.md</code>) lists <em>&quot;PDF render/export — Backend decision pending&quot;</em>, the architecture doc names <em>&quot;Headless raster/PDF&quot;</em> as the third paint target, and the ADR register lists <em>&quot;PDF generation backend&quot;</em> as a pending decision. This document specifies that backend end to end.</p>
+        <p class="doc-body">Two hard requirements shape the whole design:</p>
+        <ol class="doc-list">
+        <li><strong>A real, proper PDF — never a page of images.</strong> Output must carry a genuine text layer (selectable, searchable, copyable), vector graphics, and embedded <strong>subset</strong> fonts. Text-as-outlines or rasterized pages are explicitly rejected.</li>
+        <li><strong>Two simultaneous parity targets:</strong></li>
+        <ul class="doc-list">
+        <li><strong>Editor parity (structural):</strong> the PDF must look identical to what the user sees in the editor. Any drift is a defect.</li>
+        <li><strong>Word feature parity (capability):</strong> the PDF must expose the same <em>feature set</em> Microsoft Word's &quot;Export → Create PDF&quot; produces (outline/bookmarks, hyperlinks, metadata, tagged/accessible structure, PDF/A option). This is feature parity, <strong>not</strong> an independent rendering target — layout fidelity to Word is earned in the layout engine, not here.</li>
+        </ul>
+        </ol>
+        <h2 class="doc-h2" id="the-parity-model-the-single-most-important-design-constraint">The parity model (the single most important design constraint)</h2>
+        <h3 class="doc-h3" id="editor-parity-is-structural-not-aspirational">Editor parity is structural, not aspirational</h3>
+        <p class="doc-body">The editor pipeline is <code>model → layout → DisplayList → tiny-skia</code>. The PDF exporter consumes <strong>the exact same <code>DisplayList</code>, produced by the same layout pass</strong>, and maps each <code>PaintItem</code> to PDF content-stream operators. Because both backends share pagination, shaping, and glyph positions, editor↔PDF drift is <strong>architecturally impossible</strong> — provided the exporter never does its own layout. This yields the governing rule of the whole feature:</p>
+        <blockquote class="doc-quote">
+        <p class="doc-body"><strong>The PDF exporter performs zero layout, zero re-shaping, and zero metric adjustment. It is a deterministic transcription of the shared <code>DisplayList</code>. It is never permitted to be &quot;smarter&quot; than the editor.</strong></p>
+        </blockquote>
+        <p class="doc-body">Any attempt to improve fidelity inside the exporter (nudging positions to look &quot;more like Word&quot;) would <em>create</em> the editor↔PDF drift the requirement forbids. The exporter's only job is faithfulness to the display list.</p>
+        <h3 class="doc-h3" id="word-parity-is-a-layout-goal-the-pdf-inherits-with-one-exception">Word parity is a layout goal the PDF inherits — with one exception</h3>
+        <p class="doc-body">Because the PDF must match both the editor and Word, the editor must match Word. The exporter cannot add Word <em>rendering</em> fidelity the editor lacks; it inherits exactly the layout fidelity the on-screen renderer already has (tracked separately under the fidelity-corpus / pagination work, <code>60</code>/<code>94</code>/<code>P1F</code>). **Word <em>feature</em> parity, by contrast, is this document's job** — see §6 (semantic features) and §10 (tagged PDF / PDF-A).</p>
+        <h3 class="doc-h3" id="the-font-parity-trap-must-fix-not-optional">The font parity trap (must-fix, not optional)</h3>
+        <p class="doc-body">The one place editor↔PDF parity most easily breaks is fonts. The <code>system-fonts</code> build lays out with real system faces (Arial/Times/Calibri); the deterministic / WASM build uses bundled substitutes (Roboto). Different face → different metrics → different line breaks → different pagination. Therefore:</p>
+        <blockquote class="doc-quote">
+        <p class="doc-body">**The PDF must embed and emit the <em>exact same font faces the layout pass used</em> — the same <code>FontId</code>, the same bytes from <code>FontRegistry</code>, the same glyph indices at the same advances. The exporter must never re-resolve fonts independently.**</p>
+        </blockquote>
+        <p class="doc-body"><code>GlyphRun</code> already carries glyph indices into those specific faces, so embedding the same face and emitting the same GIDs at the same advances produces a PDF that is glyph-for-glyph identical to the editor. This is enforced by a CI golden (§9).</p>
+        <h2 class="doc-h2" id="goals">Goals</h2>
+        <ul class="doc-list">
+        <li>A <code>casual-doc-pdf</code> backend that transcribes a per-page <code>DisplayList</code> into a valid, deterministic PDF (ISO 32000-1) with a real text layer and embedded subset fonts.</li>
+        <li>Byte-deterministic output: identical input → identical bytes (no timestamps, no random file IDs; IDs derived from content). Same discipline as the rest of the repo.</li>
+        <li>Word <em>feature</em> parity delivered in phases (§6, §10): outline/bookmarks, internal + external links, document metadata; then tagged/accessible PDF and PDF/A as a gated second phase.</li>
+        <li>Print support that reuses the PDF pipeline (§8), with host-owned device policy.</li>
+        <li>Integration through the existing <code>casual-doc-io</code> registry and the WASM/SDK <code>export_as</code> / <code>available_export_formats</code> seam.</li>
+        <li>Security: untrusted font bytes and image bytes handled under the <code>21-PARSER-LIMITS</code> discipline; bounded, fail-closed, no panics on adversarial input.</li>
+        </ul>
+        <h2 class="doc-h2" id="non-goals">Non-Goals</h2>
+        <ul class="doc-list">
+        <li>Any <em>rendering/layout</em> fidelity work — that lives in the layout engine, not here. This document adds <strong>no</strong> shaping, line-breaking, or pagination logic.</li>
+        <li>Round-trip PDF <em>import</em>. This is export-only.</li>
+        <li>Experimental local PDF semantic reconstruction is evaluated separately in doc 131 and proposed ADR-034. It does not alter this design's export-only scope or the current <code>can_import: false</code> product behavior.</li>
+        <li>Text-as-outlines or rasterized-page output (explicitly rejected).</li>
+        <li>Editing PDFs, PDF forms (AcroForm) authoring, digital signatures, JavaScript, or embedded multimedia.</li>
+        <li>Font <em>procurement</em>. Which faces are legally embeddable is a licensing decision (§7), out of engineering scope; this document only specifies the embedding mechanism and the fallback policy.</li>
+        </ul>
+        <h2 class="doc-h2" id="architecture">Architecture</h2>
+        <div class="code-panel">
+        <pre><code>                    ┌─────────────────────── shared layout pass ───────────────────────┐
+           model ─▶ layout ─┤  paginate.rs → Vec&lt;DisplayList&gt; (one per page)  +  FontRegistry   │
+                            │  (NEW) StructureTree  — logical/semantic side-channel (§6)         │
+                            └───────────────┬───────────────────────────┬──────────────────────┘
+                                            │                           │
+                               ┌───────────▼──────────┐     ┌──────────▼───────────┐
+                               │ casual-doc-render     │     │ casual-doc-pdf (NEW) │
+                               │ tiny-skia (screen)    │     │ DisplayList → PDF    │
+                               │ REFERENCE traversal   │     │ ops + semantics      │
+                               └───────────────────────┘     └──────────┬───────────┘
+                                                                        │
+                                             ┌──────────────────────────┼───────────────────────┐
+                                             │ pdf-writer (container) │ font subsetter │ image XObjects │
+                                             └──────────────────────────┼───────────────────────┘
+                                                                        │
+                                             casual-doc-io registry ◀───┘  format_id = &quot;pdf&quot;
+                                             WASM/SDK export_as(&quot;pdf&quot;, …)  → bytes / print target (§8)</code></pre>
+        </div>
+        <p class="doc-body">New crate <strong><code>casual-doc-pdf</code></strong> (naming per workspace convention). It depends on <code>casual-doc-layout</code> (for <code>DisplayList</code>/<code>PaintItem</code>/<code>GlyphRun</code>/<code>FontRegistry</code>) and <code>casual-doc-model</code> (for <code>Definitions.media</code>, colors, metadata). It must <strong>not</strong> depend on <code>casual-doc-render</code> — it is a sibling backend consuming the same seam (ADR-003). It reuses <code>casual-doc-render</code>'s traversal <em>shape</em> as the reference for correctness, not as a dependency.</p>
+        <h2 class="doc-h2" id="step-by-step-design">Step-by-step design</h2>
+        <p class="doc-body">The work is ordered so each step lands as an adversarially-reviewed slice (the repo's working pattern) and so nothing downstream is blocked by an undecided upstream.</p>
+        <h3 class="doc-h3" id="step-0-adr-031-pdf-writer-subsetter-build-vs-buy-blocking">Step 0 — ADR-031: PDF-writer + subsetter build-vs-buy (BLOCKING)</h3>
+        <p class="doc-body">Decide, against <code>deny.toml</code> and <code>unsafe_code = forbid</code>, whether to:</p>
+        <ul class="doc-list">
+        <li><strong>(A) Hand-roll</strong> a minimal PDF writer and TrueType/CFF subsetter (max control, zero new supply-chain surface, deterministic by construction; higher eng cost — the subsetter is real work); or</li>
+        <li><strong>(B) Vet crates</strong> — e.g. a low-level PDF writer + a font-subsetting crate — against the dependency policy (lower eng cost; requires audit, <code>cargo-deny</code> clearance, determinism verification, and pinning).</li>
+        </ul>
+        <p class="doc-body">This choice moves Phase 0 by ~1.5 sprints (§ effort). <strong>No code starts before it is recorded as ADR-031.</strong> Recommendation: prefer (B) for the <em>writer</em> (well-trodden, low risk) and evaluate (A) vs (B) for the <em>subsetter</em> specifically, since subsetting is the correctness- and security-critical part.</p>
+        <h3 class="doc-h3" id="step-1-pdf-container-writer">Step 1 — PDF container writer</h3>
+        <ul class="doc-list">
+        <li>Object model: indirect objects, xref table (or cross-reference streams for compactness), document catalog, page tree, per-page resource dictionaries.</li>
+        <li>Content streams: Flate-compressed (reuse the workspace <code>zip</code>/flate stack already present).</li>
+        <li><strong>Determinism:</strong> object numbering is assignment-order stable; the file <code>/ID</code> is derived from a content hash, not time/random; no <code>/CreationDate</code>/<code>/ModDate</code> unless sourced from <code>DocumentProperties</code> (and then normalized). This mirrors the repo's existing byte-fixed-point contracts.</li>
+        <li>Page geometry comes straight from pagination (page size + margins already in twips; convert twips → PDF points, 1 pt = 20 twips, origin flip to PDF's bottom-left).</li>
+        </ul>
+        <h3 class="doc-h3" id="step-2-vector-paint-mapping-displaylist-content-operators">Step 2 — Vector paint mapping (<code>DisplayList</code> → content operators)</h3>
+        <p class="doc-body">Walk <code>PaintItem</code> in back-to-front order (identical order to <code>casual-doc-render</code>) and emit operators. The mapping is mostly mechanical because the display primitives already exist:</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th><code>PaintItem</code></th>
+        <th>PDF operators</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>Rect { fill, stroke }</code></td>
+        <td><code>re</code> + <code>f</code>/<code>S</code>/<code>B</code> with <code>rg</code>/<code>RG</code> colors, <code>w</code> line width</td>
+        </tr>
+        <tr>
+        <td><code>Ellipse</code> / <code>RoundedRect</code></td>
+        <td>Bézier path approximation (same math as the raster backend)</td>
+        </tr>
+        <tr>
+        <td><code>Polygon</code></td>
+        <td><code>m</code>/<code>l…</code>/<code>h</code> + fill/stroke</td>
+        </tr>
+        <tr>
+        <td><code>Line { from, to, stroke }</code></td>
+        <td><code>m</code>/<code>l</code>/<code>S</code>; dash via <code>d</code></td>
+        </tr>
+        <tr>
+        <td><code>Shape { geometry, fill, stroke, head/tail_end, transform }</code></td>
+        <td>path build + <code>sh</code> shading for gradients; <code>cm</code> for transform; arrowheads as explicit paths</td>
+        </tr>
+        <tr>
+        <td><code>Image { media, rect, crop, transform }</code></td>
+        <td>image XObject (Step 4), <code>cm</code> place, clip for crop</td>
+        </tr>
+        <tr>
+        <td><code>Glyphs { run }</code></td>
+        <td>text object (Step 3)</td>
+        </tr>
+        <tr>
+        <td><code>PushClip</code>/<code>PopClip</code></td>
+        <td><code>q</code> + <code>re W n</code> … <code>Q</code></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Gradients map to PDF axial/radial shadings (<code>ShadingType 2/3</code>); dashes to <code>d</code>; <code>ShapeTransform</code> (rotate/flip about center) to a <code>cm</code> matrix. All geometry is device- independent twips → points; <strong>no</strong> device scale is applied (PDF is resolution-free), which is the one deliberate divergence from the raster backend's paint path.</p>
+        <h3 class="doc-h3" id="step-3-text-as-a-real-selectable-layer">Step 3 — Text as a real, selectable layer</h3>
+        <p class="doc-body">For each <code>GlyphRun</code>:</p>
+        <ul class="doc-list">
+        <li>Open a text object (<code>BT</code>/<code>ET</code>), set the embedded font + size (<code>Tf</code>), set fill color (<code>rg</code>), set the text matrix (<code>Tm</code>) from <code>run.origin</code> (+ <code>character_scale_percent</code> as a horizontal-scale <code>Tz</code>, matching how the raster backend scales outlines).</li>
+        <li>Emit glyphs <strong>by glyph index</strong> into a <code>Type0</code>/CID font with <code>Identity-H</code> encoding and explicit positioning from <code>Glyph.advance</code> (<code>TJ</code> with advance adjustments), so the on-page positions equal the display list exactly.</li>
+        <li>Decorations (<code>underline</code>/<code>strikethrough</code>/<code>double_strike</code>), <code>highlight</code>, and run <code>shading</code> are painted as rects behind/over the run — identical to the raster backend — not as font features.</li>
+        <li><strong><code>ToUnicode</code> CMap:</strong> <code>Glyph.cluster</code> is the UTF-8 byte offset into the paragraph's source text. This is exactly the data needed to build the <code>ToUnicode</code> map (glyph → source scalar[s]), which makes selection, search, and copy work. This is what separates a &quot;proper&quot; PDF from an outline dump, and the mapping data already exists in the display list.</li>
+        <li>List-marker runs (<code>is_marker</code>) are emitted as text too, but tagged as artifacts in the Phase-2 structure tree (§10) so they don't pollute the reading order.</li>
+        </ul>
+        <h3 class="doc-h3" id="step-4-image-xobjects">Step 4 — Image XObjects</h3>
+        <ul class="doc-list">
+        <li>Resolve <code>PaintItem::Image.media</code> against <code>Definitions.media</code> (the exporter is given the media bytes by the host, exactly as the raster backend is).</li>
+        <li>JPEG → <code>DCTDecode</code> passthrough (no re-encode). PNG/other → decode then <code>FlateDecode</code> (or <code>DCTDecode</code> for photographic content per the size/quality knob, §6).</li>
+        <li>Honor <code>crop</code> (source sub-rect via clip + scaled placement) and <code>transform</code> (rotate/flip via <code>cm</code>).</li>
+        <li>Reuse <code>casual-doc-render</code>'s decode limits verbatim (<code>MAX_DECODED_IMAGE_*</code> from <code>21-PARSER-LIMITS</code>): bounded dimensions/pixels/bytes, fail-closed with a finding.</li>
+        </ul>
+        <h3 class="doc-h3" id="step-5-font-embedding-subsetting-the-long-pole">Step 5 — Font embedding + subsetting (the long pole)</h3>
+        <p class="doc-body">For every <code>FontId</code> referenced by any emitted <code>GlyphRun</code>:</p>
+        <ul class="doc-list">
+        <li>Pull the exact face bytes from <code>FontRegistry</code> (<code>face_bytes</code>/<code>FontBytes</code>/<code>DynFace</code>) — the same face the shaper used (parity guarantee, §&quot;font parity trap&quot;).</li>
+        <li><strong>Subset:</strong> retain only the referenced glyph indices. TrueType path: rebuild <code>glyf</code>/<code>loca</code>/<code>cmap</code>/<code>hmtx</code>/<code>maxp</code>/<code>head</code>/<code>hhea</code> for the kept set; CFF/OTF path: subset the CharStrings INDEX. <code>.ttc</code>/<code>.otc</code> collections: extract the single face by index (<code>DynFace</code> already carries the face index).</li>
+        <li>Wrap as a <code>Type0</code> font with a CID-keyed descendant (<code>CIDFontType2</code> for TrueType / <code>CIDFontType0</code> for CFF), <code>Identity</code> <code>CIDToGIDMap</code>, a <code>W</code> array from the run advances /<code>hmtx</code>, a <code>FontDescriptor</code> (flags, bbox, ascent/descent/stemV), and the subset embedded (<code>FontFile2</code>/<code>FontFile3</code>). Subset-tag the PostScript name (<code>ABCDEF+Name</code>).</li>
+        <li><strong>Untrusted-font hardening:</strong> the face bytes may originate from an imported document. Subsetting parses untrusted tables → apply <code>21-PARSER-LIMITS</code> bounds (table sizes, glyph counts, offsets), reject malformed tables fail-closed with a reported finding, and never panic. This is the highest-risk security surface in the feature and gets its own fuzz target (§9).</li>
+        <li><strong>Fallback policy (no images):</strong> if a face genuinely cannot be embedded (unsupported outline format, or a licensing flag the host declines), the run is emitted with a substitute embeddable face and a <strong>loss finding</strong> — never rasterized, never dropped silently. Word offers a &quot;bitmap text when fonts can't be saved&quot; fallback; we do not (it violates requirement 1).</li>
+        </ul>
+        <h3 class="doc-h3" id="step-6-semantic-features-word-feature-parity-phase-1">Step 6 — Semantic features (Word feature parity, Phase 1)</h3>
+        <p class="doc-body">A flat display list has no logical structure, so feature parity needs a <strong>semantic side-channel</strong> carried from the model through layout to page positions. Introduce a <code>StructureTree</code> (logical order: headings, paragraphs, lists, tables, links, figures) with per-node page + rect resolved from the same layout pass. Every Phase-1 feature hangs off this one bridge:</p>
+        <ul class="doc-list">
+        <li><strong>Document metadata</strong> → <code>/Info</code> dict + XMP packet, from <code>DocumentProperties</code> (title/author/subject/keywords/lang). Nearly free.</li>
+        <li><strong>External hyperlinks</strong> → <code>Link</code> annotations with <code>URI</code> actions; rects come from the link runs (layout must expose link geometry — a small, additive layout change). The URI scheme allowlist mirrors the import/export security allowlist (no <code>javascript:</code>/unsafe <code>data:</code>), consistent with the ODT work.</li>
+        <li><strong>Internal links / TOC / cross-refs</strong> → <code>GoTo</code> actions to named destinations minted from bookmark anchors (model already has bookmarks; T1 ODT work modeled them).</li>
+        <li><strong>Outline / bookmark tree</strong> → <code>/Outlines</code> built from Heading-style paragraphs (named-style identity exists), i.e. Word's &quot;Create bookmarks using Headings&quot;.</li>
+        <li><strong>Page range / selection</strong> → emit a subset of pages.</li>
+        <li><strong>Image quality knob</strong> (Standard vs Minimum size) → image re-encode/downsample policy in Step 4.</li>
+        </ul>
+        <h3 class="doc-h3" id="step-7-public-surface-registry-wiring">Step 7 — Public surface + registry wiring</h3>
+        <ul class="doc-list">
+        <li>Register a <code>&quot;pdf&quot;</code> export adapter in <code>casual-doc-io</code> (export-only descriptor).</li>
+        <li>Route through the existing WASM/SDK <code>export_as(format_id, mode)</code> and advertise it in <code>available_export_formats</code>. <code>mode</code> carries options (page range, metadata inclusion, image quality, and — Phase 2 — tagged/PDF-A toggles).</li>
+        <li>SDK facade method on <code>casual-doc-sdk</code> (consumers depend on the SDK, not the crate — ADR-004). Emit a compatibility/loss report (unembeddable fonts, dropped features) in the same shape as the other adapters' findings.</li>
+        </ul>
+        <h2 class="doc-h2" id="fonts-and-licensing-must-be-settled-early">Fonts and licensing (must be settled early)</h2>
+        <p class="doc-body">Requirement 1 (real text) forces font <strong>embedding</strong>, which forces <strong>redistribution rights</strong> for the embedded faces. Two independent concerns:</p>
+        <ol class="doc-list">
+        <li><strong>Mechanism</strong> (this doc, Step 5): subset + embed the exact layout face.</li>
+        <li><strong>Rights</strong> (owner decision, out of eng scope): the bundled substitute faces must be embeddable (verify their licenses permit PDF embedding — most open faces do). To reach true <em>Word layout</em> parity you additionally need metric-compatible or genuine MS faces (Calibri/Cambria → Carlito/Caladea substitutes are the standard answer) <strong>in the layout engine</strong>, not here. Flag: the closer you want editor+PDF to match Word's line breaks, the more this licensing choice matters — but it is a layout- engine input, and this backend faithfully embeds whatever the layout used.</li>
+        </ol>
+        <h2 class="doc-h2" id="print">Print</h2>
+        <p class="doc-body">Print reuses the PDF pipeline; it is not a second renderer.</p>
+        <ul class="doc-list">
+        <li><strong>Web/WASM host:</strong> &quot;Print&quot; = generate the PDF (same path) and hand the blob to the browser print dialog (<code>window.print()</code> on a PDF object/hidden frame). No new rendering code. ~1–2 eng-days.</li>
+        <li><strong>Native host:</strong> OS device policy (CUPS/Quartz, GDI/XPS) is <strong>host-owned</strong> (AGENTS.md — hosts own device/resource policy; the runtime must not). The contract: the runtime hands the host either the PDF or per-page <code>DisplayList</code>s; the host drives the printer. A thin host-side adapter, ~2–4 eng-days, not core work.</li>
+        </ul>
+        <p class="doc-body">Net: budget print as a small addition to PDF, provided &quot;print = PDF routed to a print target&quot; is accepted (the standard approach for an embeddable engine).</p>
+        <h2 class="doc-h2" id="security">Security</h2>
+        <ul class="doc-list">
+        <li>Untrusted <strong>font bytes</strong> (Step 5) and <strong>image bytes</strong> (Step 4) are parsed under <code>21-PARSER-LIMITS</code>: bounded sizes/counts/offsets, fail-closed, no panics, reported findings. Dedicated fuzz targets for the subsetter and the image path.</li>
+        <li>URI/link schemes mirror the existing import/export allowlist; blocked schemes degrade to a reported remainder, never emitted (a non-PDF-origin model must not smuggle a <code>javascript:</code> link into an annotation).</li>
+        <li>No JavaScript, launch actions, embedded files, or auto-actions are ever written.</li>
+        <li>Determinism is a security property here too (reproducible builds / no entropy leak): no time, no RNG, content-derived <code>/ID</code>.</li>
+        </ul>
+        <h2 class="doc-h2" id="testing-and-gates">Testing and gates</h2>
+        <p class="doc-body">Every slice must pass the standard gates: <code>cargo test --workspace</code>, <code>cargo clippy --workspace --all-targets -- -D warnings</code>, <code>cargo fmt --check</code>, WASM check, plus:</p>
+        <ul class="doc-list">
+        <li><strong>Determinism golden:</strong> export a fixture twice → byte-identical; export₂ == export₃ fixed point (the repo's standard contract).</li>
+        <li><strong>Editor↔PDF parity golden (the key invariant):</strong> for each corpus page, assert the PDF text-run positions/advances/glyph-ids equal the shared <code>DisplayList</code> geometry (zero/epsilon). This converts &quot;the PDF matches the editor&quot; from a hope into a CI gate — if the exporter ever does something the display list didn't say, it fails.</li>
+        <li><strong>Structural validity:</strong> validate against a PDF parser (and, if PDF/A is in scope, a veraPDF-class check on the re-bless workflow, not per-CI).</li>
+        <li><strong>Oracle extension:</strong> extend the <code>docs/94</code> harness to diff the PDF's page geometry + text layer against the LibreOffice-PDF oracle (Word as tie-break authority per §&quot;Word parity&quot;). Reuses the existing pinned-<code>soffice</code> re-bless flow.</li>
+        <li><strong>Fuzz:</strong> font subsetter and image decode paths get <code>cargo fuzz</code> targets with the all-fields-explicit limit literals (note: adding a new <code>PdfExportLimits</code> field breaks those literals — update them or <code>cargo fuzz build</code> fails, same gotcha as ODT).</li>
+        <li><strong>Text-layer proof:</strong> automated <code>pdftotext</code> extraction of a known fixture equals the source text (selectable/searchable proof), and a copy-paste spot check.</li>
+        </ul>
+        <p class="doc-body">Docs to update per slice: this doc, <code>18-SUPPORT-MATRIX.md</code>, <code>08-ADR-REGISTER.md</code> (ADR-031 + any Phase-2 ADRs), <code>14-EXECUTION-TRACKER.md</code>, and a new <code>99-PDF-EXPORT-PROFILE.md</code> (supported/loss/limits table, mirroring <code>95</code>/<code>96</code>).</p>
+        <h2 class="doc-h2" id="phasing-slices-and-effort">Phasing, slices, and effort</h2>
+        <p class="doc-body">Estimates are planning-grade (±40%), for one experienced Rust engineer fluent in this codebase, and <strong>include</strong> the per-slice adversarial review + all gates. Sprint = 2 weeks ≈ 8 productive eng-days after reviews. Biggest swing = ADR-031 (crate vs hand-roll). Excluded: layout-engine Word-fidelity work and font procurement.</p>
+        <h3 class="doc-h3" id="phase-0-proper-vector-pdf-selectable-text-embedded-fonts-images">Phase 0 — proper vector PDF (selectable text, embedded fonts, images)</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Slice</th>
+        <th>Work</th>
+        <th>Eng-days (crate)</th>
+        <th>Eng-days (hand-rolled)</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>PDF-PH0-0</td>
+        <td>ADR-031 decision + writer skeleton (objects, xref, page tree, deterministic ID, Flate)</td>
+        <td>2–4</td>
+        <td>4–7</td>
+        </tr>
+        <tr>
+        <td>PDF-PH0-1</td>
+        <td>Vector paint mapping (rects/lines/ellipse/roundrect/polygon/shapes/gradients/dashes/clips)</td>
+        <td>4–6</td>
+        <td>4–6</td>
+        </tr>
+        <tr>
+        <td>PDF-PH0-2</td>
+        <td><strong>Font subsetting + embedding</strong> (TrueType+CFF, Type0/CID, ToUnicode, <code>.ttc</code>, dynamic blobs, untrusted-font limits)</td>
+        <td>5–9</td>
+        <td>12–20</td>
+        </tr>
+        <tr>
+        <td>PDF-PH0-3</td>
+        <td>Image XObjects (JPEG passthrough, PNG→Flate, crop/transform, decode limits)</td>
+        <td>3–5</td>
+        <td>3–5</td>
+        </tr>
+        <tr>
+        <td>PDF-PH0-4</td>
+        <td>Registry/SDK/WASM wiring + determinism &amp; parity goldens + oracle extension</td>
+        <td>3–5</td>
+        <td>3–5</td>
+        </tr>
+        <tr>
+        <td><strong>Phase 0 total</strong></td>
+        <td></td>
+        <td><strong>~17–29</strong></td>
+        <td><strong>~26–43</strong></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">→ ≈ <strong>2–3.5 sprints</strong> (crate) / <strong>3.5–5.5 sprints</strong> (hand-rolled). Font subsetting is the long pole and the reason ADR-031 matters.</p>
+        <h3 class="doc-h3" id="phase-1-semantic-features-word-equivalent-for-95-of-users">Phase 1 — semantic features (Word-equivalent for ~95% of users)</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Slice</th>
+        <th>Work</th>
+        <th>Eng-days</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>PDF-PH1-0</td>
+        <td><code>StructureTree</code> semantic bridge (layout emits link rects + heading/anchor structure)</td>
+        <td>3–5</td>
+        </tr>
+        <tr>
+        <td>PDF-PH1-1</td>
+        <td>Metadata (<code>/Info</code> + XMP)</td>
+        <td>1–2</td>
+        </tr>
+        <tr>
+        <td>PDF-PH1-2</td>
+        <td>External hyperlink annotations (scheme allowlist)</td>
+        <td>2–3</td>
+        </tr>
+        <tr>
+        <td>PDF-PH1-3</td>
+        <td>Internal links / TOC / cross-ref <code>GoTo</code> destinations</td>
+        <td>3–5</td>
+        </tr>
+        <tr>
+        <td>PDF-PH1-4</td>
+        <td>Outline / bookmark tree from Heading styles</td>
+        <td>2–4</td>
+        </tr>
+        <tr>
+        <td>PDF-PH1-5</td>
+        <td>Page range / selection + image-quality knob</td>
+        <td>1–2</td>
+        </tr>
+        <tr>
+        <td><strong>Phase 1 total</strong></td>
+        <td></td>
+        <td><strong>~12–21</strong></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">→ ≈ <strong>1.5–2.5 sprints.</strong></p>
+        <h3 class="doc-h3" id="print-2">Print</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Slice</th>
+        <th>Work</th>
+        <th>Eng-days</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>PDF-PRINT-0</td>
+        <td>Web: PDF → browser print handoff</td>
+        <td>1–2</td>
+        </tr>
+        <tr>
+        <td>PDF-PRINT-1</td>
+        <td>Native host print adapter contract (host-side)</td>
+        <td>2–4</td>
+        </tr>
+        <tr>
+        <td><strong>Print total</strong></td>
+        <td></td>
+        <td><strong>~3–6</strong></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">→ ≈ <strong>0.5 sprint.</strong></p>
+        <h3 class="doc-h3" id="phase-2-accessibility-archival-gated-decide-in-out-up-front-10">Phase 2 — accessibility / archival (GATED — decide in/out up front, §10)</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Slice</th>
+        <th>Work</th>
+        <th>Eng-days</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>PDF-PH2-0</td>
+        <td><strong>Tagged PDF</strong> (structure tree → marked content, reading order, heading/list/<strong>table</strong> tags, alt text, <code>Lang</code>, artifacts)</td>
+        <td>15–25</td>
+        </tr>
+        <tr>
+        <td>PDF-PH2-1</td>
+        <td><strong>PDF/A</strong> conformance (ICC/OutputIntent, XMP+PDF/A id, embedding guarantees, validation; requires tagging)</td>
+        <td>8–14</td>
+        </tr>
+        <tr>
+        <td>PDF-PH2-2</td>
+        <td>Encryption / password (AES + encrypt dict)</td>
+        <td>3–5</td>
+        </tr>
+        <tr>
+        <td>PDF-PH2-3</td>
+        <td>Comments / markup export toggle</td>
+        <td>3–5</td>
+        </tr>
+        <tr>
+        <td><strong>Phase 2 total</strong></td>
+        <td></td>
+        <td><strong>~29–49</strong></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">→ ≈ <strong>3.5–6 sprints.</strong></p>
+        <h3 class="doc-h3" id="roll-up">Roll-up</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Target</th>
+        <th>Eng-days</th>
+        <th>Sprints (1 eng)</th>
+        <th>Calendar (1 eng)</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><strong>Ship-worthy: Phase 0 + Phase 1 + Print</strong> (no tagging/PDF-A)</td>
+        <td><strong>~32–56</strong></td>
+        <td><strong>~4–7</strong></td>
+        <td>~8–14 weeks</td>
+        </tr>
+        <tr>
+        <td><strong>Word feature-complete</strong> (+ Phase 2)</td>
+        <td><strong>~61–105</strong></td>
+        <td><strong>~8–13</strong></td>
+        <td>~16–26 weeks</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>Parallelism:</strong> Phase 0's font work (PH0-2) and paint work (PH0-1) can run as two concurrent tracks (2 engineers compress Phase 0 to ≈2 sprints). Phase 1 largely serializes after the container exists.</p>
+        <h2 class="doc-h2" id="open-decisions-10">Open decisions (§10)</h2>
+        <ol class="doc-list">
+        <li><strong>ADR-031 — writer/subsetter build-vs-buy</strong> (BLOCKING; §Step 0). Moves Phase 0 by ~1.5 sprints.</li>
+        <li><strong>Phase-2 in or out.</strong> Tagged PDF + PDF/A roughly <em>doubles</em> the project. Decide up front, because the <code>StructureTree</code> (§6) should be designed with tagging in mind from day one rather than retrofitted. Drive by whether accessibility/archival compliance is an actual customer requirement.</li>
+        <li><strong>Font substitute licensing</strong> (§7) — owner/legal, not engineering. Caps how close to Word's line breaks either the editor or the PDF can get.</li>
+        <li><strong>Oracle tie-break policy</strong> — reaffirm §&quot;Word parity&quot;: LibreOffice PDF = automatable CI oracle, Word = correctness authority on disagreement (already the repo's posture for on-screen rendering; PDF stays consistent with it).</li>
+        </ol>
+        <h2 class="doc-h2" id="recommendation">Recommendation</h2>
+        <p class="doc-body">Adopt Phase 0 + Phase 1 + Print as the committed scope (<strong>≈ 4–7 sprints, one engineer</strong>) — a proper vector PDF with selectable text, embedded fonts, links, outline, metadata, and print: genuine Word-equivalence for what users notice, with editor parity guaranteed structurally and by a CI golden. Gate Phase 2 (tagged PDF / PDF-A, <strong>≈ doubles the effort</strong>) on a concrete accessibility/archival requirement. Settle ADR-031 first; nothing else starts before it.</p>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a class="is-active" href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#implementation-status-2026-09-21">Implementation status (2026-09-21)</a></li>
+            <li><a href="#problem">Problem</a></li>
+            <li><a href="#the-parity-model-the-single-most-important-design-constraint">The parity model (the single most important design constraint)</a></li>
+            <li><a href="#goals">Goals</a></li>
+            <li><a href="#non-goals">Non-Goals</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#step-by-step-design">Step-by-step design</a></li>
+            <li><a href="#fonts-and-licensing-must-be-settled-early">Fonts and licensing (must be settled early)</a></li>
+            <li><a href="#print">Print</a></li>
+            <li><a href="#security">Security</a></li>
+            <li><a href="#testing-and-gates">Testing and gates</a></li>
+            <li><a href="#phasing-slices-and-effort">Phasing, slices, and effort</a></li>
+            <li><a href="#open-decisions-10">Open decisions (§10)</a></li>
+            <li><a href="#recommendation">Recommendation</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

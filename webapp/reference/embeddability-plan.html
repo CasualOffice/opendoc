@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embeddability and the SDK, in three phases — OpenDoc</title>
+    <meta name="description" content="Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/embeddability-plan.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Embeddability and the SDK, in three phases" />
+    <meta property="og:description" content="Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/embeddability-plan.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Embeddability and the SDK, in three phases" />
+    <meta name="twitter:description" content="Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/embeddability-plan.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/embeddability-plan.html",
+            "name": "Embeddability and the SDK, in three phases — OpenDoc",
+            "headline": "Embeddability and the SDK, in three phases",
+            "description": "Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/embeddability-plan.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Embeddability and the SDK, in three phases",
+                "item": "https://opendoc.casualoffice.org/reference/embeddability-plan.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="embeddability-and-the-sdk-in-three-phases">Embeddability and the SDK, in three phases</h1>
+        <p class="doc-lede">Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/126-EMBEDDABILITY-AND-SDK-THREE-PHASE-PLAN.md"><code>docs/126-EMBEDDABILITY-AND-SDK-THREE-PHASE-PLAN.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body">Owner instruction, 2026-09-27: take the SDK and all the embeddability/integration planning, <strong>divide it into three phases, and work one phase at a time</strong> — each phase in its own worktree, rebased on <code>main</code> before it is raised, one PR per phase.</p>
+        <p class="doc-body">This document is the division. It does not restate the designs: the API surface is <code>docs/05-SDK-API-SPEC.md</code>, the architecture is <code>docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md</code>, the extensibility invariants are ADR-030 / <code>docs/45</code>, and the defect being closed is <code>109</code> <strong>HF-109</strong> (&quot;nothing is embeddable: no host-capability modes, no custom element, no package&quot;).</p>
+        <h2 class="doc-h2" id="why-three-when-83-already-has-seven">Why three, when <code>83</code> already has seven</h2>
+        <p class="doc-body"><code>83</code> §6 is a 24-week calendar in seven phases. It is not wrong, but it is not a delivery plan for this repo as it stands, for three reasons:</p>
+        <ol class="doc-list">
+        <li><strong>Two of its seven are deliberately out of scope for now.</strong> Collaboration is LAST by the owner's own ordering (authoring + i18n → mobile/touch → embeddability → SDK/release → collaboration), and <code>109</code> carries it separately as HF-114. MCP/AI agent tooling sits behind that. Phases 4 and 6 of <code>83</code> therefore do not belong in this sequence at all.</li>
+        <li><strong>Several of its phases are already substantially done</strong> and would read as work that has not started. Its Phase 2 (virtualised multi-page scroll, zoom, selection, outline, search) and Phase 3 (IME/keyboard input, caret geometry, command dispatcher, undo/redo, DOCX export) are shipped in the editor. What is missing is not the capability; it is that <strong>none of it is reachable by a host</strong> — which is exactly what HF-109 says and what §9.4 of <code>docs/99</code> warns about: &quot;built&quot; is not &quot;reachable&quot;.</li>
+        <li><strong>Its exit gates are mostly performance numbers</strong> (60 FPS, &lt;50 ms, &lt;100 MB). Those are worth having, but a phase gate that is a frame rate does not tell you whether a host can do the thing. The gates below are &quot;a host can do X, proven by a host doing X in this repository&quot;.</li>
+        </ol>
+        <p class="doc-body">So the three phases below re-cut the same material by <strong>what a host gets at the end of each</strong>, and each is independently shippable.</p>
+        <h2 class="doc-h2" id="the-through-line">The through-line</h2>
+        <p class="doc-body">Embeddability is the product (<code>SKILL.md</code> §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization <em>in code</em> — <code>LayoutManager._applyCustomization</code> early-returns when <code>!_licensed</code>. Our position is the same capability, permissively licensed and <strong>ungated</strong>. That is the wedge, and it is what Phase 3 exists to make true rather than claimed.</p>
+        <hr class="doc-rule" />
+        <h2 class="doc-h2" id="phase-1-one-artifact-and-a-capability-contract-that-holds">Phase 1 — One artifact, and a capability contract that holds</h2>
+        <p class="doc-body"><strong>What a host gets:</strong> an installable thing they can put on a page, in a mode they choose, that cannot be talked out of that mode.</p>
+        <ul class="doc-list">
+        <li>A single published artifact and a <strong>custom element</strong> (<code>&lt;opendoc-editor&gt;</code>), framework free. Framework bindings are explicitly <em>not</em> in this phase; a custom element works in React, Vue and plain HTML without any of them.</li>
+        <li><strong>Capability modes resolved before first paint.</strong> <code>webapp/src/capabilities.mjs</code> already exists and already does the load-bearing part: a page that is not the top window defaults to <code>embedded</code>, so a framed editor stops being a standalone one without the host having to discover a parameter. This phase makes it the single authority rather than one of two places that know about framing.</li>
+        <li><strong>The roles the owner asked for</strong>: <code>readonly</code>, <code>preview</code>, <code>commentor</code>, <code>edit</code>, <code>owner</code> — as presets over the capability set, not as a parallel mechanism.</li>
+        <li><strong>Layered enforcement.</strong> The chrome disables with a reason (never hides — &quot;never a dead control&quot;, <code>SKILL.md</code> §10) <em>and</em> the engine refuses independently, so a permission cannot be defeated from devtools. A capability absent from the set must produce a disabled control with an explanation, not a missing one.</li>
+        </ul>
+        <p class="doc-body"><strong>Exit gate — a host does it, in this repository:</strong> a page in the repo embeds the editor twice, once in an iframe and once as the custom element, and drives both. A test proves a <code>viewer</code>/<code>readonly</code> host cannot mutate the document <strong>through the engine</strong>, not merely that the button looks disabled. Passwords are out of scope here and stay out until the format work that would make them meaningful exists.</p>
+        <h2 class="doc-h2" id="phase-2-the-host-contract-one-schema-two-transports">Phase 2 — The host contract: one schema, two transports</h2>
+        <p class="doc-body"><strong>What a host gets:</strong> a typed way to command the editor and to be told what happened, identical whether they hold a reference or are talking across an iframe boundary.</p>
+        <ul class="doc-list">
+        <li><strong><code>crates/casual-doc-sdk</code> exists and has no product consumer.</strong> That is the thing to fix, not to duplicate: it already has <code>command</code>, <code>config</code>, <code>event</code>, <code>selection</code>, <code>session</code>, <code>snapshot</code>, <code>value</code>. Phase 2 wires the real editor to that facade, or states in the PR why the facade's shape has to change and changes it once.</li>
+        <li><strong>Events</strong>: at minimum <code>ready</code>, <code>change</code>, <code>selection</code>, <code>save</code>, <code>export</code>, <code>error</code>, and <code>refusal</code> — refusal because the editor's whole feedback design (<code>109</code> UX-017) now has one channel, and a host that cannot hear a refusal will re-issue it forever.</li>
+        <li><strong>Commands</strong>: the catalog already enumerated in <code>docs/05</code> §7, reached through the command registry the editor already has — <code>runCommandById</code> and <code>keymap.mjs</code> landed with UX-006, so every chord-bearing capability is already addressable by id.</li>
+        <li><strong>One contract, not two.</strong> The in-process API and the <code>postMessage</code> protocol are generated from, or checked against, <strong>one schema</strong>. Two hand-maintained surfaces drift, and this repository has the receipts: the <code>shortcut:</code> labels and the key bindings were two tables that disagreed until UX-006 made them one.</li>
+        </ul>
+        <p class="doc-body"><strong>Exit gate:</strong> a host in this repo drives every command over <strong>both</strong> transports, and a guard proves the two surfaces are the same contract — so adding a command to one without the other fails the build rather than shipping a half-reachable API.</p>
+        <h2 class="doc-h2" id="phase-3-white-labelling-customization-and-release">Phase 3 — White-labelling, customization, and release</h2>
+        <p class="doc-body"><strong>What a host gets:</strong> their product, not ours, and a way to install it.</p>
+        <ul class="doc-list">
+        <li><strong>White-labelling</strong>: name, mark, and theme. The design tokens are deliberate (<code>docs/63</code>: <code>--radius: 3px</code>, 140 tokens, one raw hex in 6,481 CSS lines, an AA contrast sweep over both themes) so this is a <em>token</em> seam, not a restyle. Any host theme must still pass the contrast sweep; a white-label that ships unreadable text is a worse outcome than no white-labelling.</li>
+        <li><strong>Chrome selection</strong>: which bands, menus and surfaces a host shows. This is the part ONLYOFFICE gates behind a licence check, and ours must be <strong>ungated</strong> — the licence is the wedge, so gating it would surrender the only structural advantage.</li>
+        <li><strong>String overrides</strong>: i18n already ships 19 catalogues behind <code>t()</code>, so host overrides layer on the existing seam rather than introducing a second one.</li>
+        <li><strong>Release</strong>: versioning, provenance, and a developer page whose every claim is <strong>generated from a committed artifact</strong> (<code>docs/99</code> §9 — that page has carried fabricated numbers twice, in both directions, so examples must be extracted from code that runs in CI rather than written by hand).</li>
+        </ul>
+        <p class="doc-body"><strong>Exit gate:</strong> a build is white-labelled with <strong>no code changes</strong> — configuration only — and still passes the contrast sweep; and every published claim is re-derived by a guard rather than asserted.</p>
+        <hr class="doc-rule" />
+        <h2 class="doc-h2" id="container-policy-owner-notes-2026-09-27">Container policy — owner notes, 2026-09-27</h2>
+        <p class="doc-body">Three constraints the owner gave after Phase 1 landed. They are here rather than in a phase because they cut across all three.</p>
+        <h3 class="doc-h3" id="1-the-policies-are-per-capability-not-per-tier">1. The policies are per capability, not per tier</h3>
+        <p class="doc-body">A host must be able to withhold <strong>print, download, save, edit and comment independently</strong> — &quot;comments only, everything else off&quot; is a real configuration, not a step on a ladder. The five roles stay, because most hosts want a name rather than a checklist, but they are <strong>presets over the capability set, never the unit of enforcement</strong>. Anything a role can express, an explicit capability list must also be able to express, and the two must resolve through the same code — one authority, or the roles and the fine-grained list will disagree the way the <code>shortcut:</code> labels and the key bindings did (<code>109</code> UX-006/UX-007).</p>
+        <h3 class="doc-h3" id="2-surface-composition-is-a-different-question-from-command-gating">2. Surface composition is a different question from command gating</h3>
+        <p class="doc-body">&quot;Never a dead control&quot; (<code>SKILL.md</code> §10) says a command that cannot run <strong>now</strong> ships disabled <strong>with a reason</strong>, never hidden. That rule is about a <em>command inside a surface the user was offered</em>. It does NOT say every role gets every surface.</p>
+        <p class="doc-body">So the two rules compose:</p>
+        <ul class="doc-list">
+        <li><strong>A role that has no business with a whole surface does not get the surface.</strong> A <code>readonly</code> container has no editing ribbon. Not a ribbon full of greyed buttons — no ribbon. Word, Google Docs and ONLYOFFICE all do this: their read-only/preview presentations are a different chrome, not the editing chrome with everything dimmed.</li>
+        <li><strong>Within a surface a role DOES get, a command that cannot run right now is disabled and says why.</strong> That is where &quot;never a dead control&quot; applies, and Phase 1's disabled-with-a-reason work is correct there.</li>
+        </ul>
+        <p class="doc-body">A wall of greyed controls is not honesty, it is noise: it tells a reader about capabilities they will never have, and it buries the one or two things they <em>can</em> do. The distinction to hold onto is <strong>&quot;never, for you&quot; versus &quot;not right now&quot;</strong> — the first is composition, the second is state.</p>
+        <p class="doc-body">This refines what Phase 1 shipped. Phase 1 gates commands and disables review-mode buttons with a reason, which is right for <code>edit</code>/<code>commentor</code>, and wrong for <code>readonly</code> and <code>preview</code>, where the band should be absent.</p>
+        <h3 class="doc-h3" id="3-preview-and-readonly-are-not-the-same-thing">3. <code>preview</code> and <code>readonly</code> are NOT the same thing</h3>
+        <p class="doc-body">They were correctly given different capability sets in Phase 1 (<code>preview</code> grants nothing, <code>readonly</code> grants <code>print</code>), but the difference is bigger than one capability and the chrome has to reflect it:</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th></th>
+        <th><code>preview</code></th>
+        <th><code>readonly</code></th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>What it is</td>
+        <td>The runtime as a <strong>layout and rendering engine</strong> (<code>docs/83</code> §2) — a picture of the document</td>
+        <td>A <strong>reading experience</strong> of the document</td>
+        </tr>
+        <tr>
+        <td>Chrome</td>
+        <td>Minimal to none. No ribbon, no menu bar. Possibly only the pages</td>
+        <td>Reading chrome: navigation, outline, find, zoom, page controls, print</td>
+        </tr>
+        <tr>
+        <td>Who embeds it</td>
+        <td>A host showing a thumbnail, an attachment preview, a search result, a print preview</td>
+        <td>A host publishing a document for people to read</td>
+        </tr>
+        <tr>
+        <td>The test of the difference</td>
+        <td>Could a static image replace it? For <code>preview</code>, nearly</td>
+        <td>For <code>readonly</code>, no — the reader navigates and searches</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Consequence: <code>preview</code> is not &quot;<code>readonly</code> minus print&quot;. Collapsing them would give every attachment preview a reading UI it does not want, or every published document a bare canvas with no way to get to page 40. They are separate presentations and Phase 2/3 must keep them so.</p>
+        <h2 class="doc-h2" id="site-documentation-is-part-of-every-phase-including-phase-1">Site documentation is part of every phase, including Phase 1</h2>
+        <p class="doc-body">Owner instruction: the SDK documentation goes <strong>on the site</strong>, attached to the phases, and Phase 1's own page is owed now rather than at the end.</p>
+        <p class="doc-body">The binding constraint is <code>docs/99</code> §9: the fidelity and landing pages have carried <strong>fabricated claims twice, in both directions</strong>. So for every phase:</p>
+        <ul class="doc-list">
+        <li><strong>Every example on the site is extracted from code that runs in CI</strong>, never hand-written into the page. A snippet nobody executes is the next false claim.</li>
+        <li>Every number is generated from a committed artifact and re-derived by a guard, as <code>site_claims.test.mjs</code> already does for the landing page.</li>
+        <li>Each page carries an honest <strong>&quot;what this does not do yet&quot;</strong> section. Phase 1's must say there is no command/event API and nothing published to a registry.</li>
+        </ul>
+        <p class="doc-body">Phase 1's page has real material to point at: an installable package, <code>&lt;opendoc-editor&gt;</code>, the five roles, the three enforcement layers (browser sandbox / engine mode / chrome reason), and <code>webapp/embed.html</code> as a working demo — so it can link a thing that runs rather than describe one.</p>
+        <h2 class="doc-h2" id="explicitly-not-in-these-three">Explicitly not in these three</h2>
+        <ul class="doc-list">
+        <li><strong>Collaboration, presence, sharing, roles-at-a-server</strong> — <code>109</code> HF-114, and last by the owner's ordering. ADR-033 settles the algorithm (OT over transactions); the real blocker is that the live editing path bypasses the transaction engine (<code>109</code> CQ-002), which is its own row and must close first.</li>
+        <li><strong>MCP / AI agent tooling</strong> — additive by ADR-030's invariants, and behind collaboration.</li>
+        <li><strong>Plugin registration and framework bindings</strong> — a custom element covers the hosts that matter now; plugins want a stable command surface first, which is Phase 2.</li>
+        <li><strong>Passwords</strong> — scoped out until there is format work to make them mean anything.</li>
+        </ul>
+        <h2 class="doc-h2" id="sequencing-rule">Sequencing rule</h2>
+        <p class="doc-body">One phase at a time, each in its own worktree, <strong>rebased on <code>main</code> immediately before the PR is raised</strong>, one PR per phase. That last part is not ceremony: four merges went in on 2026-09-26/27 while no <code>main</code> CI run had completed, and the <code>main.js</code> ratchet collided twice because two branches each measured honestly against a file the other was about to change. Re-measuring from the merged file is part of raising the PR.</p>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a class="is-active" href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#why-three-when-83-already-has-seven">Why three, when `83` already has seven</a></li>
+            <li><a href="#the-through-line">The through-line</a></li>
+            <li><a href="#phase-1-one-artifact-and-a-capability-contract-that-holds">Phase 1 — One artifact, and a capability contract that holds</a></li>
+            <li><a href="#phase-2-the-host-contract-one-schema-two-transports">Phase 2 — The host contract: one schema, two transports</a></li>
+            <li><a href="#phase-3-white-labelling-customization-and-release">Phase 3 — White-labelling, customization, and release</a></li>
+            <li><a href="#container-policy-owner-notes-2026-09-27">Container policy — owner notes, 2026-09-27</a></li>
+            <li><a href="#site-documentation-is-part-of-every-phase-including-phase-1">Site documentation is part of every phase, including Phase 1</a></li>
+            <li><a href="#explicitly-not-in-these-three">Explicitly not in these three</a></li>
+            <li><a href="#sequencing-rule">Sequencing rule</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Contributing — OpenDoc</title>
+    <meta name="description" content="This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/contributing.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Contributing" />
+    <meta property="og:description" content="This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/contributing.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Contributing" />
+    <meta name="twitter:description" content="This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/contributing.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/contributing.html",
+            "name": "Contributing — OpenDoc",
+            "headline": "Contributing",
+            "description": "This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/contributing.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Contributing",
+                "item": "https://opendoc.casualoffice.org/reference/contributing.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="contributing">Contributing</h1>
+        <p class="doc-lede">This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/CONTRIBUTING.md"><code>CONTRIBUTING.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body">This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability.</p>
+        <h2 class="doc-h2" id="development-contract">Development Contract</h2>
+        <p class="doc-body">Before implementation:</p>
+        <ol class="doc-list">
+        <li>Read the relevant docs in <code>docs/</code>.</li>
+        <li>Write or update the design note for the work.</li>
+        <li>Discuss and finalize the approach.</li>
+        <li>Add or update the tracker item in <code>docs/14-EXECUTION-TRACKER.md</code>.</li>
+        <li>Identify required tests, compatibility impact, and CI gates.</li>
+        </ol>
+        <p class="doc-body">During implementation:</p>
+        <ol class="doc-list">
+        <li>Keep changes narrowly scoped.</li>
+        <li>Prefer existing architecture and documented module boundaries.</li>
+        <li>Add focused tests with each behavior change.</li>
+        <li>Update docs when behavior, public API, compatibility, or process changes.</li>
+        <li>Avoid silent data loss, implicit network access, and unbounded parsing.</li>
+        </ol>
+        <p class="doc-body">Before merge:</p>
+        <ol class="doc-list">
+        <li>Run formatting, linting, type checks, and relevant tests.</li>
+        <li>Confirm the tracker status is current.</li>
+        <li>Update ADRs for architectural decisions.</li>
+        <li>Document performance, security, and compatibility impact.</li>
+        <li>Ensure CI is green.</li>
+        </ol>
+        <h2 class="doc-h2" id="pull-request-requirements">Pull Request Requirements</h2>
+        <p class="doc-body">Every PR should include:</p>
+        <ul class="doc-list">
+        <li>problem statement;</li>
+        <li>design summary;</li>
+        <li>tests run;</li>
+        <li>compatibility impact;</li>
+        <li>performance impact when relevant;</li>
+        <li>security impact when parsing, input, file, font, image, plugin, or network behavior changes;</li>
+        <li>public API impact;</li>
+        <li>documentation changes;</li>
+        <li>tracker link or item id;</li>
+        <li>ADR link when applicable.</li>
+        </ul>
+        <h2 class="doc-h2" id="quality-bar">Quality Bar</h2>
+        <p class="doc-body">The default expectation is production quality:</p>
+        <ul class="doc-list">
+        <li>deterministic behavior where specified;</li>
+        <li>stable error handling;</li>
+        <li>no panics across public API boundaries;</li>
+        <li>no document content in normal logs;</li>
+        <li>bounded parsing and resource limits;</li>
+        <li>reproducible tests;</li>
+        <li>fixtures for document compatibility work;</li>
+        <li>visual and structural regression coverage for layout/rendering work.</li>
+        </ul>
+        <h2 class="doc-h2" id="local-checks">Local Checks</h2>
+        <p class="doc-body">The current foundation gate is:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>sh</span></div>
+        <pre><code>cargo fmt --all -- --check
+        cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        cargo test --workspace --all-features --locked
+        cargo test --doc --workspace --all-features --locked
+        cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
+        cargo doc --workspace --all-features --no-deps --locked</code></pre>
+        </div>
+        <p class="doc-body">The CI <code>docs</code> job runs the <code>cargo doc</code> step with <code>RUSTDOCFLAGS=&quot;-D warnings&quot;</code>, so every rustdoc lint is a hard failure. To reproduce it exactly:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>sh</span></div>
+        <pre><code>RUSTDOCFLAGS=&quot;-D warnings&quot; cargo doc --workspace --all-features --no-deps --locked</code></pre>
+        </div>
+        <p class="doc-body"><strong>Rustdoc gotcha — private intra-doc links.</strong> A <em>public</em> doc comment that links a <em>private</em> type with intra-doc-link syntax (`<code> [</code>Type<code>] </code><code>) emits a </code>private_intra_doc_links<code> warning, which </code>-D warnings<code> turns into a red CI </code>docs<code> job. This has bitten </code>casual-doc-wasm<code> twice on its private </code>serde<code>-serialization structs (e.g. </code>ReviewCommentSummaryJson<code>, </code>A11yBlockJson<code>). When a doc comment refers to a private/internal type, use a plain code span (</code><code> </code>Type<code> </code><code>, no brackets) instead of an intra-doc link. Reserve </code><code> [</code>Type<code>] </code>` for items that are public from the linking item's scope.</p>
+        <p class="doc-body">Dependency policy additionally uses:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>sh</span></div>
+        <pre><code>cargo deny --locked check
+        cargo audit --deny warnings</code></pre>
+        </div>
+        <h2 class="doc-h2" id="commit-style">Commit Style</h2>
+        <p class="doc-body">Use short, factual commit messages. Conventional prefixes are preferred when useful:</p>
+        <ul class="doc-list">
+        <li><code>docs:</code></li>
+        <li><code>feat:</code></li>
+        <li><code>fix:</code></li>
+        <li><code>test:</code></li>
+        <li><code>ci:</code></li>
+        <li><code>refactor:</code></li>
+        <li><code>perf:</code></li>
+        <li><code>security:</code></li>
+        </ul>
+        <h2 class="doc-h2" id="license">License</h2>
+        <p class="doc-body">Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in OpenDoc is provided under the <a href="https://github.com/CasualOffice/opendoc/blob/main/LICENSE">Apache License 2.0</a>, without additional terms or conditions.</p>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a class="is-active" href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#development-contract">Development Contract</a></li>
+            <li><a href="#pull-request-requirements">Pull Request Requirements</a></li>
+            <li><a href="#quality-bar">Quality Bar</a></li>
+            <li><a href="#local-checks">Local Checks</a></li>
+            <li><a href="#commit-style">Commit Style</a></li>
+            <li><a href="#license">License</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

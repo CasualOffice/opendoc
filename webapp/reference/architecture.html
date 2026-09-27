@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Target Architecture — OpenDoc</title>
+    <meta name="description" content="The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/architecture.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Target Architecture" />
+    <meta property="og:description" content="The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/architecture.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Target Architecture" />
+    <meta name="twitter:description" content="The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/architecture.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/architecture.html",
+            "name": "Target Architecture — OpenDoc",
+            "headline": "Target Architecture",
+            "description": "The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/architecture.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Target Architecture",
+                "item": "https://opendoc.casualoffice.org/reference/architecture.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="target-architecture">Target Architecture</h1>
+        <p class="doc-lede">The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md"><code>docs/02-ARCHITECTURE.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <h2 class="doc-h2" id="1-architectural-style">1. Architectural style</h2>
+        <p class="doc-body">The system is a <strong>headless document engine with host adapters</strong>.</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>text</span></div>
+        <pre><code>+---------------------------------------------------------------+
+        | Host Application                                               |
+        | Tauri | Browser | Electron alternative | Server | CLI | Mobile |
+        +------------------------------+--------------------------------+
+                                       |
+                            Stable SDK / FFI / WASM API
+                                       |
+        +---------------------------------------------------------------+
+        | SDK Facade                                                      |
+        | Sessions | Commands | Events | Capabilities | Resources         |
+        +---------------------------------------------------------------+
+        | Document Runtime                                                |
+        | Model | Transactions | Selection | History | Anchors | Semantics|
+        +---------------------------------------------------------------+
+        | Layout Runtime                                                  |
+        | Shaping | Line break | Pagination | Tables | Floats | Hit test  |
+        +---------------------------------------------------------------+
+        | Scene / Display List                                            |
+        | Text runs | Paths | Images | Clips | Layers | Decorations       |
+        +---------------------------------------------------------------+
+        | Render Backends                                                 |
+        | Native GPU/2D | Web Canvas/WebGPU | Headless raster/PDF          |
+        +---------------------------------------------------------------+
+
+        Cross-cutting:
+        DOCX/ODT/MD/TXT import-export | Collaboration adapters | Plugins
+        Diagnostics | Font service | Image service | Accessibility</code></pre>
+        </div>
+        <h2 class="doc-h2" id="2-design-principles">2. Design principles</h2>
+        <h3 class="doc-h3" id="engine-state-is-authoritative">Engine state is authoritative</h3>
+        <p class="doc-body">The DOM, React state, Tauri state, and canvas state are projections. They never become the canonical document.</p>
+        <h3 class="doc-h3" id="commands-produce-transactions">Commands produce transactions</h3>
+        <p class="doc-body">UI actions call commands. Commands create validated transactions. Transactions mutate the model and produce invalidation information.</p>
+        <h3 class="doc-h3" id="layout-is-incremental">Layout is incremental</h3>
+        <p class="doc-body">An edit invalidates the smallest safe layout scope. The engine prioritizes visible pages and may complete distant layout asynchronously.</p>
+        <h3 class="doc-h3" id="rendering-is-retained-and-backend-neutral">Rendering is retained and backend-neutral</h3>
+        <p class="doc-body">Layout generates a display list. A renderer consumes that display list. Rendering code does not inspect DOCX XML or mutate the document.</p>
+        <h3 class="doc-h3" id="import-preserves-intent-and-unknown-data">Import preserves intent and unknown data</h3>
+        <p class="doc-body">DOCX import maps recognized structures into normalized nodes while retaining bounded source provenance and safely preservable unsupported content outside the live editing model. Candidate ADR-027 proposes an immutable source snapshot, typed preservation ledger, and one import/export mapping registry; see <code>34-OOXML-FIDELITY-ARCHITECTURE.md</code>.</p>
+        <h3 class="doc-h3" id="host-controls-policy">Host controls policy</h3>
+        <p class="doc-body">The host decides:</p>
+        <ul class="doc-list">
+        <li>where files are stored;</li>
+        <li>whether external links/resources are allowed;</li>
+        <li>which commands are exposed;</li>
+        <li>authentication;</li>
+        <li>network access;</li>
+        <li>plugin trust;</li>
+        <li>telemetry;</li>
+        <li>collaboration provider.</li>
+        </ul>
+        <h3 class="doc-h3" id="public-api-is-narrower-than-internal-architecture">Public API is narrower than internal architecture</h3>
+        <p class="doc-body">Internal crates may evolve. The SDK facade exposes stable IDs, value objects, commands, snapshots, events, and handles.</p>
+        <h2 class="doc-h2" id="3-main-subsystems">3. Main subsystems</h2>
+        <h3 class="doc-h3" id="document-model">Document model</h3>
+        <p class="doc-body">Stores semantic structure:</p>
+        <ul class="doc-list">
+        <li>document;</li>
+        <li>sections;</li>
+        <li>headers/footers;</li>
+        <li>paragraphs;</li>
+        <li>runs;</li>
+        <li>tables;</li>
+        <li>notes;</li>
+        <li>drawing objects;</li>
+        <li>comments;</li>
+        <li>bookmarks;</li>
+        <li>styles;</li>
+        <li>numbering;</li>
+        <li>relationships;</li>
+        <li>metadata;</li>
+        <li>extension data.</li>
+        </ul>
+        <h3 class="doc-h3" id="transaction-engine">Transaction engine</h3>
+        <p class="doc-body">Validates and applies operations atomically. Produces:</p>
+        <ul class="doc-list">
+        <li>new revision;</li>
+        <li>inverse operations;</li>
+        <li>changed ranges;</li>
+        <li>style invalidations;</li>
+        <li>layout invalidations;</li>
+        <li>event payloads.</li>
+        </ul>
+        <h3 class="doc-h3" id="position-and-anchor-engine">Position and anchor engine</h3>
+        <p class="doc-body">Uses stable node IDs plus local offsets. Anchors survive ordinary edits through transaction mapping.</p>
+        <h3 class="doc-h3" id="selection-engine">Selection engine</h3>
+        <p class="doc-body">Maintains logical selection, direction, affinity, table selections, and IME composition ranges.</p>
+        <h3 class="doc-h3" id="layout-engine">Layout engine</h3>
+        <p class="doc-body">Transforms semantic nodes into paginated fragments using:</p>
+        <ul class="doc-list">
+        <li>resolved styles;</li>
+        <li>shaped text;</li>
+        <li>line boxes;</li>
+        <li>block fragments;</li>
+        <li>table fragments;</li>
+        <li>page/column containers;</li>
+        <li>floating object constraints.</li>
+        </ul>
+        <h3 class="doc-h3" id="scene-builder">Scene builder</h3>
+        <p class="doc-body">Converts layout fragments plus decorations into a renderer-neutral display list.</p>
+        <h3 class="doc-h3" id="import-export">Import/export</h3>
+        <p class="doc-body">DOCX package reader/writer, source-shaped OOXML decoding, relationships, media, style resolution, numbering, themes, provenance, typed preservation, and a versioned bidirectional mapping registry.</p>
+        <h3 class="doc-h3" id="resource-services">Resource services</h3>
+        <p class="doc-body">Abstract:</p>
+        <ul class="doc-list">
+        <li>fonts;</li>
+        <li>images;</li>
+        <li>hyperlinks;</li>
+        <li>dictionaries;</li>
+        <li>locale;</li>
+        <li>clipboard;</li>
+        <li>file attachments.</li>
+        </ul>
+        <h3 class="doc-h3" id="collaboration-adapters">Collaboration adapters</h3>
+        <p class="doc-body">Translate runtime transactions and anchors to an external synchronization mechanism.</p>
+        <h3 class="doc-h3" id="plugin-runtime">Plugin runtime</h3>
+        <p class="doc-body">Registers trusted in-process extensions. Sandboxed plugin execution is a later phase.</p>
+        <h2 class="doc-h2" id="4-data-ownership">4. Data ownership</h2>
+        <ul class="doc-list">
+        <li><code>DocumentSession</code> owns mutable runtime state.</li>
+        <li>immutable snapshots may be shared across threads;</li>
+        <li>layout jobs consume immutable document snapshots;</li>
+        <li>render snapshots are immutable;</li>
+        <li>resource providers are host-owned interfaces;</li>
+        <li>renderer surfaces are host-owned;</li>
+        <li>plugins cannot directly mutate internal collections.</li>
+        </ul>
+        <h2 class="doc-h2" id="5-threading-model">5. Threading model</h2>
+        <p class="doc-body">Recommended:</p>
+        <ul class="doc-list">
+        <li>UI thread: input events, command invocation, current visible render submission;</li>
+        <li>document actor: serialized transaction application;</li>
+        <li>layout worker pool: shaping, page layout, scene generation;</li>
+        <li>I/O workers: DOCX load/save, image decode, font discovery;</li>
+        <li>collaboration worker: network adapter;</li>
+        <li>render thread: backend-specific.</li>
+        </ul>
+        <p class="doc-body">WASM single-thread mode remains supported. Optional WASM threads can be enabled where cross-origin isolation is available.</p>
+        <h2 class="doc-h2" id="6-compatibility-with-current-casual-docs">6. Compatibility with current Casual Docs</h2>
+        <p class="doc-body">The existing web editor remains operational during the rewrite.</p>
+        <p class="doc-body">Migration strategy:</p>
+        <ol class="doc-list">
+        <li>extract fixtures, behavioral tests, DOCX corpus, and round-trip rules;</li>
+        <li>publish the Rust SDK as a parallel project;</li>
+        <li>use it first for conversion/inspection and headless tests;</li>
+        <li>introduce a native Tauri editor using the SDK;</li>
+        <li>introduce WASM runtime behind a feature flag;</li>
+        <li>move capabilities incrementally;</li>
+        <li>avoid a one-shot rewrite.</li>
+        </ol>
+        <p class="doc-body">Existing Yjs collaboration should be retained through an adapter or bridge during migration.</p>
+        <h2 class="doc-h2" id="7-security-boundary">7. Security boundary</h2>
+        <p class="doc-body">Untrusted documents are parsed inside bounded, cancellable import jobs.</p>
+        <p class="doc-body">Default policies:</p>
+        <ul class="doc-list">
+        <li>no automatic URL fetching;</li>
+        <li>no macro execution;</li>
+        <li>no embedded executable activation;</li>
+        <li>no unrestricted font loading;</li>
+        <li>no plugin loading from document packages;</li>
+        <li>no HTML/script execution;</li>
+        <li>relationship and zip paths normalized;</li>
+        <li>size and nesting limits enforced.</li>
+        </ul>
+        <h2 class="doc-h2" id="8-versioning">8. Versioning</h2>
+        <p class="doc-body">Four independent versions:</p>
+        <ul class="doc-list">
+        <li>SDK API version;</li>
+        <li>normalized document schema version;</li>
+        <li>transaction/operation schema version;</li>
+        <li>file compatibility profile version.</li>
+        </ul>
+        <p class="doc-body">A runtime may support multiple older serialized schema versions through migrations.</p>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a class="is-active" href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#1-architectural-style">1. Architectural style</a></li>
+            <li><a href="#2-design-principles">2. Design principles</a></li>
+            <li><a href="#3-main-subsystems">3. Main subsystems</a></li>
+            <li><a href="#4-data-ownership">4. Data ownership</a></li>
+            <li><a href="#5-threading-model">5. Threading model</a></li>
+            <li><a href="#6-compatibility-with-current-casual-docs">6. Compatibility with current Casual Docs</a></li>
+            <li><a href="#7-security-boundary">7. Security boundary</a></li>
+            <li><a href="#8-versioning">8. Versioning</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

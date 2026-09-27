@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Glossary — OpenDoc</title>
+    <meta name="description" content="This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/glossary.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Project Glossary" />
+    <meta property="og:description" content="This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/glossary.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Project Glossary" />
+    <meta name="twitter:description" content="This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/glossary.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/glossary.html",
+            "name": "Project Glossary — OpenDoc",
+            "headline": "Project Glossary",
+            "description": "This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/glossary.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Project Glossary",
+                "item": "https://opendoc.casualoffice.org/reference/glossary.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="project-glossary">Project Glossary</h1>
+        <p class="doc-lede">This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/17-GLOSSARY.md"><code>docs/17-GLOSSARY.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body"><strong>Status:</strong> Accepted for Phase 0 <strong>Last updated:</strong> 2026-07-24</p>
+        <p class="doc-body">This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently.</p>
+        <h2 class="doc-h2" id="product-terms">Product Terms</h2>
+        <p class="doc-body"><strong>OpenDoc</strong> The repository and open document-runtime project.</p>
+        <p class="doc-body"><strong>Casual Document Runtime</strong> The embeddable engine produced by this repository.</p>
+        <p class="doc-body"><strong>Host</strong> An application embedding the runtime. A host owns UI, storage, authentication, network policy, telemetry, and platform integration.</p>
+        <p class="doc-body"><strong>SDK facade</strong> The narrow public API used by hosts. Internal crates are not compatibility boundaries.</p>
+        <p class="doc-body"><strong>Document session</strong> An isolated live document with a current revision, selection, history, layout state, resources, and event stream.</p>
+        <p class="doc-body"><strong>Headless</strong> Operation without a product UI. Headless use includes validation, conversion, inspection, rendering, and automated tests.</p>
+        <h2 class="doc-h2" id="model-terms">Model Terms</h2>
+        <p class="doc-body"><strong>Normalized document</strong> The runtime's format-neutral semantic representation. It is not OOXML, HTML, a DOM tree, or renderer state.</p>
+        <p class="doc-body"><strong>Node</strong> A typed semantic item in a normalized document.</p>
+        <p class="doc-body"><strong>Block</strong> A body-level node such as a paragraph or table.</p>
+        <p class="doc-body"><strong>Inline</strong> Content inside a paragraph, such as text, a break, an image, or a field.</p>
+        <p class="doc-body"><strong>Mark</strong> Formatting applied to text without changing block structure, such as bold or italic.</p>
+        <p class="doc-body"><strong>Node ID</strong> A stable 128-bit identity for a logical node. IDs are represented as 32 lowercase hexadecimal characters at serialization boundaries.</p>
+        <p class="doc-body"><strong>Revision</strong> A monotonically increasing session-local version produced by a committed transaction.</p>
+        <p class="doc-body"><strong>Snapshot</strong> An immutable view of document or render state at one revision.</p>
+        <p class="doc-body"><strong>Invariant</strong> A rule that every committed normalized document must satisfy.</p>
+        <p class="doc-body"><strong>Extension bag</strong> Opaque, bounded, non-executable data retained to preserve safely attached model extensions. It is not the DOCX source snapshot or preservation ledger.</p>
+        <h2 class="doc-h2" id="editing-terms">Editing Terms</h2>
+        <p class="doc-body"><strong>Position</strong> A node ID, local grapheme or child boundary, and affinity.</p>
+        <p class="doc-body"><strong>Affinity</strong> The side of a boundary to which a position sticks when content is inserted at that boundary.</p>
+        <p class="doc-body"><strong>Range</strong> Two ordered positions describing document content.</p>
+        <p class="doc-body"><strong>Selection</strong> One or more logical ranges plus direction and interaction state.</p>
+        <p class="doc-body"><strong>Command</strong> A user- or host-level editing intention, such as inserting text or toggling bold.</p>
+        <p class="doc-body"><strong>Operation</strong> A validated structural mutation primitive produced by a command.</p>
+        <p class="doc-body"><strong>Transaction</strong> An atomic, ordered group of operations against a declared base revision.</p>
+        <p class="doc-body"><strong>Position map</strong> The mapping from positions before a transaction to positions after it.</p>
+        <p class="doc-body"><strong>History entry</strong> A committed transaction plus inverse and selection metadata used for undo and redo.</p>
+        <p class="doc-body"><strong>Anchor</strong> A position with explicit behavior across edits, used by comments, bookmarks, decorations, collaboration, and IME state.</p>
+        <h2 class="doc-h2" id="layout-terms">Layout Terms</h2>
+        <p class="doc-body"><strong>Layout</strong> The deterministic conversion of normalized semantic content and configured resources into positioned fragments.</p>
+        <p class="doc-body"><strong>Fragment</strong> The laid-out portion of a semantic node that fits in a line, column, or page.</p>
+        <p class="doc-body"><strong>Pagination</strong> Assignment of layout fragments to page and column containers.</p>
+        <p class="doc-body"><strong>Scene</strong> An immutable, backend-neutral display list plus hit-test and semantic data.</p>
+        <p class="doc-body"><strong>Renderer</strong> A backend that paints a scene. Renderers do not inspect OOXML or mutate the document.</p>
+        <p class="doc-body"><strong>Hit testing</strong> Mapping a visual coordinate to a logical document position.</p>
+        <p class="doc-body"><strong>Deterministic font set</strong> A versioned set of font files and fallback rules used for reproducible layout and visual tests.</p>
+        <h2 class="doc-h2" id="compatibility-terms">Compatibility Terms</h2>
+        <p class="doc-body"><strong>DOCX</strong> An OPC ZIP package containing WordprocessingML, relationships, media, and related OOXML parts.</p>
+        <p class="doc-body"><strong>Source package snapshot</strong> An immutable, bounded record of an admitted package's parts, relationships, hashes, and explicitly retained safe bytes.</p>
+        <p class="doc-body"><strong>Provenance map</strong> Internal records connecting normalized semantic owners and properties to source regions and mapping-rule versions without making OOXML locations model identity.</p>
+        <p class="doc-body"><strong>Preservation ledger</strong> Typed, bounded records for safely retained unsupported or source-specific content, including ownership, order, invalidation, conflict, and future save disposition.</p>
+        <p class="doc-body"><strong>Mapping registry</strong> A versioned feature registry that owns source decoding, normalized mapping, preservation, reverse mapping, dirty scope, security policy, and required test evidence.</p>
+        <p class="doc-body"><strong>Supported</strong> Imported, rendered, editable, and exported with defined semantics.</p>
+        <p class="doc-body"><strong>Render-only</strong> Displayed, but editing is restricted to protect fidelity.</p>
+        <p class="doc-body"><strong>Preserved</strong> Retained in validated source-snapshot or preservation-ledger data even though the runtime cannot fully render or edit it. A warning alone is not preservation.</p>
+        <p class="doc-body"><strong>Flattened</strong> Converted to a simpler representation with an explicit warning.</p>
+        <p class="doc-body"><strong>Dropped</strong> Removed only with an explicit high-severity warning. Stable releases must not silently drop content.</p>
+        <p class="doc-body"><strong>Blocked</strong> Rejected because accepting the content would violate security or resource policy.</p>
+        <p class="doc-body"><strong>Compatibility profile</strong> A versioned feature matrix stating import, render, edit, save, and preservation behavior.</p>
+        <p class="doc-body"><strong>Corpus</strong> A rights-cleared set of document fixtures and expected outcomes.</p>
+        <p class="doc-body"><strong>Round trip</strong> Importing a file and exporting it again, with or without semantic edits.</p>
+        <h2 class="doc-h2" id="quality-terms">Quality Terms</h2>
+        <p class="doc-body"><strong>Structural snapshot</strong> A deterministic machine-readable summary used to compare model or layout behavior.</p>
+        <p class="doc-body"><strong>Visual baseline</strong> An approved render result produced with fixed engine, configuration, and font versions.</p>
+        <p class="doc-body"><strong>Conformance report</strong> A versioned result set for compatibility, performance, and platform gates.</p>
+        <p class="doc-body"><strong>Resource limit</strong> A configured parser or runtime bound whose breach returns a typed error.</p>
+        <p class="doc-body"><strong>Warning</strong> A recoverable condition that may affect fidelity, behavior, or performance.</p>
+        <p class="doc-body"><strong>Error code</strong> A stable public identifier with the <code>ODC-</code> prefix.</p>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a class="is-active" href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#product-terms">Product Terms</a></li>
+            <li><a href="#model-terms">Model Terms</a></li>
+            <li><a href="#editing-terms">Editing Terms</a></li>
+            <li><a href="#layout-terms">Layout Terms</a></li>
+            <li><a href="#compatibility-terms">Compatibility Terms</a></li>
+            <li><a href="#quality-terms">Quality Terms</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

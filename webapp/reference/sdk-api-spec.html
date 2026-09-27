@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SDK API Specification — OpenDoc</title>
+    <meta name="description" content="The broad interfaces below describe the intended v1 facade and are not all implemented." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/sdk-api-spec.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="SDK API Specification" />
+    <meta property="og:description" content="The broad interfaces below describe the intended v1 facade and are not all implemented." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/sdk-api-spec.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SDK API Specification" />
+    <meta name="twitter:description" content="The broad interfaces below describe the intended v1 facade and are not all implemented." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/sdk-api-spec.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/sdk-api-spec.html",
+            "name": "SDK API Specification — OpenDoc",
+            "headline": "SDK API Specification",
+            "description": "The broad interfaces below describe the intended v1 facade and are not all implemented.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/sdk-api-spec.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "SDK API Specification",
+                "item": "https://opendoc.casualoffice.org/reference/sdk-api-spec.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="sdk-api-specification">SDK API Specification</h1>
+        <p class="doc-lede">The broad interfaces below describe the intended v1 facade and are not all implemented.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/05-SDK-API-SPEC.md"><code>docs/05-SDK-API-SPEC.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body"><strong>Status:</strong> Target v1 API with an implemented Phase 0 subset</p>
+        <p class="doc-body">The broad interfaces below describe the intended v1 facade and are not all implemented. Current executable support is limited to blank-document creation, immutable snapshots, grapheme-aware text insertion/deletion, paragraph split/join, undo/redo, revision checks, position mapping, and stable SDK errors. Strict bounded normalized schema v0 JSON load/export and canonical mapped session selection are also implemented. A bounded synchronous journal exposes ordered transaction and selection events.</p>
+        <h2 class="doc-h2" id="phase-0-implemented-subset">Phase 0 Implemented Subset</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>use std::collections::BTreeSet;
+
+        use casual_doc_sdk::{
+            Affinity, BlockSnapshot, Engine, EngineConfig, InsertTextRequest, Position,
+            SelectionSnapshot, SetSelectionRequest,
+        };
+
+        let engine = Engine::new(EngineConfig::default())?;
+        let session = engine.create_blank()?;
+        let snapshot = session.snapshot()?;
+        let paragraph = match &amp;snapshot.body[0] {
+            BlockSnapshot::Paragraph(paragraph) =&gt; paragraph.id.clone(),
+        };
+
+        let result = session.insert_text(InsertTextRequest {
+            base_revision: snapshot.revision,
+            at: Position {
+                node: paragraph,
+                grapheme_offset: 0,
+                affinity: Affinity::After,
+            },
+            text: &quot;Hello&quot;.to_owned(),
+            marks: BTreeSet::new(),
+        })?;
+
+        assert_eq!(result.revision.get(), 1);
+
+        let selection = session.selection()?;
+        session.set_selection(SetSelectionRequest {
+            base_revision: result.revision,
+            selection: SelectionSnapshot {
+                anchor: selection.anchor,
+                focus: selection.focus,
+            },
+        })?;</code></pre>
+        </div>
+        <p class="doc-body">The SDK owns its public IDs, positions, snapshots, marks, and errors. Internal model and transaction types are not re-exported.</p>
+        <p class="doc-body">The additional implemented editing methods are:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>let mut subscription = session.subscribe()?;
+        session.delete_range(DeleteRangeRequest { /* ... */ })?;
+        session.split_paragraph(SplitParagraphRequest { /* ... */ })?;
+        session.join_paragraphs(JoinParagraphRequest { /* ... */ })?;
+        session.undo(expected_revision)?;
+        session.redo(expected_revision)?;
+        let batch = subscription.drain(64)?;</code></pre>
+        </div>
+        <p class="doc-body">Each successful call returns a <code>TransactionResult</code> with the committed revision and ordered mapping steps.</p>
+        <p class="doc-body">Normalized JSON sessions use:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>let session = engine.open_normalized_json(
+            bytes,
+            OpenNormalizedOptions::default(),
+        )?;
+        let deterministic_bytes = session.export_normalized_json()?;</code></pre>
+        </div>
+        <h2 class="doc-h2" id="phase-1g-implemented-subset-casual-doc-wasm-review-query-surface">Phase 1G Implemented Subset — <code>casual-doc-wasm</code> review query surface</h2>
+        <p class="doc-body">The <code>casual-doc-sdk</code> facade above is the <strong>target</strong> v1 API and is not what <code>webapp/</code> drives today; the browser/webview bridge is the separate <code>casual-doc-wasm</code> crate (docs/68 §&quot;Host surface&quot;). This subsection documents that crate's actual, shipped review query methods so this spec stays accurate about what a host can call today, closing docs/81 REVIEW-GAP-022 (P1G-REVIEW-042):</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>ts</span></div>
+        <pre><code>// All three cross the JS boundary as one JSON string per call, the same
+        // convention as every other multi-record casual-doc-wasm query (e.g.
+        // `documentOutline`, `copyRichRuns`) — see that crate's Cargo.toml for the
+        // documented rationale. `reviewSummary()` (below) remains available,
+        // unchanged, for existing callers; the three methods here are the first-class
+        // typed replacement for its nested `comments`/`revisions` arrays.
+
+        // Every comment or threaded reply. `anchor` is present only if the marker
+        // pair resolved in the live tree.
+        doc.listComments(): string; // JSON: Array&lt;{
+          //   id: string; author?: string; initials?: string; date?: string;
+          //   resolved: boolean; paraId?: string; parentParaId?: string; text: string;
+          //   anchor?: { node: string; start: number; end: number };
+          // }&gt;
+
+        // Every tracked-change/formatting revision, document order.
+        doc.listRevisions(): string; // JSON: Array&lt;{
+          //   id: string;
+          //   kind: &quot;insertion&quot; | &quot;deletion&quot; | &quot;move_from&quot; | &quot;move_to&quot; | &quot;formatting&quot;;
+          //   author?: string; date?: string; groupId?: string;
+          //   groupKind?: &quot;typing&quot; | &quot;replacement&quot; | &quot;formatting&quot;;
+          //   revisionId?: string; text: string;
+          //   anchor: { node: string; start: number; end: number };
+          //   movePair?: { name: string; fromStart: string; toStart: string };
+          //   formattingDelta?: unknown;
+          // }&gt;
+
+        // One thread: `comment`'s root plus every descendant reply, root-first in
+        // creation order. Resolves any member id (including a reply-to-a-reply) to
+        // its thread root first. Throws if `comment` is not a known comment id.
+        doc.commentThread(comment: string): string; // JSON: Array&lt;...same shape as listComments()&gt;
+
+        // Legacy combined query, unchanged: `{ comments: [...], revisions: [...] }`
+        // using the same per-item shapes as above.
+        doc.reviewSummary(): string;</code></pre>
+        </div>
+        <h2 class="doc-h2" id="1-target-api-layers">1. Target API layers</h2>
+        <h3 class="doc-h3" id="rust-native-api">Rust native API</h3>
+        <p class="doc-body">Most expressive API for Rust hosts and Tauri.</p>
+        <h3 class="doc-h3" id="c-abi">C ABI</h3>
+        <p class="doc-body">Stable handle-based API for non-Rust native consumers.</p>
+        <h3 class="doc-h3" id="javascript-wasm-api">JavaScript/WASM API</h3>
+        <p class="doc-body">Promise-based, event-driven API with binary buffers.</p>
+        <h3 class="doc-h3" id="optional-framework-bindings">Optional framework bindings</h3>
+        <p class="doc-body">React/Vue/Svelte wrappers belong outside the core SDK.</p>
+        <h2 class="doc-h2" id="2-rust-example">2. Rust example</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>use casual_doc_sdk::{
+            Engine, EngineConfig, OpenOptions, Viewport, CommandArgs,
+        };
+
+        let engine = Engine::new(EngineConfig::default())?;
+        let session = engine.open_docx(docx_bytes, OpenOptions::default()).await?;
+
+        let subscription = session.subscribe(|event| {
+            println!(&quot;{event:?}&quot;);
+        });
+
+        session.set_viewport(Viewport {
+            width_px: 1200.0,
+            height_px: 900.0,
+            scale: 1.0,
+            scroll_y: 0.0,
+        })?;
+
+        session.execute(&quot;text.insert&quot;, CommandArgs::text(&quot;Hello&quot;))?;
+        let bytes = session.save_docx(Default::default()).await?;</code></pre>
+        </div>
+        <h2 class="doc-h2" id="3-javascript-wasm-example">3. JavaScript/WASM example</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>ts</span></div>
+        <pre><code>import { DocumentEngine } from &quot;@casualoffice/document-runtime&quot;;
+
+        const engine = await DocumentEngine.create({
+          locale: &quot;en-US&quot;,
+          externalResources: &quot;deny&quot;,
+        });
+
+        const session = await engine.openDocx(fileBytes);
+
+        session.on(&quot;transactionCommitted&quot;, event =&gt; {
+          console.log(event.revision);
+        });
+
+        session.setViewport({
+          width: canvas.width,
+          height: canvas.height,
+          scale: devicePixelRatio,
+          scrollY: 0,
+        });
+
+        canvas.addEventListener(&quot;pointerdown&quot;, e =&gt; {
+          session.handlePointer({
+            kind: &quot;down&quot;,
+            x: e.offsetX,
+            y: e.offsetY,
+            button: e.button,
+            modifiers: readModifiers(e),
+          });
+        });
+
+        await session.execute(&quot;format.toggle_bold&quot;);
+        const saved = await session.saveDocx();</code></pre>
+        </div>
+        <h2 class="doc-h2" id="4-core-facade">4. Core facade</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>pub struct Engine { /* opaque */ }
+
+        impl Engine {
+            pub fn new(config: EngineConfig) -&gt; Result&lt;Self, SdkError&gt;;
+            pub async fn open_docx(
+                &amp;self,
+                bytes: Bytes,
+                options: OpenOptions,
+            ) -&gt; Result&lt;DocumentSession, SdkError&gt;;
+            pub fn create_blank(
+                &amp;self,
+                options: NewDocumentOptions,
+            ) -&gt; Result&lt;DocumentSession, SdkError&gt;;
+            pub fn register_plugin(
+                &amp;self,
+                plugin: Arc&lt;dyn Plugin&gt;,
+            ) -&gt; Result&lt;(), SdkError&gt;;
+        }</code></pre>
+        </div>
+        <h2 class="doc-h2" id="5-session-api">5. Session API</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>impl DocumentSession {
+            pub fn id(&amp;self) -&gt; SessionId;
+            pub fn revision(&amp;self) -&gt; RevisionId;
+            pub fn metadata(&amp;self) -&gt; DocumentMetadataSnapshot;
+
+            pub fn execute(
+                &amp;self,
+                command: impl Into&lt;CommandId&gt;,
+                args: CommandArgs,
+            ) -&gt; Result&lt;CommandResult, SdkError&gt;;
+
+            pub fn query_command(
+                &amp;self,
+                command: impl Into&lt;CommandId&gt;,
+            ) -&gt; Result&lt;CommandState, SdkError&gt;;
+
+            pub fn selection(&amp;self) -&gt; Result&lt;SelectionSnapshot, SdkError&gt;;
+            pub fn set_selection(&amp;self, request: SetSelectionRequest) -&gt; Result&lt;(), SdkError&gt;;
+
+            pub fn handle_key(&amp;self, event: KeyEvent) -&gt; Result&lt;InputResult, SdkError&gt;;
+            pub fn handle_pointer(&amp;self, event: PointerEvent) -&gt; Result&lt;InputResult, SdkError&gt;;
+            pub fn handle_ime(&amp;self, event: ImeEvent) -&gt; Result&lt;InputResult, SdkError&gt;;
+
+            pub fn set_viewport(&amp;self, viewport: Viewport) -&gt; Result&lt;(), SdkError&gt;;
+            pub async fn scene(&amp;self, request: SceneRequest) -&gt; Result&lt;SceneSnapshot, SdkError&gt;;
+
+            pub async fn save_docx(
+                &amp;self,
+                options: SaveOptions,
+            ) -&gt; Result&lt;Bytes, SdkError&gt;;
+
+            pub fn snapshot(&amp;self) -&gt; Result&lt;DocumentSnapshot, SdkError&gt;;
+            pub fn subscribe(
+                &amp;self,
+                listener: EventListener,
+            ) -&gt; Subscription;
+
+            pub fn close(self) -&gt; Result&lt;(), SdkError&gt;;
+        }</code></pre>
+        </div>
+        <h2 class="doc-h2" id="6-command-conventions">6. Command conventions</h2>
+        <p class="doc-body">Command IDs use namespaces:</p>
+        <ul class="doc-list">
+        <li><code>document.*</code></li>
+        <li><code>text.*</code></li>
+        <li><code>format.*</code></li>
+        <li><code>paragraph.*</code></li>
+        <li><code>list.*</code></li>
+        <li><code>table.*</code></li>
+        <li><code>image.*</code></li>
+        <li><code>section.*</code></li>
+        <li><code>comment.*</code></li>
+        <li><code>review.*</code></li>
+        <li><code>history.*</code></li>
+        <li><code>view.*</code></li>
+        <li><code>plugin.&lt;vendor&gt;.*</code></li>
+        </ul>
+        <p class="doc-body">Commands accept versioned structured arguments. Unknown optional fields are ignored; unknown required schema versions fail.</p>
+        <h2 class="doc-h2" id="7-initial-command-catalog">7. Initial command catalog</h2>
+        <h3 class="doc-h3" id="document">Document</h3>
+        <ul class="doc-list">
+        <li><code>document.select_all</code></li>
+        <li><code>document.insert_page_break</code></li>
+        <li><code>document.insert_section_break</code></li>
+        <li><code>document.set_page_setup</code></li>
+        </ul>
+        <h3 class="doc-h3" id="text-and-format">Text and format</h3>
+        <ul class="doc-list">
+        <li><code>text.insert</code></li>
+        <li><code>text.delete_backward</code></li>
+        <li><code>text.delete_forward</code></li>
+        <li><code>format.toggle_bold</code></li>
+        <li><code>format.toggle_italic</code></li>
+        <li><code>format.toggle_underline</code></li>
+        <li><code>format.set_font_family</code></li>
+        <li><code>format.set_font_size</code></li>
+        <li><code>format.set_color</code></li>
+        <li><code>format.clear</code></li>
+        </ul>
+        <h3 class="doc-h3" id="paragraph">Paragraph</h3>
+        <ul class="doc-list">
+        <li><code>paragraph.set_alignment</code></li>
+        <li><code>paragraph.set_line_spacing</code></li>
+        <li><code>paragraph.set_spacing</code></li>
+        <li><code>paragraph.increase_indent</code></li>
+        <li><code>paragraph.decrease_indent</code></li>
+        <li><code>paragraph.apply_style</code></li>
+        </ul>
+        <h3 class="doc-h3" id="lists">Lists</h3>
+        <ul class="doc-list">
+        <li><code>list.toggle_bulleted</code></li>
+        <li><code>list.toggle_numbered</code></li>
+        <li><code>list.indent</code></li>
+        <li><code>list.outdent</code></li>
+        </ul>
+        <h3 class="doc-h3" id="tables">Tables</h3>
+        <ul class="doc-list">
+        <li><code>table.insert</code></li>
+        <li><code>table.add_row</code></li>
+        <li><code>table.add_column</code></li>
+        <li><code>table.delete_row</code></li>
+        <li><code>table.delete_column</code></li>
+        <li><code>table.merge_cells</code></li>
+        <li><code>table.split_cell</code></li>
+        </ul>
+        <h3 class="doc-h3" id="history">History</h3>
+        <ul class="doc-list">
+        <li><code>history.undo</code></li>
+        <li><code>history.redo</code></li>
+        </ul>
+        <h2 class="doc-h2" id="8-snapshots-and-handles">8. Snapshots and handles</h2>
+        <p class="doc-body">Public snapshots are immutable. Native hosts may receive zero-copy references scoped by a guard. WASM and C consumers receive owned binary or plain value snapshots.</p>
+        <p class="doc-body">Never expose internal pointers without lifetime-safe wrappers.</p>
+        <h2 class="doc-h2" id="9-event-delivery">9. Event delivery</h2>
+        <p class="doc-body">The implemented Phase 0 transport is a future-only synchronous subscription over a 256-event bounded journal. Each <code>SequencedEvent</code> has a session-local sequence. <code>EventBatch::dropped_events</code> reports exact lag instead of silently skipping events. Transaction events precede any selection event caused by the same commit.</p>
+        <p class="doc-body">The target v1 adapters additionally support:</p>
+        <ul class="doc-list">
+        <li>async stream;</li>
+        <li>callback;</li>
+        <li>JavaScript EventTarget-style bridge.</li>
+        </ul>
+        <p class="doc-body">Hosts can request event coalescing for high-frequency layout and selection events.</p>
+        <h2 class="doc-h2" id="10-resource-requests">10. Resource requests</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>pub enum ResourceRequest {
+            Font(FontRequest),
+            Image(ImageRequest),
+            ExternalRelationship(ExternalRelationshipRequest),
+            Dictionary(DictionaryRequest),
+        }</code></pre>
+        </div>
+        <p class="doc-body">The host responds asynchronously. Resource identity includes content hash/version to make cache invalidation explicit.</p>
+        <h2 class="doc-h2" id="11-plugin-api">11. Plugin API</h2>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>pub trait Plugin: Send + Sync {
+            fn manifest(&amp;self) -&gt; PluginManifest;
+            fn register(&amp;self, registry: &amp;mut PluginRegistry) -&gt; Result&lt;(), PluginError&gt;;
+        }</code></pre>
+        </div>
+        <p class="doc-body">Registration capabilities:</p>
+        <ul class="doc-list">
+        <li>commands;</li>
+        <li>validators;</li>
+        <li>decorations;</li>
+        <li>custom object codecs;</li>
+        <li>custom scene emitters;</li>
+        <li>import/export handlers;</li>
+        <li>document inspectors;</li>
+        <li>semantic providers.</li>
+        </ul>
+        <p class="doc-body">v1 plugins are trusted native code. WASM-sandboxed plugins are a separate roadmap item.</p>
+        <h2 class="doc-h2" id="12-compatibility-policy">12. Compatibility policy</h2>
+        <ul class="doc-list">
+        <li>patch releases: fixes only, no breaking API;</li>
+        <li>minor releases: additive API;</li>
+        <li>major releases: breaking API allowed with migration guide;</li>
+        <li>deprecated APIs remain for at least two minor releases when practical;</li>
+        <li>serialized schemas have independent compatibility guarantees.</li>
+        </ul>
+        <h2 class="doc-h2" id="13-distribution">13. Distribution</h2>
+        <p class="doc-body">Proposed artifacts:</p>
+        <ul class="doc-list">
+        <li>crates.io Rust crates;</li>
+        <li>npm WASM package;</li>
+        <li>prebuilt native libraries for major desktop targets;</li>
+        <li>C headers;</li>
+        <li>generated TypeScript definitions;</li>
+        <li>API docs site;</li>
+        <li>sample apps;</li>
+        <li>conformance fixtures.</li>
+        </ul>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a class="is-active" href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#phase-0-implemented-subset">Phase 0 Implemented Subset</a></li>
+            <li><a href="#phase-1g-implemented-subset-casual-doc-wasm-review-query-surface">Phase 1G Implemented Subset — `casual-doc-wasm` review query surface</a></li>
+            <li><a href="#1-target-api-layers">1. Target API layers</a></li>
+            <li><a href="#2-rust-example">2. Rust example</a></li>
+            <li><a href="#3-javascript-wasm-example">3. JavaScript/WASM example</a></li>
+            <li><a href="#4-core-facade">4. Core facade</a></li>
+            <li><a href="#5-session-api">5. Session API</a></li>
+            <li><a href="#6-command-conventions">6. Command conventions</a></li>
+            <li><a href="#7-initial-command-catalog">7. Initial command catalog</a></li>
+            <li><a href="#8-snapshots-and-handles">8. Snapshots and handles</a></li>
+            <li><a href="#9-event-delivery">9. Event delivery</a></li>
+            <li><a href="#10-resource-requests">10. Resource requests</a></li>
+            <li><a href="#11-plugin-api">11. Plugin API</a></li>
+            <li><a href="#12-compatibility-policy">12. Compatibility policy</a></li>
+            <li><a href="#13-distribution">13. Distribution</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

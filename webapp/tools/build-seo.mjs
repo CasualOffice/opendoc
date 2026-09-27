@@ -41,6 +41,8 @@ import { readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { artifacts as docPageArtifacts } from "./build-doc-pages.mjs";
+
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Pages that link the site stylesheet but are deliberately kept out of the
@@ -127,15 +129,28 @@ export function describePage(file, source) {
  *  depend on having run `build-site.py` first, and so a head edit reaches the
  *  manifests in the same pass that reaches the page. */
 export function sitePages() {
-  const pages = readdirSync(WEBAPP)
-    .filter((name) => name.endsWith(".page.html"))
-    .sort()
-    .map((template) =>
-      describePage(
-        template.replace(/\.page\.html$/, ".html"),
-        readFileSync(join(WEBAPP, template), "utf8"),
+  const pages = [
+    ...readdirSync(WEBAPP)
+      .filter((name) => name.endsWith(".page.html"))
+      .sort()
+      .map((template) =>
+        describePage(
+          template.replace(/\.page\.html$/, ".html"),
+          readFileSync(join(WEBAPP, template), "utf8"),
+        ),
       ),
-    );
+    // The reference pages — the repository's own design docs, published as site
+    // pages by `tools/build-doc-pages.mjs`. Described from what that generator
+    // RENDERS rather than from the files it wrote, for the same reason the
+    // templates are read above instead of the built pages: the manifests then do
+    // not depend on the order the build ran in, and a doc edited in `docs/`
+    // reaches `sitemap.xml` and `llms.txt` in the same pass it reaches its page.
+    //
+    // They were the whole point of the exercise: eleven documents that a reader
+    // and a crawler could previously only reach on github.com, where none of them
+    // could ever rank for this site.
+    ...docPageArtifacts().map(([file, html]) => describePage(file, html)),
+  ];
   for (const page of pages) {
     for (const field of ["canonical", "title", "description"]) {
       if (!page[field]) {
