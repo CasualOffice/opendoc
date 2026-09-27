@@ -39402,4 +39402,158 @@ mod tests {
             .expect_err("an out-of-range delete is refused");
         assert_eq!(plain, "OffsetOutOfRange");
     }
+
+    /// Selecting a table cell that holds a text box inside an inline content
+    /// control is refused, rather than handing back a range that crosses two
+    /// editing surfaces.
+    ///
+    /// This is what `collect_text_box_text` is actually for. `cellTextRange` reports
+    /// `found = false` for a cell containing an embedded text-box story, because
+    /// that story is its own editing surface and one contiguous model range cannot
+    /// span the boundary. The detection walked `TextBox`/`Hyperlink`/`Field`/`Group`
+    /// and missed `Sdt` and `Revision`, so a box wrapped in a content control was
+    /// not seen and the cell handed back a range straight across it.
+    ///
+    /// The finding this came from said `collect_text_box_text` "feeds `findText`". It
+    /// does not — `findText` goes through `collect_block_text`, hence
+    /// `visit_paragraphs`, hence `visit_text_box_paragraphs`, which had the SAME
+    /// missing pair and is covered by
+    /// `text_in_a_box_inside_a_content_control_is_findable`. Established by
+    /// mutation: reverting `collect_text_box_text` left that guard green, which is
+    /// the only reason this one exists.
+    #[test]
+    fn a_cell_holding_a_boxed_story_in_a_content_control_refuses_a_text_range() {
+        use casual_doc_model::v1::{
+            InlineSdt, SdtProperties, Table, TableCell, TableCellProperties, TableLook,
+            TableProperties, TableRow, TableRowProperties, TextBox,
+        };
+
+        let mut next = 1u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(66, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let paragraph = |id: NodeId, inlines: Vec<InlineNode>| {
+            BlockNode::Paragraph(Paragraph {
+                id,
+                properties: ParagraphProperties::default().into(),
+                inlines,
+            })
+        };
+        fn boxed_story(id: &mut impl FnMut() -> NodeId, inner_text: &str) -> InlineNode {
+            let inner = id();
+            let run_id = id();
+            let box_id = id();
+            let run = InlineNode::Run(Run {
+                id: run_id,
+                properties: RunProperties::default().into(),
+                text: inner_text.to_owned(),
+            });
+            InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
+                id: box_id,
+                anchor: None,
+                relative_height: None,
+                extent: Some(Extent {
+                    width_emu: 1_828_800,
+                    height_emu: 914_400,
+                }),
+                fill: None,
+                border: None,
+                body_properties: casual_doc_model::v1::TextBoxBodyProperties::default(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: inner,
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run],
+                })],
+            }))
+        }
+
+        // Two cells, identical but for the wrapper around the box. The plain one is
+        // the control: it must ALSO be refused, or the guard cannot tell the
+        // detection from a cell range that never works.
+        let plain_cell_paragraph = id();
+        let plain_cell = TableCell {
+            id: id(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                plain_cell_paragraph,
+                vec![run(id(), "cell "), boxed_story(&mut id, "plain box")],
+            )],
+        };
+        let controlled_cell_paragraph = id();
+        let controlled_box = boxed_story(&mut id, "controlled box");
+        let controlled_cell = TableCell {
+            id: id(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                controlled_cell_paragraph,
+                vec![
+                    run(id(), "cell "),
+                    InlineNode::Sdt(Box::new(InlineSdt {
+                        id: id(),
+                        properties: SdtProperties::default(),
+                        inlines: vec![controlled_box],
+                    })),
+                ],
+            )],
+        };
+        // A third cell with no box at all, so the guard proves `cellTextRange`
+        // answers at all on this fixture.
+        let ordinary_cell_paragraph = id();
+        let ordinary_cell = TableCell {
+            id: id(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                ordinary_cell_paragraph,
+                vec![run(id(), "just text")],
+            )],
+        };
+
+        let table = BlockNode::Table(Box::new(Table {
+            id: id(),
+            grid: Vec::new(),
+            grid_change: None,
+            properties: TableProperties {
+                look: TableLook::default(),
+                ..TableProperties::default()
+            },
+            rows: vec![TableRow {
+                id: id(),
+                properties: TableRowProperties::default(),
+                cells: vec![plain_cell, controlled_cell, ordinary_cell],
+            }],
+        }));
+        let document = Document::new(
+            NodeId::from_parts(66, 1).unwrap(),
+            vec![table, paragraph(id(), vec![run(id(), "after")])],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid boxed-cell document");
+
+        let d = wasm_document(document);
+        assert!(
+            d.cell_text_range(&ordinary_cell_paragraph.to_string())
+                .found(),
+            "a cell of ordinary text must have a text range, or this guard cannot \
+             tell detection from `cellTextRange` never answering"
+        );
+        assert!(
+            !d.cell_text_range(&plain_cell_paragraph.to_string()).found(),
+            "a cell holding a plain inline text box must refuse a contiguous range"
+        );
+        assert!(
+            !d.cell_text_range(&controlled_cell_paragraph.to_string())
+                .found(),
+            "a cell holding a text box inside an inline content control handed back \
+             a contiguous range straight across a separate editing surface"
+        );
+    }
 }
