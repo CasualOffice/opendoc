@@ -13,10 +13,15 @@
     <link rel="stylesheet" href="./src/fonts.css" />
     <link rel="stylesheet" href="./src/marketing.css" />
     <style>
-      /* Only what this page needs. Every colour is a marketing.css token, so the
-         page inherits the AA contrast the design system already holds — the
-         tokens are deliberate (docs/63) and this page is not the place to
-         relitigate them. */
+      /* Only what this page needs, and every colour is a marketing.css token.
+         That used to be stated as "so the page inherits the AA contrast the
+         design system already holds", which was not true: --muted-3 clears
+         4.5:1 on --bg and misses it on the quieter --surface-2 and --paper this
+         page puts it on, so the withheld-capability chips measured 4.40:1 and
+         the idle notice 4.47:1. Using a token is not the same as clearing the
+         floor; `tests/e2e/site-contrast.spec.mjs` now measures this page.
+         The tokens themselves are deliberate (docs/63) and this page is still
+         not the place to relitigate them. */
       .embed-page {
         max-width: 1180px;
         margin: 0 auto;
@@ -143,7 +148,9 @@
       }
       .embed-caps li[data-state="withheld"] {
         text-decoration: line-through;
-        color: var(--muted-3);
+        /* --faint-on-paper, not --muted-3: this chip sits on --surface-2, where
+           --muted-3 is 4.40:1. HF-189. */
+        color: var(--faint-on-paper);
       }
       .embed-stage {
         padding: 0;
@@ -167,7 +174,8 @@
         align-items: center;
         justify-content: center;
         padding: 24px;
-        color: var(--muted-3);
+        /* On --paper, where --muted-3 is 4.47:1. HF-189. */
+        color: var(--faint-on-paper);
         font-size: 0.85rem;
         text-align: center;
       }
