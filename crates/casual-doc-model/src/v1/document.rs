@@ -2243,14 +2243,25 @@ fn check_opt_bound(
     Ok(())
 }
 
-/// Validates a legacy form field's configuration (`w:ffData`): every present
-/// string is at most `MAX_FORM_FIELD_STRING_BYTES`, a drop-down carries at most
-/// `MAX_FORM_FIELD_ENTRIES` entries, and the kind-specific payload agrees with
-/// the field instruction's `FORM…` token (a `TextInput` payload only on a
-/// FORMTEXT field, and so on). Absent (`None`) for an ordinary field.
 /// Bounds the strings carried by a [`FieldKind`] projection. Each is derived
 /// from the (already length-bounded) instruction, so this only guards against a
 /// hand-built model whose kind strings exceed the instruction ceiling.
+fn validate_field_kind(kind: &FieldKind) -> Result<(), ModelError> {
+    let within = |value: &str| value.len() <= MAX_FIELD_INSTRUCTION_BYTES;
+    let ok = match kind {
+        FieldKind::Page | FieldKind::NumPages | FieldKind::Toc => true,
+        FieldKind::Date { format } | FieldKind::Time { format } => {
+            format.as_deref().is_none_or(within)
+        }
+        FieldKind::Ref { bookmark } | FieldKind::PageRef { bookmark } => within(bookmark),
+        FieldKind::Seq { name } => within(name),
+        FieldKind::StyleRef { style } => within(style),
+        FieldKind::Hyperlink { target } => target.as_deref().is_none_or(within),
+        FieldKind::Other { keyword } => within(keyword),
+    };
+    check_domain(ok, "field.kind")
+}
+
 /// The start/end tally of the field ranges open in one block container.
 ///
 /// Lives in a struct rather than three locals so the recursion into transparent
@@ -2382,22 +2393,6 @@ fn check_field_range_group(group: &WordprocessingGroup) -> Result<(), ModelError
         }
     }
     Ok(())
-}
-
-fn validate_field_kind(kind: &FieldKind) -> Result<(), ModelError> {
-    let within = |value: &str| value.len() <= MAX_FIELD_INSTRUCTION_BYTES;
-    let ok = match kind {
-        FieldKind::Page | FieldKind::NumPages | FieldKind::Toc => true,
-        FieldKind::Date { format } | FieldKind::Time { format } => {
-            format.as_deref().is_none_or(within)
-        }
-        FieldKind::Ref { bookmark } | FieldKind::PageRef { bookmark } => within(bookmark),
-        FieldKind::Seq { name } => within(name),
-        FieldKind::StyleRef { style } => within(style),
-        FieldKind::Hyperlink { target } => target.as_deref().is_none_or(within),
-        FieldKind::Other { keyword } => within(keyword),
-    };
-    check_domain(ok, "field.kind")
 }
 
 fn check_form_field(field: &Field) -> Result<(), ModelError> {
