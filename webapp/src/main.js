@@ -7597,7 +7597,7 @@ const objectContextMenuHost = {
   wrapModes: () => WRAP_MODES,
   shapeColors: () => SHAPE_MENU_COLORS,
   objectWrap: (root) => doc.objectWrap(root),
-  documentRows: referenceObjectMenuRows,
+  documentRows: () => referenceObjectMenuRows(),
   setObjectWrap,
   openAltText: () => openAltTextDialog(),
   applyShapeFill,

@@ -152,6 +152,44 @@ const MODALS = [
     },
   },
   {
+    id: "captionDialog",
+    name: "Insert caption",
+    // Same as Drop cap and Watermark: the ribbon button is bound through
+    // `onButton`, which preventDefaults mousedown so the band never takes the
+    // keyboard off the document, so there is no surviving opener to return to.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Word's dialog opens on the Caption box, and so does this one
+    // (`CaptionDialog.js:341`, `getDefaultFocusableComponent`). It is also the
+    // only field the author must fill, which is the other reason it goes first.
+    focus: "#captionText",
+    async open(page) {
+      await gotoEditor(page);
+      // `requires: "bodyCaret"` — no caret, no insertion point, and the button is
+      // disabled. Without this the row would fail for the wrong reason.
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refCaptionBtn").click();
+    },
+  },
+  {
+    id: "crossRefDialog",
+    name: "Cross-reference",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The reference TYPE is the first decision: everything else in the dialog —
+    // the option list, the target list, the list's own heading — is derived from
+    // it, which is why Word and ONLYOFFICE both open on it
+    // (`CrossReferenceDialog.js:_setDefaults`).
+    focus: "#crossRefType",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refCrossRefBtn").click();
+    },
+  },
+  {
     id: "aboutDialog",
     name: "About",
     // Opened from the File PAGE rather than the palette, because a durable

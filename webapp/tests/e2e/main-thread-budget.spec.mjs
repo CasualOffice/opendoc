@@ -98,6 +98,31 @@ const OPERATIONS = [
     },
   },
   {
+    name: "opening the Cross-reference dialog",
+    // It ENUMERATES the document: `captionLabels()` to build the reference-type
+    // list, then `referenceTargets(kind)` for the first type's targets. Two walks,
+    // which is why this row exists — the same shape as the Outline panel above,
+    // whose `documentOutline` was 5,565 ms at this exact size before `docs/116`
+    // because it called a linear lookup per node.
+    //
+    // The row also guards a rule that is easy to break by accident: switching
+    // reference type re-walks, but nothing else in the dialog does. Typing in it,
+    // picking an option and selecting a target all read from what is already in
+    // memory.
+    budget: 800,
+    async run(page) {
+      await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 70 } });
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refCrossRefBtn").click();
+      await expect(page.locator("#crossRefDialog")).toBeVisible();
+      // The rows share one page, so a modal left open would swallow the next
+      // operation's clicks — and the dismissal is cheap enough not to hide the
+      // cost this row is here to measure.
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#crossRefDialog")).toBeHidden();
+    },
+  },
+  {
     name: "opening the Pages panel",
     // Already windowed to 40 thumbnails; this pins that it stays windowed.
     budget: 800,
