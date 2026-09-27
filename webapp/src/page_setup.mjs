@@ -129,8 +129,12 @@ export function createPageSetup(io) {
     columnSeparator.checked = value.separator === true;
   }
 
-  function columnsPayload() {
-    const previous = current.columns;
+  /** The columns half of a `setPageSetup` payload, compared against `section`'s
+   *  own columns rather than the dialog's open-time snapshot: Apply reads the
+   *  document fresh, so what counts as "the column controls did not change" has to
+   *  be measured against the same fresh answer. */
+  function columnsPayload(section) {
+    const previous = section.columns;
     const count = Number(columnCount.value) || 1;
     const spaceTwips = fieldTwips(columnGap);
     const separator = columnSeparator.checked;
@@ -145,7 +149,14 @@ export function createPageSetup(io) {
     ) {
       return previous;
     }
-    return { ...(previous ?? {}), count, spaceTwips, separator, equalWidth: true, columns: [] };
+    return {
+      ...(previous ?? {}),
+      count,
+      spaceTwips,
+      separator,
+      equalWidth: true,
+      columns: [],
+    };
   }
 
   function updatePreview() {
@@ -158,12 +169,25 @@ export function createPageSetup(io) {
     const percent = (value, dimension) =>
       `${Math.min(38, Math.max(3, (value / dimension) * 100))}%`;
 
-    previewSheet.dataset.orientation = width > height ? "landscape" : "portrait";
+    previewSheet.dataset.orientation =
+      width > height ? "landscape" : "portrait";
     previewSheet.style.setProperty("--page-ratio", `${width} / ${height}`);
-    previewMargins.style.setProperty("--preview-margin-top", percent(top, height));
-    previewMargins.style.setProperty("--preview-margin-bottom", percent(bottom, height));
-    previewMargins.style.setProperty("--preview-margin-left", percent(left, width));
-    previewMargins.style.setProperty("--preview-margin-right", percent(right, width));
+    previewMargins.style.setProperty(
+      "--preview-margin-top",
+      percent(top, height),
+    );
+    previewMargins.style.setProperty(
+      "--preview-margin-bottom",
+      percent(bottom, height),
+    );
+    previewMargins.style.setProperty(
+      "--preview-margin-left",
+      percent(left, width),
+    );
+    previewMargins.style.setProperty(
+      "--preview-margin-right",
+      percent(right, width),
+    );
     previewLabel.textContent = t("pageSetup.dimensions", {
       width: inchText(width * TWIPS_PER_INCH),
       height: inchText(height * TWIPS_PER_INCH),
@@ -200,7 +224,11 @@ export function createPageSetup(io) {
 
   /** One section's layout entry, by id. */
   function layoutOf(sectionId) {
-    return layoutSections()?.sections?.find((entry) => entry.section === sectionId) ?? null;
+    return (
+      layoutSections()?.sections?.find(
+        (entry) => entry.section === sectionId,
+      ) ?? null
+    );
   }
 
   /** Paints every field from one section's geometry. Both the initial reflect
@@ -222,10 +250,12 @@ export function createPageSetup(io) {
     // An absent `w:vAlign` is top everywhere in this pipeline, so "Top" is what
     // the absent value shows — and choosing Top writes the property away again
     // rather than asserting a default no other producer writes.
-    verticalAlignment.value = layoutOf(section.section)?.verticalAlignment ?? "top";
+    verticalAlignment.value =
+      layoutOf(section.section)?.verticalAlignment ?? "top";
     reflectColumns(section.columns);
     const active =
-      orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
+      orientation ??
+      (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
     orientationGroup.reflect(active);
     updatePreview();
   }
@@ -244,14 +274,14 @@ export function createPageSetup(io) {
     }
     sectionSelect.value = list.current;
     paintSection(
-      list.sections.find((section) => section.section === list.current) ?? list.sections[0],
+      list.sections.find((section) => section.section === list.current) ??
+        list.sections[0],
     );
     return true;
   }
 
   const modal = io.registerModal(pageSetupMenu, {
-    initialFocus: () =>
-      focusIntent?.() ?? orientationGroup.selected(),
+    initialFocus: () => focusIntent?.() ?? orientationGroup.selected(),
     fallbackFocus: () => pageSetupBtn,
   });
 
@@ -270,7 +300,9 @@ export function createPageSetup(io) {
 
   sectionSelect.addEventListener("change", () => {
     const list = sections();
-    const picked = list?.sections?.find((section) => section.section === sectionSelect.value);
+    const picked = list?.sections?.find(
+      (section) => section.section === sectionSelect.value,
+    );
     if (picked) paintSection(picked);
   });
 
@@ -300,45 +332,129 @@ export function createPageSetup(io) {
 
   cancelBtn.addEventListener("click", () => toggle(false));
   closeBtn.addEventListener("click", () => toggle(false));
-  for (const input of [widthInput, heightInput, marginTop, marginBottom, marginLeft, marginRight]) {
+  for (const input of [
+    widthInput,
+    heightInput,
+    marginTop,
+    marginBottom,
+    marginLeft,
+    marginRight,
+  ]) {
     input.addEventListener("input", updatePreview);
+  }
+
+  /** Whether the geometry controls say anything different from what `section`
+   *  already carries — the test that decides whether Apply issues `setPageSetup`
+   *  at all.
+   *
+   *  ONE APPLY MUST BE ONE UNDO. This dialog writes two property families through
+   *  two engine calls (`setPageSetup` for the geometry in `w:pgSz`/`w:pgMar`,
+   *  `setSectionLayout` for `w:vAlign`), and `apply_action_caret` pushes a history
+   *  entry for every call it is given — it has no no-op detection, by design, since
+   *  an operation that reinstalls the same value is still an operation. So an
+   *  unconditional `setPageSetup` made "change the vertical alignment and press
+   *  Apply" cost TWO presses of undo: one for the alignment, one for a geometry
+   *  write that changed nothing. Header and footer settings already compares each
+   *  half before writing it for this exact reason; this is the other half of that
+   *  family, and it was missed the first time.
+   *
+   *  Orientation is compared on its EFFECTIVE value, the way `paintSection` paints
+   *  it: `w:pgSz/@w:orient` is absent on a portrait section, and the control then
+   *  reads "portrait" without the user having chosen anything. Comparing the
+   *  control's "portrait" against a stored `null` would call every Apply a change,
+   *  which is the bug this function exists to stop — and skipping the write also
+   *  stops Apply asserting an orientation the document had merely implied.
+   *
+   *  Columns compare by IDENTITY because `columnsPayload` returns the section's own
+   *  object when no column control moved; a structural comparison would have to
+   *  re-decide "did the columns change", and two answers to one question is how
+   *  they come to disagree.
+   *
+   *  Every distance compares against the value the FIELD WOULD SHOW for it, not
+   *  against the stored twips. `inchText` keeps two decimals, so a section holding
+   *  851 twips paints "0.59" and reads back as 850: comparing 850 against 851 would
+   *  call an untouched field changed and defeat the whole function. What this asks
+   *  is "did the user move this control", and the painted value is the only reading
+   *  that answers it. The rounding itself is this dialog's existing behaviour and
+   *  is unchanged — such a section keeps its 851 until something is actually
+   *  edited, where before Apply quietly rewrote it to 850. */
+  function geometryMoved(section, columns) {
+    const size = section.pageSize ?? {};
+    const margins = section.pageMargins ?? {};
+    const painted = (twip) => inchesToTwips(inchText(twip ?? 0));
+    const effective =
+      section.orientation ??
+      ((size.widthTwips ?? 0) > (size.heightTwips ?? 0)
+        ? "landscape"
+        : "portrait");
+    return (
+      fieldTwips(widthInput) !== painted(size.widthTwips) ||
+      fieldTwips(heightInput) !== painted(size.heightTwips) ||
+      fieldTwips(marginTop) !== painted(margins.topTwips) ||
+      fieldTwips(marginBottom) !== painted(margins.bottomTwips) ||
+      fieldTwips(marginLeft) !== painted(margins.startTwips) ||
+      fieldTwips(marginRight) !== painted(margins.endTwips) ||
+      fieldTwips(marginGutter) !== painted(margins.gutterTwips) ||
+      columns !== section.columns ||
+      (orientationGroup.value() ?? "portrait") !== effective
+    );
   }
 
   applyBtn.addEventListener("click", async () => {
     const doc = io.getDoc();
     if (!doc || !current) return;
-    const payload = {
-      section: current.section,
-      pageSize: { widthTwips: fieldTwips(widthInput), heightTwips: fieldTwips(heightInput) },
-      pageMargins: {
-        // The spread still matters: it carries the two BAND distances this dialog
-        // does not show (`headerTwips`/`footerTwips`, which Header and footer
-        // settings owns), so opening Page setup and changing a margin cannot
-        // silently move a header.
-        ...current.pageMargins,
-        topTwips: fieldTwips(marginTop),
-        bottomTwips: fieldTwips(marginBottom),
-        startTwips: fieldTwips(marginLeft),
-        endTwips: fieldTwips(marginRight),
-        gutterTwips: fieldTwips(marginGutter),
-      },
-      columns: columnsPayload(),
-      orientation: orientationGroup.value() ?? "portrait",
-    };
-    await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
+    // Read fresh rather than trusting the snapshot this dialog opened on, for the
+    // same reason Header and footer settings does: the two dialogs share
+    // `w:pgMar`, and an Apply built from a stale `pageMargins` would carry a band
+    // distance backwards. It is also what makes the comparisons below honest —
+    // measuring "did this change" against an old reading is how a write gets
+    // skipped that was needed.
+    const fresh = sections()?.sections?.find(
+      (section) => section.section === current.section,
+    );
+    if (!fresh) return; // the section went away under us; say nothing, change nothing
+
+    const columns = columnsPayload(fresh);
+    if (geometryMoved(fresh, columns)) {
+      const payload = {
+        section: fresh.section,
+        pageSize: {
+          widthTwips: fieldTwips(widthInput),
+          heightTwips: fieldTwips(heightInput),
+        },
+        pageMargins: {
+          // The spread still matters: it carries the two BAND distances this dialog
+          // does not show (`headerTwips`/`footerTwips`, which Header and footer
+          // settings owns), so opening Page setup and changing a margin cannot
+          // silently move a header.
+          ...fresh.pageMargins,
+          topTwips: fieldTwips(marginTop),
+          bottomTwips: fieldTwips(marginBottom),
+          startTwips: fieldTwips(marginLeft),
+          endTwips: fieldTwips(marginRight),
+          gutterTwips: fieldTwips(marginGutter),
+        },
+        columns,
+        orientation: orientationGroup.value() ?? "portrait",
+      };
+      await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), {
+        gate: true,
+      });
+    }
     // Vertical alignment is a second engine call, and it only happens when the
     // control actually changed: `setSectionLayout` writes the page numbering too,
     // so an unconditional call would make every Page setup Apply a page-numbering
     // write as well — and a value read at dialog-open time could by then be stale.
     // Read fresh, compare, and write only the difference.
-    const wanted = verticalAlignment.value === "top" ? null : verticalAlignment.value;
-    const layout = layoutOf(current.section);
+    const wanted =
+      verticalAlignment.value === "top" ? null : verticalAlignment.value;
+    const layout = layoutOf(fresh.section);
     if (layout && (layout.verticalAlignment ?? null) !== wanted) {
       await io.runEdit(
         () =>
           doc.setSectionLayout(
             JSON.stringify({
-              section: current.section,
+              section: fresh.section,
               verticalAlignment: wanted,
               // Carried through untouched. This dialog does not show page
               // numbering, so Apply must not invent values for it.
@@ -378,7 +494,8 @@ export function createPageSetup(io) {
    *  else it carries: `countBy` is what the engine steps the count by, and the
    *  empty rule is how numbering is turned off. */
   function modeOf(rule) {
-    if (!rule || rule.countBy === null || rule.countBy === undefined) return "none";
+    if (!rule || rule.countBy === null || rule.countBy === undefined)
+      return "none";
     return rule.restart ?? "newPage"; // the schema default when `@w:restart` is absent
   }
 
@@ -386,7 +503,10 @@ export function createPageSetup(io) {
     const rule = lineNumbering();
     const mode = modeOf(rule);
     for (const item of lineNumbersMenu.querySelectorAll("[data-linenumber]")) {
-      item.setAttribute("aria-checked", String(item.dataset.linenumber === mode));
+      item.setAttribute(
+        "aria-checked",
+        String(item.dataset.linenumber === mode),
+      );
     }
     lineNumberSuppress.checked = rule?.suppressed === true;
     lineNumberStart.value = String(rule?.start ?? 1);
@@ -417,14 +537,18 @@ export function createPageSetup(io) {
             restart: rule.restart,
             ...patch,
           };
-    await io.runEdit(() => doc.setLineNumbering(JSON.stringify(payload)), { gate: true });
+    await io.runEdit(() => doc.setLineNumbering(JSON.stringify(payload)), {
+      gate: true,
+    });
     reflectLineNumbers();
   }
 
   lineNumbersMenu.addEventListener("click", async (e) => {
     const preset = e.target.closest("[data-linenumber]");
     if (!preset) return;
-    await writeLineNumbering(LINE_NUMBER_MODES.get(preset.dataset.linenumber) ?? null);
+    await writeLineNumbering(
+      LINE_NUMBER_MODES.get(preset.dataset.linenumber) ?? null,
+    );
   });
 
   lineNumberSuppress.addEventListener("change", async () => {
@@ -432,7 +556,9 @@ export function createPageSetup(io) {
     const range = io.selectionEndpoints();
     if (!doc || !range) return;
     const on = lineNumberSuppress.checked;
-    await io.runEdit(() => doc.setSuppressLineNumbers(...range, on), { gate: true });
+    await io.runEdit(() => doc.setSuppressLineNumbers(...range, on), {
+      gate: true,
+    });
     reflectLineNumbers();
   });
 
@@ -452,7 +578,9 @@ export function createPageSetup(io) {
       // clamping here means the field cannot silently do nothing instead.
       const max = field === "distance" ? 31_680 : 32_767;
       const min = field === "countBy" ? 1 : 0;
-      await writeLineNumbering({ [field]: Math.min(max, Math.max(min, Math.round(raw))) });
+      await writeLineNumbering({
+        [field]: Math.min(max, Math.max(min, Math.round(raw))),
+      });
     });
   }
 
@@ -520,7 +648,9 @@ export function createPageSetup(io) {
     attr: "data-watermark-layout",
   });
   const watermarkTextFields = el("watermarkTextFields");
-  const watermarkKinds = [...watermarkDialog.querySelectorAll('input[name="watermarkKind"]')];
+  const watermarkKinds = [
+    ...watermarkDialog.querySelectorAll('input[name="watermarkKind"]'),
+  ];
 
   /** The watermark the dialog is currently showing, as the engine reported it.
    *  Kept because Apply has to write back the fields this form does NOT offer —
@@ -530,7 +660,9 @@ export function createPageSetup(io) {
   /** Word's own watermark size list, in points. Appended from script rather than
    *  authored in the markup because a number is not a string a translator has to
    *  see; "Auto" is in the markup precisely because it is. */
-  for (const points of [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72, 96, 120, 144]) {
+  for (const points of [
+    8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72, 96, 120, 144,
+  ]) {
     const option = document.createElement("option");
     option.value = String(points * 2); // half-points, the engine's unit
     option.textContent = String(points);
@@ -571,7 +703,9 @@ export function createPageSetup(io) {
     fallback.value = "";
     fallback.textContent = t("watermark.fontDefault");
     watermarkFont.appendChild(fallback);
-    for (const name of selected && !names.includes(selected) ? [selected, ...names] : names) {
+    for (const name of selected && !names.includes(selected)
+      ? [selected, ...names]
+      : names) {
       const option = document.createElement("option");
       option.value = name;
       option.textContent = name;
@@ -594,15 +728,20 @@ export function createPageSetup(io) {
     const state = watermarkState();
     if (!state) return false;
     currentWatermark = state;
-    for (const input of watermarkKinds) input.checked = input.value === state.kind;
+    for (const input of watermarkKinds)
+      input.checked = input.value === state.kind;
     watermarkText.value = state.text ?? "";
     paintWatermarkFonts(state.font ?? "");
     // An imported watermark can carry any size at all, and a <select> silently
     // falls back to its first option for a value it does not hold — which would
     // read as "Auto" and turn a 37pt stamp into an auto-fitted one the moment
     // anybody pressed Apply. An off-list size joins the list instead.
-    const wanted = state.sizeHalfPoints == null ? "" : String(state.sizeHalfPoints);
-    if (wanted && ![...watermarkSize.options].some((option) => option.value === wanted)) {
+    const wanted =
+      state.sizeHalfPoints == null ? "" : String(state.sizeHalfPoints);
+    if (
+      wanted &&
+      ![...watermarkSize.options].some((option) => option.value === wanted)
+    ) {
       const option = document.createElement("option");
       option.value = wanted;
       option.textContent = String(state.sizeHalfPoints / 2);
@@ -612,7 +751,9 @@ export function createPageSetup(io) {
     // A picture watermark reports no colour at all, and `<input type=color>`
     // resolves anything it cannot parse to black — which would read as a black
     // stamp that nobody asked for.
-    watermarkColor.value = /^#[0-9a-f]{6}$/i.test(state.color ?? "") ? state.color : "#c0c0c0";
+    watermarkColor.value = /^#[0-9a-f]{6}$/i.test(state.color ?? "")
+      ? state.color
+      : "#c0c0c0";
     watermarkSemi.checked = state.semiTransparent === true;
     watermarkLayoutGroup.reflect(state.layout || "diagonal");
     reflectWatermarkKind();
@@ -620,7 +761,8 @@ export function createPageSetup(io) {
   }
 
   const watermarkModal = io.registerModal(watermarkDialog, {
-    initialFocus: () => watermarkKinds.find((input) => input.checked) ?? watermarkKinds[0],
+    initialFocus: () =>
+      watermarkKinds.find((input) => input.checked) ?? watermarkKinds[0],
     fallbackFocus: () => watermarkBtn,
     defaultAction: () => void applyWatermark(),
   });
@@ -665,7 +807,9 @@ export function createPageSetup(io) {
               kind: "text",
               text: watermarkText.value.trim(),
               font: watermarkFont.value || null,
-              sizeHalfPoints: watermarkSize.value ? Number(watermarkSize.value) : null,
+              sizeHalfPoints: watermarkSize.value
+                ? Number(watermarkSize.value)
+                : null,
               color: watermarkColor.value,
               // Not in Word's dialog, and not invented here either: an imported
               // watermark can be bold or italic, and dropping that on Apply
@@ -675,7 +819,9 @@ export function createPageSetup(io) {
               layout: watermarkLayout(),
               semiTransparent: watermarkSemi.checked,
             };
-    await io.runEdit(() => doc.setWatermark(JSON.stringify(payload)), { gate: true });
+    await io.runEdit(() => doc.setWatermark(JSON.stringify(payload)), {
+      gate: true,
+    });
     watermarkModal.close();
   }
 

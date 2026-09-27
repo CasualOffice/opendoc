@@ -12,7 +12,15 @@
 // five the property was ALREADY readable and writable from the engine's side
 // before this round, so host state is exactly the thing that proves nothing.
 // `line-numbers.spec.mjs` records the same trap for the same reason.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD, documentPageCount, pageSheet } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  MOD,
+  documentPageCount,
+  pageSheet,
+} from "./fixtures.mjs";
 
 /** Dark-pixel statistics for a normalized region of one page's raster.
  *
@@ -29,12 +37,18 @@ import { test, expect, gotoEditor, clickIntoFirstPage, MOD, documentPageCount, p
  *  Every assertion below is a RELATION between two measurements of the same
  *  document, never a pinned number: a pinned figure reddens `main` when a font or
  *  a metric changes without anything being removed. */
-async function inkOf(page, pageNumber, region = { top: 0, height: 1, left: 0, width: 1 }) {
+async function inkOf(
+  page,
+  pageNumber,
+  region = { top: 0, height: 1, left: 0, width: 1 },
+) {
   await pageSheet(page, pageNumber);
   await page.evaluate(() => document.fonts.ready);
   return page.evaluate(
     ({ n, r }) => {
-      const wrap = document.querySelector(`#pages .page-wrap[data-page-number="${n}"]`);
+      const wrap = document.querySelector(
+        `#pages .page-wrap[data-page-number="${n}"]`,
+      );
       const canvas = wrap.querySelector("canvas.page");
       const x = Math.round(canvas.width * r.left);
       const y = Math.round(canvas.height * r.top);
@@ -150,7 +164,10 @@ test("the header distance moves the header down the page, for the caret's sectio
   await applyHeaderFooter(page, { "#headerFromTop": "0.15" });
   const high = await inkOf(page, 1, HEADER_STRIP);
   const landscapeBefore = await inkOf(page, 5, HEADER_STRIP);
-  expect(high.count, "the portrait section has a header to move").toBeGreaterThan(0);
+  expect(
+    high.count,
+    "the portrait section has a header to move",
+  ).toBeGreaterThan(0);
 
   await openHeaderFooterSettings(page);
   await applyHeaderFooter(page, { "#headerFromTop": "0.75" });
@@ -173,10 +190,9 @@ test("the header distance moves the header down the page, for the caret's sectio
 
   // ONE undo, because one Apply is one action.
   await page.keyboard.press(`${MOD}+z`);
-  await expect.poll(async () => (await inkOf(page, 1, HEADER_STRIP)).centroidY).toBeCloseTo(
-    high.centroidY,
-    0,
-  );
+  await expect
+    .poll(async () => (await inkOf(page, 1, HEADER_STRIP)).centroidY)
+    .toBeCloseTo(high.centroidY, 0);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -192,7 +208,10 @@ test("the footer distance moves the footer up from the bottom edge", async ({
   await openHeaderFooterSettings(page);
   await applyHeaderFooter(page, { "#footerFromBottom": "0.15" });
   const low = await inkOf(page, 1, strip);
-  expect(low.count, "the portrait section has a footer to move").toBeGreaterThan(0);
+  expect(
+    low.count,
+    "the portrait section has a footer to move",
+  ).toBeGreaterThan(0);
 
   await openHeaderFooterSettings(page);
   await applyHeaderFooter(page, { "#footerFromBottom": "0.75" });
@@ -235,7 +254,62 @@ test("vertical alignment moves a short page's content down, and undo brings it b
   ).toBeGreaterThan(bottom.height / 2);
 
   await page.keyboard.press(`${MOD}+z`);
-  await expect.poll(async () => (await inkOf(page, 1)).centroidY).toBeLessThan(top.centroidY + 2);
+  await expect
+    .poll(async () => (await inkOf(page, 1)).centroidY)
+    .toBeLessThan(top.centroidY + 2);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("changing only the vertical alignment costs ONE undo, so the next one reaches the typing", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The guarantee is "one Apply is one undoable action", and the only way to
+  // assert it on INK is to look at what the SECOND undo reaches. Page setup writes
+  // two property families through two engine calls, and the engine pushes a
+  // history entry for every call it is given — so an Apply that issued
+  // `setPageSetup` unconditionally made a vertical-alignment change cost two
+  // presses, the second of which reversed a geometry write that changed nothing.
+  // A test that only pressed undo once would have stayed green through all of it,
+  // which is exactly what happened: the sibling alignment test does press undo
+  // once, and it passed while this was broken.
+  await gotoEditor(page);
+  await newBlankDocument(page);
+  await page.keyboard.type("ALIGN");
+
+  const typed = await inkOf(page, 1);
+  expect(typed.count, "the typed word is on the page").toBeGreaterThan(0);
+
+  await openPageSetup(page);
+  await expect(page.locator("#pageVerticalAlignment")).toHaveValue("top");
+  await page.locator("#pageVerticalAlignment").selectOption("bottom");
+  // Nothing else is touched, which is the whole point: the geometry half of this
+  // dialog has no change to write, so it must not write one.
+  await page.locator("#pageSetupApply").click();
+  await expect(page.locator("#pageSetupMenu")).toBeHidden();
+
+  const aligned = await inkOf(page, 1);
+  expect(aligned.centroidY, "the alignment took effect").toBeGreaterThan(
+    aligned.height / 2,
+  );
+
+  // One undo reverses the alignment...
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(async () => (await inkOf(page, 1)).centroidY)
+    .toBeLessThan(typed.centroidY + 2);
+
+  // ...and the NEXT one reaches the typing, because the Apply spent exactly one
+  // entry. If it spent two, this undo reverses the second one and the word stays.
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(async () => (await inkOf(page, 1)).count, {
+      message:
+        "the second undo must reach the typing — a leftover no-op geometry entry " +
+        "absorbs it and the word stays on the page",
+    })
+    .toBe(0);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -366,7 +440,9 @@ test("every property this round shipped is reachable from at least two surfaces"
   // Surface 2: the command palette.
   await page.keyboard.press(`${MOD}+Shift+P`);
   await expect(page.locator("#cmdPalette")).toBeVisible();
-  const row = page.locator('#cmdList .cmd-item[data-command-id="layout.headerFooterSettings"]');
+  const row = page.locator(
+    '#cmdList .cmd-item[data-command-id="layout.headerFooterSettings"]',
+  );
   await expect(row).toBeVisible();
   await row.click();
   await expect(page.locator("#headerFooterSettingsDialog")).toBeVisible();
