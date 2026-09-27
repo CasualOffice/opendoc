@@ -2275,6 +2275,171 @@ main.home {
   font-weight: 500;
 }
 
+/* ----------------------------------------------------------------------------
+   Reference pages — the repository's own design docs, rendered as site pages by
+   webapp/tools/build-doc-pages.mjs.
+
+   ADDITIVE ONLY, and token-only. `docs/63` is explicit that the palette is
+   deliberate and that visual changes are proposed rather than made, so nothing
+   above this comment is touched and nothing below it introduces a colour: every
+   value here is one of the existing tokens, and every one of them is a tone
+   `tests/e2e/site-contrast.spec.mjs` already measures on these grounds. Faint
+   text uses `--faint-on-paper` (5.13:1 on `--bg`, 5.21:1 on `--surface-3`), never
+   `--faint` (3.15:1), which is the AA defect HF-189 closed.
+
+   What is new is only the shapes Markdown produces and the hand-built docs page
+   never needed: prose headings below h2, bulleted and numbered lists, GFM tables,
+   block quotes, thematic breaks, and the reference index's entry list.
+   ------------------------------------------------------------------------- */
+
+/* Where the page comes from. One line, under the lede. */
+.doc-provenance {
+  margin: 16px 0 0;
+  color: var(--faint-on-paper);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.doc-provenance code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.doc-prose > .doc-h2:first-child {
+  margin-top: 34px;
+}
+
+.doc-h3 {
+  margin: 32px 0 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 80px;
+}
+
+.doc-h4 {
+  margin: 26px 0 0;
+  color: var(--ink);
+  font-size: 15.5px;
+  font-weight: 600;
+  scroll-margin-top: 80px;
+}
+
+.doc-prose .code-panel {
+  margin-top: 20px;
+}
+
+/* Lists. Nested lists indent from their parent item rather than from the article,
+   so a three-level design note keeps its structure. */
+.doc-list {
+  margin: 12px 0 0;
+  padding-left: 22px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.doc-list li + li,
+.doc-list .doc-list {
+  margin-top: 7px;
+}
+
+.doc-list code,
+.doc-table code,
+.doc-quote code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+/* Tables. A reference doc's table is as wide as its widest row, which on a phone
+   is wider than the screen — so the TABLE scrolls sideways inside its own box and
+   the page never does. */
+.doc-table-scroll {
+  margin-top: 20px;
+  overflow-x: auto;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+}
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.doc-table th {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-3);
+  color: var(--faint-on-paper);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.doc-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted-2);
+  line-height: 1.55;
+  vertical-align: top;
+}
+
+.doc-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Block quotes carry the status banners and admonitions these documents use, so
+   they are set apart without being coloured as a warning. */
+.doc-quote {
+  margin: 26px 0 0;
+  padding: 2px 18px 14px;
+  border-left: 2px solid var(--line-strong);
+  background: var(--surface-3);
+}
+
+.doc-rule {
+  margin: 38px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line-2);
+}
+
+/* The reference index: one entry per published document, with its own summary. */
+.doc-index-list {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-index-list li {
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-index-list li:last-child {
+  border-bottom: none;
+}
+
+.doc-index-title {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.doc-index-summary {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 /* Blog / changelog */
 .blog-list {
   display: grid;

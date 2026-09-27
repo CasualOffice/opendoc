@@ -425,6 +425,28 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   // first attempt at it was 62 — this assertion rejected that, which is the same
   // lesson the string ceilings carry: a number here is a measurement, never a
   // calculation.
+  //
+  // 46 → 201 when the reference pages landed (`109` HF-192): the site went from
+  // four indexable pages to sixteen, and twelve of them are the repository's own
+  // design documents published as pages instead of as links to raw Markdown on
+  // github.com. Two things are worth saying about the jump rather than letting the
+  // number speak for itself.
+  //
+  // It is DERIVED, not authored. Every one of the 155 new strings is a reference
+  // page's `<title>`, its meta description, or a copy of one of those inside its
+  // social card and its JSON-LD — and the title and the description are read out
+  // of the source `.md` by `tools/build-doc-pages.mjs` (the heading, and the first
+  // prose paragraphs). Nobody typed any of them, and nobody can: the page is
+  // regenerated and `--check` fails the build if it is edited. So this is not 155
+  // new sentences somebody has to translate one day; it is twelve documents'
+  // headings and opening paragraphs, counted once per place they are published.
+  //
+  // And it does not change the site-i18n position. Localising these still needs
+  // per-language pages with `hreflang`, which does not exist — and for these
+  // pages it would additionally need translated design documents, which is a
+  // different project from translating a product surface.
+  //
+  // MEASURED by running this test, not by arithmetic: 46 + 12 × 13 would give 202.
   const READABLE_META = [
     "description",
     "og:title",
@@ -447,9 +469,9 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   }
   assert.equal(
     strings,
-    46,
+    201,
     `the site publishes ${strings} human-readable metadata strings outside the i18n ` +
-      `seam (was 46). That is not a failure — it is the number, and it moved. Update ` +
+      `seam (was 201). That is not a failure — it is the number, and it moved. Update ` +
       `it deliberately, and note that localising these needs per-language pages with ` +
       `hreflang, which does not exist yet.`,
   );

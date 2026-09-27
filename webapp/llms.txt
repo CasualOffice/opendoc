@@ -33,14 +33,26 @@ directions, not currently supported features.
 - [Documentation — OpenDoc](https://opendoc.casualoffice.org/docs.html): Documentation for OpenDoc, the open-source Rust DOCX engine and embeddable WebAssembly editor: embedding, import, dispositions, architecture, and the reference docs.
 - [Embed the editor — OpenDoc](https://opendoc.casualoffice.org/embedding.html): Embed the OpenDoc editor in your own page: an installable package, the <opendoc-editor> custom element, and a capability contract resolved before the frame's first navigation. Every example on this page is extracted from code that runs in CI.
 - [DOCX fidelity support matrix — OpenDoc](https://opendoc.casualoffice.org/fidelity.html): OpenDoc fidelity, measured against a LibreOffice oracle rather than a feature list: page-count parity, round-trip disposition, and honest per-construct support. The oracle geometry gate is manual (workflow_dispatch) and currently inert — no reference is committed — so these grades are hand-checked, not CI-enforced.
+- [Target Architecture — OpenDoc](https://opendoc.casualoffice.org/reference/architecture.html): The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections.
+- [Context Menu and Shared Command Descriptors — OpenDoc](https://opendoc.casualoffice.org/reference/command-registry.html): The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu.
+- [Contributing — OpenDoc](https://opendoc.casualoffice.org/reference/contributing.html): This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability.
+- [Import Disposition Taxonomy — OpenDoc](https://opendoc.casualoffice.org/reference/disposition-taxonomy.html): A single value per entry cannot express the outcome the fidelity architecture exists to serve: a construct can be partially mapped into the model and have its unconsumed remainder either retained in the preservation ledger or lost.
+- [DOCX Package Reader — OpenDoc](https://opendoc.casualoffice.org/reference/docx-package-reader.html): Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads.
+- [Embeddability and the SDK, in three phases — OpenDoc](https://opendoc.casualoffice.org/reference/embeddability-plan.html): Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed.
+- [Error Code Registry — OpenDoc](https://opendoc.casualoffice.org/reference/error-code-registry.html): Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not.
+- [Project Glossary — OpenDoc](https://opendoc.casualoffice.org/reference/glossary.html): This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently.
+- [OpenDoc reference documentation — OpenDoc](https://opendoc.casualoffice.org/reference/index.html): Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs.
+- [PDF Export and Print Design — OpenDoc](https://opendoc.casualoffice.org/reference/pdf-export-and-print.html): Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered.
+- [SDK API Specification — OpenDoc](https://opendoc.casualoffice.org/reference/sdk-api-spec.html): The broad interfaces below describe the intended v1 facade and are not all implemented.
+- [Security Policy — OpenDoc](https://opendoc.casualoffice.org/reference/security.html): Do not open a public issue for a suspected vulnerability, malicious fixture, or confidential document. The project will acknowledge a complete report, assess severity, coordinate a fix and advisory, and credit the reporter when requested.
 
 ## Other primary links
 
 - Live sample: https://opendoc.casualoffice.org/editor.html?demo=1
 - Browser editor: https://opendoc.casualoffice.org/editor.html
 - Source repository: https://github.com/CasualOffice/opendoc
-- Architecture: https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md
-- SDK API direction: https://github.com/CasualOffice/opendoc/blob/main/docs/05-SDK-API-SPEC.md
+- Architecture: https://opendoc.casualoffice.org/reference/architecture.html
+- SDK API direction: https://opendoc.casualoffice.org/reference/sdk-api-spec.html
 - Support matrix: https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md
 - Roadmap: https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md
 - Execution tracker: https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md

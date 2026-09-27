@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DOCX Package Reader — OpenDoc</title>
+    <meta name="description" content="Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/docx-package-reader.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="DOCX Package Reader" />
+    <meta property="og:description" content="Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/docx-package-reader.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DOCX Package Reader" />
+    <meta name="twitter:description" content="Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/docx-package-reader.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/docx-package-reader.html",
+            "name": "DOCX Package Reader — OpenDoc",
+            "headline": "DOCX Package Reader",
+            "description": "Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/docx-package-reader.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "DOCX Package Reader",
+                "item": "https://opendoc.casualoffice.org/reference/docx-package-reader.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader">
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a class="is-active" href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="docx-package-reader">DOCX Package Reader</h1>
+        <p class="doc-lede">Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/28-DOCX-PACKAGE-READER.md"><code>docs/28-DOCX-PACKAGE-READER.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body"><strong>Status:</strong> Accepted for Phase 0 <strong>Decision date:</strong> 2026-07-24 <strong>Tracker:</strong> P0-006 <strong>Implementation:</strong> Complete on 2026-07-24</p>
+        <h2 class="doc-h2" id="outcome">Outcome</h2>
+        <p class="doc-body">Add <code>casual-doc-ooxml</code> with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads. It does not parse WordprocessingML into the normalized document yet.</p>
+        <h2 class="doc-h2" id="dependency-decision">Dependency Decision</h2>
+        <p class="doc-body">Pin <code>zip</code> 7.2.0 with default features disabled and the pure-Rust Deflate path enabled.</p>
+        <p class="doc-body">Reasons:</p>
+        <ul class="doc-list">
+        <li><code>zip</code> 7.2.0 declares Rust 1.83 support, compatible with OpenDoc's Rust 1.85 MSRV;</li>
+        <li>the current 8.6.0 release declares Rust 1.88 and cannot be adopted without an explicit OpenDoc MSRV decision;</li>
+        <li>default <code>zip</code> features include encryption and multiple codecs that DOCX does not require;</li>
+        <li>exact pinning keeps a security-sensitive parser dependency reviewable.</li>
+        </ul>
+        <p class="doc-body">Primary references checked 2026-07-24:</p>
+        <ul class="doc-list">
+        <li><a href="https://crates.io/crates/zip/7.2.0">zip 7.2.0 package metadata</a>;</li>
+        <li><a href="https://docs.rs/zip/8.6.0/zip/">zip 8.6.0 documentation and MSRV</a>;</li>
+        <li><a href="https://docs.rs/zip/8.6.0/zip/read/struct.ZipFile.html">ZipFile path and size APIs</a>.</li>
+        </ul>
+        <p class="doc-body">The crate's <code>enclosed_name</code> guidance informs the threat model, but OpenDoc uses its own platform-independent package-path validation so macOS, Linux, Windows, and WASM accept and reject the same names.</p>
+        <h2 class="doc-h2" id="supported-zip-profile">Supported ZIP Profile</h2>
+        <p class="doc-body">Accepted:</p>
+        <ul class="doc-list">
+        <li>single-disk ZIP and ZIP64 metadata handled by the dependency;</li>
+        <li>stored entries;</li>
+        <li>Deflate-compressed entries;</li>
+        <li>regular files and zero-sized directory records;</li>
+        <li>UTF-8 part names that satisfy the package-path rules below.</li>
+        </ul>
+        <p class="doc-body">Rejected:</p>
+        <ul class="doc-list">
+        <li>encrypted entries;</li>
+        <li>symlinks and non-file special entries;</li>
+        <li>unsupported compression methods;</li>
+        <li>overlapping entry data;</li>
+        <li>malformed central or local records;</li>
+        <li>macro project parts;</li>
+        <li>archives missing the minimal DOCX package parts.</li>
+        </ul>
+        <p class="doc-body">No entry is extracted to the host filesystem.</p>
+        <h2 class="doc-h2" id="required-parts">Required Parts</h2>
+        <p class="doc-body">The foundation requires:</p>
+        <ul class="doc-list">
+        <li><code>[Content_Types].xml</code>;</li>
+        <li><code>_rels/.rels</code>;</li>
+        <li><code>word/document.xml</code>.</li>
+        </ul>
+        <p class="doc-body">Later relationship parsing will resolve the office-document target instead of assuming <code>word/document.xml</code>. The Phase 0 restriction is explicit and may reject structurally valid packages with unusual office-document part names.</p>
+        <blockquote class="doc-quote">
+        <p class="doc-body"><strong>Amendment (ADR-027 / R1, accepted 2026-07-24).</strong> Phase 1A relaxes the required set to <code>[Content_Types].xml</code> + <code>_rels/.rels</code> only, moving main-document identification to a post-admission step that follows the <code>officeDocument</code> package relationship (transitional or strict namespace) and binds by content type, fail-closed. <code>word/document.xml</code> becomes an optional fast-path heuristic. The Phase 0 three-part requirement above is superseded for the Phase 1A read path; see <code>36-ADR-027-ACCEPTANCE-RECORD.md</code> (R1) and <code>37-PHASE-1A-DECISION-RESEARCH.md</code>.</p>
+        </blockquote>
+        <h2 class="doc-h2" id="package-path-rules">Package Path Rules</h2>
+        <p class="doc-body">Raw entry names must be valid UTF-8 and no longer than the configured path-byte limit. OpenDoc rejects:</p>
+        <ul class="doc-list">
+        <li>empty names for file entries;</li>
+        <li>NUL bytes;</li>
+        <li>leading <code>/</code>;</li>
+        <li><code>\</code> separators;</li>
+        <li>Windows drive prefixes;</li>
+        <li>empty, <code>.</code> or <code>..</code> segments;</li>
+        <li>duplicate normalized file part names.</li>
+        </ul>
+        <p class="doc-body">Directory records may end in <code>/</code>; their non-empty segments follow the same rules. Directory records are not exposed as package parts.</p>
+        <p class="doc-body">Percent escapes must contain two hexadecimal digits. Escapes for <code>/</code>, <code>\</code>, NUL, <code>.</code> in a traversal segment, or ASCII unreserved characters are rejected rather than normalized ambiguously. Full OPC Pack URI canonicalization is part of the relationship/content-type parser slice.</p>
+        <h2 class="doc-h2" id="limits">Limits</h2>
+        <p class="doc-body"><code>PackageLimits</code> exposes the accepted defaults and hard ceilings from <code>21-PARSER-LIMITS.md</code>:</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Limit</th>
+        <th style="text-align:right">Default</th>
+        <th style="text-align:right">Hard ceiling</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Input bytes</td>
+        <td style="text-align:right">256 MiB</td>
+        <td style="text-align:right">1 GiB</td>
+        </tr>
+        <tr>
+        <td>Entries</td>
+        <td style="text-align:right">10,000</td>
+        <td style="text-align:right">50,000</td>
+        </tr>
+        <tr>
+        <td>Total expanded bytes</td>
+        <td style="text-align:right">1 GiB</td>
+        <td style="text-align:right">4 GiB</td>
+        </tr>
+        <tr>
+        <td>Single expanded entry</td>
+        <td style="text-align:right">256 MiB</td>
+        <td style="text-align:right">1 GiB</td>
+        </tr>
+        <tr>
+        <td>Per-entry expansion ratio</td>
+        <td style="text-align:right">200:1</td>
+        <td style="text-align:right">1,000:1</td>
+        </tr>
+        <tr>
+        <td>Path bytes</td>
+        <td style="text-align:right">1,024</td>
+        <td style="text-align:right">4,096</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Host values may lower defaults but cannot exceed hard ceilings. Every limit has a stable boundary name and reports observed and allowed values without document content.</p>
+        <p class="doc-body">Central-directory metadata is checked before decompression. Expanded totals use checked arithmetic. A non-empty entry with zero compressed bytes has an infinite ratio and is rejected.</p>
+        <h2 class="doc-h2" id="on-demand-reads">On-Demand Reads</h2>
+        <p class="doc-body">Opening returns metadata only. <code>read_part</code> allocates and decompresses one validated part on demand:</p>
+        <ol class="doc-list">
+        <li>find the exact normalized part;</li>
+        <li>cap the reader at declared size plus one byte;</li>
+        <li>read to an owned byte vector;</li>
+        <li>require actual bytes to equal the declared expanded size;</li>
+        <li>rely on the ZIP reader's CRC validation;</li>
+        <li>return no partial bytes on failure.</li>
+        </ol>
+        <p class="doc-body">The package-wide expanded-size limit is based on declared metadata even when a caller reads only one part. Repeated host reads are a runtime cache/budget concern and do not weaken package admission limits.</p>
+        <p class="doc-body">Admission and part reads accept a cloneable cancellation token. Central-record loops and 64 KiB decompression chunks check it cooperatively; cancellation returns no package or partial part bytes.</p>
+        <h2 class="doc-h2" id="public-boundary">Public Boundary</h2>
+        <p class="doc-body"><code>casual-doc-ooxml</code> remains internal for this slice. It exposes:</p>
+        <ul class="doc-list">
+        <li><code>PackageLimits</code>;</li>
+        <li><code>DocxPackage</code>;</li>
+        <li>immutable <code>PackageEntry</code> metadata;</li>
+        <li><code>read_part</code>;</li>
+        <li>typed <code>PackageError</code>.</li>
+        </ul>
+        <p class="doc-body">The SDK does not expose <code>open_docx</code> until XML, relationships, and model mapping can produce a valid document session. SDK error mapping will use <code>ODC-1001</code>, <code>ODC-1003</code>, and <code>ODC-0002</code> when that boundary is added.</p>
+        <h2 class="doc-h2" id="fixture-policy">Fixture Policy</h2>
+        <p class="doc-body">Tests use repository-owned generated fixtures. Generator source and manifest records are committed with deterministic metadata and checksums. No sibling repository or customer document is copied.</p>
+        <p class="doc-body">The first package-reader batch covers:</p>
+        <ul class="doc-list">
+        <li>minimal valid DOCX;</li>
+        <li>mixed-Unicode document XML;</li>
+        <li>unknown safe package-part enumeration and exact read;</li>
+        <li>traversal rejection;</li>
+        <li>high-expansion rejection;</li>
+        <li>duplicate part rejection;</li>
+        <li>malformed ZIP rejection;</li>
+        <li>deterministic part ordering.</li>
+        </ul>
+        <p class="doc-body">Semantic unknown-XML preservation and visual/round-trip expectations remain blocked on the XML and model-mapping slices.</p>
+        <h2 class="doc-h2" id="acceptance-gates">Acceptance Gates</h2>
+        <ul class="doc-list">
+        <li>valid minimal DOCX metadata and part bytes are deterministic;</li>
+        <li>every package limit has accepted and rejected boundary coverage;</li>
+        <li>unsafe, duplicate, encrypted, overlapping, macro, and unsupported entries are rejected before returning a package;</li>
+        <li>actual part reads remain bounded and return no partial bytes;</li>
+        <li>admission and decompression cancellation return no partial result;</li>
+        <li>error text does not include document content;</li>
+        <li>all seven generated fixtures have manifest checksums and source;</li>
+        <li>native, Windows, macOS, WASM, MSRV, docs, lint, audit, and policy gates pass.</li>
+        </ul>
+        </div>
+      </article>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#outcome">Outcome</a></li>
+            <li><a href="#dependency-decision">Dependency Decision</a></li>
+            <li><a href="#supported-zip-profile">Supported ZIP Profile</a></li>
+            <li><a href="#required-parts">Required Parts</a></li>
+            <li><a href="#package-path-rules">Package Path Rules</a></li>
+            <li><a href="#limits">Limits</a></li>
+            <li><a href="#on-demand-reads">On-Demand Reads</a></li>
+            <li><a href="#public-boundary">Public Boundary</a></li>
+            <li><a href="#fixture-policy">Fixture Policy</a></li>
+            <li><a href="#acceptance-gates">Acceptance Gates</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

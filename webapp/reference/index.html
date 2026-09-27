@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenDoc reference documentation — OpenDoc</title>
+    <meta name="description" content="Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/index.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="OpenDoc reference documentation" />
+    <meta property="og:description" content="Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/index.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="OpenDoc reference documentation" />
+    <meta name="twitter:description" content="Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/index.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/index.html",
+            "name": "OpenDoc reference documentation — OpenDoc",
+            "headline": "OpenDoc reference documentation",
+            "description": "Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/index.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader">
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a class="is-active" href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="reference">OpenDoc reference documentation</h1>
+        <p class="doc-lede">Every OpenDoc architecture, design and specification document published on this site, generated from the repository's own Markdown so a page and its source can never disagree. Documents deliberately not published here are named, with the reason, in webapp/tools/build-doc-pages.mjs.</p>
+        <div class="doc-prose">
+        <h2 class="doc-h2" id="architecture">Architecture</h2>
+        <ul class="doc-index-list">
+          <li>
+            <a class="doc-index-title" href="./architecture.html">Target Architecture</a>
+            <p class="doc-index-summary">The system is a headless document engine with host adapters. The DOM, React state, Tauri state, and canvas state are projections.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./docx-package-reader.html">DOCX Package Reader</a>
+            <p class="doc-index-summary">Add casual-doc-ooxml with a security-bounded, read-only DOCX package layer. This slice validates ZIP structure and exposes safe on-demand part reads.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./disposition-taxonomy.html">Import Disposition Taxonomy</a>
+            <p class="doc-index-summary">A single value per entry cannot express the outcome the fidelity architecture exists to serve: a construct can be partially mapped into the model and have its unconsumed remainder either retained in the preservation ledger or lost.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./pdf-export-and-print.html">PDF Export and Print Design</a>
+            <p class="doc-index-summary">Absence from a support list is an overstatement by omission, so every family the display list can carry is listed here, including the ones that are not covered.</p>
+          </li>
+        </ul>
+        <h2 class="doc-h2" id="sdk">SDK</h2>
+        <ul class="doc-index-list">
+          <li>
+            <a class="doc-index-title" href="./sdk-api-spec.html">SDK API Specification</a>
+            <p class="doc-index-summary">The broad interfaces below describe the intended v1 facade and are not all implemented.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./error-code-registry.html">Error Code Registry</a>
+            <p class="doc-index-summary">Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./embeddability-plan.html">Embeddability and the SDK, in three phases</a>
+            <p class="doc-index-summary">Embeddability is the product (SKILL.md §1). ONLYOFFICE is AGPL-3.0-only, bills the Developer Edition per concurrent browser tab, and gates host customization in code — LayoutManager._applyCustomization early-returns when !_licensed.</p>
+          </li>
+        </ul>
+        <h2 class="doc-h2" id="editor">Editor</h2>
+        <ul class="doc-index-list">
+          <li>
+            <a class="doc-index-title" href="./command-registry.html">Context Menu and Shared Command Descriptors</a>
+            <p class="doc-index-summary">The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu.</p>
+          </li>
+        </ul>
+        <h2 class="doc-h2" id="project">Project</h2>
+        <ul class="doc-index-list">
+          <li>
+            <a class="doc-index-title" href="./glossary.html">Project Glossary</a>
+            <p class="doc-index-summary">This glossary defines terms used by the OpenDoc runtime, SDK, tests, and documentation. Public API names should use these terms consistently.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./contributing.html">Contributing</a>
+            <p class="doc-index-summary">This repository is building a production-grade document runtime. Contributions should protect correctness, fidelity, security, performance, and maintainability.</p>
+          </li>
+          <li>
+            <a class="doc-index-title" href="./security.html">Security Policy</a>
+            <p class="doc-index-summary">Do not open a public issue for a suspected vulnerability, malicious fixture, or confidential document. The project will acknowledge a complete report, assess severity, coordinate a fix and advisory, and credit the reporter when requested.</p>
+          </li>
+        </ul>
+        </div>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

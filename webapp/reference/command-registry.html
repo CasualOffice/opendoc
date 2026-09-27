@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Context Menu and Shared Command Descriptors — OpenDoc</title>
+    <meta name="description" content="The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/command-registry.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Context Menu and Shared Command Descriptors" />
+    <meta property="og:description" content="The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/command-registry.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Context Menu and Shared Command Descriptors" />
+    <meta name="twitter:description" content="The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/command-registry.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/command-registry.html",
+            "name": "Context Menu and Shared Command Descriptors — OpenDoc",
+            "headline": "Context Menu and Shared Command Descriptors",
+            "description": "The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/command-registry.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Context Menu and Shared Command Descriptors",
+                "item": "https://opendoc.casualoffice.org/reference/command-registry.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader">
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a class="is-active" href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="context-menu-and-shared-command-descriptors">Context Menu and Shared Command Descriptors</h1>
+        <p class="doc-lede">The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/84-CONTEXT-MENU-AND-COMMAND-REGISTRY-DESIGN.md"><code>docs/84-CONTEXT-MENU-AND-COMMAND-REGISTRY-DESIGN.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body">Status: accepted implementation design</p>
+        <p class="doc-body">Date: 2026-07-31 Depends on: docs 58, 63, 67, 68, 70, 81, and 83</p>
+        <h2 class="doc-h2" id="problem">Problem</h2>
+        <p class="doc-body">The web editor has a table-only right-click menu assembled from a private array. Prose, selections, links, lists, comments, and suggestions fall through to the browser menu. The command palette separately assembles another action list, so labels, availability, and invocation behavior can drift. The table menu also moves the caret on every invocation, has no keyboard entry point, and implements only pointer hover rather than an accessible menu interaction.</p>
+        <h2 class="doc-h2" id="decisions">Decisions</h2>
+        <ol class="doc-list">
+        <li><code>editorCommands(context)</code> is the web host's shared descriptor source for the command palette and context menu. A descriptor has a stable id, label, group, search keywords, optional shortcut, visibility, availability, disabled reason, and one invocation callback. Existing ribbon handlers may migrate to the same source incrementally; this slice does not rewrite working ribbon controls solely for architectural symmetry.</li>
+        <li>The context menu is one reusable <code>role=&quot;menu&quot;</code> surface. Its contents are derived from the model context at invocation time:</li>
+        <ul class="doc-list">
+        <li>selection/caret: clipboard, Select all, link/comment, paragraph/list;</li>
+        <li>link: edit and remove the exact resolved link range;</li>
+        <li>comment or tracked change: open the comment, or accept/reject the exact revision, editor group, or move pair;</li>
+        <li>table cell: selection, structure, distribute/sort, cell/table properties, merge/split, and destructive actions.</li>
+        </ul>
+        <li>A pointer invocation inside the current painted selection preserves that selection. A pointer invocation outside it collapses to the hit-tested anchor before building context. <code>Shift+F10</code> and the Menu key open at the current caret/selection geometry and never change the model selection.</li>
+        <li>Commands that are unsafe for the current state remain visible only when that visibility teaches useful context, and carry an explicit disabled reason. Examples are Copy without a range and column operations on a merged table. Mutating table/list/paragraph commands are unavailable in Suggesting mode until those structures have a tracked representation.</li>
+        <li>Review UI remains in the dedicated sibling sidebar. The context menu only invokes review actions or focuses the corresponding sidebar card; it does not create a canvas card, popover, superscript, or second review panel.</li>
+        <li>Menu focus uses roving <code>tabindex</code>: Arrow Up/Down, Home/End, Enter/Space, and Escape. Escape and command execution restore focus to the editor surface. Pointer dismissal respects the newly clicked target. Placement is clamped to an 8px viewport inset and recomputed after the menu is measured.</li>
+        <li>All mutations continue through existing WASM command/transaction entry points. The menu owns no document state and performs no direct model edits.</li>
+        </ol>
+        <h2 class="doc-h2" id="verification">Verification</h2>
+        <ul class="doc-list">
+        <li>Pure unit tests cover menu grouping, separators, enabled-index navigation, and viewport placement.</li>
+        <li>Browser tests cover prose and table invocation, selection preservation, keyboard invocation/focus return, disabled reasons, viewport collision, and light/dark theme surfaces.</li>
+        <li>Existing clipboard, list, link, table, review, and focus-recovery suites remain green.</li>
+        </ul>
+        <h2 class="doc-h2" id="deferred">Deferred</h2>
+        <ul class="doc-list">
+        <li>Migrating every ribbon and shortcut listener to descriptor lookup is the next command-routing increment, together with structured command error codes.</li>
+        <li>Native spelling/grammar and browser extension entries cannot be reproduced in a custom canvas menu. A future host policy may expose a deliberate native-menu escape gesture if required.</li>
+        </ul>
+        </div>
+      </article>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#problem">Problem</a></li>
+            <li><a href="#decisions">Decisions</a></li>
+            <li><a href="#verification">Verification</a></li>
+            <li><a href="#deferred">Deferred</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>

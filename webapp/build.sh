@@ -115,6 +115,14 @@ node "$here/tools/build-embed-docs.mjs" --check
 "$here/build-site.py"
 "$here/build-site.py" --check
 
+# The reference pages: the repository's publishable design docs, rendered as real
+# pages of this site instead of links to raw Markdown on github.com. Everything on
+# them is derived from the committed `.md` — title, description, article body — so
+# `--check` fails the build both when a page is hand-edited and when a published
+# doc changes without the page being regenerated.
+node "$here/tools/build-doc-pages.mjs"
+node "$here/tools/build-doc-pages.mjs" --check
+
 # The crawler manifests. `sitemap.xml` and `llms.txt` were hand-written, so a new
 # page was invisible to search until somebody remembered two files; they are now
 # generated from the pages build-site.py builds, and `--check` fails the build when

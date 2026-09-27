@@ -16,4 +16,40 @@
   <url>
     <loc>https://opendoc.casualoffice.org/fidelity.html</loc>
   </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/architecture.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/command-registry.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/contributing.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/disposition-taxonomy.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/docx-package-reader.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/embeddability-plan.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/error-code-registry.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/glossary.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/index.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/pdf-export-and-print.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/sdk-api-spec.html</loc>
+  </url>
+  <url>
+    <loc>https://opendoc.casualoffice.org/reference/security.html</loc>
+  </url>
 </urlset>

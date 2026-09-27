@@ -214,7 +214,7 @@
             <span>Source of truth:
               <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">docs/18 support matrix</a>,
               <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">execution tracker</a>,
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/35-DISPOSITION-TAXONOMY.md">disposition taxonomy</a>
+              <a href="./reference/disposition-taxonomy.html">disposition taxonomy</a>
             </span>
           </div>
         </div>
@@ -269,11 +269,11 @@
             <li><b>Charts and SmartArt</b> are modeled as first-class references and preserved byte-for-byte on export, but are not painted as live charts/diagrams — an embedded preview image shows if the file provides one, otherwise a text placeholder (⊟).</li>
             <li><b>Non-PNG/JPEG images (EMF/WMF, SVG on the browser build), undecodable images, and <code>w:altChunk</code></b> paint a visible placeholder that reserves layout space, so nothing silently vanishes (▢).</li>
             <li><b>Color fonts and color emoji render.</b> The CPU rasterizer tries bitmap strikes (<code>sbix</code>, <code>CBDT</code>) and then <code>COLR</code> v0/v1 paint graphs with the default <code>CPAL</code> palette before falling back to monochrome outlines. Gradient and clip-heavy COLRv1 graphs are approximated; a face the bundled set does not cover still needs a host-registered font.</li>
-            <li><b>Real-text PDF export is available.</b> File → Export as PDF produces a deterministic vector PDF with selectable/searchable text and embedded TrueType subset fonts. Hyperlink annotations, outlines, tagged PDF/PDF-A, page ranges, and live host-font parity remain incomplete; physical printing still uses browser-rendered raster pages. See <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md">docs/98</a>.</li>
+            <li><b>Real-text PDF export is available.</b> File → Export as PDF produces a deterministic vector PDF with selectable/searchable text and embedded TrueType subset fonts. Hyperlink annotations, outlines, tagged PDF/PDF-A, page ranges, and live host-font parity remain incomplete; physical printing still uses browser-rendered raster pages. See <a href="./reference/pdf-export-and-print.html">docs/98</a>.</li>
             <li><b>Text wrap around floats</b> reserves shared flow for top-and-bottom and square wrapping, including inside table cells, headers and footers. Tight and through contour wrapping, and page-coupled reflow, remain partial.</li>
             <li><b><code>.docm</code> macro-enabled files are rejected at open.</b> Strip-and-open versus explicit non-support is an undecided policy question, not an oversight.</li>
             <li><b>Round-trips means a semantic fixed point</b> (import&nbsp;→&nbsp;export&nbsp;→&nbsp;reopen yields an equal model), not a byte-identical file. Byte-exact preservation applies to the retention/no-edit floor.</li>
-            <li><b>Data-loss reporting is partial, not total.</b> The <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/35-DISPOSITION-TAXONOMY.md">disposition taxonomy</a> is the intended contract and whole unmodeled <i>parts</i> are preserved verbatim. But the DOCX exporter has no reporting path yet, unknown <i>attributes</i> (notably <code>w:rsid*</code>) are outside the report vocabulary, and the theme, font-table and comment-extension parsers regenerate their parts without reporting. Tracked in <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/105-AUDIT-2026-09-TRACKER.md">docs/105</a>.</li>
+            <li><b>Data-loss reporting is partial, not total.</b> The <a href="./reference/disposition-taxonomy.html">disposition taxonomy</a> is the intended contract and whole unmodeled <i>parts</i> are preserved verbatim. But the DOCX exporter has no reporting path yet, unknown <i>attributes</i> (notably <code>w:rsid*</code>) are outside the report vocabulary, and the theme, font-table and comment-extension parsers regenerate their parts without reporting. Tracked in <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/105-AUDIT-2026-09-TRACKER.md">docs/105</a>.</li>
           </ul>
         </section>
       </section>

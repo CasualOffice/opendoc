@@ -34,8 +34,8 @@ directions, not currently supported features.
 - Live sample: https://opendoc.casualoffice.org/editor.html?demo=1
 - Browser editor: https://opendoc.casualoffice.org/editor.html
 - Source repository: https://github.com/CasualOffice/opendoc
-- Architecture: https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md
-- SDK API direction: https://github.com/CasualOffice/opendoc/blob/main/docs/05-SDK-API-SPEC.md
+- Architecture: https://opendoc.casualoffice.org/reference/architecture.html
+- SDK API direction: https://opendoc.casualoffice.org/reference/sdk-api-spec.html
 - Support matrix: https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md
 - Roadmap: https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md
 - Execution tracker: https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md

@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Error Code Registry — OpenDoc</title>
+    <meta name="description" content="Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/error-code-registry.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Error Code Registry" />
+    <meta property="og:description" content="Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/error-code-registry.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Error Code Registry" />
+    <meta name="twitter:description" content="Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/error-code-registry.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/error-code-registry.html",
+            "name": "Error Code Registry — OpenDoc",
+            "headline": "Error Code Registry",
+            "description": "Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/error-code-registry.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Error Code Registry",
+                "item": "https://opendoc.casualoffice.org/reference/error-code-registry.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="../" data-nav="overview">Overview</a>
+          <a href="../editor.html" data-nav="editor">Editor</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="../editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader">
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a class="is-active" href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="error-code-registry">Error Code Registry</h1>
+        <p class="doc-lede">Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/20-ERROR-CODE-REGISTRY.md"><code>docs/20-ERROR-CODE-REGISTRY.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body"><strong>Status:</strong> Accepted for Phase 0 <strong>Last updated:</strong> 2026-07-24 <strong>Tracker:</strong> F-006</p>
+        <h2 class="doc-h2" id="contract">Contract</h2>
+        <p class="doc-body">Every error crossing the SDK, WASM, C ABI, or serialized operation boundary has:</p>
+        <ul class="doc-list">
+        <li>a stable <code>ODC-NNNN</code> code;</li>
+        <li>a machine-readable category;</li>
+        <li>a severity;</li>
+        <li>a safe human-readable message;</li>
+        <li>optional structured context;</li>
+        <li>an optional internal source chain that is excluded from untrusted output.</li>
+        </ul>
+        <p class="doc-body">Error codes are never recycled. Message wording may improve without a breaking release, but code meaning may not.</p>
+        <h2 class="doc-h2" id="severity">Severity</h2>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Severity</th>
+        <th>Meaning</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>warning</code></td>
+        <td>Operation can continue with a documented limitation.</td>
+        </tr>
+        <tr>
+        <td><code>error</code></td>
+        <td>Requested operation failed; session remains valid.</td>
+        </tr>
+        <tr>
+        <td><code>fatal</code></td>
+        <td>Session cannot safely continue.</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Cancellation is an expected non-fatal error, not a warning or panic.</p>
+        <h2 class="doc-h2" id="initial-registry">Initial Registry</h2>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Code</th>
+        <th>Name</th>
+        <th>Severity</th>
+        <th>Meaning</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>ODC-0001</code></td>
+        <td><code>invalid_argument</code></td>
+        <td>error</td>
+        <td>A public argument is malformed or inconsistent.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-0002</code></td>
+        <td><code>invalid_configuration</code></td>
+        <td>error</td>
+        <td>Engine or session configuration is invalid.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-0003</code></td>
+        <td><code>unsupported</code></td>
+        <td>error</td>
+        <td>The requested operation is not implemented or allowed in the active profile.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-0004</code></td>
+        <td><code>cancelled</code></td>
+        <td>error</td>
+        <td>A cancellable operation was stopped without corrupting session state.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-1001</code></td>
+        <td><code>malformed_document</code></td>
+        <td>error</td>
+        <td>Input cannot be represented as a valid normalized document.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-1002</code></td>
+        <td><code>unsupported_content</code></td>
+        <td>warning</td>
+        <td>Content is not fully supported but may be preserved or flattened.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-1003</code></td>
+        <td><code>resource_limit</code></td>
+        <td>error</td>
+        <td>A configured parser or runtime resource limit was exceeded.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-1004</code></td>
+        <td><code>policy_denied</code></td>
+        <td>error</td>
+        <td>Host or runtime security policy denied the action.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-1005</code></td>
+        <td><code>external_resource_denied</code></td>
+        <td>warning</td>
+        <td>An external relationship was not fetched under the default policy.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-2001</code></td>
+        <td><code>stale_revision</code></td>
+        <td>error</td>
+        <td>A transaction base revision does not match the session revision.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-2002</code></td>
+        <td><code>invalid_position</code></td>
+        <td>error</td>
+        <td>A position does not resolve to a valid boundary.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-2003</code></td>
+        <td><code>empty_transaction</code></td>
+        <td>error</td>
+        <td>A transaction contains no effective operations.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-2004</code></td>
+        <td><code>invalid_text_input</code></td>
+        <td>error</td>
+        <td>Text contains a control requiring a different structural command.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-2005</code></td>
+        <td><code>invariant_violation</code></td>
+        <td>fatal</td>
+        <td>Committed or imported model state violates a required invariant.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-2006</code></td>
+        <td><code>history_empty</code></td>
+        <td>error</td>
+        <td>The requested undo or redo stack has no entry.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-3001</code></td>
+        <td><code>resource_unavailable</code></td>
+        <td>error</td>
+        <td>A required font, image, or host resource is unavailable.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-4001</code></td>
+        <td><code>layout_failed</code></td>
+        <td>error</td>
+        <td>Layout could not complete for the requested content/configuration.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-5001</code></td>
+        <td><code>render_failed</code></td>
+        <td>error</td>
+        <td>A renderer failed without invalidating document state.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-6001</code></td>
+        <td><code>import_failed</code></td>
+        <td>error</td>
+        <td>Format import failed after input passed initial sniffing.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-6002</code></td>
+        <td><code>export_failed</code></td>
+        <td>error</td>
+        <td>Format export failed; existing session state remains valid.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7001</code></td>
+        <td><code>collaboration_conflict</code></td>
+        <td>error</td>
+        <td>A remote operation cannot be safely applied or rebased.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-8001</code></td>
+        <td><code>plugin_failed</code></td>
+        <td>error</td>
+        <td>A plugin returned an error or violated its declared contract.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-9001</code></td>
+        <td><code>internal</code></td>
+        <td>fatal</td>
+        <td>An unexpected internal failure occurred.</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h2 class="doc-h2" id="context-policy">Context Policy</h2>
+        <p class="doc-body">Structured context uses allowlisted fields such as:</p>
+        <ul class="doc-list">
+        <li><code>operation</code>;</li>
+        <li><code>revision</code>;</li>
+        <li><code>node_id</code>;</li>
+        <li><code>part_name</code>;</li>
+        <li><code>limit_name</code>;</li>
+        <li><code>limit_value</code>;</li>
+        <li><code>observed_value</code>;</li>
+        <li><code>feature</code>;</li>
+        <li><code>format</code>.</li>
+        </ul>
+        <p class="doc-body">Document text, credentials, URLs with tokens, raw XML, and file-system paths are not included by default.</p>
+        <h2 class="doc-h2" id="evolution">Evolution</h2>
+        <p class="doc-body">New codes are appended to the appropriate range. Removing a code requires retaining a documented tombstone. Bindings expose the string code exactly and may additionally expose category enums whose unknown variant remains forward-compatible.</p>
+        </div>
+      </article>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#contract">Contract</a></li>
+            <li><a href="#severity">Severity</a></li>
+            <li><a href="#initial-registry">Initial Registry</a></li>
+            <li><a href="#context-policy">Context Policy</a></li>
+            <li><a href="#evolution">Evolution</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="../reference/security.html">Security</a>
+        <a href="../reference/contributing.html">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>
