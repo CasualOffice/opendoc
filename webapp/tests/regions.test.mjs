@@ -1,0 +1,238 @@
+// Region composition: the owner's container policy, as properties.
+//
+// `docs/126`'s container policy makes three demands that this file exists to hold.
+//
+//   1. Surface composition is a DIFFERENT question from command gating. A role
+//      with no business with a whole surface does not get the surface; within a
+//      surface it does get, a command that cannot run right now is disabled and
+//      says why. "Never, for you" versus "not right now".
+//   2. `preview` and `readonly` are NOT the same thing, and must not be collapsed.
+//   3. Policies are per capability, not per tier. Roles stay as presets over the
+//      capability set, never the unit of enforcement, and both must resolve
+//      through the SAME code.
+//
+// The third is the one with a track record: two code paths for roles and explicit
+// lists "will diverge exactly as the `shortcut:` labels and key bindings did"
+// (`109` UX-006/UX-007). So the assertions below are not about the tables' shape.
+// They are about properties that hold for a role added later, and several of them
+// would fail on a second resolver even if both resolvers were individually correct.
+//
+// The DOM half is `chrome_regions.test.mjs` (which elements each region names) and
+// `tests/e2e/white-label.spec.mjs` (that a real editor composes them away).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  CAPABILITIES,
+  CAPABILITY_AFFORDANCES,
+  PRESET_NAMES,
+  REGIONS,
+  ROLES,
+  editingModeFor,
+  hostConfig,
+  hostRegions,
+  parseWithheld,
+  resolveCapabilities,
+  resolveRegions,
+} from "../src/capabilities.mjs";
+
+const caps = (input) => [...resolveCapabilities(input)].sort();
+const regions = (input) => [...resolveRegions(input)].sort();
+
+test("every preset resolves both axes, and only to names that exist", () => {
+  for (const mode of PRESET_NAMES) {
+    for (const id of resolveRegions({ mode })) {
+      assert.ok(REGIONS.includes(id), `${mode} resolves to an unknown region "${id}"`);
+    }
+    for (const name of resolveCapabilities({ mode })) {
+      assert.ok(CAPABILITIES.includes(name), `${mode} resolves to an unknown capability "${name}"`);
+    }
+  }
+});
+
+test("a readonly container has NO editing ribbon — not a dimmed one", () => {
+  // The owner's sentence, verbatim: "A `readonly` container has no editing ribbon.
+  // Not a ribbon full of greyed buttons — no ribbon." Word, Google Docs and
+  // ONLYOFFICE all present read-only as a different chrome rather than the editing
+  // chrome dimmed, and a wall of greyed controls tells a reader about capabilities
+  // they will never have while burying the one or two things they can do.
+  const shown = resolveRegions({ mode: "readonly", framed: true });
+  assert.equal(shown.has("ribbon"), false, "readonly must not get the ribbon");
+  for (const id of REGIONS.filter((r) => r.startsWith("band."))) {
+    assert.equal(shown.has(id), false, `readonly must not get ${id}`);
+  }
+  // And it IS a reading experience, not a bare canvas: the reader navigates,
+  // searches, sees where they are, and can take a paper copy.
+  for (const id of ["menu", "rail", "status", "zoom", "find", "title"]) {
+    assert.equal(shown.has(id), true, `readonly must get ${id} to be readable`);
+  }
+  // The selection toolbar offers formatting, and Settings is an author's
+  // preferences; neither belongs to a reader.
+  assert.equal(shown.has("selection"), false);
+  assert.equal(shown.has("settings"), false);
+});
+
+test("preview and readonly are different presentations, not one with a capability removed", () => {
+  // `docs/126` is explicit: "preview is not `readonly` minus print. Collapsing
+  // them would give every attachment preview a reading UI it does not want, or
+  // every published document a bare canvas with no way to get to page 40."
+  const preview = resolveRegions({ mode: "preview", framed: true });
+  const readonly = resolveRegions({ mode: "readonly", framed: true });
+  assert.deepEqual([...preview], [], "preview is the runtime as a rendering engine");
+  assert.ok(readonly.size >= 6, "readonly is a reading experience and needs chrome for it");
+  // The difference between the two is bigger than one capability — which is the
+  // whole claim. If it were only `print`, a future edit could collapse them and
+  // nothing would notice.
+  const capDelta = caps({ mode: "readonly" }).filter((c) => !caps({ mode: "preview" }).includes(c));
+  assert.deepEqual(capDelta, ["print"]);
+  assert.ok(
+    readonly.size - preview.size > capDelta.length,
+    "preview and readonly differ by one capability and no chrome, so they have been collapsed",
+  );
+  // Both are still readers: neither may change, keep or replace the document.
+  for (const mode of ["preview", "readonly"]) {
+    assert.equal(editingModeFor(resolveCapabilities({ mode })), "viewing");
+  }
+});
+
+test("every capability a preset GRANTS has an affordance in chrome that preset SHOWS", () => {
+  // THE JOINT BETWEEN THE TWO AXES, and the assertion that shaped reading chrome.
+  // Composition removes surfaces and a permission grants an action; nothing
+  // mechanical otherwise stops a container being handed a capability and no way to
+  // use it. That is `105` UX-004's recurring defect ("capability reachable from
+  // only ONE surface") arriving one level up, and it is exactly how hiding the
+  // ribbon for `readonly` WITHOUT revealing the menu bar would have made its only
+  // grant unreachable.
+  const unreachable = [];
+  for (const mode of PRESET_NAMES) {
+    const shown = resolveRegions({ mode, framed: true });
+    for (const name of resolveCapabilities({ mode, framed: true })) {
+      const where = CAPABILITY_AFFORDANCES[name];
+      assert.ok(where, `${name} has no declared affordance, so this guard cannot check it`);
+      if (where.length === 0) continue; // needs no chrome; the table says why
+      if (!where.some((id) => shown.has(id))) unreachable.push(`${mode} grants ${name} but shows none of ${where.join(", ")}`);
+    }
+  }
+  assert.deepEqual(unreachable, []);
+  // The half that fails when the guard breaks rather than when the tree does: a
+  // table of empty lists would pass the loop above having checked nothing.
+  const checkable = Object.values(CAPABILITY_AFFORDANCES).filter((l) => l.length > 0);
+  assert.ok(checkable.length >= 6, "too few capabilities have a declared affordance to check");
+  assert.deepEqual(
+    Object.keys(CAPABILITY_AFFORDANCES).sort(),
+    [...CAPABILITIES].sort(),
+    "every capability must appear in the affordance table, or a new one is exempt by omission",
+  );
+});
+
+test("roles and explicit capability lists resolve through ONE authority", () => {
+  // THE PROPERTY THAT PROVES IT, rather than a comment claiming it. Every role's
+  // capability set is reachable by narrowing the role above it with a withhold
+  // list, through the same `resolveCapabilities`. If roles were a parallel
+  // mechanism — a second table, or a branch on a role name — the sets would not
+  // line up, because nothing would be forcing them to.
+  for (let i = 1; i < ROLES.length; i += 1) {
+    const lower = resolveCapabilities({ mode: ROLES[i - 1] });
+    const higher = resolveCapabilities({ mode: ROLES[i] });
+    const extra = [...higher].filter((name) => !lower.has(name));
+    const narrowed = resolveCapabilities({ mode: ROLES[i], withhold: extra.map((n) => `-${n}`).join(",") });
+    assert.deepEqual(
+      [...narrowed].sort(),
+      [...lower].sort(),
+      `${ROLES[i]} narrowed by ${extra.join(",")} is not ${ROLES[i - 1]}, so roles and explicit ` +
+        "lists are not one mechanism",
+    );
+  }
+  // And the per-capability policy the container notes ask for is real: "comments
+  // only, everything else off" is expressible, not a rung on a ladder.
+  assert.deepEqual(
+    caps({ mode: "commentor", withhold: "-print,-download" }),
+    ["comment"],
+    "a host must be able to withhold print and download from a commentor independently",
+  );
+  // Each of the five the owner named, withheld one at a time, from a role that has it.
+  for (const name of ["print", "download", "save", "edit", "comment"]) {
+    const full = resolveCapabilities({ mode: "owner" });
+    assert.ok(full.has(name), `owner does not grant ${name}, so this case checks nothing`);
+    const narrowed = resolveCapabilities({ mode: "owner", withhold: `-${name}` });
+    assert.equal(narrowed.has(name), false, `${name} is not independently withholdable`);
+    assert.equal(narrowed.size, full.size - 1, `withholding ${name} moved something else`);
+  }
+});
+
+test("a withhold list can only ever take away", () => {
+  // One direction to audit. A configuration channel that can widen a role is a
+  // configuration channel an attacker fills in, and `docs/125` §5.2 states the rule:
+  // "`can` may only narrow the role. A host cannot grant `edit` to `preview` by
+  // accident."
+  for (const spelling of ["edit", "-edit", "+edit", "EDIT", " edit ", "edit,edit"]) {
+    assert.equal(
+      resolveCapabilities({ mode: "preview", withhold: spelling }).size,
+      0,
+      `"${spelling}" changed what preview grants`,
+    );
+  }
+  assert.equal(resolveRegions({ mode: "preview", withhold: "ribbon,-menu" }).size, 0);
+  // An unknown entry is DROPPED, and dropping narrows nothing — so a typo in a
+  // host's URL can never widen the result. Same reasoning as an unrecognised
+  // `mode` falling back to the framed default.
+  assert.deepEqual([...parseWithheld("-nonsense,-print", CAPABILITIES)], ["print"]);
+  assert.deepEqual([...parseWithheld(null, CAPABILITIES)], []);
+  assert.deepEqual([...parseWithheld("", REGIONS)], []);
+  // And it really does narrow when the name is known, or the assertions above
+  // would pass for a parser that ignored everything.
+  assert.equal(resolveCapabilities({ mode: "owner", withhold: "-edit" }).has("edit"), false);
+});
+
+test("withholding the ribbon withholds its bands, derived rather than asked twice", () => {
+  const shown = resolveRegions({ mode: "owner", withhold: "-ribbon" });
+  assert.equal(shown.has("ribbon"), false);
+  for (const id of REGIONS.filter((r) => r.startsWith("band."))) {
+    assert.equal(shown.has(id), false, `${id} survived its container being withheld`);
+  }
+  // A host who said `-ribbon` and still saw a band would have found a hole; a host
+  // who had to list all eight would be maintaining our containment rules for us.
+  assert.ok(shown.has("status"), "withholding the ribbon must not take the status bar with it");
+  // And one band alone is expressible, which is the grain a host actually asks for.
+  const homeOnly = resolveRegions({ mode: "owner", withhold: "-band.insert,-band.layout,-band.references,-band.review,-band.view,-band.table" });
+  assert.equal(homeOnly.has("band.home"), true);
+  assert.equal(homeOnly.has("band.insert"), false);
+  assert.equal(homeOnly.has("ribbon"), true);
+});
+
+test("a framed container with no mode asked gets the framed presentation, never standalone", () => {
+  // The phase 1 default, now on both axes. A page that is not the top window was
+  // put there by someone else.
+  assert.deepEqual(regions({ framed: true }), regions({ mode: "embedded" }));
+  assert.deepEqual(caps({ framed: true }), caps({ mode: "embedded" }));
+  // An unrecognised mode falls back to the framed default rather than throwing,
+  // and never to more than it: a typo must not leave a container with no chrome at
+  // all, and must not grant more either.
+  assert.deepEqual(regions({ mode: "kittens", framed: true }), regions({ mode: "embedded" }));
+  assert.deepEqual(caps({ mode: "kittens", framed: true }), caps({ mode: "embedded" }));
+});
+
+test("the URL is the one configuration channel, read in one place", () => {
+  // Every host input travels on the URL, because that is the only channel decided
+  // BEFORE the frame's first navigation (`embed_element.mjs` writes the mode into
+  // the src). A `postMessage` after load would mean a window in which the editor
+  // was something else, and `docs/104` is explicit that gating applies before the
+  // first frame.
+  const view = {
+    location: { search: "?mode=readonly&can=-print&chrome=-find&autosave=1" },
+    self: 1,
+    top: 2,
+  };
+  const config = hostConfig(view);
+  assert.deepEqual(config, {
+    mode: "readonly",
+    autosave: true,
+    withhold: "-print",
+    chrome: "-find",
+    framed: true,
+  });
+  assert.deepEqual([...hostRegions(view)].sort(), regions({ mode: "readonly", framed: true, withhold: "-find" }));
+  // A cross-origin parent makes `self !== top` throw in some engines; a throw means
+  // we ARE framed, which is the safer answer.
+  const hostile = { location: { search: "" }, get self() { throw new Error("cross-origin"); } };
+  assert.equal(hostConfig(hostile).framed, true);
+});
