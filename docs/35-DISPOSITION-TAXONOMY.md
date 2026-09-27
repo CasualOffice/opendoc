@@ -182,6 +182,29 @@ user's own text — while an nsid identifies where a *list template* came from,
 and no feature of the document depends on it. If a consumer for `w:nsid` is ever
 found, it belongs in the rsid class rather than in the table above.
 
+**Settled, and adjacent to that question: `w:lvl@w:tplc` and `w:lvl@w:tentative`
+are REPORTED, not excluded.** Both are attributes of a numbering level, both look
+like the same bookkeeping family as `w:nsid`/`w:tmpl`, and both were being dropped
+in **silence** — not by this policy but by an omission: `casual-doc-import`'s
+`numbering.rs` never called `Reporter::report_attribute`, and the catch-all that
+routes unmapped numbering markup here sees *elements only*, so an attribute on an
+element the parser handles fell through it with no finding at all (`docs/142`
+LST-31). They now raise `lvl/@tplc` and `lvl/@tentative` as `degraded`, and the
+reasoning is deliberately *not* the nsid one:
+
+- a `tplc` keys a **level the user can still see and edit** back to its List
+  Library entry, where an `nsid`/`tmpl` identifies the whole abstract definition,
+  and this table's rule is about markup whose value equals a state the model
+  already holds — a `tplc`'s value is not represented anywhere in the model;
+- `w:tentative="1"` says Word may **discard** this level if it is never used, so
+  dropping it makes a tentative level permanent on reopen. That is a behavioural
+  difference, not bookkeeping, and it fails the "nothing is lost" test outright.
+
+`word/numbering.xml` is in the consumed set and is regenerated from the model on a
+semantic save, so neither has byte retention standing behind it. The same commit
+also reports `numFmt/@format`, the custom number-format picture: the model carries
+the `w:val` token only, so what a `w:val="custom"` marker actually reads is lost.
+
 ### Revision-save IDs (`w:rsid*`) — reported once per document, as a class
 
 `w:rsid*` attributes (`rsidR`, `rsidRPr`, `rsidRDefault`, `rsidP`, `rsidDel`,
