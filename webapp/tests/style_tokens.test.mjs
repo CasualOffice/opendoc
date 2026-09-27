@@ -136,74 +136,66 @@ test("no rule reads a token the stylesheet never defines", () => {
 // The tokens above are only as good as their numbers, and the numbers are what
 // the tracker rows were actually about: review deletion text measured 2.38:1 on
 // the dark surface, the mode pill 2.62:1, and --faint 3.29:1 in light and
-// 3.16:1 in dark. Those floors are stated here so the palette cannot drift back
+// 3.16:1 in dark. Those floors are stated so the palette cannot drift back
 // under them — a colour picked by eye is how they got there.
+//
+// THE TABLES AND THE ARITHMETIC NOW LIVE IN `src/contrast.mjs`, and this file
+// reads them. They used to be local, and `docs/126` phase 3 needed the same two
+// questions asked of a HOST's palette — which token is text, and what must it
+// clear. Two tables saying which token is text would disagree eventually, the way
+// the `shortcut:` labels and the key bindings did (`109` UX-006). So there is one
+// statement of the roles, one of the floors, and one resolver for `var()` and
+// `color-mix()`, shared by this guard and by `tools/build-brand.mjs`.
+//
+// WHAT THAT CHANGED HERE, deliberately: the palette is now measured MERGED —
+// the theme-independent block plus the theme's own — because that is what the
+// cascade produces. Measuring a theme block alone could not see any pair whose
+// halves live in different blocks, which is every accent pair, because `--accent`
+// is theme-independent and `--accent-text` is not. Three pairs are therefore
+// checked that nothing checked before: `--accent-ink` on `--accent`,
+// `--primary-ink` on `--primary-bg`, and `--accent-text` on `--surface`. All
+// three pass today; the mutation proving they can fail is in the PR.
+import { TEXT_ROLES, UI_ROLES, PAIRED_ROLES, auditPalette } from "../src/contrast.mjs";
+import { readPalettes } from "../tools/palette_source.mjs";
 
-/** WCAG 2.1 relative luminance / contrast, on plain sRGB hex. */
-function channels(hex) {
-  let value = hex.replace("#", "");
-  if (value.length === 3) value = [...value].map((c) => c + c).join("");
-  return [0, 2, 4].map((i) => Number.parseInt(value.slice(i, i + 2), 16));
-}
-
-function luminance(hex) {
-  const [r, g, b] = channels(hex).map((v) => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function contrast(a, b) {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-// Roles used directly as text on --surface: the 4.5:1 body-text floor.
-const TEXT_ROLES = [
-  "--ink",
-  "--muted",
-  "--faint",
-  "--success",
-  "--warning",
-  "--danger",
-  "--info",
-  "--review-move",
-];
-
-// Roles used directly as a border, rule or edge: the 3:1 non-text floor. Only
-// the ones a rule sets straight onto the surface are listed; a -line token that
-// is always mixed into another colour first (--warning-line, via color-mix) is
-// read at its mixed value, not at this one.
-const UI_ROLES = ["--success-line", "--danger-line", "--info-line", "--review-format-line"];
-
-test("every colour role clears its WCAG floor in both themes", () => {
-  const themes = {
-    light: declaredTokens(ruleBody(paletteRegion, /:root,\s*\n:root\[data-theme="light"\]/)),
-    "system dark": declaredTokens(ruleBody(paletteRegion, /:root:not\(\[data-theme\]\)/)),
-    "explicit dark": declaredTokens(ruleBody(paletteRegion, /:root\[data-theme="dark"\]/)),
-  };
+test("every colour role clears its WCAG floor in all three palettes", () => {
+  const { themes } = readPalettes(css);
   const failures = [];
-  for (const [theme, tokens] of Object.entries(themes)) {
-    const surface = tokens.get("--surface");
-    for (const [roles, floor] of [
-      [TEXT_ROLES, 4.5],
-      [UI_ROLES, 3],
-    ]) {
-      for (const role of roles) {
-        const value = tokens.get(role);
-        assert.ok(value, `${role} is not declared in the ${theme} palette`);
-        assert.match(value, /^#[0-9a-f]{3,6}$/i, `${role} must be a literal in the palette`);
-        const ratio = contrast(value, surface);
-        if (ratio < floor) {
-          failures.push(
-            `${theme} ${role} ${value} on ${surface} = ${ratio.toFixed(2)}:1 (needs ${floor}:1)`,
-          );
-        }
-      }
+  for (const [theme, palette] of themes) {
+    const { failures: bad, unreadable } = auditPalette(palette);
+    for (const value of unreadable) {
+      failures.push(`${theme} ${value} cannot be read as a colour, so nothing measured it`);
+    }
+    for (const f of bad) {
+      failures.push(
+        `${theme} ${f.role} ${f.value} on ${f.on} ${f.ground} = ${f.ratio.toFixed(2)}:1 ` +
+          `(needs ${f.floor}:1; ${f.suggestion ?? "no value on this hue"} would pass)`,
+      );
     }
   }
   assert.deepEqual(failures, []);
+});
+
+test("the role tables really cover the palette, so a pass is not a pass by omission", () => {
+  // THE HALF THAT FAILS WHEN THE GUARD BREAKS RATHER THAN WHEN THE TREE DOES.
+  // `auditPalette` reports nothing for a role it cannot find, so a typo in the
+  // table — or a token renamed in the stylesheet — would turn this whole section
+  // into a no-op silently. That is the "green because it checked nothing" defect
+  // `docs/105` CQ-003 records, so the roles are asserted to EXIST.
+  const { themes } = readPalettes(css);
+  const missing = [];
+  for (const [theme, palette] of themes) {
+    for (const role of [...TEXT_ROLES, ...UI_ROLES]) {
+      if (palette[role] === undefined) missing.push(`${theme} has no ${role}`);
+    }
+    for (const pair of PAIRED_ROLES) {
+      if (palette[pair.ink] === undefined) missing.push(`${theme} has no ${pair.ink}`);
+      if (palette[pair.on] === undefined) missing.push(`${theme} has no ${pair.on}`);
+    }
+  }
+  assert.deepEqual(missing, []);
+  assert.ok(TEXT_ROLES.length >= 8, "the text-role table has shrunk; a smaller table checks less");
+  assert.ok(PAIRED_ROLES.length >= 3, "the paired-role table has shrunk");
 });
 
 // ---- The frame does not move (the owner's "frame of webapp is not fixed") --

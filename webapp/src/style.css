@@ -511,7 +511,15 @@ body {
 body {
   display: flex;
   flex-direction: column;
-  font: var(--fs-body)/1.5 "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  /* `--brand-font` is a white-label seam (docs/126 phase 3): a host names a face
+     they placed NEXT TO the editor and `src/brand.css` declares an @font-face for
+     it. Never a CDN — `src/fonts.css` self-hosts Inter and Material Symbols and
+     `tests/chrome_fonts.test.mjs` asserts no remote font reference, because the
+     chrome has to paint with the network off. Our own stack stays behind it, so a
+     face that fails to load leaves readable chrome rather than a system serif. */
+  font:
+    var(--fs-body)/1.5 var(--brand-font, "Inter"), -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", Roboto, sans-serif;
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -600,10 +608,21 @@ input {
   letter-spacing: -0.02em;
 }
 
+/* The brand mark. Painted from a TOKEN rather than from an `<img src>`, so a
+   white-labelled deployment changes it in `brand.json` and regenerates
+   `src/brand.css` — no markup edit, which is what `docs/126` phase 3's "no code
+   changes" gate means in practice. The `var()` carries our own mark as its
+   fallback so a deployment WITHOUT `brand.css` still shows a mark rather than an
+   empty box, and so `style.css` does not read a token it never defines
+   (`tests/style_tokens.test.mjs`). */
 .brand-logo {
   display: block;
   width: 26px;
   height: 26px;
+  background-image: var(--brand-mark, url("../opendoc-mark.svg"));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
 }
 
 .controls {
