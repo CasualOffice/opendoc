@@ -27,6 +27,9 @@ use casual_doc_edit::{
     run_properties_in_range,
 };
 use casual_doc_edit::{find_paragraph_any, surface_block_lists};
+// Break authoring (`docs/130` section 4.3, OO-022): the site check, the
+// inline-break builder, and the section-split rules.
+use casual_doc_edit::breaks::{BreakSite, break_site, section_break_ops, section_split_site};
 use casual_doc_edit::{object_descr, text_box_body_properties};
 use casual_doc_export::write_document;
 #[cfg(test)]
@@ -59,9 +62,11 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_model::v1::BreakKind;
+// The start type a section break gives the section that follows it.
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::MediaId;
+use casual_doc_model::v1::SectionType;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
     BookmarkId, BorderEdge, Break, CellMargins, CellVerticalAlignment, Color, Comment, CommentId,
@@ -604,6 +609,9 @@ enum HistoryKind {
     ParagraphBreak,
     Formatting,
     LineBreak,
+    PageBreak,
+    ColumnBreak,
+    SectionBreak,
     ParagraphFormatting,
     ListFormatting,
     LinkChange,
@@ -636,6 +644,9 @@ impl HistoryKind {
             Self::Replace => "Replace",
             Self::ParagraphBreak => "Paragraph break",
             Self::LineBreak => "Line break",
+            Self::PageBreak => "Page break",
+            Self::ColumnBreak => "Column break",
+            Self::SectionBreak => "Section break",
             Self::Formatting => "Formatting",
             Self::ParagraphFormatting => "Paragraph formatting",
             Self::ListFormatting => "List formatting",
@@ -719,6 +730,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
+        // Creating or removing a section is not a page-setup change: it is the
+        // section break the user inserted, and the undo label has to say so.
+        Operation::SpliceSectionBoundary { .. } => HistoryKind::SectionBreak,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
         Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
@@ -3734,6 +3748,130 @@ impl WasmDocument {
             HistoryKind::LineBreak,
         )
         .map_err(to_js)
+    }
+
+    /// Ctrl+Enter / Ctrl+Shift+Enter: an explicit **page** or **column** break at
+    /// the caret — the first two items of both Word's and ONLYOFFICE's Breaks menu
+    /// (`docs/130` 4.3, OO-022). `kind` is `"page"` or `"column"`.
+    ///
+    /// **No new operation**, and no new layout code either. `w:br` is an inline
+    /// node, so this is the `InsertInlineObject`/`RemoveInlineObject` pair
+    /// [`Self::insert_line_break`] already uses, and `casual-doc-layout` has always
+    /// paginated an *imported* page break: flow turns a trailing `BreakKind::Page`
+    /// into `LineBreak::Page` with `page_break_after`, and the column paginator
+    /// answers that with a new page and `LineBreak::Column` with the next column.
+    /// The gap `docs/130` found was authoring, not capability.
+    ///
+    /// Refuses, naming the container, where a forced break would be stored and then
+    /// ignored — a table cell, a text box, a content control, a header or footer, a
+    /// note, a comment — because only the body's paginator consumes one, and
+    /// storing an ignored break is silent loss. This is stricter than Word inside a
+    /// table cell, deliberately: refusing with a reason is honest, and paginating
+    /// row-internal breaks is engine work this does not do.
+    ///
+    /// Complexity: the site check is one non-recursive pass over the body's
+    /// top-level blocks (O(top-level blocks)); the operation itself costs what
+    /// `InsertInlineObject` costs, and this adds no new `find_paragraph_mut` call
+    /// site (HF-184).
+    #[wasm_bindgen(js_name = insertBreak)]
+    pub fn insert_break(
+        &mut self,
+        node: &str,
+        offset: u32,
+        kind: &str,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (kind, history) = match kind {
+            "page" => (BreakKind::Page, HistoryKind::PageBreak),
+            "column" => (BreakKind::Column, HistoryKind::ColumnBreak),
+            other => return Err(to_js(format!("unsupported break kind: {other}"))),
+        };
+        if let BreakSite::Elsewhere(refusal) = break_site(&self.document, nid) {
+            return Err(to_js(refusal.reason().to_owned()));
+        }
+        let break_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        self.apply_action_as(
+            vec![casual_doc_edit::breaks::insert_break_op(
+                Pos::new(nid, offset),
+                break_id,
+                kind,
+            )],
+            history,
+        )
+        .map_err(to_js)
+    }
+
+    /// A **section break** at the caret. `start` is the new section's start type —
+    /// `"nextPage"`, `"continuous"`, `"evenPage"` or `"oddPage"` — the four entries
+    /// of both products' section submenu.
+    ///
+    /// The caret's section keeps its identity and keeps the content *before* the
+    /// break; the content *after* it becomes a new section inheriting the caret
+    /// section's geometry, running-content references and watermark, with page
+    /// numbering deliberately **not** restarted. `casual_doc_edit::breaks` states
+    /// the full inheritance table and why each exception exists.
+    ///
+    /// The three operations this applies — splice the new boundary, retarget the
+    /// section's old terminator, split the caret's paragraph — go through one
+    /// `apply_action_caret_as` group, so they are **one history entry and undo in
+    /// one step**. A break that undid in two would be a defect.
+    ///
+    /// Refuses with a reason unless the caret is on a top-level body paragraph:
+    /// layout charges a section break to a section only there
+    /// (`document_layout::section_break_points` does not recurse), so anywhere else
+    /// the break would be stored and ignored.
+    ///
+    /// Complexity: one forward pass over the body's top-level blocks from the
+    /// caret, short-circuited to O(1) in a single-section document; plus
+    /// O(sections) to resolve the boundary being inherited from. No id is resolved
+    /// inside a loop and no `find_paragraph_mut` call site is added.
+    #[wasm_bindgen(js_name = insertSectionBreak)]
+    pub fn insert_section_break(
+        &mut self,
+        node: &str,
+        offset: u32,
+        start: &str,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let start = match start {
+            "nextPage" => SectionType::NextPage,
+            "continuous" => SectionType::Continuous,
+            "evenPage" => SectionType::EvenPage,
+            "oddPage" => SectionType::OddPage,
+            other => return Err(to_js(format!("unsupported section break: {other}"))),
+        };
+        let split = section_split_site(&self.document, nid)
+            .map_err(|refusal| to_js(refusal.reason().to_owned()))?;
+        let inherited = self
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .find(|boundary| boundary.id == split.current)
+            .ok_or_else(|| to_js("refused: the caret's section is not defined".to_owned()))?
+            .clone();
+        let new_section = SectionId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".into()))?,
+        );
+        let new_paragraph = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let ops = section_break_ops(
+            Pos::new(nid, offset),
+            &split,
+            &inherited,
+            new_section,
+            new_paragraph,
+            start,
+        );
+        self.apply_action_caret_as(ops, Pos::new(new_paragraph, 0), HistoryKind::SectionBreak)
+            .map_err(to_js)
     }
 
     /// Backspace at a collapsed caret: deletes the character before `offset`, or —
@@ -22403,6 +22541,11 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),
+        // Splicing a section boundary is half of a section-break action whose other
+        // half is the paragraph split that carries the caret, and the action routes
+        // through `apply_action_caret` with the caller's own position; this arm is a
+        // neutral placeholder that keeps the match exhaustive.
+        Operation::SpliceSectionBoundary { .. } => Pos::new(doc_id, 0),
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
