@@ -186,6 +186,291 @@ mod semantic_tests {
         (m1, m2)
     }
 
+
+    // --- Paragraph-spanning complex fields (docs/128) ----------------------
+
+    /// The main-document XML of a written package.
+    fn written_document_xml(document: &casual_doc_model::v1::Document) -> String {
+        use std::io::Read;
+        let bytes = write_document(document, &BTreeMap::new()).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        xml
+    }
+
+    /// A `TOC` field spanning four paragraphs: `begin` + instruction + `separate` in
+    /// the first, three `TOC 1` entry rows, `end` in the last. Word writes exactly
+    /// this shape, and it is the shape `sample.docx` does NOT have (its own TOC field
+    /// is single-paragraph, so it guards the inline path — `docs/128` §7).
+    const SPANNING_TOC_XML: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+        </w:p>
+        <w:p><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr>
+            <w:hyperlink w:anchor="_Toc100" w:history="1">
+                <w:r><w:t>First chapter</w:t></w:r>
+                <w:r><w:tab/></w:r>
+                <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc100 \h </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>1</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:hyperlink></w:p>
+        <w:p>
+            <w:hyperlink w:anchor="_Toc101" w:history="1">
+                <w:r><w:t>Second chapter</w:t></w:r>
+                <w:r><w:tab/></w:r>
+                <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc101 \h </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>4</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:hyperlink></w:p>
+        <w:p>
+            <w:hyperlink w:anchor="_Toc102" w:history="1">
+                <w:r><w:t>Third chapter</w:t></w:r>
+                <w:r><w:tab/></w:r>
+                <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText xml:space="preserve"> PAGEREF _Toc102 \h </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>9</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:hyperlink>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+        <w:p><w:r><w:t>Body text after the table of contents.</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+
+    #[test]
+    fn a_paragraph_spanning_toc_field_is_written_back_as_fld_chars() {
+        // The whole point of the range: Word's "Update Table" acts on a FIELD, so the
+        // export has to put the `fldChar` structure back. The old fallback wrote a
+        // `BlockSdt` of ordinary paragraphs, which Word had nothing to update.
+        let document = import_main_document_xml(SPANNING_TOC_XML, ImportConfig::default())
+            .unwrap()
+            .document;
+        let xml = written_document_xml(&document);
+
+        // The prologue: begin, the instruction verbatim, separate.
+        let begin = xml
+            .find(r#"<w:fldChar w:fldCharType="begin"/>"#)
+            .expect("a fldChar begin is written");
+        let instr = xml
+            .find(r#" TOC \o &quot;1-3&quot; \h \z \u "#)
+            .expect("the TOC instruction is written verbatim");
+        let separate = xml
+            .find(r#"<w:fldChar w:fldCharType="separate"/>"#)
+            .expect("a fldChar separate is written");
+        let end = xml
+            .rfind(r#"<w:fldChar w:fldCharType="end"/>"#)
+            .expect("a fldChar end is written");
+        assert!(
+            begin < instr && instr < separate && separate < end,
+            "begin -> instrText -> separate -> result -> end, in that order"
+        );
+        assert!(
+            xml[begin..instr].contains("</w:r>") && xml[instr..separate].contains("</w:r>"),
+            "each marker is its own run, as Word writes them: {}",
+            &xml[begin..separate]
+        );
+
+        // The result is real paragraphs BETWEEN separate and end — not the children of
+        // one element. This is the assertion that a container representation, or a
+        // BlockSdt fallback, could not satisfy.
+        let result = &xml[separate..end];
+        assert_eq!(
+            result.matches("<w:hyperlink").count(),
+            3,
+            "all three entry rows sit inside the field's extent: {result}"
+        );
+        assert!(
+            result.matches("<w:p>").count() >= 3,
+            "the entry rows are paragraphs, not inline children: {result}"
+        );
+        assert_eq!(
+            result.matches(r#" PAGEREF _Toc10"#).count(),
+            3,
+            "each row keeps its own PAGEREF field: {result}"
+        );
+
+        // And the paragraph after the field is outside it.
+        assert!(
+            xml[end..].contains("Body text after the table of contents."),
+            "the trailing paragraph is written after the field's end, not inside it"
+        );
+    }
+
+    #[test]
+    fn a_paragraph_spanning_toc_field_survives_write_then_reopen() {
+        // Structural round trip: what we write must re-import to the same model,
+        // markers, definition and all. A one-way check would pass while the export
+        // wrote something Word accepts and we cannot read back.
+        let (m1, m2) = round_trip_main_document(SPANNING_TOC_XML);
+        assert!(m1.validate().is_ok());
+        assert_eq!(m1, m2, "the paragraph-spanning TOC survives write -> reopen");
+        assert_eq!(
+            m2.definitions().field_ranges.iter().count(),
+            1,
+            "the range definition comes back"
+        );
+        assert_eq!(
+            m2.definitions()
+                .field_ranges
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .instruction,
+            r#" TOC \o "1-3" \h \z \u "#,
+            "the instruction comes back verbatim"
+        );
+        // Re-exporting the reopened model is byte-identical, so the shape has reached
+        // a fixed point rather than drifting a little on each save.
+        assert_eq!(
+            written_document_xml(&m1),
+            written_document_xml(&m2),
+            "a second save produces the same bytes"
+        );
+    }
+
+    #[test]
+    fn sample_docx_keeps_its_toc_field_as_an_updatable_field() {
+        // `sample.docx` is the repository's one fixture carrying a real, unpopulated
+        // `TOC` instruction. Two corrections it is worth recording, because both have
+        // been stated the other way round here:
+        //
+        // 1. It is NOT Word output. `docProps/core.xml` says
+        //    `<dc:description>generated by python-docx</dc:description>`; `app.xml`
+        //    reads `Microsoft Macintosh Word` because that is what python-docx's
+        //    bundled `Normal.dotm` carries, not because Word wrote the file.
+        // 2. Its `begin` and `end` are in the SAME paragraph (and in fact the same
+        //    `w:r`, a shape Word never writes), so by `docs/128` §2c it is correctly
+        //    an inline `Field` before this change and after it. It guards the inline
+        //    path; it cannot exercise the range, which is why the range has a fixture
+        //    of its own above.
+        //
+        // What must hold is that the field stays a field: Word's "Update Table" acts
+        // on the field, so a TOC that came back as plain text would be dead markup.
+        let bytes = include_bytes!("../../../sample.docx");
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert!(
+            import.document.definitions().field_ranges.is_empty(),
+            "a single-paragraph field is not promoted to a range"
+        );
+
+        let out = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let mut reopened = DocxPackage::open(&out, PackageLimits::default()).unwrap();
+        let again = import_package(&mut reopened, ImportConfig::default()).unwrap();
+
+        let instruction = |document: &casual_doc_model::v1::Document| -> Vec<String> {
+            use casual_doc_model::v1::{BlockNode, InlineNode};
+            let mut found = Vec::new();
+            for block in document.body() {
+                if let BlockNode::Paragraph(paragraph) = block {
+                    for inline in &paragraph.inlines {
+                        if let InlineNode::Field(field) = inline
+                            && field.instruction.contains("TOC")
+                        {
+                            found.push(field.instruction.clone());
+                        }
+                    }
+                }
+            }
+            found
+        };
+        assert_eq!(
+            instruction(&import.document),
+            vec![r#" TOC \o "1-3" \h \z \u "#.to_owned()],
+            "the fixture's TOC field is read as a field"
+        );
+        assert_eq!(
+            instruction(&again.document),
+            instruction(&import.document),
+            "and is still a field, with the same instruction, after export -> reopen"
+        );
+
+        // The written markup is a field element Word updates, not text.
+        use std::io::Read;
+        let mut zip = zip::ZipArchive::new(Cursor::new(&out)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(
+            xml.contains(r#"<w:fldSimple w:instr=" TOC \o &quot;1-3&quot; \h \z \u ""#),
+            "the single-paragraph field is written as the w:fldSimple the inline \
+             writer has always emitted. NOT byte-identical to the source's \
+             single-`w:r` complex field, and this test says so rather than claiming a \
+             fidelity we do not have: a `w:fldSimple` is a field Word updates, but \
+             Word itself writes the complex spelling, so the normalization is a real \
+             (recorded) gap. `docs/128` §5."
+        );
+    }
+
+    #[test]
+    fn a_field_range_marker_whose_definition_is_missing_writes_no_orphan_begin() {
+        // A start marker with no definition writes nothing — the defence
+        // `BookmarkStart` already has. The end marker is written unconditionally, and
+        // the asymmetry is deliberate: an unmatched `w:fldChar begin` makes Word read
+        // the rest of the document as field instruction text, while a stray `end` is
+        // inert. So the export's job is to never emit a `begin` it cannot complete.
+        //
+        // `Document::validate` refuses this model (R1, `DanglingFieldRangeRef`), so it
+        // is unreachable from a valid document; the export path is defence in depth
+        // for a model that arrives by snapshot load. The pair is BALANCED here so R1
+        // is the diagnosis — with only a start, the container balance check (R2) fires
+        // first and reports `UnbalancedFieldRange` instead, which is also correct but
+        // does not exercise the reference check.
+        use casual_doc_model::v1::{
+            BlockNode, FieldRangeEnd, FieldRangeId, FieldRangeStart, InlineNode,
+        };
+        let mut document = import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#,
+            ImportConfig::default(),
+        )
+        .unwrap()
+        .document;
+        let mut ids = casual_doc_model::IdGenerator::new(0xF1E1);
+        let field = FieldRangeId::new(ids.next_id().unwrap());
+        let start = InlineNode::FieldRangeStart(FieldRangeStart {
+            id: ids.next_id().unwrap(),
+            field,
+        });
+        let end = InlineNode::FieldRangeEnd(FieldRangeEnd {
+            id: ids.next_id().unwrap(),
+            field,
+        });
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("expected a paragraph");
+        };
+        paragraph.inlines.insert(0, start);
+        paragraph.inlines.push(end);
+        assert!(
+            matches!(
+                document.validate(),
+                Err(casual_doc_model::ModelError::DanglingFieldRangeRef(_))
+            ),
+            "validation refuses the unresolvable reference: {:?}",
+            document.validate()
+        );
+        let xml = written_document_xml(&document);
+        assert!(
+            !xml.contains(r#"<w:fldChar w:fldCharType="begin"/>"#),
+            "no orphaned begin reaches the package: {xml}"
+        );
+        assert!(
+            !xml.contains("<w:instrText"),
+            "and no instruction is invented for a definition that is not there: {xml}"
+        );
+    }
+
     /// The `SdtProperties` of the first inline content control in the first body
     /// paragraph (the shape the content-control-data tests build).
     fn first_inline_sdt_properties(
