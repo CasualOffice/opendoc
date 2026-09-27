@@ -30,6 +30,7 @@
 // No English: this module carries no user-facing string at all. A refusal's
 // sentence is produced by the session, which was handed it by the chrome.
 import {
+  HOST_EVENT_NAMES,
   PROTOCOL,
   isRequestEnvelope,
   originAllowed,
@@ -130,13 +131,14 @@ export function attachHostBridge({ session, view }) {
     }
   }
 
-  // Every event the contract declares, forwarded. The list comes from the
-  // session, which took it from the schema, so an added event reaches a
-  // `postMessage` host with no change to this file.
-  const unsubscribes = [];
-  for (const name of session.describe().events) {
-    unsubscribes.push(session.on(name, broadcast));
-  }
+  // Every event the contract declares, forwarded. The list comes from the SCHEMA
+  // rather than from `session.describe()`, so an added event reaches a
+  // `postMessage` host with no change to this file — and so attaching the bridge
+  // costs no registry build. That second part is not a micro-optimisation: the
+  // bridge is attached while `main.js` is still evaluating, at a point where the
+  // command registry cannot be built at all, and asking for one there would make
+  // the editor's boot depend on the order two unrelated declarations sit in.
+  const unsubscribes = HOST_EVENT_NAMES.map((name) => session.on(name, broadcast));
 
   async function onMessage(event) {
     // The origin check comes first, before the envelope is even looked at.

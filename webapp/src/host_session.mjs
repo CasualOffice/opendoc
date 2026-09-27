@@ -116,7 +116,20 @@ export function createHostSession({
    *  typed into its input, so this is an accepted cost on an existing path. */
   function descriptors() {
     const map = new Map();
-    for (const command of registry() ?? []) map.set(command.id, command);
+    let rows = [];
+    try {
+      rows = registry() ?? [];
+    } catch (err) {
+      // The registry could not be built in this state, which happens for real: a
+      // host may ask before the editor has opened anything, and the editor builds
+      // its registry from document state. An empty registry answers honestly —
+      // every command reads as `present: false`, and `execute` refuses with
+      // `unknown-command` — where a throw would let one early call take down the
+      // embed.
+      console.warn("opendoc: the command registry is not available yet", err);
+      rows = [];
+    }
+    for (const command of rows) map.set(command.id, command);
     return map;
   }
 
