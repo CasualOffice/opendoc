@@ -25,7 +25,7 @@
 //! 3. **A running body no section references is not written.** Toggling Link to
 //!    Previous off and on *n* times mints *n* orphaned header bodies, and a writer
 //!    that emits every entry of `Definitions::headers` writes all of them on every
-//!    save — unbounded growth driven by a checkbox (`docs/128` §3). The acceptance
+//!    save — unbounded growth driven by a checkbox (`docs/129` §3). The acceptance
 //!    criterion there is that an unlink/re-link cycle must not leave the package
 //!    larger than it started, so that is asserted as a comparison against the
 //!    baseline package's own part list, not as a count someone typed in.
@@ -440,7 +440,7 @@ fn an_unreferenced_running_body_is_not_written_and_the_drop_is_reported() {
         part_names(&export.bytes),
         part_names(&clean_bytes),
         "three unlink/re-link cycles leave the package's part list unchanged — the \
-         acceptance criterion docs/128 §3 states"
+         acceptance criterion docs/129 §3 states"
     );
     assert!(
         export.bytes.len() <= clean_bytes.len(),

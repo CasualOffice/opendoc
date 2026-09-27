@@ -2091,7 +2091,7 @@ const TWIPS_PER_POINT: f64 = 20.0;
 /// to write. A body nobody references is legal OOXML (Word leaves such parts
 /// behind too) but it is also unbounded: turning Link to Previous off and on *n*
 /// times mints *n* bodies, and a writer that emits every table entry writes all of
-/// them on every save. `docs/128` (Link to Previous) named that and left the choice
+/// them on every save. `docs/129` (Link to Previous) named that and left the choice
 /// to this file; the choice is a reachability pass here, so the invariant holds for
 /// an orphan from *any* source — an edit op, an import of a file that already
 /// carried one, or a future op nobody has written yet — instead of being re-checked

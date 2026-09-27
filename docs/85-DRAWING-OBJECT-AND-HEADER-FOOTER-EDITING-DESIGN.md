@@ -534,7 +534,7 @@ the code does not have is worse than a doc that admits a gap, because it is cite
 as evidence; the claim is now true because the pass exists, and the paragraph above
 names the function and the report ids so the next reader can check rather than
 believe. The decision, the alternative rejected and the watermark interaction are
-recorded in `docs/128-LINK-TO-PREVIOUS-DESIGN.md` §3.
+recorded in `docs/129-LINK-TO-PREVIOUS-DESIGN.md` §3a.
 
 ## 8b. Status reconciliation (2026-08-09)
 
