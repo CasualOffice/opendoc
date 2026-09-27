@@ -72,7 +72,7 @@ pub use vml::{
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Bookmark, BookmarkId, Comment, CommentId, DefinitionMap, Definitions, Document,
+    BlockNode, Comment, CommentId, DefinitionMap, Definitions, Document,
     DocumentSettings, HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph,
     ParagraphProperties, Person,
 };
