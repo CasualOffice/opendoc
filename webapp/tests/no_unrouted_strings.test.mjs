@@ -34,8 +34,13 @@
 // What the exception costs is visibility, not silence: the site's debt is a
 // published number that moves in a diff. What it buys is that documenting a
 // shipped capability is no longer refused by a translation gate. The work that
-// would let these numbers fall is per-language pages and `hreflang` — HF-190's
-// second half, and its own piece of work.
+// would let these numbers fall is per-language pages and `hreflang`, which is its
+// own piece of work and is filed as its own row. It is deliberately NOT cited by
+// id here: this comment first named HF-190, an id that had been claimed by an
+// unrelated defect hours earlier (accept/reject at the caret) while several lanes
+// were proposing ids in parallel. A comment pointing at the wrong row is worse
+// than one pointing at none, because the reader finds a real row and believes it.
+// Search the queue for the site localisation seam instead.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
