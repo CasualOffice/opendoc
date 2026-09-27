@@ -43,17 +43,15 @@ use casual_doc_import::{ImportConfig, import_main_document_xml, import_package};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, FieldUpdateState, FontName, HeaderFooter, HeaderFooterId,
-    HeaderFooterKind, HeaderFooterRef, InlineNode, Paragraph, PropChange, Rgba, Run,
-    RunProperties, Watermark, WatermarkContent, WatermarkLayout, WatermarkText,
+    HeaderFooterKind, HeaderFooterRef, InlineNode, Paragraph, PropChange, Rgba, Run, RunProperties,
+    Watermark, WatermarkContent, WatermarkLayout, WatermarkText,
 };
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-const HEADER_CT: &str =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
-const FOOTER_CT: &str =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
 const HEADER_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
 const FOOTER_REL: &str =
@@ -145,8 +143,10 @@ fn package_with_one_header_and_footer() -> Vec<u8> {
     let doc_rels = format!(
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH1" Type="{HEADER_REL}" Target="header1.xml"/><Relationship Id="rIdF1" Type="{FOOTER_REL}" Target="footer1.xml"/></Relationships>"#
     );
-    let header = br#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>the live header</w:t></w:r></w:p></w:hdr>"#;
-    let footer = br#"<w:ftr xmlns:w="urn:w"><w:p><w:r><w:t>the live footer</w:t></w:r></w:p></w:ftr>"#;
+    let header =
+        br#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>the live header</w:t></w:r></w:p></w:hdr>"#;
+    let footer =
+        br#"<w:ftr xmlns:w="urn:w"><w:p><w:r><w:t>the live footer</w:t></w:r></w:p></w:ftr>"#;
     zip_named(&[
         ("[Content_Types].xml", content_types.as_bytes()),
         ("_rels/.rels", root_rels.as_bytes()),
@@ -288,7 +288,9 @@ fn a_legacy_form_field_still_carries_its_ff_data_in_the_begin_marker() {
         .find(r#"<w:fldChar w:fldCharType="begin">"#)
         .expect("a non-empty fldChar begin, because it carries ffData");
     let ff = markup.find("<w:ffData>").expect("the ffData block");
-    let close = markup.find("</w:fldChar>").expect("the begin marker closes");
+    let close = markup
+        .find("</w:fldChar>")
+        .expect("the begin marker closes");
     assert!(
         begin < ff && ff < close,
         "the ffData block is INSIDE the begin marker: {markup}"
@@ -567,7 +569,9 @@ fn a_running_body_reached_only_from_a_sect_pr_change_snapshot_is_still_written()
     let mut references = 0;
     for (index, _) in markup.match_indices("<w:headerReference") {
         let element = &markup[index..index + markup[index..].find("/>").unwrap()];
-        let at = element.find("r:id=\"").expect("a headerReference has an r:id");
+        let at = element
+            .find("r:id=\"")
+            .expect("a headerReference has an r:id");
         let rest = &element[at + 6..];
         let rel_id = &rest[..rest.find('"').unwrap()];
         assert!(
@@ -576,7 +580,10 @@ fn a_running_body_reached_only_from_a_sect_pr_change_snapshot_is_still_written()
         );
         references += 1;
     }
-    assert_eq!(references, 2, "two header references were written: {markup}");
+    assert_eq!(
+        references, 2,
+        "two header references were written: {markup}"
+    );
 }
 
 #[test]

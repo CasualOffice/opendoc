@@ -5,6 +5,11 @@ OO-001 (table of contents / table of figures). **Opened:** 2026-09-27.
 **Landed:** 2026-09-27 — model, validation, import, export, layout, wasm accessor.
 Generation, the update command and the editing behaviour are **not** in it (§9).
 
+**Follow-up landed 2026-09-27:** the two field-representation gaps §5a and §9 recorded
+are closed. Every field — inline or range, imported or newly inserted — is now written
+in the complex `w:fldChar` spelling by **one** writer, and `w:fldLock` / `w:dirty` are
+modelled, imported, exported and round-tripped. §5a and §5b are the record.
+
 **Companion:** `127` defines the field-result contract this builds on; every field
 switch, picture switch and `PAGEREF` row this document carries is specified there.
 
@@ -296,8 +301,8 @@ epilogue, each as its own run, in the run position the marker occupies:
 <w:r><w:fldChar w:fldCharType="end"/></w:r>
 ```
 
-Four runs rather than one, which is what the existing inline-field writer already
-emits and what Word itself writes. **"Verbatim" here means structurally verbatim,
+Four runs rather than one, which is what the single field writer emits for the inline
+field too (§5a) and what Word itself writes. **"Verbatim" here means structurally verbatim,
 not byte-identical**: a producer is free to put all four `fldChar`/`instrText`
 children inside a *single* `w:r` (`sample.docx` does — see §7), and we normalize
 that to one run per marker. The field is the same field to any reader, including
@@ -311,20 +316,95 @@ as instruction text, whereas a stray `end` is inert. So the export's obligation 
 never emit a `begin` it cannot complete. Validation refuses such a document first
 (R1), so the path is defence in depth for a model arriving by snapshot load.
 
-### 5a. The inline field's own normalization — a recorded gap
+### 5a. The inline field's own normalization — closed (2026-09-27)
 
-This is the correction to the first draft's implied claim. The **range** is written as
-`fldChar`. The **inline** field is not: `write_inline` has always written an ordinary
-inline field as `w:fldSimple w:instr="…"`, so a single-paragraph complex field —
-`sample.docx`'s `TOC` among them — round-trips `fldChar` → `fldSimple`.
+This was the correction to the first draft's implied claim, and it is now the record of
+a gap that has been closed. It read: the **range** is written as `fldChar`, the
+**inline** field is not — `write_inline` had always written an ordinary inline field as
+`w:fldSimple w:instr="…"`, so a single-paragraph complex field (`sample.docx`'s `TOC`
+among them) round-tripped `fldChar` → `fldSimple`. `w:fldSimple` is a real field that
+Word updates, so nothing was *broken*; but Word itself writes the complex spelling, so
+it was a fidelity gap, recorded here rather than hidden behind the word "verbatim".
 
-`w:fldSimple` is a real field that Word updates, so nothing is broken and "Update
-Table" still has a field to act on. But Word itself writes the complex spelling, so
-this *is* a fidelity gap and it is recorded here rather than hidden behind the word
-"verbatim". Changing it is a change to the inline field's export, which touches every
-field in the corpus and every existing export expectation; it belongs in a change that
-covers both encodings together, like `w:dirty` and `w:fldLock` (§9), not bolted onto
-the range.
+**There is now one field writer, and it writes the complex spelling.**
+`write_field_prologue` emits `fldChar begin` (carrying `w:ffData` when the field is a
+legacy form field, and the update attributes of §5b), the `w:instrText` instruction and
+`fldChar separate`; `write_field_epilogue` emits `fldChar end`. The inline
+`InlineNode::Field` and the `FieldRangeStart` / `FieldRangeEnd` markers all go through
+those two functions, so the two encodings **cannot** drift into different markup.
+
+#### What decides simple vs. complex: nothing. There is no decision left.
+
+`w:fldSimple` is **not written at all** any more, and the model does **not** record
+which spelling a field arrived in. That is a deliberate choice, not an oversight, and
+it is the one the brief asked to have argued:
+
+* **A field imported as complex round-trips as complex.** That was the point.
+* **A field imported as `w:fldSimple` also round-trips as complex.** The two spellings
+  are the same field to any reader: the same instruction, the same cached result, the
+  same `w:fldLock`/`w:dirty` state, the same behaviour under "Update Field".
+  ECMA-376 Part 1 §17.16.19 defines `CT_SimpleField` as a shorthand for a field with no
+  nested complexity; §17.16.18's `fldChar` form is the general one. Anywhere
+  `w:fldSimple` is legal (`EG_PContent`) a `w:r` is legal too, so the complex spelling
+  is always available and never less valid.
+* **A field the user newly inserts is complex**, for the same reason — it goes through
+  the same single writer. `casual-doc-edit`'s `CommonField::build` and `field_node`
+  construct it with a default update state (neither locked nor dirty: the cached result
+  was just computed, and freezing a field is a later author decision).
+* **The model does not remember provenance**, because remembering it would require a
+  second writer to act on it, and two writers for one rule is the shape that produced
+  this gap in the first place. Nor is it preservation loss in the sense `docs/34` is
+  about: `docs/34`'s sidecar exists for *document data* the model cannot express, and
+  the choice between two encodings of an identical field is a producer's serialization
+  habit, not data. `w:fldSimple` therefore stays **readable** on import — real
+  documents use it, including inside `w:hyperlink` — and unreachable on export.
+
+What is still **not** byte-identical, said plainly rather than left implied: a producer
+may pack all four `fldChar`/`instrText` children into a *single* `w:r` (`sample.docx`
+does — §7), and we write one run per marker. Word writes one run per marker too, so this
+is normalization toward Word, but it is still normalization, and
+`sample_docx_keeps_its_toc_field_as_an_updatable_field` says so in its own assertion
+message.
+
+### 5b. `w:fldLock` and `w:dirty` — modelled, imported, exported (2026-09-27)
+
+§9 listed these as out of scope. They were dropped entirely — no handling anywhere in
+import, export or the model — and that is worse than a byte difference, because both
+attributes change what a **reader sees**:
+
+| attribute | meaning | cost of dropping it |
+| --- | --- | --- |
+| `w:fldLock` | Word must not update this field | a deliberately frozen field (a dated letter, a quoted total) becomes one Word refreshes, so the document's *content* changes on the reader's machine |
+| `w:dirty` | the cached result is stale; recalculate on open | our cached result is presented as current, when the producer had already marked it out of date |
+
+Both are now `FieldUpdateState { locked, dirty }` — **one type**, carried by the inline
+`Field` and by the definitions-side `FieldRange`, so a field cannot change its update
+semantics by changing its encoding. Two independent flags rather than one tri-state,
+because Word can produce a field that declares both (and `fldLock` wins there).
+
+Import reads them from `w:fldSimple` (`CT_SimpleField`) and from **every** `w:fldChar`
+marker (`CT_FldChar` allows them on any marker, not only the `begin` Word writes them
+on) and **merges** rather than overwrites, since an absent attribute is the schema
+default and not an assertion of `false`. A flag on the `end` marker of a field that was
+promoted to a range lands on the registered `FieldRange`; a flag on a marker with no
+field at all is *reported*, not swallowed. Export writes them on the `begin` marker.
+
+**A recorded near-miss.** The first implementation read the attributes with `is_true`,
+which answers the `w:val` question — where a *missing* value means `true`, as in
+`<w:b/>` — so every field in every document came back locked **and** dirty. It was
+caught by the existing `a_paragraph_spanning_toc_field_is_written_back_as_fld_chars`
+guard, which searches for the exact bytes `<w:fldChar w:fldCharType="begin"/>` and found
+`<w:fldChar w:fldCharType="begin" w:fldLock="true" w:dirty="true"/>`. Absence is now
+checked before the value is interpreted, and every guard for this feature carries a
+field that declares **neither** attribute, so the same mistake cannot pass again.
+
+**One deliberate difference from Word.** Inside a tracked deletion Word writes
+`w:delInstrText`; we write `w:instrText`. `CT_R` admits both, so the output is
+schema-valid either way, and `w:instrText` is chosen because the importer reads it and
+does not read `w:delInstrText` — emitting Word's spelling would lose a deleted field's
+instruction on reopen. Recorded here and in `write_field_prologue`'s doc comment rather
+than left ambiguous; reading `w:delInstrText` on import is the change that would let this
+flip.
 
 ## 6. Layout: no new path
 
@@ -459,12 +539,12 @@ they use — there is no worker.
 - **Editing** a range: creating one, deleting one, or the selection behaviour of a
   caret inside a field result (Word selects the whole field on one click). Today a
   range arrives by import and leaves by export.
-- `w:fldChar/@w:dirty` and `@w:fldLock`. Both are dropped today for the inline field
-  too, so modelling them only on the range would create the two-mechanisms problem
-  §2b rejects; they belong in one change that covers both encodings. Neither is
-  needed for "Update Table", which is a reader action, not a document flag —
-  `w:dirty` only asks a reader to update *automatically on open*. Recorded as a real
-  fidelity gap, not as done.
+- ~~`w:fldChar/@w:dirty` and `@w:fldLock`.~~ **Done (2026-09-27) — see §5b.** They
+  landed in the one change that covers both encodings, exactly as this bullet asked,
+  together with the `w:fldSimple` normalization of §5a. Neither is needed for "Update
+  Table", which is a reader action rather than a document flag — `w:dirty` only asks a
+  reader to update *automatically on open* — but both are author intent about content,
+  which is why they are no longer dropped.
 
 ## 10. Open questions, recorded rather than hidden
 
@@ -494,6 +574,8 @@ they use — there is no worker.
    own repair instead. No producer in the corpus writes one, and the asymmetry is
    recorded rather than resolved because resolving it means threading the slot through
    the frame for one kind and not the other twice over.
-6. **The inline field still exports as `w:fldSimple`** (§5a). Not introduced here and
-   not fixed here; it belongs with `w:dirty`/`w:fldLock` in one change that covers both
-   encodings.
+6. ~~**The inline field still exports as `w:fldSimple`** (§5a).~~ **Closed
+   (2026-09-27).** It exports in the complex spelling, from the same writer the range
+   markers use, in the same change that added `w:dirty`/`w:fldLock` — §5a and §5b. The
+   model deliberately does not record which spelling a field arrived in, and §5a argues
+   that choice rather than leaving it implicit.

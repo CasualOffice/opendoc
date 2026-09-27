@@ -39,9 +39,9 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
 // Same rule: the paragraph-spanning field range's own imports go on their own line.
+use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
-use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -8691,6 +8691,31 @@ fn vml_rgba(color: VmlColor) -> Rgba {
     }
 }
 
+/// Reads a field element's `w:fldLock` / `w:dirty` update attributes.
+///
+/// Shared by `w:fldSimple` (`CT_SimpleField`) and every `w:fldChar`
+/// (`CT_FldChar`), which declare the same pair — so the two encodings cannot read
+/// them differently. An absent attribute is `false`, which is the schema default;
+/// it is not an assertion that the field is updatable, which is why
+/// `FieldUpdateState::merge` ORs rather than overwrites.
+///
+/// Absence is checked BEFORE the value is interpreted, because `is_true` answers
+/// the `w:val` question — where a missing value means `true`, as in `<w:b/>` —
+/// and reusing it on a missing attribute marked every field in every document
+/// locked and dirty. That is how this function first shipped, and the
+/// paragraph-spanning-TOC export guard caught it.
+///
+/// O(attributes on the element).
+fn field_update_state(element: &BytesStart<'_>) -> FieldUpdateState {
+    let flag = |name: &[u8]| {
+        attribute_value(element, name).is_some_and(|value| is_true(Some(value.as_str())))
+    };
+    FieldUpdateState {
+        locked: flag(b"fldLock"),
+        dirty: flag(b"dirty"),
+    }
+}
+
 #[cfg(test)]
 mod vml_fill_tests {
     use super::*;
@@ -8761,30 +8786,5 @@ mod vml_fill_tests {
                 a: 255
             }))
         );
-    }
-}
-
-/// Reads a field element's `w:fldLock` / `w:dirty` update attributes.
-///
-/// Shared by `w:fldSimple` (`CT_SimpleField`) and every `w:fldChar`
-/// (`CT_FldChar`), which declare the same pair — so the two encodings cannot read
-/// them differently. An absent attribute is `false`, which is the schema default;
-/// it is not an assertion that the field is updatable, which is why
-/// `FieldUpdateState::merge` ORs rather than overwrites.
-///
-/// Absence is checked BEFORE the value is interpreted, because `is_true` answers
-/// the `w:val` question — where a missing value means `true`, as in `<w:b/>` —
-/// and reusing it on a missing attribute marked every field in every document
-/// locked and dirty. That is how this function first shipped, and the
-/// paragraph-spanning-TOC export guard caught it.
-///
-/// O(attributes on the element).
-fn field_update_state(element: &BytesStart<'_>) -> FieldUpdateState {
-    let flag = |name: &[u8]| {
-        attribute_value(element, name).is_some_and(|value| is_true(Some(value.as_str())))
-    };
-    FieldUpdateState {
-        locked: flag(b"fldLock"),
-        dirty: flag(b"dirty"),
     }
 }

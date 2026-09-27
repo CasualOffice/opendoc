@@ -87,8 +87,7 @@ Consequences to design around rather than discover:
   this exporter already relies on for the header-less watermark case — but "Word sometimes
   does" is not a licence for "grows without bound".
 
-Two candidate answers, and this document does **not** pick one, because it is an exporter
-decision and the exporter is another lane's file domain:
+Two candidate answers:
 
 1. **Re-link removes the body too**: `SetSectionRunningRef { reference: None }` plus
    `RemoveHeaderFooterBody`, as one action. Exact, and undo already works because
@@ -102,6 +101,74 @@ decision and the exporter is another lane's file domain:
 
 Either way: **an unlink/re-link cycle must not leave the package larger than it started.**
 That is the acceptance criterion.
+
+### 3a. The answer, taken (2026-09-27): the reachability pass
+
+**Answer 2.** `crates/casual-doc-export/src/semantic.rs` now computes
+`referenced_running_bodies(defs)` — the union, over `Definitions::sections`, of each
+section's `headers` and `footers` refs plus those of every prior snapshot in its
+`section_change` chain — and the two part-writing loops skip any `headers` / `footers`
+entry outside it. The drop is reported
+(`docx.export.header.unreferenced_dropped`, `docx.export.footer.unreferenced_dropped`),
+because the bytes leave the package even though no reader ever displayed them, and
+`AGENTS.md` makes reported-not-silent a hard rule.
+
+**Complexity: O(sections + parts).** The set is built from the section table with a
+bounded number of refs per section (at most one per page type per region) plus the
+change-chain depth, and the filter is one set lookup per part. Nothing walks the body,
+which is what the constraint in the brief demanded and what answer 1 would also have
+satisfied — so complexity did not decide this.
+
+**Why answer 1 was rejected**, in the order the reasons matter:
+
+* It needs the *same* reachability computation anyway. A body may be shared by two
+  sections, so "re-link removes the body" is only safe after checking no other section
+  resolves to it. Answer 1 is therefore answer 2's computation performed at edit time,
+  once per op site, instead of once in the one place that can see the whole document.
+  Two implementations of one rule diverge.
+* It only covers the op that happens to call it. An orphan can arrive from **import** (a
+  source package that already carried an unreferenced header part — Word leaves them), from
+  a future op nobody has written yet, or from a snapshot load. Answer 1 leaves every one of
+  those leaking; answer 2 holds the invariant regardless of provenance.
+* It makes the model refuse a state OOXML permits. An unreferenced running body is legal,
+  and a model that cannot hold one cannot represent a file it just opened.
+* It couples two ops into one undo unit for a *storage* reason rather than a user-intent
+  reason, which is the wrong axis for an undo boundary.
+
+What answer 2 gives up, stated rather than glossed: the orphan stays in memory for the rest
+of the session, so an unlink/re-link loop grows the *model*, not the file. That is bounded
+by the session and by the ordinary block-count admission limits, and it is the price of
+keeping the pass in one place. If it ever matters, the fix is a model-side collector, not a
+second copy of the reachability rule in the ops.
+
+**The watermark path, checked before the pass was written.** §3 above notes that this
+exporter relies on Word's tolerance of unreferenced header parts for the header-less
+watermark case, so a pass that dropped everything unreferenced could have broken it. It
+does not, and by construction rather than by luck:
+
+* `watermark_plan`'s `in_header` map is keyed by ids taken from `section.headers`, so a
+  header part that carries a watermark is one the section **references** — it is inside the
+  reachable set, not outside it.
+* the parts invented for a section that has no header of a page type it uses
+  (`plan.synthesized`) are **not entries of `Definitions::headers` at all**. They are built
+  from `plan`, numbered after the real headers, and carry their own `rIdWm…` relationship
+  which `write_section_properties` emits into the `w:sectPr`. The pass cannot see them, so it
+  cannot drop them.
+
+Both halves are guarded —
+`crates/casual-doc-export/tests/field_and_running_part_fidelity.rs`,
+`a_header_less_sections_watermark_still_gets_its_part_beside_an_orphan` and
+`a_watermark_in_a_referenced_header_survives_beside_an_orphan` — each with an orphan in the
+same document, so the guard fails if the pass either stops running or starts over-reaching.
+
+One non-obvious member of the reachable set: a `w:sectPrChange` prior snapshot's own
+`w:headerReference`. The writer emits it into the revision record, so the part it names has
+to exist or the package advertises a relationship it does not contain (FID-R-06). Dropping
+it was the first shape of this pass, and
+`a_running_body_reached_only_from_a_sect_pr_change_snapshot_is_still_written` is the guard
+that pins it.
+
+`docs/85` §8.4 has been corrected: it claimed this garbage collection already happened.
 
 ## 4. The op sequence
 

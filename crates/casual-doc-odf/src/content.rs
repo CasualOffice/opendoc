@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::IdGenerator;
+use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellMargins, CellVerticalAlignment,
@@ -21,7 +22,6 @@ use casual_doc_model::v1::{
     HorizontalAnchor, HorizontalPosition, VerticalAlign, VerticalAnchor, VerticalPosition,
     WrapDistances, WrapMode,
 };
-use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
