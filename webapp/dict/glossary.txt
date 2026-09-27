@@ -49,6 +49,7 @@ DOM
 DOTX
 DPI
 DTD
+Diff
 DocumentServer
 DrawingML
 ECMA
@@ -125,6 +126,7 @@ ONNX
 OOM
 OOXML
 OPC
+OPFS
 OSS
 OTT
 OVBA
@@ -277,6 +279,8 @@ desync
 dev
 dialogs
 diff
+diffable
+diffed
 diffs
 discoverability
 discoverable
@@ -305,6 +309,7 @@ etc
 fallbacks
 façade
 ffData
+filesystem
 fmt
 focusable
 fontTable
@@ -321,7 +326,6 @@ grapheme
 grep
 gridSpan
 gzip
-gzipped
 handoff
 hardcoded
 hardcodes
@@ -331,6 +335,7 @@ hotfix
 href
 html
 iOS
+idempotency
 idempotent
 iframe
 impl
@@ -430,6 +435,7 @@ repagination
 repo
 representable
 resizable
+restorable
 resumable
 reviewable
 roadmap

@@ -426,13 +426,18 @@ benchmark, and only for a lever that does not tax runtime.
 ## ADR-033 — Collaboration is operational transformation over the closed op set, with snapshot/replay versioning
 
 **Status:** Proposed (owner decision taken 2026-09-15). Designed in
-`107-COLLABORATION-OT-SNAPSHOT-REPLAY-DESIGN.md`.
+`107-COLLABORATION-OT-SNAPSHOT-REPLAY-DESIGN.md`; the product, restore, checkpoint,
+and diff contracts are refined by docs 139–140.
 
 **Decision:** Collaborative editing uses **operational transformation**, carried by
 `casual-doc-transaction` transactions over the closed `casual-doc-edit` operation set, with a
 durable ordered operation log. **Versioning is snapshot-plus-replay** over that log: a
-snapshot (`25`) plus the operations after it reconstitutes any revision. Operations are
-transformed only against a **totally ordered** log supplied by an optional relay.
+validated checkpoint plus the operations after it reconstitutes any revision. The
+normalized snapshot (`25`) is the semantic replay projection, but doc 112 proved it cannot
+be the sole restore artifact because it omits binary resources and retained source data;
+restorable versions therefore carry the fidelity-complete source-format artifact specified
+by doc 140. Operations are transformed only against a **totally ordered** log supplied by
+an optional relay.
 
 **Why OT rather than the cheaper alternative.** The competitor this project is positioned
 against (`106`) uses neither OT nor a CRDT but a server-ordered change log plus pessimistic

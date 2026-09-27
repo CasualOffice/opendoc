@@ -188,6 +188,11 @@ write cost, and cold replay from snapshot + N operations.
 
 ## 5. Snapshot, replay, and versioning
 
+Docs 139–140 refine this section into the product, restore, fidelity-checkpoint, storage,
+and version-diff contracts. They preserve snapshot-plus-replay but correct one important
+ambiguity below: a normalized snapshot is suitable for semantic replay/diff projection,
+not as the sole user-restorable artifact.
+
 The versioning half of the decision, and the part that pays for itself immediately.
 
 ### 5.1 The log is the primitive
@@ -196,9 +201,12 @@ The versioning half of the decision, and the part that pays for itself immediate
 Snapshot(r0) ─ op(r1) ─ op(r2) ─ … ─ op(rN)        →  document at rN
 ```
 
-- **Snapshot:** the existing deterministic normalized snapshot (`25`), already strict,
-  bounded, and round-trip tested. Canonical CBOR (`08`, designed and unimplemented) becomes
-  the compact on-disk form when it lands; JSON serves until then.
+- **Checkpoint:** a fidelity-complete source-format artifact plus a validated semantic
+  projection, as specified by doc 140. The deterministic normalized snapshot (`25`) is
+  strict, bounded, and useful for replay/diff; canonical CBOR (`08`, designed and
+  unimplemented) may become its compact form. It cannot be the only restore source: doc
+  112 measured that normalized JSON drops binary resources and the retained source
+  envelope.
 - **Operation:** one committed `Transaction` — its operations, `base_revision`, allocated
   `RevisionId`, author identity (`82` already models authors), and timestamp.
 - **Replay:** load a snapshot, apply operations in order. Deterministic because the engine is

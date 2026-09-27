@@ -4,7 +4,9 @@
 **Rows:** `docs/109` row 2 — **HF-011** (P0, data-safety), restated as `docs/105` **OO-004**.
 **Unblocked by** owner decision **D-1** (`docs/104`: browser storage — yes, one store, opencalc
 shape). **Does not** implement HF-068 (version history) or HF-073 (recent documents); both are
-meant to sit on the store this document defines.
+meant to sit on the store this document defines. The proposed version-history product and
+architecture contracts are now docs 139–140; they retain this document's measured rule that
+normalized JSON is not a fidelity-complete restore artifact.
 
 ## 1. The problem, stated concretely
 

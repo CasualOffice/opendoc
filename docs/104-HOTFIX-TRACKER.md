@@ -754,17 +754,17 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-011 — No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable
 
-**P1** · data-safety · architecture · effort L · source: Sibling gap vs opencalc + docs · **Status:** Open · related: HF-002
+**P1** · data-safety · architecture · effort L · source: Sibling gap vs opencalc + docs · **Status:** Fixed (#554; doc 112) · related: HF-002
 
 **Symptom.** A browser OOM kill, an OS restart, or a wasm crash takes the whole session with it. Even after HF-002 lands, the only recovery for anything that is not a deliberate close is nothing at all — there is no snapshot to come back to.
 
-**In opendoc.** Absent. `rg -i indexedDB|IDBDatabase|autosave|draft|recover` over webapp/src + editor.html → nothing document-related (the two apparent hits are Material-Symbols ligature strings). The only durable storage in the whole webapp is four localStorage preference writes: main.js:286/296 (ribbonCollapsed), :13657/13664 (smart quotes), :14344/14352 (opendoc.settings). No drafts/recovery spec among the 93 e2e specs. docs/03-HLD.md:185 already anticipates a StorageProvider "only for optional autosave".
+**In opendoc now.** Fixed by doc 112 and #554: source-format IndexedDB drafts, bounded cadence/slots, explicit recovery offers, cross-tab liveness, quota disclosure, and crash/reload tests ship. The historical diagnosis below is retained only as the evidence that opened the row.
 
 **In the sibling.** sheets/webapp/editor.drafts.js (1026 lines) — IndexedDB draft store on a quiesce-5s / ceiling-60s cadence copied from the collab server, a meta+bytes two-row split so the recovery bar costs kilobytes (:136-150), a cross-tab slot lease (:258-303), a recovery bar that OFFERS and never applies (:667-780), writes on visibilitychange rather than beforeunload (:635-655), suppressed in host-owned modes (:31-35). docs-repo/docx-editor/packages/react/src/utils/autosave.ts (single-slot IDB ArrayBuffer) + components/AutosaveRestoreBanner.tsx (24h age gate, same-doc gate, Restore/Discard) + hooks/useAutoSave.ts + file-source/AutosaveStatus.tsx ("Saved 2 min ago" pill).
 
-**Fix.** Port editor.drafts.js's shape (not a new invention): an `opendoc-drafts` IndexedDB with a meta row and a bytes row per tab slot, serialized via the existing `doc.exportAs("org.casualoffice.normalized-json")` (main.js:10641); write on quiesce (5s idle, 60s ceiling) keyed on the engine revision moving; write on visibilitychange, not beforeunload; on boot show a bar that names the document, its age, and how far ahead of the last download it is, and OFFERS the draft rather than applying it; delete on successful Save; adopt docs-ref's 24h age gate and same-doc gate rather than inventing new ones. Do not autosave in a host iframe. This is the one IndexedDB seam ranks 17 and 18 also build on. BLOCKED ON the privacy decision below.
+**Fix.** Implemented as doc 112. The shipped design deliberately replaced this row's early normalized-JSON idea after measurement proved that JSON loses resources and the retained source envelope; drafts use the document's fidelity-capable source-format export ladder.
 
-**Decision.** **Unblocked by D-1** (browser storage approved, opencalc shape). Build the IndexedDB seam once; HF-068 and HF-073 sit on top of it.
+**Decision.** **Unblocked by D-1 and shipped.** Build the IndexedDB seam once; HF-068 and HF-073 sit on top of it.
 
 ### HF-012 — Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept
 
@@ -1565,13 +1565,13 @@ a test that could not fail.
 
 **Symptom.** "Get back the version from before I restructured chapter 3" is unanswerable. Ctrl+Z is the only recovery mechanism and it does not survive a reload.
 
-**In opendoc.** Absent: `rg -ni 'version history|versionHistory|restoreVersion|namedVersion|snapshot'` over webapp/ and crates/ hits only main.js:7940 and :13238, both about formatting/keystroke coalescing; no versions module among webapp/src's eight files; no version spec among 93 e2e specs; the File menu (main.js:10926-10932) has no entry. docs/71 — the only "history" design in the repo — is undo/redo action labels, not snapshots. The only history is the in-memory undo stack, which dies with the page.
+**In opendoc.** Implementation remains absent. Session Undo/Redo and doc 112 crash-recovery drafts ship, but neither is a durable timeline. Docs 139–140 now define the product and architecture contracts; no version store, named version, historical preview/diff, or append-only restore surface has landed.
 
 **In the sibling.** sheets/webapp/editor.versions.js (195 lines) — a reload-surviving IndexedDB version store, "A history you lose by pressing F5 is not a history", compressed via CompressionStream off the main thread (17.82 MiB → 1.61 MiB measured), meta/bytes split so opening the panel costs kilobytes; persistVersions/loadVersions/forgetVersions; the panel at editor.core.js:5245-5265 renders when / label(Saved|Named|Autosave) / size / Restore plus a byte-budget line. Gated by tests/browser/editor.version-history.spec.mjs and editor.version-persistence.spec.mjs. docs-ref: version-history/store.ts, useVersionHistoryCapture.ts, useLiveVersionList.ts, versionDiff.ts and components/sidebar/VersionHistoryPanel.tsx (day-grouped timeline, pinned Current version, per-row preview/rename/restore/delete, changes-vs-previous diff).
 
-**Fix.** BLOCKED ON HF-011 — build on the same IndexedDB seam, not a second store. Capture on explicit Save, on a named "Keep this version" action, and on a slow tick; store metadata and gzipped bytes as separate rows (CompressionStream off the main thread rather than compressing in wasm); retain against a byte budget, not a count; surface as File ▸ Version history with the opencalc row shape (timestamp, kind label, size, Restore) reusing the existing right-panel pattern (main.js:9930/10025/10545), and make Restore go through the same confirm as a destructive open. No Rust needed — exportAs("org.casualoffice.normalized-json") is already wired (:10641). Scope v1 to preview + restore; the word-level diff can follow using the paragraph walk find already does (:12563).
+**Fix.** **Designed, not implemented, in docs 139–140.** Build on the same IndexedDB seam, not a second store. Capture fidelity-complete source-format checkpoints on explicit Save, named-version creation, restore boundaries, and bounded policy ticks; split metadata from immutable bytes so opening the panel costs kilobytes; retain against a byte budget, not a count; and surface File ▸ Version history with grouped/named rows, isolated preview, structural version diff, copy/download, and Restore. Restore appends a new reversible commit and preserves the later timeline. The old proposal to store normalized JSON is withdrawn: doc 112 measured that it drops every binary resource and the retained source envelope. Normalized snapshots may be derived diff projections, never the sole restore artifact. Durable per-change authorship remains gated on doc 107's transaction-path unification.
 
-**Decision.** **Unblocked by D-1.** Same store as HF-011 — not a second one. The target design shows a Saved/Synced state, so this surface is design-required.
+**Decision.** **Unblocked by D-1; design complete pending owner decisions VH-0/H0.** Same store as HF-011 — not a second one. The target design shows a Saved/Synced state, so this surface is design-required. Status remains Open until the docs 139–140 release gates pass.
 
 ### HF-069 — Toolbar and menu commands fire on mouse-down, so a mis-press cannot be aborted
 
@@ -2082,4 +2082,3 @@ a test that could not fail.
 **Evidence.** pageFromEvent spreads pagesEl.querySelectorAll('.page-wrap') into an array and indexOf's it on every pointermove/pointerdown, while pageIndexOfWrap reads wrap.__pageIndex, populated for every page by observePages.
 
 **Fix.** Replace the body of pageFromEvent with `const idx = pageIndexOfWrap(wrap); return idx < 0 ? null : pages[idx];` — an exactly equivalent O(1) lookup that also removes the stale-index window during a rebuild.
-

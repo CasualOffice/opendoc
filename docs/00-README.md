@@ -113,6 +113,8 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 104. `104-HOTFIX-TRACKER.md` — ranked queue of confirmed UX, UI, and correctness defects in shipped code, with cross-cutting root-cause themes and the owner decisions that block several rows.
 131. `131-PDF-SEMANTIC-RECONSTRUCTION-AND-BROWSER-OCR-ARCHITECTURE.md` — experimental future-feature architecture for local browser PDF evidence extraction, selective OCR, staged Rust/WASM reconstruction, and semantic export; not implemented or supported.
 132. `132-EXPERIMENTAL-DOCUMENT-ASSISTANCE-SEMANTIC-SEARCH-AND-MCP-ARCHITECTURE.md` — proposed experimental, use-case-first architecture for document assistance, browser-local semantic retrieval and summarization, reviewable change proposals, and an optional MCP adapter; not implemented or supported.
+139. `139-VERSION-HISTORY-EDIT-MANAGEMENT-AND-RESTORE-PRD.md` — proposed product requirements for Google-Docs-style durable versions, edit attribution, named history, safe append-only restore, copy/download, and structural version diff.
+140. `140-VERSION-HISTORY-RESTORE-AND-DIFF-ARCHITECTURE.md` — proposed local-first snapshot/replay, fidelity-complete checkpoint, atomic restore, host storage, retention, and typed version-diff architecture; not implemented.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 

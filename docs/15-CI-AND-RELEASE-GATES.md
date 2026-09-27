@@ -257,6 +257,46 @@ gates:
 Until these gates exist and pass, CI makes no document-assistance, semantic-search,
 summarization, embedded-model, or MCP support claim.
 
+### Durable version-history, restore, and diff gates
+
+Docs 139–140 define proposed required v1 behavior, not current support. The existing
+Undo/Redo and doc 112 autosave/crash-recovery gates do not establish durable version
+history. Before the support matrix may claim it, CI must include:
+
+- version/checkpoint/commit schema compatibility, bounded decoding, unknown-version
+  refusal, and deterministic metadata grouping tests;
+- fidelity-complete checkpoint corpora across DOCX, ODT, RTF, TXT, and normalized JSON,
+  including media, source envelopes, unknown safe parts, comments/revisions, drawings,
+  tables, notes, fields, headers/footers, and metadata;
+- checkpoint -> restore -> save -> reopen semantic and preservation fixed points, proving
+  that normalized JSON is never used alone when it would lose resources;
+- injected failure before and after every restore state-machine transition, proving the
+  visible head is always either the complete old state or complete restored state;
+- restore-as-new-commit, retained later history, idempotent retry, stale-head refusal,
+  in-session one-step Undo, and after-reload reversibility tests;
+- golden structure-aware diffs for every declared construct family, stable-ID and
+  independently imported alignment, deterministic ordering, exact navigation anchors,
+  and explicit `not_compared`/ambiguous/missing-resource findings;
+- author/origin attribution tests and an explicit incomplete state when compaction or
+  snapshot-only history prevents per-change attribution;
+- capability tests for read, name, create, restore, copy, download, delete, and audit at
+  the UI, host-contract, SDK, and service boundaries;
+- metadata-only panel reads, pagination, cancellation, storage byte limits, quota/eviction
+  disclosure, pin-preserving compaction, corruption isolation, and cross-tab collision
+  tests;
+- offline/network-interception proof for local history and a check that ordinary
+  DOCX/ODT export contains no hidden OpenDoc timeline;
+- keyboard, screen-reader, high-contrast, locale/time-zone, narrow-viewport, and touch
+  journeys for list -> preview -> diff -> restore -> return;
+- main-thread long-task, checkpoint, preview-open, restore, replay, diff, peak-memory, and
+  storage benchmarks on small, media-heavy, 500-paragraph, 8,000-paragraph, and
+  pathological documents;
+- crash/reload tests during checkpoint, compaction, version deletion, and restore, plus a
+  browser-store schema upgrade from doc 112 without draft loss.
+
+Until these gates pass, current support is accurately described as session Undo/Redo,
+review history, and single-slot crash recovery—not durable version history or diff.
+
 ## Release Gates
 
 ### Preview
@@ -308,6 +348,7 @@ summarization, embedded-model, or MCP support claim.
 | Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Comments and suggestions integrity | Partial | P1G-REVIEW-035 supplies numeric authored inline revision ids, scoped atomic review inverses, coalesced/bounded suggestion history, and fail-closed editor-group decisions. P1G-REVIEW-036 adds one deterministic Final-with-markup byte projection and standard one-copy `w:rPrChange` formatting with structured card deltas and import/export decisions. Doc 81 retains the pending full-schema/consumer, command-matrix, mixed-editing, scale, accessibility, and responsive gates in P1G-REVIEW-037 through P1G-REVIEW-039. |
+| Durable version history / restore / diff | Design only | Not implemented. Docs 139–140 define future fidelity-checkpoint, append-only restore, typed diff, attribution, capability, retention, offline, crash-atomicity, accessibility, and performance gates. Doc 112 covers crash-recovery drafts only. |
 | PDF semantic reconstruction | Experimental design only | Not implemented or supported. Doc 131 defines future evidence, privacy, offline, determinism, security, semantic, visual, editability, memory, cancellation, and browser-profile gates. Current PDF CI covers export only. |
 | Document assistance / semantic search / MCP | Experimental design only | Not implemented or supported. Doc 132 and proposed ADR-035 define future scenario, proposal, preservation, injection-resistance, semantic-index, retrieval/summarization-quality, privacy/offline, resource, cross-browser, MCP-conformance, authorization, approval, and optional-companion gates. |
 | Release artifacts | Not started | Define before beta. |
