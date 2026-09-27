@@ -739,6 +739,447 @@ fn master_page_round_trips_as_a_byte_and_semantic_fixed_point() {
     assert_eq!(reexported.bytes, first.bytes);
 }
 
+/// Extracts the `<office:master-styles>` … `</office:master-styles>` block of a
+/// styles.xml document, so a guard can assert on the header/footer regions
+/// without matching the rest of the part.
+fn master_styles_block(styles_xml: &str) -> &str {
+    styles_xml
+        .split("<office:master-styles>")
+        .nth(1)
+        .and_then(|rest| rest.split("</office:master-styles>").next())
+        .expect("master-styles block")
+}
+
+/// Every automatic-style name referenced inside `region` must be DEFINED in
+/// `styles_xml`. An automatic style declared in content.xml is not in scope from
+/// a `style:master-page`, so this is the assertion that catches a header
+/// referencing a style that only exists in the other part.
+fn assert_no_dangling_style_refs(region: &str, styles_xml: &str) {
+    for attribute in ["text:style-name=\"", "table:style-name=\""] {
+        for occurrence in region.split(attribute).skip(1) {
+            let name = occurrence.split('"').next().expect("style name");
+            assert!(
+                styles_xml.contains(&format!("style:name=\"{name}\"")),
+                "header/footer references automatic style {name:?} that styles.xml does not define: {styles_xml}"
+            );
+        }
+    }
+}
+
+/// Imports the shared package with a plain-text footer, then hands the footer's
+/// definition to `build` so a guard can replace its blocks with richer content.
+/// Returns the mutated, re-validated document.
+fn document_with_footer(
+    build: impl FnOnce(&mut casual_doc_model::v1::Document, casual_doc_model::v1::HeaderFooterId),
+) -> casual_doc_model::v1::Document {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:footer><text:p>placeholder</text:p></style:footer></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    let mut document = imported.document;
+    let footer_id = document.definitions().sections[0].footers[0].reference;
+    build(&mut document, footer_id);
+    document.validate().unwrap();
+    document
+}
+
+/// Mints test node ids well above anything the importer produced.
+fn test_ids() -> impl FnMut() -> casual_doc_model::NodeId {
+    let mut next = 500_000_u128;
+    move || {
+        next += 1;
+        casual_doc_model::NodeId::new(next).unwrap()
+    }
+}
+
+#[test]
+fn footer_page_number_field_and_logo_survive_the_export() {
+    // Regression: `render_header_footer_paragraph` was a second, far poorer
+    // writer than `write_inlines` — it handled 3 of 29 inline kinds and 1 of 4
+    // block kinds, so a page-number field, an image, a hyperlink, a bookmark, a
+    // table and every run/paragraph property in a header or footer were recorded
+    // `Omitted` and written as nothing. A Word document's footer page number came
+    // back empty. The header/footer path now runs through `write_blocks`.
+    //
+    // Assert the GUARANTEE on the bytes we hand a consumer: the exported
+    // package's styles.xml footer region carries the page-number field and the
+    // logo's frame, the image part is in the package, and no style the region
+    // references is missing from styles.xml.
+    use casual_doc_model::v1::{
+        Alignment as Align, Bookmark, BookmarkEnd, BookmarkId, Drawing, Extent, ExternalTarget,
+        Field, FieldKind, Hyperlink, HyperlinkTarget as Target, MediaId, MediaReference, Paragraph,
+        ParagraphProperties, Run, RunProperties, Table, TableCell, TableRow,
+    };
+
+    const LOGO_PART: &str = "Pictures/logo.png";
+    const LOGO_BYTES: &[u8] = b"\x89PNG\r\n\x1a\nlogo-bytes";
+
+    let mut fresh = test_ids();
+    let media_id = MediaId::new(fresh());
+    let bookmark_id = BookmarkId::new(fresh());
+    let document = document_with_footer(|document, footer_id| {
+        let definitions = document.definitions_mut();
+        definitions.media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: LOGO_PART.to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: LOGO_PART.to_owned(),
+            },
+        );
+        definitions.bookmarks.insert(
+            bookmark_id,
+            Bookmark {
+                name: "FooterMark".to_owned(),
+            },
+        );
+        let properties = ParagraphProperties {
+            alignment: Some(Align::Center),
+            ..Default::default()
+        };
+        let bold = RunProperties {
+            bold: Some(true),
+            ..Default::default()
+        };
+        let footer = definitions.footers.get_mut(&footer_id).expect("footer");
+        footer.blocks = vec![
+            BlockNode::Paragraph(Paragraph {
+                id: fresh(),
+                properties: properties.into(),
+                inlines: vec![
+                    InlineNode::BookmarkStart(casual_doc_model::v1::BookmarkStart {
+                        id: fresh(),
+                        bookmark: bookmark_id,
+                    }),
+                    InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: bold.into(),
+                        text: "Page ".to_owned(),
+                    }),
+                    // The near-universal case: a page number in a footer.
+                    InlineNode::Field(Box::new(Field {
+                        id: fresh(),
+                        instruction: "PAGE".to_owned(),
+                        kind: FieldKind::Page,
+                        inlines: Vec::new(),
+                        form: None,
+                        update: Default::default(),
+                    })),
+                    InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: Default::default(),
+                        text: " of ".to_owned(),
+                    }),
+                    InlineNode::Field(Box::new(Field {
+                        id: fresh(),
+                        instruction: "NUMPAGES".to_owned(),
+                        kind: FieldKind::NumPages,
+                        inlines: Vec::new(),
+                        form: None,
+                        update: Default::default(),
+                    })),
+                    InlineNode::Tab(casual_doc_model::v1::Tab { id: fresh() }),
+                    // The logo.
+                    InlineNode::Drawing(Box::new(Drawing {
+                        id: fresh(),
+                        media: media_id,
+                        extent: Some(Extent {
+                            width_emu: 914_400,
+                            height_emu: 457_200,
+                        }),
+                        descr: Some("Company logo".to_owned()),
+                        crop: None,
+                        opacity: None,
+                        hyperlink: None,
+                        border: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    })),
+                    InlineNode::Hyperlink(Box::new(Hyperlink {
+                        id: fresh(),
+                        target: Target::External(ExternalTarget {
+                            url: "https://example.org/terms".to_owned(),
+                            anchor: None,
+                        }),
+                        tooltip: None,
+                        inlines: vec![InlineNode::Run(Run {
+                            id: fresh(),
+                            properties: Default::default(),
+                            text: "Terms".to_owned(),
+                        })],
+                    })),
+                    InlineNode::BookmarkEnd(BookmarkEnd {
+                        id: fresh(),
+                        bookmark: bookmark_id,
+                    }),
+                ],
+            }),
+            BlockNode::Table(Box::new(Table {
+                id: fresh(),
+                grid: vec![casual_doc_model::v1::GridColumn {
+                    width_twips: Some(2000),
+                }],
+                grid_change: None,
+                properties: Default::default(),
+                rows: vec![TableRow {
+                    id: fresh(),
+                    properties: Default::default(),
+                    cells: vec![TableCell {
+                        id: fresh(),
+                        properties: Default::default(),
+                        blocks: vec![BlockNode::Paragraph(Paragraph {
+                            id: fresh(),
+                            properties: Default::default(),
+                            inlines: vec![InlineNode::Run(Run {
+                                id: fresh(),
+                                properties: Default::default(),
+                                text: "celled".to_owned(),
+                            })],
+                        })],
+                    }],
+                }],
+            })),
+        ];
+    });
+
+    let mut retained = crate::OdfRetainedParts::default();
+    retained.parts.insert(
+        LOGO_PART.to_owned(),
+        RetainedPart {
+            media_type: "image/png".to_owned(),
+            bytes: LOGO_BYTES.to_vec(),
+        },
+    );
+    let export =
+        write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default()).unwrap();
+
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_xml = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    let master = master_styles_block(&styles_xml);
+    let footer_region = master
+        .split("<style:footer>")
+        .nth(1)
+        .and_then(|rest| rest.split("</style:footer>").next())
+        .expect("footer region");
+
+    for expected in [
+        "<text:page-number/>",
+        "<text:page-count/>",
+        "<draw:image xlink:href=\"Pictures/logo.png\"/>",
+        "<text:a xlink:type=\"simple\" xlink:href=\"https://example.org/terms\">",
+        "<text:bookmark-start text:name=\"FooterMark\"/>",
+        "<text:bookmark-end text:name=\"FooterMark\"/>",
+        "<table:table",
+        "celled",
+        "<text:tab/>",
+        "<svg:title>Company logo</svg:title>",
+    ] {
+        assert!(
+            footer_region.contains(expected),
+            "footer region missing {expected:?}: {footer_region}"
+        );
+    }
+    // Paragraph alignment and the bold run now ride on real styles.xml automatic
+    // styles rather than being dropped as `header_footer.*_properties`.
+    assert!(
+        footer_region.contains("<text:p text:style-name="),
+        "footer paragraph carries no style: {footer_region}"
+    );
+    assert!(
+        footer_region.contains("<text:span text:style-name="),
+        "footer bold run carries no style: {footer_region}"
+    );
+    assert_no_dangling_style_refs(footer_region, &styles_xml);
+
+    // The namespaces those elements need must be declared on the styles.xml root.
+    for declaration in [
+        "xmlns:text=",
+        "xmlns:table=",
+        "xmlns:draw=",
+        "xmlns:svg=",
+        "xmlns:xlink=",
+    ] {
+        assert!(
+            styles_xml.contains(declaration),
+            "styles.xml root does not declare {declaration}: {styles_xml}"
+        );
+    }
+
+    // The logo's bytes are in the package, byte-verbatim, so the reference is not
+    // dangling, and the whole package still reopens through the bounded layer.
+    assert_eq!(package.read_part(LOGO_PART).unwrap(), LOGO_BYTES);
+    package.import_document(OdfImportLimits::default()).unwrap();
+
+    // Nothing in this footer is reported as omitted header/footer content any
+    // more: the old writer reported five distinct losses for it.
+    let omitted: Vec<&str> = export
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature.starts_with("odt.export.header_footer."))
+        .map(|entry| entry.feature.as_str())
+        .collect();
+    assert!(
+        omitted.is_empty(),
+        "footer content still reported as header/footer loss: {omitted:?}"
+    );
+}
+
+#[test]
+fn header_content_a_page_region_cannot_host_is_reported_not_written() {
+    // The three constructs that genuinely differ from the body, because their
+    // DECLARATION lives in content.xml or a page region cannot host them at all.
+    // Each must be reported AND must not emit a reference styles.xml cannot
+    // resolve.
+    use casual_doc_model::v1::{
+        Field, FieldKind, FormFieldData, FormFieldKind, FormTextInput, Note, NoteId, NoteKind,
+        NoteReference, Paragraph, Revision, RevisionKind, Run,
+    };
+
+    let mut fresh = test_ids();
+    let note_id = NoteId::new(fresh());
+    let document = document_with_footer(|document, footer_id| {
+        let definitions = document.definitions_mut();
+        definitions.footnotes.insert(
+            note_id,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: fresh(),
+                    properties: Default::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: Default::default(),
+                        text: "note body".to_owned(),
+                    })],
+                })],
+            },
+        );
+        let footer = definitions.footers.get_mut(&footer_id).expect("footer");
+        footer.blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: fresh(),
+            properties: Default::default(),
+            inlines: vec![
+                // A form control: `office:forms` is a child of `office:text`.
+                InlineNode::Field(Box::new(Field {
+                    id: fresh(),
+                    instruction: "FORMTEXT".to_owned(),
+                    kind: FieldKind::Other {
+                        keyword: "FORMTEXT".to_owned(),
+                    },
+                    inlines: vec![InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: Default::default(),
+                        text: "typed".to_owned(),
+                    })],
+                    form: Some(FormFieldData {
+                        name: None,
+                        enabled: None,
+                        calc_on_exit: None,
+                        help_text: None,
+                        status_text: None,
+                        entry_macro: None,
+                        exit_macro: None,
+                        kind: FormFieldKind::TextInput(FormTextInput {
+                            text_type: None,
+                            default: None,
+                            max_length: None,
+                            format: None,
+                        }),
+                    }),
+                    update: Default::default(),
+                })),
+                // A tracked insertion: `text:tracked-changes` is a child of
+                // `office:text`, so no changed region is reachable from here.
+                InlineNode::Revision(Box::new(Revision {
+                    id: fresh(),
+                    kind: RevisionKind::Insertion,
+                    author: Some("Ada".to_owned()),
+                    date: None,
+                    revision_id: None,
+                    editor_group: None,
+                    inlines: vec![InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: Default::default(),
+                        text: "added".to_owned(),
+                    })],
+                })),
+                // A tracked deletion: its text must NOT be resurrected as live
+                // page furniture.
+                InlineNode::Revision(Box::new(Revision {
+                    id: fresh(),
+                    kind: RevisionKind::Deletion,
+                    author: Some("Ada".to_owned()),
+                    date: None,
+                    revision_id: None,
+                    editor_group: None,
+                    inlines: vec![InlineNode::Run(Run {
+                        id: fresh(),
+                        properties: Default::default(),
+                        text: "REMOVED".to_owned(),
+                    })],
+                })),
+                // A footnote reference: a page region has no note area.
+                InlineNode::NoteReference(NoteReference {
+                    id: fresh(),
+                    kind: NoteKind::Footnote,
+                    note: note_id,
+                }),
+            ],
+        })];
+    });
+
+    let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_xml = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    let footer_region = master_styles_block(&styles_xml)
+        .split("<style:footer>")
+        .nth(1)
+        .and_then(|rest| rest.split("</style:footer>").next())
+        .expect("footer region");
+
+    // The text that is genuinely on the page survives; the unresolvable
+    // references do not appear at all.
+    assert!(footer_region.contains("typed"), "{footer_region}");
+    assert!(footer_region.contains("added"), "{footer_region}");
+    for forbidden in [
+        "draw:control",
+        "text:change",
+        "text:note",
+        // Deleted text must not be written into the page.
+        "REMOVED",
+    ] {
+        assert!(
+            !footer_region.contains(forbidden),
+            "footer region emitted unresolvable/deleted {forbidden:?}: {footer_region}"
+        );
+    }
+    // And every one of them is disclosed.
+    let reported: Vec<&str> = export
+        .report
+        .entries
+        .iter()
+        .map(|entry| entry.feature.as_str())
+        .collect();
+    for feature in [
+        "odt.export.header_footer.form_field",
+        "odt.export.header_footer.tracked_insertion",
+        "odt.export.header_footer.tracked_deletion",
+        "odt.export.header_footer.note",
+    ] {
+        assert!(
+            reported.contains(&feature),
+            "{feature} not reported: {reported:?}"
+        );
+    }
+    // The package is still valid ODF.
+    package.import_document(OdfImportLimits::default()).unwrap();
+}
+
 #[test]
 fn geometry_only_styles_have_no_master_page() {
     let bytes = package_with_styles(styles_with_master(""));
