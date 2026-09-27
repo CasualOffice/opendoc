@@ -543,6 +543,11 @@ fn append_inlines(
             | InlineNode::CommentRangeEnd(_)
             | InlineNode::BookmarkStart(_)
             | InlineNode::BookmarkEnd(_)
+            // A paragraph-spanning field's markers are range anchors like the rest:
+            // the field's cached result is the ordinary content between them and is
+            // emitted by walking that content, so the markers themselves add no text.
+            | InlineNode::FieldRangeStart(_)
+            | InlineNode::FieldRangeEnd(_)
             | InlineNode::MoveRangeStart(_)
             | InlineNode::MoveRangeEnd(_) => {
                 losses.record("plain_text.range_or_comment_marker", ModelOutcome::Omitted);
