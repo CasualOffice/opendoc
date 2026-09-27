@@ -1,4 +1,4 @@
-# 128 — ONLYOFFICE toolbar gap analysis
+# 130 — ONLYOFFICE toolbar gap analysis
 
 **Status:** Analysis, complete. **Opened:** 2026-09-27. **Owner:** unassigned.
 **Scope:** the ribbon/toolbar command surface of ONLYOFFICE's **document** editor against
@@ -633,7 +633,7 @@ never-a-dead-control contract working as intended (`SKILL.md` §10), and it mean
 a missing-surface row.
 
 **The first draft's classification of this as "facade + UI" was too cheap, and
-`docs/128-LINK-TO-PREVIOUS-DESIGN.md` is why.** Re-linking is one
+`docs/129-LINK-TO-PREVIOUS-DESIGN.md` is why.** Re-linking is one
 `SetSectionRunningRef { reference: None }` and needs nothing new. *Un*linking has to mint a
 section-local body holding a faithful copy of the inherited blocks, and the only deep-copy in
 the tree — `Interop::fresh_block` in `casual-doc-wasm`, the structured clipboard's
@@ -641,7 +641,7 @@ reconstructor — routes inlines through a `match` with a `_ => {}` arm that sil
 everything but runs, tabs, breaks and hyperlinks. Shipping this on that helper would be silent
 data loss, which `SKILL.md` §12 forbids outright. It adds **no operation** (so ADR-030 I2 holds)
 and needs **one lossless clone helper**. Tracked as **HF-192**, with the clone helper itself as
-**HF-191** (PR #641). Read `128` before touching it; do not re-derive it here.
+**HF-191** (PR #641). Read `129` before touching it; do not re-derive it here.
 
 ### 4.10 Advanced character formatting — model-adjacent engine + facade + UI
 
@@ -858,7 +858,7 @@ already do.
 | 12 | **Multilevel list gallery and list settings** (number format, start-at, restart, follow-number-with, tab stop) | UI over the existing numbering model (`definitions.rs:220-248` carries level, start, `num_fmt`, `lvl_text`, `lvl_jc`, `suff`) | OO-021 — sharpen with these citations |
 | 13 | **Print dialog**: range, duplex, colour/mono, margins, preview | UI + print plumbing. **Its "blocked-by RM-04" note is stale** — real-text PDF shipped | OO-010 |
 | 14 | **Comment scope**: remove/resolve mine and all | UI only | **new** |
-| 15 | **Header/footer "same as previous"** | **engine** — one lossless deep-clone helper, **no new operation**. The control already ships disabled with a reason and the design is written | `docs/128-LINK-TO-PREVIOUS-DESIGN.md`, tracked as **HF-192** with the deep-copy helper it waits on as **HF-191** (PR #641); **not a new row** |
+| 15 | **Header/footer "same as previous"** | **engine** — one lossless deep-clone helper, **no new operation**. The control already ships disabled with a reason and the design is written | `docs/129-LINK-TO-PREVIOUS-DESIGN.md`, tracked as **HF-192** with the deep-copy helper it waits on as **HF-191** (PR #641); **not a new row** |
 | 16 | **View-tab breadth**: rulers show/hide, dark document, status bar / panel visibility | UI only | **new** |
 | 17 | **Multiple-pages view** | UI + viewer layout | **new** (part of #16's row or its own; `105` §4.3 already notes it) |
 | 18 | **Content control authoring** (7 types) | engine + UI; `w:sdt` already models, round-trips and paints checkbox state | OO-012 |
@@ -924,7 +924,7 @@ work.
 | OO-028 | Audit | P2 | M | No object arrangement: no z-order operation (so `layout.arrange.bringForward` ships disabled), no align, no distribute, no group/ungroup | 8 |
 | OO-029 | Audit | P2 | S | Notes can be inserted and nothing else — no convert to endnote/footnote, no swap, no delete-all, no note settings, no go-to next/previous note | 11 |
 | OO-030 | Audit | P2 | S | Comments have only the current scope — no "resolve mine", "resolve all", "remove mine" or "remove all", while changes already have both scopes | 14 |
-| ~~OO-031~~ | — | — | — | **Withdrawn — already filed as `HF-192`** (PR #641), with the lossless deep-copy helper it waits on as `HF-191`. "A section's header/footer cannot be unlinked from the previous section" is real, but it is designed in `docs/128-LINK-TO-PREVIOUS-DESIGN.md` and the control already ships disabled with that reason. Filing it again would duplicate, and the first draft's effort estimate would have been wrong: the blocker is a lossless deep clone, not a facade call | 15 |
+| ~~OO-031~~ | — | — | — | **Withdrawn — already filed as `HF-192`** (PR #641), with the lossless deep-copy helper it waits on as `HF-191`. "A section's header/footer cannot be unlinked from the previous section" is real, but it is designed in `docs/129-LINK-TO-PREVIOUS-DESIGN.md` and the control already ships disabled with that reason. Filing it again would duplicate, and the first draft's effort estimate would have been wrong: the blocker is a lossless deep clone, not a facade call | 15 |
 | OO-032 | Audit | P2 | S | View offers nothing but compact ribbon — no rulers show/hide, no dark document, no status-bar or panel visibility | 16 |
 | OO-033 | Audit | P2 | M | No multiple-pages view, so a reader cannot see spreads | 17 |
 | OO-034 | Audit | P3 | S | The headings panel has no promote/demote, no insert-heading-before/after and no expand-to-level | 22 |

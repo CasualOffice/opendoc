@@ -1,4 +1,4 @@
-# 126 — Experimental Document Assistance, Semantic Search, and MCP Architecture
+# 132 — Experimental Document Assistance, Semantic Search, and MCP Architecture
 
 **Status:** Proposed experimental future feature; documentation only. Not accepted,
 implemented, supported, or committed to v1.

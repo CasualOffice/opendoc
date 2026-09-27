@@ -215,3 +215,49 @@ test("no two documents claim the same number", () => {
       "because the number belongs to whichever document readers are already pointing at",
   );
 });
+
+// A document's own heading must agree with its number.
+//
+// The renaming that closed the collisions above moved ten files and left every
+// one of their H1s stating the OLD number, so `docs/137` opened with
+// "# 105 — Dual chrome" — the same wrong-address defect, inside the change that
+// was fixing it. Nine of the ten, caught by looking rather than by any guard.
+//
+// This is the cheap half of "does a citation mean what it says": a reader who
+// follows `docs/137` and finds a heading numbered 105 cannot tell whether they
+// have the right file, the wrong file, or a file that was renamed and not
+// finished. Not every document uses the `# NNN — Title` form, and one that does
+// not is left alone; the assertion is only that a document which states a number
+// states its OWN.
+test("a document's heading states its own number", () => {
+  const wrong = [];
+  let checked = 0;
+  for (const name of readdirSync(join(repoRoot, "docs")).sort()) {
+    const file = /^(\d+)-.*\.md$/.exec(name);
+    if (!file) continue;
+    const first = readFileSync(join(repoRoot, "docs", name), "utf8").split("\n", 1)[0];
+    const heading = /^#\s+(\d+)\s*[—–-]\s*(.*)$/.exec(first);
+    if (!heading) continue; // A document that does not number its heading is fine.
+    checked += 1;
+    if (heading[1] !== file[1]) wrong.push(`${name} opens "# ${heading[1]} — ${heading[2]}"`);
+  }
+
+  // The half that fails when the guard breaks rather than when the tree does.
+  // 68 documents use the `# NNN — Title` form today. The floor is set BELOW that
+  // measurement rather than at a round guess: my first attempt asserted 80 and
+  // failed on arrival, which is the cheap version of the mistake this file keeps
+  // finding in other guards — a number chosen for how it reads instead of for
+  // what was counted.
+  assert.ok(
+    checked > 60,
+    `only ${checked} numbered headings found — the scan is looking in the wrong place, and ` +
+      "a guard that finds no headings passes by failing to look",
+  );
+  assert.deepEqual(
+    wrong,
+    [],
+    "a document's heading states a different number than its filename. Renaming a document " +
+      "means renaming it in its own first line too, or a reader cannot tell whether they have " +
+      "the right file",
+  );
+});

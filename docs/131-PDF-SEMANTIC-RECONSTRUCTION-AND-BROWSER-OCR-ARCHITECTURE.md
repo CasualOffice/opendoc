@@ -1,4 +1,4 @@
-# 125 — PDF Semantic Reconstruction and Browser OCR Architecture (Experimental)
+# 131 — PDF Semantic Reconstruction and Browser OCR Architecture (Experimental)
 
 > [!IMPORTANT]
 > This is research and architecture for a possible future feature. PDF import is not

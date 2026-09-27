@@ -1,4 +1,4 @@
-# 95 — Model-Completeness (Layer 1) Tracker
+# 136 — Model-Completeness (Layer 1) Tracker
 
 **Status:** ✅ **Layer 1 (typed model) COMPLETE — and 17 of its 40 rows are still unreachable from the product.** The typed-model completion pass (Layer 1 of a deliberate layering) is done — every ubiquitous/common/occasional construct is typed and round-trips; a completeness-critic sweep of all 139 import disposition sites confirmed no common-or-above construct remains dropped (the remainder is niche and retained verbatim by the floor). The `modeled` column of the fidelity matrix (doc 18 / `webapp/src/fidelity.js`) has been advanced accordingly. Next layer: rendering fidelity (Layer 3).
 **Scope:** `casual-doc-model` (typed model) + `casual-doc-import` + `casual-doc-export` (round-trip). **No new rendering in this layer.**
