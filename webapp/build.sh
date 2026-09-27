@@ -104,6 +104,14 @@ cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 # write the flat *.html that GitHub Pages serves. `--check` then fails the build
 # if the committed HTML drifted from its template + partials, so the generated
 # files can never fall out of sync (the same guard CI runs).
+# The embedding guide's code panels, tables and numbers are generated from the
+# code they document (webapp/tools/build-embed-docs.mjs). `--check` fails the
+# build when the committed page is not what a fresh run produces, so BOTH
+# directions of drift are caught here: a page edited by hand, and a source that
+# moved without the page being regenerated. Same contract as build-site --check
+# below, and as build-embed-package --check for the published package.
+node "$here/tools/build-embed-docs.mjs" --check
+
 "$here/build-site.py"
 "$here/build-site.py" --check
 
