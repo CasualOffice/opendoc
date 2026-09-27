@@ -37884,4 +37884,291 @@ mod tests {
             "and the reopened document paginates the same way"
         );
     }
+
+    // ---- "How long is this paragraph?" must have ONE answer ------------------
+    // Three functions in this engine have disagreed about it, one after another:
+    // `casual_doc_edit::inline_text_len`, `casual_doc_layout::append_node_plain_text`
+    // and (until this branch) `inline_anchor_len_for_review`. Deleting the third
+    // copy fixes this instance; the three guards below are what makes a FOURTH
+    // one fail the build instead of shipping.
+
+    /// A paragraph whose inlines are `"Page "`, a `PAGE` field whose cached result
+    /// is `"7"`, and `" of 9"`. Plain text is `"Page 7 of 9"`, eleven bytes, and
+    /// the field occupies the one byte it paints.
+    fn page_field_paragraph() -> (WasmDocument, NodeId) {
+        use casual_doc_model::v1::{Field, FieldKind};
+        // Its own `use` line on purpose — a new v1 import added into a shared
+        // sorted block conflicts with every other branch doing the same.
+        use casual_doc_model::v1::FieldUpdateState;
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(77, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let node = id();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: node,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                run(id(), "Page "),
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "PAGE".to_owned(),
+                    kind: FieldKind::Page,
+                    inlines: vec![run(id(), "7")],
+                    form: None,
+                    update: FieldUpdateState::default(),
+                })),
+                run(id(), " of 9"),
+            ],
+        });
+        let document = Document::new(
+            NodeId::from_parts(77, 1).unwrap(),
+            vec![paragraph],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid page-field document");
+        (wasm_document(document), node)
+    }
+
+    /// The text a comment's range markers actually enclose in the model, read
+    /// back from the tree rather than from any offset arithmetic.
+    ///
+    /// Deliberately NOT expressed in offsets: if the guard asked the review path
+    /// where it put the marker, and the review path is what is under test, a
+    /// wrong answer would agree with itself and the guard would pass. The
+    /// characters between the markers are an independent fact.
+    fn commented_text(paragraph: &Paragraph) -> String {
+        let mut inside = false;
+        let mut out = String::new();
+        for inline in &paragraph.inlines {
+            match inline {
+                InlineNode::CommentRangeStart(_) => inside = true,
+                InlineNode::CommentRangeEnd(_) => inside = false,
+                other if inside => out.push_str(&node_plain_text(core::slice::from_ref(other))),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// A comment anchored after a page-number field must enclose the characters
+    /// the user selected.
+    ///
+    /// `inline_anchor_len_for_review` charged a `Field` zero bytes while the
+    /// canonical `inline_anchor_len` charged it the width of the result it
+    /// paints, so every review offset in a paragraph holding a field was short by
+    /// exactly those bytes and the markers were spliced that far to the left.
+    #[test]
+    fn a_comment_after_a_page_field_encloses_the_selected_characters() {
+        let (mut d, node) = page_field_paragraph();
+        let key = node.to_string();
+        assert_eq!(
+            d.paragraph_length(&key),
+            11,
+            "the host addresses this paragraph as eleven bytes: \"Page 7 of 9\""
+        );
+
+        // " of 9" — the five bytes AFTER the field's one-byte result.
+        d.add_comment(&key, 6, &key, 11, "after the field", None, None, None)
+            .expect("comment the text after the field");
+
+        let paragraph = find_paragraph(d.document.body(), node).expect("the paragraph");
+        assert_eq!(
+            commented_text(paragraph),
+            " of 9",
+            "the comment encloses what the host selected; charging the field zero \
+             bytes slides both markers one byte to the left"
+        );
+    }
+
+    /// Every function on this crate's review path must report the SAME length for
+    /// the same paragraph.
+    ///
+    /// The fixture deliberately holds one of each kind the deleted copy charged
+    /// zero — a field, a note reference, an equation and a preview-less chart —
+    /// and holds them again one wrapper down, because the walks differ in how
+    /// they recurse and the bug hid inside the recursion too. A guard built from
+    /// runs alone cannot tell the two answers apart.
+    #[test]
+    fn every_review_length_answer_agrees_on_one_paragraph() {
+        use casual_doc_model::v1::FieldUpdateState;
+        use casual_doc_model::v1::{
+            EmbeddedKind, EmbeddedObject, EmbeddedPart, Field, FieldKind, InlineSdt, Math, Note,
+            NoteReference, SdtProperties,
+        };
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(78, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let note = NoteId::new(NodeId::from_parts(78, 900).unwrap());
+        let inlines = vec![
+            run(id(), "text"),
+            InlineNode::Field(Box::new(Field {
+                id: id(),
+                instruction: "PAGE".to_owned(),
+                kind: FieldKind::Page,
+                inlines: vec![run(id(), "7")],
+                form: None,
+                update: FieldUpdateState::default(),
+            })),
+            InlineNode::NoteReference(NoteReference {
+                id: id(),
+                kind: NoteKind::Footnote,
+                note,
+            }),
+            InlineNode::Math(Box::new(Math {
+                id: id(),
+                omml: "<m:oMath/>".to_owned(),
+                text: "x+1".to_owned(),
+                expression: None,
+            })),
+            InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                id: id(),
+                kind: EmbeddedKind::Chart,
+                part: EmbeddedPart {
+                    relationship_id: "rId7".to_owned(),
+                    relationship_type:
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                            .to_owned(),
+                    part_name: "word/charts/chart1.xml".to_owned(),
+                },
+                extra_parts: Vec::new(),
+                preview: None,
+                extent: Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                },
+                prog_id: None,
+            })),
+            InlineNode::Sdt(Box::new(InlineSdt {
+                id: id(),
+                properties: SdtProperties::default(),
+                inlines: vec![
+                    run(id(), "in a control"),
+                    InlineNode::Field(Box::new(Field {
+                        id: id(),
+                        instruction: "NUMPAGES".to_owned(),
+                        kind: FieldKind::NumPages,
+                        inlines: vec![run(id(), "9")],
+                        form: None,
+                        update: FieldUpdateState::default(),
+                    })),
+                ],
+            })),
+        ];
+        let node = id();
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: id(),
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![run(id(), "the note")],
+                })],
+            },
+        );
+        let document = Document::new(
+            NodeId::from_parts(78, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: node,
+                properties: ParagraphProperties::default().into(),
+                inlines: inlines.clone(),
+            })],
+            definitions,
+        )
+        .expect("a valid mixed-inline document");
+
+        let notes = NoteAnchorLengths::of(&document);
+        let anchor = inlines_anchor_len(&notes, &inlines);
+        assert!(
+            anchor > "textin a control".len() as u32,
+            "the fixture must charge the non-run kinds something, or this guard \
+             cannot tell a zero-returning length function from a correct one \
+             (measured {anchor})"
+        );
+
+        let mut segments = Vec::new();
+        review_segments(&notes, &inlines, false, &mut segments);
+        let segment_total: u32 = segments.iter().map(|segment| segment.len).sum();
+        assert_eq!(
+            segment_total, anchor,
+            "`review_segments` — the editing/markup offset map — must measure the \
+             paragraph the same way the splices do"
+        );
+
+        let mut offset = 0;
+        let mut items = Vec::new();
+        collect_review_inline(
+            &notes,
+            &inlines,
+            node,
+            &mut offset,
+            true,
+            &BTreeMap::new(),
+            &mut items,
+        );
+        assert_eq!(
+            offset, anchor,
+            "`collect_review_inline` — the walk that reports every revision's \
+             anchor — must end where the paragraph ends"
+        );
+    }
+
+    /// There must be exactly ONE family of anchor-length functions in this file.
+    ///
+    /// The behavioural guards above catch a second answer that DISAGREES. This
+    /// one catches a second answer at the moment it is written, which is cheaper
+    /// and is the failure mode this class actually has: three times now someone
+    /// needed the length in a context the canonical function could not be called
+    /// from, and wrote a private copy that started out agreeing.
+    ///
+    /// If a genuinely new one is needed it has to be added to this list
+    /// deliberately, with its reason — which is the review this class has never
+    /// had.
+    #[test]
+    fn there_is_exactly_one_anchor_length_family() {
+        const SOURCE: &str = include_str!("lib.rs");
+        let declared: Vec<&str> = SOURCE
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| {
+                line.strip_prefix("fn ")
+                    .or_else(|| line.strip_prefix("pub fn "))
+            })
+            .filter_map(|rest| rest.split('(').next())
+            .filter(|name| name.contains("anchor_len") || name.ends_with("_text_len"))
+            .collect();
+        assert_eq!(
+            declared,
+            vec![
+                // The single answer, and the one helper it owns.
+                "inline_anchor_len",
+                "inlines_anchor_len",
+                "field_anchor_len",
+            ],
+            "a new function answering \"how many bytes does this inline occupy\" \
+             has appeared. Three copies of this question have already disagreed \
+             and mis-placed comment markers; call `inline_anchor_len` instead, or \
+             add the new one here with the reason it cannot"
+        );
+    }
 }
