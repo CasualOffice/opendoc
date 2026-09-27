@@ -24,6 +24,7 @@ directions, not currently supported features.
 - Project overview: https://opendoc.casualoffice.org/
 - Live sample: https://opendoc.casualoffice.org/editor.html?demo=1
 - Browser editor: https://opendoc.casualoffice.org/editor.html
+- Embedding guide (capability roles, the custom element, the package): https://opendoc.casualoffice.org/embedding.html
 - Source repository: https://github.com/CasualOffice/opendoc
 - Architecture: https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md
 - SDK API direction: https://github.com/CasualOffice/opendoc/blob/main/docs/05-SDK-API-SPEC.md

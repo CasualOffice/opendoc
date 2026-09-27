@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embed the editor — OpenDoc</title>
+    <meta
+      name="description"
+      content="Embed the OpenDoc editor in your own page: an installable package, the <opendoc-editor> custom element, and a capability contract resolved before the frame's first navigation. Every example on this page is extracted from code that runs in CI."
+    />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/embedding.html" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="Embed the OpenDoc editor" />
+    <meta
+      property="og:description"
+      content="An installable package, a framework-free custom element, and a capability contract a host cannot be talked out of. Apache-2.0 and ungated."
+    />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/embedding.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Embed the OpenDoc editor" />
+    <meta
+      name="twitter:description"
+      content="An installable package, a framework-free custom element, and a capability contract resolved before first paint."
+    />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="./src/marketing.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="./" aria-label="OpenDoc home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="./" data-nav="overview">Overview</a>
+          <a href="./editor.html" data-nav="editor">Editor</a>
+          <a href="./docs.html" data-nav="docs" aria-current="page">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
+          <a class="header-cta" href="./editor.html">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader">
+      <aside class="doc-rail" aria-label="Documentation sections">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Guides</p>
+          <ul class="doc-rail-list">
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md">Architecture</a>
+            </li>
+            <li><a href="./docs.html">Import a document</a></li>
+            <li><a class="is-active" href="./embedding.html">Embed the editor</a></li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md">Embedding the engine</a>
+            </li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/05-SDK-API-SPEC.md">Transaction semantics</a>
+            </li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/40-FONT-MANAGEMENT-DESIGN.md">Fonts &amp; coverage</a>
+            </li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/28-DOCX-PACKAGE-READER.md">Package limits</a>
+            </li>
+          </ul>
+
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc-embed">The embed package</a></li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/126-EMBEDDABILITY-AND-SDK-THREE-PHASE-PLAN.md">Embeddability plan</a>
+            </li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/crates">Crates</a></li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/20-ERROR-CODE-REGISTRY.md">Error registry</a>
+            </li>
+            <li>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix</a>
+            </li>
+          </ul>
+        </div>
+      </aside>
+
+      <article class="doc-article">
+        <p class="doc-eyebrow">Guides · Embedding · SDK phase 1 of 3</p>
+        <h1 id="embed-the-editor">Embed the editor</h1>
+        <p class="doc-lede">
+          Phase 1 of the SDK ships three things a host can use today: an
+          installable package, a framework-free
+          <code>&lt;opendoc-editor&gt;</code> custom element, and a capability
+          contract that is resolved <b>before the frame's first navigation</b> —
+          so an embed cannot be talked out of the mode it was given. What it does
+          not ship yet is <a href="#not-yet">at the bottom of this page</a>, in as
+          many words.
+        </p>
+        <p class="doc-body">
+          Everything below is extracted from code in this repository by
+          <code>webapp/tools/build-embed-docs.mjs</code>, and a guard fails the
+          build if the page and the code disagree. Each code panel's caption
+          names the file it came from. That is not decoration: the public pages
+          here have carried fabricated claims twice, in both directions, so no
+          example on this page is typed and trusted — see
+          <a href="#evidence">how this page is kept honest</a>.
+        </p>
+
+        <h2 id="install" class="doc-h2">Install it</h2>
+        <p class="doc-body">
+          <code data-claim="package-name">@casualoffice/opendoc-embed</code>
+          version <span data-claim="package-version">0.1.0</span>:
+          <span data-claim="package-file-count">6</span> files,
+          <span data-claim="package-unpacked-kb">37 kB</span> unpacked,
+          <span data-claim="package-dependencies">0</span> runtime dependencies.
+          <b>Nothing publishes it to a registry yet</b>, so today a host installs
+          the tarball <code>npm pack</code> produces from a checkout. The
+          packaging guard does exactly this — it packs the package, installs the
+          tarball into an empty project, and imports it by its bare specifier, so
+          "installable" is a measured fact rather than a manifest that looks
+          right.
+        </p>
+        <!-- @generated install-commands -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/tests/embed_package.test.mjs — what the packaging guard really runs</span></div>
+          <pre><code># Nothing publishes @casualoffice/opendoc-embed to a registry yet, so a host
+# installs the tarball `npm pack` produces from the checkout.
+cd packages/opendoc-embed
+npm pack                       # -&gt; casualoffice-opendoc-embed-0.1.0.tgz
+npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
+        </div>
+        <!-- @end install-commands -->
+        <p class="doc-body">
+          The package has <span data-claim="entry-point-count">3</span> entry
+          points, and a set of typings generated from the capability authority's
+          real values rather than typed out beside it:
+        </p>
+        <!-- @generated package-files -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>File</div>
+            <div>Ships as</div>
+            <div>What it is</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>./src/embed_element.mjs</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed"</code></div>
+            <div class="disp-cell">The element class, the capability authority it re-exports, and <code>defineOpenDocEditor</code>.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>./src/embed_define.js</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />define"</code></div>
+            <div class="disp-cell">The side-effect entry: importing it registers the tag and nothing else.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>./src/capabilities.mjs</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />capabilities"</code></div>
+            <div class="disp-cell">Resolve a capability set without mounting anything — no DOM, so it answers in Node.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>./types/index.d.ts</code></div>
+            <div class="disp-cell">Types</div>
+            <div class="disp-cell">Generated from the authority's real values, so a role cannot exist in the types without existing in the code.</div>
+          </div>
+        </div>
+        <!-- @end package-files -->
+        <p class="doc-body">
+          The package is the mount and the capability contract; it does not carry
+          the engine. You also serve the editor's own static files
+          (<code>editor.html</code> and the WebAssembly bundle beside it) from
+          somewhere you control, and point <code>editor-src</code> at them.
+        </p>
+
+        <h2 id="mount" class="doc-h2">Mount it</h2>
+        <p class="doc-body">
+          The element takes <span data-claim="attribute-count">3</span>
+          attributes and no configuration object. This is the package's own
+          documented usage, and a guard checks every attribute
+          in it against the attributes the element really reads, and the
+          <code>mode</code> value against the names the authority really accepts:
+        </p>
+        <!-- @generated declarative-usage -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>packages/opendoc-embed/README.md — the package's own usage, checked against the element</span></div>
+          <pre><code>&lt;script type="module"&gt;
+  import "@casualoffice/opendoc-embed/define";
+&lt;/script&gt;
+
+&lt;opendoc-editor
+  mode="readonly"
+  editor-src="/opendoc/editor.html"
+  frame-title="Contract preview"
+&gt;&lt;/opendoc-editor&gt;</code></pre>
+        </div>
+        <!-- @end declarative-usage -->
+        <p class="doc-body">
+          It is <code>mode</code> and not <code>role</code> because
+          <code>role</code> is a global ARIA attribute:
+          <code>role="readonly"</code> would publish an invalid ARIA role to every
+          assistive technology on the page. <code>frame-title</code> has no
+          default — an iframe with no accessible name is an axe
+          <code>frame-title</code> violation, and the package has no business
+          inventing English for your page, so you get one console warning and no
+          label.
+        </p>
+        <p class="doc-body">
+          Mounting from script is the same three attributes. This is the code the
+          demo host in this repository runs, not a paraphrase of it — the
+          <a href="./embed.html">embed demo page</a> mounts the editor twice, once
+          this way and once as a hand-wired iframe, and the browser suite drives
+          both:
+        </p>
+        <!-- @generated mount-element -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — mountElement()</span></div>
+          <pre><code>/** The custom element's own path: the host sets `mode` and nothing else, and
+ *  the element resolves, sandboxes and reports. The readout is taken from the
+ *  element's event rather than recomputed here — if the page and the element
+ *  disagreed, the page would be hiding it. */
+function mountElement(role) {
+  const element = document.createElement("opendoc-editor");
+  element.setAttribute("mode", role);
+  element.setAttribute("editor-src", EDITOR_SRC);
+  element.setAttribute("frame-title", panel.dataset.frameTitle ?? "");
+  element.addEventListener("opendoc-capabilities", (event) =&gt; {
+    render(panel, {
+      capabilities: new Set(event.detail.capabilities),
+      editingMode: event.detail.editingMode,
+      sandbox: event.detail.sandbox,
+    });
+  });
+  return element;
+}</code></pre>
+        </div>
+        <!-- @end mount-element -->
+        <p class="doc-body">
+          Setting <code>mode</code> or <code>editor-src</code> on a live element
+          <b>remounts</b> it rather than retuning it. A permission handed over
+          after the document is already on screen was never a permission.
+        </p>
+        <p class="doc-body">
+          You do not have to use the package. A host can wire the iframe itself —
+          and this is what that costs, which is also the argument for the element:
+          every line here is a decision the element already made.
+        </p>
+        <!-- @generated mount-iframe -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — mountIframe()</span></div>
+          <pre><code>/** What a host writes with no package at all — and why they should not have
+ *  to. Every line below is a decision the element already made: put the mode
+ *  in the URL before the frame is attached, derive the sandbox from the
+ *  capability set, and give the frame an accessible name. */
+function mountIframe(role) {
+  const url = new URL(EDITOR_SRC, document.baseURI);
+  url.searchParams.set("mode", role);
+  const resolved = resolveFor(role);
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", resolved.sandbox.join(" "));
+  frame.setAttribute("allow", "clipboard-read; clipboard-write");
+  frame.title = panel.dataset.frameTitle ?? "";
+  frame.src = url.href;
+  return frame;
+}</code></pre>
+        </div>
+        <!-- @end mount-iframe -->
+        <p class="doc-body">
+          Resolution is pure and has no DOM, so a host can ask what a role grants
+          <em>before</em> mounting anything — which matters, because each embed
+          holds its own WebAssembly instance and a page should not have to boot
+          one to find out what it would be allowed to do:
+        </p>
+        <!-- @generated resolve-first -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — resolveFor()</span></div>
+          <pre><code>/** The capability set, review mode and sandbox for a role, as an embed would
+ *  see them: `framed: true`, because every embed on this page is framed. */
+function resolveFor(role) {
+  const capabilities = resolveCapabilities({ mode: role, framed: true });
+  return {
+    capabilities,
+    editingMode: editingModeFor(capabilities),
+    sandbox: sandboxTokensFor(capabilities),
+  };
+}</code></pre>
+        </div>
+        <!-- @end resolve-first -->
+
+        <h2 id="capabilities" class="doc-h2">Capabilities, and the five roles</h2>
+        <p class="doc-body">
+          There are <span data-claim="capability-count">9</span> capabilities. A
+          host grants or withholds them; the editor asks the resolved set and
+          never asks for a role name.
+        </p>
+        <!-- @generated capability-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Capability</div>
+            <div>What it is</div>
+            <div>Enforced by</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>open</code></div>
+            <div class="disp-cell">Replace the loaded document from inside the editor.</div>
+            <div class="disp-cell">chrome</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>new</code></div>
+            <div class="disp-cell">Start a blank document.</div>
+            <div class="disp-cell">chrome</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>save</code></div>
+            <div class="disp-cell">Write the document back out.</div>
+            <div class="disp-cell">browser (<code>allow-downloads</code>)</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>download</code></div>
+            <div class="disp-cell">Export to a file the visitor keeps.</div>
+            <div class="disp-cell">browser (<code>allow-downloads</code>)</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>print</code></div>
+            <div class="disp-cell">Open the browser's print dialog.</div>
+            <div class="disp-cell">browser (<code>allow-modals</code>)</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>edit</code></div>
+            <div class="disp-cell">Change the document at all.</div>
+            <div class="disp-cell">engine (review mode), chrome</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>comment</code></div>
+            <div class="disp-cell">Annotate, and change the document as tracked suggestions.</div>
+            <div class="disp-cell">engine (review mode), chrome</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>branding</code></div>
+            <div class="disp-cell">Show OpenDoc's own name and mark inside the frame.</div>
+            <div class="disp-cell"><b>nothing yet</b></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>autosave</code></div>
+            <div class="disp-cell">Keep drafts of the visitor's typing on this origin.</div>
+            <div class="disp-cell">chrome</div>
+          </div>
+        </div>
+        <!-- @end capability-table -->
+        <p class="doc-body">
+          <span data-claim="role-count">5</span> roles are presets over that set,
+          in strictly increasing order of what they grant. The ordering is
+          asserted, not described: a "higher" role quietly losing something a
+          lower one had is the classic permissions defect, so the chain is proven
+          monotone for every role there is and every role added later.
+        </p>
+        <!-- @generated role-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Role</div>
+            <div>Review mode</div>
+            <div>Grants</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>preview</code></div>
+            <div class="disp-cell"><code>viewing</code></div>
+            <div class="disp-cell">Nothing at all.<br />Sandbox: no tokens beyond the unconditional two</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>readonly</code></div>
+            <div class="disp-cell"><code>viewing</code></div>
+            <div class="disp-cell"><code>print</code><br />Sandbox: adds <code>allow-modals</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>commentor</code></div>
+            <div class="disp-cell"><code>suggesting</code></div>
+            <div class="disp-cell"><code>print</code> <code>download</code> <code>comment</code><br />Sandbox: adds <code>allow-downloads</code> <code>allow-modals</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>edit</code></div>
+            <div class="disp-cell"><code>editing</code></div>
+            <div class="disp-cell"><code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code><br />Sandbox: adds <code>allow-downloads</code> <code>allow-modals</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>owner</code></div>
+            <div class="disp-cell"><code>editing</code></div>
+            <div class="disp-cell"><code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code><br />Sandbox: adds <code>allow-downloads</code> <code>allow-modals</code></div>
+          </div>
+        </div>
+        <!-- @end role-table -->
+        <p class="doc-body">
+          Every embed's frame is sandboxed with
+          <code data-claim="unconditional-sandbox">allow-scripts allow-same-origin</code>
+          unconditionally — without them the editor cannot run its own
+          WebAssembly or read its own origin, and an embed that cannot boot is not
+          a permission decision. Together they do mean the frame can reach out of
+          the sandbox, which is why the sandbox is one <a href="#enforcement">layer</a>
+          and not the enforcement.
+        </p>
+        <p class="doc-body">
+          <span data-claim="preset-count">8</span> names are accepted in total:
+          the roles, plus the older preset names that are a published URL
+          contract. An unrecognised name falls back to the framed default rather
+          than throwing, and never to more than it — a typo in a host's URL must
+          not leave the editor with no chrome, and must not grant anything extra
+          either.
+        </p>
+        <!-- @generated legacy-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Legacy name</div>
+            <div>Relationship</div>
+            <div>Grants</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>standalone</code></div>
+            <div class="disp-cell">Exactly <code>owner</code>.</div>
+            <div class="disp-cell"><code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>viewer</code></div>
+            <div class="disp-cell">Exactly <code>readonly</code>.</div>
+            <div class="disp-cell"><code>print</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>embedded</code></div>
+            <div class="disp-cell">Not an alias of any role.</div>
+            <div class="disp-cell"><code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code></div>
+          </div>
+        </div>
+        <!-- @end legacy-table -->
+        <p class="doc-body">
+          A host that wires its own iframe passes the same vocabulary in the URL:
+          <code>?mode=readonly</code>. <b>Framing alone is enough</b> — a page that
+          is not the top window resolves to <code>embedded</code> without the host
+          having to discover a parameter, which is the whole point: the defect
+          this closed was a framed editor being a standalone one, with File ▸ Open
+          live inside someone else's page. <code>?autosave=1</code> and
+          <code>?autosave=0</code> move the one per-capability override there is.
+        </p>
+
+        <h2 id="per-capability" class="doc-h2">Per capability, not per tier</h2>
+        <p class="doc-body">
+          The roles are names for subsets, never the unit of enforcement. Nothing
+          downstream branches on a role name: the review mode, the sandbox tokens
+          and every gated command are computed from the capability <em>set</em>.
+          That is what makes "print, download, save, edit and comment are withheld
+          independently" a property of the design rather than a promise.
+        </p>
+        <div class="doc-callout">
+          <p class="doc-callout-label">Today's limit</p>
+          <p>
+            The set is per capability, but the <em>host's input</em> is not yet: a
+            host picks one of the
+            <span data-claim="preset-count">8</span> accepted names and may
+            override <code>autosave</code>. There is no capability list a host can pass, so
+            "commentor, but no printing" is not expressible today — it is a
+            one-authority change rather than a new mechanism, and it is listed
+            under <a href="#not-yet">what this does not do yet</a>.
+          </p>
+        </div>
+
+        <h2 id="presentations" class="doc-h2"><code>preview</code> is not <code>readonly</code></h2>
+        <p class="doc-body">
+          They are two different presentations, not two rungs of a ladder.
+          <code>preview</code> is the runtime as a layout and rendering engine — a
+          picture of the document, for a thumbnail, an attachment preview, a
+          search result. <code>readonly</code> is a reading <em>experience</em> of
+          a published document: navigation, outline, find, zoom, page controls and
+          a paper copy. The test of the difference is whether a static image could
+          replace it: for <code>preview</code>, nearly; for <code>readonly</code>,
+          no, because the reader navigates and searches. So
+          <code>preview</code> is not "<code>readonly</code> minus print".
+        </p>
+        <div class="doc-callout">
+          <p class="doc-callout-label">What is true today</p>
+          <p>
+            The capability sets already differ, and so does the frame's sandbox.
+            The <em>chrome</em> does not: both roles land in the editor's Viewing
+            mode with the full editing chrome present and its controls disabled,
+            rather than a minimal canvas and a reading surface respectively.
+            Composing a surface out — a <code>readonly</code> container with no
+            editing ribbon at all — is designed and not built, and a wall of
+            greyed controls is not the intended answer for these two roles.
+          </p>
+        </div>
+
+        <h2 id="enforcement" class="doc-h2">Three layers of enforcement</h2>
+        <p class="doc-body">
+          In order of how hard they are to defeat.
+        </p>
+        <p class="doc-body">
+          <b>1 · The browser.</b> The element derives the iframe's
+          <code>sandbox</code> tokens from the capability set, and the browser does
+          not negotiate: a frame without <code>allow-downloads</code> cannot start
+          a download however its chrome or its engine is persuaded, and one
+          without <code>allow-modals</code> cannot open the print dialog. For
+          comparison, ONLYOFFICE's <code>createIframe</code>
+          (<code>apps/api/documents/api.js:1279</code>) sets no
+          <code>sandbox</code> attribute at all — that file contains the string
+          nowhere — so this is a layer they do not have.
+        </p>
+        <p class="doc-body">
+          <b>2 · The engine.</b> A capability set maps onto the editor's three
+          existing review modes: <code>edit</code> → Editing,
+          <code>comment</code> → Suggesting (every body change recorded as a
+          tracked revision), neither → Viewing. Viewing is read-only at a single
+          fail-closed choke point that refuses every mutation path — typing,
+          deletion, paste, toolbar formatting, table operations, comment and
+          revision decisions — rather than relying on any individual control being
+          disabled. A <code>readonly</code> embed is therefore in Viewing
+          <b>on arrival</b>, not an Editing page with dimmed buttons, and the
+          browser suite proves it by stripping every <code>disabled</code> and
+          <code>aria-disabled</code> attribute in the frame and then attacking the
+          document with typing, paste and
+          <span data-claim="attack-command-count">17</span> ribbon commands, one
+          by one rather than a sample. The evidence
+          is the engine's own word and character counts, not the DOM.
+        </p>
+        <p class="doc-body">
+          <b>3 · The chrome.</b> A withheld capability disables its control
+          <em>with a reason</em> and never hides it: a control that vanishes
+          teaches nothing, and a product that silently lacks a feature is
+          indistinguishable from one that is broken. Open the command palette
+          inside a <code>readonly</code> embed and look at <em>Open…</em> — it is
+          present, it is disabled, and its title says why. This is the layer that
+          is least complete today: the editor page consults
+          <span data-claim="chrome-consulted-count">5</span> of the
+          <span data-claim="capability-count">9</span> capabilities.
+        </p>
+        <!-- @generated chrome-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Capability</div>
+            <div>Command id</div>
+            <div>What it decides</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>autosave</code></div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">Decides whether this origin keeps drafts of the visitor's typing at all.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>comment</code></div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">Decides whether Suggesting is offered as a mode.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>edit</code></div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">Decides the review mode the editor arrives in, and whether the Editing button is offered.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>new</code></div>
+            <div class="disp-cell"><code>file.new</code></div>
+            <div class="disp-cell">File ▸ New is present and disabled, with the reason as its title.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>open</code></div>
+            <div class="disp-cell"><code>file.open</code></div>
+            <div class="disp-cell">File ▸ Open is present and disabled, with the reason as its title.</div>
+          </div>
+        </div>
+        <!-- @end chrome-table -->
+        <p class="doc-body">
+          The other <span data-claim="chrome-unconsulted-count">4</span> are not
+          consulted by the chrome at all. <code>print</code>,
+          <code>download</code> and <code>save</code> are withheld by the sandbox
+          — which works, but the refusal arrives from the browser rather than from
+          a control that explains itself, and the editor's own status line can
+          still report a save that the browser declined.
+          <code>branding</code> is consulted nowhere yet: withholding it does not
+          remove OpenDoc's mark from the frame. Both are listed below rather than
+          left to be discovered.
+        </p>
+
+        <h2 id="licence" class="doc-h2">Nothing here is gated</h2>
+        <p class="doc-body">
+          The package is Apache-2.0 and consults no licence, in any code path.
+          That is the whole competitive position rather than a footnote:
+          ONLYOFFICE's host-customization path early-returns when the editor is
+          not licensed —
+          <code>apps/common/<wbr />main/lib/<wbr />controller/<wbr />LayoutManager.js:68</code>,
+          <code>if (!_licensed || !config) return;</code> — so the customization a
+          host is offered is a licence check away from doing nothing. Gating ours
+          would surrender the only structural advantage that cannot be copied.
+        </p>
+
+        <h2 id="evidence" class="doc-h2">How this page is kept honest</h2>
+        <p class="doc-body">
+          The pages of this site have carried fabricated claims twice, in both
+          directions — a parity figure that contradicted the fidelity page, a
+          corpus file that did not exist, a repaint timing with no benchmark, and
+          three shipped features listed as "Not yet". Understating is also false.
+          So this page is built the way the package is:
+        </p>
+        <p class="doc-body">
+          <code>webapp/tools/build-embed-docs.mjs</code> generates every code
+          panel, every table and every number above from the code they document,
+          and <code>--check</code> fails when the committed page is not what a
+          fresh run produces. That makes both directions of drift a build failure:
+          editing the page by hand, and changing the code without regenerating the
+          page. <code>webapp/tests/embedding_page.test.mjs</code> then re-derives
+          the numbers independently of the generator, proves each extracted
+          snippet still appears verbatim in the file its caption names, and proves
+          every item under "does not do yet" is still true. Both run in the
+          <code>browser-smoke</code> job of <code>.github/workflows/ci.yml</code>,
+          which is itself asserted, because a gate nobody armed has been claimed
+          here before.
+        </p>
+        <p class="doc-body">
+          The behavioural claims are not this page's word either. These are the
+          tests they rest on:
+        </p>
+        <!-- @generated evidence-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>File</div>
+            <div>Lane</div>
+            <div>The test</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />roles.test.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:unit</code></div>
+            <div class="disp-cell">the role chain is monotone: a higher role never loses a lower one's grant</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />embed_package.test.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:unit</code></div>
+            <div class="disp-cell">the package packs, installs, and imports — not just claims to</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:e2e</code></div>
+            <div class="disp-cell">both embeds resolve their role before first paint, and the chrome refuses with a reason</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:e2e</code></div>
+            <div class="disp-cell">the simplest possible embed is not a standalone editor</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:e2e</code></div>
+            <div class="disp-cell">a readonly host cannot mutate the document through the engine, chrome defeated</div>
+          </div>
+        </div>
+        <!-- @end evidence-table -->
+
+        <h2 id="not-yet" class="doc-h2">What this does not do yet</h2>
+        <p class="doc-body">
+          Phase 1 is one of three. Each item here is checked by the guard, so it
+          cannot outlive the gap it describes.
+        </p>
+        <ul class="doc-body">
+          <li>
+            <b>No command or event API.</b> You cannot tell the embedded editor to
+            do something, or be told what it did. The element fires exactly one
+            event — <code>opendoc-capabilities</code>, once per mount, which is the
+            capability contract announcing itself, not the editor reporting on a
+            document. There is no <code>postMessage</code> protocol in the package
+            at all. One schema over two transports (in-process and
+            <code>postMessage</code>) is phase 2.
+          </li>
+          <li>
+            <b>No way to hand it your document.</b> The element takes
+            <code>mode</code>, <code>editor-src</code> and
+            <code>frame-title</code>, and nothing else.
+            <code>editor-src</code> may carry the editor's own query parameters;
+            there is no host-supplied document URL or byte array.
+          </li>
+          <li>
+            <b>No host capability list.</b> A host picks one of the
+            <span data-claim="preset-count">8</span> preset names and may override
+            <code>autosave</code>. An arbitrary "these five, not those four" list
+            is not accepted yet, so a configuration like "comments only,
+            everything else off" cannot be expressed.
+          </li>
+          <li>
+            <b>No reading or preview chrome.</b> <code>readonly</code> and
+            <code>preview</code> get the editing chrome with controls disabled,
+            not a reading surface and a bare canvas. The two presentations are
+            designed; the surface composition that would make them real is not
+            built.
+          </li>
+          <li>
+            <b>A browser-enforced refusal does not explain itself.</b> Withholding
+            <code>print</code>, <code>download</code> or <code>save</code> is
+            enforced by the sandbox, and the control that triggers it is still
+            offered — so the refusal arrives as the browser declining, and the
+            editor can still report a save that never reached the visitor's disk.
+          </li>
+          <li>
+            <b>Withholding <code>branding</code> does nothing.</b> The capability
+            exists and is refused to every role but <code>owner</code>, but no
+            code consults it, so the editor still shows its own mark inside your
+            page. White-labelling — name, mark, theme tokens, chrome selection and
+            string overrides — is phase 3.
+          </li>
+          <li>
+            <b>No framework bindings</b>, by choice. A custom element needs no
+            binding layer; the package ships none and declares no framework entry
+            point. The repository exercises it in plain HTML and in Node, not
+            inside a framework.
+          </li>
+          <li>
+            <b>Not published.</b> No workflow publishes the package to a registry.
+            Install the tarball, or vendor the files.
+          </li>
+          <li>
+            <b>No passwords.</b> Deliberately out of scope until there is format
+            work to make an encrypted document mean anything.
+          </li>
+        </ul>
+
+        <nav class="doc-pager" aria-label="Related guides">
+          <a class="prev" href="./docs.html">
+            <div class="doc-pager-dir">← Previous</div>
+            <div class="doc-pager-title">Import a document</div>
+          </a>
+          <a class="next" href="https://github.com/CasualOffice/opendoc/blob/main/docs/126-EMBEDDABILITY-AND-SDK-THREE-PHASE-PLAN.md">
+            <div class="doc-pager-dir">Next →</div>
+            <div class="doc-pager-title">The three-phase embeddability plan</div>
+          </a>
+        </nav>
+      </article>
+
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#embed-the-editor" aria-current="true">Embed the editor</a></li>
+            <li><a href="#install">Install it</a></li>
+            <li><a href="#mount">Mount it</a></li>
+            <li><a href="#capabilities">Capabilities and roles</a></li>
+            <li><a href="#per-capability">Per capability, not per tier</a></li>
+            <li><a href="#presentations">preview is not readonly</a></li>
+            <li><a href="#enforcement">Three layers of enforcement</a></li>
+            <li><a href="#licence">Nothing here is gated</a></li>
+            <li><a href="#evidence">How this page is kept honest</a></li>
+            <li><a href="#not-yet">What this does not do yet</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-spacer" aria-hidden="true"></span>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+        <a href="https://github.com/CasualOffice/opendoc/blob/main/SECURITY.md">Security</a>
+        <a href="https://github.com/CasualOffice/opendoc/blob/main/CONTRIBUTING.md">Contributing</a>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "./pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+  </body>
+</html>
