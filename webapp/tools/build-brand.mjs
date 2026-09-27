@@ -142,6 +142,12 @@ const INDEPENDENT_ONLY = new Set([
   "--accent-line",
 ]);
 
+/** JSON has no comments, and this is a file a host reads and edits, so a key
+ *  beginning with `//` is a note rather than a setting. Dropped everywhere a map
+ *  is walked, which is the only way a comment inside `theme.light` does not read
+ *  as a token called `//`. */
+const isNote = (key) => key.startsWith("//");
+
 /** A refusal a host can act on. Carries every reason at once rather than the
  *  first: a build that fails five times for five colours is five builds. */
 export class BrandRefusal extends Error {
@@ -214,6 +220,7 @@ export function normalize(raw, themes) {
   const groups = { tokens: raw?.theme?.tokens ?? {}, light: raw?.theme?.light ?? {}, dark: raw?.theme?.dark ?? {} };
   for (const [group, entries] of Object.entries(groups)) {
     for (const [token, value] of Object.entries(entries)) {
+      if (isNote(token)) continue;
       if (LOCKED_TOKEN_PREFIXES.some((prefix) => token.startsWith(prefix))) {
         reasons.push(
           `theme.${group} may not set ${token}. The paper layer is the same in both themes on ` +
@@ -249,17 +256,32 @@ export function normalize(raw, themes) {
 
   const strings = raw?.strings ?? {};
   for (const [tag, entries] of Object.entries(strings)) {
+    if (isNote(tag)) continue;
     if (!entries || typeof entries !== "object") {
       reasons.push(`strings["${tag}"] must be an object of key → string.`);
       continue;
     }
     for (const [key, value] of Object.entries(entries)) {
+      if (isNote(key)) continue;
       if (typeof value !== "string") reasons.push(`strings["${tag}"]["${key}"] must be a string.`);
     }
   }
 
   if (reasons.length) throw new BrandRefusal(reasons);
-  return { version: 1, name, mark, tabTitle, theme: groups, font, strings };
+  const clean = (map) => Object.fromEntries(Object.entries(map).filter(([k]) => !isNote(k)));
+  return {
+    version: 1,
+    name,
+    mark,
+    tabTitle,
+    theme: { tokens: clean(groups.tokens), light: clean(groups.light), dark: clean(groups.dark) },
+    font,
+    strings: Object.fromEntries(
+      Object.entries(strings)
+        .filter(([tag]) => !isNote(tag))
+        .map(([tag, entries]) => [tag, clean(entries)]),
+    ),
+  };
 }
 
 /**
@@ -551,9 +573,25 @@ export function readCatalogues() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const check = process.argv.includes("--check");
+  // `--config <path>` names a different configuration, and it exists because of a
+  // MUTATION THAT DID NOT GO RED. Deleting the `throw new BrandRefusal(failures)`
+  // below left every assertion in `brand.test.mjs` green, because the test called
+  // `auditBrand` itself: it proved the audit could see a failing palette and never
+  // proved the generator refuses one. That is exactly phase 2's finding — a door
+  // standing open with a lock behind it — so the guard now drives this command line
+  // with a failing palette and asserts the exit status, which is the only thing
+  // that can tell "refuses" from "computes a refusal and carries on".
+  const configArg = process.argv.indexOf("--config");
+  const configPath = configArg > 0 ? process.argv[configArg + 1] : undefined;
+  // A `--config` run is a check and never a write: it must not be able to
+  // overwrite a deployment's committed artifacts with somebody's experiment.
+  if (configPath && !check) {
+    console.error("build-brand: --config is only valid with --check.");
+    process.exit(2);
+  }
   let produced;
   try {
-    produced = artifacts();
+    produced = artifacts(configPath ? { configPath } : undefined);
   } catch (err) {
     console.error(err instanceof BrandRefusal ? err.message : err);
     process.exit(1);
@@ -567,7 +605,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     return current !== file.content;
   });
-  if (check) {
+  if (configPath) {
+    // Nothing is compared: a foreign configuration produces different artifacts by
+    // definition, and the only question asked of it is whether it was ACCEPTED.
+    console.log(`build-brand --check --config ${configPath}: accepted.`);
+  } else if (check) {
     if (stale.length) {
       console.error(
         `build-brand --check: ${stale.length} generated file(s) are stale:\n` +

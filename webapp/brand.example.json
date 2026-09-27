@@ -1,0 +1,50 @@
+{
+  "//": "A WORKED EXAMPLE of a white-label, committed so the exit gate can be demonstrated rather than described. `docs/126` phase 3 asks for a build that is white-labelled with no code changes and still passes the contrast sweep — so this file is a real host configuration, `tests/brand.test.mjs` generates from it and audits the result, and `tests/e2e/white-label.spec.mjs` installs the stylesheet it produces into a real editor and runs the full contrast sweep over both themes. Copy it over `brand.json` to white-label a deployment.",
+  "//name": "Not a real company. A plausible one: a fictional host, so nothing here impersonates anybody.",
+  "version": 1,
+  "name": "Northwind Docs",
+  "mark": "./opendoc-mark.svg",
+  "tabTitle": "document",
+  "theme": {
+    "//": "A deliberately DIFFERENT palette from ours, because a guard that passes because the default theme is applied proves nothing. The accent is a deep teal and the greys are warmer than ours; every value was checked against the floors by the generator rather than picked by eye, and two of the first three attempts were refused (see the PR).",
+    "tokens": {
+      "--accent": "#0f6d6a",
+      "--accent-ink": "#ffffff"
+    },
+    "light": {
+      "--bg": "#f2f0ec",
+      "--bg-2": "#f7f6f3",
+      "--surface": "#ffffff",
+      "--surface-alt": "#f4f2ee",
+      "--ink": "#1b1a18",
+      "--muted": "#5c5953",
+      "--faint": "#67635c",
+      "--line": "#e4e1da",
+      "--line-strong": "#cec9bf",
+      "--primary-bg": "#1b1a18",
+      "--primary-ink": "#faf9f6",
+      "--accent-text": "#0c5a57"
+    },
+    "dark": {
+      "--bg": "#16181a",
+      "--bg-2": "#1c1f21",
+      "--surface": "#202426",
+      "--surface-alt": "#272b2e",
+      "--ink": "#e9eaea",
+      "--muted": "#a9aeb0",
+      "--faint": "#9ba1a3",
+      "--line": "#303538",
+      "--line-strong": "#414749",
+      "--primary-bg": "#e9eaea",
+      "--primary-ink": "#16181a",
+      "--accent-text": "#5fc3bf"
+    }
+  },
+  "font": null,
+  "strings": {
+    "//": "Nothing here renames the product — `name` already does that in all nineteen languages, derived from the catalogues. This is the escape hatch for a host who wants different words in a particular language, and it wins over the derived override.",
+    "de": {
+      "branding.themeSetByHost": "Die Farbe wird von Northwind Docs vorgegeben."
+    }
+  }
+}
