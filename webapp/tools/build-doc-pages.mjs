@@ -1046,7 +1046,10 @@ export function renderHub() {
     }
     cards.push("</ul>");
   }
-  const heading = "OpenDoc reference documentation";
+  // Not "OpenDoc reference documentation": the page title appends " — OpenDoc",
+  // and a search result reading "OpenDoc reference documentation — OpenDoc" says
+  // the name twice and the subject once.
+  const heading = "Reference documentation";
   const summary =
     "Every OpenDoc architecture, design and specification document published on this " +
     "site, generated from the repository's own Markdown so a page and its source can " +
