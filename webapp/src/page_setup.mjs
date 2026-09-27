@@ -72,6 +72,8 @@ export function createPageSetup(io) {
   const marginBottom = el("pageMarginBottom");
   const marginLeft = el("pageMarginLeft");
   const marginRight = el("pageMarginRight");
+  const marginGutter = el("pageMarginGutter");
+  const verticalAlignment = el("pageVerticalAlignment");
   const applyBtn = el("pageSetupApply");
   const cancelBtn = el("pageSetupCancel");
   const closeBtn = el("pageSetupClose");
@@ -177,6 +179,30 @@ export function createPageSetup(io) {
     return list?.sections?.length ? list : null;
   }
 
+  /** Every section's vertical alignment and page numbering, or null.
+   *
+   *  A SECOND engine call rather than a second field on the first: `setPageSetup`
+   *  installs page size, margins, orientation and columns and is documented to
+   *  leave the rest of the section alone, so folding two more properties into that
+   *  payload would make a Page setup Apply silently rewrite values this dialog does
+   *  not show. It is a list for the same reason `pageSetupSections` is — the
+   *  Section dropdown can pick any section, and painting the CARET's alignment
+   *  under a dropdown reading "Section 2" is the defect that plumbing exists to
+   *  prevent. Both calls happen once per opening, not per frame; each is
+   *  O(document). */
+  function layoutSections() {
+    const doc = io.getDoc();
+    if (!doc) return null;
+    const raw = doc.sectionLayout(io.selectionNode());
+    const list = raw === "null" ? null : JSON.parse(raw);
+    return list?.sections?.length ? list : null;
+  }
+
+  /** One section's layout entry, by id. */
+  function layoutOf(sectionId) {
+    return layoutSections()?.sections?.find((entry) => entry.section === sectionId) ?? null;
+  }
+
   /** Paints every field from one section's geometry. Both the initial reflect
    *  and the Section dropdown's change handler come through here; they were two
    *  copies of the same fourteen lines, which is how the column fields came to
@@ -190,6 +216,13 @@ export function createPageSetup(io) {
     marginBottom.value = inchText(pageMargins.bottomTwips);
     marginLeft.value = inchText(pageMargins.startTwips);
     marginRight.value = inchText(pageMargins.endTwips);
+    // `w:gutter` absent is 0, which layout already resolves it to, so 0 is the
+    // honest reading and not a placeholder for "unset".
+    marginGutter.value = inchText(pageMargins.gutterTwips ?? 0);
+    // An absent `w:vAlign` is top everywhere in this pipeline, so "Top" is what
+    // the absent value shows — and choosing Top writes the property away again
+    // rather than asserting a default no other producer writes.
+    verticalAlignment.value = layoutOf(section.section)?.verticalAlignment ?? "top";
     reflectColumns(section.columns);
     const active =
       orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
@@ -278,16 +311,44 @@ export function createPageSetup(io) {
       section: current.section,
       pageSize: { widthTwips: fieldTwips(widthInput), heightTwips: fieldTwips(heightInput) },
       pageMargins: {
+        // The spread still matters: it carries the two BAND distances this dialog
+        // does not show (`headerTwips`/`footerTwips`, which Header and footer
+        // settings owns), so opening Page setup and changing a margin cannot
+        // silently move a header.
         ...current.pageMargins,
         topTwips: fieldTwips(marginTop),
         bottomTwips: fieldTwips(marginBottom),
         startTwips: fieldTwips(marginLeft),
         endTwips: fieldTwips(marginRight),
+        gutterTwips: fieldTwips(marginGutter),
       },
       columns: columnsPayload(),
       orientation: orientationGroup.value() ?? "portrait",
     };
     await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
+    // Vertical alignment is a second engine call, and it only happens when the
+    // control actually changed: `setSectionLayout` writes the page numbering too,
+    // so an unconditional call would make every Page setup Apply a page-numbering
+    // write as well — and a value read at dialog-open time could by then be stale.
+    // Read fresh, compare, and write only the difference.
+    const wanted = verticalAlignment.value === "top" ? null : verticalAlignment.value;
+    const layout = layoutOf(current.section);
+    if (layout && (layout.verticalAlignment ?? null) !== wanted) {
+      await io.runEdit(
+        () =>
+          doc.setSectionLayout(
+            JSON.stringify({
+              section: current.section,
+              verticalAlignment: wanted,
+              // Carried through untouched. This dialog does not show page
+              // numbering, so Apply must not invent values for it.
+              pageNumberFormat: layout.pageNumberFormat ?? null,
+              pageNumberStart: layout.pageNumberStart ?? null,
+            }),
+          ),
+        { gate: true },
+      );
+    }
     toggle(false);
   });
 

@@ -7160,37 +7160,44 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// The page-layout properties of the section holding `node` — vertical
-    /// alignment and page numbering — in the shape
-    /// [`set_section_layout`](Self::set_section_layout) accepts. `null` only when
-    /// the document has no section at all.
+    /// EVERY section's page-layout properties — vertical alignment and page
+    /// numbering — plus the section holding `node` as the current one. `null` only
+    /// when the document has no section at all.
     ///
-    /// Both values come back as the ABSENT form when the section does not carry
-    /// them (`verticalAlignment: null` = top, `pageNumberStart: null` = continue
-    /// from the previous section), so a host reflecting this never has to hold a
-    /// second idea of what a default is.
+    /// Shaped like [`pageSetupSections`](Self::page_setup_sections) and not like
+    /// [`lineNumbering`](Self::line_numbering) on purpose. The surfaces that show
+    /// these carry a Section dropdown, so a caret-only answer would paint the
+    /// caret's alignment under a dropdown reading "Section 2" — the exact defect
+    /// (one section's values shown while another's are written) that made
+    /// `pageSetupSections` a list in the first place. Line numbering and the
+    /// watermark can be caret-only because their surfaces have no such dropdown.
+    ///
+    /// Each value comes back in its ABSENT form when the section does not carry it
+    /// (`verticalAlignment: null` = top, `pageNumberStart: null` = continue from
+    /// the previous section), so a host reflecting this never has to hold a second
+    /// idea of what a default is.
     ///
     /// O(document): resolving `node` to its section is a document walk
     /// (`section_of`). Call it when a surface opens, not per frame.
     #[wasm_bindgen(js_name = sectionLayout)]
     #[must_use]
     pub fn section_layout(&self, node: &str) -> String {
-        if self.document.definitions().sections.is_empty() {
+        let sections = &self.document.definitions().sections;
+        if sections.is_empty() {
             return "null".to_string();
         }
-        let section = self.section_of(node);
-        let boundary = self
-            .document
-            .definitions()
-            .sections
-            .iter()
-            .find(|candidate| candidate.id.node_id() == section);
-        let payload = SectionLayoutJson {
-            section: section.to_string(),
-            vertical_alignment: boundary.and_then(|candidate| candidate.vertical_alignment),
-            page_number_format: boundary
-                .and_then(|candidate| candidate.page_numbering.format.clone()),
-            page_number_start: boundary.and_then(|candidate| candidate.page_numbering.start),
+        let current = self.section_of(node);
+        let payload = SectionLayoutSectionsJson {
+            current: current.to_string(),
+            sections: sections
+                .iter()
+                .map(|section| SectionLayoutJson {
+                    section: section.id.node_id().to_string(),
+                    vertical_alignment: section.vertical_alignment,
+                    page_number_format: section.page_numbering.format.clone(),
+                    page_number_start: section.page_numbering.start,
+                })
+                .collect(),
         };
         serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
     }
@@ -13620,6 +13627,16 @@ struct SectionLayoutJson {
     page_number_format: Option<NumberFormat>,
     #[serde(default)]
     page_number_start: Option<i32>,
+}
+
+/// Every section's [`SectionLayoutJson`] plus which one holds the caret — the
+/// read side, shaped like `PageSetupSectionsJson` so a surface with a Section
+/// dropdown can paint any section rather than only the caret's.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SectionLayoutSectionsJson {
+    current: String,
+    sections: Vec<SectionLayoutJson>,
 }
 
 fn default_section_columns() -> SectionColumns {

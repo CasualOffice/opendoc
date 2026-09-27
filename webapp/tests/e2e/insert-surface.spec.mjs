@@ -100,6 +100,12 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     // would have left them palette-only.
     "insertFirstPageVariantBtn",
     "insertEvenOddVariantBtn",
+    // Header and footer settings, last in the group: the band distances and the
+    // page numbering, which nothing could reach at all. It sits with the switches
+    // it configures because that is where ONLYOFFICE puts the same controls
+    // (`apps/documenteditor/main/app/view/HeaderFooterTab.js` L63-87 — the two
+    // distances one separator from the two switches).
+    "headerFooterSettingsBtn",
     "insertSymbolBtn",
     "insertEmojiBtn",
   ]);
@@ -140,6 +146,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
     ["#insertPageNumberBtn", "Page number"],
+    ["#headerFooterSettingsBtn", "Header and footer settings"],
     ["#insertSymbolBtn", "Insert symbol"],
     ["#insertEmojiBtn", "Insert emoji"],
   ];
@@ -177,6 +184,10 @@ test("every Insert ribbon button is live on a freshly loaded document — only L
     "#insertDropCapBtn",
     "#insertPageNumberBtn",
     "#insertDateBtn",
+    // Setting a header distance needs a document and nothing else — no caret, no
+    // band open. Gating it on a caret would make it unreachable from the one place
+    // a user looks for it before they have clicked anywhere.
+    "#headerFooterSettingsBtn",
     "#insertSymbolBtn",
     "#insertEmojiBtn",
   ]) {
