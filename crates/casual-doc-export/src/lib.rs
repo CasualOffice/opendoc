@@ -4253,7 +4253,10 @@ mod semantic_tests {
         /// The `lvlText` of the level the paragraph at `index` actually paints,
         /// resolved through the one authority — `None` when the list lost its
         /// marker.
-        fn marker_template(document: &casual_doc_model::v1::Document, index: usize) -> Option<String> {
+        fn marker_template(
+            document: &casual_doc_model::v1::Document,
+            index: usize,
+        ) -> Option<String> {
             let casual_doc_model::v1::BlockNode::Paragraph(paragraph) = &document.body()[index]
             else {
                 return None;

@@ -67,9 +67,7 @@ impl Styles {
         let pending = std::mem::take(&mut self.pending_numbering);
         let resolved: Vec<(StyleId, Option<casual_doc_model::v1::NumberingRef>)> = pending
             .iter()
-            .map(|(style_id, num_id, level)| {
-                (*style_id, numbering.resolve(self, num_id, *level))
-            })
+            .map(|(style_id, num_id, level)| (*style_id, numbering.resolve(self, num_id, *level)))
             .collect();
         for (style_id, reference) in resolved {
             let Some(mut style) = self.definitions.get(&style_id).cloned() else {

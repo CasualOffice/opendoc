@@ -117,7 +117,7 @@ impl<'a> NumberingResolver<'a> {
     /// would make the resolution depend on a style cascade that
     /// [`Document::validate`](crate::v1::Document::validate) checks separately.
     ///
-    /// Complexity: O(1) — at most [`MAX_NUM_STYLE_LINK_HOPS`] hops, each three
+    /// Complexity: O(1) — at most `MAX_NUM_STYLE_LINK_HOPS` hops, each three
     /// B-tree lookups, so O(log S + log N + log A) per hop with a constant bound
     /// on the hop count. Independent of how many abstracts the document holds.
     #[must_use]

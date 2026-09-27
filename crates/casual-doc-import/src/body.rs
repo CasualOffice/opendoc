@@ -4569,7 +4569,10 @@ impl BodyParser<'_> {
                 self.numpr_depth = self.numpr_depth.saturating_sub(1);
                 if self.numpr_depth == 0 {
                     if let Some(num_id) = self.pending_num_id.take() {
-                        match self.numbering.resolve(self.styles, &num_id, self.pending_ilvl) {
+                        match self
+                            .numbering
+                            .resolve(self.styles, &num_id, self.pending_ilvl)
+                        {
                             Some(reference) => {
                                 self.paragraph_properties.numbering = Some(reference);
                             }

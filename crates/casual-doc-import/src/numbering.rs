@@ -84,7 +84,11 @@ impl Numbering {
     ///
     /// Complexity: O(1) — it borrows three maps.
     fn resolver<'a>(&'a self, styles: &'a Styles) -> NumberingResolver<'a> {
-        NumberingResolver::new(styles.definitions(), &self.instances, &self.abstract_numbering)
+        NumberingResolver::new(
+            styles.definitions(),
+            &self.instances,
+            &self.abstract_numbering,
+        )
     }
 
     /// Whether `num_id` names an instance whose abstract defers its levels through
@@ -108,8 +112,7 @@ impl Numbering {
         let Some(declared) = self.abstract_numbering.get(&instance.abstract_ref) else {
             return false;
         };
-        declared.num_style_link.is_some()
-            && resolver.effective_abstract(declared).levels.is_empty()
+        declared.num_style_link.is_some() && resolver.effective_abstract(declared).levels.is_empty()
     }
 
     pub(crate) fn into_definitions(
@@ -692,11 +695,7 @@ fn on_start(
 ///
 /// Complexity: O(A) in the attributes of the one element being opened (three
 /// name comparisons each), so O(1) per element and linear in the part overall.
-fn report_unmodeled_attributes(
-    reporter: &mut Reporter,
-    local: &[u8],
-    element: &BytesStart<'_>,
-) {
+fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
     const UNMODELED: &[(&[u8], &[u8])] = &[
         (b"lvl", b"tplc"),
         (b"lvl", b"tentative"),

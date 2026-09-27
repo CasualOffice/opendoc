@@ -662,11 +662,12 @@ impl Document {
     /// [`NumberingResolver::level`](crate::v1::NumberingResolver::level).
     fn resolve_numbering_level(&self, reference: &NumberingRef) -> Result<(), ModelError> {
         let resolver = self.definitions.numbering_resolver();
-        let instance = resolver
-            .instance(reference.instance)
-            .ok_or(ModelError::DanglingNumberingRef(
-                reference.instance.node_id(),
-            ))?;
+        let instance =
+            resolver
+                .instance(reference.instance)
+                .ok_or(ModelError::DanglingNumberingRef(
+                    reference.instance.node_id(),
+                ))?;
         if !self
             .definitions
             .abstract_numbering

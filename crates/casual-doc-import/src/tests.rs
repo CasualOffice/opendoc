@@ -2022,8 +2022,7 @@ fn a_dangling_num_style_link_is_reported_not_silently_unnumbered() {
     let styles: &[u8] = br#"<w:styles xmlns:w="urn:w">
         <w:style w:type="paragraph" w:styleId="MyListStyle"><w:name w:val="My List Style"/></w:style>
     </w:styles>"#;
-    let import =
-        import_with_styles_and_numbering(LIST_STYLE_BODY, styles, LIST_STYLE_NUMBERING);
+    let import = import_with_styles_and_numbering(LIST_STYLE_BODY, styles, LIST_STYLE_NUMBERING);
 
     assert_eq!(paragraph(&import, 0).properties.numbering, None);
     assert!(
