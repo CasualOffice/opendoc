@@ -1078,6 +1078,118 @@ fn footer_page_number_field_and_logo_survive_the_export() {
 }
 
 #[test]
+fn a_numbered_list_in_a_footer_carries_its_list_style_into_styles_xml() {
+    // A list is the one construct whose automatic-style DEFINITION lives in a
+    // registry built up front rather than minted at the emit site, so the
+    // per-part scoping needed its own path (`AutomaticStyles::lists` +
+    // `used_list_styles`). Without it the footer would emit
+    // `text:style-name="L…"` naming a `text:list-style` that only content.xml
+    // defines — a dangling reference. It must be defined in styles.xml, and the
+    // list must not be numbered as a continuation of a body list.
+    use casual_doc_model::v1::{
+        AbstractNumbering, AbstractNumberingId, NumberFormat as Fmt, NumberingInstance,
+        NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, Run,
+    };
+
+    let mut fresh = test_ids();
+    let abstract_id = AbstractNumberingId::new(fresh());
+    let instance_id = NumberingInstanceId::new(fresh());
+    let document = document_with_footer(|document, footer_id| {
+        let definitions = document.definitions_mut();
+        definitions.abstract_numbering.insert(
+            abstract_id,
+            AbstractNumbering {
+                levels: vec![NumberingLevel {
+                    level: 0,
+                    start: 1,
+                    num_fmt: Some(Fmt::Decimal),
+                    lvl_text: Some("%1.".to_owned()),
+                    lvl_jc: None,
+                    suff: None,
+                    is_lgl: false,
+                    paragraph_properties: None,
+                    run_properties: None,
+                    style_ref: None,
+                    lvl_restart: None,
+                    pstyle: None,
+                }],
+                multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
+            },
+        );
+        definitions.numbering.insert(
+            instance_id,
+            NumberingInstance {
+                abstract_ref: abstract_id,
+                overrides: Vec::new(),
+            },
+        );
+        let numbered = ParagraphProperties {
+            numbering: Some(NumberingRef {
+                instance: instance_id,
+                level: 0,
+            }),
+            ..Default::default()
+        };
+        let footer = definitions.footers.get_mut(&footer_id).expect("footer");
+        footer.blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: fresh(),
+            properties: numbered.clone().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: fresh(),
+                properties: Default::default(),
+                text: "item".to_owned(),
+            })],
+        })];
+        // The BODY carries a list on the SAME numbering instance, which is what
+        // makes the continue-numbering assertion below load-bearing: the body is
+        // written first, so without per-part list-continuation state the footer
+        // would claim to continue it.
+        document.body_mut().push(BlockNode::Paragraph(Paragraph {
+            id: fresh(),
+            properties: numbered.into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: fresh(),
+                properties: Default::default(),
+                text: "body item".to_owned(),
+            })],
+        }));
+    });
+
+    let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_xml = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    let footer_region = master_styles_block(&styles_xml)
+        .split("<style:footer>")
+        .nth(1)
+        .and_then(|rest| rest.split("</style:footer>").next())
+        .expect("footer region");
+
+    assert!(
+        footer_region.contains("<text:list"),
+        "footer list was not emitted: {footer_region}"
+    );
+    assert!(
+        footer_region.contains("item"),
+        "footer list text was not emitted: {footer_region}"
+    );
+    // The list style it names must be DEFINED in styles.xml, not only in
+    // content.xml, and it must not claim to continue a body list.
+    assert_no_dangling_style_refs(footer_region, &styles_xml);
+    assert!(
+        styles_xml.contains("<text:list-style"),
+        "styles.xml defines no list style for the footer list: {styles_xml}"
+    );
+    assert!(
+        !footer_region.contains("text:continue-numbering"),
+        "footer list claims to continue a body list: {footer_region}"
+    );
+    assert_every_master_prefix_is_declared(&styles_xml);
+    package.import_document(OdfImportLimits::default()).unwrap();
+}
+
+#[test]
 fn header_text_that_looks_like_a_namespace_prefix_stays_deterministic() {
     // `styles_namespaces` decides the styles.xml root declarations by scanning the
     // emitted fragment bytes for each prefix. Header TEXT is escaped for `<` and
