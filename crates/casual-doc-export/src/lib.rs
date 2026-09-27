@@ -186,7 +186,6 @@ mod semantic_tests {
         (m1, m2)
     }
 
-
     // --- Paragraph-spanning complex fields (docs/128) ----------------------
 
     /// The main-document XML of a written package.
@@ -312,7 +311,10 @@ mod semantic_tests {
         // wrote something Word accepts and we cannot read back.
         let (m1, m2) = round_trip_main_document(SPANNING_TOC_XML);
         assert!(m1.validate().is_ok());
-        assert_eq!(m1, m2, "the paragraph-spanning TOC survives write -> reopen");
+        assert_eq!(
+            m1, m2,
+            "the paragraph-spanning TOC survives write -> reopen"
+        );
         assert_eq!(
             m2.definitions().field_ranges.iter().count(),
             1,

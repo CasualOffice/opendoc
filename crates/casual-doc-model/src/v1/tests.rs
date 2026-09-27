@@ -5127,7 +5127,10 @@ fn a_balanced_field_range_spanning_paragraphs_is_accepted_and_round_trips() {
     .expect("a balanced range across paragraphs validates");
     let json = document.to_json().unwrap();
     let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
-    assert_eq!(document, reloaded, "the range survives a snapshot round trip");
+    assert_eq!(
+        document, reloaded,
+        "the range survives a snapshot round trip"
+    );
     assert!(
         String::from_utf8(json).unwrap().contains("fieldRanges"),
         "the definition table is serialized when non-empty"
@@ -5568,10 +5571,7 @@ fn r2_an_unbalanced_field_range_inside_a_text_box_is_rejected() {
         tid(99),
         vec![bookmark_paragraph(
             tid(1),
-            vec![
-                InlineNode::TextBox(Box::new(text_box)),
-                range_end(2, field),
-            ],
+            vec![InlineNode::TextBox(Box::new(text_box)), range_end(2, field)],
         )],
         toc_definitions(),
     );

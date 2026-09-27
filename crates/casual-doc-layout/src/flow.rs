@@ -8102,7 +8102,7 @@ mod tests {
         // marker that shaped so much as a zero-width placeholder run would change the
         // galley, and a marker that changed line breaking would change it visibly.
         use casual_doc_model::v1::{
-            FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart, FieldKind,
+            FieldKind, FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart,
         };
         let field = FieldRangeId::new(NodeId::from_parts(90, 1).unwrap());
         let mut definitions = Definitions::default();
@@ -8124,8 +8124,14 @@ mod tests {
 
         let entries = || {
             vec![
-                paragraph(20, vec![run_node(21, "First chapter", RunProperties::default())]),
-                paragraph(30, vec![run_node(31, "Second chapter", RunProperties::default())]),
+                paragraph(
+                    20,
+                    vec![run_node(21, "First chapter", RunProperties::default())],
+                ),
+                paragraph(
+                    30,
+                    vec![run_node(31, "Second chapter", RunProperties::default())],
+                ),
             ]
         };
         let mut with_markers = vec![paragraph(10, vec![start])];

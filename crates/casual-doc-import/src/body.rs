@@ -39,8 +39,8 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
 // Same rule: the paragraph-spanning field range's own imports go on their own line.
-use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::Watermark;
+use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -1529,7 +1529,8 @@ pub(crate) fn parse_notes(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(container), config);
+    let mut parser =
+        BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(container), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -1631,7 +1632,14 @@ pub(crate) fn parse_comments(
         comment_ids: &empty_comment,
         color_scheme: None,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, parsed_defs, Some(b"comment"), config);
+    let mut parser = BodyParser::build(
+        ids,
+        reporter,
+        &inputs,
+        parsed_defs,
+        Some(b"comment"),
+        config,
+    );
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_frame()?;
@@ -2438,7 +2446,9 @@ impl BodyParser<'_> {
                             self.reporter.report(b"bookmarkStart");
                         } else {
                             let bookmark = BookmarkId::new(self.next_id()?);
-                            self.parsed_defs.bookmarks.insert(bookmark, Bookmark { name });
+                            self.parsed_defs
+                                .bookmarks
+                                .insert(bookmark, Bookmark { name });
                             self.bookmark_ids.insert(source, bookmark);
                             self.push_segment(Segment::BookmarkStart { bookmark });
                             // A column bookmark (`w:colFirst`/`w:colLast`, a

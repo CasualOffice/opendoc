@@ -72,9 +72,8 @@ pub use vml::{
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Comment, CommentId, DefinitionMap, Definitions, Document,
-    DocumentSettings, HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph,
-    ParagraphProperties, Person,
+    BlockNode, Comment, CommentId, DefinitionMap, Definitions, Document, DocumentSettings,
+    HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph, ParagraphProperties, Person,
 };
 use casual_doc_ooxml::DocxPackage;
 

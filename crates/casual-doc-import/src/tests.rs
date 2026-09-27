@@ -3564,10 +3564,7 @@ fn complex_field_missing_end_is_promoted_and_repaired_without_loss() {
     );
     let inlines = &paragraph(&import, 0).inlines;
     assert!(matches!(inlines[0], InlineNode::FieldRangeStart(_)));
-    assert!(matches!(
-        inlines.last(),
-        Some(InlineNode::FieldRangeEnd(_))
-    ));
+    assert!(matches!(inlines.last(), Some(InlineNode::FieldRangeEnd(_))));
     let mut text = String::new();
     inlines.iter().for_each(|c| inline_text(c, &mut text));
     assert_eq!(text, "3", "the cached text is not dropped");
@@ -9091,8 +9088,7 @@ fn sole_field_range(import: &Import) -> (casual_doc_model::v1::FieldRangeId, usi
         };
         // Document order, explicitly: a LIFO stack would visit one paragraph's
         // inlines in reverse and see a same-paragraph pair end-first.
-        let mut queue: std::collections::VecDeque<&InlineNode> =
-            paragraph.inlines.iter().collect();
+        let mut queue: std::collections::VecDeque<&InlineNode> = paragraph.inlines.iter().collect();
         while let Some(inline) = queue.pop_front() {
             match inline {
                 InlineNode::FieldRangeStart(marker) => {
@@ -9142,7 +9138,10 @@ fn a_toc_field_that_outlives_its_paragraph_becomes_a_range_not_a_truncated_field
     assert!(import.document.validate().is_ok(), "the range validates");
 
     let (id, start, end) = sole_field_range(&import);
-    assert_eq!(start, 0, "the start marker is in the paragraph that opened it");
+    assert_eq!(
+        start, 0,
+        "the start marker is in the paragraph that opened it"
+    );
     assert_eq!(end, 3, "the end marker is in the paragraph that closed it");
 
     let range = import

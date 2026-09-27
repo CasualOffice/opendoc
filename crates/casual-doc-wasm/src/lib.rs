@@ -27618,7 +27618,11 @@ mod tests {
         .document;
         let document = wasm_document(spanning);
         let entries = document.field_range_entries();
-        assert_eq!(entries.len(), 1, "one paragraph-spanning field: {entries:?}");
+        assert_eq!(
+            entries.len(),
+            1,
+            "one paragraph-spanning field: {entries:?}"
+        );
         let (id, instruction) = entries[0].split_once('\t').expect("id\\tinstruction");
         assert_eq!(instruction, r#" TOC \o "1-3" \h "#);
         assert_eq!(id.len(), 32, "the 32-hex node id, as bookmarkEntries gives");
