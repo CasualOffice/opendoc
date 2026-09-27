@@ -36120,6 +36120,9 @@ mod tests {
     /// shape of a logo in a letterhead or a figure in a report — the most common
     /// way a real document puts an image next to text.
     fn picture_in_table_document() -> (Document, NodeId, NodeId) {
+        // Its own `use` line on purpose — see the note in
+        // `every_inline_kind_document`.
+        use casual_doc_model::v1::FieldUpdateState;
         use casual_doc_model::v1::{
             Definitions, Drawing, Field, FieldKind, MediaReference, TableLook, TableRowProperties,
         };
@@ -36182,6 +36185,7 @@ mod tests {
                     kind: FieldKind::Page,
                     inlines: vec![run(id(), "7")],
                     form: None,
+                    update: FieldUpdateState::default(),
                 })),
             ],
         });
@@ -36309,6 +36313,9 @@ mod tests {
             SoftHyphen, Tab, TableLook, TableRowProperties, TextBox, WrapDistances,
         };
         use casual_doc_model::v1::{BookmarkStart, Break};
+        // Its own `use` line on purpose: a new v1 import added into the sorted
+        // block above conflicts with every other branch doing the same.
+        use casual_doc_model::v1::FieldUpdateState;
 
         let mut next = 1_u64;
         let mut id = move || {
@@ -36376,6 +36383,7 @@ mod tests {
             FieldRange {
                 instruction: "TOC \\o".to_owned(),
                 kind: FieldKind::Toc,
+                update: FieldUpdateState::default(),
             },
         );
 
@@ -36399,7 +36407,8 @@ mod tests {
             height_emu: 914_400,
         };
         let cell_paragraph = id();
-        let inlines = vec![
+        let inlines =
+            vec![
             run(id(), "text"),
             InlineNode::Tab(Tab { id: id() }),
             InlineNode::Break(Break {
@@ -36463,6 +36472,15 @@ mod tests {
                 kind: FieldKind::Page,
                 inlines: vec![run(id(), "7")],
                 form: None,
+                // Deliberately NOT the default. `update` arrived from #646 while
+                // this fixture was being written in #645, and the two met for the
+                // first time in the merge — so the fixture carries a field that is
+                // locked AND dirty, and the assertion below proves a structured
+                // paste carries both flags. A `Default::default()` here would have
+                // satisfied the compiler while testing nothing about the new field,
+                // which is how a field added on one branch becomes a silent drop on
+                // another.
+                update: FieldUpdateState { locked: true, dirty: true },
             })),
             InlineNode::TextBox(Box::new(TextBox {
                 hyperlink: None,
