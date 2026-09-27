@@ -79,15 +79,22 @@ export function applyRegions({ body, root, regions, selectBand }) {
     const tab = root.getElementById(bandElements(id).tab);
     if (tab) tab.hidden = !shown;
   }
+  // A container that withheld the band that was on screen must be shown another
+  // one, or `?chrome=-band.home` opens onto nothing: Home carries
+  // `aria-selected="true"` in the markup, so the default tab is precisely the one
+  // a host is most likely to withhold.
+  //
+  // `band.file` is skipped as a survivor: it is the File PAGE, which covers the
+  // work area rather than sitting beside the document, so opening a container
+  // into it would hide the document the container exists to show.
   const bands = REGIONS.filter((id) => id.startsWith("band."));
-  const survivor = bands.find((id) => regions?.has?.(id) === true);
-  if (survivor && selectBand) {
-    const current = bands.find((id) => {
-      const tab = root.getElementById(bandElements(id).tab);
-      return tab?.getAttribute("aria-selected") === "true";
-    });
-    if (!current) selectBand(survivor.slice("band.".length));
-  }
+  const survivor = bands.find((id) => id !== "band.file" && regions?.has?.(id) === true);
+  const current = bands.find((id) => {
+    const tab = root.getElementById(bandElements(id).tab);
+    return tab?.getAttribute("aria-selected") === "true";
+  });
+  const stranded = !current || regions?.has?.(current) !== true;
+  if (stranded && survivor && selectBand) selectBand(survivor.slice("band.".length));
   // Published on the element so a host page, a screenshot or a spec can read
   // what was composed away without re-deriving it from eighteen classes.
   body.dataset.chromeWithheld = withheld.join(" ");

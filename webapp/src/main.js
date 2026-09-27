@@ -91,7 +91,7 @@ import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
-import { editingModeFor, hostCapabilities, reflectReviewModeAccess } from "./capabilities.mjs";
+import { editingModeFor, hostCapabilities, hostRegions, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
@@ -178,39 +178,14 @@ import { createRuler } from "./ruler.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { bindTableBand } from "./table_band.mjs";
+import { loadPrefObject, readPref, savePrefObject, writePref } from "./prefs.mjs";
+import { BRAND } from "./brand.mjs";
+import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
+import { applyRegions } from "./chrome_regions.mjs";
 
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
 const fontCache = new Map();
-
-// ---- Persisted preferences --------------------------------------------------
-// `localStorage` is host policy, not a dependency: with site data blocked, in a
-// cross-origin embed, or in some private modes, even *touching* `window
-// .localStorage` throws. Every preference read and write goes through these two
-// helpers so no future one can be written without the guard — an unguarded
-// module-scope read used to throw before the first listener was attached and
-// left the whole editor inert (blank page, no ribbon, no keyboard).
-// Preferences are a convenience; the editor is fully usable without them, so a
-// failure is silent by design and costs the session nothing but persistence.
-
-/** The stored value for `key`, or `fallback` when storage is unavailable. */
-function readPref(key, fallback = null) {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value === null ? fallback : value;
-  } catch {
-    return fallback;
-  }
-}
-
-/** Persists `value` under `key`; a no-op when storage is unavailable. */
-function writePref(key, value) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* private mode / storage disabled — the preference applies for this session only */
-  }
-}
 
 const statusEl = document.getElementById("status");
 // Every channel a status message can reach a person through, wired once (`109`
@@ -524,7 +499,11 @@ document.addEventListener("keydown", (event) => {
 document.querySelector(".ribbon-tabs")?.addEventListener("keydown", (event) => {
   if (!event.target.matches(".ribbon-tab")) return;
   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-  const enabled = ribbonTabs.filter((tab) => !tab.disabled);
+  // `hidden` as well as `disabled`: a band the HOST withheld is composed away
+  // (`docs/126` phase 3), and a tab at `display: none` is still in this array, so
+  // without the second test the arrow keys walk onto an invisible tab, `focus()`
+  // does nothing, and navigation appears to stop dead.
+  const enabled = ribbonTabs.filter((tab) => !tab.disabled && !tab.hidden);
   const current = enabled.indexOf(event.target);
   if (current < 0 || enabled.length === 0) return;
   let next = current;
@@ -1361,6 +1340,16 @@ const reviewMarginCommentBtn = document.getElementById("reviewMarginComment");
 // not an Editing page with disabled buttons. See `capabilities.mjs`.
 const HOST_CAPS = hostCapabilities();
 const HOST_MODE = editingModeFor(HOST_CAPS);
+/** Which chrome this container paints (`docs/126` phase 3). Resolved from the
+ *  same URL the capability set came from, applied BEFORE first paint, and a
+ *  different question from the capability set: a withheld region is a
+ *  presentation decision, a withheld capability is a permission. */
+const HOST_REGIONS = applyRegions({
+  body: document.body,
+  root: document,
+  regions: hostRegions(),
+  selectBand: (band) => selectRibbonTab(band),
+});
 /** The host contract (`docs/126` phase 2), built at the END of this file because
  *  its command registry cannot exist until everything below is declared, and
  *  declared HERE because the hooks that feed it are scattered up the file. Every
@@ -2820,6 +2809,10 @@ function refreshDocumentTitle() {
     name: doc ? currentName : "",
     dirty: !!doc && documentIsDirty(),
     fallback: FALLBACK_DOCUMENT_TITLE,
+    // The single most visible place our brand leaked into someone else's product
+    // (`docs/125` §2 F4: "the host page's own browser tab title carries our
+    // brand"). `brand.json` decides, and `tabTitle: "document"` drops it.
+    product: BRAND.tabTitle === "document" ? "" : BRAND.name,
   });
 }
 
@@ -16128,19 +16121,19 @@ const languageSelect = document.getElementById("languageSelect");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
+// Who owns the accent: the deployment's `brand.json`, or the visitor. Read once,
+// before the first `applySettings()`, because a brand resolved after the first
+// paint was never resolved before it.
+const ACCENT_PIN = brandAccent(document.documentElement);
+
 let settings = loadSettings();
 
 function loadSettings() {
-  try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(readPref("opendoc.settings") || "{}") };
-  } catch {
-    // Storage is already guarded by readPref; this catches a corrupt payload.
-    return { ...DEFAULT_SETTINGS };
-  }
+  return loadPrefObject("opendoc.settings", DEFAULT_SETTINGS);
 }
 
 function saveSettings() {
-  writePref("opendoc.settings", JSON.stringify(settings));
+  savePrefObject("opendoc.settings", settings);
 }
 
 /**
@@ -16161,22 +16154,24 @@ function applyActiveAuthorToDocument() {
 
 /** Applies the current settings to the document root + reflects them in the panel. */
 function applySettings() {
-  const root = document.documentElement;
-  if (settings.theme === "system") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", settings.theme);
-  root.style.setProperty("--accent", settings.accent);
+  applyAppearance({
+    root: document.documentElement,
+    theme: settings.theme,
+    accent: settings.accent,
+    pin: ACCENT_PIN,
+  });
   // The gallery is built per document, but its legibility decisions were made
   // against whatever palette was live at the time.
   refreshStylePreviews();
 
-  themeGroup.reflect(settings.theme);
-  for (const b of accentSwatches.querySelectorAll(".acc[data-accent]")) {
-    b.setAttribute(
-      "aria-pressed",
-      String(b.dataset.accent.toLowerCase() === settings.accent.toLowerCase()),
-    );
-  }
-  accentCustom.value = settings.accent;
+  reflectAppearance({
+    themeGroup,
+    swatches: accentSwatches,
+    custom: accentCustom,
+    settings,
+    pin: ACCENT_PIN,
+    reason: t("branding.themeSetByHost"),
+  });
   authorNameInput.value = settings.authorName;
   authorInitialsInput.value = settings.authorInitials;
   if (autosaveToggle) {

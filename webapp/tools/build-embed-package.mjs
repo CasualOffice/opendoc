@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAPABILITIES, LEGACY_PRESETS, PRESET_NAMES, ROLES } from "../src/capabilities.mjs";
+import { REGIONS } from "../src/capabilities.mjs";
 import { HOST_EVENTS, REFUSAL_CODES, REQUIREMENTS } from "../src/host_contract.mjs";
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -114,7 +115,53 @@ export declare function resolveCapabilities(input?: {
   mode?: Mode | string | null;
   framed?: boolean;
   autosave?: boolean | null;
+  /** Narrows the preset, never widens it. \`"-print,-download"\` or
+   *  \`"print,download"\`; an unknown entry is dropped, and dropping narrows
+   *  nothing, so a typo can never grant more. */
+  withhold?: string | null;
 }): Set<Capability>;
+
+// ---- Region composition (\`docs/126\` phase 3) -------------------------------
+//
+// A different axis from the capability set, and deliberately not folded into it:
+// a withheld REGION is a presentation decision about the host's own page, and a
+// withheld CAPABILITY is a permission. "Never, for you" is composition and is
+// silent; "not right now" is state and explains itself with a reason.
+
+/** Every region of the chrome a host can withhold. */
+export type Region = ${union([...REGIONS])};
+
+export declare const REGIONS: readonly Region[];
+
+/**
+ * The chrome regions a page load gets.
+ *
+ * Presets, by role: \`preview\` gets none of them — it is the runtime as a layout
+ * and rendering engine, a picture of the document — and \`readonly\` gets READING
+ * chrome: the menu bar rather than the ribbon, the navigation rail, the status bar
+ * with its page count and zoom, and the find card. Every other role gets all of
+ * them. Withholding \`ribbon\` withholds its bands too.
+ */
+export declare function resolveRegions(input?: {
+  mode?: Mode | string | null;
+  framed?: boolean;
+  withhold?: string | null;
+}): Set<Region>;
+
+/** Reads \`mode\` and \`chrome\` off a real window. */
+export declare function hostRegions(view?: unknown): Set<Region>;
+
+/** Every host input carried on the page's URL, read once. */
+export declare function hostConfig(view?: unknown): {
+  mode: string | null;
+  autosave: boolean | null;
+  withhold: string | null;
+  chrome: string | null;
+  framed: boolean;
+};
+
+/** Parses a withhold list against a vocabulary. Only ever narrows. */
+export declare function parseWithheld(raw: string | null | undefined, known: readonly string[]): readonly string[];
 
 /** Maps a capability set onto the editor's existing three review modes. Fails
  *  closed to \`"viewing"\` for anything that is not a set. */

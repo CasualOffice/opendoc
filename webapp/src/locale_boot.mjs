@@ -6,6 +6,8 @@
 // collaborators rather than reaching for them so the whole sequence can be
 // driven without a document, a settings store or a network.
 import { setCatalogue, setLocale, t } from "./i18n.mjs";
+import { hasOverrides, setOverrides } from "./i18n.mjs";
+import { BRAND_STRINGS } from "./brand.mjs";
 import { applyDocumentLocale, fetchCatalogue, localizeTree } from "./localize.mjs";
 import { LOCALES, bestLocale } from "./locales.mjs";
 import { EN_STRINGS } from "./en_strings.mjs";
@@ -97,7 +99,22 @@ export function startLocalisation({
   status,
   openSettings,
 }) {
+  // THE HOST'S WORDS GO IN FIRST, and synchronously.
+  //
+  // `docs/126` phase 3 asks for string overrides that "layer on the existing
+  // seam rather than introducing a second one", which is what `setOverrides` is:
+  // the same lookup the nineteen catalogues resolve through, consulted one layer
+  // earlier. Installed here rather than in `main.js` because this is the module
+  // that owns what the editor reads, and because `main.js` had no lines.
+  //
+  // BEFORE the English catalogue and before the first `localizeTree`, so a
+  // white-labelled build never paints our product name and then replaces it. That
+  // ordering is the whole difference between a white-label and a flash of someone
+  // else's brand: `has()` answers for an override, so the sweep below relabels
+  // the markup the moment it runs, without waiting for any request.
+  setOverrides(BRAND_STRINGS);
   setCatalogue("en", EN_STRINGS);
+  if (hasOverrides()) localizeTree();
   const sources = () => ({
     search: location.search,
     saved: settings.language,
