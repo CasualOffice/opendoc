@@ -157,6 +157,49 @@ tells you less than you think.** Real examples from this repo:
 - If a golden (`geometry_snapshot.golden`) moves, the diff must be intentional and
   explained.
 
+## 5a. Two green PRs can make `main` red — check the COMBINATION
+
+This happened **three times on 2026-09-27**, and no reviewer reading either diff
+could have caught the third. A PR is verified against `main` as it was when the
+branch was cut; nothing verifies the merge.
+
+The three shapes, all real:
+
+1. **A type change breaks a literal in a file the other branch owns.** #646 added a
+   field to `Field`/`FieldRange`; #645 wrote new fixtures constructing both, in a
+   crate #646 deliberately stayed out of. Git had nothing to conflict on — the
+   incompatibility is in the type system, not in the text — and `main` failed with
+   three `E0063`. Adding a field to a struct is a breaking change to every literal
+   and Rust has no source-compatible way to do it.
+2. **A generated artifact goes stale.** A *published* document's page is generated,
+   so editing `docs/126` on one branch staled a page committed on another and
+   `build.sh --check` failed on `main`.
+3. **Two branches mint the same number.** Two ADR-034s met, and the merge resolved
+   the conflict by **deleting two published ADRs** while five documents went on
+   citing them. There are now uniqueness guards for doc numbers and ADR numbers.
+
+**What to do:**
+
+- **Rebase immediately before the PR and re-run the gates** — this is already the
+  rule and it is the main defence. It only works if you rebase *last*, not first.
+- **Run `cargo check --workspace --all-targets --all-features`, not just your
+  crate's tests.** A literal in another crate's `#[cfg(test)]` module is exactly
+  what breaks, and a crate-scoped run cannot see it.
+- **Re-measure every ratchet from the MERGED file**, never carry your branch's
+  number forward. `main.js` went 16,616 -> 16,589 -> 16,579 across three branches
+  in one day; arithmetic on two branches' numbers is always wrong.
+- **If you edit a document the site publishes, run `webapp/build.sh` and commit the
+  regenerated pages in the same commit.** The published list is in
+  `webapp/tools/build-doc-pages.mjs`.
+- **Claim a number by writing it into the tree in the same commit as the citation.**
+  A "proposed" id is not a reserved id — several lanes reached for `HF-190`/`HF-191`
+  within an hour of each other.
+- **When the compiler demands a field, do not reach for `Default::default()`
+  reflexively.** In the fixture whose whole purpose was proving a paste carries
+  every inline kind, defaulting would have satisfied `cargo check` while testing
+  nothing about the new field — which is how a field added on one branch becomes a
+  silent drop on another.
+
 ## 6. Verify before you claim
 
 - **Never bisect with single runs of a possibly-flaky test.** Repeat 5× per ref. A false
