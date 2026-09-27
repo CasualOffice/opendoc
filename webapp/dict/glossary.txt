@@ -220,6 +220,7 @@ allowlisted
 alt
 altChunk
 app
+arrowing
 ary
 ascii
 aspirational
@@ -238,6 +239,7 @@ backends
 basedOn
 bbox
 bidi
+bindgen
 blit
 blits
 blitted
@@ -319,6 +321,7 @@ formtext
 freeform
 frontend
 getter
+getters
 github
 glyphs
 goldens
@@ -408,6 +411,7 @@ premultiplied
 preprocessing
 prev
 quiesce
+rAF
 rPr
 radiogroup
 rastered
@@ -487,6 +491,7 @@ ungated
 unicode
 unlink
 unmapped
+unmerged
 unmodeled
 unreferenced
 unrepresentable
