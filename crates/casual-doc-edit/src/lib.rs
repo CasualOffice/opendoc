@@ -628,7 +628,8 @@ pub enum Operation {
         object: NodeId,
     },
     /// Re-insert a previously removed object node at 0-based `index` within the
-    /// inline container `owner` (the paragraph, hyperlink, or revision whose inline
+    /// inline container `owner` (the paragraph, hyperlink, field, revision or inline
+    /// content control whose inline
     /// list held it). The inverse vehicle for [`Operation::DeleteObject`]; its own
     /// inverse is a [`Operation::DeleteObject`] of the re-inserted node.
     InsertObjectNode {
@@ -3611,7 +3612,8 @@ fn is_object_node(node: &InlineNode) -> bool {
 
 /// Removes the object `object` from its inline container, searched the same way as
 /// [`set_object_extent`]. Returns `(owner, index, node)` — the id of the inline
-/// container the object was removed from (a paragraph, hyperlink, or revision), the
+/// container the object was removed from (a paragraph, or any of the four inline
+/// containers — hyperlink, field, revision, inline content control), the
 /// 0-based inline position it occupied, and the removed node — so
 /// [`Operation::DeleteObject`] can build an exact-restore inverse. `None` if
 /// `object` is not a removable object.
@@ -3692,7 +3694,8 @@ fn remove_object_from_inlines(
 }
 
 /// Inserts `node` at 0-based inline `index` within the container `owner` (a
-/// paragraph, hyperlink, or revision), searched the same way as [`remove_object`].
+/// paragraph or one of the four inline containers), searched the same way as
+/// [`remove_object`].
 /// The re-insertion target for [`Operation::InsertObjectNode`]. Returns `Ok(true)`
 /// when inserted, `Ok(false)` when `owner` is not found, and `Err` when `owner` is
 /// found but `index` is past the end of its inline list.
