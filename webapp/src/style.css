@@ -4533,8 +4533,13 @@ body.compact-mode {
 
 .ctl.size select,
 .ctl.size > input {
-  width: 64px;
-  min-width: 62px;
+  /* 80px, not 64: a decimal size clipped. Word allows half points and the engine
+     stores eighths of a point, so "8.5" is four glyphs plus the spinner and the
+     focus ring, and at 64px the last character was cut. The Home band's width
+     budget has ~55px of slack at 1280px (`docs/63`), so this spends 16 of it —
+     `ribbon-home` and `responsive-shell` are what prove the band still fits. */
+  width: 80px;
+  min-width: 80px;
 }
 
 .ctl select:disabled,
