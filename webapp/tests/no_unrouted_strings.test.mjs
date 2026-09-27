@@ -89,7 +89,12 @@ const CEILINGS = new Map([
   // exempted would be a real improvement and is deliberately NOT bundled here,
   // because it moves every number in this table and belongs to whoever owns the
   // scanner next.
-  ["embedding.page.html", 297],
+  //
+  // 297 -> 310 when the Rust facade joined the contract: three evidence rows for
+  // `crates/casual-doc-sdk/src/host_parity.rs` (the only guard on that page a
+  // browser cannot run) and one more "does not do yet" item saying plainly that the
+  // crate declares this vocabulary and does not run the editor. Measured.
+  ["embedding.page.html", 310],
   ["fidelity.page.html", 84],
   ["index.page.html", 157],
   // The shared header and footer, counted where they are AUTHORED. The generated

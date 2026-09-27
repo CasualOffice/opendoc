@@ -983,6 +983,21 @@ export function parseOriginAllowlist(raw, selfOrigin) {
             <div class="disp-cell">a command the contract calls ungated really does not touch the document</div>
           </div>
           <div class="disp-row">
+            <div class="disp-name"><code>crates/<wbr />casual-doc-sdk/<wbr />src/<wbr />host_parity.rs</code></div>
+            <div class="disp-cell"><code>cargo test</code></div>
+            <div class="disp-cell">the_editor_and_this_crate_declare_the_same_host_events</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>crates/<wbr />casual-doc-sdk/<wbr />src/<wbr />host_parity.rs</code></div>
+            <div class="disp-cell"><code>cargo test</code></div>
+            <div class="disp-cell">the_editor_and_this_crate_declare_the_same_refusal_codes</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>crates/<wbr />casual-doc-sdk/<wbr />src/<wbr />host_parity.rs</code></div>
+            <div class="disp-cell"><code>cargo test</code></div>
+            <div class="disp-cell">a_runtime_event_maps_onto_a_host_event_rather_than_a_new_name</div>
+          </div>
+          <div class="disp-row">
             <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
             <div class="disp-cell"><code>npm run test:e2e</code></div>
             <div class="disp-cell">a readonly host cannot mutate the document through the engine, chrome defeated</div>
@@ -1070,6 +1085,16 @@ export function parseOriginAllowlist(raw, selfOrigin) {
           <li>
             <b>Not published.</b> No workflow publishes the package to a registry.
             Install the tarball, or vendor the files.
+          </li>
+          <li>
+            <b>The Rust facade declares this contract; it does not run the
+            editor.</b> <code>crates/casual-doc-sdk</code> holds the same events,
+            refusal codes, request verbs and version, and a Rust test reads the
+            editor's schema and fails when the two disagree — so a native host and a
+            browser host read one vocabulary. The editor's own runtime is still the
+            WebAssembly engine's own operations, which the crate does not carry, so
+            there is no Rust in-process transport yet: converging the two is its own
+            piece of work and it gates nothing on this page.
           </li>
           <li>
             <b>No passwords.</b> Deliberately out of scope until there is format

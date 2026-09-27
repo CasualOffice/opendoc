@@ -682,16 +682,25 @@ test("an unanswered execute resolves as a timeout refusal, not a rejection", asy
 
 // ── Documentation of the contract ──────────────────────────────────────────
 
-test("the contract's vocabulary is the one the Rust facade declares", () => {
-  // `crates/casual-doc-sdk` is the designed host facade (`docs/05` §§4-5) and it
-  // has no product consumer. Phase 2 does not close that — the live editing path
-  // bypasses `casual-doc-transaction` entirely (`109` CQ-002), which is its own
-  // row — but the two must not be allowed to invent separate vocabularies in the
-  // meantime, or unifying them later becomes a migration instead of a wiring.
-  // So the crate declares the same event kinds and refusal codes, and ITS OWN
-  // test reads this file. This half asserts the file stays readable by that test:
-  // a reshuffle that hid these lists from a line-oriented reader would turn a
-  // cross-language guard into a silent pass.
+test("the contract stays readable by the Rust facade's parity test", () => {
+  // `crates/casual-doc-sdk` is the designed host facade (`docs/05` §§4-5), and
+  // `crates/casual-doc-sdk/src/host.rs` now declares this contract's events,
+  // refusal codes, request verbs and version in Rust, with
+  // `src/host_parity.rs` reading THIS FILE and failing in both directions when
+  // the two disagree. That is the half a browser test cannot do.
+  //
+  // Phase 2 does not make the crate the editor's runtime: the live editing path
+  // applies `casual-doc-edit`'s ops directly and references
+  // `casual_doc_transaction` zero times (`109` CQ-002, `docs/125` §9 row 5), so
+  // convergence is its own piece of work. What it does do is refuse to let the two
+  // grow separate vocabularies while that waits.
+  //
+  // This test is the other end of that guard. The Rust side PARSES rather than
+  // executes — a JavaScript runtime in a Rust test is not the trade to make — so
+  // its parse is a real dependency of this file's SHAPE, and a reshuffle that hid
+  // these declarations from a line-oriented reader would turn a cross-language
+  // guard into a silent pass. Every form the Rust parser looks for is asserted
+  // here, so it fails on this side rather than mysteriously over there.
   const source = readFileSync(new URL("../src/host_contract.mjs", import.meta.url), "utf8");
   for (const name of HOST_EVENT_NAMES) {
     assert.match(source, new RegExp(`name: "${name}"`), `${name} is not declared in a parseable form`);
@@ -699,4 +708,34 @@ test("the contract's vocabulary is the one the Rust facade declares", () => {
   for (const code of REFUSAL_CODES) {
     assert.match(source, new RegExp(`^  "${code}",$`, "m"), `${code} is not declared in a parseable form`);
   }
+  // The array openers the Rust side finds by name, and the closing `]);` at the
+  // start of a line that bounds each one.
+  for (const opener of [
+    "export const HOST_EVENTS = Object.freeze([",
+    "export const REFUSAL_CODES = Object.freeze([",
+  ]) {
+    assert.ok(source.includes(opener), `${opener} is the form the Rust parity test looks for`);
+    const body = source.slice(source.indexOf(opener));
+    const closes = body.indexOf("\n]);");
+    assert.notEqual(closes, -1, `${opener} must close with "]);" at the start of a line`);
+    // And close before the NEXT declaration, or the Rust side reads this array as
+    // running on into the following one. Indenting a closing `]);` by two spaces
+    // does exactly that, and `includes("\n]);")` alone cannot see it.
+    assert.ok(
+      !body.slice(0, closes).includes("\nexport "),
+      `${opener} must close with "]);" at column zero BEFORE the next export`,
+    );
+  }
+  // The verbs on ONE line, which is how the Rust side reads them, and the version
+  // as a plain integer rather than an expression.
+  const verbs = source.split("\n").find((line) => line.includes("requests: Object.freeze(["));
+  assert.ok(verbs, "the protocol's request verbs must stay on one line");
+  for (const verb of PROTOCOL.requests) {
+    assert.ok(verbs.includes(`"${verb}"`), `${verb} is not on the verbs line`);
+  }
+  assert.match(
+    source,
+    new RegExp(`^export const CONTRACT_VERSION = ${CONTRACT_VERSION};$`, "m"),
+    "CONTRACT_VERSION must stay a plain integer literal",
+  );
 });

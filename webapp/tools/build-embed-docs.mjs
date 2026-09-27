@@ -77,6 +77,11 @@ const SOURCES = Object.freeze({
   contract: join(WEBAPP, "src", "host_contract.mjs"),
   contractTest: join(WEBAPP, "tests", "host_contract.test.mjs"),
   contractGate: join(WEBAPP, "tests", "e2e", "host-contract.spec.mjs"),
+  // The Rust half of the contract. `casual-doc-sdk` declares the same events,
+  // refusal codes, verbs and version, and `host_parity.rs` reads
+  // `host_contract.mjs` and fails in both directions — which is the only guard on
+  // this page that a browser cannot run.
+  contractParity: join(REPO, "crates", "casual-doc-sdk", "src", "host_parity.rs"),
 });
 
 /** What each capability is, in one clause.
@@ -472,10 +477,16 @@ function evidenceRows() {
   // of a sentence instead of the sentence.
   const reader = read(SOURCES.gate).match(/const READER = "([\w-]+)"/);
   if (!reader) throw new Error(`build-embed-docs: no READER constant in ${rel(SOURCES.gate)}`);
+  // A test's name, in the language the file is written in. A Rust `#[test] fn`
+  // has no title string, and its function name IS the sentence — underscores and
+  // all — so it is published as the identifier it is rather than a prose
+  // paraphrase nothing could check.
   const titles = (path) =>
-    [...read(path).matchAll(/^test\(\s*(?:`|")([^`"]+)(?:`|")/gm)].map((m) =>
-      m[1].replaceAll("${READER}", reader[1]),
-    );
+    path.endsWith(".rs")
+      ? [...read(path).matchAll(/#\[test\]\s*\nfn ([a-z0-9_]+)\(/g)].map((m) => m[1])
+      : [...read(path).matchAll(/^test\(\s*(?:`|")([^`"]+)(?:`|")/gm)].map((m) =>
+          m[1].replaceAll("${READER}", reader[1]),
+        );
   const sets = [
     [SOURCES.roles, ["the role chain is monotone: a higher role never loses a lower one's grant"]],
     [SOURCES.packaging, ["the package packs, installs, and imports — not just claims to"]],
@@ -502,10 +513,22 @@ function evidenceRows() {
         "a command the contract calls ungated really does not touch the document",
       ],
     ],
+    [
+      SOURCES.contractParity,
+      [
+        "the_editor_and_this_crate_declare_the_same_host_events",
+        "the_editor_and_this_crate_declare_the_same_refusal_codes",
+        "a_runtime_event_maps_onto_a_host_event_rather_than_a_new_name",
+      ],
+    ],
   ];
   /** Which lane runs a test file — the two commands CI runs, not a label. */
-  const lane = (path) =>
-    rel(path).includes("/e2e/") ? "<code>npm run test:e2e</code>" : "<code>npm run test:unit</code>";
+  const lane = (path) => {
+    if (path.endsWith(".rs")) return "<code>cargo test</code>";
+    return rel(path).includes("/e2e/")
+      ? "<code>npm run test:e2e</code>"
+      : "<code>npm run test:unit</code>";
+  };
   const rows = [];
   for (const [path, wanted] of sets) {
     const present = titles(path);

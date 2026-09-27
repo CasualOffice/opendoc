@@ -425,6 +425,35 @@ test("everything under 'does not do yet' is still not done", () => {
     "branding now changes the sandbox",
   );
 
+  // The RUST facade declares the contract and does not run the editor. Both
+  // halves are asserted, because either one alone is a different claim: that the
+  // crate really does declare the vocabulary (its parity test exists and names
+  // this file), and that it really is not the editor's runtime — the engine the
+  // browser loads references it zero times, and the only workspace member that
+  // depends on it is the benchmark tool. The day convergence lands, this fails and
+  // the page has to stop saying it.
+  const parity = read(join(REPO, "crates", "casual-doc-sdk", "src", "host_parity.rs"));
+  assert.ok(
+    parity.includes("host_contract.mjs"),
+    "the Rust parity test no longer reads the editor's schema, so the page's claim that one " +
+      "vocabulary is shared is unbacked",
+  );
+  const wasmCrate = read(join(REPO, "crates", "casual-doc-wasm", "src", "lib.rs"));
+  assert.equal(
+    wasmCrate.includes("casual_doc_sdk"),
+    false,
+    "casual-doc-wasm now uses casual-doc-sdk: the facade IS becoming the runtime, so the page " +
+      "must stop saying it is not",
+  );
+  const dependants = readdirSync(join(REPO, "crates"))
+    .filter((name) => name !== "casual-doc-sdk")
+    .filter((name) => read(join(REPO, "crates", name, "Cargo.toml")).includes("casual-doc-sdk"));
+  assert.deepEqual(
+    dependants,
+    [],
+    "a crate now depends on casual-doc-sdk; the page's claim about its reach is stale",
+  );
+
   // No framework bindings, and nothing published.
   for (const subpath of Object.keys(manifest.exports)) {
     assert.ok(
