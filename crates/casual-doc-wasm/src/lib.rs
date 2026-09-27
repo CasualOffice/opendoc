@@ -86,6 +86,7 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
+use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::v1::{
     Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
@@ -711,6 +712,8 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageNumbering { .. }
+        | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
         Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
@@ -7157,6 +7160,84 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// The page-layout properties of the section holding `node` — vertical
+    /// alignment and page numbering — in the shape
+    /// [`set_section_layout`](Self::set_section_layout) accepts. `null` only when
+    /// the document has no section at all.
+    ///
+    /// Both values come back as the ABSENT form when the section does not carry
+    /// them (`verticalAlignment: null` = top, `pageNumberStart: null` = continue
+    /// from the previous section), so a host reflecting this never has to hold a
+    /// second idea of what a default is.
+    ///
+    /// O(document): resolving `node` to its section is a document walk
+    /// (`section_of`). Call it when a surface opens, not per frame.
+    #[wasm_bindgen(js_name = sectionLayout)]
+    #[must_use]
+    pub fn section_layout(&self, node: &str) -> String {
+        if self.document.definitions().sections.is_empty() {
+            return "null".to_string();
+        }
+        let section = self.section_of(node);
+        let boundary = self
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .find(|candidate| candidate.id.node_id() == section);
+        let payload = SectionLayoutJson {
+            section: section.to_string(),
+            vertical_alignment: boundary.and_then(|candidate| candidate.vertical_alignment),
+            page_number_format: boundary
+                .and_then(|candidate| candidate.page_numbering.format.clone()),
+            page_number_start: boundary.and_then(|candidate| candidate.page_numbering.start),
+        };
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
+    /// Installs a section's vertical alignment and page numbering from a JSON
+    /// object in the shape [`section_layout`](Self::section_layout) returns.
+    /// ONE undoable action covering both, because they are one dialog's Apply and
+    /// two history entries would make the user press undo twice to reverse one
+    /// press of one button.
+    ///
+    /// Each field's ABSENT form clears the corresponding property rather than
+    /// leaving it alone, which is what makes this a write of the whole payload
+    /// and not a patch: `verticalAlignment: null` removes `w:vAlign` (top), and a
+    /// null format with a null start removes `w:pgNumType`. A caller therefore
+    /// sends back what it read, with the fields it changed replaced — the same
+    /// contract [`set_watermark`](Self::set_watermark) and
+    /// [`set_line_numbering`](Self::set_line_numbering) already have.
+    ///
+    /// Rejected, with the document left exactly as it was, if `pageNumberStart`
+    /// falls outside the model's domain.
+    #[wasm_bindgen(js_name = setSectionLayout)]
+    pub fn set_section_layout(&mut self, section_layout_json: &str) -> Result<EditResult, JsValue> {
+        let payload: SectionLayoutJson = serde_json::from_str(section_layout_json)
+            .map_err(|e| to_js(format!("invalid section layout payload: {e}")))?;
+        let section = NodeId::from_str(&payload.section)
+            .map(SectionId::new)
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            vec![
+                Operation::SetSectionPageNumbering {
+                    section,
+                    page_numbering: PageNumbering {
+                        format: payload.page_number_format,
+                        start: payload.page_number_start,
+                    },
+                },
+                Operation::SetSectionVerticalAlignment {
+                    section,
+                    vertical_alignment: payload.vertical_alignment,
+                },
+            ],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
     /// The watermark of the section holding `node`, in the shape
     /// [`set_watermark`](Self::set_watermark) accepts. `kind` is `"none"` when the
     /// section has none, which is also what the dialog opens on.
@@ -13513,6 +13594,32 @@ struct LineNumberingJson {
     /// owns the paragraph scope.
     #[serde(default)]
     suppressed: bool,
+}
+
+/// The read and write shape of the section properties Word keeps on its Page
+/// Setup ▸ Layout tab: where the page's content sits vertically (`w:vAlign`) and
+/// how its pages are numbered (`w:pgNumType`).
+///
+/// One payload rather than two because they are one question to the host — "what
+/// does this section's page layout say" — answered by one `section_of` walk,
+/// which is O(document). Two entry points would mean two walks per dialog
+/// opening for no gain.
+///
+/// `verticalAlignment` is `null` for top, which is how an absent `w:vAlign` is
+/// read everywhere else in this pipeline. `pageNumberStart` is `null` for
+/// "continue the count from the previous section", which is how an absent
+/// `w:start` is read — there is no separate restart flag in OOXML and none is
+/// invented here.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SectionLayoutJson {
+    section: String,
+    #[serde(default)]
+    vertical_alignment: Option<PageVerticalAlignment>,
+    #[serde(default)]
+    page_number_format: Option<NumberFormat>,
+    #[serde(default)]
+    page_number_start: Option<i32>,
 }
 
 fn default_section_columns() -> SectionColumns {
@@ -22306,10 +22413,14 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
         // Section-scoped, and the caret does not move: turning line numbers on
-        // must not scroll away from what the user was reading.
-        Operation::SetSectionLineNumbering { .. } | Operation::SetSectionWatermark { .. } => {
-            Pos::new(doc_id, 0)
-        }
+        // must not scroll away from what the user was reading. Page numbering and
+        // vertical alignment are the same promise — re-aligning a page's content
+        // moves the text under the caret, and moving the caret too would lose the
+        // user's place in a document they only asked to re-align.
+        Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageNumbering { .. }
+        | Operation::SetSectionVerticalAlignment { .. }
+        | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
