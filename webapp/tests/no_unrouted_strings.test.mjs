@@ -63,12 +63,18 @@ const CEILINGS = new Map([
   // read at import, before a catalogue exists, so English there is the same
   // deliberate debt every other row in it carries.
   //
-  // MEASURED from the rebased file, not arithmetic on the two branches' numbers.
-  // Both lanes lowered this ceiling from 342 independently, and subtracting both
-  // reclaims would have been a guess — that is the exact shape of the merge trap
-  // recorded in `module_seams.test.mjs`, where two branches each measured honestly
-  // against a file the other was about to change.
-  ["src/main.js", 325],
+  // MEASURED from the rebased file. The first attempt at this number was 325,
+  // reached by subtracting both lanes' reclaims from 342 — and this gate rejected
+  // it: the real count is 327, because `main` also brought in two draft-recovery
+  // template literals (the "Restore …" and "Delete the recovered draft of …"
+  // confirmations) that neither branch's arithmetic knew about. That is the merge
+  // trap `module_seams.test.mjs` records, caught by the guard rather than by CI,
+  // and it is why this number is a measurement and never a calculation.
+  //
+  // 327 is still a real lowering: `main` had 338 and this branch had 328. The two
+  // draft-recovery strings are pre-existing debt that became visible here, not debt
+  // this change added, and they are left for whoever owns that dialog.
+  ["src/main.js", 327],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
   // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here
