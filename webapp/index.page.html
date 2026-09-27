@@ -51,7 +51,22 @@
         "@context": "https://schema.org",
         "@graph": [
           {
+            "@type": "WebSite",
+            "@id": "https://opendoc.casualoffice.org/#website",
+            "name": "OpenDoc",
+            "url": "https://opendoc.casualoffice.org/",
+            "inLanguage": "en",
+            "publisher": { "@id": "https://opendoc.casualoffice.org/#organization" }
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://opendoc.casualoffice.org/#organization",
+            "name": "CasualOffice",
+            "url": "https://github.com/CasualOffice"
+          },
+          {
             "@type": "SoftwareSourceCode",
+            "@id": "https://opendoc.casualoffice.org/#software",
             "name": "OpenDoc",
             "description": "An open-source Rust document runtime for deterministic DOCX import, editing, layout, rendering, and export.",
             "codeRepository": "https://github.com/CasualOffice/opendoc",
@@ -59,14 +74,22 @@
             "programmingLanguage": ["Rust", "JavaScript", "WebAssembly"],
             "runtimePlatform": ["Native", "WebAssembly", "Headless"],
             "url": "https://opendoc.casualoffice.org/",
-            "author": {
-              "@type": "Organization",
-              "name": "CasualOffice",
-              "url": "https://github.com/CasualOffice"
-            }
+            "author": { "@id": "https://opendoc.casualoffice.org/#organization" }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://opendoc.casualoffice.org/#webpage",
+            "url": "https://opendoc.casualoffice.org/",
+            "name": "OpenDoc — build documents on an engine you control",
+            "description": "OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework.",
+            "inLanguage": "en",
+            "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
+            "about": { "@id": "https://opendoc.casualoffice.org/#software" },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
           },
           {
             "@type": "WebApplication",
+            "@id": "https://opendoc.casualoffice.org/#editor",
             "name": "OpenDoc Editor",
             "url": "https://opendoc.casualoffice.org/editor.html",
             "applicationCategory": "DeveloperApplication",

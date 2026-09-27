@@ -115,5 +115,13 @@ node "$here/tools/build-embed-docs.mjs" --check
 "$here/build-site.py"
 "$here/build-site.py" --check
 
+# The crawler manifests. `sitemap.xml` and `llms.txt` were hand-written, so a new
+# page was invisible to search until somebody remembered two files; they are now
+# generated from the pages build-site.py builds, and `--check` fails the build when
+# the committed copies drift — which is what makes forgetting impossible rather
+# than merely discouraged.
+node "$here/tools/build-seo.mjs"
+node "$here/tools/build-seo.mjs" --check
+
 echo "Built webapp/pkg, staged the demo/site assets, and generated the static pages."
 echo "Run ./serve.py (no-cache), then open http://localhost:8099/."

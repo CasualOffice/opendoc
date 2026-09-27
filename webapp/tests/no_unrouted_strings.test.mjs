@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-const { codeBlocks, scanMarkup, scanScript, scanTree, totalSites, unroutableStrings } =
+const { exemptedSites, scanMarkup, scanScript, scanTree, totalSites, unroutableStrings } =
   await import("../tools/string_sites.mjs");
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -178,17 +178,27 @@ test("the total is published, so the remaining debt is a number and not a feelin
   );
 });
 
-// ---- The code-block exemption ---------------------------------------------
-// The site pages embed extracted Rust, JavaScript and shell — most of it
-// GENERATED from the code it documents by `tools/build-embed-docs.mjs` — and
-// `npm pack` is not translated into eighteen languages. Left counted, that debt
-// could never legitimately come down, and a ratchet nobody can turn gets deleted.
+// ---- The code exemptions ---------------------------------------------------
+// Two of them, both structural rather than allowlist entries, because a structural
+// exemption cannot quietly cover prose:
 //
-// So the exemption is structural rather than an allowlist entry: `<pre><code>`.
-// The two tests below hold both halves of that — it covers code, and it cannot be
-// stretched over prose — plus a measured bound on how much it suppresses, so
-// wrapping a paragraph in `<pre><code>` to silence the gate shows up as a number
-// that moved rather than as nothing at all.
+//   * `<pre><code>…</code></pre>`. The site pages embed extracted Rust, JavaScript
+//     and shell — most of it GENERATED from the code it documents by
+//     `tools/build-embed-docs.mjs` — and `npm pack` is not translated into eighteen
+//     languages. Left counted, that debt could never legitimately come down, and a
+//     ratchet nobody can turn gets deleted.
+//   * `<script>` and `<style>` BODIES. This one is a bug fix as much as an
+//     exemption. `scanMarkup` skipped the script and style OPENING TAGS by name and
+//     then walked straight into their contents, because it captures the text after
+//     each tag up to the next `<` — so a script body containing anything
+//     tag-SHAPED was read as markup. Putting the embedding guide's own description
+//     ("…the `<opendoc-editor>` custom element…") into an `ld+json` block made the
+//     scanner match `<opendoc-editor>` as an element and count the rest of the JSON
+//     line as translatable prose. The ratchet caught it at one site over a ceiling.
+//
+// The tests below hold both halves — they cover code, and they cannot be stretched
+// over prose — plus a measured bound on how much they suppress, so hiding a
+// paragraph in either shows up as a number that moved rather than as nothing.
 
 test("the exemption covers code, and cannot be stretched over prose", () => {
   // Code inside `<pre><code>` is not a translation site.
@@ -219,20 +229,51 @@ test("the exemption covers code, and cannot be stretched over prose", () => {
   assert.equal(scanMarkup("<pre><code>npm pack<p>Install the package first.</p>").length, 2);
 });
 
-test("how much the code-block exemption suppresses is measured, per file", () => {
-  // MEASURED by scanning each block on its own. If somebody wraps real prose in
-  // `<pre><code>` — the one way a structural exemption can be abused — this number
+test("a script or style body is code, tag-shaped text inside it included", () => {
+  // The regression this exists for, exactly as it was found. Without the
+  // exemption, `<opendoc-editor>` in a JSON string is matched as an element and the
+  // rest of the line is counted as prose — one site, in a file whose ceiling had
+  // zero slack.
+  const jsonld =
+    '<script type="application/ld+json">\n' +
+    '{ "description": "Embed the editor: the <opendoc-editor> custom element, and a contract." }\n' +
+    "</script>";
+  assert.deepEqual(scanMarkup(jsonld), []);
+  assert.equal(scanMarkup(jsonld, { exemptCode: false }).length, 1);
+  // A style body, same shape.
+  assert.deepEqual(scanMarkup("<style>\n.a::after { content: \"<b>x</b> and some words\"; }\n</style>"), []);
+  // And it ends at the closing tag: prose after the script still counts, and only
+  // that prose.
+  const terminated = '<script>var a = "<i>some words here</i>";</script><p>Real prose here.</p>';
+  assert.equal(scanMarkup(terminated).length, 1);
+  // An unterminated script exempts nothing, the same failing-open rule as `<pre>` —
+  // so the tag-shaped text inside it is counted again alongside the real prose.
+  const unterminated = '<script>var a = "<i>some words here</i>";<p>Real prose here.</p>';
+  assert.equal(scanMarkup(unterminated).length, 2);
+});
+
+test("how much the code exemptions suppress is measured, per file", () => {
+  // MEASURED by scanning each file with the exemptions on and off and taking the
+  // difference. If somebody wraps real prose in `<pre><code>` or hides it in a
+  // script body — the one way a structural exemption can be abused — this number
   // rises and the test fails, so the abuse has to be argued instead of being
-  // invisible. Files absent from the expectation have no `<pre><code>` at all.
+  // invisible. Files absent from the expectation suppress nothing.
+  //
+  // The first version of this measurement scanned each exempt block on its own and
+  // reported `embedding.page.html: 1`. That was wrong, and the way it was wrong is
+  // worth keeping: `scanMarkup` captures the text after a tag only up to the next
+  // `<`, and returns nothing when there is no next `<` at all, so the sentence it
+  // really does read in the whole page reads as empty in a sliced-out block. The
+  // real figure is 2. A measurement taken on a case that does not exercise the
+  // behaviour is not a measurement.
   const SUPPRESSED = {
     "docs.page.html": 2,
-    "embedding.page.html": 1,
+    "embedding.page.html": 2,
     "index.page.html": 2,
   };
   const measured = {};
   for (const file of [...CEILINGS.keys()].filter((name) => name.endsWith(".html"))) {
-    const source = readFileSync(join(WEBAPP, file), "utf8");
-    const sites = codeBlocks(source).reduce((sum, block) => sum + scanMarkup(block).length, 0);
+    const sites = exemptedSites(readFileSync(join(WEBAPP, file), "utf8"));
     if (sites) measured[file] = sites;
   }
   assert.deepEqual(measured, SUPPRESSED);
