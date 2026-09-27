@@ -265,7 +265,22 @@ const SRC = new URL("../src/", import.meta.url);
  *  Re-measured from the file AFTER rebasing onto `origin/main`, not before:
  *  arithmetic on two branches' numbers is the trap the notes above record
  *  four times. */
-const MAIN_JS_LINE_CEILING = 16489;
+/** Lowered to 16,487 by the version-preview chrome fix. The file was at its
+ *  ceiling with ZERO slack, and the change needed ten lines: a second region set,
+ *  one `reflectChrome()` that composes it, and two call sites. It paid for them by
+ *  deleting what was already dead — `reviewText` (an unused helper holding an
+ *  unrouted English string), the unused `tabReviewBtn` binding, the unused
+ *  `openAppMenu` alias and a dead `contrast.mjs` import — and by collapsing a real
+ *  duplication in the open path: `reviewMode`, both banners and the mode buttons'
+ *  pressed states were all set by hand beside a CONDITIONAL call to the one
+ *  function that already does all four. The combination could not cover an editable
+ *  document replacing a read-only one, which is a defect the deduplication fixes
+ *  rather than a line count it buys. RE-MEASURED from the merged file after
+ *  rebasing onto `origin/main`, never carried forward from the branch: the branch
+ *  carried 16,543 against a `main` that then landed the table-commands extraction
+ *  and took this number to 16,489 underneath it, so 16,487 is a measurement of the
+ *  merge and not arithmetic on two branches' figures. */
+const MAIN_JS_LINE_CEILING = 16487;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

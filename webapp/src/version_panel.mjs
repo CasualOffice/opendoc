@@ -107,6 +107,7 @@ import {
   openHistoryStore,
   resolveRetention,
   sanitiseVersionName,
+  suppressesUnchanged,
 } from "./version_history.mjs";
 import {
   groupVersions,
@@ -1360,7 +1361,22 @@ export function createVersionHistory({
       actor: info.actor,
       kind: kind ?? kindFor(reason),
       retention: retention(),
+      // Nothing new to keep is not a version (`docs/139` §18 q3, reversed by the
+      // owner on 2026-09-28). Per REASON, because the reasons are not the same
+      // kind of thing — `SUPPRESS_UNCHANGED` argues each one — and decided here
+      // rather than in `shouldCapture`, which may not touch bytes or storage.
+      skipIfUnchanged: suppressesUnchanged(reason),
     });
+    if (result.status === HISTORY_STATUS.UNCHANGED) {
+      // Nothing was written, so nothing is noted: `noteCaptured` would start the
+      // interval over and skip the NEXT tick, which is the one that would have had
+      // something to keep. And nothing is an error — the timeline simply gained no
+      // row, which is what was asked for. Said aloud only while the timeline is on
+      // screen, where the reader can see the row not appear; on a Save with the
+      // panel shut it would be a toast about a non-event.
+      if (isOpen()) report(result);
+      return result;
+    }
     if (result.ok) {
       capturePolicy.noteCaptured(Date.now(), info.revision);
       rows = await ready.listVersions(lineageId);

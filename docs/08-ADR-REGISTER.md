@@ -725,9 +725,25 @@ corrected rather than left to contradict the shipped policy.
    This also answers `docs/139` §18 question 5 — yes, named versions get a count limit in
    addition to the byte ceiling, and the limit exists to protect the refusal from being the
    normal case.
-5. **An explicit Save always creates a version** (`docs/139` §18 question 3). It is a point a
-   person recognises, and content addressing makes a no-change Save cost a row rather than a
-   document.
+5. ~~**An explicit Save always creates a version**~~ — **REVERSED by the owner on 2026-09-28:
+   a capture with nothing new in it is suppressed** (`docs/139` §18 question 3). The original
+   decision reasoned from storage — a no-change Save costs a row, not a document — and storage
+   was never what was wrong with it. The owner's words are *"version should not be logged if
+   nothing has changed"*, and the cost is to the timeline: opening a document laid down an
+   `import` entry identical to the head and saving an unmodified one laid a `saved` entry beside
+   it, so a reader got rows they cannot tell apart or act on, and real versions were pushed out
+   of a 25-row budget by them.
+   A capture whose artifact is byte-identical to the lineage head now reports `history.unchanged`
+   and writes nothing. It is a **per-reason** decision: `open`, `save` and autosave's four
+   triggers are suppressed, because all of them are implicit; `name` and `manual` are not,
+   because they are explicit user acts and a command that appears to do nothing is the worse
+   failure; and `pre_restore`, `restore` and `recovery` are not, because they are integrity
+   captures and decision 9 below states the pre-restore invariant over a *record existing*.
+   The comparison is content addressing doing the job it was built for — the SHA-256 checkpoint
+   id the capture has already computed, against the one the head already stores, inside the
+   transaction that is already reading those rows. Nothing is hashed, read or walked twice, and
+   `shouldCapture` (decision 10) is untouched and still O(1) with no storage access: a content
+   question needs bytes and the editing path may not spend them.
 6. **History is on by default and tied to autosave** (`docs/139` §18 question 2), for
    autosave's own reason: a document-safety net nobody switches on is not one. Turning
    autosave off turns history off with it — one switch must not promise what the other has

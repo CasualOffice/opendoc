@@ -96,7 +96,7 @@ import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
-import { editingModeFor, hostCapabilities, hostRegions, reflectReviewModeAccess } from "./capabilities.mjs";
+import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
@@ -119,7 +119,6 @@ import {
   reviewFormattingDescription,
   reviewRevisionTooltip,
 } from "./review_labels.mjs";
-import { previewInkIsLegible } from "./contrast.mjs";
 import {
   byteOffsetToStringIndex,
   isWholeWordAt,
@@ -385,7 +384,6 @@ const refEndnoteBtn = document.getElementById("refEndnoteBtn");
 const refFieldBtn = document.getElementById("refFieldBtn");
 const refUpdateCaptionsBtn = document.getElementById("refUpdateCaptionsBtn");
 const refUpdateFieldsBtn = document.getElementById("refUpdateFieldsBtn");
-const tabReviewBtn = document.getElementById("tabReview");
 const reviewTrackBtn = document.getElementById("reviewTrackBtn");
 const reviewShowChangesBtn = document.getElementById("reviewShowChangesBtn");
 const reviewPrevBtn = document.getElementById("reviewPrevBtn");
@@ -1281,21 +1279,28 @@ const reviewMarginCommentBtn = document.getElementById("reviewMarginComment");
 // not an Editing page with disabled buttons. See `capabilities.mjs`.
 const HOST_CAPS = hostCapabilities();
 const HOST_MODE = editingModeFor(HOST_CAPS);
-/** Which chrome this container paints (`docs/126` phase 3). Resolved from the
- *  same URL the capability set came from, applied BEFORE first paint, and a
- *  different question from the capability set: a withheld region is a
- *  presentation decision, a withheld capability is a permission. */
-const HOST_REGIONS = hostRegions();
-// `applyRegions` RETURNS the withheld ids, which is the opposite of the set above
-// — reading its return value as the shown set threw a `TypeError` on the first
-// registry build and killed boot outright. The return value is not wanted here,
-// so it is not bound.
-applyRegions({
-  body: document.body,
-  root: document,
-  regions: HOST_REGIONS,
-  selectBand: (band) => selectRibbonTab(band),
-});
+/** Which chrome this container paints (`docs/126` phase 3), in both of its shapes:
+ *  the container's own, and the same container with its editing chrome composed
+ *  away. Resolved from the same URL the capability set came from, applied BEFORE
+ *  first paint, and a different question from the capability set — a withheld
+ *  region is a presentation decision, a withheld capability is a permission. */
+const HOST_CHROME = hostChrome();
+/** Composes the chrome for the document on screen. `readOnlyReason` is non-empty
+ *  exactly when this document can never be edited — the engine refusing it, or a
+ *  version preview standing in for it — which is "never, for you" for as long as
+ *  it is there, so it gets the reading chrome (see `EDITING_REGIONS`). Reversible
+ *  Read-only MODE is deliberately not here: that is "not right now", and its
+ *  controls already say so. Leaving a preview restores exactly what was there, the
+ *  active ribbon tab included — `applyRegions` re-selects a band only when the one
+ *  on screen is stranded, and a reading container has none to move to. O(regions). */
+function reflectChrome() {
+  applyRegions({
+    body: document.body,
+    root: document,
+    regions: readOnlyReason ? HOST_CHROME.reading : HOST_CHROME.editing,
+    selectBand: (band) => selectRibbonTab(band),
+  });
+}
 /** The host contract (`docs/126` phase 2), built at the END of this file because
  *  its command registry cannot exist until everything below is declared, and
  *  declared HERE because the hooks that feed it are scattered up the file. Every
@@ -1312,6 +1317,7 @@ let reviewMode = HOST_MODE;
  *  off, which is why the mode buttons are disabled and the banner loses its
  *  "Switch to editing" escape. */
 let readOnlyReason = "";
+reflectChrome(); // before first paint, and `readOnlyReason` had to exist first
 let activeReviewCommentId = null;
 
 // The "Show changes" markup preview (docs/93): renders struck deletions +
@@ -1537,6 +1543,7 @@ function setReviewMode(mode) {
   }
   // There is nothing to switch to: the offer would be a dead control.
   if (viewingBannerEdit) viewingBannerEdit.hidden = !!readOnlyReason;
+  reflectChrome(); // every `readOnlyReason` edge — a preview's two included — is here
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
   }
@@ -3097,13 +3104,10 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     startPosition.free();
     tableSelection = null;
     objectCropSession = null; // a new document invalidates any in-progress crop
-      // Ask the engine, before anything is offered, whether this document can be
-    // edited at all: everything downstream — the mode buttons, the banner,
-    // every refusal message — reads this one answer (`docs/113` §8.7).
+    // Ask the engine, before anything is offered, whether this document can be
+    // edited at all: the mode buttons, the banner, the chrome and every refusal
+    // message all read this one answer (`docs/113` §8.7).
     readOnlyReason = String(doc.editingUnavailableReason ?? "");
-    reviewMode = readOnlyReason ? "viewing" : HOST_MODE;
-    suggestingBanner.hidden = true;
-    if (viewingBanner) viewingBanner.hidden = true;
     reviewSidebarPreference = null;
     activeReviewCommentId = null;
     activeReviewItemId = null;
@@ -3112,16 +3116,15 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // A new document invalidates every retained card and its cached geometry.
     reviewLayout = [];
     reviewCardCache.clear();
-    for (const button of reviewModeButtons) {
-      button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
-    }
-      // Through the one function that owns mode state, so the banner, its
-    // (removed) escape hatch and the disabled buttons cannot drift from
-    // `reviewMode`.
-    // Through the one owner of mode state, so a withheld mode cannot drift.
-    if (readOnlyReason || HOST_MODE !== "editing") {
-      setReviewMode(readOnlyReason ? "viewing" : HOST_MODE);
-    }
+    // The mode this document opens in, through the ONE owner of mode state — which
+    // sets `reviewMode`, both banners, the pressed states, the tracking flag and the
+    // composed chrome, so none can drift. It used to be called only for a non-editing
+    // mode, with four of those five done again by hand beside it; the case that could
+    // not cover is an editable document REPLACING a read-only one, which kept the old
+    // mode and, now that chrome follows it, the reading chrome. Skipped only where
+    // nothing can have changed — editing to editing.
+    const openMode = readOnlyReason ? "viewing" : HOST_MODE;
+    if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode);
     breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
@@ -11327,10 +11330,6 @@ function togglePages() {
 railPages.addEventListener("click", togglePages);
 pagesClose.addEventListener("click", togglePages);
 
-function reviewText(value) {
-  return value == null || value === "" ? "Not provided" : String(value);
-}
-
 /**
  * Timestamp for a review action. Author/initials are no longer read here:
  * they come from the WASM engine's active host identity (`doc.setActiveAuthor`,
@@ -11963,7 +11962,7 @@ function editorCommands(context = { surface: "palette" }) {
     // of the REGISTRY rather than hiding a button is what makes the composition
     // complete — the palette and the ⌘⌥⇧H chord read the registry, and neither
     // belongs to a region CSS could reach.
-    ...(HOST_REGIONS.has("history")
+    ...(HOST_CHROME.editing.has("history")
       ? [
           {
             id: "file.versionHistory",
@@ -12517,7 +12516,6 @@ const appMenu = createMenuBar({
   registry: menuRegistry,
   formatShortcut,
 });
-const openAppMenu = (name, options) => appMenu.open(name, options);
 const closeAppMenu = (options) => appMenu.close(options);
 
 // The File page. Same rows, rendered as headed groups instead of a dropdown,
