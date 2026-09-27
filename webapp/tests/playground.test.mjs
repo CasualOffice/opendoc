@@ -74,13 +74,26 @@ test("every switch is labelled, and the label points at the control", () => {
   // An `<input>` with no `<label for>` has no accessible name, and a checkbox with
   // no name is a checkbox a screen reader reads as "checkbox". Thirty-three of them
   // would be a page nobody could use without a mouse.
-  const ids = [...PAGE.matchAll(/<input[^>]*\bid="(pg-[\w.-]+)"/g)].map((m) => m[1]);
-  assert.equal(ids.length, ROLES.length + CAPABILITIES.length + REGIONS.length);
-  for (const id of ids) {
-    assert.ok(
-      PAGE.includes(`for="${id}"`),
-      `#${id} has no <label for>, so it has no accessible name`,
-    );
+  // Both halves, because the first version of this counted `id="pg-…"` inputs and
+  // asserted the total was 33 — which passed only while the brand fields happened
+  // to be named in camelCase, and went red the moment they were renamed to match
+  // their neighbours. A count is not the guarantee; being labelled is.
+  const switches = [...PAGE.matchAll(/<input[^>]*\bid="(pg-[\w.-]+)"[^>]*\bdata-(?:role|capability|region)\b/g)]
+    .map((m) => m[1]);
+  assert.equal(
+    switches.length,
+    ROLES.length + CAPABILITIES.length + REGIONS.length,
+    "the page does not carry one switch per role, capability and region",
+  );
+  const named = [...PAGE.matchAll(/<(?:input|select)[^>]*\bid="(pg-[\w.-]+)"[^>]*>/g)].map(
+    (m) => m[1],
+  );
+  assert.ok(named.length >= switches.length, "no controls found at all");
+  for (const id of named) {
+    const labelled =
+      PAGE.includes(`for="${id}"`) ||
+      new RegExp(`<(?:input|select)[^>]*\\bid="${id}"[^>]*aria-label="[^"]+"`).test(PAGE);
+    assert.ok(labelled, `#${id} has neither a <label for> nor an aria-label`);
   }
 });
 

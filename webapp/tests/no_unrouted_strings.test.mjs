@@ -439,7 +439,7 @@ test("how much the code exemptions suppress is measured, per file", () => {
     "docs.page.html": 2,
     "embedding.page.html": 4,
     "index.page.html": 2,
-    "playground.page.html": 1,
+    "playground.page.html": 2,
   };
   const measured = {};
   for (const file of [...CEILINGS.keys()].filter((name) => name.endsWith(".html"))) {

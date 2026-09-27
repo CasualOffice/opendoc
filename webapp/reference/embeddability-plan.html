@@ -236,6 +236,66 @@
         </table>
         </div>
         <p class="doc-body">Consequence: <code>preview</code> is not &quot;<code>readonly</code> minus print&quot;. Collapsing them would give every attachment preview a reading UI it does not want, or every published document a bare canvas with no way to get to page 40. They are separate presentations and Phase 2/3 must keep them so.</p>
+        <hr class="doc-rule" />
+        <h2 class="doc-h2" id="the-configuration-playground-landed-2026-09-28">The configuration playground — landed 2026-09-28</h2>
+        <p class="doc-body">Owner instruction, verbatim: <em>&quot;we have SDK .. configuration other things ready .. but no demo added still on about to use it.. and realtime configuration control to see and help on how to configuration and demo page its needed for sdk&quot;</em>.</p>
+        <p class="doc-body">All three phases had shipped and <strong>none of them was reachable</strong>. A prospective host could read the embedding guide's tables and could not try the thing, which is <code>docs/99</code> §9.4's &quot;built is not reachable&quot; arriving at the one subject least able to survive it: the only convincing argument that <code>preview</code> and <code>readonly</code> are different presentations is watching them be different.</p>
+        <p class="doc-body"><code>webapp/playground.html</code> is the answer. Controls on the left, a running editor on the right, and a copyable snippet at the bottom that reproduces whatever is on screen.</p>
+        <h3 class="doc-h3" id="a-new-page-not-a-bigger-embed-html">A new page, not a bigger <code>embed.html</code></h3>
+        <p class="doc-body">Three reasons, in order of weight.</p>
+        <ol class="doc-list">
+        <li><code>embed.html</code> is the fixture <code>host-contract.spec.mjs</code> drives. Growing a test fixture into a public teaching page couples them: a control added for a reader becomes a control that spec has to keep working around.</li>
+        <li>It declares <code>noindex</code> and carries no site chrome, because it plays a host's own site. The playground is a page <strong>of</strong> the site — in the sitemap, under the shared header, swept by the contrast and nav guards.</li>
+        <li>It mounts the editor <strong>twice</strong> on purpose, to show one contract over two transports. The playground mounts it once and spends the room on configuration.</li>
+        </ol>
+        <p class="doc-body">They link to each other and neither does the other's job.</p>
+        <h3 class="doc-h3" id="the-controls-are-generated-not-typed">The controls are generated, not typed</h3>
+        <p class="doc-body"><code>tools/build-embed-docs.mjs</code> — the generator that already keeps the embedding guide honest — now renders <strong>two</strong> pages. The playground's switches come from <code>capabilities.mjs</code>: one radio per role, one checkbox per capability, one per region, each clause read from the same <code>MEANINGS</code> / <code>REGION_MEANINGS</code> tables the guide's columns use. A tenth capability puts a tenth switch on the page with nobody editing it, and a capability with no clause fails the build in both places at once.</p>
+        <p class="doc-body">Extending the existing generator rather than adding a sixth <code>--check</code> to <code>build.sh</code> was deliberate: a second generator would be a second place that knows what a capability is, which is the defect this whole tool exists to prevent.</p>
+        <p class="doc-body">Every number is derived with its recipe stated — the role, capability, region and band counts, the overridable token count, <code>&lt;opendoc-editor&gt;</code>'s attribute count, the URL parameters read out of <code>hostConfig()</code>, and the WCAG floors out of <code>contrast.mjs</code>.</p>
+        <h3 class="doc-h3" id="the-refusal-is-the-generator-s-own-by-construction">The refusal is the generator's own, by construction</h3>
+        <p class="doc-body">A colour that fails AA has to show a host the message <code>node webapp/tools/build-brand.mjs</code> would give them — the pair, the measured ratio, the floor, the nearest passing value — and the only honest way to publish that is to run the code the command line runs. <code>tools/build-brand.mjs</code> opened with <code>node:fs</code>, so the pure half moved out:</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Module</th>
+        <th>What it holds</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>webapp/src/brand_contract.mjs</code></td>
+        <td><code>OVERRIDABLE</code>, the locked prefixes, <code>normalize</code>, <code>auditBrand</code>, <code>brandCss</code>, <code>markPaths</code>, <code>BrandRefusal</code>, and §AA — the argument for refusing rather than correcting or nagging</td>
+        </tr>
+        <tr>
+        <td><code>webapp/src/palette_parse.mjs</code></td>
+        <td>How a palette is read out of stylesheet <strong>text</strong></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">The generator keeps the file reading, the catalogues, the <code>editor.html</code> regions and the command line, and re-exports every name that moved, so <code>build-embed-docs.mjs</code> and <code>tests/brand.test.mjs</code> did not move with it. The page fetches <code>src/style.css</code> and audits the host's palette against the palette the editor will really render. Nothing is duplicated: a committed JSON copy of the palette for the browser would be the second source of truth <code>palette_source.mjs</code>'s own header argues against.</p>
+        <p class="doc-body"><strong>A refused palette is not applied.</strong> That is the difference between refusing and nagging, and <code>playground.spec.mjs</code> asserts it against the live frame's computed <code>--accent</code>.</p>
+        <h3 class="doc-h3" id="what-is-live-and-what-cannot-be">What is live, and what cannot be</h3>
+        <ul class="doc-list">
+        <li>The brand palette is live: it is a stylesheet, and a white-labelled build is a swapped stylesheet. No reload.</li>
+        <li>Role, capabilities and regions <strong>remount</strong> the frame. They are resolved before the frame's first navigation on purpose, and a channel that could widen a live container is the second channel <code>capabilities.mjs</code> refuses to add. The page says so in its own &quot;does not do yet&quot; list rather than hiding it.</li>
+        </ul>
+        <p class="doc-body">Per interaction the work is O(roles + capabilities + regions) and independent of document size; a change that resolves to the same URL reloads nothing.</p>
+        <h3 class="doc-h3" id="what-the-page-found">What the page found</h3>
+        <p class="doc-body">This is the argument for having built it. In a <code>preview</code> container — offered none of the nineteen regions — two strips survive:</p>
+        <ul class="doc-list">
+        <li>the top bar still paints the document-state chip, the import-findings count and the Properties button;</li>
+        <li>the Viewing banner still offers <strong>&quot;Switch to editing&quot;</strong>, which a <code>preview</code> container can never do — a dead control in the strictest sense.</li>
+        </ul>
+        <p class="doc-body">Neither belongs to any region, so neither can be withheld. Said plainly on the page and <strong>filed rather than patched here</strong>: deciding where they belong is a change to the region set, in files two other lanes were in.</p>
+        <h3 class="doc-h3" id="deliberately-not-done">Deliberately not done</h3>
+        <ul class="doc-list">
+        <li><strong>No <code>can</code> / <code>chrome</code> attribute on <code>&lt;opendoc-editor&gt;</code>.</strong> The lists ride in <code>editor-src</code>'s query, which is what the snippet generates. An attribute apiece would read better and belongs to the element and its published types rather than to a documentation PR; the page says so with a guard that fails when it stops being true.</li>
+        <li><strong>No host commands here.</strong> <code>embed.html</code> already drives every command over both transports, and the playground links to it.</li>
+        <li><strong>No fix for the two chrome strips above</strong>, for the reason given.</li>
+        </ul>
         <h2 class="doc-h2" id="site-documentation-is-part-of-every-phase-including-phase-1">Site documentation is part of every phase, including Phase 1</h2>
         <p class="doc-body">Owner instruction: the SDK documentation goes <strong>on the site</strong>, attached to the phases, and Phase 1's own page is owed now rather than at the end.</p>
         <p class="doc-body">The binding constraint is <code>docs/99</code> §9: the fidelity and landing pages have carried <strong>fabricated claims twice, in both directions</strong>. So for every phase:</p>
@@ -297,6 +357,7 @@
             <li><a href="#phase-2-the-host-contract-one-schema-two-transports">Phase 2 — The host contract: one schema, two transports</a></li>
             <li><a href="#phase-3-white-labelling-customization-and-release">Phase 3 — White-labelling, customization, and release</a></li>
             <li><a href="#container-policy-owner-notes-2026-09-27">Container policy — owner notes, 2026-09-27</a></li>
+            <li><a href="#the-configuration-playground-landed-2026-09-28">The configuration playground — landed 2026-09-28</a></li>
             <li><a href="#site-documentation-is-part-of-every-phase-including-phase-1">Site documentation is part of every phase, including Phase 1</a></li>
             <li><a href="#explicitly-not-in-these-three">Explicitly not in these three</a></li>
             <li><a href="#sequencing-rule">Sequencing rule</a></li>
