@@ -17,6 +17,8 @@ use super::{FontName, Rgba};
 use super::{FieldKind, FieldRangeId};
 // Same rule: the field update attributes go on their own line.
 use super::FieldUpdateState;
+// Same rule: the one numbering resolver (`v1::numbering`) goes on its own line.
+use super::NumberingResolver;
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -1395,4 +1397,16 @@ pub struct Definitions {
     /// empty so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<Person>,
+}
+
+impl Definitions {
+    /// The single numbering resolver over this document's styles, numbering
+    /// instances and abstract definitions — the one answer to "which level does
+    /// this `w:numPr` paint?" that validation, layout and import all consult.
+    ///
+    /// Complexity: O(1); it only borrows three maps.
+    #[must_use]
+    pub fn numbering_resolver(&self) -> NumberingResolver<'_> {
+        NumberingResolver::new(&self.styles, &self.numbering, &self.abstract_numbering)
+    }
 }

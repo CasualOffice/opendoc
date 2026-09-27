@@ -52,11 +52,30 @@ impl Styles {
     /// the numbering part is parsed. A `numId` with no instance (or an undefined
     /// level) is reported, matching the body parser.
     pub(crate) fn resolve_numbering(&mut self, numbering: &Numbering, reporter: &mut Reporter) {
-        for (style_id, num_id, level) in std::mem::take(&mut self.pending_numbering) {
+        // Two passes over one `Vec`, not one: `Numbering::resolve` now reads the
+        // styles table (a `w:numStyleLink` is followed *through* a style's own
+        // `w:numPr`), so every resolution is done while `self` is borrowed
+        // immutably and only then are the results written back.
+        //
+        // Ordering note, deliberately not hidden: at this point no style carries a
+        // resolved `paragraph.numbering` yet, so a *chained* List Style — a
+        // numbering style whose own `w:numPr` names an instance that itself defers
+        // through `w:numStyleLink` — does not resolve here and is reported rather
+        // than silently dropped. Word writes the levels on the style's own
+        // abstract, so the shape that matters resolves; body paragraphs are parsed
+        // after this pass and see the fully-resolved table.
+        let pending = std::mem::take(&mut self.pending_numbering);
+        let resolved: Vec<(StyleId, Option<casual_doc_model::v1::NumberingRef>)> = pending
+            .iter()
+            .map(|(style_id, num_id, level)| {
+                (*style_id, numbering.resolve(self, num_id, *level))
+            })
+            .collect();
+        for (style_id, reference) in resolved {
             let Some(mut style) = self.definitions.get(&style_id).cloned() else {
                 continue;
             };
-            match numbering.resolve(&num_id, level) {
+            match reference {
                 Some(reference) => {
                     style
                         .paragraph
@@ -87,6 +106,15 @@ impl Styles {
     /// The `w:latentStyles` block, if the part carried one.
     pub(crate) fn latent_styles(&self) -> Option<LatentStyles> {
         self.latent_styles.clone()
+    }
+
+    /// The parsed style table, for the one numbering resolver: a `w:numStyleLink`
+    /// is followed *through* a paragraph style's own `w:pPr/w:numPr`, so
+    /// `casual_doc_model::v1::NumberingResolver` needs this map to follow it.
+    ///
+    /// Complexity: O(1).
+    pub(crate) fn definitions(&self) -> &DefinitionMap<StyleId, Style> {
+        &self.definitions
     }
 
     pub(crate) fn into_definitions(self) -> DefinitionMap<StyleId, Style> {

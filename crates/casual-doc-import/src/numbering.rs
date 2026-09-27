@@ -19,26 +19,85 @@ use crate::properties::{apply_paragraph_property, apply_run_property, attribute_
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 use crate::styles::Styles;
+// Separate `use` line (rustfmt Preserve) to minimize import-block merge
+// conflicts: the ONE numbering resolver, which this module defers to instead of
+// carrying a validity rule of its own.
+use casual_doc_model::v1::NumberingResolver;
 
 /// Resolved numbering definitions plus the numId -> instance index.
 #[derive(Debug, Default)]
 pub(crate) struct Numbering {
     by_num_id: BTreeMap<String, NumberingInstanceId>,
-    valid_levels: BTreeMap<NumberingInstanceId, BTreeSet<u8>>,
     abstract_numbering: DefinitionMap<AbstractNumberingId, AbstractNumbering>,
     instances: DefinitionMap<NumberingInstanceId, NumberingInstance>,
 }
 
 impl Numbering {
     /// Resolves a `w:numPr` (numId + ilvl) to a paragraph numbering reference,
-    /// requiring the instance to exist and the level to be defined.
-    pub(crate) fn resolve(&self, num_id: &str, level: u8) -> Option<NumberingRef> {
+    /// requiring the instance to exist and the level to **resolve**.
+    ///
+    /// "Resolve" is not this module's rule. It is
+    /// [`NumberingResolver::level`](casual_doc_model::v1::NumberingResolver::level)
+    /// in `casual-doc-model` — the same predicate `Document::validate` accepts a
+    /// reference by and `casual-doc-layout` paints from. This function used to
+    /// carry a third, stricter rule of its own (a per-instance set of the `w:lvl`
+    /// children the named abstract declared), which is why a Word **List Style** —
+    /// an abstract carrying `<w:numStyleLink/>` and no `w:lvl` at all, deferring
+    /// its levels to a numbering paragraph style — lost the marker on *every*
+    /// paragraph of the list, silently, while the renderer had followed that link
+    /// correctly for months (`docs/142` LST-10; the import-side half of LST-34 is
+    /// that admitting the reference without moving the model's validator would
+    /// have turned the dropped marker into a rejected document).
+    ///
+    /// `styles` is threaded in because the `w:numStyleLink` indirection routes
+    /// *through* a paragraph style's own `w:pPr/w:numPr`; the caller therefore has
+    /// to have run [`Styles::resolve_numbering`](crate::styles::Styles::resolve_numbering)
+    /// first for a link to be followable.
+    ///
+    /// Complexity: one B-tree lookup for the `numId`, then O(1) link hops and a
+    /// scan of the effective abstract's levels (at most nine in OOXML) — see
+    /// [`NumberingResolver::level`](casual_doc_model::v1::NumberingResolver::level).
+    /// Called once per `w:numPr`, so import stays linear in paragraphs and is
+    /// quadratic in neither abstracts nor levels.
+    pub(crate) fn resolve(&self, styles: &Styles, num_id: &str, level: u8) -> Option<NumberingRef> {
         let instance = *self.by_num_id.get(num_id)?;
-        if self.valid_levels.get(&instance)?.contains(&level) {
-            Some(NumberingRef { instance, level })
-        } else {
-            None
-        }
+        let reference = NumberingRef { instance, level };
+        self.resolver(styles)
+            .level(reference)
+            .is_some()
+            .then_some(reference)
+    }
+
+    /// The model's numbering resolver over the definitions parsed so far.
+    ///
+    /// Complexity: O(1) — it borrows three maps.
+    fn resolver<'a>(&'a self, styles: &'a Styles) -> NumberingResolver<'a> {
+        NumberingResolver::new(styles.definitions(), &self.instances, &self.abstract_numbering)
+    }
+
+    /// Whether `num_id` names an instance whose abstract defers its levels through
+    /// a `w:numStyleLink` that leads nowhere: the link is present, and following it
+    /// still reaches an abstract declaring no levels at all.
+    ///
+    /// This is the difference between "this document has no such list" and "this
+    /// document has a List-Style list we could not follow", and the caller reports
+    /// the second as its own finding rather than defaulting the list to unnumbered
+    /// (a dangling link and a `numStyleLink`/`styleLink` cycle both land here).
+    ///
+    /// Complexity: as [`Numbering::resolve`].
+    pub(crate) fn has_unfollowable_style_link(&self, styles: &Styles, num_id: &str) -> bool {
+        let Some(instance_id) = self.by_num_id.get(num_id) else {
+            return false;
+        };
+        let resolver = self.resolver(styles);
+        let Some(instance) = resolver.instance(*instance_id) else {
+            return false;
+        };
+        let Some(declared) = self.abstract_numbering.get(&instance.abstract_ref) else {
+            return false;
+        };
+        declared.num_style_link.is_some()
+            && resolver.effective_abstract(declared).levels.is_empty()
     }
 
     pub(crate) fn into_definitions(
@@ -111,8 +170,7 @@ pub(crate) fn parse(
 
     // Assign ids to abstract definitions; build the abstractNumId -> id map and
     // the definition table.
-    let mut abstract_by_key: BTreeMap<String, (AbstractNumberingId, BTreeSet<u8>)> =
-        BTreeMap::new();
+    let mut abstract_by_key: BTreeMap<String, AbstractNumberingId> = BTreeMap::new();
     let mut abstract_numbering = DefinitionMap::default();
     for raw in abstracts {
         if abstract_by_key.contains_key(&raw.id) {
@@ -121,13 +179,17 @@ pub(crate) fn parse(
         }
         let id = AbstractNumberingId::new(next_id(ids)?);
         let mut levels = Vec::with_capacity(raw.levels.len());
-        let mut defined = BTreeSet::new();
+        // `seen` exists only to drop a repeated `w:lvl@w:ilvl` (the first wins);
+        // it is NOT a table of which levels are valid. Which levels a `w:numPr`
+        // may name is `NumberingResolver::level`'s answer, and building a second
+        // one here is the defect this file used to carry.
+        let mut seen = BTreeSet::new();
         for level in raw.levels {
-            if defined.insert(level.level) {
+            if seen.insert(level.level) {
                 levels.push(build_level(level, styles, reporter));
             }
         }
-        abstract_by_key.insert(raw.id.clone(), (id, defined));
+        abstract_by_key.insert(raw.id.clone(), id);
         abstract_numbering.insert(
             id,
             AbstractNumbering {
@@ -151,14 +213,13 @@ pub(crate) fn parse(
 
     // Assign ids to instances; resolve their abstract reference.
     let mut by_num_id = BTreeMap::new();
-    let mut valid_levels = BTreeMap::new();
     let mut instances = DefinitionMap::default();
     for raw in nums {
         if by_num_id.contains_key(&raw.num_id) {
             reporter.report(b"num");
             continue;
         }
-        let Some((abstract_ref, levels)) = raw
+        let Some(abstract_ref) = raw
             .abstract_id
             .as_deref()
             .and_then(|key| abstract_by_key.get(key))
@@ -168,7 +229,6 @@ pub(crate) fn parse(
         };
         let id = NumberingInstanceId::new(next_id(ids)?);
         by_num_id.insert(raw.num_id, id);
-        valid_levels.insert(id, levels.clone());
         // Keep only the last override per level (a later `w:lvlOverride` for the
         // same ilvl wins, per field), preserving level order for deterministic
         // output.
@@ -208,7 +268,6 @@ pub(crate) fn parse(
 
     Ok(Numbering {
         by_num_id,
-        valid_levels,
         abstract_numbering,
         instances,
     })

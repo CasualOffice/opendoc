@@ -575,6 +575,7 @@ impl Document {
     }
 
     fn validate_numbering(&self) -> Result<(), ModelError> {
+        let resolver = self.definitions.numbering_resolver();
         for (id, instance) in self.definitions.numbering.iter() {
             let abstract_num = self
                 .definitions
@@ -587,10 +588,16 @@ impl Document {
                 if let Some(start) = numbering_override.start {
                     check_domain(start <= 32_767, "numbering.override.start")?;
                 }
-                if !abstract_num
-                    .levels
-                    .iter()
-                    .any(|level| level.level == numbering_override.level)
+                // The override must target a level that exists — resolved by the
+                // one resolver, so a `w:startOverride` on a List-Style instance
+                // (whose abstract defers its levels through `w:numStyleLink` and
+                // declares none of its own) is accepted here exactly as the
+                // layout accepts it. Reading `abstract_num.levels` directly was
+                // the second half of the import/model/layout disagreement
+                // (`docs/142` LST-34).
+                if resolver
+                    .level_of(instance, abstract_num, numbering_override.level)
+                    .is_none()
                 {
                     return Err(ModelError::NumberingLevelUndefined {
                         reference: id.node_id(),
@@ -639,22 +646,37 @@ impl Document {
         Ok(())
     }
 
+    /// Whether a paragraph may carry `reference`.
+    ///
+    /// The rule is **not written here**: it is
+    /// [`NumberingResolver::level`](crate::v1::NumberingResolver::level), the one
+    /// resolver `casual-doc-layout` paints from and `casual-doc-import` admits a
+    /// `w:numPr` by. Validation used to apply a *stricter* rule of its own — the
+    /// level had to be a `w:lvl` of the abstract the instance names — so a
+    /// document the renderer could paint was rejected, and the importer's own
+    /// third rule silently dropped the list before either was reached
+    /// (`docs/142` LST-10, LST-34). All three now derive from the resolver, so
+    /// they cannot disagree.
+    ///
+    /// Complexity: O(1) link walk + O(levels) scan per reference; see
+    /// [`NumberingResolver::level`](crate::v1::NumberingResolver::level).
     fn resolve_numbering_level(&self, reference: &NumberingRef) -> Result<(), ModelError> {
-        let instance = self.definitions.numbering.get(&reference.instance).ok_or(
-            ModelError::DanglingNumberingRef(reference.instance.node_id()),
-        )?;
-        let abstract_num = self
+        let resolver = self.definitions.numbering_resolver();
+        let instance = resolver
+            .instance(reference.instance)
+            .ok_or(ModelError::DanglingNumberingRef(
+                reference.instance.node_id(),
+            ))?;
+        if !self
             .definitions
             .abstract_numbering
-            .get(&instance.abstract_ref)
-            .ok_or(ModelError::DanglingAbstractNumberingRef(
-                instance.abstract_ref.node_id(),
-            ))?;
-        if abstract_num
-            .levels
-            .iter()
-            .any(|level| level.level == reference.level)
+            .contains_key(&instance.abstract_ref)
         {
+            return Err(ModelError::DanglingAbstractNumberingRef(
+                instance.abstract_ref.node_id(),
+            ));
+        }
+        if resolver.level(*reference).is_some() {
             Ok(())
         } else {
             Err(ModelError::NumberingLevelUndefined {
