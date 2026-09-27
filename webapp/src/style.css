@@ -9298,6 +9298,12 @@ body.chrome-no-ribbon .ribbon-nav,
 body.chrome-no-rail .rail,
 body.chrome-no-rail #outlinePanel,
 body.chrome-no-rail #pagesPanel,
+/* Version history, withheld: the panel, its ribbon button and its preview bar.
+   The COMMAND is withheld too, in `main.js`, because the palette and the ⌘⌥⇧H
+   chord belong to no region and CSS cannot reach them. */
+body.chrome-no-history #versionPanel,
+body.chrome-no-history #viewVersionsBtn,
+body.chrome-no-history #versionPreviewBanner,
 body.chrome-no-status .footer,
 body.chrome-no-zoom .zoom,
 body.chrome-no-find #findPanel,

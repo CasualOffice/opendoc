@@ -54,7 +54,7 @@ export declare function resolveCapabilities(input?: {
 // silent; "not right now" is state and explains itself with a reason.
 
 /** Every region of the chrome a host can withhold. */
-export type Region = "brand" | "title" | "menu" | "ribbon" | "band.file" | "band.home" | "band.insert" | "band.layout" | "band.references" | "band.review" | "band.view" | "band.table" | "rail" | "status" | "zoom" | "find" | "selection" | "settings";
+export type Region = "brand" | "title" | "menu" | "ribbon" | "band.file" | "band.home" | "band.insert" | "band.layout" | "band.references" | "band.review" | "band.view" | "band.table" | "rail" | "history" | "status" | "zoom" | "find" | "selection" | "settings";
 
 export declare const REGIONS: readonly Region[];
 

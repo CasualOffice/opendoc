@@ -81,6 +81,21 @@ const PREVIEW_SETTLE_MS = 220;
  *  document, and a `versionId` is already both. */
 const optionId = (versionId) => `versionOption-${versionId}`;
 
+/** A Material Symbols glyph, `aria-hidden` because it is decoration and the
+ *  state it stands for is already in the option's accessible name.
+ *
+ *  A helper rather than three inline lines, for the same reason
+ *  `compact_toolbar.mjs` and `review_chrome.mjs` have one: a ligature NAME is not
+ *  prose, and writing it straight into `textContent` at the call site makes the
+ *  unrouted-string scanner read a font instruction as English. */
+function iconSpan(name, className = "") {
+  const icon = document.createElement("span");
+  icon.className = className ? `ms ${className}` : "ms";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = name;
+  return icon;
+}
+
 /**
  * Builds the version history panel and everything behind it.
  *
@@ -306,11 +321,7 @@ export function createVersionHistory({
       // The pin is a STATE, and a colour-only or icon-only state is not a state
       // a screen reader can read — `versionRowText` puts "Named" into the
       // option's accessible name, so this glyph is decoration.
-      const pin = document.createElement("span");
-      pin.className = "ms version-item-pin";
-      pin.setAttribute("aria-hidden", "true");
-      pin.textContent = "push_pin";
-      head.append(pin);
+      head.append(iconSpan("push_pin", "version-item-pin"));
     }
     if (row.versionId === headVersionId) {
       const now = document.createElement("span");
@@ -393,11 +404,11 @@ export function createVersionHistory({
     // H3 and is not built.
     set(actions.changes, false, t("versionHistory.action.showChangesUnavailable"));
     set(actions.clear, rows.length > 0, t("versionHistory.empty"));
-    // A toggle button, `aria-pressed` and a FIXED label: "Keep this version"
-    // that becomes "Stop keeping this version" would be a control whose name
-    // changes under a screen-reader user's cursor, and the applier that walks
-    // `data-i18n` on a locale change would overwrite a script-set label anyway.
-    // The state belongs in `aria-pressed`, which is what it is for.
+    // A toggle button with a FIXED label, and the state in aria-pressed, which
+    // is what aria-pressed is for. A label that flipped between keeping and not
+    // keeping would be a control whose NAME changes under a screen-reader user's
+    // cursor — and the applier that walks data-i18n on a locale change would
+    // overwrite a script-set label anyway.
     actions.pin?.setAttribute("aria-pressed", String(Boolean(row?.pinned)));
     if (bannerBack) bannerBack.hidden = !previewing;
     if (banner) banner.hidden = !previewing;

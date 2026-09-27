@@ -12027,15 +12027,26 @@ function editorCommands(context = { surface: "palette" }) {
     // autosave off, in a framed editor or with a store the browser refused, this
     // row is present and DISABLED WITH THE REASON — which is a different sentence
     // in each of those five cases, because the way out of each one is different.
-    {
-      id: "file.versionHistory",
-      label: t("versionHistory.command"),
-      group: "File",
-      kw: "version history timeline earlier previous restore revert named checkpoint past revision",
-      enabled: !!doc && versionHistory.available(),
-      disabledReason: versionHistory.unavailableReason(),
-      run: () => void versionHistory.toggle(),
-    },
+    //
+    // A WITHHELD REGION is the one case that is silent instead, and that is the
+    // distinction `docs/126` draws: "never, for you" is composition and says
+    // nothing, "not right now" is state and explains itself. Taking the row out
+    // of the REGISTRY rather than hiding a button is what makes the composition
+    // complete — the palette and the ⌘⌥⇧H chord read the registry, and neither
+    // belongs to a region CSS could reach.
+    ...(HOST_REGIONS.has("history")
+      ? [
+          {
+            id: "file.versionHistory",
+            label: t("versionHistory.command"),
+            group: "File",
+            kw: "version history timeline earlier previous restore revert named checkpoint past revision",
+            enabled: !!doc && versionHistory.available(),
+            disabledReason: versionHistory.unavailableReason(),
+            run: () => void versionHistory.toggle(),
+          },
+        ]
+      : []),
     {
       id: "edit.undo",
       label: doc?.undoLabel ? `Undo ${doc.undoLabel}` : "Undo",
