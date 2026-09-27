@@ -371,8 +371,8 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 
 | Theirs | file:line | Ours | Verdict |
 | --- | --- | --- | --- |
-| **Blank Page** | `Toolbar.js:979-989` | — | **Absent** · needs **engine** — a page break first (§4.3) |
-| **Breaks** — page, column, section ▸ next page / continuous / even / odd | injected `:2245-2249`; menu `:2382-2388`; section submenu `:2372-2380` | — | **Absent** · needs **engine** — §4.3 |
+| **Blank Page** | `Toolbar.js:979-989` | — | **Absent** · needs **UI** — unblocked by #649; two page breaks, no engine work (§4.3) |
+| **Breaks** — page, column, section ▸ next page / continuous / even / odd | injected `:2245-2249`; menu `:2382-2388`; section submenu `:2372-2380` | `insertBreak` / `insertSectionBreak` (facade, no surface yet) | **Absent** · needs **UI** — engine shipped in #649 (§4.3) |
 | Table (8×10 picker, custom, draw, erase, text-to-table, **Insert Spreadsheet**) | `:878-899`, picker `:3280-3286` | `insert.table`, and `table.*` on the contextual tab | **Weaker** · needs **engine** — no draw/erase table, no OLE spreadsheet; text-to-table absent |
 | Image (file / URL / storage) | `HeaderFooterTab.js:281-283`, menu `:326-331` | `insert.image` | **Weaker** · needs **UI + host** — file only |
 | Shape | `:992-1005` | `insert.shape` | **Present** |
@@ -401,7 +401,7 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 | Orientation | `:1257-1288` | `layout.orientation` | **Present** |
 | Size (13 presets + custom) | `:1362-1484` | `layout.size` | **Weaker** · needs **UI** — fewer presets |
 | Columns (5 presets + custom) | `:1196-1254` | `layout.columns` | **Present** |
-| Breaks (second slot of the Insert control) | `:2245-2249` | — | **Absent** · needs **engine** — §4.3 |
+| Breaks (second slot of the Insert control) | `:2245-2249` | `insertBreak` / `insertSectionBreak` (facade, no surface yet) | **Absent** · needs **UI** — engine shipped in #649 (§4.3) |
 | Line Numbers (none/continuous/restart page/restart section/suppress + custom) | `:1487-1537` | `layout.lineNumbers` (#609) | **Present** |
 | **Hyphenation** (none / auto / custom) | `:1540-1572`; engine is complete — `sdkjs/word/Editor/Paragraph/TextHyphenator.js`, breaker `Paragraph_Recalculate.js:4335`, painted `RunContent/Text.js:405` | — | **Absent** · needs **engine** — FID-L-02 / OO-006 |
 | indent left/right, spacing before/after spinners | `:694-783` | `layoutIndentFieldsBtn`, `layoutSpacingFieldsBtn` | **Present** |
@@ -532,22 +532,40 @@ end, mid-dot per space, arrow per tab, a page-break rule) before any UI. The eng
 already draw a pilcrow-sized marker for paragraph-mark revisions (`main.js`, `Where a paragraph-level revision is drawn`),
 which is a precedent for the geometry but not the feature.
 
-### 4.3 Breaks — page, column, section — engine + facade + UI
+### 4.3 Breaks — page, column, section — SHIPPED in the engine (#649); UI only remains
+
+**Corrected 2026-09-27, and the correction matters because this section's grade was
+wrong in a way that inflated the cost.** It said a page break "needs **engine**" work.
+It did not. When #649 came to build it, `BreakKind::{Page, Column}` was already
+imported, **paginated** (`flow.rs` turns a trailing page break into `LineBreak::Page`
+plus `page_break_after`; `columns.rs` answers that with a new page, and
+`LineBreak::Column` with the next column), **exported** as `w:br w:type="page"|"column"`,
+and degraded-with-a-loss-report on the ODT path. A `w:br` is an inline node, so authoring
+it reused the same `InsertInlineObject`/`RemoveInlineObject` pair Shift+Enter already
+used: **zero new operations and zero layout changes.** Only the SECTION break needed an
+operation, and it needed exactly one.
+
+The lesson for the rest of this document: "needs engine" was inferred here from the
+absence of an *authoring command*, not from the state of the engine. Any row graded
+`engine` on that reasoning is worth re-checking before it is costed — it is the same
+mistake as reading a missing surface as a missing capability.
 
 Theirs: one split button rendered into **both** Insert and Layout
 (`view/Toolbar.js:2245-2249`); menu `Toolbar.js:2382-2388` (page / column / section);
 section submenu `Toolbar.js:2372-2380` (next page / continuous / even page / odd page).
 
-Ours: **there is no break-insertion operation.** `Operation` has 50 variants
-(`crates/casual-doc-edit/src/lib.rs:326-916`) and none inserts a break; the only break
-command is `insert.lineBreak` (`main.js`, `id: "insert.lineBreak"`). `BreakKind::{Line, Page, Column}` *is*
-modelled (`crates/casual-doc-model/src/v1/properties.rs:324-332`), so imported breaks
-paginate correctly — we simply cannot author one. A section break additionally needs a new
-section with inherited properties, which is why `Blank Page` (theirs: `Toolbar.js:979-989`)
-is blocked behind the same work.
+Ours, as of #649: `Operation` has **51** variants — one added,
+`SpliceSectionBoundary { at, boundary }`, a single variant rather than a pair because
+`Some`/`None` makes it its own inverse, anchored on `SectionId` rather than a list index
+(doc 45 I3). The facade is `insertBreak(node, offset, "page"|"column")` and
+`insertSectionBreak(node, offset, "nextPage"|"continuous"|"evenPage"|"oddPage")`. The
+inheritance table lives in the `crates/casual-doc-edit/src/breaks.rs` module header so it
+cannot drift from the code; ADR-037 records the one-operation decision.
 
-This is the highest-ranked absent capability in the document: a page break is a keystroke
-away in every word processor, and `docs/99` §3 already names section-break insertion.
+**What is left is the UI**, and it displaces nothing: §7.1's recipe measures **Insert
+537px** and **Layout 559px** of headroom, so a mirrored split button fits in both bands
+the way theirs does. `Blank Page` (theirs: `Toolbar.js:979-989`) is **unblocked** — two
+page breaks, no engine work.
 
 ### 4.4 Section and page properties that are modelled, laid out, and unreachable — mostly UI only, and now mostly shipped
 
