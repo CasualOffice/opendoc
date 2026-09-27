@@ -2018,10 +2018,17 @@
          The sentence names WHEN the version is from, because a read-only canvas
          with no date on it is indistinguishable from a locked document. Its text
          is written by `version_panel.mjs` (it carries a timestamp), so it has no
-         `data-i18n` of its own. -->
+         `data-i18n` of its own.
+         Restore sits HERE as well as in the row menu, which is where Google Docs
+         puts it: the preview bar is the surface that is already saying "this is
+         not your document", so it is the surface that should offer to make it
+         your document. It appears only while a preview is on screen, so it is
+         never a resting disabled control — which is what the five-button stack
+         this replaced had five of. -->
     <div id="versionPreviewBanner" class="suggesting-banner version-preview-banner" role="status" hidden>
       <span class="ms" aria-hidden="true">history</span>
       <span id="versionPreviewBannerText"></span>
+      <button data-i18n="versionPreviewBanner.restoreThisVersion" id="versionPreviewRestore" type="button">Restore this version</button>
       <button data-i18n="versionPreviewBanner.backToCurrent" id="versionPreviewBack" type="button">Back to current</button>
     </div>
 
@@ -2047,6 +2054,19 @@
         <button data-i18n-title="ui.outline.title" data-i18n-label="ui.outline.label" id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="railOutline.outline">Outline</span></button>
         <button data-i18n-title="ui.pages.title" data-i18n-label="ui.pages.label" id="railPages" type="button" class="rail-btn" title="Pages" aria-label="Pages" aria-pressed="false" disabled><span class="ms" aria-hidden="true">auto_stories</span><span data-i18n="railPages.pages">Pages</span></button>
         <button data-i18n-title="ui.commentsSuggestions.title" data-i18n-label="ui.toggleCommentsSuggestions.label" id="railReview" type="button" class="rail-btn" title="Comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span><span data-i18n="railReview.comments">Comments</span></button>
+        <!-- The timeline's rail entry, below Comments. The previous round left it
+             out on the grounds that File and the View band were enough; the owner
+             overruled that ("i need version icon/shortcut on left bar below
+             comments as well"), and the rail is where this editor's panels live,
+             so a panel with no rail entry was the odd one out rather than the
+             restrained one.
+             Same `history` glyph as the View band's button, because they run the
+             SAME command (`file.versionHistory`) — two faces of one command must
+             not look like two commands. Its pressed state, its disabled state and
+             its reason are all owned by `version_panel.mjs`, alongside the View
+             button's, so the two entry points cannot drift into saying different
+             things about why version history is unavailable. -->
+        <button data-i18n-title="ui.versionHistory.title" data-i18n-label="ui.versionHistory.label" id="railVersions" type="button" class="rail-btn" title="Version history" aria-label="Version history" aria-pressed="false" disabled><span class="ms" aria-hidden="true">history</span><span data-i18n="railVersions.versions">Versions</span></button>
       </nav>
       <aside data-i18n-label="ui.outline.label2" id="outlinePanel" class="side-panel" hidden aria-label="Outline">
         <div class="panel-head">
@@ -2147,10 +2167,25 @@
            rather than a full-window page: Docs takes over the window, but this
            editor already has an established shape for "a list beside the
            document" in Outline, Pages and Comments, and one mechanism beats two.
-           The list is a single-select LISTBOX — selecting an entry previews it,
-           which is the Docs interaction — and the actions sit in a bar below it
-           rather than in a per-row hover menu, so every one of them is reachable
-           by touch and by keyboard without a pointer hovering anything. -->
+
+           THE LIST IS THE PANEL, and each entry carries its own actions — the
+           Google Docs shape. The first round put the five actions in a bar below
+           the list instead; with one or two versions that bar was most of the
+           panel, four of its five buttons were disabled until a row was selected,
+           and a reader's first sight of the timeline was a column of grey. The
+           actions were also detached from the row they act on, which is the part
+           no amount of styling fixes.
+
+           So the list is a GRID, not a listbox. That is forced, not stylistic: a
+           `role="option"` may not contain an interactive child, so a listbox
+           cannot carry a per-row menu button that a screen reader can describe or
+           a keyboard can reach. `role="grid"` is the composite widget that can —
+           each row is a `row`, the entry and its ⋮ are `gridcell`s, and a roving
+           tabindex gives the ⋮ real focus. Up/Down walk rows and select (which
+           previews, as in Docs), Left/Right walk the two cells, F2 names, Delete
+           deletes, and Shift+F10 opens the same menu the ⋮ does. Nothing is
+           hover-only and the ⋮ is a 44px target, because the owner has said
+           mobile is supported. -->
       <aside id="versionPanel" class="side-panel version-panel" hidden aria-labelledby="versionPanelTitle">
         <div class="panel-head">
           <span data-i18n="versionPanel.versionHistory" id="versionPanelTitle" class="panel-title">Version history</span>
@@ -2159,14 +2194,7 @@
         <div class="version-filter">
           <label class="version-filter-label"><input id="versionNamedOnly" type="checkbox" /><span data-i18n="versionPanel.onlyNamedVersions">Only named versions</span></label>
         </div>
-        <div data-i18n-label="versionPanel.versionsOfThisDocument.label" id="versionPanelBody" class="panel-body version-list" role="listbox" tabindex="0" aria-label="Versions of this document"></div>
-        <div data-i18n-label="versionPanel.actionsSelectedVersion.label" class="version-actions" role="group" aria-label="Actions for the selected version">
-          <button data-i18n="versionPanel.restoreThisVersion" id="versionRestoreBtn" type="button" class="dialog-button dialog-button-primary" disabled>Restore this version</button>
-          <button data-i18n="versionPanel.nameThisVersion" id="versionNameBtn" type="button" class="dialog-button" disabled>Name this version…</button>
-          <button data-i18n="versionPanel.keepThisVersion" id="versionPinBtn" type="button" class="dialog-button" aria-pressed="false" disabled>Keep this version</button>
-          <button data-i18n="versionPanel.showChanges" id="versionChangesBtn" type="button" class="dialog-button" disabled>Show changes</button>
-          <button data-i18n="versionPanel.deleteThisVersion" id="versionDeleteBtn" type="button" class="dialog-button" disabled>Delete this version</button>
-        </div>
+        <div data-i18n-label="versionPanel.versionsOfThisDocument.label" id="versionPanelBody" class="panel-body version-list" role="grid" tabindex="0" aria-label="Versions of this document"></div>
         <!-- The disclosure docs/139 §12 asks for by name: how much history there
              is, where it lives, and what the policy will do with it. A person
              who cannot see the bound cannot trust the promise. -->

@@ -39,7 +39,16 @@ const EXPECTED = Object.freeze({
   menu: ['id="appMenuBar"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
-  history: ['id="versionPanel"', 'id="viewVersionsBtn"', 'id="versionPreviewBanner"'],
+  // Both durable entry points, not just the View band's: the rail's Versions
+  // button is the second face of the same command, and a region that took one
+  // away and left the other would be a host believing they had withheld a
+  // surface that is still on screen.
+  history: [
+    'id="versionPanel"',
+    'id="viewVersionsBtn"',
+    'id="railVersions"',
+    'id="versionPreviewBanner"',
+  ],
   status: ['class="footer"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],

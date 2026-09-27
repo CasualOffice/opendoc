@@ -6,14 +6,21 @@
 // and does a person get the Google Docs interaction the design names? #653 landed
 // the whole store with no interface at all, and "built but unreachable" is the
 // most expensive recurring pattern in this repository (SKILL §9.4) — so these
-// tests go through the File surface, the ribbon, the keyboard and the panel,
-// never through the module.
+// tests go through the File surface, the ribbon, the rail, the keyboard and the
+// panel, never through the module.
 //
 // EVERY TEST CREATES ITS CONDITION. A panel test that passes against an empty
-// store proves nothing: the timeline would be empty, every action disabled, and
-// the assertions would pass over a feature that does not work. So each test below
+// store proves nothing: the timeline would be empty, every action absent, and the
+// assertions would pass over a feature that does not work. So each test below
 // first makes a version exist — by opening a document (the import baseline) and,
 // where it needs two, by saving — and asserts on rows that are really there.
+//
+// The second round of this panel moved every per-version action out of a bar
+// below the list and onto the row it acts on, and added the rail entry the owner
+// asked for. Those two changes are what the tests from "the row's ⋮ menu" onward
+// exist for: a ⋮ inside a list is only worth having if a keyboard and a screen
+// reader can reach it, so the keyboard route is asserted for every action rather
+// than assumed from the pointer route working.
 import {
   expect,
   expectEditorFocused,
@@ -26,13 +33,14 @@ import {
 const panel = "#versionPanel";
 const list = "#versionPanelBody";
 const rows = `${list} .version-item`;
+const rowMenu = "#versionRowMenu";
 
 /** Opens the timeline through the File surface — the primary entry point
  *  `docs/139` §8.1 names, and the one both Google Docs and ONLYOFFICE use. The
  *  helper asserts the row is present AND enabled, so an unreachable command fails
  *  loudly rather than quietly doing nothing. */
 async function openTimeline(page) {
-  // The command is a TOGGLE, which is what the View button's `aria-pressed`
+  // The command is a TOGGLE, which is what both entry points' `aria-pressed`
   // reflects — so running it on an already-open panel closes it. Idempotent here
   // so a test that saved while the panel was open does not close it by asking
   // for it again.
@@ -49,7 +57,21 @@ async function waitForBaseline(page) {
   await expect(page.locator(rows)).toHaveCount(1);
 }
 
-test("the timeline is reachable from the File surface AND from the View band", async ({
+/** The id of whatever really holds the keyboard, and the class of its cell —
+ *  which is what a roving-tabindex grid publishes instead of
+ *  `aria-activedescendant`. */
+function focusedCell(page) {
+  return page.evaluate(() => {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLElement)) return { row: "", cell: "" };
+    return {
+      row: el.closest(".version-item")?.id ?? "",
+      cell: el.classList.contains("version-item-menu") ? "menu" : "entry",
+    };
+  });
+}
+
+test("the timeline is reachable from File, from the View band AND from the rail", async ({
   page,
   consoleErrors,
 }) => {
@@ -61,20 +83,47 @@ test("the timeline is reachable from the File surface AND from the View band", a
   await page.locator("#versionPanelClose").click();
   await expect(page.locator(panel)).toBeHidden();
 
-  // Surface two: the View band's panel toggle, beside Outline and Comments —
-  // `105` UX-004, a capability reachable from one place is the recurring defect
-  // here. It reflects state, so it is a toggle and not a second door that only
-  // opens.
+  // Surface two: the View band's panel toggle.
   await page.locator("#tabView").click();
-  const button = page.locator("#viewVersionsBtn");
-  await expect(button).toBeEnabled();
-  await expect(button).toHaveAttribute("aria-pressed", "false");
-  await button.click();
+  const view = page.locator("#viewVersionsBtn");
+  await expect(view).toBeEnabled();
+  await expect(view).toHaveAttribute("aria-pressed", "false");
+  await view.click();
   await expect(page.locator(panel)).toBeVisible();
-  await expect(button).toHaveAttribute("aria-pressed", "true");
-  await button.click();
+  await expect(view).toHaveAttribute("aria-pressed", "true");
+  await view.click();
   await expect(page.locator(panel)).toBeHidden();
-  await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(view).toHaveAttribute("aria-pressed", "false");
+
+  // Surface three: the rail, below Comments. The owner asked for it by name
+  // ("i need version icon/shortcut on left bar below comments as well"), and the
+  // rail is where this editor's panels live, so the assertion is both that it is
+  // there and that it is LAST — a fourth entry above Outline would not be the
+  // thing that was asked for.
+  const railOrder = await page
+    .locator(".rail .rail-btn")
+    .evaluateAll((els) => els.map((el) => el.id));
+  expect(railOrder).toEqual(["railOutline", "railPages", "railReview", "railVersions"]);
+
+  const rail = page.locator("#railVersions");
+  await expect(rail).toBeEnabled();
+  await expect(rail).toHaveAttribute("aria-pressed", "false");
+  // The same glyph the View band's button uses: two faces of ONE command must
+  // not look like two commands.
+  await expect(rail.locator(".ms")).toHaveText("history");
+  await expect(view.locator(".ms")).toHaveText("history");
+
+  // THE GESTURE, not the wiring: pressing it opens the panel and the button says
+  // so. A rail button that ran a command without reflecting its state would be a
+  // second door rather than a toggle.
+  await rail.click();
+  await expect(page.locator(panel)).toBeVisible();
+  await expect(rail).toHaveAttribute("aria-pressed", "true");
+  // And the OTHER entry point agrees, because one command has one state.
+  await expect(view).toHaveAttribute("aria-pressed", "true");
+  await rail.click();
+  await expect(page.locator(panel)).toBeHidden();
+  await expect(rail).toHaveAttribute("aria-pressed", "false");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -89,7 +138,7 @@ test("the timeline lists this document's own past, and the panel is not the docu
   // The baseline: opening a file is the point it rejoins its own timeline
   // (`docs/140` §7.5), and the row says so in words rather than in a code.
   const first = page.locator(rows).first();
-  await expect(first).toHaveAttribute("role", "option");
+  await expect(first).toHaveAttribute("role", "row");
   await expect(first).toContainText("Opened");
   // The current version is marked as such, so a reader can tell where they are.
   await expect(first).toContainText("Current version");
@@ -101,16 +150,66 @@ test("the timeline lists this document's own past, and the panel is not the docu
   );
 
   // A day heading, hidden from the accessibility tree because a heading is not a
-  // permitted child of a listbox and the day is already in every option's name.
+  // permitted child of a grid and the day is already in every row's accessible
+  // name. The group is a `rowgroup` for the same reason `group` is not one.
   const group = page.locator(`${list} .version-group`).first();
-  await expect(group).toHaveAttribute("role", "group");
-  await expect(group.locator(".version-group-day")).toHaveText("Today");
+  await expect(group).toHaveAttribute("role", "rowgroup");
+  const day = group.locator(".version-group-day");
+  await expect(day).toHaveText("Today");
+  await expect(day).toHaveAttribute("aria-hidden", "true");
+  // The group carries no `aria-label` of its own, which is only defensible
+  // because each row NAMES ITS OWN DATE — the full instant, not the friendly
+  // "Today" a sighted reader sees above it. Asserted against the row's own
+  // `title`, so this cannot pass by matching a substring of something else.
+  const entry = first.locator(".version-item-entry");
+  const stamp = await entry.getAttribute("title");
+  expect(stamp, "the row has no full timestamp to name itself with").toMatch(/\d{4}/);
+  expect(
+    await entry.getAttribute("aria-label"),
+    "the day heading is hidden from the accessibility tree and the row does not " +
+      "carry the date either, so a screen reader is told when nothing",
+  ).toContain(stamp);
 
   // The disclosure `docs/139` §12 asks for by name: how much history there is,
   // where it lives, and what the policy will do with it.
   await expect(page.locator("#versionPanelSummary")).toContainText("1 version kept");
   await expect(page.locator("#versionPanelDetail")).toContainText("in this browser");
   await expect(page.locator("#versionPanelPolicy")).toContainText("7 days");
+});
+
+test("the list IS the panel: no detached action bar, and no resting wall of disabled buttons", async ({
+  page,
+}) => {
+  await gotoEditor(page);
+  await openTimeline(page);
+  await waitForBaseline(page);
+
+  // The defect this panel shipped with, stated as a property rather than as a
+  // list of five ids: with nothing selected, the only controls in the panel are
+  // the ones that are ALWAYS meaningful — close, the filter, each row's own ⋮,
+  // and Clear version history. A control that is disabled while resting is a
+  // control the reader meets as a grey rectangle, and there were four of them.
+  const resting = await page
+    .locator(`${panel} button, ${panel} input`)
+    .evaluateAll((els) =>
+      els
+        .filter((el) => el.getClientRects().length > 0 && el.disabled)
+        .map((el) => el.id || el.className),
+    );
+  expect(
+    resting,
+    "these controls are on screen and disabled before the reader has done anything",
+  ).toEqual([]);
+
+  // And the timeline really is what fills the panel: the list is the tallest
+  // thing in it by a wide margin. Measured rather than asserted from the markup,
+  // because the complaint was about proportion, not about structure.
+  const share = await page.evaluate(() => {
+    const p = document.getElementById("versionPanel").getBoundingClientRect().height;
+    const l = document.getElementById("versionPanelBody").getBoundingClientRect().height;
+    return l / p;
+  });
+  expect(share, "the list is not the panel; something else is").toBeGreaterThan(0.5);
 });
 
 test("saving lays down a version, and the timeline is metadata only", async ({ page }) => {
@@ -142,7 +241,7 @@ test("selecting an entry previews it read-only, and Back to current returns", as
   await expect(page.locator(rows)).toHaveCount(2);
 
   const earlier = page.locator(rows).last();
-  await earlier.click();
+  await earlier.locator(".version-item-entry").click();
   await expect(earlier).toHaveAttribute("aria-selected", "true");
 
   // The Docs interaction: the version is shown IN THE CANVAS, read-only, rather
@@ -186,17 +285,19 @@ test("restore is non-destructive: the document you replace becomes a version", a
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
-  const earlier = page.locator(rows).last();
-  await earlier.click();
-  const restore = page.locator("#versionRestoreBtn");
-  await expect(restore).toBeEnabled();
+  // Through the PREVIEW BAR, which is Restore's second surface and the one
+  // Google Docs uses: the bar that is already saying "this is not your document"
+  // is the one that offers to make it your document. It exists only while a
+  // preview is on screen, which is why it is never a resting disabled control.
+  await page.locator(rows).last().locator(".version-item-entry").click();
+  const restore = page.locator("#versionPreviewRestore");
+  await expect(restore).toBeVisible();
   await restore.click();
 
   // The confirmation is the only place the reader is TOLD that restoring keeps
-  // their current work, which is why there is one at all (`docs/139` §18 q6 —
-  // settled by this change). Google Docs does not ask; its restore is an
-  // undoable edit to a server-side document, and this one replaces what is in
-  // the tab.
+  // their current work, which is why there is one at all (`docs/139` §18 q6).
+  // Google Docs does not ask; its restore is an undoable edit to a server-side
+  // document, and this one replaces what is in the tab.
   const dialog = page.locator("#confirmDialog");
   await expect(dialog).toBeVisible();
   await expect(page.locator("#confirmDescription")).toContainText("Nothing is lost");
@@ -220,7 +321,7 @@ test("restore is non-destructive: the document you replace becomes a version", a
   await expect(page.locator("#documentState")).toHaveAttribute("data-state", "edited");
 });
 
-test("the panel is a listbox: arrows move, Enter opens, Escape hands focus back", async ({
+test("the panel is a grid: arrows move rows and cells, and the keyboard really lands there", async ({
   page,
 }) => {
   await gotoEditor(page);
@@ -228,22 +329,40 @@ test("the panel is a listbox: arrows move, Enter opens, Escape hands focus back"
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
-  // Opening a real surface takes the keyboard, and the list is where the keyboard
-  // belongs (`docs/139` §14).
-  await expect(page.locator(list)).toBeFocused();
-  await expect(page.locator(list)).toHaveAttribute("role", "listbox");
-
+  await expect(page.locator(list)).toHaveAttribute("role", "grid");
+  // Opening a real surface takes the keyboard, and a GRID puts it on a cell —
+  // `aria-activedescendant` is the listbox mechanism, and this list stopped being
+  // one when its rows gained a menu button (a `role="option"` may not hold an
+  // interactive child).
   const ids = await page.locator(rows).evaluateAll((els) => els.map((el) => el.id));
+  expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "entry" });
+
+  // Exactly one tab stop, which is what makes a grid one Tab stop and not N.
+  expect(
+    await page.locator(`${rows} [tabindex="0"]`).count(),
+    "a grid must have exactly one tab stop",
+  ).toBe(1);
+
   await page.keyboard.press("ArrowDown");
-  await expect(page.locator(list)).toHaveAttribute("aria-activedescendant", ids[0]);
+  expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "entry" });
+  await expect(page.locator(`#${ids[0]}`)).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("ArrowDown");
-  await expect(page.locator(list)).toHaveAttribute("aria-activedescendant", ids[1]);
+  expect(await focusedCell(page)).toEqual({ row: ids[1], cell: "entry" });
   await page.keyboard.press("ArrowUp");
-  await expect(page.locator(list)).toHaveAttribute("aria-activedescendant", ids[0]);
+  expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "entry" });
   await page.keyboard.press("End");
-  await expect(page.locator(list)).toHaveAttribute("aria-activedescendant", ids[ids.length - 1]);
+  expect(await focusedCell(page)).toEqual({ row: ids[ids.length - 1], cell: "entry" });
   await page.keyboard.press("Home");
-  await expect(page.locator(list)).toHaveAttribute("aria-activedescendant", ids[0]);
+  expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "entry" });
+
+  // The second axis, which is the point of the grid: Right reaches the ⋮, Left
+  // comes back, and the column is kept when the row changes.
+  await page.keyboard.press("ArrowRight");
+  expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "menu" });
+  await page.keyboard.press("ArrowDown");
+  expect(await focusedCell(page)).toEqual({ row: ids[1], cell: "menu" });
+  await page.keyboard.press("ArrowLeft");
+  expect(await focusedCell(page)).toEqual({ row: ids[1], cell: "entry" });
 
   // Escape closes the surface and gives the keyboard back, which is the contract
   // every panel in this editor keeps.
@@ -253,14 +372,110 @@ test("the panel is a listbox: arrows move, Enter opens, Escape hands focus back"
   expect(focused, "closing the panel left the keyboard on <body>").not.toEqual("");
 });
 
-test("naming a version pins it, and the filter shows only named versions", async ({ page }) => {
+test("the row's ⋮ menu carries that row's actions, and opens from the keyboard", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await saveDocument(page);
+  await openTimeline(page);
+  await expect(page.locator(rows)).toHaveCount(2);
+  const ids = await page.locator(rows).evaluateAll((els) => els.map((el) => el.id));
+
+  // Route one: the pointer.
+  const older = page.locator(rows).last();
+  const trigger = older.locator(".version-item-menu");
+  // A 44px target, painted at all times — never revealed by hover, which is no
+  // affordance at all on a phone.
+  const box = await trigger.boundingBox();
+  expect(box.width, "the ⋮ is below the touch floor").toBeGreaterThanOrEqual(44);
+  expect(box.height, "the ⋮ is below the touch floor").toBeGreaterThanOrEqual(44);
+  await expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+  // Its name carries the version it acts on: "More actions" once per row names
+  // nothing a screen-reader user can tell apart.
+  await expect(trigger).toHaveAttribute("aria-label", /Actions for the version from .+/);
+
+  await trigger.click();
+  await expect(page.locator(rowMenu)).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const labels = await page
+    .locator(`${rowMenu} .menu-item`)
+    .evaluateAll((els) => els.map((el) => el.textContent.trim()));
+  expect(labels).toEqual([
+    "Restore this version",
+    "Name this version…F2",
+    "Keep this version",
+    "Show changes",
+    expect.stringContaining("Delete this version"),
+  ]);
+  // Present, disabled, and honest about why — SKILL §10, and `docs/140` H3 is
+  // where the structural diff actually is.
+  const changes = page.locator(`${rowMenu} [data-command-id="version.changes"]`);
+  await expect(changes).toBeDisabled();
+  await expect(changes).toHaveAttribute("title", /not built yet/i);
+  // Keep is a STATE, so it is a checkbox row rather than a label that flips.
+  await expect(page.locator(`${rowMenu} [data-command-id="version.keep"]`)).toHaveAttribute(
+    "role",
+    "menuitemcheckbox",
+  );
+
+  // Light dismiss: a transient surface closes when you point somewhere else.
+  await page.mouse.click(400, 500);
+  await expect(page.locator(rowMenu)).toBeHidden();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+  // Route two: the KEYBOARD, with no pointer at all. This is the assertion the
+  // whole structure exists for — a ⋮ inside a list that a keyboard cannot reach
+  // is worse than the bar it replaced.
+  //
+  // Reopened rather than continued: the light-dismiss press above landed on the
+  // document, so the document has the keyboard and it is right that it does.
+  // Opening the panel is what puts the keyboard back in the timeline, and that
+  // is the gesture under test.
+  await page.locator("#versionPanelClose").click();
+  await openTimeline(page);
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowRight");
+  expect(await focusedCell(page)).toEqual({ row: ids[ids.length - 1], cell: "menu" });
+  await page.keyboard.press("Enter");
+  await expect(page.locator(rowMenu)).toBeVisible();
+  // Focus is INSIDE the menu, or arrowing through it is impossible and it is a
+  // pointer-only surface wearing menu semantics.
+  expect(await page.evaluate(() => !!document.activeElement?.closest("#versionRowMenu"))).toBe(
+    true,
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.locator(rowMenu)).toBeHidden();
+  // …and Escape hands the keyboard back to the ⋮ it came from.
+  expect(await focusedCell(page)).toEqual({ row: ids[ids.length - 1], cell: "menu" });
+
+  // Route three: Shift+F10, the platform gesture, from the entry cell.
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Shift+F10");
+  await expect(page.locator(rowMenu)).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("naming a version pins it — from the row menu by keyboard, and from F2", async ({
+  page,
+}) => {
   await gotoEditor(page);
   await saveDocument(page);
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
-  await page.locator(rows).last().click();
-  await page.locator("#versionNameBtn").click();
+  // The whole action, driven by keys only: End selects the older row, Right
+  // reaches its ⋮, Enter opens the menu, Down reaches "Name this version…",
+  // Enter runs it.
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(`${rowMenu} .menu-item.active`)).toHaveText(/Name this version/);
+  await page.keyboard.press("Enter");
+
   // A real dialog, not `window.prompt` — which cannot be labelled, cannot be
   // localised, and freezes the wasm engine's event loop while it is up.
   await expect(page.locator("#versionNameDialog")).toBeVisible();
@@ -268,13 +483,21 @@ test("naming a version pins it, and the filter shows only named versions", async
   await page.locator("#versionNameInput").fill("Before the legal review");
   await page.locator("#versionNameConfirm").click();
 
-  await expect(page.locator(rows).last()).toContainText("Before the legal review");
+  const older = page.locator(rows).last();
+  await expect(older).toContainText("Before the legal review");
   // Naming PINS: the label makes it findable, the pin makes it durable, and the
   // store never prunes a pin — when a ceiling cannot be met without deleting one
-  // it refuses the capture instead. So the panel says "Named" in the row's
-  // accessible name rather than implying the name is best-effort.
-  await expect(page.locator(rows).last()).toHaveAttribute("aria-label", /Named/);
+  // it refuses the capture instead. So the row says "Named" in its accessible
+  // name rather than implying the name is best-effort.
+  await expect(older.locator(".version-item-entry")).toHaveAttribute("aria-label", /Named/);
   await expect(page.locator("#versionPanelDetail")).toContainText("1 of 15 named");
+  // And the menu now says the version is kept, as a checked row.
+  await older.locator(".version-item-menu").click();
+  await expect(page.locator(`${rowMenu} [data-command-id="version.keep"]`)).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await page.keyboard.press("Escape");
 
   // Docs' "Only show named versions".
   await page.locator("#versionNamedOnly").check();
@@ -282,9 +505,41 @@ test("naming a version pins it, and the filter shows only named versions", async
   await expect(page.locator(rows).first()).toContainText("Before the legal review");
   await page.locator("#versionNamedOnly").uncheck();
   await expect(page.locator(rows)).toHaveCount(2);
+
+  // Name's SECOND surface: F2 on the focused row, which is the key every list
+  // carries and which the menu advertises in its shortcut column.
+  await page.locator(rows).last().locator(".version-item-entry").click();
+  await page.keyboard.press("F2");
+  await expect(page.locator("#versionNameDialog")).toBeVisible();
+  await expect(page.locator("#versionNameInput")).toHaveValue("Before the legal review");
+  await page.keyboard.press("Escape");
 });
 
-test("with autosave off the entry is still there, and says why", async ({ page }) => {
+test("Delete removes a version from the row menu, and from the Delete key", async ({ page }) => {
+  await gotoEditor(page);
+  await saveDocument(page);
+  await openTimeline(page);
+  await expect(page.locator(rows)).toHaveCount(2);
+
+  // The head is the document, so its own menu refuses — with the reason, not by
+  // silence.
+  await page.locator(rows).first().locator(".version-item-menu").click();
+  const headDelete = page.locator(`${rowMenu} [data-command-id="version.delete"]`);
+  await expect(headDelete).toBeDisabled();
+  await expect(headDelete).toHaveAttribute("title", /current version/i);
+  await page.keyboard.press("Escape");
+
+  // The older one can go. Through the Delete KEY, which is Delete's second
+  // surface; the menu row is the first.
+  await page.locator(rows).last().locator(".version-item-entry").click();
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#confirmDialog")).toBeVisible();
+  await expect(page.locator("#confirmDescription")).toContainText("cannot be undone");
+  await page.locator("#confirmAccept").click();
+  await expect(page.locator(rows)).toHaveCount(1);
+});
+
+test("with autosave off BOTH entry points are still there, and both say why", async ({ page }) => {
   await gotoEditor(page);
   // Version history rides the autosave switch (ADR-038 / `docs/139` §18 q2): one
   // switch must not promise what the other has stopped doing. Turning it off must
@@ -295,9 +550,12 @@ test("with autosave off the entry is still there, and says why", async ({ page }
   await page.keyboard.press("Escape");
 
   await page.locator("#tabView").click();
-  const button = page.locator("#viewVersionsBtn");
-  await expect(button).toBeDisabled();
-  await expect(button).toHaveAttribute("title", /autosave/i);
+  for (const id of ["#viewVersionsBtn", "#railVersions"]) {
+    const button = page.locator(id);
+    await expect(button, `${id} vanished instead of explaining itself`).toBeVisible();
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute("title", /autosave/i);
+  }
 
   // And the File row, through the registry rather than the DOM, so the palette
   // and the menus say the same thing.
