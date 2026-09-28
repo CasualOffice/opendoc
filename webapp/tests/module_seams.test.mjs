@@ -307,6 +307,13 @@ const PURE_MODULES = [
   // the text came from. Same split, same reason: the generator reads the file, the
   // page fetches it, and there is one parser.
   "palette_parse.mjs",
+  // The proofing contract and the whole of what decides a finding. Purity is
+  // load-bearing twice over here (`docs/146` §4, ADR-042): it is what lets the
+  // Web Worker and the in-process fallback run the SAME function rather than
+  // two implementations of one rule, and it is ADR-042 §6's requirement that
+  // proofing be a separate optional package whose network and storage the HOST
+  // injects — a module that reached for `fetch` could not be given to one.
+  "proof_protocol.mjs",
   // The caption / cross-reference VOCABULARY: which "Insert reference to"
   // options a reference type offers, when Word offers "Include above/below",
   // and what a caption will read as. Word's own rules, with no widget attached,

@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createSpellChecker, spellingContextCommands } from "../src/spell_check.mjs";
+import { createProofResponder } from "../src/proof_protocol.mjs";
 
 const DICTIONARY = ["and", "are", "badly", "both", "correct", "fine", "is", "line", "of", "one",
   "ours", "page", "prose", "repeated", "sentence", "the", "this", "too", "word", "wrong"]
@@ -363,7 +364,12 @@ test("a product name from the shipped glossary is not flagged, and is not a pers
       "with the product and the personal dictionary belongs to the user, and " +
       "confusing the two would make one look like the other's doing",
   );
-  assert.ok(h.checker.glossaryTerms().includes("opendoc"));
+  // `glossaryTerms()` used to be asserted here. It is gone: the glossary now
+  // lives in the worker, with the dictionary and the rules, and an accessor
+  // that answered from the coordinator would be a second copy of it. The tier
+  // separation is asserted where the tiers now are — `proof_protocol.test.mjs`
+  // — and here by the pair of facts a user can actually observe: the name is
+  // not flagged, and it is not reported as a word they added.
 });
 
 test("the glossary and the personal dictionary are independent tiers", async () => {
@@ -385,15 +391,17 @@ test("the glossary and the personal dictionary are independent tiers", async () 
 });
 
 test("a mistyped product name suggests the product name", async () => {
+  // Through the REAL path now, not a hand-built `flagged`: suggestions are
+  // computed in the worker while checking and arrive with the finding, so the
+  // only honest way to ask this question is to put the typo in the document
+  // and right-click it (`docs/146` §4, and the correction in `docs/114` §5.4).
   const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word opendco is wrong";
   const h = harness(engine);
   h.setWindow(1, 1);
   await settle(h);
-  const flagged = {
-    kind: "spelling",
-    word: "opendco",
-    language: "en-US",
-  };
+  const flagged = h.checker.misspellingAt({ node: "p1b", offset: 12 });
+  assert.equal(flagged?.word, "opendco");
   assert.ok(
     h.checker.suggestions(flagged).includes("opendoc"),
     "the glossary is searched for near matches, or the feature the owner asked " +
@@ -461,7 +469,10 @@ test("turning grammar on re-checks paragraphs the cache already holds", async ()
   assert.deepEqual(h.placedMarks().filter((m) => m.rule), [], "grammar is off");
 
   grammar = true;
-  h.checker.refresh(); // exactly what the command does: no cache clear
+  // Exactly what the command does — `refresh()` and no cache clear. It is
+  // awaited now because the check happens in a worker: `settle` runs the same
+  // `refresh()` and then lets the reply land.
+  await settle(h);
   assert.ok(
     h.placedMarks().some((m) => m.rule === "doubled-word"),
     "the paragraph must be re-checked, not served from the grammar-off entry",
@@ -519,4 +530,186 @@ test("a grammar correction is gated by the review mode, like a spelling one", ()
     false,
     "turning a rule off is a host decision, not a document mutation",
   );
+});
+
+// ---- Increment A: the decoupling, and the failure that used to underline
+// ---- everything (`docs/146` §2, ADR-042) ----------------------------------------
+
+/** A transport that HOLDS each findings reply until the test releases it —
+ *  which is exactly what a busy worker does, and is not otherwise observable.
+ *  Every other message (the `ready` handshake, resources) goes straight
+ *  through, so only the thing under test is delayed. */
+function heldTransport(state) {
+  return (onReply) => {
+    const responder = createProofResponder();
+    return {
+      post(message) {
+        const reply = responder.handle(message);
+        if (!reply) return;
+        if (reply.type === "proof:findings") state.held = () => onReply(reply);
+        else onReply(reply);
+      },
+      dispose() {},
+    };
+  };
+}
+
+test("a GRAMMAR-ONLY scan asks the network for nothing at all", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated wrong";
+  const h = harness(engine, { enabled: () => false, grammarEnabled: () => true });
+  h.setWindow(1, 1);
+  await settle(h);
+
+  // The positive case first: grammar really is running, so "no fetches" is not
+  // "nothing happened".
+  assert.ok(
+    h.placedMarks().some((mark) => mark.rule === "doubled-word"),
+    "grammar must run with spelling off, or this test proves nothing",
+  );
+  assert.deepEqual(
+    h.fetched,
+    [],
+    "a grammar pass consults neither the word list nor the GLOSSARY, and must " +
+      "therefore request neither. `docs/146` §2 named the dictionary; the " +
+      "glossary was the one actually being fetched. MUTATION: move " +
+      "`loadGlossary()` back above the `if (spelling)` and this goes red.",
+  );
+});
+
+test("a dictionary that fails to load flags NOTHING, and grammar keeps running", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated and qzxtypo too";
+  const h = harness(engine, {
+    grammarEnabled: () => true,
+    fetchText: async (url) => {
+      if (url === "fake://glossary") return GLOSSARY;
+      throw new Error("offline");
+    },
+  });
+  h.setWindow(1, 1);
+  await settle(h);
+  await settle(h);
+
+  const marks = h.placedMarks();
+  assert.deepEqual(
+    marks.filter((mark) => mark.className === "spell-error"),
+    [],
+    "a word list that could not be loaded used to be stored as an EMPTY one, " +
+      "and an empty word list means no word is known — so every word in the " +
+      "document was underlined while the status line said the dictionary had " +
+      "failed. MUTATION: install `emptyDictionary()` on the catch path instead " +
+      "of `unavailable` and this goes red with eight marks.",
+  );
+  assert.ok(
+    marks.some((mark) => mark.rule === "doubled-word"),
+    "...and the document is still being proofed: grammar does not depend on it",
+  );
+  assert.ok(
+    h.statuses.some((text) => /could not be loaded/.test(text)),
+    "the user is told, by name",
+  );
+  assert.match(
+    h.checker.statusNote(),
+    /could not be loaded/,
+    "and it is a STANDING condition, so it survives a status line that " +
+      "something else clears (`docs/114` §10.2)",
+  );
+});
+
+test("a reply about text that has since been edited is discarded", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word qzxstale is wrong";
+  const state = {};
+  const h = harness(engine, { proofTransport: heldTransport(state) });
+  h.setWindow(1, 1);
+  await settle(h);
+
+  // The request is out and the reply is held. Now the paragraph changes.
+  assert.ok(state.held, "a check must have been posted");
+  // Captured BEFORE the edit: the next check overwrites `state.held` with its
+  // own reply, and delivering that one would be testing nothing.
+  const stale = state.held;
+  state.held = null;
+  engine.paragraphs[1].text = "This word qzxfresh is wrong";
+  h.checker.refresh();
+  stale();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(
+    h.flags(),
+    [],
+    "the held reply is about `qzxstale`, which is not in the document any " +
+      "more. MUTATION: drop the `isFreshResult` guard in `onReply` and this " +
+      "goes red by painting `qzxstale` over text that now reads `qzxfresh`.",
+  );
+
+  // And the fresh answer, when it comes, IS painted — so the guard rejects
+  // staleness rather than everything.
+  state.held?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(h.flags(), ["qzxfresh"]);
+});
+
+test("a reply about the previous document is discarded", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word qzxone is wrong";
+  const state = {};
+  const h = harness(engine, { proofTransport: heldTransport(state) });
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.ok(state.held);
+  const stale = state.held;
+  state.held = null;
+
+  // A new document is opened while the check is in flight. Node ids come from a
+  // counter that restarts per import, so `p1b` exists in both AT THE SAME
+  // REVISION — which is precisely why the revision alone cannot answer this and
+  // the document id has to.
+  h.checker.reset();
+  engine.paragraphs[1].text = "This word qzxtwo is wrong";
+  h.checker.refresh();
+  state.held?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(h.flags(), ["qzxtwo"], "the new document is checked");
+
+  stale();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(
+    h.flags(),
+    ["qzxtwo"],
+    "MUTATION: stop bumping `documentId` in `reset()` and this goes red with " +
+      "`qzxone` — the previous document's findings land on the new document's " +
+      "paragraph, at the same node id and the same revision",
+  );
+});
+
+test("the in-process fallback is the worker's own responder, not a second checker", async () => {
+  // `docs/146` §4 and ADR-042: the fallback must be a TRANSPORT. The only way
+  // to assert that from outside is that routing every message through a
+  // hand-built `createProofResponder` gives identical marks.
+  const build = (overrides) => {
+    const engine = fakeEngine(2);
+    engine.paragraphs[1].text = "This word qzxtypo is is wrong";
+    const h = harness(engine, { grammarEnabled: () => true, ...overrides });
+    h.setWindow(1, 1);
+    return h;
+  };
+  const viaDefault = build({});
+  await settle(viaDefault);
+  const viaExplicit = build({
+    proofTransport: (onReply) => {
+      const responder = createProofResponder();
+      return {
+        post(message) {
+          const reply = responder.handle(message);
+          if (reply) queueMicrotask(() => onReply(reply));
+        },
+        dispose() {},
+      };
+    },
+  });
+  await settle(viaExplicit);
+  assert.deepEqual(viaExplicit.placedMarks(), viaDefault.placedMarks());
+  assert.ok(viaDefault.placedMarks().length > 0, "and they both found something");
 });

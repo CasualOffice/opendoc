@@ -17,8 +17,14 @@
 //      on the keystroke path may touch the dictionary; `SpellScheduler` below is
 //      the whole of what a keystroke pays, and it is the same three
 //      constant-time steps `drafts.mjs`'s `DraftScheduler.noteDirty()` takes.
-//   3. **Suggestions are computed on demand, never while checking.** The scan
-//      only ever asks "is this word in the list".
+//   3. **Suggestions cost only what the caller lets them.** They used to be
+//      computed on right-click and never while checking (`docs/114` §5.4),
+//      because the bounded dictionary scan costs 2.6-19.5 ms and that was being
+//      paid on the main thread inside a menu open. They now run in the proofing
+//      worker while checking (`docs/146` §4, ADR-042), which removes that
+//      reason — so `suggestionsFor` takes a `deepScan` flag and the caller
+//      budgets it. The scan itself still only ever asks "is this word in the
+//      list".
 
 /** Separates a dictionary file's common tier from the rest. Written by
  *  `tools/build-dictionary.mjs`; see `docs/114` §2.4. */
@@ -271,8 +277,18 @@ function possessiveStem(word) {
  *
  * O(1) in the document and O(1) in the dictionary — a handful of `Set` lookups.
  */
-export function isKnownWord(word, dictionary, { personal, ignored, glossary } = {}) {
-  if (!word) return true;
+export function isKnownWord(rawWord, dictionary, { personal, ignored, glossary } = {}) {
+  if (!rawWord) return true;
+  // NORMALIZE BEFORE COMPARING. SCOWL, the glossary and anything a user types
+  // into a dialog are NFC; a `.docx` can carry NFD, where `café` is `cafe` plus
+  // U+0301 — the same word, a different string, and `Set.has` says no. Found by
+  // the combining-character case of the UTF-16/UTF-8 offset guard
+  // (`docs/146` §9), where a correctly spelled decomposed word was flagged.
+  //
+  // Only the LOOKUP is normalized. The token keeps its original form, so the
+  // offsets that address the document and the word shown in the menu are
+  // untouched — normalizing those would move a range by a code unit.
+  const word = rawWord.normalize("NFC");
   if (personal && (personal.has(word) || personal.has(word.toLowerCase()))) return true;
   if (ignored && (ignored.has(word) || ignored.has(word.toLowerCase()))) return true;
   // The glossary is matched with the SAME capitalization rule the dictionary
@@ -481,7 +497,11 @@ export function boundedEditDistance(a, b, max) {
  * letter wrong), then edit kind, then the common tier, then length difference,
  * then alphabetical — a total order, so the tests can name cases.
  */
-export function suggestionsFor(word, { common, all }, { limit = 5, personal, glossary } = {}) {
+export function suggestionsFor(
+  word,
+  { common, all },
+  { limit = 5, personal, glossary, deepScan = true } = {},
+) {
   const lower = String(word ?? "").toLowerCase();
   if (!lower) return [];
   /** The form to SHOW for a lower-case candidate, or null if nothing knows it.
@@ -511,7 +531,13 @@ export function suggestionsFor(word, { common, all }, { limit = 5, personal, glo
 
   for (const candidate of edits1(lower)) consider(candidate, 1);
 
-  if (scored.size < 3) {
+  // `deepScan: false` keeps stage 1 and skips stage 2. It exists because
+  // suggestions now run inside the proofing worker while checking rather than
+  // on right-click (`docs/146` §4, ADR-042, and the correction in `docs/114`
+  // §5.4): off the main thread is not the same as unbounded, and this is the
+  // budget's lever. A caller that skips stage 2 must not then report "there are
+  // no suggestions" — it has not asked.
+  if (deepScan && scored.size < 3) {
     // Two prefilters before the distance is computed at all, because they run
     // 83,775 times and it runs a few thousand: the length must be within the
     // bound, and a real typo almost never changes BOTH of the first two
