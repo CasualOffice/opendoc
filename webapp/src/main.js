@@ -9187,6 +9187,8 @@ for (const entry of INSERT_SURFACE) {
   railReview.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   viewZoom.setEnabled(!!doc);
   tabTable.disabled = !inTable;
+  // The compact bar's Table group is contextual for the same reason this tab is.
+  compactToolbarUi?.setTableContext(inTable);
   if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
     selectRibbonTab("home");
   }
@@ -12941,6 +12943,7 @@ const tocCommands = createTocCommands({
   mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
   caretNode: () => selection?.focus.node ?? "",
   applyEdit: (run) => runEdit(run, { gate: true }),
+  changed: () => updateToolbar(),
 });
 
 // ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------

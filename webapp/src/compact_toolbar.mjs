@@ -67,6 +67,16 @@
 // into all eighteen languages for the menu bar) rather than from a fresh English
 // literal: the bar's older group labels are raw English under a ratchet, and the
 // way to not make that worse is to not add to it.
+//
+// **It is CONTEXTUAL, and that is not a width dodge — it is the standard.** The
+// ribbon's own Table tab appears only when the caret is in a table; Word's Table
+// Layout tab is contextual too, and Docs shows its table toolbar only over a
+// table. The width matters as well, and honestly: measured at the 1280px budget
+// this bar is held to, the twelve resting groups need 1237px of an available
+// 1256, so a permanent thirteenth group would have folded another one into the
+// `⋯` menu at the default viewport. Outside a table the capability is not gone —
+// the compact chrome's Table MENU carries every row, disabled with its reason,
+// which is where "never a dead control" is met.
 import { APP_MENU_SECTIONS, TABLE_MENU_LABELS } from "./command_taxonomy.mjs";
 import { t } from "./i18n.mjs";
 
@@ -172,6 +182,7 @@ export const COMPACT_TOOLBAR = [
     // need for these, and unpinned so it folds before B/I/U do.
     group: "table",
     labelKey: "appMenuBar.table",
+    contextual: true,
     items: [
       {
         kind: "menu",
@@ -301,6 +312,10 @@ export function createCompactToolbar({
   const contributed = [];
   /** The rendered groups, in declaration order, for the fold. */
   let rendered = [];
+  /** Whether the caret is in a table, which is what shows the contextual group.
+   *  Kept here rather than asked per frame: the bar renders on mode entry and
+   *  this is pushed in by the one toolbar sync that already knows. */
+  let tableContext = false;
   let overflowBtn = null;
   let overflowMenu = null;
   let alignTrigger = null;
@@ -417,6 +432,14 @@ export function createCompactToolbar({
     // Hung off <body> for the reason the align menu is: the bar clips.
     document.body.appendChild(surface);
     registerPopover(trigger, surface, () => fillMenu(entry, surface));
+    // Filled once here as well as on every open. Two reasons, and neither is
+    // cosmetic: the rows are then in the DOM for anything that asks what this
+    // bar offers — including the guard that fails the build when a declared
+    // command id renders nothing, which is how the bar once shipped with no
+    // bulleted and no numbered list button — and a surface that is empty until
+    // it is opened cannot be told apart from one that is empty because the
+    // command set vanished.
+    fillMenu(entry, surface);
     const pair = { trigger, surface };
     menus.set(entry.id, pair);
     return pair;
@@ -583,6 +606,11 @@ export function createCompactToolbar({
     for (const group of rendered) host.insertBefore(group.el, overflowBtn);
     overflowMenu.replaceChildren();
     overflowBtn.hidden = true;
+    // A contextual group that is not showing takes part in nothing: it has no
+    // width, and counting the GAP beside it would make the bar fold a real group
+    // to make room for a group nobody can see.
+    const visible = rendered.filter((group) => !group.el.hidden);
+    if (visible.length === 0) return;
     const style = getComputedStyle(host);
     const avail =
       host.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
@@ -594,29 +622,29 @@ export function createCompactToolbar({
     // groups carry a left margin; measuring without it under-reported the bar
     // by 2px per divider, which is how "everything fits" was decided at a width
     // where the last group was in fact 8px outside the bar.
-    const widths = rendered.map((group) => {
+    const widths = visible.map((group) => {
       const box = getComputedStyle(group.el);
       return (
         group.el.offsetWidth + (parseFloat(box.marginLeft) || 0) + (parseFloat(box.marginRight) || 0)
       );
     });
-    let total = widths.reduce((sum, w) => sum + w, 0) + gap * (rendered.length - 1);
+    let total = widths.reduce((sum, w) => sum + w, 0) + gap * (visible.length - 1);
     if (total <= avail + 0.5) return; // everything fits — no overflow control
     const reserve = 38; // room for the ⋯ button itself
     const moved = new Set();
     for (let pass = 0; pass < 2 && total > avail - reserve; pass++) {
-      for (let i = rendered.length - 1; i >= 1 && total > avail - reserve; i--) {
+      for (let i = visible.length - 1; i >= 1 && total > avail - reserve; i--) {
         if (moved.has(i)) continue;
         // First pass folds only the unpinned groups; the second is the last
         // resort at a width where even B/I/U cannot stay, and it still leaves
         // the first group (undo/redo) inline.
-        if (pass === 0 && rendered[i].pinned) continue;
+        if (pass === 0 && visible[i].pinned) continue;
         moved.add(i);
         total -= widths[i] + gap;
       }
     }
-    for (let i = 0; i < rendered.length; i++) {
-      if (moved.has(i)) overflowMenu.appendChild(rendered[i].el);
+    for (let i = 0; i < visible.length; i++) {
+      if (moved.has(i)) overflowMenu.appendChild(visible[i].el);
     }
     overflowBtn.hidden = moved.size === 0;
   }
@@ -675,8 +703,14 @@ export function createCompactToolbar({
         el.appendChild(button(command, entry));
       }
       if (el.childElementCount === 0) continue;
+      if (group.contextual) el.hidden = !tableContext;
       host.appendChild(el);
-      rendered.push({ el, group: group.group, pinned: !!group.pinned });
+      rendered.push({
+        el,
+        group: group.group,
+        pinned: !!group.pinned,
+        contextual: !!group.contextual,
+      });
     }
     host.appendChild(overflowBtn);
     reflow();
@@ -694,5 +728,20 @@ export function createCompactToolbar({
   // save us: the bar stays exactly as wide as the window.)
   if (document.fonts?.ready) document.fonts.ready.then(scheduleReflow).catch(() => {});
 
-  return { render, release, reflectAlign, reflow, scheduleReflow };
+  /** Shows or hides the contextual group(s). Called from the one toolbar sync,
+   *  which already knows whether the caret is in a table; re-laying out only on
+   *  a CHANGE keeps a caret move inside a table free. */
+  function setTableContext(inTable) {
+    if (tableContext === !!inTable) return;
+    tableContext = !!inTable;
+    let changed = false;
+    for (const group of rendered) {
+      if (!group.contextual) continue;
+      group.el.hidden = !tableContext;
+      changed = true;
+    }
+    if (changed) scheduleReflow();
+  }
+
+  return { render, release, reflectAlign, reflow, scheduleReflow, setTableContext };
 }

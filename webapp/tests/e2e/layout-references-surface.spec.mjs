@@ -9,9 +9,11 @@
 // an object is already selected. The palette even declared `group: "Layout"`
 // with no tab for those commands to live on. So this spec is not about new
 // capability — it is about whether the capability is now REACHABLE, from more
-// than one surface, and whether the three things that genuinely do not exist
-// (table of contents, cross-reference, update fields) say so instead of sitting
-// there as buttons that do nothing.
+// than one surface, and whether what is genuinely unavailable says so instead of
+// sitting there as a button that does nothing. Two of the three that could not
+// exist when this was written — table of contents, cross-reference, update table
+// — have since been built, and this file now guards that their refusals went
+// away with them.
 import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
 
 /** Opens a ribbon tab and waits for its panel. */
@@ -300,7 +302,7 @@ test("the References faces of Bookmark and Insert field run the same commands", 
 // live and does nothing does not. The reason has to be present on BOTH surfaces
 // — the ribbon's tooltip and the palette's hint column — or a keyboard user gets
 // the greyed row with no explanation.
-test("table of contents, cross-reference and update fields are disabled WITH a reason, on both surfaces", async ({
+test("a closed gap stops refusing, and the one real precondition says so on both surfaces", async ({
   page,
   consoleErrors,
 }) => {
@@ -308,28 +310,27 @@ test("table of contents, cross-reference and update fields are disabled WITH a r
   await clickIntoFirstPage(page);
   await openTab(page, "tabReferences", "panelReferences");
 
-  // Two, not three. `#refCrossRefBtn` used to be here with "A cross-reference
-  // needs the REF field engine, which does not exist yet"; OO-005 built that
-  // engine, so the row moved to the behaviour test below. A reason left standing
+  // NONE of the three, now. `#refCrossRefBtn` left first (OO-005 built the REF
+  // field engine); `#refTocBtn` and `#refUpdateFieldsBtn` left together when
+  // `insertTableOfContents` / `updateTableOfContents` landed, and their
+  // behaviour is proven in `table-of-contents.spec.mjs`. A reason left standing
   // after the gap it describes is closed is the same lie as a claim that is too
   // generous — `109` EV-007, "understating is also false".
-  const unavailable = [
-    // The reason was narrowed when contents entries became navigable: what is
-    // missing is GENERATING a table, not evaluating one. A reason that claims a
-    // working capability does not exist is the same lie as one left standing
-    // after its gap closed.
-    ["#refTocBtn", "Table of contents", /field generation/i],
-    ["#refUpdateFieldsBtn", "Update fields", /field-evaluation pass/i],
-  ];
-  for (const [selector, label, reason] of unavailable) {
-    const button = page.locator(selector);
-    await expect(button, `${label} must not look available`).toBeDisabled();
-    await expect(button, `${label} must say why`).toHaveAttribute("title", reason);
-    const row = await paletteRow(page, label, label);
-    expect(row.disabled, `${label} must be disabled in the palette too`).toBe(true);
-    expect(row.hint, `${label} must carry its reason in the palette`).toMatch(reason);
-    await openTab(page, "tabReferences", "panelReferences");
-  }
+  await expect(
+    page.locator("#refTocBtn"),
+    "inserting a table of contents is built; the button may not still be refusing",
+  ).toBeEnabled();
+  // Update table is still disabled here, and for a PRECONDITION rather than a
+  // missing engine: this document has no contents field yet. The distinction is
+  // the whole point of the reason — one is "not yet built", the other is
+  // "not right now", and they send the reader to different places.
+  const update = page.locator("#refUpdateFieldsBtn");
+  await expect(update).toBeDisabled();
+  await expect(update).toHaveAttribute("title", /no generated table of contents/i);
+  const updateRow = await paletteRow(page, "Update table of contents", "Update table of contents");
+  expect(updateRow.disabled, "Update table must be disabled in the palette too").toBe(true);
+  expect(updateRow.hint).toMatch(/no generated table of contents/i);
+  await openTab(page, "tabReferences", "panelReferences");
 
   // Layout's Arrange group has no permanently-missing command any more.
   // `layout.arrange.bringForward` shipped disabled carrying "needs a z-order

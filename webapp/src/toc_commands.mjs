@@ -121,22 +121,27 @@ export function createTocCommands(io) {
     /** One `fieldRangeEntries()` read — O(field ranges), no document walk. Called
      *  from the same deliberate interactions the stale-caption count is: opening
      *  a document, inserting or updating a table, and reaching the References
-     *  tab. */
+     *  tab.
+     *
+     *  `io.changed()` is called after, because the count is what the ribbon's
+     *  enablement reads and the ribbon syncs INSIDE the edit that changed it —
+     *  so without this the Update button stays disabled until something else
+     *  happens to sync it, which is exactly the shape of a control that does
+     *  nothing for no visible reason. */
     refresh() {
       const doc = io.getDoc();
-      if (!doc?.fieldRangeEntries) {
-        fieldCount = 0;
-        return;
-      }
+      const previous = fieldCount;
+      fieldCount = 0;
       try {
-        fieldCount = doc
-          .fieldRangeEntries()
-          .filter((line) => isTocInstruction(String(line).split("\t")[1] ?? "")).length;
+        fieldCount = (doc?.fieldRangeEntries?.() ?? []).filter((line) =>
+          isTocInstruction(String(line).split("\t")[1] ?? ""),
+        ).length;
       } catch {
         // A build whose engine predates the binding: "no contents field" is the
         // honest state, and the button then says so rather than throwing.
         fieldCount = 0;
       }
+      if (fieldCount !== previous) io.changed?.();
     },
   };
 

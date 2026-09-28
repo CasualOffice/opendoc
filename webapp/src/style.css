@@ -7550,6 +7550,14 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   gap: 0;
   flex: 0 0 auto;
 }
+/* A CONTEXTUAL group that is not showing. `display: inline-flex` above beats the
+   `hidden` attribute's own `display: none`, so without this the Table group kept
+   its 48px while invisible — the same shape as the two placeholders that ignored
+   `[hidden]` in the embed chrome. */
+.compact-toolbar .cgroup[hidden] {
+  display: none;
+}
+
 /* The seven boundaries Docs draws a rule at. The rest read as a gap. */
 .compact-toolbar .cgroup[data-divider]:not(:first-child) {
   border-left: 1px solid var(--line);
