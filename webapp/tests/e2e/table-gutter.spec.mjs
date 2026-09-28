@@ -66,10 +66,15 @@ const activeCell = (page) =>
 /** Sweeps LEFT of the table until the row strip appears, and returns the client
  *  point at which it did. Probing rather than computing is deliberate: the test
  *  has to find the strip the way a user does — by moving the pointer and seeing
- *  it appear — so a strip that exists in the geometry but is never armed fails. */
+ *  it appear — so a strip that exists in the geometry but is never armed fails.
+ *
+ *  It ENTERS the table first, because that is what arms the gutter: the strips
+ *  are not targets for a pointer that has never been on the table. */
 async function findRowStrip(page, { top, height }) {
   const box = await stableBox(page.locator(".page-wrap .page").first());
   const cell = await activeCell(page);
+  await page.mouse.move(box.x + cell.x + cell.w / 2, box.y + top + height / 2);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
   for (let dx = 2; dx <= 26; dx += 2) {
     await page.mouse.move(box.x + cell.x - dx, box.y + top + height / 2);
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
@@ -317,6 +322,90 @@ test("the accessibility mirror expresses the cell selection, not only the fill",
   expect(consoleErrors).toEqual([]);
 });
 
+test("the gutter arms by ENTERING the table, so the line above one is still that line", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The column strip is a 14px band directly above the table, and body text
+  // frequently sits in it. Arming on proximity alone made the paragraph above a
+  // table report a column strip — and a press there would have selected a column
+  // instead of placing the caret in that paragraph. The pointer-cursor sweep
+  // caught it as "a form checkbox one line above a table stopped being a
+  // control", which is the same defect seen from the other end.
+  await insertTable(page, 3, 3);
+  const cell = await activeCell(page);
+  const box = await stableBox(page.locator(".page-wrap .page").first());
+  const justAbove = { x: box.x + cell.x + cell.w / 2, y: box.y + cell.y - 4 };
+
+  await page.mouse.move(justAbove.x, justAbove.y);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+  await expect(page.locator(".overlay .table-column-strip")).toHaveCount(0);
+  const target = await page.evaluate(
+    () => document.querySelector(".page-wrap .page")?.dataset.pointerTarget ?? "",
+  );
+  expect(target, "the router must still speak for the text under the pointer").not.toBe("");
+
+  // …and a press there places a caret rather than selecting a column.
+  await page.mouse.click(justAbove.x, justAbove.y);
+  await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a merged table gets a row strip and NO column strip, rather than one that refuses", async ({
+  page,
+  consoleErrors,
+}) => {
+  // A column selection has no meaning on a merged or spanned table —
+  // `tableSelectionAnchorNodes(node, "column")` returns nothing there — so a
+  // painted column strip would be a control that refuses on click. A row of a
+  // merged table is still a row, so that strip stays.
+  await insertTable(page, 3, 3);
+  await page.locator('[data-tab="table"]').click();
+  await page.locator('[data-table-select="row"]').click();
+  await page.locator("#mergeCellsBtn").click();
+  await expect(page.locator("#tableContext")).toContainText("merged/spanned");
+
+  const cell = await activeCell(page);
+  const box = await stableBox(page.locator(".page-wrap .page").first());
+  await page.mouse.move(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h / 2);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+  await expect(page.locator(".overlay .table-row-strip")).toHaveCount(1);
+  await expect(page.locator(".overlay .table-column-strip")).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test.describe("touch", () => {
+  test.use({ hasTouch: true });
+
+  test("a tap inside the table arms the gutter, and the strip is 24px under a finger", async ({
+    page,
+    consoleErrors,
+  }) => {
+    // Hover does not exist on touch, so without an arming tap the whole gutter is
+    // unreachable from a finger. The first tap places the caret AND arms the
+    // strips — the rule the boundary pills already follow (`docs/141` TBL-18) —
+    // and the strip then measures 24 CSS px, WCAG 2.5.8 Target Size (Minimum).
+    // It can afford to: the strip is outside the table, so widening it takes
+    // nothing from any cell, which is exactly what stopped the BOUNDARY zones
+    // from doing the same.
+    await insertTable(page, 3, 3);
+    const cell = await activeCell(page);
+    const box = await stableBox(page.locator(".page-wrap .page").first());
+    await expect(page.locator(".overlay .table-row-strip")).toHaveCount(0);
+
+    await page.touchscreen.tap(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h * 1.5);
+    const strip = page.locator(".overlay .table-row-strip");
+    await expect(strip).toHaveCount(1);
+    const width = await strip.evaluate((el) => el.getBoundingClientRect().width);
+    expect(width, "a strip a finger can hit is at least 24 CSS px").toBeGreaterThanOrEqual(24);
+
+    // …and a second tap ON the strip selects that row.
+    await page.touchscreen.tap(box.x + cell.x - 12, box.y + cell.y + cell.h * 1.5);
+    await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(3);
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
 test("the strips are hover chrome only: they never rest on the page, and a click in a cell still places the caret", async ({
   page,
   consoleErrors,
@@ -336,7 +425,7 @@ test("the strips are hover chrome only: they never rest on the page, and a click
   // …and moving away takes it down again. Without this the strips accumulate
   // beside every table the pointer has ever passed, which is exactly the
   // "resting chrome" `docs/141` §4.4 forbids.
-  await page.mouse.move(box.x + cell.x + cell.w / 2, box.y + Math.max(8, cell.y - 24));
+  await page.mouse.move(box.x + cell.x + cell.w / 2, box.y + 8);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
   await expect(page.locator(".overlay .table-row-strip")).toHaveCount(0);
   await expect(page.locator(".overlay .table-column-strip")).toHaveCount(0);
@@ -349,11 +438,18 @@ test("the strips are hover chrome only: they never rest on the page, and a click
       box.y + cell.y + cell.h * row + cell.h / 2,
     );
     await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(0);
+    // The caret went where the click did — read from the active-cell outline,
+    // which is the editor's own statement of which cell it is editing.
+    const landed = await activeCell(page);
+    expect(
+      Math.abs(landed.y - (cell.y + cell.h * row)),
+      `a click in row ${row}, column ${col} put the caret in a different row`,
+    ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs(landed.x - (cell.x + cell.w * col)),
+      `a click in row ${row}, column ${col} put the caret in a different column`,
+    ).toBeLessThanOrEqual(3);
     await page.keyboard.type("X");
   }
-  const text = await page.evaluate(
-    () => document.querySelector("#a11yDocument table")?.textContent ?? "",
-  );
-  expect(text.replace(/[^X]/g, "")).toBe("XXX");
   expect(consoleErrors).toEqual([]);
 });

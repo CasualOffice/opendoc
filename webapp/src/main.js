@@ -4115,8 +4115,8 @@ function paintOverlayLayer() {
     tableChrome.paintCaretColumnHandles(pages, cellRect);
     tableChrome.paintTouchPills(pages);
   }
-  // The gutter is painted outside the `selection` branch: a strip is armed by
-  // the POINTER, and hovering a table is not a reason to require a caret.
+  // Outside the `selection` branch: a strip is armed by the POINTER, and being
+  // over a table is not a reason to require a caret.
   tableGutter.paint(pages);
 }
 
@@ -6334,10 +6334,9 @@ function onPointerDown(page, event) {
     // instead of reusing click-away behavior and silently entering the body.
     runningBand: runningEditBand,
     objectNode: editingHere ? objectSelection.node : null,
-    // The cell the press landed in, so a drag that leaves it can become a CELL
-    // range instead of a text range (`docs/141` D-3). One `inTable` per press —
-    // the press already pays for several document questions — and the drag
-    // itself re-asks only when the paragraph under the pointer changes.
+    // The cell the press landed in, so a drag that leaves it becomes a CELL range
+    // instead of a text range (`docs/141` D-3). One `inTable` per press, and the
+    // drag re-asks only when the paragraph under the pointer changes.
     cellAnchor: doc.inTable(anchor.node) ? anchor.node : "",
     lastCellProbe: "",
     cellRange: false,
@@ -6399,10 +6398,8 @@ function onPointerMove(page, event) {
     return;
   }
   if (!dragging) {
-    // The gutter is asked FIRST and unthrottled: it is a few dozen comparisons
-    // over the memoised page chrome with no engine call, and it repaints only
-    // when the armed band actually changes. Throttling it to a frame would make
-    // the strip lag the pointer that is aiming at it.
+    // FIRST and unthrottled: a few dozen comparisons over the memoised page
+    // chrome, no engine call, and a repaint only when the armed band changes.
     tableGutter.hover(page, event);
     pointerHover.schedule(page, event);
     return;
@@ -6723,11 +6720,12 @@ window.addEventListener("pointermove", (e) => {
     else updateDragSelection(e);
   }
 });
-pagesEl.addEventListener("pointerleave", () => {
+pagesEl.addEventListener("pointerleave", (e) => {
   pointerHover.clear();
-  // The strips are hover chrome: leaving the sheet takes them down, or they
-  // would sit beside a table the pointer is nowhere near.
-  if (tableGutter.clear()) paintOverlayLayer();
+  // The strips are hover chrome: leaving the sheet takes them down, or they sit
+  // beside a table the pointer is nowhere near. A TOUCH pointer leaves the moment
+  // the finger lifts, so honouring it there would undo the tap that armed them.
+  if (e.pointerType !== "touch" && tableGutter.clear()) paintOverlayLayer();
 });
 pagesEl.addEventListener("dblclick", (e) => {
   const page = pageFromEvent(e);
