@@ -711,19 +711,59 @@ function regionRows() {
 // list must also be able to express, and the two must resolve through the same
 // code". A page whose switches were hand-listed would be a third table, and the
 // first thing to drift.
+//
+// THE SHAPE OF THESE CONTROLS IS THE CONFIGURATOR PATTERN, not an invention:
+// a compact option panel beside a preview that never leaves the screen, the way
+// TinyMCE's configurator, CKEditor's online builder, the Monaco playground and
+// Stripe's Elements demos are all built. Three consequences show up here rather
+// than in the page, because this file writes the markup:
+//
+//   1. A ROLE IS A CARD, not a radio with an essay beside it. Name, one line of
+//      what it is, and the three facts that differ between roles as pills. The
+//      rest of the argument — why `preview` is not `readonly` minus print — moves
+//      into a note that appears for the SELECTED role only, so it is one
+//      paragraph on screen instead of five.
+//   2. A CAPABILITY OR REGION IS A ONE-LINE TOGGLE, grouped. Nineteen flat rows
+//      is a list nobody reads; five groups with counts is a list somebody scans.
+//      The groups are asserted to be a partition of the authority's own order, so
+//      a new region cannot quietly land outside one.
+//   3. EVERY CLAUSE STILL COMES FROM ONE TABLE. `MEANINGS` and `REGION_MEANINGS`
+//      serve the embedding guide's columns and these controls both, so the page
+//      and the table cannot disagree about what `autosave` is.
 
-/** What each role IS, in one clause. The only authored column; everything else
- *  in a role's row is asked of `resolveCapabilities` / `resolveRegions`.
+/** What each role IS, in one line, and WHY, in the rest of it.
+ *
+ *  The only authored column; everything else in a role's card is asked of
+ *  `resolveCapabilities` / `resolveRegions`. Split in two because the card shows
+ *  `is` and the note shows `why`: one line is what a control can carry, and the
+ *  argument still has to be somewhere. Not one string cut in half at render time —
+ *  where a sentence ends is an editorial decision, and a generator that guessed it
+ *  would produce a different card the day somebody added a comma.
  *
  *  `preview` and `readonly` are the two that matter and the two that get the most
  *  words, because `docs/126` is explicit that they are NOT the same thing and the
  *  playground is where a reader can watch the difference. */
 const ROLE_MEANINGS = Object.freeze({
-  preview: "A picture of the document — a thumbnail, an attachment preview, a print preview. The runtime as a layout and rendering engine, and nearly replaceable by a static image.",
-  readonly: "A published document, to read. Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome.",
-  commentor: "Google Docs' Commenter, Word's reviewer. Annotates and suggests; every body change is a tracked revision somebody else accepts.",
-  edit: "The reason a host embeds an editor. Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours.",
-  owner: "The page is ours, or the host has said it may as well be.",
+  preview: {
+    is: "A picture of the document — a thumbnail, an attachment preview, a print preview.",
+    why: "The runtime as a layout and rendering engine, and nearly replaceable by a static image.",
+  },
+  readonly: {
+    is: "A published document, to read.",
+    why: "Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome.",
+  },
+  commentor: {
+    is: "Google Docs' Commenter, Word's reviewer.",
+    why: "Annotates and suggests; every body change is a tracked revision somebody else accepts.",
+  },
+  edit: {
+    is: "The reason a host embeds an editor.",
+    why: "Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours.",
+  },
+  owner: {
+    is: "The page is ours, or the host has said it may as well be.",
+    why: "",
+  },
 });
 
 /** An accent value that really does fail the AA floor, for the page's
@@ -745,36 +785,102 @@ const FAILING_ACCENT = "#f5a524";
  *
  *  Declared here and nowhere else: `playground.js` reads which radio the markup
  *  has `checked` rather than carrying its own default, so this constant is the one
- *  statement of it. */
+ *  statement of it — and it is also what the page's Reset returns to, because a
+ *  reset reads `defaultChecked` off the same attribute. */
 const DEFAULT_ROLE = "edit";
 
-/** One `<li class="pg-switch">`: the control, its machine name, and one clause.
+/** How the capability switches are grouped, and in what order.
+ *
+ *  A PARTITION OF `CAPABILITIES` IN THE AUTHORITY'S OWN ORDER, asserted below.
+ *  That is stricter than "every capability appears somewhere" and it is the
+ *  version worth having: the page's controls then read in the same order as the
+ *  authority's list, the embedding guide's table and the readout chips, so three
+ *  surfaces describing one contract cannot present it three ways. A tenth
+ *  capability lands outside a group and fails the build. */
+const CAPABILITY_GROUPS = Object.freeze([
+  Object.freeze({ title: "Getting documents in and out", ids: ["open", "new", "save", "download", "print"] }),
+  Object.freeze({ title: "Changing the document", ids: ["edit", "comment"] }),
+  Object.freeze({ title: "Inside the frame", ids: ["branding", "autosave"] }),
+]);
+
+/** How the chrome switches are grouped — the same partition rule, and one of the
+ *  five folded shut.
+ *
+ *  The eight ribbon bands are the reason this page needed grouping at all:
+ *  nineteen flat switches pushed the brand controls a screen and a half below the
+ *  fold, and the previous fix — a 330px scroller — hid rows inside a box with no
+ *  label saying how many were in there. A `<details>` says `8` on its summary, is
+ *  a real keyboard control, and sits directly under the `ribbon` switch that
+ *  contains it, so a reader who has not decided about `ribbon` has no business
+ *  inside it. The other four groups are open, because folding a two-row group
+ *  costs a click and saves nothing. */
+const REGION_GROUPS = Object.freeze([
+  Object.freeze({ title: "Top bar", ids: ["brand", "title", "menu", "ribbon"] }),
+  Object.freeze({ title: "Ribbon bands", ids: REGIONS.filter((id) => id.startsWith("band.")), fold: true }),
+  Object.freeze({ title: "Beside the document", ids: ["rail", "history"] }),
+  Object.freeze({ title: "Status bar", ids: ["status", "zoom"] }),
+  Object.freeze({ title: "Overlays", ids: ["find", "selection", "settings"] }),
+]);
+
+/** Fails unless the groups are exactly the authority's list, in order. */
+function partition(groups, all, what) {
+  const flat = groups.flatMap((group) => group.ids);
+  if (flat.join(" ") !== all.join(" ")) {
+    throw new Error(
+      `build-embed-docs: the playground's ${what} groups are not a partition of the ` +
+        `authority's list in its own order.\n  groups: ${flat.join(" ")}\n  ${what}: ${all.join(" ")}\n` +
+        "Every one gets exactly one switch, and the switches read in the order the " +
+        "authority declares — which is also the order of the table on the embedding " +
+        "page and of the chips in the readout.",
+    );
+  }
+  return groups;
+}
+
+/** The dom id a control gets. `.` is not legal in a `for=`-friendly id here only
+ *  by convention, but `band.file` in a CSS selector would need escaping in every
+ *  test that reaches for it, so the dots become dashes once, here. */
+function domId(group, value) {
+  return `pg-${group}-${value.replace(/\./g, "-")}`;
+}
+
+/** One capability or region switch: the control, its name, and one clause.
  *
  *  `<label for>` rather than a wrapping label, because the clause sits in a third
  *  grid cell and a label wrapping all three would read the whole paragraph as the
  *  control's name to a screen reader. */
-function switchRow({ type, group, id, value, what, attribute, checked }) {
-  const domId = `pg-${group}-${value.replace(/\./g, "-")}`;
-  const name = type === "radio" ? ` name="${group}"` : "";
-  const on = checked ? " checked" : "";
+function toggleRow({ group, value, what, attribute }) {
+  const id = domId(group, value);
   return [
-    '  <li class="pg-switch">',
-    `    <input type="${type}"${name} id="${domId}" value="${escape(value)}" ${attribute}${on} />`,
-    `    <label class="pg-switch-name" for="${domId}">${escape(value)}</label>`,
-    `    <span class="pg-switch-what">${what}</span>`,
+    '  <li class="pg-toggle">',
+    `    <input type="checkbox" class="pg-check" id="${id}" value="${escape(value)}" ${attribute} />`,
+    `    <label class="pg-toggle-name" for="${id}">${escape(value)}</label>`,
+    `    <span class="pg-toggle-what">${what}</span>`,
     "  </li>",
   ].join("\n");
 }
 
-function switchList(rows, { scroll = false } = {}) {
-  return [`<ul class="pg-switches"${scroll ? " data-scroll" : ""}>`, ...rows, "</ul>"].join("\n");
+/** A group of switches, as a disclosure carrying its own count. */
+function foldGroup({ title, count, open, body }) {
+  return [
+    `<details class="pg-fold"${open ? " open" : ""}>`,
+    `  <summary class="pg-fold-head"><span class="pg-fold-title">${escape(title)}</span>` +
+      `<span class="pg-fold-count">${count}</span></summary>`,
+    '  <ul class="pg-toggles">',
+    body,
+    "  </ul>",
+    "</details>",
+  ].join("\n");
 }
 
-/** The role radios. Each clause ends with what the role actually resolves to, so
- *  the difference between `preview` and `readonly` is on screen before anything is
- *  mounted — derived from the authority, both halves. */
+/** The role cards.
+ *
+ *  Each card carries the three facts that actually differ between roles — how many
+ *  capabilities it grants, how much chrome it is offered, and which review mode it
+ *  lands in — derived from the authority rather than described. The full grant list
+ *  goes in the note below, which is the one place a reader gets a paragraph. */
 function roleControls() {
-  const unexplained = ROLES.filter((role) => !ROLE_MEANINGS[role]);
+  const unexplained = ROLES.filter((role) => !ROLE_MEANINGS[role]?.is);
   if (unexplained.length) {
     throw new Error(
       `build-embed-docs: role(s) with no clause in ROLE_MEANINGS: ${unexplained.join(", ")}. ` +
@@ -782,24 +888,44 @@ function roleControls() {
         "explanation is a control a host has to guess at.",
     );
   }
-  return switchList(
-    ROLES.map((role) => {
-      const capabilities = resolveCapabilities({ mode: role, framed: true });
-      const shown = resolveRegions({ mode: role, framed: true, capabilities });
-      const grants = capabilities.size ? codeList(capabilities) : "nothing at all";
-      return switchRow({
-        type: "radio",
-        group: "role",
-        value: role,
-        attribute: "data-role",
-        checked: role === DEFAULT_ROLE,
-        what:
-          `${escape(ROLE_MEANINGS[role])}<br />Grants ${grants} · ` +
-          `${shown.size} of ${REGIONS.length} regions · ` +
-          `<code>${editingModeFor(capabilities)}</code>`,
-      });
-    }),
-  );
+  const cards = ROLES.map((role) => {
+    const capabilities = resolveCapabilities({ mode: role, framed: true });
+    const shown = resolveRegions({ mode: role, framed: true, capabilities });
+    const id = domId("role", role);
+    return [
+      '  <li class="pg-choice">',
+      `    <input type="radio" class="pg-check" name="role" id="${id}" value="${escape(role)}" data-role${role === DEFAULT_ROLE ? " checked" : ""} />`,
+      `    <label class="pg-choice-name" for="${id}">${escape(role)}</label>`,
+      `    <span class="pg-choice-what">${escape(ROLE_MEANINGS[role].is)}</span>`,
+      '    <span class="pg-choice-meta">',
+      `      <span class="pg-pill">${capabilities.size} of ${CAPABILITIES.length} capabilities</span>`,
+      `      <span class="pg-pill">${shown.size} of ${REGIONS.length} regions</span>`,
+      `      <span class="pg-pill pg-pill--mode">${editingModeFor(capabilities)}</span>`,
+      "    </span>",
+      "  </li>",
+    ].join("\n");
+  });
+  // One note per role, all five present and four of them `hidden`. `playground.js`
+  // flips which one is shown and writes nothing: the page's language stays in the
+  // page, which is the contract that keeps that module out of the string table.
+  const notes = ROLES.map((role) => {
+    const capabilities = resolveCapabilities({ mode: role, framed: true });
+    const shown = resolveRegions({ mode: role, framed: true, capabilities });
+    const why = ROLE_MEANINGS[role].why ? `${escape(ROLE_MEANINGS[role].why)} ` : "";
+    return (
+      `  <p class="pg-role-note" data-role-note="${escape(role)}"${role === DEFAULT_ROLE ? "" : " hidden"}>` +
+      `${why}Grants ${capabilities.size ? codeList(capabilities) : "nothing at all"}, ` +
+      `and is offered ${shown.size} of ${REGIONS.length} chrome regions.</p>`
+    );
+  });
+  return [
+    '<ul class="pg-choices">',
+    ...cards,
+    "</ul>",
+    '<div class="pg-role-notes" data-role-notes>',
+    ...notes,
+    "</div>",
+  ].join("\n");
 }
 
 /** The capability checkboxes, described by the same `MEANINGS` table the
@@ -813,17 +939,25 @@ function capabilityControls() {
         "The playground puts a switch on screen for each one.",
     );
   }
-  return switchList(
-    CAPABILITIES.map((capability) =>
-      switchRow({
-        type: "checkbox",
-        group: "cap",
-        value: capability,
-        attribute: "data-capability",
-        what: escape(MEANINGS[capability]),
+  return partition(CAPABILITY_GROUPS, CAPABILITIES, "capability")
+    .map((group) =>
+      foldGroup({
+        title: group.title,
+        count: group.ids.length,
+        open: true,
+        body: group.ids
+          .map((capability) =>
+            toggleRow({
+              group: "cap",
+              value: capability,
+              attribute: "data-capability",
+              what: escape(MEANINGS[capability]),
+            }),
+          )
+          .join("\n"),
       }),
-    ),
-  );
+    )
+    .join("\n");
 }
 
 /** The region checkboxes, described by `REGION_MEANINGS` — likewise shared with
@@ -836,18 +970,25 @@ function regionControls() {
         "The playground puts a switch on screen for each one.",
     );
   }
-  return switchList(
-    REGIONS.map((id) =>
-      switchRow({
-        type: "checkbox",
-        group: "chrome",
-        value: id,
-        attribute: "data-region",
-        what: escape(REGION_MEANINGS[id]),
+  return partition(REGION_GROUPS, REGIONS, "region")
+    .map((group) =>
+      foldGroup({
+        title: group.title,
+        count: group.ids.length,
+        open: !group.fold,
+        body: group.ids
+          .map((id) =>
+            toggleRow({
+              group: "chrome",
+              value: id,
+              attribute: "data-region",
+              what: escape(REGION_MEANINGS[id]),
+            }),
+          )
+          .join("\n"),
       }),
-    ),
-    { scroll: true },
-  );
+    )
+    .join("\n");
 }
 
 /** The brand fields. Generated because two of their values are facts about the

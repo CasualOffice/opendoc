@@ -133,7 +133,18 @@ const CEILINGS = new Map([
   // attribute, the same contract `embed_host_demo.js` holds, and
   // `playground.test.mjs` asserts it with `scanScript`. That is the direction this
   // table is for.
-  ["playground.page.html", 85],
+  //
+  // 85 -> 109 when the page was rebuilt as a configurator (the owner's verdict on
+  // the first version: "configuration is seriously bad… UX is seriously bad").
+  // MEASURED, and the twenty-four are almost all facts rather than prose: fifteen
+  // are the derived pills on the five role cards ("6 of 9 capabilities", "18 of 19
+  // regions", the review mode), four are the numbers in the page head, and eight
+  // are the titles and counts of the groups the capability and region switches are
+  // folded into. Five 4-to-8-line essays came OUT of the control panel in the same
+  // pass — they are now one note for the selected role and four cards below the
+  // fold, which is why a page that reads shorter counts higher: a pill is one site
+  // and a paragraph is one site.
+  ["playground.page.html", 109],
   ["fidelity.page.html", 84],
   ["index.page.html", 157],
   // The shared header and footer, counted where they are AUTHORED. The generated

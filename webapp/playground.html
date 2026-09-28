@@ -80,66 +80,159 @@
       }
     </script>
     <style>
-      /* Only what this page needs, and every colour is a marketing.css token.
-         `tests/e2e/site-contrast.spec.mjs` discovers this page from the template
-         list and sweeps every text node on it at 1280 and 390, in the one theme
-         the site has — so a token is not enough on its own: `--muted-3` clears
-         4.5:1 on `--bg` and misses it on the quieter `--surface-2` and `--paper`
-         (HF-189, measured at 4.40 and 4.47). Secondary text here is `--muted-2`
-         or `--muted`, and `--faint*` is never text. The tokens themselves are
-         deliberate (docs/63) and this page is not the place to relitigate them. */
+      /* THE PATTERN THIS PAGE IS BUILT ON, named before it was designed (the house
+         rule): the CONFIGURATOR — a compact option panel beside a live preview that
+         never leaves the screen, with the copyable output underneath. It is what
+         TinyMCE's configurator, CKEditor's online builder, the Monaco playground
+         and Stripe's Elements demos all are, and the three properties that make
+         one work are the three this stylesheet has to deliver:
+
+           1. THE PREVIEW IS ALWAYS ON SCREEN. A control you cannot see the effect
+              of is a control you have to remember the effect of. `.pg-live` is
+              sticky at both widths, and `playground.spec.mjs` scrolls to the last
+              control and measures that the frame is still in the viewport.
+           2. THE CONTROLS ARE CONTROLS. One line each, grouped, with counts; the
+              argument lives below the fold or in the note that follows the
+              selected role, not beside every radio.
+           3. THE OUTPUT IS COPYABLE AND EXACT. Unchanged from the first version,
+              and still guarded: the snippet is built from the state the frame was
+              mounted from.
+
+         EVERY COLOUR IS A `marketing.css` TOKEN. `tests/e2e/site-contrast.spec.mjs`
+         discovers this page from the template list and sweeps every text node on it
+         at 1280 and 390, in the one theme the site has — so a token is not enough on
+         its own: `--muted-3` clears 4.5:1 on `--bg` and misses it on the quieter
+         `--surface-2` and `--paper` (HF-189, measured at 4.40 and 4.47). Secondary
+         text here is `--muted-2` or `--muted`, and `--faint*` is never text. The
+         tokens themselves are deliberate (docs/63) and this page is not the place to
+         relitigate them. */
       .pg {
         max-width: 1400px;
         margin: 0 auto;
-        padding: 36px 20px 72px;
+        padding: 30px 20px 72px;
+      }
+
+      /* ---- The fold: one claim, one lede, and the four numbers ---------------- */
+
+      /* Two columns above 900px, because the lede wraps at 68ch and left a third of
+         the page empty to its right — 440px of nothing, measured at 1280. The
+         numbers that fill it are the same derived claims the groups below publish,
+         so the space is spent on the page's own subject rather than on air. */
+      .pg-head {
+        display: grid;
+        gap: 22px 40px;
+        align-items: end;
+        grid-template-columns: minmax(0, 1fr);
+      }
+      @media (min-width: 900px) {
+        .pg-head {
+          grid-template-columns: minmax(0, 1fr) auto;
+        }
+      }
+      .pg-head h1 {
+        margin: 6px 0 10px;
+        font-size: clamp(1.9rem, 1.2rem + 1.9vw, 2.6rem);
+        line-height: 1.12;
+        letter-spacing: -0.02em;
       }
       .pg-lede {
-        max-width: 72ch;
+        margin: 0;
+        max-width: 68ch;
         color: var(--muted);
         font-size: 1.02rem;
         line-height: 1.6;
       }
-      .pg-lede code,
-      .pg-note code,
-      .pg-hint code,
-      .pg .doc-list code,
-      .pg .doc-callout code {
-        font-family: var(--font-mono);
-        font-size: 0.86em;
-        /* A mono token is one unbreakable word, and at 390px
-           `LayoutManager._applyCustomization` was 24px wider than the viewport.
-           `anywhere` rather than the docs page's `<wbr />` trick because these
-           identifiers have no `/` to break on, and scoped to this page's own
-           classes because the tokens are deliberate (docs/63) and a `word-break`
-           on a shared component would be a restyle. */
-        overflow-wrap: anywhere;
-      }
-      /* Side by side above 1080px, stacked below it — controls first, because on a
-         phone the thing you came to change has to be reachable without scrolling
-         past a 620px editor. */
-      .pg-split {
+      .pg-stats {
         display: grid;
-        gap: 22px;
-        grid-template-columns: 1fr;
-        margin-top: 28px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius);
+        background: var(--line-2);
+        overflow: hidden;
+      }
+      @media (min-width: 900px) {
+        .pg-stats {
+          grid-template-columns: repeat(4, minmax(96px, auto));
+        }
+      }
+      .pg-stats li {
+        padding: 11px 14px;
+        background: var(--surface);
+        font-size: 0.78rem;
+        line-height: 1.35;
+        color: var(--muted-2);
+      }
+      .pg-stats b {
+        display: block;
+        font-size: 1.28rem;
+        font-weight: 600;
+        line-height: 1.1;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---- The two panes ----------------------------------------------------- */
+
+      /* Narrow: a flex COLUMN rather than a one-column grid, and that is load
+         bearing rather than a preference. A sticky grid item is confined to its own
+         grid area, which in a single-column grid is one row — so the preview would
+         unstick the moment the controls row began. In a flex column the containing
+         block is the whole `.pg-split`, so the preview stays put for the entire
+         scroll of the controls. `order` puts it first without moving it in the DOM,
+         where the controls stay first for the keyboard. */
+      .pg-split {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        margin-top: 26px;
+      }
+      .pg-live {
+        order: -1;
+        position: sticky;
+        /* Under the site header, which is itself sticky and whose height is not one
+           number: MEASURED at 57px at 1280, 99px from about 560 to 860 where the
+           primary nav wraps, and 121px at 390. A constant would have parked the
+           live card behind the nav on a phone, so `playground.js` measures the
+           header and publishes `--pg-stick`; the fallback here is the desktop
+           height, for the moment before the module runs. */
+        top: calc(var(--pg-stick, 57px) + 8px);
+        z-index: 2;
+        /* A HEIGHT, not a max-height: the card is a flex column whose stage is the
+           only flexible row, so with nothing but a maximum it collapses to the
+           height of its own head — a 150px editor, which a screenshot caught and
+           no assertion would have. */
+        /* Leaves about 300px of viewport for the controls under it, so the
+           preview and the control you are changing are on screen together. */
+        height: calc(100vh - var(--pg-stick, 57px) - 300px);
+        min-height: 300px;
       }
       @media (min-width: 1080px) {
         .pg-split {
-          grid-template-columns: minmax(290px, 320px) minmax(0, 1fr);
+          display: grid;
+          grid-template-columns: minmax(330px, 384px) minmax(0, 1fr);
+          gap: 24px;
+          /* `start`, not the default `stretch`: a stretched item is as tall as its
+             grid area and therefore has nowhere to travel, which is the usual way a
+             sticky sidebar silently does nothing. The earlier version of this page
+             stretched the live card DELIBERATELY, to spend the empty column on more
+             document — that argument is answered better by sticking it, because the
+             room it was filling only existed while the controls were 2,545px tall. */
+          align-items: start;
         }
-        /* STRETCHED rather than pinned to the top, and the alternative is worth
-           recording: with `align-items: start` the live card kept its 620px and
-           left a screen and a half of empty white beside the controls, which read
-           as an unfinished page. Stretching spends that space on the thing the
-           page is about — several pages of document instead of one — and the
-           brand controls, which are the last group in the column, still sit
-           beside editor rather than beside nothing. */
+        .pg-controls {
+          grid-column: 1;
+          grid-row: 1;
+        }
         .pg-live {
-          display: flex;
-          flex-direction: column;
-        }
-        .pg-live .pg-stage {
-          flex: 1 1 auto;
+          grid-column: 2;
+          grid-row: 1;
+          order: 0;
+          top: calc(var(--pg-stick, 57px) + 16px);
+          height: calc(100vh - var(--pg-stick, 57px) - 40px);
         }
       }
       .pg-card {
@@ -154,10 +247,12 @@
         flex-direction: column;
         min-width: 0;
       }
+
+      /* ---- A control group --------------------------------------------------- */
       .pg-group {
         border: 0;
         margin: 0;
-        padding: 16px 18px;
+        padding: 15px 16px 16px;
         border-bottom: 1px solid var(--line);
         min-width: 0;
       }
@@ -166,84 +261,312 @@
       }
       .pg-group > legend {
         padding: 0;
-        font-size: 0.82rem;
+        font-size: 0.74rem;
         font-weight: 600;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
         color: var(--muted-2);
       }
       .pg-hint {
-        margin: 6px 0 12px;
-        font-size: 0.83rem;
+        margin: 5px 0 12px;
+        font-size: 0.82rem;
         line-height: 1.5;
         color: var(--muted);
       }
-      /* One row per switch: the control, its name, and what it is. */
-      .pg-switches {
+      .pg-hint code,
+      .pg-lede code,
+      .pg-note code,
+      .pg-role-note code,
+      .pg .doc-list code,
+      .pg .doc-callout code {
+        font-family: var(--font-mono);
+        font-size: 0.86em;
+        /* A mono token is one unbreakable word, and at 390px
+           `LayoutManager._applyCustomization` was 24px wider than the viewport.
+           `anywhere` rather than the docs page's `<wbr />` trick because these
+           identifiers have no `/` to break on, and scoped to this page's own
+           classes because the tokens are deliberate (docs/63) and a `word-break`
+           on a shared component would be a restyle. */
+        overflow-wrap: anywhere;
+      }
+
+      /* ---- The switch itself, drawn rather than borrowed ---------------------- */
+
+      /* `appearance: none` and then painted from the site's own tokens, because the
+         user-agent checkbox is the one control on the page that ignored the design
+         system entirely — a blue-grey Chrome square beside Instrument Sans. It stays
+         a real `<input>`: focusable, in the tab order, operated by Space, reported to
+         a screen reader as a checkbox, and `:disabled` is still the browser's. */
+      .pg-check {
+        appearance: none;
+        -webkit-appearance: none;
+        flex: none;
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        background: var(--surface);
+        cursor: pointer;
+        display: grid;
+        place-content: center;
+      }
+      .pg-check[type="radio"] {
+        border-radius: 50%;
+      }
+      .pg-check:hover:not(:disabled) {
+        border-color: var(--accent);
+      }
+      .pg-check:checked {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .pg-check[type="checkbox"]:checked::after {
+        content: "";
+        width: 9px;
+        height: 5px;
+        margin-top: -2px;
+        border: 2px solid var(--accent-ink);
+        border-top: 0;
+        border-right: 0;
+        transform: rotate(-45deg);
+      }
+      .pg-check[type="radio"]:checked::after {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent-ink);
+      }
+      .pg-check:disabled {
+        background: var(--surface-2);
+        border-color: var(--line-strong);
+        cursor: not-allowed;
+      }
+      .pg-check:disabled:checked {
+        background: var(--line-strong);
+      }
+      /* One focus ring for every control on the page, including the disclosures and
+         the buttons — the previous version had none at all on its own controls and
+         relied on whatever the user agent drew over a native widget. */
+      .pg-check:focus-visible,
+      .pg-btn:focus-visible,
+      .pg-fold-head:focus-visible,
+      .pg-field input:focus-visible,
+      .pg-field select:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* ---- Role: five cards, one selected, one note -------------------------- */
+      .pg-choices {
         list-style: none;
         margin: 0;
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 6px;
       }
-      .pg-switch {
+      .pg-choice {
+        position: relative;
         display: grid;
         grid-template-columns: auto minmax(0, 1fr);
-        gap: 4px 9px;
-        align-items: baseline;
-        padding: 5px 6px;
+        gap: 3px 10px;
+        padding: 9px 11px;
+        border: 1px solid var(--line-2);
         border-radius: var(--radius-sm);
+        background: var(--surface);
       }
-      .pg-switch:hover {
+      .pg-choice:hover {
+        border-color: var(--line-strong);
         background: var(--surface-3);
       }
-      /* The nineteen regions are the longest list on the page by some way, and
-         left open they pushed the brand controls a screen and a half below the
-         fold. Scrolled rather than folded away: a `<details>` would hide a switch
-         behind a disclosure nobody opens, and a scroller keeps every row in the
-         tab order with the browser scrolling focus into view for free. */
-      .pg-switches[data-scroll] {
-        max-height: 330px;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding-right: 4px;
+      /* The whole card is the hit area, and the accessible NAME is still just
+         "edit": the label carries one word and stretches an empty box over the card
+         (the stretched-link pattern). A label wrapping the clause and the pills
+         would have a screen reader announce the whole paragraph as the radio's
+         name.
+
+         The radio itself is lifted back OUT of that box. Without this the stretched
+         label covers the control, and anything clicking the input at its own centre
+         — Playwright's `check()`, and a person aiming at the dot — hits the label
+         instead. It still works, because a label forwards the click, but only by
+         accident of the label being the right one; on the region rows there is no
+         such overlay and the two would behave differently. */
+      .pg-choice-name::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: var(--radius-sm);
       }
-      .pg-switch input {
-        margin: 0;
-        accent-color: var(--accent);
+      .pg-choice > .pg-check {
+        position: relative;
+        z-index: 1;
       }
-      .pg-switch input:disabled + .pg-switch-name {
-        color: var(--muted-2);
-        text-decoration: line-through;
+      .pg-choice:has(.pg-check:checked) {
+        border-color: var(--accent-line);
+        background: var(--accent-tint);
       }
-      .pg-switch-name {
-        font-family: var(--font-mono);
-        font-size: 0.8rem;
+      .pg-choice-name {
+        font-size: 0.92rem;
+        font-weight: 600;
+        line-height: 1.25;
         color: var(--ink);
+        cursor: pointer;
       }
-      .pg-switch-what {
+      .pg-choice-what {
         grid-column: 2;
-        font-size: 0.78rem;
+        font-size: 0.8rem;
         line-height: 1.45;
         color: var(--muted);
       }
+      .pg-choice-meta {
+        grid-column: 2;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      .pg-pill {
+        font-size: 0.7rem;
+        line-height: 1.5;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--line-2);
+        background: var(--surface-2);
+        color: var(--muted-2);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .pg-pill--mode {
+        border-color: var(--accent-line);
+        background: var(--accent-tint);
+        color: var(--accent-2);
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+      }
+      .pg-role-notes {
+        margin-top: 10px;
+      }
+      /* No `display` here on purpose: four of the five notes carry `hidden`, and a
+         class that set `display` would beat the user-agent `[hidden]` rule — the
+         exact bug a screenshot caught on the first version of this page, where a
+         flex rule kept a hidden notice on screen and gave it half the stage. */
+      .pg-role-note {
+        margin: 0;
+        padding: 9px 11px;
+        border-left: 2px solid var(--accent-line);
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+        background: var(--surface-2);
+        font-size: 0.8rem;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      /* ---- Capabilities and regions: grouped one-line toggles ---------------- */
+      .pg-fold {
+        border-top: 1px solid var(--line);
+      }
+      .pg-fold:first-child {
+        border-top: 0;
+      }
+      .pg-fold-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 2px;
+        cursor: pointer;
+        list-style: none;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--muted-2);
+      }
+      .pg-fold-head::-webkit-details-marker {
+        display: none;
+      }
+      /* The disclosure triangle, drawn so it can be a token colour and so it turns
+         with the state. `::after` on the summary rather than a character in the
+         markup: a glyph would be a string the localisation sweep has to count. */
+      .pg-fold-head::after {
+        content: "";
+        width: 5px;
+        height: 5px;
+        margin-left: auto;
+        border-right: 1.5px solid var(--muted-2);
+        border-bottom: 1.5px solid var(--muted-2);
+        transform: rotate(45deg);
+        transform-origin: center;
+      }
+      .pg-fold[open] > .pg-fold-head::after {
+        transform: rotate(-135deg);
+      }
+      .pg-fold-count {
+        font-weight: 500;
+        font-size: 0.7rem;
+        padding: 0 6px;
+        border-radius: 999px;
+        border: 1px solid var(--line-2);
+        background: var(--surface-2);
+        color: var(--muted-2);
+        font-variant-numeric: tabular-nums;
+      }
+      .pg-toggles {
+        list-style: none;
+        margin: 0 0 8px;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .pg-toggle {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 1px 9px;
+        padding: 5px 6px;
+        border-radius: var(--radius-sm);
+        align-items: center;
+      }
+      .pg-toggle:hover {
+        background: var(--surface-3);
+      }
+      .pg-toggle-name {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--ink);
+        cursor: pointer;
+      }
+      /* A capability the role never granted: struck through, disabled, and it says
+         why on hover and to a screen reader. Kept exactly as it was — it is the one
+         thing on the panel that teaches the rule that a list only ever narrows. */
+      .pg-check:disabled + .pg-toggle-name {
+        color: var(--muted-2);
+        text-decoration: line-through;
+        cursor: not-allowed;
+      }
+      .pg-toggle-what {
+        grid-column: 2;
+        font-size: 0.76rem;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+
+      /* ---- The brand fields -------------------------------------------------- */
       .pg-field {
         display: flex;
         flex-direction: column;
         gap: 5px;
-        margin: 0 0 12px;
-        font-size: 0.83rem;
-        color: var(--muted);
+        margin: 0 0 11px;
+        font-size: 0.8rem;
+        color: var(--muted-2);
       }
-      .pg-field:last-child {
-        margin-bottom: 0;
+      .pg-field:last-of-type {
+        margin-bottom: 12px;
       }
       .pg-field input,
       .pg-field select {
         font: inherit;
-        font-size: 0.9rem;
-        padding: 6px 8px;
+        font-size: 0.88rem;
+        padding: 7px 9px;
         color: var(--ink);
         background: var(--surface);
         border: 1px solid var(--line-strong);
@@ -257,24 +580,32 @@
       }
       .pg-colour-row {
         display: grid;
-        grid-template-columns: 52px minmax(0, 1fr);
+        grid-template-columns: 46px minmax(0, 1fr);
         gap: 8px;
         align-items: center;
       }
+
+      /* ---- Buttons ----------------------------------------------------------- */
       .pg-btn {
         font: inherit;
-        font-size: 0.85rem;
-        padding: 7px 13px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 6px 12px;
         border-radius: var(--radius-sm);
         border: 1px solid var(--accent);
         background: var(--accent);
         color: var(--accent-ink);
         cursor: pointer;
+        white-space: nowrap;
       }
       .pg-btn[data-variant="quiet"] {
         background: var(--surface);
         border-color: var(--line-strong);
         color: var(--ink);
+      }
+      .pg-btn[data-variant="quiet"]:hover {
+        background: var(--surface-2);
+        border-color: var(--muted-3);
       }
       .pg-btn:disabled {
         cursor: not-allowed;
@@ -286,42 +617,57 @@
         gap: 8px;
         align-items: center;
       }
-      /* ---- The live side ---- */
+      .pg-refusal {
+        margin: 10px 0 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line-strong);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        line-height: 1.55;
+        color: var(--ink);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      /* ---- The live pane ----------------------------------------------------- */
+      .pg-live {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
       .pg-live-head {
-        padding: 14px 18px;
+        flex: none;
+        padding: 10px 14px;
         border-bottom: 1px solid var(--line);
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 8px 12px;
         align-items: center;
         justify-content: space-between;
       }
       .pg-live-head h2 {
         margin: 0;
-        font-size: 1rem;
+        font-size: 0.95rem;
+        font-weight: 600;
       }
-      .pg-readout {
-        padding: 12px 18px;
+      /* The readout. It used to be a label/value table with the raw sandbox token
+         string in it, sitting above an empty stage — debug output as the primary
+         UI. What a reader needs at a glance is three facts and a strikethrough;
+         the token string is still here, one disclosure away, because it IS what
+         the frame gets and a host eventually wants to read it. */
+      .pg-resolved {
+        flex: none;
+        padding: 9px 14px 10px;
         border-bottom: 1px solid var(--line);
-        font-size: 0.82rem;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
       }
-      .pg-readout dl {
-        display: grid;
-        grid-template-columns: max-content minmax(0, 1fr);
-        gap: 6px 14px;
-        margin: 0;
-      }
-      .pg-readout dt {
-        color: var(--muted-2);
-      }
-      .pg-readout dd {
-        margin: 0;
-        color: var(--ink);
-        font-family: var(--font-mono);
-        font-size: 0.76rem;
-        overflow-wrap: anywhere;
-      }
-      .pg-chips {
+      .pg-pills {
         display: flex;
         flex-wrap: wrap;
         gap: 5px;
@@ -329,12 +675,24 @@
         margin: 0;
         padding: 0;
       }
+      .pg-pills b {
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .pg-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
       .pg-chips li {
         font-family: var(--font-mono);
-        font-size: 0.72rem;
-        padding: 2px 7px;
+        font-size: 0.68rem;
+        padding: 1px 7px;
         border-radius: 999px;
-        border: 1px solid var(--line-strong);
+        border: 1px solid var(--line-2);
         color: var(--muted-2);
         background: var(--surface-2);
       }
@@ -348,10 +706,40 @@
         /* On --surface-2, where --muted-3 measures 4.40:1. HF-189. */
         color: var(--faint-on-paper);
       }
+      .pg-fold--flat {
+        border-top: 0;
+      }
+      .pg-fold--flat > .pg-fold-head {
+        padding: 2px;
+        font-weight: 500;
+        font-size: 0.74rem;
+      }
+      .pg-fold--flat .pg-fold-head::after {
+        margin-left: 6px;
+      }
+      .pg-facts {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 4px 12px;
+        margin: 4px 0 2px;
+        font-size: 0.74rem;
+      }
+      .pg-facts dt {
+        color: var(--muted-2);
+      }
+      .pg-facts dd {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        overflow-wrap: anywhere;
+      }
       .pg-stage {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
         background: var(--paper);
         display: flex;
-        min-height: 620px;
         border-radius: 0 0 var(--radius) var(--radius);
         overflow: hidden;
       }
@@ -359,7 +747,7 @@
         flex: 1 1 auto;
         min-width: 0;
       }
-      /* `.pg-idle` sets `display: flex`, which beats the user-agent sheet's
+      /* `.pg-booting` sets `display: flex`, which beats the user-agent sheet's
          `[hidden] { display: none }` — so hiding it left the notice on screen and
          the flex row gave it half the stage, squeezing the booted editor into the
          other half. Seen in a screenshot, not in a test: nothing asserts the width
@@ -370,38 +758,33 @@
       .pg-stage iframe {
         display: block;
         width: 100%;
-        min-height: 620px;
+        height: 100%;
         border: 0;
       }
-      .pg-idle {
+      .pg-booting {
+        position: absolute;
+        inset: 0;
         display: flex;
         flex-direction: column;
         gap: 12px;
         align-items: center;
         justify-content: center;
-        padding: 28px;
+        padding: 24px;
         margin: 0;
         text-align: center;
+        background: var(--paper);
         /* On --paper, where --muted-3 measures 4.47:1. HF-189. */
         color: var(--faint-on-paper);
-        font-size: 0.85rem;
-      }
-      .pg-refusal {
-        margin: 10px 0 0;
-        padding: 10px 12px;
-        border: 1px solid var(--line-strong);
-        border-left: 3px solid var(--accent);
-        border-radius: var(--radius-sm);
-        background: var(--surface-2);
-        font-family: var(--font-mono);
-        font-size: 0.74rem;
+        font-size: 0.82rem;
         line-height: 1.55;
-        color: var(--ink);
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
       }
+      .pg-booting span {
+        max-width: 46ch;
+      }
+
+      /* ---- Below the fold ---------------------------------------------------- */
       .pg-out {
-        margin-top: 32px;
+        margin-top: 36px;
       }
       .pg-out .code-panel {
         margin-top: 12px;
@@ -412,13 +795,40 @@
         font-size: 0.92rem;
         line-height: 1.65;
       }
+      .pg-rules {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: minmax(0, 1fr);
+        margin-top: 14px;
+      }
+      @media (min-width: 900px) {
+        .pg-rules {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .pg-rule {
+        margin: 0;
+        padding: 14px 16px;
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius);
+        background: var(--surface);
+        font-size: 0.88rem;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+      .pg-rule b {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+
       @media (max-width: 640px) {
         .pg {
-          padding: 24px 16px 56px;
+          padding: 22px 16px 56px;
         }
-        .pg-stage,
-        .pg-stage iframe {
-          min-height: 460px;
+        .pg-stage {
+          min-height: 220px;
         }
       }
     </style>
@@ -447,65 +857,93 @@
     </header>
 
     <main class="pg">
-      <p class="doc-eyebrow">SDK · Embedding</p>
-      <h1>Configure an embed, and watch it change</h1>
-      <p class="pg-lede">
-        Everything on the left is host configuration. Change it and the editor on
-        the right becomes the thing you configured: a
-        <code>readonly</code> container has reading chrome and no editing ribbon, a
-        <code>preview</code> container is offered none of the
-        <span data-claim="region-count">19</span> regions at all, a withheld
-        capability is gone from the API as well as from the buttons, and a brand
-        colour lands on the running editor. The snippet at the bottom reproduces
-        whatever is on screen, so you can paste it into your own page and get the
-        same result.
-      </p>
-      <p class="pg-lede">
-        Nothing here is gated. ONLYOFFICE puts host customization behind a licence
-        check in code — <code>LayoutManager._applyCustomization</code> returns
-        early when <code>!_licensed</code> — so an integrator ships their chrome
-        and then discovers the modal. This is Apache-2.0, the permissive licence
-        is the whole point of the project, and gating the one thing that makes it
-        worth embedding would surrender it.
-      </p>
+      <header class="pg-head">
+        <div>
+          <p class="doc-eyebrow">SDK · Embedding</p>
+          <h1>Configure an embed, and watch it change</h1>
+          <p class="pg-lede">
+            The editor beside these controls is running right now, configured by
+            them. Change a role, withhold a capability, take a chrome region away
+            or give it a brand colour, and it becomes the thing you configured —
+            then copy the configuration that reproduces exactly what is on screen.
+          </p>
+        </div>
+        <ul class="pg-stats">
+          <li><b data-claim="role-count">5</b> roles</li>
+          <li><b data-claim="capability-count">9</b> capabilities</li>
+          <li><b data-claim="region-count">19</b> chrome regions</li>
+          <li><b data-claim="overridable-token-count">18</b> brand tokens</li>
+        </ul>
+      </header>
 
       <div class="pg-split">
         <form class="pg-card pg-controls" data-controls aria-label="Embed configuration">
           <fieldset class="pg-group">
             <legend>Role</legend>
             <p class="pg-hint">
-              <span data-claim="role-count">5</span> presets over the capability
-              set — a name for a subset, never the unit of enforcement. Switching
-              one rewrites everything below it.
+              A name for a subset of the capability set, never the unit of
+              enforcement. Switching one rewrites everything below it.
             </p>
             <!-- @generated playground-role-controls -->
-            <ul class="pg-switches">
-              <li class="pg-switch">
-                <input type="radio" name="role" id="pg-role-preview" value="preview" data-role />
-                <label class="pg-switch-name" for="pg-role-preview">preview</label>
-                <span class="pg-switch-what">A picture of the document — a thumbnail, an attachment preview, a print preview. The runtime as a layout and rendering engine, and nearly replaceable by a static image.<br />Grants nothing at all · 0 of 19 regions · <code>viewing</code></span>
+            <ul class="pg-choices">
+              <li class="pg-choice">
+                <input type="radio" class="pg-check" name="role" id="pg-role-preview" value="preview" data-role />
+                <label class="pg-choice-name" for="pg-role-preview">preview</label>
+                <span class="pg-choice-what">A picture of the document — a thumbnail, an attachment preview, a print preview.</span>
+                <span class="pg-choice-meta">
+                  <span class="pg-pill">0 of 9 capabilities</span>
+                  <span class="pg-pill">0 of 19 regions</span>
+                  <span class="pg-pill pg-pill--mode">viewing</span>
+                </span>
               </li>
-              <li class="pg-switch">
-                <input type="radio" name="role" id="pg-role-readonly" value="readonly" data-role />
-                <label class="pg-switch-name" for="pg-role-readonly">readonly</label>
-                <span class="pg-switch-what">A published document, to read. Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome.<br />Grants <code>print</code> · 6 of 19 regions · <code>viewing</code></span>
+              <li class="pg-choice">
+                <input type="radio" class="pg-check" name="role" id="pg-role-readonly" value="readonly" data-role />
+                <label class="pg-choice-name" for="pg-role-readonly">readonly</label>
+                <span class="pg-choice-what">A published document, to read.</span>
+                <span class="pg-choice-meta">
+                  <span class="pg-pill">1 of 9 capabilities</span>
+                  <span class="pg-pill">6 of 19 regions</span>
+                  <span class="pg-pill pg-pill--mode">viewing</span>
+                </span>
               </li>
-              <li class="pg-switch">
-                <input type="radio" name="role" id="pg-role-commentor" value="commentor" data-role />
-                <label class="pg-switch-name" for="pg-role-commentor">commentor</label>
-                <span class="pg-switch-what">Google Docs' Commenter, Word's reviewer. Annotates and suggests; every body change is a tracked revision somebody else accepts.<br />Grants <code>print</code> <code>download</code> <code>comment</code> · 18 of 19 regions · <code>suggesting</code></span>
+              <li class="pg-choice">
+                <input type="radio" class="pg-check" name="role" id="pg-role-commentor" value="commentor" data-role />
+                <label class="pg-choice-name" for="pg-role-commentor">commentor</label>
+                <span class="pg-choice-what">Google Docs' Commenter, Word's reviewer.</span>
+                <span class="pg-choice-meta">
+                  <span class="pg-pill">3 of 9 capabilities</span>
+                  <span class="pg-pill">18 of 19 regions</span>
+                  <span class="pg-pill pg-pill--mode">suggesting</span>
+                </span>
               </li>
-              <li class="pg-switch">
-                <input type="radio" name="role" id="pg-role-edit" value="edit" data-role checked />
-                <label class="pg-switch-name" for="pg-role-edit">edit</label>
-                <span class="pg-switch-what">The reason a host embeds an editor. Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours.<br />Grants <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code> · 18 of 19 regions · <code>editing</code></span>
+              <li class="pg-choice">
+                <input type="radio" class="pg-check" name="role" id="pg-role-edit" value="edit" data-role checked />
+                <label class="pg-choice-name" for="pg-role-edit">edit</label>
+                <span class="pg-choice-what">The reason a host embeds an editor.</span>
+                <span class="pg-choice-meta">
+                  <span class="pg-pill">6 of 9 capabilities</span>
+                  <span class="pg-pill">18 of 19 regions</span>
+                  <span class="pg-pill pg-pill--mode">editing</span>
+                </span>
               </li>
-              <li class="pg-switch">
-                <input type="radio" name="role" id="pg-role-owner" value="owner" data-role />
-                <label class="pg-switch-name" for="pg-role-owner">owner</label>
-                <span class="pg-switch-what">The page is ours, or the host has said it may as well be.<br />Grants <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code> · 19 of 19 regions · <code>editing</code></span>
+              <li class="pg-choice">
+                <input type="radio" class="pg-check" name="role" id="pg-role-owner" value="owner" data-role />
+                <label class="pg-choice-name" for="pg-role-owner">owner</label>
+                <span class="pg-choice-what">The page is ours, or the host has said it may as well be.</span>
+                <span class="pg-choice-meta">
+                  <span class="pg-pill">9 of 9 capabilities</span>
+                  <span class="pg-pill">19 of 19 regions</span>
+                  <span class="pg-pill pg-pill--mode">editing</span>
+                </span>
               </li>
             </ul>
+            <div class="pg-role-notes" data-role-notes>
+              <p class="pg-role-note" data-role-note="preview" hidden>The runtime as a layout and rendering engine, and nearly replaceable by a static image. Grants nothing at all, and is offered 0 of 19 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="readonly" hidden>Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome. Grants <code>print</code>, and is offered 6 of 19 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="commentor" hidden>Annotates and suggests; every body change is a tracked revision somebody else accepts. Grants <code>print</code> <code>download</code> <code>comment</code>, and is offered 18 of 19 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="edit">Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours. Grants <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code>, and is offered 18 of 19 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="owner" hidden>Grants <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code>, and is offered 19 of 19 chrome regions.</p>
+            </div>
             <!-- @end playground-role-controls -->
           </fieldset>
 
@@ -515,60 +953,70 @@
           >
             <legend>Capabilities</legend>
             <p class="pg-hint">
-              All <span data-claim="capability-count">9</span> are withheld
-              independently: &ldquo;comments only, everything else off&rdquo; is a
-              configuration, not a rung on a ladder. A list can only
-              <em>narrow</em> a role, so a capability the role never granted is
-              shown struck through and disabled — one direction to audit.
+              Withheld one at a time. A list can only <em>narrow</em> a role, so a
+              capability the role never granted is struck through and disabled.
             </p>
             <!-- @generated playground-capability-controls -->
-            <ul class="pg-switches">
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-open" value="open" data-capability />
-                <label class="pg-switch-name" for="pg-cap-open">open</label>
-                <span class="pg-switch-what">Replace the loaded document from inside the editor.</span>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Getting documents in and out</span><span class="pg-fold-count">5</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-open" value="open" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-open">open</label>
+                <span class="pg-toggle-what">Replace the loaded document from inside the editor.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-new" value="new" data-capability />
-                <label class="pg-switch-name" for="pg-cap-new">new</label>
-                <span class="pg-switch-what">Start a blank document.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-new" value="new" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-new">new</label>
+                <span class="pg-toggle-what">Start a blank document.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-save" value="save" data-capability />
-                <label class="pg-switch-name" for="pg-cap-save">save</label>
-                <span class="pg-switch-what">Write the document back out.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-save" value="save" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-save">save</label>
+                <span class="pg-toggle-what">Write the document back out.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-download" value="download" data-capability />
-                <label class="pg-switch-name" for="pg-cap-download">download</label>
-                <span class="pg-switch-what">Export to a file the visitor keeps.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-download" value="download" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-download">download</label>
+                <span class="pg-toggle-what">Export to a file the visitor keeps.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-print" value="print" data-capability />
-                <label class="pg-switch-name" for="pg-cap-print">print</label>
-                <span class="pg-switch-what">Open the browser's print dialog.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-print" value="print" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-print">print</label>
+                <span class="pg-toggle-what">Open the browser's print dialog.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-edit" value="edit" data-capability />
-                <label class="pg-switch-name" for="pg-cap-edit">edit</label>
-                <span class="pg-switch-what">Change the document at all.</span>
+              </ul>
+            </details>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Changing the document</span><span class="pg-fold-count">2</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-edit" value="edit" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-edit">edit</label>
+                <span class="pg-toggle-what">Change the document at all.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-comment" value="comment" data-capability />
-                <label class="pg-switch-name" for="pg-cap-comment">comment</label>
-                <span class="pg-switch-what">Annotate, and change the document as tracked suggestions.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-comment" value="comment" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-comment">comment</label>
+                <span class="pg-toggle-what">Annotate, and change the document as tracked suggestions.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-branding" value="branding" data-capability />
-                <label class="pg-switch-name" for="pg-cap-branding">branding</label>
-                <span class="pg-switch-what">Show OpenDoc's own name and mark inside the frame.</span>
+              </ul>
+            </details>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Inside the frame</span><span class="pg-fold-count">2</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-branding" value="branding" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-branding">branding</label>
+                <span class="pg-toggle-what">Show OpenDoc's own name and mark inside the frame.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-cap-autosave" value="autosave" data-capability />
-                <label class="pg-switch-name" for="pg-cap-autosave">autosave</label>
-                <span class="pg-switch-what">Keep drafts of the visitor's typing on this origin.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-cap-autosave" value="autosave" data-capability />
+                <label class="pg-toggle-name" for="pg-cap-autosave">autosave</label>
+                <span class="pg-toggle-what">Keep drafts of the visitor's typing on this origin.</span>
               </li>
-            </ul>
+              </ul>
+            </details>
             <!-- @end playground-capability-controls -->
           </fieldset>
 
@@ -578,120 +1026,139 @@
           >
             <legend>Chrome regions</legend>
             <p class="pg-hint">
-              <span data-claim="region-count">19</span> whole presentations a host
-              can decline, <span data-claim="band-count">8</span> of them ribbon
-              bands. A region is not a capability: withholding one is a decision
-              about your page, withholding a capability is a permission. Dropping
-              <code>ribbon</code> drops every band with it.
+              Whole presentations a host can decline,
+              <span data-claim="band-count">8</span> of them ribbon bands.
+              Dropping <code>ribbon</code> drops every band with it.
             </p>
             <!-- @generated playground-region-controls -->
-            <ul class="pg-switches" data-scroll>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-brand" value="brand" data-region />
-                <label class="pg-switch-name" for="pg-chrome-brand">brand</label>
-                <span class="pg-switch-what">Our name and mark in the top bar.</span>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Top bar</span><span class="pg-fold-count">4</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-brand" value="brand" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-brand">brand</label>
+                <span class="pg-toggle-what">Our name and mark in the top bar.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-title" value="title" data-region />
-                <label class="pg-switch-name" for="pg-chrome-title">title</label>
-                <span class="pg-switch-what">The document name, and renaming it.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-title" value="title" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-title">title</label>
+                <span class="pg-toggle-what">The document name, and renaming it.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-menu" value="menu" data-region />
-                <label class="pg-switch-name" for="pg-chrome-menu">menu</label>
-                <span class="pg-switch-what">The application menu bar — one of the two navigation axes.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-menu" value="menu" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-menu">menu</label>
+                <span class="pg-toggle-what">The application menu bar — one of the two navigation axes.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-ribbon" value="ribbon" data-region />
-                <label class="pg-switch-name" for="pg-chrome-ribbon">ribbon</label>
-                <span class="pg-switch-what">The whole tabbed ribbon, strip and bands together.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-ribbon" value="ribbon" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-ribbon">ribbon</label>
+                <span class="pg-toggle-what">The whole tabbed ribbon, strip and bands together.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-file" value="band.file" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-file">band.file</label>
-                <span class="pg-switch-what">The File page: open, save, export, print, properties, settings.</span>
+              </ul>
+            </details>
+            <details class="pg-fold">
+              <summary class="pg-fold-head"><span class="pg-fold-title">Ribbon bands</span><span class="pg-fold-count">8</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-file" value="band.file" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-file">band.file</label>
+                <span class="pg-toggle-what">The File page: open, save, export, print, properties, settings.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-home" value="band.home" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-home">band.home</label>
-                <span class="pg-switch-what">Character and paragraph formatting, styles, clipboard, undo.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-home" value="band.home" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-home">band.home</label>
+                <span class="pg-toggle-what">Character and paragraph formatting, styles, clipboard, undo.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-insert" value="band.insert" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-insert">band.insert</label>
-                <span class="pg-switch-what">Tables, pictures, shapes, links, comments, headers, symbols.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-insert" value="band.insert" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-insert">band.insert</label>
+                <span class="pg-toggle-what">Tables, pictures, shapes, links, comments, headers, symbols.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-layout" value="band.layout" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-layout">band.layout</label>
-                <span class="pg-switch-what">Page setup, margins, columns, spacing, watermark, arrange.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-layout" value="band.layout" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-layout">band.layout</label>
+                <span class="pg-toggle-what">Page setup, margins, columns, spacing, watermark, arrange.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-references" value="band.references" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-references">band.references</label>
-                <span class="pg-switch-what">Captions, cross-references, contents, footnotes, fields.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-references" value="band.references" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-references">band.references</label>
+                <span class="pg-toggle-what">Captions, cross-references, contents, footnotes, fields.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-review" value="band.review" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-review">band.review</label>
-                <span class="pg-switch-what">Tracked changes, comments, proofing, the review mode control.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-review" value="band.review" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-review">band.review</label>
+                <span class="pg-toggle-what">Tracked changes, comments, proofing, the review mode control.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-view" value="band.view" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-view">band.view</label>
-                <span class="pg-switch-what">Outline, zoom, page setup, showing changes.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-view" value="band.view" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-view">band.view</label>
+                <span class="pg-toggle-what">Outline, zoom, page setup, showing changes.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-band-table" value="band.table" data-region />
-                <label class="pg-switch-name" for="pg-chrome-band-table">band.table</label>
-                <span class="pg-switch-what">The contextual table band, present when the caret is in a table.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-band-table" value="band.table" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-band-table">band.table</label>
+                <span class="pg-toggle-what">The contextual table band, present when the caret is in a table.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-rail" value="rail" data-region />
-                <label class="pg-switch-name" for="pg-chrome-rail">rail</label>
-                <span class="pg-switch-what">The left navigation rail: outline and page thumbnails.</span>
+              </ul>
+            </details>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Beside the document</span><span class="pg-fold-count">2</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-rail" value="rail" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-rail">rail</label>
+                <span class="pg-toggle-what">The left navigation rail: outline and page thumbnails.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-history" value="history" data-region />
-                <label class="pg-switch-name" for="pg-chrome-history">history</label>
-                <span class="pg-switch-what">The version-history timeline, its ribbon entry and its preview bar.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-history" value="history" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-history">history</label>
+                <span class="pg-toggle-what">The version-history timeline, its ribbon entry and its preview bar.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-status" value="status" data-region />
-                <label class="pg-switch-name" for="pg-chrome-status">status</label>
-                <span class="pg-switch-what">The status bar: counts, page number, language, mode.</span>
+              </ul>
+            </details>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Status bar</span><span class="pg-fold-count">2</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-status" value="status" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-status">status</label>
+                <span class="pg-toggle-what">The status bar: counts, page number, language, mode.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-zoom" value="zoom" data-region />
-                <label class="pg-switch-name" for="pg-chrome-zoom">zoom</label>
-                <span class="pg-switch-what">The zoom cluster in the status bar.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-zoom" value="zoom" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-zoom">zoom</label>
+                <span class="pg-toggle-what">The zoom cluster in the status bar.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-find" value="find" data-region />
-                <label class="pg-switch-name" for="pg-chrome-find">find</label>
-                <span class="pg-switch-what">The find and replace card.</span>
+              </ul>
+            </details>
+            <details class="pg-fold" open>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Overlays</span><span class="pg-fold-count">3</span></summary>
+              <ul class="pg-toggles">
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-find" value="find" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-find">find</label>
+                <span class="pg-toggle-what">The find and replace card.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-selection" value="selection" data-region />
-                <label class="pg-switch-name" for="pg-chrome-selection">selection</label>
-                <span class="pg-switch-what">The floating toolbar above a selection.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-selection" value="selection" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-selection">selection</label>
+                <span class="pg-toggle-what">The floating toolbar above a selection.</span>
               </li>
-              <li class="pg-switch">
-                <input type="checkbox" id="pg-chrome-settings" value="settings" data-region />
-                <label class="pg-switch-name" for="pg-chrome-settings">settings</label>
-                <span class="pg-switch-what">The settings dialog and the gear that opens it.</span>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-settings" value="settings" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-settings">settings</label>
+                <span class="pg-toggle-what">The settings dialog and the gear that opens it.</span>
               </li>
-            </ul>
+              </ul>
+            </details>
             <!-- @end playground-region-controls -->
           </fieldset>
 
           <fieldset class="pg-group">
             <legend>Brand</legend>
             <p class="pg-hint">
-              <span data-claim="overridable-token-count">18</span> palette tokens
-              are a public contract; geometry and the paper layer are refused.
-              These two apply to the running editor with no reload, because a
-              white-labelled build is one swapped stylesheet.
+              The palette tokens are a public contract; geometry and the paper
+              layer are refused. These apply to the running editor with no reload.
             </p>
             <!-- @generated playground-brand-controls -->
             <p class="pg-field">
@@ -727,41 +1194,56 @@
           <div class="pg-live-head">
             <h2 id="pgLiveHeading">The live editor</h2>
             <div class="pg-btn-row">
-              <button type="button" class="pg-btn" data-mount>Start the editor</button>
-              <button type="button" class="pg-btn" data-variant="quiet" data-release disabled>
-                Stop it
+              <button type="button" class="pg-btn" data-variant="quiet" data-reset>
+                Reset
+              </button>
+              <button type="button" class="pg-btn" data-variant="quiet" data-remount>
+                Restart
               </button>
             </div>
           </div>
-          <div class="pg-readout">
-            <dl>
-              <dt>Review mode</dt>
-              <dd data-editing-mode>—</dd>
-              <dt>Sandbox</dt>
-              <dd data-sandbox>—</dd>
-              <dt>Capabilities</dt>
-              <dd>
-                <ul
-                  class="pg-chips"
-                  data-caps
-                  data-granted-label="granted"
-                  data-withheld-label="withheld"
-                ></ul>
-              </dd>
-              <dt>Chrome withheld</dt>
-              <dd data-withheld-regions data-none-label="nothing — every region is shown">—</dd>
-            </dl>
+          <div class="pg-resolved">
+            <ul class="pg-pills">
+              <li class="pg-pill pg-pill--mode" data-editing-mode>—</li>
+              <li class="pg-pill">
+                <b data-granted-count>—</b> of
+                <span data-claim="capability-count">9</span> capabilities
+              </li>
+              <li class="pg-pill">
+                <b data-region-count>—</b> of
+                <span data-claim="region-count">19</span> regions shown
+              </li>
+            </ul>
+            <ul
+              class="pg-chips"
+              data-caps
+              data-granted-label="granted"
+              data-withheld-label="withheld"
+            ></ul>
+            <details class="pg-fold pg-fold--flat">
+              <summary class="pg-fold-head">
+                <span class="pg-fold-title">What the frame is given</span>
+              </summary>
+              <dl class="pg-facts">
+                <dt>Chrome withheld</dt>
+                <dd data-withheld-regions data-none-label="nothing — every region is shown">
+                  —
+                </dd>
+                <dt>Frame sandbox</dt>
+                <dd data-sandbox>—</dd>
+              </dl>
+            </details>
           </div>
           <div
             class="pg-stage"
             data-stage
             data-frame-title="OpenDoc editor, embedded with the configuration on this page"
           >
-            <p class="pg-idle" data-idle>
+            <p class="pg-booting" data-booting>
               <span
-                >The editor holds a WebAssembly instance of roughly 100&nbsp;MB, so it
-                boots when you ask rather than on arrival. The readout above is already
-                live: it is resolved from the same authority the editor resolves.</span
+                >The editor holds a WebAssembly instance of roughly 100&nbsp;MB and
+                is booting now. The readout above is already live: it is resolved
+                from the same authority the editor resolves.</span
               >
             </p>
           </div>
@@ -825,6 +1307,40 @@
           command runs, in this page, so it cannot describe a message the generator
           no longer emits.
         </p>
+      </section>
+
+      <section class="pg-out">
+        <h2 class="doc-h2">The rules these controls follow</h2>
+        <div class="pg-rules">
+          <p class="pg-rule">
+            <b>Nothing here is gated.</b> ONLYOFFICE puts host customization behind
+            a licence check in code — <code>LayoutManager._applyCustomization</code>
+            returns early when <code>!_licensed</code> — so an integrator ships
+            their chrome and then discovers the modal. This is Apache-2.0, the
+            permissive licence is the whole point of the project, and gating the
+            one thing that makes it worth embedding would surrender it.
+          </p>
+          <p class="pg-rule">
+            <b>A capability list narrows; it never widens.</b> All
+            <span data-claim="capability-count">9</span> are withheld
+            independently — &ldquo;comments only, everything else off&rdquo; is a
+            configuration, not a rung on a ladder — but a list can only take away
+            from what the role granted, so there is exactly one direction to audit.
+          </p>
+          <p class="pg-rule">
+            <b>A region is not a capability.</b> Withholding a region is a decision
+            about your page; withholding a capability is a permission. That is why
+            <code>preview</code> and <code>readonly</code> are different
+            presentations rather than one with print turned off, and why the region
+            list narrows the same way the capability list does.
+          </p>
+          <p class="pg-rule">
+            <b>A palette is a stylesheet.</b> The brand fields apply to the running
+            editor with no reload, because a white-labelled build is one swapped
+            stylesheet. Everything else here is resolved before the frame's first
+            navigation, so it remounts instead.
+          </p>
+        </div>
       </section>
 
       <section class="pg-out">
