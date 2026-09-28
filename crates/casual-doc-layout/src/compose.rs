@@ -654,86 +654,33 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 });
             }
         }
-        AnchorContent::Rectangle { fill, stroke } => {
-            list.push(PaintItem::Shape {
-                geometry: ShapeGeometry::Rect { rect: anchor.rect },
-                fill: fill.as_ref().map(fill_to_display),
-                stroke: stroke.as_ref().map(shape_outline),
-                head_end: None,
-                tail_end: None,
-                transform: anchor.transform,
-            });
-        }
-        AnchorContent::Ellipse { fill, stroke } => {
-            list.push(PaintItem::Shape {
-                geometry: ShapeGeometry::Ellipse { rect: anchor.rect },
-                fill: fill.as_ref().map(fill_to_display),
-                stroke: stroke.as_ref().map(shape_outline),
-                head_end: None,
-                tail_end: None,
-                transform: anchor.transform,
-            });
-        }
-        AnchorContent::RoundedRectangle {
-            radius,
-            fill,
-            stroke,
-        } => {
-            list.push(PaintItem::Shape {
-                geometry: ShapeGeometry::RoundedRect {
-                    rect: anchor.rect,
-                    radius: *radius,
-                },
-                fill: fill.as_ref().map(fill_to_display),
-                stroke: stroke.as_ref().map(shape_outline),
-                head_end: None,
-                tail_end: None,
-                transform: anchor.transform,
-            });
-        }
-        AnchorContent::Polygon {
-            points,
-            closed,
-            fill,
-            stroke,
-        } => {
-            list.push(PaintItem::Shape {
-                geometry: ShapeGeometry::Polygon {
-                    points: points.clone(),
-                    closed: *closed,
-                },
-                fill: fill.as_ref().map(fill_to_display),
-                stroke: stroke.as_ref().map(shape_outline),
-                head_end: None,
-                tail_end: None,
-                transform: anchor.transform,
-            });
-        }
-        AnchorContent::Line {
-            from,
-            to,
-            stroke,
-            head_end,
-            tail_end,
-        } => {
-            list.push(PaintItem::Shape {
-                geometry: ShapeGeometry::Line {
-                    from: *from,
-                    to: *to,
-                },
-                fill: None,
-                stroke: Some(shape_outline(stroke)),
-                head_end: *head_end,
-                tail_end: *tail_end,
-                transform: anchor.transform,
-            });
+        AnchorContent::Rectangle { .. }
+        | AnchorContent::Ellipse { .. }
+        | AnchorContent::RoundedRectangle { .. }
+        | AnchorContent::Polygon { .. }
+        | AnchorContent::Line { .. } => {
+            if let Some(item) = shape_paint_item(&anchor.content, anchor.rect, anchor.transform) {
+                list.push(item);
+            }
         }
         AnchorContent::TextBox {
             blocks,
             fill,
             border,
             content_layout,
+            backdrop,
         } => {
+            // A text-bearing shape with a real preset geometry paints THAT
+            // behind its text — through the identical mapping a text-free shape
+            // takes, so an ellipse text box is the same ellipse either way. It
+            // carries the box's fill and outline, which is why `fill`/`border`
+            // below are unset whenever a backdrop is present.
+            if let Some(item) = backdrop
+                .as_deref()
+                .and_then(|content| shape_paint_item(content, anchor.rect, anchor.transform))
+            {
+                list.push(item);
+            }
             if let Some(fill) = fill {
                 // The box background paints as a shape rect so a gradient fill
                 // (`a:gradFill`) is honored, not just a solid color.
@@ -774,6 +721,97 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             compose_blocks(list, rows, anchor.rect.origin);
         }
     }
+}
+
+/// The single [`PaintItem`] a geometric float paints, or `None` for the content
+/// kinds that are not one shape (an image, a text box, a positioned table).
+///
+/// One function rather than one arm per geometry inside [`compose_anchor`],
+/// because a text box's backdrop paints exactly the shape a bare
+/// `GroupChild::Shape` would: routing both through here is what keeps an ellipse
+/// with text inside it identical to an ellipse without.
+///
+/// Complexity: O(v) in the shape's vertex count (1 for every preset but the
+/// polygons, whose vertices were already resolved during placement).
+fn shape_paint_item(
+    content: &AnchorContent,
+    rect: Rect,
+    transform: Option<crate::display::ShapeTransform>,
+) -> Option<PaintItem> {
+    let (geometry, fill, stroke, head_end, tail_end) = match content {
+        AnchorContent::Rectangle { fill, stroke } => (
+            ShapeGeometry::Rect { rect },
+            fill.as_ref(),
+            stroke.as_ref(),
+            None,
+            None,
+        ),
+        AnchorContent::Ellipse { fill, stroke } => (
+            ShapeGeometry::Ellipse { rect },
+            fill.as_ref(),
+            stroke.as_ref(),
+            None,
+            None,
+        ),
+        AnchorContent::RoundedRectangle {
+            radius,
+            fill,
+            stroke,
+        } => (
+            ShapeGeometry::RoundedRect {
+                rect,
+                radius: *radius,
+            },
+            fill.as_ref(),
+            stroke.as_ref(),
+            None,
+            None,
+        ),
+        AnchorContent::Polygon {
+            points,
+            closed,
+            fill,
+            stroke,
+        } => (
+            ShapeGeometry::Polygon {
+                points: points.clone(),
+                closed: *closed,
+            },
+            fill.as_ref(),
+            stroke.as_ref(),
+            None,
+            None,
+        ),
+        AnchorContent::Line {
+            from,
+            to,
+            stroke,
+            head_end,
+            tail_end,
+        } => (
+            ShapeGeometry::Line {
+                from: *from,
+                to: *to,
+            },
+            None,
+            Some(stroke),
+            *head_end,
+            *tail_end,
+        ),
+        AnchorContent::Image { .. }
+        | AnchorContent::TextBox { .. }
+        | AnchorContent::Table { .. } => {
+            return None;
+        }
+    };
+    Some(PaintItem::Shape {
+        geometry,
+        fill: fill.map(fill_to_display),
+        stroke: stroke.map(shape_outline),
+        head_end,
+        tail_end,
+        transform,
+    })
 }
 
 /// Builds the clip rectangle that contains a text box's flowed content.
@@ -2227,6 +2265,9 @@ mod tests {
                     clip_horizontal: false,
                     clip_vertical: false,
                 },
+                // This guard is about the CLIP rectangle, which a backdrop
+                // shape does not take part in.
+                backdrop: None,
             },
             rect,
         );

@@ -1095,7 +1095,7 @@ mod semantic_tests {
         use casual_doc_model::v1::{
             BlockNode, GroupChild, InlineNode, ShapeAdjustment, ShapeGeometry,
         };
-        // A `wpg:wgp` with an untyped preset shape (red fill, green outline,
+        // A `wpg:wgp` with a typed `hexagon` shape (red fill, green outline,
         // authored adjustment guide) and a text box.
         let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0" distT="12700" distB="25400" distL="38100" distR="50800"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Hexagon"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="hexagon"><a:avLst><a:gd name="adj" fmla="val 25000"/></a:avLst></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
         let (m1, m2) = round_trip_main_document(xml);
@@ -1125,8 +1125,11 @@ mod semantic_tests {
         let GroupChild::Shape(shape) = &group.children[0] else {
             panic!("expected a shape");
         };
-        assert_eq!(shape.geometry, ShapeGeometry::Other);
-        assert_eq!(shape.preset.as_deref(), Some("hexagon"));
+        // `hexagon` is a TYPED preset now, so nothing is retained verbatim —
+        // the enum carries it and the writer re-derives the token. Its `adj`
+        // guide is still kept, because layout honors it.
+        assert_eq!(shape.geometry, ShapeGeometry::Hexagon);
+        assert_eq!(shape.preset, None);
         assert_eq!(
             shape.adjustments,
             vec![ShapeAdjustment {
@@ -1502,6 +1505,173 @@ mod semantic_tests {
             assert_eq!(shape.geometry, expected, "preset {preset}");
             assert_eq!(m1, m2, "{preset} survives write -> reopen");
         }
+    }
+
+    /// Every typed [`ShapeGeometry`] survives `import(export(v)) == v`.
+    ///
+    /// Exhaustive over the enum by construction: `token` is a `match` with no
+    /// wildcard, so a variant added without an import arm, an export arm or a
+    /// place in `ALL` fails to compile or fails here. That is the point — a
+    /// variant present in the model but missing from either end of the pipeline
+    /// is a silent rewrite of the author's shape on save.
+    #[test]
+    fn every_typed_shape_preset_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+        /// The `ST_ShapeType` token each variant must round trip through, and
+        /// its index in `ALL`. No wildcard arm: this is the compile-time half
+        /// of the guard.
+        fn token(geometry: ShapeGeometry) -> (&'static str, usize) {
+            match geometry {
+                ShapeGeometry::Rectangle => ("rect", 0),
+                ShapeGeometry::RoundRectangle => ("roundRect", 1),
+                ShapeGeometry::Ellipse => ("ellipse", 2),
+                ShapeGeometry::Triangle => ("triangle", 3),
+                ShapeGeometry::RightTriangle => ("rtTriangle", 4),
+                ShapeGeometry::Diamond => ("diamond", 5),
+                ShapeGeometry::Line => ("line", 6),
+                ShapeGeometry::Pentagon => ("pentagon", 7),
+                ShapeGeometry::Hexagon => ("hexagon", 8),
+                ShapeGeometry::Octagon => ("octagon", 9),
+                ShapeGeometry::Star5 => ("star5", 10),
+                ShapeGeometry::Star4 => ("star4", 11),
+                ShapeGeometry::RightArrow => ("rightArrow", 12),
+                ShapeGeometry::LeftArrow => ("leftArrow", 13),
+                ShapeGeometry::UpArrow => ("upArrow", 14),
+                ShapeGeometry::DownArrow => ("downArrow", 15),
+                ShapeGeometry::LeftRightArrow => ("leftRightArrow", 16),
+                ShapeGeometry::Parallelogram => ("parallelogram", 17),
+                ShapeGeometry::Trapezoid => ("trapezoid", 18),
+                ShapeGeometry::Chevron => ("chevron", 19),
+                ShapeGeometry::HomePlate => ("homePlate", 20),
+                ShapeGeometry::Plus => ("plus", 21),
+                // `Other` has no token of its own: it is what an unrecognized
+                // preset becomes, and it round trips through the RETAINED
+                // token, which `wpg_group_survives_the_semantic_round_trip`
+                // covers.
+                ShapeGeometry::Other => ("", 22),
+            }
+        }
+
+        const ALL: [ShapeGeometry; 23] = [
+            ShapeGeometry::Rectangle,
+            ShapeGeometry::RoundRectangle,
+            ShapeGeometry::Ellipse,
+            ShapeGeometry::Triangle,
+            ShapeGeometry::RightTriangle,
+            ShapeGeometry::Diamond,
+            ShapeGeometry::Line,
+            ShapeGeometry::Pentagon,
+            ShapeGeometry::Hexagon,
+            ShapeGeometry::Octagon,
+            ShapeGeometry::Star5,
+            ShapeGeometry::Star4,
+            ShapeGeometry::RightArrow,
+            ShapeGeometry::LeftArrow,
+            ShapeGeometry::UpArrow,
+            ShapeGeometry::DownArrow,
+            ShapeGeometry::LeftRightArrow,
+            ShapeGeometry::Parallelogram,
+            ShapeGeometry::Trapezoid,
+            ShapeGeometry::Chevron,
+            ShapeGeometry::HomePlate,
+            ShapeGeometry::Plus,
+            ShapeGeometry::Other,
+        ];
+
+        for (index, geometry) in ALL.iter().enumerate() {
+            assert_eq!(
+                token(*geometry).1,
+                index,
+                "ALL must list every variant exactly once, in `token` order"
+            );
+        }
+
+        for geometry in ALL {
+            let (preset, _) = token(geometry);
+            if preset.is_empty() {
+                continue;
+            }
+            let xml = group_shape_document_xml(preset, "");
+            let (m1, m2) = round_trip_main_document(xml.as_bytes());
+            let GroupChild::Shape(shape) = &first_group(&m1).children[0] else {
+                panic!("expected a {preset} shape");
+            };
+            assert_eq!(shape.geometry, geometry, "preset {preset} imports typed");
+            assert_eq!(
+                shape.preset, None,
+                "a typed preset {preset} needs no verbatim retention"
+            );
+            assert_eq!(m1, m2, "{preset} survives write -> reopen");
+        }
+    }
+
+    /// A `wps:wsp` that carries BOTH an `a:prstGeom` and a `wps:txbx` keeps its
+    /// geometry across a DOCX round trip (`109` FID-G, docs/119).
+    ///
+    /// Before this, the importer took the text-box branch, which modeled no
+    /// geometry, and the writer emitted an unconditional `prst="rect"`: an
+    /// authored ellipse came back a rectangle with NO loss report, because the
+    /// model had already forgotten there was anything to report.
+    #[test]
+    fn a_text_bearing_shape_keeps_its_preset_across_a_docx_round_trip() {
+        use casual_doc_model::v1::{GroupChild, ShapeAdjustment, ShapeGeometry};
+
+        let xml = group_shape_document_xml(
+            "ellipse",
+            "<wps:txbx><w:txbxContent><w:p><w:r><w:t>Inside</w:t></w:r></w:p></w:txbxContent></wps:txbx>",
+        );
+        let (m1, m2) = round_trip_main_document(xml.as_bytes());
+        let GroupChild::TextBox(text_box) = &first_group(&m1).children[0] else {
+            panic!(
+                "expected a text box, got {:?}",
+                first_group(&m1).children[0]
+            );
+        };
+        assert_eq!(text_box.geometry, ShapeGeometry::Ellipse);
+        assert_eq!(
+            text_box.adjustments,
+            vec![ShapeAdjustment {
+                name: "adj".to_owned(),
+                formula: "val 30000".to_owned(),
+            }],
+            "the text-bearing shape keeps its `a:avLst` too"
+        );
+        assert_eq!(m1, m2, "the text box's geometry survives write -> reopen");
+
+        // And the written package really says `ellipse`. Model equality alone
+        // would also pass if BOTH ends agreed on the wrong token.
+        let written = written_document_xml(&m1);
+        assert!(
+            written.contains(r#"<a:prstGeom prst="ellipse">"#),
+            "the writer must re-emit the authored preset: {written}"
+        );
+        assert!(
+            !written.contains(r#"<a:prstGeom prst="rect">"#),
+            "nothing may be rewritten to `rect`: {written}"
+        );
+    }
+
+    /// A `wpg:wgp` holding one `wps:wsp` with the given preset, an `adj` guide,
+    /// and `extra` (a `wps:txbx`, or nothing) inside the shape.
+    fn group_shape_document_xml(preset: &str, extra: &str) -> String {
+        format!(
+            r#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="500000"/><wp:wrapNone/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="500000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="{preset}"><a:avLst><a:gd name="adj" fmla="val 30000"/></a:avLst></a:prstGeom></wps:spPr>{extra}<wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+        )
+    }
+
+    /// The single `wpg:wgp` of a document built by `group_shape_document_xml`.
+    fn first_group(
+        document: &casual_doc_model::v1::Document,
+    ) -> &casual_doc_model::v1::WordprocessingGroup {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        group
     }
 
     #[test]

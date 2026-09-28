@@ -1240,6 +1240,11 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
                 width_emu: 1_000 * 635,
                 height_emu: 635,
             },
+            // A PLAIN text box: this fixture measures where the body content
+            // lands inside the box, not what is drawn behind it.
+            geometry: ShapeGeometry::Rectangle,
+            preset: None,
+            adjustments: Vec::new(),
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: node(502),
                 properties: ParagraphProperties::default().into(),
@@ -2245,4 +2250,335 @@ fn a_page_field_in_an_inline_text_box_resolves() {
         Some("1".to_owned()),
         "an inline text box's PAGE field resolves to the current page, not the cached 99"
     );
+}
+
+// --- Preset shape coverage and text-in-shape geometry -----------------------
+
+/// A group holding ONE 1"×1" child at the page's 1"/1" anchor, so every expected
+/// twip below is arithmetic: the child box is `(1440, 1440)` to `(2880, 2880)`.
+fn single_child_group_document(child: GroupChild) -> Document {
+    let extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
+        id: node(90),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(11),
+        extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        children: vec![child],
+    }));
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    Document::new(node(1), vec![paragraph], Definitions::default()).unwrap()
+}
+
+/// Places `document`'s single float and returns its resolved content.
+fn only_anchor_content(document: &Document) -> AnchorContent {
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, document, &shaper, &cfg);
+    assert_eq!(layout.pages[0].anchored.len(), 1);
+    layout.pages[0].anchored[0].content.clone()
+}
+
+/// Every [`ShapeGeometry`] variant reaches a layout primitive that is actually
+/// its shape — not a bounding rectangle wearing its name.
+///
+/// `expected` is exhaustive with no wildcard, so a variant added to the model
+/// without a layout outline fails to compile here. That is the whole point of
+/// the guard: `Other` already paints a bounding rectangle, so a named variant
+/// that did the same would be a regression dressed as a feature.
+#[test]
+fn every_shape_geometry_reaches_its_own_layout_primitive() {
+    /// How many vertices the preset's closed outline has, or the non-polygon
+    /// primitive it resolves to instead.
+    #[derive(Debug)]
+    enum Expected {
+        Polygon(usize),
+        Rectangle,
+        RoundedRectangle,
+        Ellipse,
+        Line,
+    }
+
+    fn expected(geometry: ShapeGeometry) -> Expected {
+        match geometry {
+            ShapeGeometry::Rectangle | ShapeGeometry::Other => Expected::Rectangle,
+            ShapeGeometry::RoundRectangle => Expected::RoundedRectangle,
+            ShapeGeometry::Ellipse => Expected::Ellipse,
+            ShapeGeometry::Line => Expected::Line,
+            ShapeGeometry::Triangle | ShapeGeometry::RightTriangle => Expected::Polygon(3),
+            ShapeGeometry::Diamond | ShapeGeometry::Parallelogram | ShapeGeometry::Trapezoid => {
+                Expected::Polygon(4)
+            }
+            ShapeGeometry::Pentagon | ShapeGeometry::HomePlate => Expected::Polygon(5),
+            ShapeGeometry::Hexagon | ShapeGeometry::Chevron => Expected::Polygon(6),
+            ShapeGeometry::RightArrow
+            | ShapeGeometry::LeftArrow
+            | ShapeGeometry::UpArrow
+            | ShapeGeometry::DownArrow => Expected::Polygon(7),
+            ShapeGeometry::Octagon | ShapeGeometry::Star4 => Expected::Polygon(8),
+            ShapeGeometry::Star5 | ShapeGeometry::LeftRightArrow => Expected::Polygon(10),
+            ShapeGeometry::Plus => Expected::Polygon(12),
+        }
+    }
+
+    for geometry in all_shape_geometries() {
+        let document = single_child_group_document(preset_shape_child(geometry, Vec::new()));
+        let content = only_anchor_content(&document);
+        match (expected(geometry), &content) {
+            (Expected::Polygon(count), AnchorContent::Polygon { points, closed, .. }) => {
+                assert_eq!(points.len(), count, "{geometry:?} vertex count");
+                assert!(*closed, "{geometry:?} is a closed outline");
+                for point in points {
+                    assert!(
+                        point.x >= Twip(1_440)
+                            && point.x <= Twip(2_880)
+                            && point.y >= Twip(1_440)
+                            && point.y <= Twip(2_880),
+                        "{geometry:?} vertex {point:?} escapes its 1\" box"
+                    );
+                }
+            }
+            (Expected::Rectangle, AnchorContent::Rectangle { .. })
+            | (Expected::RoundedRectangle, AnchorContent::RoundedRectangle { .. })
+            | (Expected::Ellipse, AnchorContent::Ellipse { .. })
+            | (Expected::Line, AnchorContent::Line { .. }) => {}
+            (want, other) => {
+                panic!("{geometry:?} wanted {want:?}, resolved to {other:?}");
+            }
+        }
+    }
+}
+
+/// Three of the new presets, to the twip, so the outlines are arithmetic rather
+/// than "some polygon arrived". A `homePlate` whose point was on the wrong side,
+/// or a `plus` with the arms inverted, would satisfy a vertex count.
+#[test]
+fn new_presets_resolve_to_their_documented_outlines() {
+    let outline = |geometry, adjustments| {
+        let document = single_child_group_document(preset_shape_child(geometry, adjustments));
+        match only_anchor_content(&document) {
+            AnchorContent::Polygon { points, .. } => points,
+            other => panic!("expected a polygon, got {other:?}"),
+        }
+    };
+    let at = |x, y| Point::new(Twip(x), Twip(y));
+
+    // `homePlate` at its preset default `adj` = 50000: the point is half the
+    // shorter side (720tw) deep, on the RIGHT.
+    assert_eq!(
+        outline(ShapeGeometry::HomePlate, Vec::new()),
+        vec![
+            at(1_440, 1_440),
+            at(2_160, 1_440),
+            at(2_880, 2_160),
+            at(2_160, 2_880),
+            at(1_440, 2_880),
+        ]
+    );
+
+    // `plus` at its preset default `adj` = 25000: 360tw arms.
+    assert_eq!(
+        outline(ShapeGeometry::Plus, Vec::new()),
+        vec![
+            at(1_440, 1_800),
+            at(1_800, 1_800),
+            at(1_800, 1_440),
+            at(2_520, 1_440),
+            at(2_520, 1_800),
+            at(2_880, 1_800),
+            at(2_880, 2_520),
+            at(2_520, 2_520),
+            at(2_520, 2_880),
+            at(1_800, 2_880),
+            at(1_800, 2_520),
+            at(1_440, 2_520),
+        ]
+    );
+
+    // The regular `pentagon`, apex up, filling the box.
+    assert_eq!(
+        outline(ShapeGeometry::Pentagon, Vec::new()),
+        vec![
+            at(2_160, 1_440),
+            at(2_880, 1_990),
+            at(2_605, 2_880),
+            at(1_715, 2_880),
+            at(1_440, 1_990),
+        ]
+    );
+
+    // An authored `a:avLst` really moves the outline: the default `hexagon`
+    // insets its corners by 360tw (25000 of the 1440tw shorter side), an
+    // authored 40000 by 576tw.
+    let default_hexagon = outline(ShapeGeometry::Hexagon, Vec::new());
+    assert_eq!(default_hexagon[1], at(1_800, 1_440));
+    let authored_hexagon = outline(
+        ShapeGeometry::Hexagon,
+        vec![ShapeAdjustment {
+            name: "adj".to_owned(),
+            formula: "val 40000".to_owned(),
+        }],
+    );
+    assert_eq!(authored_hexagon[1], at(2_016, 1_440));
+}
+
+/// A grouped text box whose `wps:wsp` is an ELLIPSE paints as an ellipse with
+/// its text inside — "modeled is not shipped".
+///
+/// Before this, the text box always painted a rectangle: the geometry was not
+/// in the model at all, and layout had only one shape for every text box.
+#[test]
+fn a_text_box_with_a_preset_geometry_paints_that_geometry_behind_its_text() {
+    let document = single_child_group_document(GroupChild::TextBox(GroupTextBox {
+        hyperlink: None,
+        id: node(91),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Ellipse,
+        preset: None,
+        adjustments: Vec::new(),
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(92),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(93, "Inside")],
+        })],
+        fill: Some(Fill::Solid(Rgba {
+            r: 10,
+            g: 20,
+            b: 30,
+            a: 255,
+        })),
+        border: None,
+        body_properties: TextBoxBodyProperties::default(),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    }));
+
+    let content = only_anchor_content(&document);
+    let AnchorContent::TextBox {
+        blocks,
+        fill,
+        backdrop,
+        ..
+    } = &content
+    else {
+        panic!("expected a text box, got {content:?}");
+    };
+    assert!(!blocks.is_empty(), "the text still flows inside the shape");
+    let backdrop = backdrop.as_deref().expect("the ellipse behind the text");
+    assert!(
+        matches!(backdrop, AnchorContent::Ellipse { fill: Some(_), .. }),
+        "the backdrop is the ellipse, carrying the box's fill: {backdrop:?}"
+    );
+    assert!(
+        fill.is_none(),
+        "the rectangular box fill is unset, so nothing paints twice"
+    );
+
+    // And it reaches paint as an ellipse, with no rectangle standing in for it.
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+    assert!(
+        list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::Shape {
+                geometry: DisplayShapeGeometry::Ellipse { .. },
+                ..
+            }
+        )),
+        "the display list must carry the ellipse"
+    );
+    assert!(
+        !list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::Shape {
+                geometry: DisplayShapeGeometry::Rect { .. },
+                ..
+            }
+        )),
+        "nothing may paint a rectangle where the shape is an ellipse"
+    );
+}
+
+/// Every [`ShapeGeometry`] variant, in one list the exhaustive matches above
+/// keep honest.
+fn all_shape_geometries() -> Vec<ShapeGeometry> {
+    vec![
+        ShapeGeometry::Rectangle,
+        ShapeGeometry::RoundRectangle,
+        ShapeGeometry::Ellipse,
+        ShapeGeometry::Triangle,
+        ShapeGeometry::RightTriangle,
+        ShapeGeometry::Diamond,
+        ShapeGeometry::Line,
+        ShapeGeometry::Pentagon,
+        ShapeGeometry::Hexagon,
+        ShapeGeometry::Octagon,
+        ShapeGeometry::Star5,
+        ShapeGeometry::Star4,
+        ShapeGeometry::RightArrow,
+        ShapeGeometry::LeftArrow,
+        ShapeGeometry::UpArrow,
+        ShapeGeometry::DownArrow,
+        ShapeGeometry::LeftRightArrow,
+        ShapeGeometry::Parallelogram,
+        ShapeGeometry::Trapezoid,
+        ShapeGeometry::Chevron,
+        ShapeGeometry::HomePlate,
+        ShapeGeometry::Plus,
+        ShapeGeometry::Other,
+    ]
+}
+
+/// A 1"×1" filled shape child carrying `geometry` and its authored guides.
+fn preset_shape_child(geometry: ShapeGeometry, adjustments: Vec<ShapeAdjustment>) -> GroupChild {
+    GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: node(91),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry,
+        preset: None,
+        adjustments,
+        path: None,
+        fill: Some(Fill::Solid(Rgba {
+            r: 60,
+            g: 120,
+            b: 180,
+            a: 255,
+        })),
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    })
 }

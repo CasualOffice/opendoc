@@ -362,6 +362,44 @@ struct ShapeBuilder {
     rotation: Option<i32>,
 }
 
+/// Maps an `a:prstGeom@prst` token onto the typed [`ShapeGeometry`] layout can
+/// draw the real outline of, or `None` for a preset that has no primitive yet
+/// (retained verbatim as [`ShapeGeometry::Other`] plus its token).
+///
+/// The tokens are `ST_ShapeType` (ECMA-376 Part 1 §20.1.10.56). This is the ONE
+/// token → variant table: the `prstGeom` handler consults it both for the
+/// geometry it stores and for whether an unrecognized token is malformed, so a
+/// shape carrying text takes exactly the same path as one that does not.
+///
+/// Complexity: O(1) — a fixed match over string literals, no document access.
+fn typed_preset_geometry(token: &str) -> Option<ShapeGeometry> {
+    Some(match token {
+        "rect" => ShapeGeometry::Rectangle,
+        "roundRect" => ShapeGeometry::RoundRectangle,
+        "ellipse" => ShapeGeometry::Ellipse,
+        "triangle" => ShapeGeometry::Triangle,
+        "rtTriangle" => ShapeGeometry::RightTriangle,
+        "diamond" => ShapeGeometry::Diamond,
+        "line" | "straightConnector1" => ShapeGeometry::Line,
+        "pentagon" => ShapeGeometry::Pentagon,
+        "hexagon" => ShapeGeometry::Hexagon,
+        "octagon" => ShapeGeometry::Octagon,
+        "star5" => ShapeGeometry::Star5,
+        "star4" => ShapeGeometry::Star4,
+        "rightArrow" => ShapeGeometry::RightArrow,
+        "leftArrow" => ShapeGeometry::LeftArrow,
+        "upArrow" => ShapeGeometry::UpArrow,
+        "downArrow" => ShapeGeometry::DownArrow,
+        "leftRightArrow" => ShapeGeometry::LeftRightArrow,
+        "parallelogram" => ShapeGeometry::Parallelogram,
+        "trapezoid" => ShapeGeometry::Trapezoid,
+        "chevron" => ShapeGeometry::Chevron,
+        "homePlate" => ShapeGeometry::HomePlate,
+        "plus" => ShapeGeometry::Plus,
+        _ => return None,
+    })
+}
+
 /// Accumulator for an open `a:custGeom` on the current shape (docs/119).
 ///
 /// Collects the straight-line subset of `a:pathLst/a:path` — `a:moveTo`,
@@ -3163,29 +3201,15 @@ impl BodyParser<'_> {
             // The preset geometry (`a:prstGeom@prst`) of the open shape.
             b"prstGeom" if self.pending_shape.is_some() => {
                 let preset = attribute_value(element, b"prst");
-                let invalid_unknown_preset = preset.as_deref().is_some_and(|value| {
-                    !matches!(
-                        value,
-                        "rect"
-                            | "roundRect"
-                            | "ellipse"
-                            | "triangle"
-                            | "rtTriangle"
-                            | "diamond"
-                            | "line"
-                            | "straightConnector1"
-                    ) && (value.is_empty() || value.len() > MAX_SHAPE_PRESET_BYTES)
-                });
+                let typed = preset.as_deref().and_then(typed_preset_geometry);
+                let invalid_unknown_preset = typed.is_none()
+                    && preset.as_deref().is_some_and(|value| {
+                        value.is_empty() || value.len() > MAX_SHAPE_PRESET_BYTES
+                    });
                 if let Some(shape) = self.pending_shape.as_mut() {
-                    let (geometry, retained) = match preset.as_deref() {
-                        Some("rect") => (ShapeGeometry::Rectangle, None),
-                        Some("roundRect") => (ShapeGeometry::RoundRectangle, None),
-                        Some("ellipse") => (ShapeGeometry::Ellipse, None),
-                        Some("triangle") => (ShapeGeometry::Triangle, None),
-                        Some("rtTriangle") => (ShapeGeometry::RightTriangle, None),
-                        Some("diamond") => (ShapeGeometry::Diamond, None),
-                        Some("line" | "straightConnector1") => (ShapeGeometry::Line, None),
-                        Some(value)
+                    let (geometry, retained) = match (typed, preset.as_deref()) {
+                        (Some(geometry), _) => (geometry, None),
+                        (None, Some(value))
                             if !value.is_empty() && value.len() <= MAX_SHAPE_PRESET_BYTES =>
                         {
                             (ShapeGeometry::Other, Some(value.to_owned()))
@@ -5257,6 +5281,18 @@ impl BodyParser<'_> {
             self.reporter.report(b"txbxContent");
             return Ok(());
         }
+        // A LONE text-bearing shape becomes a `TextBox`, which models no
+        // geometry, so an authored non-rectangular preset really is dropped
+        // here. Grouped text boxes keep theirs (`GroupTextBox::geometry`); this
+        // one is named rather than lost in silence until `TextBox` carries the
+        // same triple.
+        if shape.geometry != ShapeGeometry::Rectangle
+            || shape.preset.is_some()
+            || !shape.adjustments.is_empty()
+            || shape.path.is_some()
+        {
+            self.reporter.report(b"prstGeom");
+        }
         match self.pending_anchor.take() {
             Some(pending) => {
                 // A floating text box: carry its anchor + extent + fill/border.
@@ -5329,11 +5365,21 @@ impl BodyParser<'_> {
                 self.reporter.report(b"txbxContent");
                 return None;
             }
+            // A `wps:wsp` with text is still a shape: its `a:prstGeom` is carried
+            // through unchanged, by the SAME fields a text-free shape uses. The
+            // one thing a text box cannot carry is a recovered `a:custGeom`
+            // path, so that loss is named rather than dropped.
+            if shape.path.is_some() {
+                self.reporter.report(b"custGeom");
+            }
             return Some(GroupChild::TextBox(GroupTextBox {
                 hyperlink: shape.hyperlink.take(),
                 id: shape.id,
                 offset: shape.offset,
                 extent: shape.extent,
+                geometry: shape.geometry,
+                preset: shape.preset,
+                adjustments: shape.adjustments,
                 blocks,
                 fill: shape.fill,
                 border: shape.stroke,

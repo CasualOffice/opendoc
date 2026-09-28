@@ -2886,8 +2886,11 @@ fn angular_shape_presets_are_modeled_explicitly() {
 fn unknown_preset_and_adjustment_guides_are_retained() {
     use casual_doc_model::v1::{GroupChild, ShapeAdjustment, ShapeGeometry};
 
+    // `cloud` has no typed primitive (its outline is all arcs), so it is the
+    // honest subject for "an unknown preset is retained verbatim". A preset this
+    // build DOES draw would prove the opposite of what this guard is for.
     let import = import_standalone_drawingml_shape(
-        r#"<a:prstGeom prst="hexagon"><a:avLst><a:gd name="adj" fmla="val 25000"/><a:gd name="hf" fmla="*/ h 1 2"/></a:avLst></a:prstGeom>"#,
+        r#"<a:prstGeom prst="cloud"><a:avLst><a:gd name="adj" fmla="val 25000"/><a:gd name="hf" fmla="*/ h 1 2"/></a:avLst></a:prstGeom>"#,
     );
     let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected a standalone shape group");
@@ -2896,7 +2899,7 @@ fn unknown_preset_and_adjustment_guides_are_retained() {
         panic!("expected the group child to be a shape");
     };
     assert_eq!(shape.geometry, ShapeGeometry::Other);
-    assert_eq!(shape.preset.as_deref(), Some("hexagon"));
+    assert_eq!(shape.preset.as_deref(), Some("cloud"));
     assert_eq!(
         shape.adjustments,
         vec![
@@ -9704,5 +9707,72 @@ fn a_paragraph_spanning_field_nested_in_another_is_reported_and_not_nested() {
             .any(|t| t.contains("inner cached")),
         "the inner field's cached text is flattened, not dropped: {:?}",
         paragraph_texts(&import)
+    );
+}
+
+/// A LONE (ungrouped) text-bearing shape has no place to keep its preset — the
+/// standalone `TextBox` models no geometry — so the drop is REPORTED rather
+/// than silent (SKILL §1: unsupported data is preserved or named, never lost
+/// quietly). A grouped one keeps its geometry instead and reports nothing.
+#[test]
+fn a_lone_text_bearing_shape_reports_the_preset_it_cannot_keep() {
+    let text_box_shape = |preset: &str| {
+        let document = format!(
+            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>457200</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Shape"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Inside</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+        );
+        import(document.as_bytes())
+    };
+
+    let ellipse = text_box_shape("ellipse");
+    assert!(
+        features(&ellipse).contains(&"prstGeom"),
+        "a lone ellipse text box names the geometry it drops: {:?}",
+        features(&ellipse)
+    );
+
+    // A plain `rect` text box drops NOTHING, so it must not cry loss — a report
+    // fired on every text box would make the signal worthless.
+    let rectangle = text_box_shape("rect");
+    assert!(
+        !features(&rectangle).contains(&"prstGeom"),
+        "a rectangular text box has nothing to report: {:?}",
+        features(&rectangle)
+    );
+}
+
+/// A grouped text-bearing shape KEEPS its preset (it is not a loss), and the
+/// import of a text-free shape with the same preset produces the same geometry
+/// — the two paths share one token table.
+#[test]
+fn a_grouped_text_bearing_shape_keeps_the_preset_a_text_free_one_keeps() {
+    use casual_doc_model::v1::{GroupChild, ShapeAdjustment, ShapeGeometry};
+
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Group"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="914400"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="star5"><a:avLst><a:gd name="adj" fmla="val 22000"/></a:avLst></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:spPr><a:xfrm><a:off x="914400" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="star5"><a:avLst><a:gd name="adj" fmla="val 22000"/></a:avLst></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Starred</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let import = import(document);
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a group");
+    };
+    let guides = vec![ShapeAdjustment {
+        name: "adj".to_owned(),
+        formula: "val 22000".to_owned(),
+    }];
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected a text-free shape first");
+    };
+    let GroupChild::TextBox(text_box) = &group.children[1] else {
+        panic!("expected a text box second");
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Star5);
+    assert_eq!(
+        text_box.geometry, shape.geometry,
+        "one token table, one answer"
+    );
+    assert_eq!(text_box.preset, shape.preset);
+    assert_eq!(text_box.adjustments, guides);
+    assert_eq!(shape.adjustments, guides);
+    assert!(
+        !features(&import).contains(&"prstGeom"),
+        "a grouped text box keeps its geometry, so nothing is reported: {:?}",
+        features(&import)
     );
 }
