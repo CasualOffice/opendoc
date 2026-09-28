@@ -1731,6 +1731,64 @@
         </footer>
       </section>
     </div>
+    <!-- References ▸ Table of contents. Word's Insert dialog reduced to the one
+         control it actually asks for: "Show levels", 1..9, defaulting to 3.
+         Word's other two switches — "Show page numbers" and "Right align page
+         numbers" — are not offered because the generated field always carries
+         both and there is no operation to write either one off; an option that
+         cannot be honoured is a dead control with extra steps. -->
+    <div id="tocDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tocTitle" aria-describedby="tocDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="toc.title" id="tocTitle">Table of contents</h2>
+              <p data-i18n="toc.description" id="tocDescription">Lists every heading with the page it is on, as a field you can update later.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.close.label" id="tocClose" type="button" class="dialog-close" title="Close" aria-label="Close table of contents"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="tocForm" class="dialog-body">
+          <label data-i18n="toc.showLevels" class="dialog-field">Show levels<input data-i18n-title="toc.showLevels.title" id="tocLevels" type="number" min="1" max="9" step="1" inputmode="numeric" value="3" title="How deep to list: 1 lists only Heading 1, 3 is Word's default" /></label>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="tocCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="toc.insert" type="submit" form="tocForm" class="dialog-button dialog-button-primary">Insert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- References ▸ Update table. Word's two radios, in Word's order and with
+         Word's wording; ONLYOFFICE offers exactly the same pair. Each is also
+         its own command, so the choice is reachable without opening this. -->
+    <div id="tocUpdateDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tocUpdateTitle" aria-describedby="tocUpdateDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="toc.update.title" id="tocUpdateTitle">Update table of contents</h2>
+              <p data-i18n="toc.update.description" id="tocUpdateDescription">Re-read the page numbers, or rebuild the entries from the headings.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.update.close.label" id="tocUpdateClose" type="button" class="dialog-close" title="Close" aria-label="Close update table of contents"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="tocUpdateForm" class="dialog-body">
+          <fieldset class="dialog-group" data-i18n-label="toc.update.title" aria-label="Update table of contents">
+            <label class="dialog-check"><input type="radio" name="tocUpdateMode" value="pageNumbers" checked /><span data-i18n="toc.update.pageNumbers">Update page numbers only</span></label>
+            <label class="dialog-check"><input type="radio" name="tocUpdateMode" value="entire" /><span data-i18n="toc.update.entire">Update entire table</span></label>
+          </fieldset>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="tocUpdateCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="toc.update.apply" type="submit" form="tocUpdateForm" class="dialog-button dialog-button-primary">Update</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <!-- References ▸ Insert caption. Word's own dialog, in Word's order, and
          ONLYOFFICE's `CaptionDialog.js` is the same shape: caption text, the
          label combo with New/Delete beside it, position, exclude-label,

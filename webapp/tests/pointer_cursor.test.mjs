@@ -47,6 +47,11 @@ const PROBES = {
   "drag-object-move": { drag: "object-move" },
   "drag-table-column": { drag: "table-column" },
   "drag-table-row": { drag: "table-row" },
+  // The gutter's two strip drags (docs/141 D-2). They are distinguished by the
+  // gutter itself — one is extending a selection, one is carrying a band to a
+  // new position — because only the gesture in flight knows which it is.
+  "drag-table-strip-select": { drag: "table-strip-select" },
+  "drag-table-strip-move": { drag: "table-strip-move" },
   // The table chrome layer's hover zones (docs/141 D-1). Only an ARMED boundary
   // is reported to the router, so the probe carries no mode flags: the arming
   // decision is table_chrome_zones.mjs's and is guarded there.

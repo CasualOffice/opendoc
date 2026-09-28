@@ -72,7 +72,13 @@ test("the Table menu covers every structural table command", () => {
   // The ids `tableToolCommands` actually builds. Submenu PARENTS (table.insert,
   // table.delete, table.select, table.layout) are containers, not commands, and
   // are correctly absent from a flat menu.
-  const parents = new Set(["table.insert", "table.delete", "table.select", "table.layout"]);
+  const parents = new Set([
+    "table.insert",
+    "table.delete",
+    "table.move",
+    "table.select",
+    "table.layout",
+  ]);
   const built = new Set(
     [
       ...tableSource.matchAll(/tableMutation\("(table\.[\w.]+)"/g),

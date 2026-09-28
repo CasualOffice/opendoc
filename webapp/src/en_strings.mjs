@@ -39,13 +39,34 @@ export const EN_STRINGS = Object.freeze({
   "spacing.removeSpaceBefore": "Remove space before paragraph",
   "spacing.addSpaceAfter": "Add space after paragraph",
   "spacing.removeSpaceAfter": "Remove space after paragraph",
-  // Shown under the empty line-spacing box. `paragraphSpacing` reports DIRECT
-  // formatting only, so a paragraph that takes its spacing from its style reads
-  // back as nothing set; saying so is the honest answer, and ticking "Single"
-  // would be a lie for every document whose Normal style says 1.15.
+  // Shown under the line-spacing box when the number in it was INHERITED.
+  // `paragraphSpacing` is style-resolved, so the box holds the effective value
+  // and the preset above it is ticked; what this sentence adds is where the
+  // value came from, which is the difference between "1.5" and "1.5, and
+  // clearing it here would change nothing".
   "spacing.fromStyleHint": "This paragraph takes its line spacing from its style. Type a value to set it here.",
+  // The other empty-box case, and a different fact: nothing anywhere in the
+  // cascade sets line spacing, so there is no number to show and the layout
+  // default is what the page is drawn with. Ticking "Single" here would be a
+  // claim the document does not make.
+  "spacing.lineUnset": "No line spacing is set anywhere in this paragraph's styles; the document default applies.",
+  // The space-before/after twin of `fromStyleHint`. Its own sentence rather than
+  // a reuse: "line spacing" is the wrong noun for a gap above a paragraph, and a
+  // language that inflects the two differently cannot be served by one string.
+  "spacing.spaceFromStyleHint": "This space comes from the paragraph style. Type a value to set it here.",
   // Following a contents entry whose field carried no `\\h`, so there was no
   // hyperlink to follow and the entry did nothing at all.
+  // Generating and updating a table of contents. The three announcements are
+  // separate keys rather than one with a verb substituted: "updated" and "rebuilt"
+  // are different promises, and a language that inflects them differently cannot
+  // be served by gluing a word on.
+  "toc.inserted": "Table of contents inserted",
+  "toc.pageNumbersUpdated": "Page numbers updated",
+  "toc.rebuilt": "Table of contents rebuilt from the headings",
+  // Only when the document holds MORE than one contents field, where the caret
+  // is the only thing that can say which one was meant.
+  "toc.whichTable": "Put the caret in the table of contents you want to update",
+  "toc.noneToUpdate": "This document has no generated table of contents to update",
   "toc.jumpedTo": "Jumped to {heading}",
   "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
   "paragraph.caretRequired": "Place the caret in a paragraph",
@@ -550,4 +571,13 @@ export const EN_STRINGS = Object.freeze({
   // not reachable.
   "object.addText": "Add text",
   "object.addText.notAShape": "Only a shape can hold text this way",
+  // The gutter's REORDER gesture (`docs/141` §4.2.3). The tooltip is on the band
+  // once it is the selection — the moment it becomes a handle — and the two
+  // announcements name both ends of the move, because the live region is the
+  // only channel a pointer gesture has and "moved" alone does not say where to.
+  "table.moveSubmenu": "Move",
+  "table.dragToMoveRow": "Drag to move this row",
+  "table.dragToMoveColumn": "Drag to move this column",
+  "table.rowMoved": "Row {from} moved to position {to}",
+  "table.columnMoved": "Column {from} moved to position {to}",
 });

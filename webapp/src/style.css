@@ -3492,6 +3492,17 @@ body.modal-open {
   line-height: 1.35;
 }
 
+/* A control showing a value the paragraph INHERITED from its style rather than
+   one it set itself. The number is the real, effective number — Word shows the
+   resolved value and Docs ticks the resolved preset — so this cannot be a
+   greyed-out "nothing here" treatment; it is an italic that says "not written
+   on this paragraph", with the sentence under the field carrying the meaning and
+   `--muted` (not `--faint`) keeping the value itself at AA against the menu. */
+.spacing-menu [data-from-style] {
+  font-style: italic;
+  color: var(--muted);
+}
+
 .table-format-menu {
   width: min(286px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
@@ -7105,6 +7116,38 @@ body.is-format-painting .page-wrap * {
   background: color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
+/* The same band once it IS the selection: now a handle. Docs reorders a row by
+   dragging a strip that is already selected, and `grab` is the only thing that
+   says so before the press. Opting back into pointer events is what makes the
+   cursor reachable at all — the band is a child of the overlay, which is
+   `pointer-events: none`. */
+.overlay .table-gutter-band[data-move="ready"] {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+/* Where a reorder would drop, tracked live. A 2px accent rule across the table
+   at the boundary — Docs' indicator — drawn OUTSIDE the flow with a transform so
+   a zero-height box still paints, and never a hit target of its own. */
+.overlay .table-move-indicator {
+  position: absolute;
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.overlay .table-move-indicator[data-axis="row"] {
+  height: 2px;
+  transform: translateY(-1px);
+}
+
+.overlay .table-move-indicator[data-axis="column"] {
+  width: 2px;
+  transform: translateX(-1px);
+}
+
 /* A 16px disc centred on the boundary, inside the strip. Solid accent on the
    surface colour is the pairing the AA contrast sweep already covers, and the
    glyph is a plain `+` rather than an icon font so it needs no ligature and no
@@ -7636,6 +7679,14 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   overflow: visible;
 }
 .compact-toolbar .ctool-overflow[hidden] { display: none; }
+/* The compact bar's Table dropdown. Rows of LABELS, not icon buttons, so it is
+   the plain `.context-menu` shape and needs only a scroll bound: the table
+   command set is 24 rows, which is taller than a short window. */
+.compact-command-menu {
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .compact-overflow-menu {
   flex-wrap: wrap;
   max-width: min(560px, calc(100vw - 24px));

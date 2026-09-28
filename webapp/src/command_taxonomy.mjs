@@ -182,6 +182,10 @@ export const APP_MENU_SECTIONS = {
   table: [
     ["table.insert.rowAbove", "table.insert.rowBelow", "table.insert.columnLeft", "table.insert.columnRight"],
     ["table.delete.row", "table.delete.column", "table.delete.table"],
+    // Reordering. The gutter's drag is the pointer half (`docs/141` §4.2.3) and
+    // these are the half a keyboard, a menu and the palette can reach — the rule
+    // every other gesture in that layer already follows.
+    ["table.move.rowUp", "table.move.rowDown", "table.move.columnLeft", "table.move.columnRight"],
     ["table.select.row", "table.select.column", "table.select.table"],
     // Merge, then the two ways out of one. `table.unmerge` is the gesture Word
     // and Google Docs both put on the right-click menu of a merged cell, and it
@@ -229,6 +233,10 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.delete.row", "Delete row"],
   ["table.delete.column", "Delete column"],
   ["table.delete.table", "Delete table"],
+  ["table.move.rowUp", "Move row up"],
+  ["table.move.rowDown", "Move row down"],
+  ["table.move.columnLeft", "Move column left"],
+  ["table.move.columnRight", "Move column right"],
   ["table.select.row", "Select row"],
   ["table.select.column", "Select column"],
   ["table.select.table", "Select table"],

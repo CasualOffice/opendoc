@@ -52,6 +52,24 @@
 // whose icon reports the current alignment, opening a menu of the same four
 // registry commands, is both the Docs shape and the smaller one.
 
+// ---- Tables (TBL-18) -------------------------------------------------------
+//
+// The compact bar shipped with NO table command at all, so switching the chrome
+// to the Docs-shaped bar took every structural table capability off the screen:
+// the contextual Table BAND is a ribbon tab, and in compact mode there is no
+// ribbon. Google Docs solves this with a Format ▸ Table submenu, which is a
+// menu and not twenty buttons, and that is what this borrows — one trigger whose
+// menu is `APP_MENU_SECTIONS.table`, the SAME declaration the Table menu and the
+// palette render, so the three cannot disagree about which commands exist, what
+// they are called, or when they refuse.
+//
+// Its two names come from the CATALOGUE (`appMenuBar.table`, already translated
+// into all eighteen languages for the menu bar) rather than from a fresh English
+// literal: the bar's older group labels are raw English under a ratchet, and the
+// way to not make that worse is to not add to it.
+import { APP_MENU_SECTIONS, TABLE_MENU_LABELS } from "./command_taxonomy.mjs";
+import { t } from "./i18n.mjs";
+
 /** The ribbon-owned controls this bar borrows, by row `control` key.
  *
  *  Adopted, never cloned: one element means one set of listeners, one
@@ -150,6 +168,22 @@ export const COMPACT_TOOLBAR = [
     ],
   },
   {
+    // Beside Insert, because inserting a table is the gesture that creates the
+    // need for these, and unpinned so it folds before B/I/U do.
+    group: "table",
+    labelKey: "appMenuBar.table",
+    items: [
+      {
+        kind: "menu",
+        id: "compactTable",
+        icon: "grid_on",
+        labelKey: "appMenuBar.table",
+        sections: APP_MENU_SECTIONS.table,
+        labels: TABLE_MENU_LABELS,
+      },
+    ],
+  },
+  {
     group: "align",
     label: "Alignment",
     divider: true,
@@ -222,6 +256,10 @@ export function compactCommandIds(table = COMPACT_TOOLBAR) {
   const ids = [];
   for (const group of table) {
     for (const item of group.items) {
+      if (item.kind === "menu") {
+        ids.push(...item.sections.flat());
+        continue; // its own `id` names the TRIGGER, not a command
+      }
       if (item.id) ids.push(item.id);
       if (item.kind === "align") ids.push(...item.ids);
     }
@@ -342,6 +380,88 @@ export function createCompactToolbar({
     }
     onButton(el, () => runCommand(command.id, el));
     return el;
+  }
+
+  // ---- A declared dropdown of registry rows (the Table menu) ----------------
+  // Trigger and surface are created ONCE and the ROWS are rebuilt every time the
+  // menu opens, which is the only shape that can be honest here: whether Merge
+  // cells is available depends on the selection at the moment of asking, and the
+  // bar renders on mode entry. Rebuilding on open is also what keeps the bar off
+  // the keystroke path — `editorCommands` walks the caret's table, so asking it
+  // per keystroke is exactly the O(document) typing `main-thread-budget` guards.
+  const menus = new Map();
+
+  function ensureMenu(entry) {
+    if (menus.has(entry.id)) return menus.get(entry.id);
+    const name = t(entry.labelKey);
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.id = `${entry.id}Btn`;
+    trigger.className = "ctool ctool-menu";
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-controls", `${entry.id}Menu`);
+    trigger.setAttribute("aria-label", name);
+    trigger.title = name;
+    trigger.appendChild(iconSpan(entry.icon));
+    const caret = iconSpan("arrow_drop_down");
+    caret.classList.add("ctool-caret");
+    trigger.appendChild(caret);
+
+    const surface = document.createElement("div");
+    surface.id = `${entry.id}Menu`;
+    surface.className = "context-menu compact-command-menu";
+    surface.hidden = true;
+    surface.setAttribute("role", "menu");
+    surface.setAttribute("aria-label", name);
+    // Hung off <body> for the reason the align menu is: the bar clips.
+    document.body.appendChild(surface);
+    registerPopover(trigger, surface, () => fillMenu(entry, surface));
+    const pair = { trigger, surface };
+    menus.set(entry.id, pair);
+    return pair;
+  }
+
+  /** Rebuilds one dropdown's rows from the LIVE registry.
+   *
+   *  A command the registry does not answer at all is skipped; one it answers
+   *  DISABLED is rendered disabled carrying its reason, never dropped — the
+   *  whole point of the surface is that a user browsing it learns the editor can
+   *  do this and what is missing, which an absent row cannot say. */
+  function fillMenu(entry, surface) {
+    const commands = registry();
+    surface.replaceChildren();
+    for (const section of entry.sections) {
+      let wrote = false;
+      for (const id of section) {
+        const command = commands.get(id);
+        if (!command) continue;
+        if (surface.childElementCount && !wrote) {
+          const rule = document.createElement("div");
+          rule.className = "menu-divider";
+          surface.appendChild(rule);
+        }
+        wrote = true;
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "menu-item";
+        item.setAttribute("role", "menuitem");
+        item.dataset.commandId = id;
+        // The MENU label, not the palette's prefixed one: a row inside a menu
+        // called Table already has that noun in front of it.
+        item.textContent = entry.labels?.get(id) ?? command.label;
+        if (command.enabled === false) {
+          item.disabled = true;
+          // `title` and not only the disabled attribute: the reason is the
+          // sentence that turns a greyed row into an answer, and hover must not
+          // erase it (`109` HF-118).
+          item.title = command.disabledReason ?? "";
+        } else {
+          onButton(item, () => runCommand(id, item));
+        }
+        surface.appendChild(item);
+      }
+    }
   }
 
   // ---- The align dropdown --------------------------------------------------
@@ -528,7 +648,7 @@ export function createCompactToolbar({
       el.className = "cgroup";
       el.dataset.group = group.group;
       el.setAttribute("role", "group");
-      el.setAttribute("aria-label", group.label);
+      el.setAttribute("aria-label", group.labelKey ? t(group.labelKey) : group.label);
       if (group.divider) el.dataset.divider = "true";
       for (const entry of group.items) {
         if (entry.kind === "adopt") {
@@ -544,6 +664,10 @@ export function createCompactToolbar({
         if (entry.kind === "align") {
           const trigger = buildAlign(entry, commands);
           if (trigger) el.appendChild(trigger);
+          continue;
+        }
+        if (entry.kind === "menu") {
+          el.appendChild(ensureMenu(entry).trigger);
           continue;
         }
         const command = commands.get(entry.id);

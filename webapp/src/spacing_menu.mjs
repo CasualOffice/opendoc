@@ -26,20 +26,29 @@
 // reachable by typing them into the exact field, which is a path Docs does not
 // even offer.
 //
-// ## What the popover still cannot tell you, and why
+// ## What the popover shows, and how it tells inherited from directly-set
 //
-// `paragraphSpacing()` reports the paragraph's **direct** formatting only; there
-// is no style-cascade-resolved spacing accessor in the facade. So a paragraph
-// that takes its line spacing from its style — which is most paragraphs in most
-// documents — reads back as "nothing set", and the four presets show nothing
-// ticked with an empty value box. Measured on the shipped sample: every
-// paragraph, both at the document start and six lines down.
+// `paragraphSpacing()` is STYLE-RESOLVED: it answers the value actually in
+// effect, and `lineFromStyle` / `beforeFromStyle` / `afterFromStyle` say whether
+// the paragraph wrote it or inherited it. Before that it reported direct
+// formatting only, so on every paragraph of the shipped sample — which takes its
+// line spacing from `Normal`, as most paragraphs in most documents do — no
+// preset was ticked, the value box was empty, and a note said in words that the
+// paragraph followed its style. A blank box is what neither competitor shows:
 //
-// Rather than tick "Single" (a lie the moment a document's Normal style says
-// 1.15, which Word's own default Normal does), a note under the field says in
-// words that the paragraph follows its style. That is the honest rendering of
-// what the engine can currently answer; the accessor is reported as engine
-// work, and the day it lands this note is replaced by the real value.
+// * **Word** puts the RESOLVED number in the Paragraph dialog's line-spacing
+//   fields, whether the paragraph set it or its style did.
+// * **Docs** ticks the RESOLVED preset in Format ▸ Line & paragraph spacing.
+//
+// **Followed: both.** The preset is ticked (Docs) and the number is shown
+// (Word), and the distinction Word's dialog drops is kept — a note under the
+// field, plus `data-from-style` on every control whose value was inherited — so
+// "1.5, from the style" and "1.5, set here" stay two different readings, which
+// is what makes "clear the override" a gesture that means something.
+//
+// `ParagraphSpacing::default()` answers `-1` for before/after, not `0`, because
+// `0` is a real spacing value and the old default was claiming "unset" with it.
+// Every read here tests `>= 0` rather than truthiness for that reason.
 
 /** Twips per typographic point. */
 const TWIPS_PER_POINT = 20;
@@ -100,7 +109,12 @@ export function createSpacingMenu(host) {
     if (!s) return;
     const percent = s.lineRule === 0 ? s.linePercent : 0; // presets are `auto` multiples
     for (const b of menu.querySelectorAll(".spacing-line")) {
-      b.setAttribute("aria-checked", String(Number(b.dataset.percent) === percent));
+      const ticked = Number(b.dataset.percent) === percent;
+      b.setAttribute("aria-checked", String(ticked));
+      // The tick is the same tick whether the value was written here or
+      // inherited — Docs ticks the resolved preset — and the flag is what keeps
+      // the two readable apart without a second, quieter tick nobody would find.
+      setFromStyle(b, ticked && s.lineFromStyle);
     }
     // Don't overwrite a field the user is mid-edit in.
     const editingCustom =
@@ -114,26 +128,48 @@ export function createSpacingMenu(host) {
         modeSelect.value = "multiple";
         valueInput.value = s.linePercent > 0 ? String(round2(s.linePercent / 100)) : "";
       }
-      // An empty box used to be the whole answer for a paragraph whose spacing
-      // comes from its style. Say which it is — in a row of its own, because the
-      // box is 56px wide and a sentence put in it is three characters. The box
-      // keeps it as a tooltip for a pointer that lands there.
-      const inherited = valueInput.value === "";
-      valueInput.title = inherited ? host.t("spacing.fromStyleHint") : "";
+      // Three states, not two. The value box now carries the EFFECTIVE number,
+      // so "empty" no longer means "inherited" — it means nothing in the whole
+      // cascade sets line spacing and the layout default applies. Inherited is
+      // the case with a real number and `lineFromStyle`, and it gets the
+      // sentence that says where the number came from: in a row of its own,
+      // because the box is 56px wide and a sentence put in it is three
+      // characters. The box keeps it as a tooltip for a pointer that lands there.
+      const inherited = s.lineFromStyle;
+      const unset = valueInput.value === "";
+      const note = inherited ? "spacing.fromStyleHint" : unset ? "spacing.lineUnset" : "";
+      setFromStyle(valueInput, inherited);
+      valueInput.title = note ? host.t(note) : "";
       if (fromStyleNote) {
-        fromStyleNote.textContent = inherited ? host.t("spacing.fromStyleHint") : "";
-        fromStyleNote.hidden = !inherited;
+        fromStyleNote.textContent = note ? host.t(note) : "";
+        fromStyleNote.hidden = !note;
       }
       reflectUnit();
     }
-    if (document.activeElement !== beforeInput) {
-      beforeInput.value = s.beforeTwip >= 0 ? String(Math.round(s.beforeTwip / TWIPS_PER_POINT)) : "";
-    }
-    if (document.activeElement !== afterInput) {
-      afterInput.value = s.afterTwip >= 0 ? String(Math.round(s.afterTwip / TWIPS_PER_POINT)) : "";
-    }
+    reflectSpaceField(beforeInput, s.beforeTwip, s.beforeFromStyle);
+    reflectSpaceField(afterInput, s.afterTwip, s.afterFromStyle);
     reflectToggle(beforeToggle, s.beforeTwip, "spacing.addSpaceBefore", "spacing.removeSpaceBefore");
     reflectToggle(afterToggle, s.afterTwip, "spacing.addSpaceAfter", "spacing.removeSpaceAfter");
+  }
+
+  /** Marks one control as showing a value it INHERITED rather than one the
+   *  paragraph set. An attribute rather than a class: the stylesheet and a
+   *  guard both read it, and there is nothing to keep in sync. */
+  function setFromStyle(el, inherited) {
+    if (!el) return;
+    if (inherited) el.dataset.fromStyle = "true";
+    else delete el.dataset.fromStyle;
+  }
+
+  /** One space-before/after field: the EFFECTIVE value in points, the inherited
+   *  flag, and the sentence saying so. `-1` is the engine's "unset anywhere in
+   *  the cascade" and is the only value that leaves the box empty — `0` is a
+   *  real answer ("no space before this paragraph") and now prints as one. */
+  function reflectSpaceField(input, twip, fromStyle) {
+    if (!input || document.activeElement === input) return;
+    input.value = twip >= 0 ? String(Math.round(twip / TWIPS_PER_POINT)) : "";
+    setFromStyle(input, twip >= 0 && fromStyle);
+    input.title = twip >= 0 && fromStyle ? host.t("spacing.spaceFromStyleHint") : "";
   }
 
   /** Docs' flipping verb: the row offers whichever of add/remove would change
