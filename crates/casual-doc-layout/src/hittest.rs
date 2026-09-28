@@ -3679,6 +3679,11 @@ mod table_chrome_tests {
     /// `cell_rect` per (row, column), each of which scans every placed fragment on
     /// every page. `page_walk` is the single page walk. Both are measured in
     /// fragment visits, the quantity a walk actually pays for.
+    // The measured figures are PUBLISHED, not just asserted on, so that spending
+    // the improvement shows up in a log the way `ribbon-width-budget.spec.mjs`
+    // publishes its headroom. `clippy::print_stderr` is denied workspace-wide and
+    // correctly so for library code; this is a test whose output is the point.
+    #[allow(clippy::print_stderr)]
     #[test]
     fn chrome_cost_doubles_with_the_table_where_the_per_cell_route_squared() {
         let per_cell = |rows: usize| {
@@ -3705,7 +3710,7 @@ mod table_chrome_tests {
         let (new_n, new_2n) = (page_walk(8), page_walk(16));
         let old_ratio = old_2n as f64 / old_n as f64;
         let new_ratio = new_2n as f64 / new_n as f64;
-        println!(
+        eprintln!(
             "TABLE_CHROME_FRAGMENT_VISITS per-cell 8 rows={old_n} 16 rows={old_2n} \
              ratio={old_ratio:.2} | page-walk 8 rows={new_n} 16 rows={new_2n} ratio={new_ratio:.2}"
         );

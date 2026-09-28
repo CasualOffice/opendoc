@@ -6973,10 +6973,10 @@ impl WasmDocument {
     ///   it. The right answer for the table's own trailing edge, and what
     ///   `setTableColumnWidthAt` already did.
     ///
-    /// Both columns are clamped at [`MIN_COLUMN_TWIPS`]; a delta that would push
-    /// the shrinking neighbour below it is reduced to the delta that lands it
-    /// exactly there, rather than refused, because a drag that stops moving is
-    /// better feedback than a drag that fails on release.
+    /// Both columns are clamped at `MIN_COLUMN_TWIPS` (72 twips, 0.05 in); a delta
+    /// that would push the shrinking neighbour below it is reduced to the delta
+    /// that lands it exactly there, rather than refused, because a drag that stops
+    /// moving is better feedback than a drag that fails on release.
     ///
     /// Writes `grid[i].width_twips` and every row's `cells[i].properties.width`,
     /// exactly as `setTableColumnWidthAt` does, and commits one
