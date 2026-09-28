@@ -124,13 +124,21 @@ export function createTableChrome(host) {
    *  a zoomed-out page must not have a zone ten times as wide in document space
    *  as a zoomed-in one.
    *
-   *  A TOUCH gets half the pill's width instead of the mouse's ±5px, because the
-   *  pill is what the finger is aiming at and a finger is bigger than a cursor.
-   *  This is the first `pointerType` read in the product. */
+   *  A TOUCH gets half the pill's width instead of the mouse's ±5px — but ONLY
+   *  once a tap has armed the pills, and that condition is load-bearing rather
+   *  than tidiness. 12px is, at 100% zoom, about 180 twips, which is WIDER THAN A
+   *  DEFAULT TABLE ROW IS TALL (288 twips, so 144 either side of its middle): with
+   *  the enlarged zone always on, tapping anywhere in a small row started a resize
+   *  instead of placing a caret, and the pills could never arm because the arming
+   *  tap was swallowed by the gesture. So the first tap places the caret and arms
+   *  the pills; a tap on a pill then resizes. This is the first `pointerType` read
+   *  in the product, and it is exactly the kind of thing hover hides. */
   function probeOf(page, event) {
     const { x, y } = host.pointToTwip(page, event);
     const { sx, sy } = host.scaleOf(page);
-    const px = event?.pointerType === "touch" ? TOUCH_PILL_PX / 2 : BOUNDARY_TOLERANCE_PX;
+    const armed = !!touchTable && touchTable.pageNumber === page?.pageNumber;
+    const px =
+      event?.pointerType === "touch" && armed ? TOUCH_PILL_PX / 2 : BOUNDARY_TOLERANCE_PX;
     return { x, y, tolX: px / (sx || 1), tolY: px / (sy || 1) };
   }
 
