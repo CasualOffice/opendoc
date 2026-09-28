@@ -145,8 +145,11 @@ grep -n 'js_name' crates/casual-doc-wasm/src/lib.rs | grep -iE 'table|cell|row|c
 This under-counts, because wasm-bindgen exports a `pub fn` with no `js_name` under its
 snake_case name verbatim and several `TableInfo` getters have none. The authoritative count,
 taken by brace-matching every `#[wasm_bindgen]` `impl` block and listing its `pub fn`s, is
-**425 exported methods in the crate, 66 of them table-related** — 41 on `WasmDocument`, 20
-`TableInfo` getters, 5 `CellTextRange` getters.
+**442 exported methods in the crate, 84 of them table-related** — `WasmDocument` 273 methods
+in total, plus 19 `TableInfo` getters, 11 `CellRangeInfo` getters and 5 `CellTextRange`
+getters. (It read 425/66 before D-3 landed: the cell range added eight `WasmDocument` methods
+and the `CellRangeInfo` getters, and `mergeTableCellRange` keeps a String-error inner beside
+the exported wrapper, which is not exported.)
 
 ### 0.6 The ribbon budget, and the figure not to quote
 
@@ -1421,6 +1424,32 @@ with one method that is the whole reason this belongs in the engine:
 fn normalised(&self, table: &Table) -> Option<(usize, usize, usize, usize)>
 ```
 
+> **BUILT** (`crates/casual-doc-selection/src/table_cells.rs`), with three deliberate
+> differences from the sketch above, all forced by rules elsewhere in this repository:
+>
+> - **`Result<CellRange, CellSelectionError>`, not `Option<(usize, usize, usize, usize)>`.**
+>   "No silent loss" means a range that cannot be acted on refuses *with a reason*, and an
+>   `Option` cannot say which endpoint was not a cell of this table.
+> - **`CellRange` carries more than the four numbers**: `expanded`, the cell ids inside it
+>   (one per merged cell), and `passes` — the number of expansion rounds, which is what the
+>   fixed-point guard asserts on.
+> - **Fields are private with accessors.** `pub table/anchor/focus` would let a caller
+>   build a selection naming one table and normalise it against another; that is now a
+>   refusal (`WrongTable`) rather than a wrong rectangle.
+>
+> The expansion's complexity is stated on the method: O(cells) to build the grid and
+> O(cells) per pass, **one pass on a regular grid, two on an ordinary merge layout**, worst
+> case `O((rows + columns) * cells)` for a staircase of merges where each pass admits
+> exactly one new row or column. That worst case is superlinear and is said out loud. A
+> dense `rows x columns` occupancy array was rejected: `w:gridSpan` may legally be 16384, so
+> a dense grid is a memory hazard on a hostile file; the grid is per-row slots instead.
+>
+> One behaviour the design did not pin down, decided while building: **`expanded` is measured
+> against the bounding box of the anchor and focus cells' own footprints.** Dragging *into* a
+> merged cell is therefore NOT an expansion — the focus cell's own footprint already covers
+> it — while a rectangle whose edge cuts one is. Without that rule every drag that ended in a
+> merged cell would have announced "selection expanded".
+
 Two rules inside it:
 
 1. **Cell index to grid column.** A row's `cells[i]` is not grid column `i` once any cell carries
@@ -1457,6 +1486,45 @@ mergeTableCellRange(anchorCellNode, focusCellNode) -> EditResult
 - `tableSelectionAnchorNodes` is the same query TBL-08 needs; ship one, not two.
 - `expanded: true` tells the UI the rectangle grew, so it can say so rather than appearing to
   select more than was dragged.
+
+> **BUILT, and this list was wrong in three places.** What `crates/casual-doc-wasm` now
+> exports:
+>
+> ```
+> tableCellRange(anchorNode, focusNode) -> CellRangeInfo
+>         // { found, table, firstRow, lastRow, firstColumn, lastColumn,
+>         //   rowCount, columnCount, cells, expanded, reason }
+> tableCellRangeRects(anchorNode, focusNode) -> Vec<i32>          // stride 5, as today
+> tableCellRangeAnchorNodes(anchorNode, focusNode) -> Vec<String>
+> tableSelectionAnchorNodes(node, mode) -> Vec<String>            // "row"|"column"|"table"
+> mergeTableCellRange(anchorNode, focusNode) -> EditResult
+> setCellShadingRange(anchorNode, focusNode, r, g, b, clear) -> EditResult
+> setCellVerticalAlignRange(anchorNode, focusNode, align) -> EditResult
+> setCellBorderRange(anchorNode, focusNode, edges, r, g, b, sizeEighthPoints) -> EditResult
+> ```
+>
+> 1. **There is no `setTableCellSelection`.** A setter implies the engine stores the
+>    selection, which contradicts §4.3.1's own "derived on demand, never stored" — and the
+>    webapp already owns `tableSelection`. It is a **query**, `tableCellRange`, and it
+>    never throws: a refusal comes back as `found === false` plus a `reason`, because the
+>    caller is a pointer-move handler.
+> 2. **"Ship one, not two" is false.** TBL-08's query is the row/column/table selection, whose
+>    caller holds a mode string and no second endpoint, so `tableSelectionAnchorNodes(node,
+>    mode)` and `tableCellRangeAnchorNodes(anchor, focus)` are genuinely two questions. They
+>    share one implementation (`table_selection_anchors`, which `tableSelectionRects` already
+>    computed and threw away), which is the part that mattered.
+> 3. **The three cell-format range methods are new here, and §1.16's "after which the UI
+>    loops" was the wrong shape.** A UI loop over N cells is N edits and therefore N undo
+>    entries. Each method applies one `SetTableCellProperties` per cell inside a **single
+>    action**, so a block format is **one** undo entry. That is what closes `docs/109`
+>    HF-219, and it composes out of the existing op set — no new operation (ADR-030 I2).
+>
+> `mergeTableCellRange` did call `merge_regular_table_selection` unchanged, exactly as this
+> section predicted: the rectangle was the only missing piece.
+>
+> The facade's own refusal for a 1x1 rectangle reuses `merge_table_selection`'s existing
+> sentence, *"select at least two cells to merge"*, rather than minting a second wording of
+> one sentence — the divergence TBL-05 removed.
 
 #### 4.3.3 The UI
 
@@ -1556,6 +1624,22 @@ deliberately out of scope, and D-3 must not be called done on touch until it exi
 5. `Shift+Right` within one cell still extends a **text** selection. *Mutation:* make the cell
    switch unconditional and this must go red — the guard that stops D-3 from breaking ordinary
    typing.
+
+> **BUILT: the engine and facade halves of 2, 3 and 4 are proven; 1 and 5 are the UI lane's.**
+> Items 1 and 5 are pointer and keyboard gestures in `webapp/`, so they stay with D-1/the
+> gesture lane. The guards that landed with the engine, each driven red:
+>
+> | Guard | Mutation | Red output |
+> | --- | --- | --- |
+> | `expansion_iterates_to_a_fixed_point_across_a_vertical_and_a_horizontal_merge` (selection crate) | `break` after one round of growth | rectangle came out `(1, 2, 0, 3)` instead of `(0, 2, 0, 3)` — row 0 lost |
+> | the same, plus two horizontal guards | `let span = 1` (ignore `gridSpan`) | 3 guards red, including `a_horizontal_merge_at_the_edge_pulls_the_whole_merged_cell_in` |
+> | the same, plus two vertical guards | never join a `vMerge` continuation to the cell above | 3 guards red; a merged cell counted as 2 cells instead of 1 |
+> | `shading_a_two_cell_range_shades_both_cells_in_the_document` and `shading_a_selected_row_shades_every_cell_of_that_row` (facade) | `.take(1)` on the range's cells — literally HF-219 | `left: [Some(RgbColor …), None, None]` against three shaded cells |
+> | `merging_a_cell_rectangle_spans_it_and_undoes_as_one_action` | pass the row mode's rectangle (`c0 = 0`, `c1 = cols - 1`) | row 0 came out with 1 cell instead of 3 — the whole row merged, not the rectangle |
+>
+> Item 2's assertion is deliberately *"both cells are shaded in the document"*, read by walking
+> the table's cells for their `shading.fill` — not "the range reported two entries", and not
+> read back through the facade query under test.
 
 ---
 

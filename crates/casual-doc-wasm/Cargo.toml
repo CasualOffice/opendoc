@@ -37,6 +37,11 @@ casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 casual-doc-render.workspace = true
+# The rectangular cell selection and its merged-cell expansion live in the
+# selection crate, beside `TextSelection`: OT will have to transform a cell
+# selection exactly as it transforms a text one (ADR-033), and a facade-local
+# copy would guarantee a second implementation of one rule.
+casual-doc-selection.workspace = true
 # Unicode word segmentation for double-click word selection.
 unicode-segmentation.workspace = true
 # The rich-clipboard payload crosses the JS boundary as one JSON string (bridge,
