@@ -9,6 +9,33 @@ function within(v, lo, hi, tol) {
   return v >= lo - tol && v <= hi + tol;
 }
 
+/** The largest share of a band a boundary zone may take from either side.
+ *
+ *  The zone is a PIXEL distance, and a row is not. A table inserted at default
+ *  height paints rows about 18px tall, so a flat ±5px zone claimed ten of those
+ *  eighteen pixels and a click in the bottom quarter of an ordinary row started
+ *  a resize instead of placing the caret. Word and ONLYOFFICE both keep the grab
+ *  zone small relative to the band — ONLYOFFICE at ±3px absolute — and a
+ *  proportion holds that property at every row height instead of trading a big
+ *  row's forgiveness for a small row's correctness.
+ *
+ *  At 0.2 the zone is at most 40% of the shorter band it separates, so the
+ *  middle 60% of even the shortest row always belongs to the text in it. */
+const MAX_BAND_SHARE = 0.2;
+
+/** `tol`, reduced so the zone cannot swallow either band this boundary closes.
+ *
+ *  `edges[i].height`/`.width` is the painted extent of the band the boundary
+ *  closes (the one before it); the band after it is the next boundary's own
+ *  extent. The trailing outer edge has no band after it. Complexity O(1). */
+function clampedTolerance(edges, index, tol, extent) {
+  const before = edges[index]?.[extent];
+  const after = edges[index + 1]?.[extent];
+  const shorter = Math.min(before ?? Infinity, after ?? Infinity);
+  if (!Number.isFinite(shorter) || shorter <= 0) return tol;
+  return Math.min(tol, shorter * MAX_BAND_SHARE);
+}
+
 /**
  * The table boundary within tolerance of the page-local point `(x, y)`, or
  * `null`. Coordinates and tolerances are twips.
@@ -33,13 +60,15 @@ export function boundaryAt(tables, x, y, tolX, tolY) {
   for (const table of tables ?? []) {
     if (!within(x, table.x, table.x + table.w, tolX)) continue;
     if (!within(y, table.y, table.y + table.h, tolY)) continue;
-    for (const edge of table.rowEdges ?? []) {
-      if (Math.abs(y - edge.y) > tolY) continue;
+    const rowEdges = table.rowEdges ?? [];
+    for (const [index, edge] of rowEdges.entries()) {
+      if (Math.abs(y - edge.y) > clampedTolerance(rowEdges, index, tolY, "height")) continue;
       if (!within(x, edge.x, edge.x + edge.w, tolX)) continue;
       return { kind: "row", table, ...edge };
     }
-    for (const edge of table.colEdges ?? []) {
-      if (Math.abs(x - edge.x) > tolX) continue;
+    const colEdges = table.colEdges ?? [];
+    for (const [index, edge] of colEdges.entries()) {
+      if (Math.abs(x - edge.x) > clampedTolerance(colEdges, index, tolX, "width")) continue;
       if (!within(y, edge.y, edge.y + edge.h, tolY)) continue;
       return { kind: "column", table, ...edge };
     }
