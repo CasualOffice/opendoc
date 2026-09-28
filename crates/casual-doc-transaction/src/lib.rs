@@ -457,11 +457,15 @@ pub struct RevisionLog {
     max_groups: usize,
 }
 
-/// Undo groups retained before the oldest is dropped whole.
+/// Undo steps retained before the oldest is dropped whole.
 ///
 /// This is a bound on *steps*, not on commits, and deliberately so: a 60-character word is
 /// one step and sixty commits, so bounding commits would silently shorten undo depth for
 /// anyone who types — a behaviour change disguised as a constant.
+///
+/// It replaces `casual-doc-wasm`'s `MAX_HISTORY_ENTRIES`, which capped an undo `Vec` and a
+/// redo `Vec` at 256 each. [`RevisionLog::enforce_bounds`] reproduces both caps, plus a
+/// ceiling on the settled groups that accumulate behind them.
 pub const DEFAULT_MAX_UNDO_GROUPS: usize = 256;
 
 impl Default for RevisionLog {
@@ -563,7 +567,7 @@ impl RevisionLog {
         };
         self.head = revision;
         self.commits.push_back(commit);
-        self.enforce_group_bound();
+        self.enforce_bounds();
         Ok(self.commits.back().expect("just pushed"))
     }
 
@@ -586,25 +590,68 @@ impl RevisionLog {
         id
     }
 
-    /// Drops whole groups off the front until at most `max_groups` remain.
-    fn enforce_group_bound(&mut self) {
-        let mut groups = 0_usize;
-        let mut seen: Option<GroupId> = None;
-        for commit in &self.commits {
-            if seen != Some(commit.group) {
-                groups += 1;
-                seen = Some(commit.group);
-            }
-        }
-        while groups > self.max_groups {
-            let Some(oldest) = self.commits.front().map(Commit::group) else {
+    /// Keeps the log bounded, in whole groups, from the front.
+    ///
+    /// Three caps, and the first two are the two `Vec`s the flat stacks used to be:
+    ///
+    /// 1. at most `max_groups` **undoable** steps;
+    /// 2. at most `max_groups` **redoable** steps;
+    /// 3. at most `2 * max_groups` groups in total, which is what stops the *settled*
+    ///    groups — an edit and the undo that reverted it, both now unreachable — from
+    ///    accumulating for ever behind an undo/redo ping-pong.
+    ///
+    /// A single total-group cap was tried first and is wrong: undoing appends a commit, so
+    /// a log capped at 256 groups evicts an undoable edit off the front on every undo, and
+    /// the user runs out of undo steps about half way through the history they were
+    /// promised. `history_drops_the_oldest_action_at_the_bound` catches exactly that.
+    ///
+    /// Cost is O(groups²) in the worst case and O(groups) in practice — one append can only
+    /// put the log one over any cap — and `groups` is bounded by the caps themselves, so
+    /// this is O(1) in document size (`107` §4 B1).
+    fn enforce_bounds(&mut self) {
+        while self.undo_depth() > self.max_groups
+            || self.redo_depth() > self.max_groups
+            || self.group_count() > self.max_groups.saturating_mul(2)
+        {
+            if !self.drop_oldest_group() {
                 return;
-            };
-            while self.commits.front().is_some_and(|c| c.group == oldest) {
-                self.commits.pop_front();
             }
-            groups -= 1;
         }
+    }
+
+    /// Drops the oldest group whole, then any leading undo/redo group left dangling by it —
+    /// a group whose target has just been evicted cancels nothing and can only mislead the
+    /// backward scans into cancelling a step the user can still reach.
+    ///
+    /// Returns whether anything was dropped, so the caller cannot spin on an empty log.
+    fn drop_oldest_group(&mut self) -> bool {
+        let Some(oldest) = self.commits.front().map(|commit| commit.group) else {
+            return false;
+        };
+        self.drop_front_group(oldest);
+        while let Some(front) = self.commits.front() {
+            if matches!(front.origin, Origin::Edit) {
+                break;
+            }
+            let dangling = front.group;
+            self.drop_front_group(dangling);
+        }
+        true
+    }
+
+    fn drop_front_group(&mut self, group: GroupId) {
+        while self
+            .commits
+            .front()
+            .is_some_and(|commit| commit.group == group)
+        {
+            self.commits.pop_front();
+        }
+    }
+
+    /// How many undo groups the log retains.
+    fn group_count(&self) -> usize {
+        self.groups_newest_first().count()
     }
 
     /// The group Undo would revert, if any.
@@ -614,17 +661,12 @@ impl RevisionLog {
     #[must_use]
     pub fn undo_target(&self) -> Option<GroupId> {
         let mut cancelled = 0_usize;
-        let mut seen: Option<GroupId> = None;
-        for commit in self.commits.iter().rev() {
-            if seen == Some(commit.group) {
-                continue;
-            }
-            seen = Some(commit.group);
-            match commit.origin {
+        for (group, origin) in self.groups_newest_first_with_id() {
+            match origin {
                 Origin::Undo { .. } => cancelled += 1,
                 Origin::Edit | Origin::Redo { .. } => {
                     if cancelled == 0 {
-                        return Some(commit.group);
+                        return Some(group);
                     }
                     cancelled -= 1;
                 }
@@ -641,17 +683,12 @@ impl RevisionLog {
     #[must_use]
     pub fn redo_target(&self) -> Option<GroupId> {
         let mut cancelled = 0_usize;
-        let mut seen: Option<GroupId> = None;
-        for commit in self.commits.iter().rev() {
-            if seen == Some(commit.group) {
-                continue;
-            }
-            seen = Some(commit.group);
-            match commit.origin {
+        for (group, origin) in self.groups_newest_first_with_id() {
+            match origin {
                 Origin::Redo { .. } => cancelled += 1,
                 Origin::Undo { .. } => {
                     if cancelled == 0 {
-                        return Some(commit.group);
+                        return Some(group);
                     }
                     cancelled -= 1;
                 }
@@ -659,6 +696,68 @@ impl RevisionLog {
             }
         }
         None
+    }
+
+    /// How many user actions Undo can still reverse.
+    ///
+    /// The same backward scan as [`undo_target`](Self::undo_target), counted rather than
+    /// stopped at the first hit. Bounded by the group bound, so O(1) in document size.
+    #[must_use]
+    pub fn undo_depth(&self) -> usize {
+        let mut cancelled = 0_usize;
+        let mut depth = 0_usize;
+        for origin in self.groups_newest_first() {
+            match origin {
+                Origin::Undo { .. } => cancelled += 1,
+                Origin::Edit | Origin::Redo { .. } => {
+                    if cancelled == 0 {
+                        depth += 1;
+                    } else {
+                        cancelled -= 1;
+                    }
+                }
+            }
+        }
+        depth
+    }
+
+    /// How many undone actions Redo can still re-apply.
+    #[must_use]
+    pub fn redo_depth(&self) -> usize {
+        let mut cancelled = 0_usize;
+        let mut depth = 0_usize;
+        for origin in self.groups_newest_first() {
+            match origin {
+                Origin::Redo { .. } => cancelled += 1,
+                Origin::Undo { .. } => {
+                    if cancelled == 0 {
+                        depth += 1;
+                    } else {
+                        cancelled -= 1;
+                    }
+                }
+                Origin::Edit => break,
+            }
+        }
+        depth
+    }
+
+    /// Each group and its origin, newest group first — the one walk the four history reads
+    /// share, so the "a group is a run of commits" rule has exactly one implementation.
+    fn groups_newest_first_with_id(&self) -> impl Iterator<Item = (GroupId, Origin)> + '_ {
+        let mut seen: Option<GroupId> = None;
+        self.commits.iter().rev().filter_map(move |commit| {
+            if seen == Some(commit.group) {
+                return None;
+            }
+            seen = Some(commit.group);
+            Some((commit.group, commit.origin))
+        })
+    }
+
+    /// Each group's origin, newest group first.
+    fn groups_newest_first(&self) -> impl Iterator<Item = Origin> + '_ {
+        self.groups_newest_first_with_id().map(|(_, origin)| origin)
     }
 
     /// The user-facing label of `group` — its newest commit's.
@@ -1076,6 +1175,57 @@ mod tests {
             log.commits().len(),
             6,
             "a five-commit run counts as ONE step against the bound"
+        );
+    }
+
+    /// Every retained step must actually undo.
+    ///
+    /// A single total-group cap passes the depth assertion above and still fails here,
+    /// because undoing APPENDS a group: at the cap, each undo evicts an undoable edit off
+    /// the front, and the user runs out of history about half way through what they were
+    /// promised. The bound therefore caps undoable steps, redoable steps and total groups
+    /// separately (see `enforce_bounds`).
+    #[test]
+    fn every_retained_step_still_undoes_at_the_bound() {
+        let (mut doc, nodes, mut ids) = document(1);
+        let bound = 3;
+        let mut log = RevisionLog::new(bound);
+        for index in 0..=bound {
+            let id = u128::try_from(index).expect("small");
+            let offset = u32::try_from(index).expect("small");
+            log.apply(
+                &mut doc,
+                &mut ids,
+                &typing(id, log.head(), nodes[0], offset, "x"),
+            )
+            .expect("edit applies");
+        }
+        assert_eq!(
+            log.undo_depth(),
+            bound,
+            "one action past the bound leaves exactly the bound undoable"
+        );
+        for step in 0..bound {
+            let group = log
+                .undo_target()
+                .unwrap_or_else(|| panic!("step {step} of {bound} must still be undoable"));
+            let undo = Transaction::new(
+                TransactionId::new(1_000 + u128::try_from(step).expect("small")),
+                log.head(),
+                "Typing",
+                log.inverse_of(group),
+            )
+            .with_origin(Origin::Undo { group });
+            log.apply(&mut doc, &mut ids, &undo).expect("undo applies");
+        }
+        assert_eq!(log.undo_depth(), 0, "every retained step was undone");
+        // One character survives: the action the bound evicted. That is the bound
+        // working — the oldest step is gone, not merely unreachable — and it is
+        // what a user of the flat stacks saw too.
+        assert_eq!(
+            text_of(&doc, nodes[0]),
+            "x",
+            "only the evicted action's text may remain"
         );
     }
 
