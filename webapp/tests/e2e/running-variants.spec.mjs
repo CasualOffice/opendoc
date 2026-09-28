@@ -6,7 +6,7 @@
 // header/footer reference. So turning one on for a document that has no such
 // variant shows an empty band until one is created — which is what Word does
 // too, and why the tests assert the FLAG rather than any painted output.
-import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode, expectNothingToUndo, MOD } from "./fixtures.mjs";
 
 async function runCommand(page, label) {
   await page.keyboard.press(`${MOD}+Shift+P`);
@@ -74,7 +74,7 @@ test("the toggles fail closed in Viewing", async ({ page, consoleErrors }) => {
   await expect(page.locator("#status")).toContainText("read-only");
   // Nothing changed and nothing entered history.
   expect(await commandLabelExists(page, "Different first page: off")).toBe(true);
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 
   expect(consoleErrors).toEqual([]);
 });

@@ -32,6 +32,7 @@ import {
   hostChrome,
   hostConfig,
   hostRegions,
+  reflectReviewModeAccess,
   parseWithheld,
   resolveCapabilities,
   resolveRegions,
@@ -339,4 +340,49 @@ test("`branding` is consulted: an embedded editor does not advertise us", () => 
     false,
     "`?can=-branding` did not reach the brand region",
   );
+});
+
+// ── The Viewing banner's "Switch to editing" offer ────────────────────────────
+
+test("the banner's editing offer is withdrawn wherever it could not be taken", () => {
+  // `reflectReviewModeAccess` disables a withheld MODE and says why, because a
+  // segment still tells the reader which of three modes they are in. The banner's
+  // offer is different in kind: it is an invitation, and an invitation that cannot
+  // be accepted is a dead control however politely it is greyed. It was withdrawn
+  // only for `readOnlyReason` — so a `preview` container, whose host withheld
+  // `edit` outright, offered to switch into an editing mode it can never enter.
+  const reflect = (mode, readOnlyReason = "") => {
+    const bannerEdit = { hidden: false };
+    const buttons = ["editing", "suggesting", "viewing"].map((name) => ({
+      dataset: { reviewMode: name },
+      disabled: false,
+      title: "",
+      removeAttribute() {
+        this.title = "";
+      },
+    }));
+    reflectReviewModeAccess({
+      buttons,
+      bannerEdit,
+      capabilities: resolveCapabilities({ mode, framed: true }),
+      readOnlyReason,
+      withheldReason: "withheld",
+    });
+    return { bannerEdit, buttons };
+  };
+
+  for (const mode of ["preview", "readonly", "viewer"]) {
+    assert.equal(reflect(mode).bannerEdit.hidden, true, `${mode} cannot switch to editing`);
+  }
+  for (const mode of ["edit", "owner", "standalone"]) {
+    assert.equal(reflect(mode).bannerEdit.hidden, false, `${mode} can, so the offer stands`);
+  }
+  // And the engine's refusal still outranks everything: the document itself cannot
+  // be edited, whatever the host granted.
+  assert.equal(reflect("owner", "This document is too large to edit").bannerEdit.hidden, true);
+  // The SEGMENTS are not removed in any of those cases — they are disabled with a
+  // reason, which is the distinction this test exists to hold apart.
+  const { buttons } = reflect("readonly");
+  assert.equal(buttons[0].disabled, true);
+  assert.equal(buttons[0].title, "withheld");
 });

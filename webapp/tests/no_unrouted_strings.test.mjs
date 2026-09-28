@@ -98,10 +98,16 @@ const CEILINGS = new Map([
   // option — `build-embed-docs --check` would fail the build, correctly. These two
   // numbers are ceilings like every other row: they may fall, never rise.
   ["docs.page.html", 0],
-  ["embedding.page.html", 193],
+  // 193 -> 174 and 65 -> 46: the region-description column of both generated
+  // tables now carries `data-i18n`, which is the work the note above defers to
+  // "whoever owns that generator" — done for the one column the two pages share,
+  // because five regions were being ADDED and a derived table that grows with the
+  // vocabulary would otherwise have had to raise a number that may only fall.
+  // MEASURED, both of them.
+  ["embedding.page.html", 174],
   ["fidelity.page.html", 0],
   ["index.page.html", 0],
-  ["playground.page.html", 65],
+  ["playground.page.html", 46],
   ["_partials/site-footer.html", 0],
   ["_partials/site-header.html", 1],
   // ---- The editor's scripts -------------------------------------------------

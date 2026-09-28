@@ -22,6 +22,7 @@ import {
   mirrorBlocks,
   setReviewMode,
   stableBox,
+  runPaletteCommand,
   MOD,
 } from "./fixtures.mjs";
 
@@ -459,18 +460,22 @@ test("Viewing mode refuses both commands, and says so", async ({ page, consoleEr
   await clickIntoFirstPage(page);
   const before = await mirrorBlocks(page);
   await setReviewMode(page, "viewing");
-  await openReferences(page);
 
-  // The buttons stay ENABLED — the document is open and there is a caret, which
-  // is what they require — and the refusal is the shared review-mode gate every
-  // other edit path answers to, spoken in the status line. A control that went
-  // quiet here would be the silent failure the house rule forbids.
-  for (const button of ["#refCaptionBtn", "#refCrossRefBtn"]) {
-    await page.locator(button).click();
+  // Through the PALETTE, because Viewing mode composes the References band away
+  // with the rest of the ribbon. The commands stay ENABLED — the document is open
+  // and there is a caret, which is what they require — and the refusal is the
+  // shared review-mode gate every other edit path answers to, spoken in the status
+  // line. A command that went quiet here would be the silent failure the house
+  // rule forbids, so `runPaletteCommand` asserts the row is enabled before it runs
+  // it, and a greyed row fails this test rather than passing it.
+  for (const [command, query] of [
+    ["reference.caption", "Insert caption"],
+    ["reference.crossReference", "Cross-reference"],
+  ]) {
+    await runPaletteCommand(page, command, query);
     await expect(page.locator("#status")).toHaveText(/viewing|editing/i);
     await expect(page.locator("#captionDialog")).toBeHidden();
     await expect(page.locator("#crossRefDialog")).toBeHidden();
-    await openReferences(page);
   }
   expect(await mirrorBlocks(page)).toEqual(before);
   expect(consoleErrors).toEqual([]);

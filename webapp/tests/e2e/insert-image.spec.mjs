@@ -1,4 +1,4 @@
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, expectNothingToUndo } from "./fixtures.mjs";
 
 // Dispatches a paste carrying a freshly-encoded PNG image file (a valid image the
 // browser can decode), as the OS clipboard yields for a copied image.
@@ -45,5 +45,5 @@ test("inserting a picture is blocked (read-only) in Viewing mode", async ({ page
   await clickIntoFirstPage(page);
   await pasteGeneratedImage(page);
   await expect(page.locator("#status")).toContainText("read-only");
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 });

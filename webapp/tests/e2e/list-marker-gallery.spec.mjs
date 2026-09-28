@@ -1,4 +1,11 @@
-import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  setReviewMode,
+  runPaletteCommand,
+} from "./fixtures.mjs";
 
 // Marker-format picker: the bullet and numbered buttons carry a ▾ split that
 // opens a small gallery of bullet glyphs / number formats. Picking one changes
@@ -91,12 +98,17 @@ test("the marker-format gallery is blocked in Viewing mode", async ({
 
   await setReviewMode(page, "viewing");
 
+  // Through the PALETTE: Viewing mode composes the Home band away, so the
+  // gallery's TRIGGER is not on screen. The palette row is generated from the same
+  // gallery cell and runs the same `applyListFormatCommand`, so the refusal still
+  // comes from the shared gate rather than from an absent control.
   const menu = page.locator("#numberGalleryMenu");
-  await page.locator("#numberedListMenuBtn").click();
-  await menu.locator('[data-spec="lowerLetter"]').click();
+  await runPaletteCommand(page, "paragraph.listFormat.lowerLetter", "Numbering format");
 
-  // Read-only: the status reports it and the format is unchanged (still decimal).
+  // Read-only: the status reports it and the format is unchanged (still decimal),
+  // read from the gallery once Editing — and the ribbon with it — is back.
   await expect(page.locator("#status")).toContainText("read-only");
+  await setReviewMode(page, "editing");
   await page.locator("#numberedListMenuBtn").click();
   await expect(menu.locator('[data-spec="decimal"]')).toHaveAttribute("aria-checked", "true");
   await expect(menu.locator('[data-spec="lowerLetter"]')).toHaveAttribute(

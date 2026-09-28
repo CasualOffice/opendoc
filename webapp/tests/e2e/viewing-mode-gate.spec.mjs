@@ -13,6 +13,8 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  expectNothingToUndo,
+  runAppMenuCommand,
   MOD,
 } from "./fixtures.mjs";
 
@@ -94,25 +96,78 @@ test("Viewing mode is read-only: typing, deletion, paste, formatting, and table 
   await expect(page.locator("#findStatus")).toHaveText("No match");
   await page.keyboard.press("Escape");
 
-  // 4) Toolbar formatting is blocked. Select a word first (selection works in
-  // Viewing — see below), then Bold reports read-only instead of applying.
+  // 4) Formatting is blocked — driven from the KEYBOARD, because Viewing mode
+  // composes the ribbon away and ⌘B is the route a reader still has. This is the
+  // point of the whole gate: the refusal is at `blockMutationInViewing()`, the
+  // one choke point every mutation route funnels through, and NOT at a button
+  // being absent or disabled. Select a word first (selection works in Viewing —
+  // see below), then Bold reports read-only instead of applying.
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   for (let i = 0; i < 4; i++) await page.keyboard.press("Shift+ArrowRight");
-  await page.locator("#tabHome").click();
-  await page.locator("#bold").click();
+  await page.keyboard.press(`${MOD}+b`);
   await expectReadOnlyBlocked(page);
   expect(await wordCount(page)).toBe(before);
+  // Asked HERE and not only at the end, because neither assertion above can fail
+  // on its own for a refused Bold: the status line still carries the previous
+  // refusal, and bolding a word changes no word count. Proven by mutation —
+  // removing `blockMutationInViewing()` from `runToolbarEdit` alone leaves both
+  // green and only this goes red.
+  await expectNothingToUndo(page);
+  await clickIntoFirstPage(page);
 
-  // 5) Table insertion is blocked: the caret never lands in a table, so the
-  // contextual Table tab stays disabled.
-  await page.locator('[data-tab="insert"]').click();
-  await page.locator("#insertTableBtn").click();
-  await expect(page.locator("#insertTableMenu")).toBeVisible();
-  await page.locator('.gc[data-r="2"][data-c="2"]').click();
+  // 5) Table insertion is blocked, from the Insert MENU — the other axis a
+  // reader keeps. The picker never opens: a dialog-opening insert refuses before
+  // it offers a choice, the way Symbol, Emoji, Field and Drop cap do, so nobody
+  // is led into picking a size that cannot be applied.
+  await runAppMenuCommand(page, "insert", "insert.table");
+  await expect(page.locator("#insertTableMenu")).toBeHidden();
   await expectReadOnlyBlocked(page);
-  await expect(page.locator("#tabTable")).toBeDisabled();
   expect(await wordCount(page)).toBe(before);
+  // And nothing above entered history — asked of the Edit menu, since the Home
+  // band that carried `#undoBtn` is not on screen in Viewing.
+  await expectNothingToUndo(page);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("Viewing mode composes the editing chrome away, and leaving it puts everything back", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The owner's ask: "on readonly view .. we dont need full toolbar". Google Docs
+  // collapses its toolbar in Viewing mode, and a ribbon of controls that all
+  // refuse is worse than no ribbon — it advertises eight bands of capability the
+  // reader does not have.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  // Leave a NON-DEFAULT band selected, because restoring the default would prove
+  // nothing: Home carries `aria-selected="true"` in the markup.
+  await page.locator('[data-tab="layout"]').click();
+  await expect(page.locator("#tabLayout")).toHaveAttribute("aria-selected", "true");
+
+  await setReviewMode(page, "viewing");
+  await expect(page.locator(".ribbon")).toBeHidden();
+  await expect(page.locator(".ribbon-nav")).toBeHidden();
+  await expect(page.locator("#panelLayout")).toBeHidden();
+  // A reader is never left with zero navigation axes: withholding the ribbon
+  // reveals the menu bar, which is where File ▸ Print lives.
+  await expect(page.locator("#appMenuBar")).toBeVisible();
+  await expect(page.locator(".footer")).toBeVisible();
+  await expect(page.locator("#reviewModeControl")).toBeVisible();
+
+  // The floating selection toolbar goes with the ribbon: it offers formatting and
+  // nothing else, so a selection in Viewing raises no format bar.
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator("#selToolbar")).toBeHidden();
+
+  // Leaving restores EXACTLY what was there, the active band included.
+  await setReviewMode(page, "editing");
+  await expect(page.locator(".ribbon")).toBeVisible();
+  await expect(page.locator("#tabLayout")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#panelLayout")).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
 });

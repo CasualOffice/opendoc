@@ -18,7 +18,7 @@
 // `style_tokens.test.mjs` and `no_unrouted_strings.test.mjs` already do.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -28,6 +28,19 @@ import { applyRegions, bandElements, regionClass } from "../src/chrome_regions.m
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const editor = readFileSync(join(WEBAPP, "editor.html"), "utf8");
 const css = readFileSync(join(WEBAPP, "src", "style.css"), "utf8");
+// Four of the regions name chrome the editor CREATES rather than declares: the
+// ruler strip, the caret and selection rects, the right-click menu and the object
+// outline and handles are all built in script, because they are positioned over a
+// document that has not been laid out when the page is parsed. They are no less
+// real, and a typo in one of their class names would be exactly the "a name that
+// matches nothing takes nothing away" failure this file exists for — so the
+// corpus the markup check searches is the page PLUS the modules that build it.
+const sources =
+  editor +
+  readdirSync(join(WEBAPP, "src"))
+    .filter((f) => /\.m?js$/.test(f))
+    .map((f) => readFileSync(join(WEBAPP, "src", f), "utf8"))
+    .join("\n");
 
 /** What each region is expected to reach in the markup, as the selector the
  *  stylesheet uses. Declared here rather than in the module because the module
@@ -36,6 +49,17 @@ const css = readFileSync(join(WEBAPP, "src", "style.css"), "utf8");
 const EXPECTED = Object.freeze({
   brand: ['class="brand"'],
   title: ['class="document-title-row"'],
+  // Both halves of the document-state cluster, which straddles the header's two
+  // rows: the state and compatibility chips beside the title, and Document
+  // properties beside Settings.
+  state: ['class="controls-doc"', 'id="propertiesBtn"'],
+  // The four inside the work area, built in script (see `sources` above). Each is
+  // named by the class the stylesheet removes AND the code creates, so the three
+  // halves — vocabulary, rule, and the element itself — cannot drift apart.
+  ruler: ['class="ruler"'],
+  caret: ['class="caret"', 'class="highlight"'],
+  context: ['class="editor-context-menu"'],
+  objects: ['class="object-outline"', 'class="object-handle"', 'class="object-bar-actions"'],
   menu: ['id="appMenuBar"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
@@ -49,7 +73,7 @@ const EXPECTED = Object.freeze({
     'id="railVersions"',
     'id="versionPreviewBanner"',
   ],
-  status: ['class="footer"'],
+  status: ['class="footer"', 'id="statusToast"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],
   selection: ['id="selToolbar"'],
@@ -68,7 +92,17 @@ test("every region names something that exists in editor.html", () => {
     const expected = EXPECTED[id];
     assert.ok(expected, `${id} has no expected selector, so this guard cannot check it`);
     for (const needle of expected) {
-      if (!editor.includes(needle)) missing.push(`${id} -> ${needle}`);
+      // An id is declared in the markup and nowhere else, so it is matched
+      // literally. A CLASS may be written as an attribute, assigned as part of a
+      // longer `className`, or passed as the `kind` argument the overlay builds
+      // its rects from — so it is matched as a whole token inside any quoted
+      // string in our own source. Loose enough to accept all three spellings,
+      // tight enough that renaming the class without renaming the region fails.
+      const cls = needle.match(/^class="([^"]+)"$/)?.[1];
+      const found = cls
+        ? new RegExp(`"[^"]*\\b${cls}\\b[^"]*"`).test(sources)
+        : sources.includes(needle);
+      if (!found) missing.push(`${id} -> ${needle}`);
     }
   }
   assert.deepEqual(
@@ -144,6 +178,29 @@ test("the menu bar survives the ribbon being withheld, or reading chrome has no 
   // the rule above would otherwise win by specificity.
   assert.match(css, /body\.chrome-no-menu\.ribbon-mode #appMenuBar,/);
   assert.match(css, /body\.chrome-no-menu #appMenuPopover \{\s*display: none !important;/);
+});
+
+test("the top bar collapses exactly when every region it paints is withheld", () => {
+  // A `preview` container composes ALL chrome away and still paid 58px for the
+  // header strip, because `header.bar` is a box with its own height rather than a
+  // container of regions. The rule that collapses it names the regions inside the
+  // bar — so this derives that same set FROM THE MARKUP and refuses a mismatch in
+  // either direction. Adding a control to the header without giving it a region
+  // fails here rather than silently re-inflating the strip for a host that asked
+  // for no chrome; dropping a region out of the conjunction fails here too, which
+  // would collapse the bar over chrome the host still wanted.
+  const bar = editor.slice(editor.indexOf('<header class="bar">'), editor.indexOf("</header>"));
+  assert.ok(bar.length > 0, "editor.html no longer has a <header class=\"bar\">");
+  const inBar = Object.entries(EXPECTED)
+    .filter(([, needles]) => needles.some((needle) => bar.includes(needle)))
+    .map(([id]) => id);
+  const rule = css.match(/body((?:\.chrome-no-[\w-]+)+)\s*\n?\s*\.bar \{/);
+  assert.ok(rule, "no rule collapses .bar when its regions are withheld");
+  const named = rule[1]
+    .split(".chrome-no-")
+    .filter(Boolean)
+    .map((name) => name.replace(/-/g, "."));
+  assert.deepEqual(named.sort(), inBar.sort());
 });
 
 test("applying a region set toggles a class for every region, both ways", () => {

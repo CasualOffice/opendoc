@@ -10,6 +10,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  runPaletteCommand,
 } from "./fixtures.mjs";
 
 const commentCard = (page) =>
@@ -90,8 +91,12 @@ test("adding a comment is blocked in read-only Viewing mode", async ({
   await page.keyboard.press("Shift+End");
 
   // Viewing is fully read-only: the add-comment mutation fails closed with the
-  // read-only status and no comment card is created.
-  await page.locator("#selComment").click();
+  // read-only status and no comment card is created. Reached from the PALETTE,
+  // because the floating selection toolbar that carried `#selComment` is composed
+  // away in Viewing along with the rest of the editing chrome — the command is
+  // the same `openReviewComposer`, and it is the SUBMIT that has to be refused,
+  // which is the whole point of a choke point rather than a hidden button.
+  await runPaletteCommand(page, "review.comment", "Add comment");
   await submitComposer(page, "Should be blocked");
   await expect(page.locator("#status")).toContainText("read-only");
   await expect(commentCard(page)).toHaveCount(0);

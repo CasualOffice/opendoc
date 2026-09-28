@@ -33,6 +33,8 @@ import {
   setReviewMode,
   openAppMenu,
   openCommandPalette,
+  expectNothingToUndo,
+  runAppMenuCommand,
 } from "./fixtures.mjs";
 
 /** The collapsed caret's rounded on-screen x, from the overlay the editor draws
@@ -266,15 +268,19 @@ test("Viewing mode refuses both direct field inserts and charges nothing to hist
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   await setReviewMode(page, "viewing");
-  await openInsertTab(page);
 
-  for (const selector of ["#insertPageNumberBtn", "#insertDateBtn"]) {
-    await page.locator(selector).click();
+  // Driven from the Insert MENU, not the band: Viewing mode composes the ribbon
+  // away, and the menu is the axis a reader keeps. The rows stay ENABLED — they
+  // require a document and a caret, which is what they have — and the refusal is
+  // the shared `blockMutationInViewing()` gate speaking in the status line, which
+  // is the guarantee this test exists for. A row that went grey here would be
+  // proving the button, not the choke point.
+  for (const command of ["insert.field.page", "insert.field.date"]) {
+    await runAppMenuCommand(page, "insert", command);
     await expect(page.locator("#status")).toContainText("read-only");
   }
 
-  await page.locator("#tabHome").click();
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 
   expect(consoleErrors).toEqual([]);
 });
