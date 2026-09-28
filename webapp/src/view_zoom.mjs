@@ -57,12 +57,21 @@ export function zoomActionActive(action, { mode, factor }) {
  *  The 0.5% tolerance keeps a page that fits to within a subpixel at 100%
  *  rather than flipping it into a fit mode nobody asked for.
  *
+ *  And there is a FLOOR, because fitting is only an improvement while the result
+ *  can be read. A phone viewport fits a Letter page at about 31%, and the first
+ *  version of this shipped exactly that: a postage stamp of a document where the
+ *  defect had at least left readable text to pan across. Below the floor the
+ *  page stays at full size and the reader scrolls — which is what Word for the
+ *  web does too: it fits the window, and its zoom does not go under 50%.
+ *
  *  Complexity: O(1).
  */
+export const FIT_ON_OPEN_FLOOR = 0.5;
+
 export function openingZoomMode(fitFactor, current) {
   const untouched = current.mode === "custom" && Math.abs(current.factor - 1) < 1e-6;
   if (!untouched) return current.mode;
-  return fitFactor < 0.995 ? "fit-width" : "custom";
+  return fitFactor < 0.995 && fitFactor >= FIT_ON_OPEN_FLOOR ? "fit-width" : "custom";
 }
 
 /** Wires the View band's zoom controls.

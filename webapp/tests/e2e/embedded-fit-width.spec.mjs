@@ -87,3 +87,17 @@ test("a full-size window is left at 100%, and a chosen zoom is never overridden"
   await page.setViewportSize({ width: 900, height: 760 });
   await expect(page.locator("#zoom")).toHaveValue("150%");
 });
+
+test("a phone is left readable rather than fitted to a postage stamp", async ({ page }) => {
+  // The floor on the rule. A 390px viewport fits a Letter page at about 31%,
+  // which is not a document anybody can read — worse than the clipping it would
+  // be curing. Below `FIT_ON_OPEN_FLOOR` the page stays at full size and the
+  // reader pans, which is also where Word for the web's own zoom stops.
+  const frame = await mountNarrow(page, 390);
+  const seen = await overflow(frame);
+  expect(
+    seen.zoom,
+    `a ${Math.round(seen.viewportWidth)}px viewport was fitted to ${seen.zoom}, which is ` +
+      "smaller than anything can be read at",
+  ).toBe("100%");
+});
