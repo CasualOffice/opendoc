@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Cerrar el esquema",
   "outlinePanel.outline": "Esquema",
   "pageSetup.dimensions": "{width} × {height} pulg",
+  "object.cropHint": "Arrastra los bordes para recortar",
   "pageSetup.sectionNumber": "Sección {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 in",
   "pageSetupMenu.appliesSectionCanBe": "Se aplica a esta sección y se puede deshacer.",

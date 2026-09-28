@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Fermer le plan",
   "outlinePanel.outline": "Plan",
   "pageSetup.dimensions": "{width} × {height} po",
+  "object.cropHint": "Faites glisser les bords pour rogner",
   "pageSetup.sectionNumber": "Section {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 po",
   "pageSetupMenu.appliesSectionCanBe": "S’applique à cette section et peut être annulé.",

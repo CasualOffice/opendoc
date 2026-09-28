@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "रूपरेखा बंद करें",
   "outlinePanel.outline": "रूपरेखा",
   "pageSetup.dimensions": "{width} × {height} इंच",
+  "object.cropHint": "काटने के लिए किनारों को खींचें",
   "pageSetup.sectionNumber": "खंड {number}",
   "pageSetupMenu.8271169": "8.27 × 11.69 इंच",
   "pageSetupMenu.appliesSectionCanBe": "यह इस अनुभाग पर लागू होता है और पूर्ववत किया जा सकता है।",

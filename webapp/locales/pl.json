@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Zamknij konspekt",
   "outlinePanel.outline": "Konspekt",
   "pageSetup.dimensions": "{width} × {height} cala",
+  "object.cropHint": "Przeciągnij krawędzie, aby przyciąć",
   "pageSetup.sectionNumber": "Sekcja {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 cala",
   "pageSetupMenu.appliesSectionCanBe": "Dotyczy tej sekcji i można to cofnąć.",

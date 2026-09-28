@@ -277,7 +277,13 @@ test("every css-owned row says something style.css actually says", () => {
  *  makes this list the complete set of them, mechanically. */
 function interactiveSelectors() {
   const out = new Set();
-  for (const match of css.matchAll(/([^{}]+)\{([^}]*pointer-events\s*:\s*auto[^}]*)\}/g)) {
+  // The declaration block may contain no brace of its own, which is what makes
+  // the match a LEAF rule. Without that the capture ran straight past an
+  // at-rule's opening brace and reported `@media (pointer: coarse)` as the
+  // selector — so an element made interactive inside any media query was
+  // invisible to this guard, named as its at-rule and matched by no row. The
+  // touch-only move pad is the first one; the blind spot was not.
+  for (const match of css.matchAll(/([^{}]+)\{([^{}]*pointer-events\s*:\s*auto[^{}]*)\}/g)) {
     // Strip any comment that ran into the selector text, then split the list.
     const selectors = match[1].replace(/\/\*[\s\S]*?\*\//g, "").split(",");
     for (const raw of selectors) {

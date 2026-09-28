@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Đóng cấu trúc",
   "outlinePanel.outline": "Dàn ý",
   "pageSetup.dimensions": "{width} × {height} inch",
+  "object.cropHint": "Kéo các cạnh để cắt",
   "pageSetup.sectionNumber": "Phần {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 inch",
   "pageSetupMenu.appliesSectionCanBe": "Áp dụng cho phần này và có thể hoàn tác.",

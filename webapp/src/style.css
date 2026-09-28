@@ -6612,6 +6612,64 @@ body.is-format-painting .page-wrap * {
 .overlay .object-handle[data-handle="3"],
 .overlay .object-handle[data-handle="7"] { cursor: ew-resize; }
 
+/* The move pad over a selected, movable object: invisible, and there purely so
+ * the object's body carries `touch-action: none` the way its grips already do.
+ * Without it the browser claims a finger drag for scrolling at touch-start and
+ * the move never begins.
+ *
+ * It carries NO `z-index`, deliberately, and is painted before the grips: a
+ * positioned element at `z-index: auto` is hit-tested in DOM order, so the
+ * grips stay on top. Lifting the pad to `z-index: 1` put it over the half of
+ * each grip that overlaps the object, and an edge drag resized nothing because
+ * the pad answered the press — caught by the margin-snap guard. */
+.overlay .object-move-pad {
+  position: absolute;
+  background: transparent;
+  pointer-events: none;
+  touch-action: none;
+}
+
+/* The pad is INERT unless the primary pointer is coarse, and that is not a
+ * nicety — a pad that takes mouse presses is a sheet of glass over the object.
+ * The page's own hit-test is what resolves a double-click into a group, a
+ * right-click into the context menu and a click into the right nested object,
+ * and an element over the canvas intercepts all of it: with `pointer-events:
+ * auto` everywhere, four nested-object specs and three object-command ones
+ * failed, most of them by timing out on a click that could not reach the page.
+ * A mouse has that hit-test to fall through to. A finger does not — its gesture
+ * is gone at touch-start — so the pad is live exactly where the fallback is not.
+ * Same query the touch-target rules already key on. */
+@media (pointer: coarse) {
+  .overlay .object-move-pad {
+    pointer-events: auto;
+    cursor: move;
+  }
+}
+
+/* Alignment guides (Word's green / Docs' blue): the line the dragged object has
+ * been pulled onto, drawn across the whole page so the relationship is visible
+ * rather than inferred. Host chrome only — it never commits anything, and it
+ * exists only while a pointer is down. */
+.overlay .object-align-guide {
+  position: absolute;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
+}
+.overlay .object-align-guide[hidden] { display: none; }
+.overlay .object-align-guide.is-vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+}
+.overlay .object-align-guide.is-horizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+  margin-top: -0.5px;
+}
+
 /* Live drag-resize preview outline (host chrome; the op commits once on release). */
 .overlay .object-resize-preview {
   position: absolute;

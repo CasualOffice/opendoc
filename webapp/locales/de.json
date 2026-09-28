@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Gliederung schließen",
   "outlinePanel.outline": "Gliederung",
   "pageSetup.dimensions": "{width} × {height} Zoll",
+  "object.cropHint": "Ränder ziehen zum Zuschneiden",
   "pageSetup.sectionNumber": "Abschnitt {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 Zoll",
   "pageSetupMenu.appliesSectionCanBe": "Gilt für diesen Abschnitt und kann rückgängig gemacht werden.",

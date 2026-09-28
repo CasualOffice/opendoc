@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "關閉大綱",
   "outlinePanel.outline": "大綱",
   "pageSetup.dimensions": "{width} × {height} 英吋",
+  "object.cropHint": "拖曳邊緣裁剪",
   "pageSetup.sectionNumber": "第 {number} 節",
   "pageSetupMenu.8271169": "8.27 × 11.69 英吋",
   "pageSetupMenu.appliesSectionCanBe": "套用於本節，且可復原。",
