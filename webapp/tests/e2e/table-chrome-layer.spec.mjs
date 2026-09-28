@@ -162,7 +162,6 @@ test("a column boundary on a table the caret is not in moves the border, keeping
   const cell = await local(page, ".overlay .cell-outline");
   await leaveTable(page);
 
-  const box = await stableBox(page.locator(".page-wrap .page").first());
   const found = await findBoundary(page, "table-column-boundary", {
     x0: cell.x + cell.w - 10,
     y0: cell.y + cell.h / 2,
@@ -175,7 +174,15 @@ test("a column boundary on a table the caret is not in moves the border, keeping
 
   // The table's own painted width, from the engine's table selection rects — an
   // independent geometry path from the one the drag uses.
+  //
+  // Every viewport coordinate below is taken from a FRESH sheet box, and that is
+  // not caution: selecting the contextual Table tab swaps the ribbon band, which
+  // is a different height, so the sheet moves under the pointer. Reusing one box
+  // across the tab switch put the drag 20-odd px off the border and the gesture
+  // never started — which looked exactly like a broken zone.
+  const sheet = () => stableBox(page.locator(".page-wrap .page").first());
   const tableWidth = async () => {
+    const box = await sheet();
     await page.mouse.click(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h / 2);
     await expect(page.locator("#tabTable")).toBeEnabled();
     await page.locator("#tabTable").click();
@@ -192,7 +199,11 @@ test("a column boundary on a table the caret is not in moves the border, keeping
   const widthBefore = await tableWidth();
   await leaveTable(page);
 
+  const box = await sheet();
   await page.mouse.move(box.x + found.x, box.y + found.y);
+  await expect
+    .poll(() => pointerTarget(page), { message: "the column boundary under the pointer" })
+    .toBe("table-column-boundary");
   await page.mouse.down();
   await page.mouse.move(box.x + found.x + 40, box.y + found.y, { steps: 6 });
   await expect(page.locator(".overlay .table-col-resize-preview")).toHaveCount(1);

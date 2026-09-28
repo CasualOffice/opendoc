@@ -39,11 +39,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const E2E = join(HERE, "e2e");
 
 /** A `keyboard.press`/`down`/`up` argument that is a STRING LITERAL naming a
- *  platform modifier. The modifier must be a whole token — `Alt+ArrowLeft` is a
- *  hit, and a key named `"Control"` on its own (a bare modifier keydown, which is
- *  platform-neutral) is not. */
+ *  PLATFORM-DEPENDENT modifier. The modifier must be a whole token, and a key
+ *  named `"Control"` on its own (a bare modifier keydown) is not a hit.
+ *
+ *  Meta and Control only. `Alt` and `Shift` used to be listed here too, and that
+ *  was wrong in a way worth writing down: `matchesShortcut` resolves exactly one
+ *  glyph against the platform — `⌘`, to Command on Apple and Control elsewhere —
+ *  and compares `event.altKey`/`event.shiftKey` verbatim on both. Option IS Alt.
+ *  So `"Alt+Shift+ArrowDown"` fires identically everywhere, and flagging it sent
+ *  a lane looking for a portability bug in a chord that has none. A chord is
+ *  platform-dependent when it names Meta or Control, and not otherwise. */
 const HARDCODED_CHORD =
-  /keyboard\.(?:press|down|up)\(\s*(["'])((?:[^"']*\+)?(?:Meta|Control|Alt)\+[^"']*)\1/g;
+  /keyboard\.(?:press|down|up)\(\s*(["'])((?:[^"']*\+)?(?:Meta|Control)\+[^"']*)\1/g;
 
 /** Spec files allowed to name a modifier outright, and the exact chords they may
  *  name. A chord belongs here only when it is genuinely ONE platform's chord

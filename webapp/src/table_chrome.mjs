@@ -143,10 +143,18 @@ export function createTableChrome(host) {
   }
 
   return {
-    /** Drops the per-page cache. Called from the one repaint choke point, which
-     *  is the only thing that can move a boundary. */
+    /** Drops the per-page cache and puts an in-flight drag's guide back.
+     *
+     *  Called from the one overlay repaint. The cache half is because a repaint is
+     *  the only thing that can move a boundary. The guide half is because that
+     *  repaint destroys and rebuilds every overlay child, so ANY repaint arriving
+     *  mid-drag — and one does, the moment the press moves focus back to the
+     *  editing surface from a ribbon control — deleted the guide and left the drag
+     *  running invisibly. Re-appending is right rather than suppressing the
+     *  repaint: the repaint has work of its own to do. */
     invalidate() {
       cache = new Map();
+      if (drag && !drag.guide.isConnected) drag.page.overlay?.appendChild(drag.guide);
     },
 
     /** The armed boundary under a pointer event, plus the reason when a boundary

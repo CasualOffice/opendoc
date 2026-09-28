@@ -4073,11 +4073,12 @@ function replaceMisspelling(flagged, word) {
  *  `drawSelection` and is not paid for on every scroll. */
 function paintOverlayLayer() {
   if (!doc) return;
-  // A repaint is the ONLY thing that can move a table boundary, so it is the only
-  // place the chrome layer's per-page geometry cache has to be dropped. That makes
-  // a pointer-move a cache lookup rather than an engine query (`docs/141` D-1).
-  tableChrome.invalidate();
   clearOverlays();
+  // A repaint is the only thing that can move a table boundary, so it is the only
+  // place the chrome layer's geometry cache must be dropped — which is what makes a
+  // pointer-move a lookup rather than an engine query. AFTER `clearOverlays`,
+  // because the same call puts an in-flight drag's guide back (`docs/141` D-1).
+  tableChrome.invalidate();
   paintReviewMarkers();
   paintChecklistMarkers();
   spellChecker.paint();
@@ -7062,10 +7063,9 @@ const TABLE_COMMAND_HOST = {
 };
 
 /** Sizes the caret's table row or column by one grid step — the keyboard twin of
- *  the boundary drag (`docs/141` D-1 §4.1.6), bound to Alt+Shift+Arrow.
- *
- *  The caret's page comes from the `cellRect` the chrome layer needs anyway, so
- *  this costs one page-scoped geometry call and no `tableInfo` walk. */
+ *  the boundary drag (`docs/141` D-1 §4.1.6), bound to Alt+Shift+Arrow. The page
+ *  comes from the `cellRect` the chrome layer needs anyway, so this costs one
+ *  page-scoped geometry call and no `tableInfo` walk. */
 function stepTableBand(axis, sign) {
   if (!doc || !selection) return false;
   const cell = doc.cellRect(selection.focus.node); // [page, x, y, w, h] or []
@@ -7074,8 +7074,7 @@ function stepTableBand(axis, sign) {
     return true;
   }
   const page = pages[cell[0] - 1];
-  if (!page) return false;
-  return tableChrome.stepFromCaret(page, selection.focus.node, cell, axis, sign);
+  return page ? tableChrome.stepFromCaret(page, selection.focus.node, cell, axis, sign) : false;
 }
 
 const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
