@@ -3,13 +3,24 @@
 **Status:** Accepted for the local storage layer, and **implemented and reachable** for H1 and
 H2: the store and restore coordinator in `webapp/src/version_history.mjs` (schema v3 in
 `webapp/src/drafts.mjs`), and the interface over them in `webapp/src/version_panel.mjs` and
-`webapp/src/version_policy.mjs`. H3 (diff), H4 (unified commits) and H5 (collaboration) remain
-proposed and are **not** support claims. Decisions this document left open about identity,
-retention and restore atomicity are settled in **ADR-038**; the ones the interface had to make
-— the panel's shape, its surfaces, the `history` chrome region, the restore confirmation and
-the read-only preview — are settled in **ADR-040**.
+`webapp/src/version_policy.mjs`.
 
-**Opened:** 2026-09-27. Storage layer landed 2026-09-28; the surface the same day.
+**H3 (diff) is implemented in the ENGINE and NOT YET REACHABLE.** `crates/casual-doc-diff/**`
+is the comparison and `crates/casual-doc-wasm/src/diff.rs` is the facade a host calls; the
+panel and overlay that would show it are a separate lane and are not built, so "Show changes"
+remains present and disabled with its reason (ADR-040). Nothing in §11 may be quoted as a
+shipped user-facing capability until that lane lands — SKILL §9.4, "built is not reachable".
+H4 (unified commits) and H5 (collaboration) remain proposed.
+
+Decisions this document left open about identity, retention and restore atomicity are settled
+in **ADR-038**; the ones the interface had to make — the panel's shape, its surfaces, the
+`history` chrome region, the restore confirmation and the read-only preview — are settled in
+**ADR-040**; the diff's matching algorithm, its vocabulary and where it runs are settled in
+**ADR-041**, which also **contradicts §11.2 step 2 of this document** (see the correction
+below).
+
+**Opened:** 2026-09-27. Storage layer landed 2026-09-28; the surface the same day; the diff
+engine and facade the same day.
 
 **Product requirements:** doc 139.
 
@@ -590,17 +601,63 @@ Output is a versioned `VersionDiff` sidecar:
 
 ### 11.2 Alignment pipeline
 
-1. Load bounded semantic projections or open isolated checkpoint sessions.
-2. Match stable `NodeId` identities when the states share the same retained lineage.
-3. Match unmatched structure by story, section, heading path, block kind, table topology,
-   and bounded content hashes.
-4. Diff paragraph inline trees with grapheme-aware text and mark/style runs.
-5. Diff structural/property objects by typed fields, not serialized JSON text.
-6. Detect moves only above a confidence threshold; otherwise report delete + insert.
-7. Produce explicit `not_compared`, `ambiguous_match`, or `missing_resource` findings.
-8. Sort changes by document order with deterministic tie-breaking.
+> **Correction, 2026-09-28 (ADR-041).** Step 2 as originally written — "match stable `NodeId`
+> identities when the states share the same retained lineage" — is **not implementable for a
+> checkpoint pair and was removed from the pipeline**, not merely skipped. A checkpoint pair is
+> two independent imports, and every id in this model (`NodeId` and every definition id that
+> wraps one) comes from `IdGenerator::new(config.id_namespace)`, a counter that restarts at one
+> per import. The consequence differs by format and is wrong either way:
+>
+> | Format | What id equality means across two checkpoints | What matching on it would do |
+> | --- | --- | --- |
+> | DOCX / ODT | both sides use namespace 1, so equal ids mean "the same ordinal in the parse walk" | misalign every block below the first insertion, confidently |
+> | Plain text | the namespace is a hash of the whole text (`casual_doc_io::text`), so the two sides share **no** id | report every paragraph as deleted and re-added |
+>
+> Two guards pin this: `node_ids_are_ordinal_across_two_parses_so_they_are_anchors_and_not_match_keys`
+> (DOCX) and `plain_text_checkpoints_share_no_node_ids_at_all` (text).
+>
+> Ids are still carried, as **anchors**: each record reports the id of the block on each side in
+> the `{node, start, end}` shape the review surface uses. Because a parse is deterministic, those
+> ids are the ids a preview session opened from the same checkpoint will have — the property that
+> makes them useless as match keys makes them reproducible as anchors. For a live document, whose
+> ids have moved on, the anchor's container `path` is the reliable half.
+>
+> The identities that DO survive two parses are the ones the source format writes, and the
+> pipeline uses each where it exists: a comment's `w16cid:durableId` (else `w14:paraId`), a
+> style's `w:name`, a bookmark's name, a media part's package path, and a header's semantic
+> position (section ordinal plus page type). A body paragraph's `w14:paraId` is **not** among
+> them — this engine reports it as a located attribute loss on save (FID-R-03) — so retaining it
+> would make a later diff materially better. That is now a recorded reason to retain it.
 
-Stable IDs improve alignment but are never assumed across independently imported files.
+As built:
+
+1. Project each document to a **hash forest**: one record per block (paragraph, table, row,
+   cell, content control, chunk) carrying hashes of its text, its formatting, its inline
+   objects, its tracked-change structure, and its whole subtree. A parent's subtree hash folds
+   its children's in order, so an identical subtree is settled by **one comparison**.
+2. Pair the two sides' **stories** — body, each header and footer by section ordinal and page
+   type, each note by ordinal, each comment by durable id — and skip any pair whose content
+   hash matches.
+3. Align each sibling list: common prefix/suffix trim, then **patience anchoring** (keys unique
+   on both sides, then the longest increasing subsequence of their pairings), then **Myers'
+   greedy O(ND) diff**. A region with no common key at all is reported wholesale in O(n)
+   rather than proved empty by Myers in O(n·(n+m)).
+4. Tell an edited block from a deletion plus an addition with a second pass of the **same**
+   aligner on a weaker key (the block kind): accepted outright where the correspondence is one
+   to one, and on a similarity threshold where the region is ragged.
+5. Diff a matched paragraph's text with the same aligner over **word tokens built from grapheme
+   clusters** — never splitting a cluster, and never reporting "kept the r" out of `brown` and
+   `red`.
+6. Name property differences by **reflecting the model type's own serde field names**
+   (`spacing.beforeTwips`, `runProperties[0].bold`), not by a hand-maintained list.
+7. Detect moves by a **hash join** on subtree hash, accepted only where the content is unique
+   on both sides; anything else is a deletion plus an insertion with an `ambiguous_match`
+   finding.
+8. Produce explicit `not_compared`, `ambiguous_match`, `missing_resource` and `truncated`
+   findings, aggregated by (code, construct) with a count.
+9. Sort changes by document order with deterministic tie-breaking on family and kind.
+
+**General tree edit distance (Zhang–Shasha and descendants) is rejected** — see §19.
 
 ### 11.3 Change record
 
@@ -636,6 +693,86 @@ The later **Create comparison document** command compiles a supported `VersionDi
 new document with tracked revision markup. Neither source changes. Unsupported diff records
 remain findings attached to the new document/session; they are not dropped. This is separate
 from ordinary preview and does not block VH-3.
+
+### 11.7 Families detected, and families deliberately not
+
+`docs/139` §9.2 lists what a diff must classify "where supported". This is where supported
+ends, and what a reader sees on the other side of that line. `VersionDiff.complete` is false
+whenever **any** finding is present, so the list on the right can never be quietly absorbed
+into "changed" (VH-009).
+
+Detected and typed:
+
+| Family | Kinds | Located by |
+| --- | --- | --- |
+| `block` | `insertion`, `deletion`, `move_from`/`move_to` | story + container path + node |
+| `text` | `insertion`, `deletion` | the above plus a UTF-8 byte range in the block's projected text |
+| `formatting` | `formatting` | typed field paths, per paragraph and per run |
+| `table` | `insertion`, `deletion`, `formatting` | table / row / cell path |
+| `object` | `property` | the paragraph that holds it |
+| `section` | `insertion`, `deletion`, `property` | section ordinal + typed field paths |
+| `definition` | `insertion`, `deletion`, `property` | styles by kind+name, bookmarks by name, the rest by field |
+| `resource` | `insertion`, `deletion`, `property` | media part name; `bytes` when the host supplies digests |
+| `comment` story content | the `text`/`block` families | the comment's durable id |
+| `review` | `property` | the paragraph whose pending markup differs |
+| `metadata` | `property` | typed field paths under `properties` |
+
+Deliberately not detected, and what a reader sees instead:
+
+| Not detected | What a reader sees |
+| --- | --- |
+| A move that also changed content | a deletion and an insertion, separately |
+| A move whose content is not unique on both sides | a deletion and an insertion, plus `ambiguous_match` |
+| What changed *inside* a drawing, embedded object, OMML subtree, chart or SmartArt | an `object` change located at its paragraph, plus `not_compared` for `inlineObject` |
+| Which numbering definition changed, and how | a `definition` change naming `numbering`/`abstractNumbering`, plus `not_compared` — numbering is keyed by parse-minted ids, so identity cannot be established |
+| What changed inside the theme's retained format scheme | a `definition` change naming `formatSchemeXml`, plus `not_compared` |
+| Media bytes replaced under the same part name, with no digests supplied | `missing_resource` for `mediaBytes` |
+| An exact alignment of a region whose keys are all duplicated and which exceeds the cell budget | that region wholesale, plus `ambiguous_match` |
+| An exact text diff of a paragraph past the token budget | the whole text replaced, plus `truncated` |
+| Changes past the record ceiling | the first N, plus `truncated` |
+| Layout differences — page count, where a line breaks | nothing; layout is not a document difference |
+| Per-change authorship | nothing; a snapshot pair carries no authorship (§11.5) |
+
+The diff reads the **final-with-markup** projection, which is what the editor shows (`docs/133`
+decision 1). A pending tracked change accepted between two versions therefore leaves the
+projected text identical — and is reported as a `review` change rather than missed, because
+every block also carries a hash of its tracked-change structure.
+
+### 11.8 What the panel lane should call
+
+The interface half of H3 is a separate lane. It needs nothing from the engine but this:
+
+```js
+import init, { beginVersionDiff } from "./pkg/casual_doc_wasm.js";
+
+const job = beginVersionDiff(olderBytes, newerBytes);   // no parsing yet
+let state = job.step(4000);                              // "parsing" | "working"
+// … drive from requestIdleCallback, exactly as background_measure.mjs does,
+//   converging on the block count that fits the frame budget;
+//   job.blocksProjected() / job.blocksTotal() drive a real progress bar
+//   (blocksTotal() is 0 until both sides are parsed — show an indeterminate
+//   bar until then rather than a bar that pretends to know);
+//   job.cancel() on panel close, on a new selection, or on Escape.
+const diff = JSON.parse(job.result());                   // once, when state === "complete"
+```
+
+- **The three comparison modes are all two byte arrays** (§9.1 of doc 139): previous-versus-
+  selected, selected-versus-current (pass the head checkpoint's bytes, which the store already
+  holds), or two chosen versions. No third entry point.
+- **`diff.changes` is already in document order** and each record already carries its family,
+  its kind, its anchors, its bounded excerpts and its typed field names. The panel should not
+  re-derive, re-sort or re-group by walking a document.
+- **Wording belongs to `version_policy.mjs`**, not to the engine: a record carries a family, a
+  kind and field names, never a sentence. That is ADR-040 §6 applied to the diff, and it is
+  what keeps nineteen locale catalogues in one place.
+- **Findings are a first-class part of the surface.** `diff.complete === false` with
+  `diff.findings` non-empty means the panel must say the comparison is incomplete and which
+  constructs it could not characterise. A panel that renders only `changes` republishes the
+  defect this design exists to avoid.
+- **Navigation** uses `right.path` for the live document and `right.node` plus
+  `start`/`end` for a preview session parsed from the same checkpoint (§11.2's correction).
+- `diff.schema` must be checked against the schema the panel knows; an unrecognised version is
+  refused rather than half-rendered.
 
 ## 12. Events and SDK surface
 
@@ -786,10 +923,21 @@ limits, never values above engine hard ceilings.
 
 ### H3 — Structural diff
 
-- semantic projection, alignment, typed diff families, findings;
-- Worker/background execution where possible;
-- panel/overlay navigation and accessibility;
-- current/previous/two-version comparison.
+- semantic projection, alignment, typed diff families, findings; **landed** —
+  `crates/casual-doc-diff/**` (§11.2 as built, §11.7 for the families and the explicit
+  not-detected list);
+- Worker/background execution where possible; **decided and landed as far as it can be** — the
+  engine is a budgeted, cancellable coroutine that holds no borrow, so it runs wherever the
+  host puts it. A Worker is **not possible from `webapp/` today**: there is no `new Worker`
+  anywhere in the tree, the wasm module is instantiated once on the main thread and holds the
+  live document, and sharing that memory needs `SharedArrayBuffer`, which needs COOP/COEP
+  headers GitHub Pages cannot send. A separate wasm instance in a worker needs no shared
+  memory, and the facade is shaped for it (bytes in, JSON out, no reference to the live
+  session), so that move is a `webapp/` change with no engine change;
+- panel/overlay navigation and accessibility; **NOT built** — a separate lane. §11.8 is the
+  contract it should code against, and "Show changes" stays disabled until it lands;
+- current/previous/two-version comparison; **landed** — all three are two byte arrays through
+  one entry point, `beginVersionDiff`.
 
 ### H4 — Unified durable commits
 
@@ -838,6 +986,26 @@ activation failure. Reopen must find either the complete old or complete restore
 - table merges, moved blocks, style inheritance, review markup, and resources;
 - deterministic ordering; cancellation; explicit unsupported findings;
 - mutation tests proving no family can disappear silently.
+
+**As built (2026-09-28).** 28 guards in `crates/casual-doc-diff/src/tests.rs` and 7 in
+`crates/casual-doc-wasm/src/diff.rs`. Every one asserts the **family and the location** of a
+change rather than a count, because a diff test that counts passes when the engine says
+"something changed" about the wrong thing — and `an_identical_pair_is_empty_and_complete` is
+the deliberate statement of the other trap, a diff test that passes because both inputs were
+the same.
+
+What this list still does not cover, and should when the corpus work lands: bidi and
+CJK/Indic text (only combining marks and emoji are guarded), table **merge** topology
+(`gridSpan`/`vMerge` are compared but not guarded), style **inheritance** (a `basedOn` change
+is a field difference, not a re-resolution), and the fidelity corpus run against real
+checkpoint pairs.
+
+Complexity is guarded by **doubling**, not by a clock:
+`rewriting_every_paragraph_costs_linear_work_not_quadratic` and
+`detecting_moves_in_a_reordered_body_costs_linear_work_not_quadratic` build documents of n and
+2n and assert the comparison counter roughly doubles. The first found a real quadratic while
+being written (a fully rewritten body shares no key and Myers was proving that in O(n·(n+m))),
+which is the argument for a doubling guard over a timing threshold in one sentence.
 
 ### Browser/storage
 
@@ -914,7 +1082,14 @@ may have no review markup.
    class split; the byte budget is the device-sensitive bound and a host can lower it.
 6. Whether DOCX/ODT ZIP checkpoints should ever receive outer compression.
 7. Canonical semantic projection format before CBOR is implemented.
-8. Structural matching algorithm and thresholds for moves/renames without stable IDs.
+8. ~~Structural matching algorithm and thresholds for moves/renames without stable IDs.~~
+   **Settled by ADR-041**: a Merkle hash forest, common prefix/suffix trim, patience anchoring
+   (unique common keys plus their longest increasing subsequence), Myers' greedy O(ND) diff,
+   a weak-key second pass for edited blocks, and a hash join for moves. General tree edit
+   distance is rejected. A move needs content unique on **both** sides; a pairing inside a
+   replace region is accepted outright when the correspondence is one to one and on a
+   similarity threshold when it is ragged. There are no stable IDs to match on at all — see
+   §11.2's correction.
 9. Which changes are attributable after commit compaction and how incompleteness is shown.
 10. Cross-device lineage and actor identity without a mandatory account/server.
 11. Whether history archives need encryption/signing independent of host storage.
