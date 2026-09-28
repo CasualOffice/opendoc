@@ -8108,7 +8108,7 @@ const REVIEW_SURFACE = [
   // Declared here rather than beside the new button for the reason the comment
   // above gives: a second wiring is free to drift in what it runs and in when it
   // is available.
-  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", reasonKey: "reviewMarginComment.addCommentOnSelectedText.label", run: () => openReviewComposer() },
+  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", reasonKey: "review.comment.needsRange", run: () => openReviewComposer() },
   // `requires: "comment"` — the caret is inside a commented range. Word and
   // ONLYOFFICE both target that comment rather than a sidebar selection, so a
   // reviewer never has to open a panel to resolve what they are reading.

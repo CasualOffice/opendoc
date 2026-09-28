@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "انتقال",
   "refTocBtn.contents": "المحتويات",
   "refUpdateFieldsBtn.updateFields": "تحديث الحقول",
+  "review.comment.needsRange": "حدد النص الذي تريد التعليق عليه",
   "reviewBulkActions.acceptAll": "قبول الكل",
   "reviewBulkActions.acceptAllChanges.title": "قبول كل التغييرات",
   "reviewBulkActions.rejectAll": "رفض الكل",

@@ -245,7 +245,11 @@ test("Insert ▸ Comment needs a range, says so, and opens the one composer", as
   // A caret is not a range, so the control is disabled — and a disabled control
   // has to SAY why, which for a button that takes no events means its title.
   await expect(button).toBeDisabled();
-  await expect(button).toHaveAttribute("title", /selection/i);
+  // The title must INSTRUCT, not describe. It used to carry the margin button's
+  // own label — "Add a comment on the selected text" — which says what the
+  // control does and leaves a reader who cannot click it none the wiser. A
+  // reason starts with the thing to do.
+  await expect(button).toHaveAttribute("title", /^select /i);
 
   // Select something and the same button comes live, from the REVIEW_SURFACE
   // rule the Review band's button reads — one precondition, not two.

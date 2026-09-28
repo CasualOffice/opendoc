@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "Перейти",
   "refTocBtn.contents": "Содержание",
   "refUpdateFieldsBtn.updateFields": "Обновить поля",
+  "review.comment.needsRange": "Выделите текст, который хотите прокомментировать",
   "reviewBulkActions.acceptAll": "Принять все",
   "reviewBulkActions.acceptAllChanges.title": "Принять все изменения",
   "reviewBulkActions.rejectAll": "Отклонить все",

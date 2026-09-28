@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "जाएँ",
   "refTocBtn.contents": "सामग्री",
   "refUpdateFieldsBtn.updateFields": "फ़ील्ड अद्यतन करें",
+  "review.comment.needsRange": "वह पाठ चुनें जिस पर आप टिप्पणी करना चाहते हैं",
   "reviewBulkActions.acceptAll": "सभी स्वीकारें",
   "reviewBulkActions.acceptAllChanges.title": "सभी बदलाव स्वीकारें",
   "reviewBulkActions.rejectAll": "सभी अस्वीकारें",

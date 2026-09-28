@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "Đến",
   "refTocBtn.contents": "Nội dung",
   "refUpdateFieldsBtn.updateFields": "Cập nhật trường",
+  "review.comment.needsRange": "Chọn văn bản bạn muốn nhận xét",
   "reviewBulkActions.acceptAll": "Chấp nhận tất cả",
   "reviewBulkActions.acceptAllChanges.title": "Chấp nhận mọi thay đổi",
   "reviewBulkActions.rejectAll": "Từ chối tất cả",

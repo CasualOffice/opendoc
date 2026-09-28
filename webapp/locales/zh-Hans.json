@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "转到",
   "refTocBtn.contents": "内容",
   "refUpdateFieldsBtn.updateFields": "更新域",
+  "review.comment.needsRange": "选择要评论的文本",
   "reviewBulkActions.acceptAll": "全部接受",
   "reviewBulkActions.acceptAllChanges.title": "接受所有更改",
   "reviewBulkActions.rejectAll": "全部拒绝",

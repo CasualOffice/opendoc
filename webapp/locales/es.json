@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "Ir a",
   "refTocBtn.contents": "Contenido",
   "refUpdateFieldsBtn.updateFields": "Actualizar campos",
+  "review.comment.needsRange": "Selecciona el texto que quieres comentar",
   "reviewBulkActions.acceptAll": "Aceptar todo",
   "reviewBulkActions.acceptAllChanges.title": "Aceptar todos los cambios",
   "reviewBulkActions.rejectAll": "Rechazar todo",

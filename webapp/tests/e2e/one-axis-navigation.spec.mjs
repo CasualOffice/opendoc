@@ -277,6 +277,11 @@ const VALUE_FAMILIES = [
   ["format.underline.", "#underlineMenuBtn", "the underline-style menu on the Home band"],
   ["paragraph.listFormat.", "#bulletListMenuBtn", "the bullet and numbering galleries on Home"],
   ["paragraph.spacing.", "#spacingBtn", "the line-and-paragraph-spacing menu on Home"],
+  // The same menu owns Add/Remove space before and after, as `#spaceBeforeToggle`
+  // and `#spaceAfterToggle` rows. They read as orphans only because the command
+  // family is spelled `paragraph.space.` where the presets are `paragraph.spacing.`
+  // — one letter, and the guard could not tell a real orphan from a naming seam.
+  ["paragraph.space.", "#spacingBtn", "Add/Remove space before and after, in the same menu"],
   ["style.", "#stylesTrigger", "the Styles gallery on the Home band"],
   ["view.zoom.", "#zoom", "the zoom control, on the View band and in the footer"],
   ["insert.field.", "#insertFieldBtn", "the field dialog, on both Insert and References"],

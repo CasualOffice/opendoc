@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "移動",
   "refTocBtn.contents": "内容",
   "refUpdateFieldsBtn.updateFields": "フィールドの更新",
+  "review.comment.needsRange": "コメントするテキストを選択してください",
   "reviewBulkActions.acceptAll": "すべて反映",
   "reviewBulkActions.acceptAllChanges.title": "すべての変更を反映",
   "reviewBulkActions.rejectAll": "すべて元に戻す",

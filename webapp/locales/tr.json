@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "Git",
   "refTocBtn.contents": "İçerik",
   "refUpdateFieldsBtn.updateFields": "Alanları güncelle",
+  "review.comment.needsRange": "Yorum yapmak istediğiniz metni seçin",
   "reviewBulkActions.acceptAll": "Tümünü kabul et",
   "reviewBulkActions.acceptAllChanges.title": "Tüm değişiklikleri kabul et",
   "reviewBulkActions.rejectAll": "Tümünü reddet",

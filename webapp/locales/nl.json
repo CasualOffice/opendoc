@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "Ga naar",
   "refTocBtn.contents": "Inhoud",
   "refUpdateFieldsBtn.updateFields": "Velden bijwerken",
+  "review.comment.needsRange": "Selecteer de tekst waarop je een opmerking wilt plaatsen",
   "reviewBulkActions.acceptAll": "Alles accepteren",
   "reviewBulkActions.acceptAllChanges.title": "Alle wijzigingen accepteren",
   "reviewBulkActions.rejectAll": "Alles afwijzen",

@@ -870,6 +870,7 @@
   "refGoToHeadingBtn.goTo": "이동",
   "refTocBtn.contents": "내용",
   "refUpdateFieldsBtn.updateFields": "필드 업데이트",
+  "review.comment.needsRange": "댓글을 달 텍스트를 선택하세요",
   "reviewBulkActions.acceptAll": "모두 적용",
   "reviewBulkActions.acceptAllChanges.title": "모든 변경 내용 적용",
   "reviewBulkActions.rejectAll": "모두 취소",
