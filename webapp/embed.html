@@ -328,9 +328,13 @@
         font-size: 0.7rem;
         word-break: break-word;
       }
+      /* No `min-height` on the stage itself: it used to hold 560px whether an
+         editor was in it or not, which is where most of the ~330px of empty grey
+         came from. The mounted editor asks for its own height below; the
+         placeholder asks for a much smaller one, so an unmounted panel is a
+         compact card rather than a screenful of nothing. */
       .embed-stage {
         padding: 0;
-        min-height: 560px;
         background: var(--paper);
         display: flex;
       }
@@ -355,6 +359,7 @@
          nobody reads the reason for. */
       .embed-idle {
         flex: 1 1 auto;
+        min-height: 240px;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -362,6 +367,18 @@
         gap: 10px;
         padding: 32px 24px;
         text-align: center;
+      }
+      /* THE DEFECT A SCREENSHOT CAUGHT, and it is the same one twice on this page.
+         The host sets `hidden` on the placeholder when it mounts and on the console
+         until it does — and a `display` declared in a class BEATS the user-agent
+         `[hidden]` rule. So the placeholder shared the stage with a running editor,
+         and a transport picker with a live "Run it" was on screen with nothing to
+         run it against. `playground.page.html` records the identical bug being
+         caught the same way on its first version; the rule belongs beside the
+         `display` that causes it. */
+      .embed-idle[hidden],
+      .embed-console[hidden] {
+        display: none;
       }
       .embed-idle-title {
         margin: 0;
