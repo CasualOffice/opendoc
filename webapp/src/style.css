@@ -197,6 +197,26 @@
   --h-tab: 28px;
   --h-rail-control: 50px;
   --h-footer: 30px;
+  /* The band above the footer that the status toast owns, and that a
+     narrow-screen DRAWER therefore may not extend into (`109` HF-233).
+     The toast is pinned to the viewport's bottom-start corner and a drawer is
+     pinned to the whole right-hand side, so below the drawer breakpoint the two
+     fixed surfaces share the bottom edge and nothing arbitrates between them —
+     the toast lands on the drawer's footer ACTION, which is the one thing there
+     that a reader has to be able to see and press. Reserving the band is the
+     arbitration, and it is one rule for every drawer rather than a z-index
+     argument per panel: the toast keeps the corner, the drawer stops above it.
+
+     Reserved UNCONDITIONALLY rather than only while a toast is up, because a
+     drawer that grew and shrank as announcements came and went would move the
+     control under the reader's finger — a jump is worse than 56px.
+
+     56px is three lines of `--fs-small` at 1.45 plus the card's own padding and
+     border, which is the tallest a refusal gets before it wraps past what a
+     transient card should carry at all. A toast taller than that still grows
+     upward over the drawer's LIST, which is scrollable content and not a
+     control; the guarantee the guard holds is about the footer action. */
+  --h-toast-band: 56px;
   /* The header is two bands now (see `.bar`): the document's title row over the
      navigation row. 26 + 28 + 5 + 4 of padding = 63. It was 58 while the two
      rows measured 24 + 28 + 9 = 61, so the chrome overflowed its own bar by 3px
@@ -8161,7 +8181,7 @@ body:not(.doc-loaded) .drop-title {
     z-index: var(--z-drawer);
     top: calc(var(--chrome-bottom) + 8px);
     right: 8px;
-    bottom: calc(var(--h-footer) + 8px);
+    bottom: calc(var(--h-footer) + 8px + var(--h-toast-band));
     width: min(340px, calc(100vw - 42px));
     max-width: none;
     margin: 0;
@@ -8173,7 +8193,7 @@ body:not(.doc-loaded) .drop-title {
     z-index: var(--z-drawer);
     top: calc(var(--chrome-bottom) + 8px);
     right: 8px;
-    bottom: calc(var(--h-footer) + 8px);
+    bottom: calc(var(--h-footer) + 8px + var(--h-toast-band));
     width: min(360px, calc(100vw - 42px));
     max-width: none;
     margin: 0;
@@ -8226,6 +8246,29 @@ body:not(.doc-loaded) .drop-title {
   }
 
   .controls .btn-label {
+    display: none;
+  }
+
+  /* The navigation rail joins the same rung: below this width it is glyphs, and
+     the name is carried by the `aria-label` and the tooltip every tile already
+     has (`109` HF-232). Word and Google Docs both drop a rail caption on a
+     narrow window, and this is the rung where this chrome ALREADY drops a
+     caption — one rule for the whole bar rather than a second breakpoint that
+     only the rail knows about.
+     `visibility` would keep the box; `display: none` is what actually returns
+     the width, and returning the width is the point.
+
+     WHAT THE DEFECT REALLY IS, measured rather than inherited. HF-232 was filed
+     as "the captions clip — the rail reads Outlin…, Commen…, Version…", and that
+     symptom is gone: the tile is `width: auto` now, so the caption no longer
+     ellipsises. It grows instead, and the growth is the harm — a tile is as wide
+     as the longest caption in the ACTIVE LOCALE, so the rail measures 66px in
+     English, 86px in Russian and 111px in Brazilian Portuguese, which at a 320px
+     viewport is 35% of the screen spent on four destinations that fit in 36px.
+     Measured in Chromium at 1280/640/390/320 across en, de, ru, vi, id and
+     pt-BR; the numbers are in `editor-narrow-chrome.spec.mjs`, which fails if a
+     caption comes back. */
+  .rail-btn > span:not(.ms) {
     display: none;
   }
 
