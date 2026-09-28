@@ -6625,9 +6625,25 @@ body.is-format-painting .page-wrap * {
 .overlay .object-move-pad {
   position: absolute;
   background: transparent;
-  pointer-events: auto;
+  pointer-events: none;
   touch-action: none;
-  cursor: move;
+}
+
+/* The pad is INERT unless the primary pointer is coarse, and that is not a
+ * nicety — a pad that takes mouse presses is a sheet of glass over the object.
+ * The page's own hit-test is what resolves a double-click into a group, a
+ * right-click into the context menu and a click into the right nested object,
+ * and an element over the canvas intercepts all of it: with `pointer-events:
+ * auto` everywhere, four nested-object specs and three object-command ones
+ * failed, most of them by timing out on a click that could not reach the page.
+ * A mouse has that hit-test to fall through to. A finger does not — its gesture
+ * is gone at touch-start — so the pad is live exactly where the fallback is not.
+ * Same query the touch-target rules already key on. */
+@media (pointer: coarse) {
+  .overlay .object-move-pad {
+    pointer-events: auto;
+    cursor: move;
+  }
 }
 
 /* Alignment guides (Word's green / Docs' blue): the line the dragged object has
