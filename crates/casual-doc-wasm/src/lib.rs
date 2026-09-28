@@ -113,6 +113,11 @@ use wasm_bindgen::prelude::*;
 
 mod window;
 
+// Floating-object position, grouping, z-order and transform. Its own module for
+// the same reason as `references`: one feature, one document walk per command,
+// and this file is already 40k lines and is owned by other lanes.
+mod objects;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
