@@ -124,6 +124,13 @@ const CEILINGS = new Map([
   ["fidelity.page.html", 0],
   ["index.page.html", 0],
   ["playground.page.html", 3],
+  // Still 0 after the footer gained the copyright line and the licence line
+  // (`© 2026 CasualOffice — developed by the CasualOffice Team` and `Apache-2.0
+  // · contributions welcome under the same licence`). RE-MEASURED with the
+  // scanner rather than assumed: both carry `data-i18n` keys with the English
+  // beside them, and both are translated in all eighteen catalogues in the same
+  // commit that routed them, so nothing about this ceiling moved. A zero that
+  // stays zero while the file grows is the ceiling working.
   ["_partials/site-footer.html", 0],
   ["_partials/site-header.html", 1],
   // ---- The editor's scripts -------------------------------------------------

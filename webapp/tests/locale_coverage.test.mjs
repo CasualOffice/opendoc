@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1234],
-  ["de", 1234],
-  ["es", 1234],
-  ["fr", 1234],
-  ["hi", 1234],
-  ["id", 1234],
-  ["it", 1234],
-  ["ja", 1234],
-  ["ko", 1234],
-  ["nl", 1234],
-  ["pl", 1234],
-  ["pt-BR", 1234],
-  ["ru", 1234],
-  ["tr", 1234],
-  ["uk", 1234],
-  ["vi", 1234],
-  ["zh-Hans", 1234],
-  ["zh-Hant", 1234],
+  ["ar", 1323],
+  ["de", 1323],
+  ["es", 1323],
+  ["fr", 1323],
+  ["hi", 1323],
+  ["id", 1323],
+  ["it", 1323],
+  ["ja", 1323],
+  ["ko", 1323],
+  ["nl", 1323],
+  ["pl", 1323],
+  ["pt-BR", 1323],
+  ["ru", 1323],
+  ["tr", 1323],
+  ["uk", 1323],
+  ["vi", 1323],
+  ["zh-Hans", 1323],
+  ["zh-Hant", 1323],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -197,7 +197,18 @@ const COVERAGE = new Map([
  *  same in every language and needs one form per locale instead of Arabic's six
  *  — a shape this catalogue already uses and one fewer way for eighteen
  *  catalogues to end up half-answered. MEASURED from the merged catalogues, not
- *  incremented by fifteen. */
+ *  incremented by fifteen.
+ *
+ *  1,234 -> 1,323 with the footer's authorship and licence lines. ONE of those
+ *  eighty-nine is this change: `site.footer.licence`, translated into all
+ *  eighteen languages in the commit that routed it, beside a re-translated
+ *  `site.footer.copyright` whose English changed to carry the copyright line.
+ *  The other EIGHTY-EIGHT were already translated and were never recorded: the
+ *  rows read 1,234 while the catalogues answered 1,322. That is the floor doing
+ *  the only thing a floor can -- it cannot notice work that was done -- and it
+ *  is why this row is RE-MEASURED here rather than incremented by one. Measured
+ *  on `HEAD~1` as well as on this tree, so the eighty-eight are demonstrably
+ *  pre-existing rather than something this change invented. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];
