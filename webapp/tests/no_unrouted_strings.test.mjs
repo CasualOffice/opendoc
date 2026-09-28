@@ -137,10 +137,17 @@ const CEILINGS = new Map([
   ["fidelity.page.html", 84],
   ["index.page.html", 157],
   // The shared header and footer, counted where they are AUTHORED. The generated
-  // `*.html` pages inline them, so counting those would charge the same fourteen
+  // `*.html` pages inline them, so counting those would charge the same sixteen
   // strings once per page and make one edit to a partial move four ceilings.
+  //
+  // The header measured 10 until Playground and Embedding joined the primary nav.
+  // Both pages had shipped with no nav entry of their own and borrowed `Docs` for
+  // their active state, so they answered 200 and could not be found from the site;
+  // `site_nav_reach.test.mjs` is the guard that fails the build when a page ships
+  // that way again. Two destinations are two more words here — the cheapest part
+  // of the fix.
   ["_partials/site-footer.html", 4],
-  ["_partials/site-header.html", 10],
+  ["_partials/site-header.html", 12],
   // ---- The editor's scripts -------------------------------------------------
   ["src/a11y_mirror.mjs", 1],
   ["src/blank_document.mjs", 8],
