@@ -368,21 +368,56 @@ test("the snippet reproduces the state it was generated from", async ({ page, co
   const configured = await painted(await liveFrame(page));
 
   const snippet = await page.locator('[data-snippet="element"]').textContent();
-  const src = decodeURIComponent(
-    snippet.match(/editor-src="([^"]+)"/)?.[1].replaceAll("&amp;", "&") ?? "",
-  );
+  const attribute = (name) => snippet.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+  const src = decodeURIComponent((attribute("editor-src") ?? "").replaceAll("&amp;", "&"));
   expect(src, `no editor-src in the snippet:\n${snippet}`).toBeTruthy();
   expect(snippet).toContain('mode="commentor"');
-  expect(src, "the snippet lost the capability the visitor withheld").toContain("can=-download");
-  expect(src, "the snippet lost the region the visitor withheld").toContain("chrome=-rail");
+  // AS ATTRIBUTES, which is the point: the element reads `can` and `chrome`, so a
+  // host expressing "commentor, but without download" never has to hand-write a
+  // query string. A snippet that pushed them back into `editor-src` would be
+  // teaching the shape those attributes exist to replace.
+  expect(attribute("can"), "the snippet lost the capability the visitor withheld").toBe("-download");
+  expect(attribute("chrome"), "the snippet lost the region the visitor withheld").toBe("-rail");
+  expect(src, "editor-src should carry only WHERE the editor is").not.toContain("can=");
 
+  // THE SNIPPET IS MOUNTED FOR REAL, as an element with those attributes, on a page
+  // that carries none of this state. That is what makes this test unable to pass
+  // while broken: the live frame beside it and the snippet are built from ONE
+  // state, so an earlier version of this guard went on agreeing with itself when a
+  // mutation dropped `can` — both halves became wrong together. Here the
+  // attributes are the ONLY channel: if the element ignored `can`, `editor-src` is
+  // a bare path and the pasted embed would resolve a full `commentor` and export
+  // happily.
   const pasted = await page.context().newPage();
-  await pasted.goto(`/${src.replace(/^\.\//, "")}`);
-  await waitForFramedEditor(pasted.mainFrame());
-  const reproduced = await painted(pasted.mainFrame());
-  // The permission travelled too, not just the chrome: an export is refused in the
-  // pasted editor, by the API, before dispatch.
-  const exported = await pasted.evaluate(async () => {
+  await pasted.goto("/embed.html"); // registers <opendoc-editor>; mounts nothing on load
+  const mounted = await pasted.evaluate(
+    async ([href, can, chrome, title]) => {
+      const element = document.createElement("opendoc-editor");
+      element.setAttribute("mode", "commentor");
+      element.setAttribute("can", can);
+      element.setAttribute("chrome", chrome);
+      element.setAttribute("editor-src", href);
+      element.setAttribute("frame-title", title);
+      document.body.append(element);
+      return { capabilities: element.capabilities, regions: element.regions };
+    },
+    [src, attribute("can"), attribute("chrome"), "pasted snippet"],
+  );
+  expect(mounted.capabilities, "the element granted a capability the attribute withheld").not.toContain(
+    "download",
+  );
+  expect(mounted.regions, "the element offered a region the attribute withheld").not.toContain("rail");
+
+  // Through the shadow root: the element keeps its frame there, and a Playwright
+  // CSS locator pierces an open one.
+  const pastedFrame = await (
+    await pasted.locator("opendoc-editor iframe").elementHandle()
+  ).contentFrame();
+  await waitForFramedEditor(pastedFrame);
+  const reproduced = await painted(pastedFrame);
+  // THE REFUSAL, not the absent button: the permission travelled, and the API
+  // refuses before dispatch so the engine is never even asked.
+  const exported = await pastedFrame.evaluate(async () => {
     const session = window.opendoc;
     return session ? await session.execute("file.export.docx") : null;
   });

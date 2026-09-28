@@ -376,22 +376,27 @@ test("everything under 'does not do yet' is still not done", () => {
   }
   assert.ok(REFUSAL_CODES.length > 0);
 
-  // No host-supplied document: three mount attributes, and none of them is one.
+  // No host-supplied document: every mount attribute configures what the editor
+  // IS, and none of them is a document or a byte array.
   const attributes = [
     ...read(join(WEBAPP, "src", "embed_element.mjs"))
       .match(/const MOUNT_ATTRIBUTES = Object\.freeze\(\[([^\]]*)\]\)/)[1]
       .matchAll(/"([\w-]+)"/g),
   ].map((m) => m[1]);
-  assert.deepEqual(attributes, ["mode", "editor-src", "frame-title"]);
+  assert.deepEqual(attributes, ["mode", "can", "chrome", "editor-src", "frame-title"]);
+  for (const name of attributes) {
+    assert.ok(
+      !/(doc|file|src-doc|content|bytes)/.test(name) || name === "editor-src",
+      `"${name}" looks like a document input, so the page must stop saying there is none`,
+    );
+  }
 
-  // No host capability list: the only override that moves anything is autosave.
+  // The per-capability list is NOT a gap any more, so nothing here claims it is —
+  // and this is the assertion that says so: `can` really narrows a role.
   const commentor = resolveCapabilities({ mode: "commentor", framed: true });
-  const withPrintWithheld = resolveCapabilities({ mode: "commentor", framed: true, print: false });
-  assert.deepEqual(
-    [...withPrintWithheld].sort(),
-    [...commentor].sort(),
-    "a per-capability override now works, so the page must stop saying it does not",
-  );
+  const narrowed = resolveCapabilities({ mode: "commentor", framed: true, withhold: "-download" });
+  assert.ok(commentor.has("download"), "commentor no longer grants download");
+  assert.ok(!narrowed.has("download"), "a `can` list no longer narrows a role");
   assert.ok(resolveCapabilities({ mode: "readonly", autosave: true }).has("autosave"));
 
   // No reading or preview chrome: both roles still resolve to the same mode, and
@@ -599,7 +604,19 @@ test("the refusal the page shows is one the validator really emits", () => {
   // And it carries the three things a refusal has to carry to be actionable.
   assert.match(panel.code, /measures \d+\.\d+:1/, "no measured ratio");
   assert.match(panel.code, /must clear 4\.5:1/, "no floor");
-  assert.match(panel.code, /#[0-9a-f]{6} would pass/, "no value that would work");
+  // A value that would work, NAMED AGAINST THE TOKEN THE HOST WROTE. The fourth
+  // thing, and the one that used to be missing: the number alone is ambiguous
+  // between the two ends of a pair, and a host reading "#484848 would pass" after
+  // a sentence naming two colours has to guess which one it is about.
+  assert.match(panel.code, /You set --[\w-]+: #[0-9a-f]{6} there would pass/, "no value that would work");
+  for (const line of panel.code.split("\n")) {
+    const named = line.match(/You set (--[\w-]+):/)?.[1];
+    if (!named) continue;
+    assert.ok(
+      ["--accent", "--accent-ink", "--muted"].includes(named),
+      `the panel tells a host to change ${named}, which this brand.json never sets`,
+    );
+  }
 });
 
 test("the configuration the page shows is the committed example, values intact", () => {

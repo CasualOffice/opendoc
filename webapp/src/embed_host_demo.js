@@ -41,8 +41,26 @@ const EDITOR_SRC = "./editor.html";
  *  interesting case — a mode that is neither fully open nor fully closed. */
 const DEFAULT_ROLE = "commentor";
 
-for (const panel of document.querySelectorAll("[data-embed]")) {
+const panels = [...document.querySelectorAll("[data-embed]")];
+
+for (const panel of panels) {
   wirePanel(panel);
+}
+
+// The header strip: DIGITS ONLY, from the authority and from the page's own
+// structure. Two of these are facts about `capabilities.mjs` and two are facts
+// about this page — how many times it mounts the editor, and how many transports
+// each mount offers — counted rather than typed, because a number typed into a
+// page is a claim about someone else's code (`docs/99` §9.1). The words beside
+// them live in the markup, so this module still puts no English on screen.
+setStat("roles", ROLES.length);
+setStat("capabilities", CAPABILITIES.length);
+setStat("mounts", panels.length);
+setStat("transports", document.querySelector("[data-transport]")?.options.length ?? 0);
+
+function setStat(name, value) {
+  const node = document.querySelector(`[data-stat="${name}"]`);
+  if (node) node.textContent = String(value);
 }
 
 /** One panel: a role picker, a mount/release pair, a readout and a stage. Both
@@ -51,6 +69,7 @@ for (const panel of document.querySelectorAll("[data-embed]")) {
 function wirePanel(panel) {
   const kind = panel.dataset.embed;
   const select = panel.querySelector("[data-role-select]");
+  const withholdBox = panel.querySelector("[data-withhold]");
   const mountBtn = panel.querySelector("[data-mount]");
   const releaseBtn = panel.querySelector("[data-release]");
   const stage = panel.querySelector("[data-stage]");
@@ -67,38 +86,60 @@ function wirePanel(panel) {
   // The readout is shown before anything is mounted, and that is deliberate: a
   // host deciding which role to hand out should be able to see what each one
   // grants without paying 100 MB to find out.
-  render(panel, resolveFor(select.value));
+  reflect();
 
-  select.addEventListener("change", () => {
-    render(panel, resolveFor(select.value));
-    // A live embed is REMOUNTED rather than retuned. The mode is resolved before
-    // the frame's first navigation, so changing it on a running editor would be
-    // a permission granted after the document was already on screen.
-    if (stage.querySelector("[data-live]")) mount();
-  });
+  for (const control of [select, withholdBox]) {
+    control?.addEventListener("change", () => {
+      reflect();
+      // A live embed is REMOUNTED rather than retuned. Both the mode and the
+      // withhold list are resolved before the frame's first navigation, so
+      // changing either on a running editor would be a permission decided after
+      // the document was already on screen.
+      if (stage.querySelector("[data-live]")) mount();
+    });
+  }
 
   mountBtn.addEventListener("click", mount);
   releaseBtn.addEventListener("click", release);
 
+  /** The host's two inputs. `can` is null rather than `""` when nothing is
+   *  withheld: an empty list and no list are the same decision, and writing the
+   *  empty one into a URL or an attribute would teach a host to carry it. */
+  function asked() {
+    const withheld = withholdBox?.checked ? `-${withholdBox.value}` : null;
+    return { mode: select.value, can: withheld };
+  }
+
+  /** Paints the readout and the code panel from the CONTROLS, without mounting
+   *  anything. */
+  function reflect() {
+    const request = asked();
+    render(panel, resolveFor(request));
+    writeSource(panel, kind, request);
+  }
+
   function mount() {
     release();
-    const role = select.value;
-    const live = kind === "element" ? mountElement(role) : mountIframe(role);
+    const request = asked();
+    const live = kind === "element" ? mountElement(request) : mountIframe(request);
     live.dataset.live = "true";
     idle.hidden = true;
     stage.append(live);
     releaseBtn.disabled = false;
-    render(panel, resolveFor(role));
+    reflect();
     void wireConsole(panel);
   }
 
-  /** The custom element's own path: the host sets `mode` and nothing else, and
-   *  the element resolves, sandboxes and reports. The readout is taken from the
-   *  element's event rather than recomputed here — if the page and the element
+  /** The custom element's own path: the host DECLARES the configuration and the
+   *  element resolves, sandboxes and reports. `can` is an attribute here, which
+   *  is the whole difference from the panel above — `mountIframe` has to build
+   *  the same list into a query string by hand. The readout is taken from the
+   *  element's event rather than recomputed here: if the page and the element
    *  disagreed, the page would be hiding it. */
-  function mountElement(role) {
+  function mountElement({ mode, can }) {
     const element = document.createElement("opendoc-editor");
-    element.setAttribute("mode", role);
+    element.setAttribute("mode", mode);
+    if (can) element.setAttribute("can", can);
     element.setAttribute("editor-src", EDITOR_SRC);
     element.setAttribute("frame-title", panel.dataset.frameTitle ?? "");
     element.addEventListener("opendoc-capabilities", (event) => {
@@ -113,17 +154,14 @@ function wirePanel(panel) {
 
   /** What a host writes with no package at all — and why they should not have
    *  to. Every line below is a decision the element already made: put the mode
-   *  in the URL before the frame is attached, derive the sandbox from the
-   *  capability set, and give the frame an accessible name. */
-  function mountIframe(role) {
-    const url = new URL(EDITOR_SRC, document.baseURI);
-    url.searchParams.set("mode", role);
-    const resolved = resolveFor(role);
+   *  and the withhold list in the URL before the frame is attached, derive the
+   *  sandbox from the capability set, and give the frame an accessible name. */
+  function mountIframe(request) {
     const frame = document.createElement("iframe");
-    frame.setAttribute("sandbox", resolved.sandbox.join(" "));
+    frame.setAttribute("sandbox", resolveFor(request).sandbox.join(" "));
     frame.setAttribute("allow", "clipboard-read; clipboard-write");
     frame.title = panel.dataset.frameTitle ?? "";
-    frame.src = url.href;
+    frame.src = editorUrl(request).href;
     return frame;
   }
 
@@ -150,15 +188,65 @@ function wirePanel(panel) {
   }
 }
 
-/** The capability set, review mode and sandbox for a role, as an embed would
- *  see them: `framed: true`, because every embed on this page is framed. */
-function resolveFor(role) {
-  const capabilities = resolveCapabilities({ mode: role, framed: true });
+/** The capability set, review mode and sandbox for a host's request, as an embed
+ *  would see them: `framed: true`, because every embed on this page is framed.
+ *
+ *  `can` goes to the same `resolveCapabilities` the element and the editor page
+ *  both call, so the readout cannot describe a narrowing the frame did not get. */
+function resolveFor({ mode, can }) {
+  const capabilities = resolveCapabilities({ mode, framed: true, withhold: can });
   return {
     capabilities,
     editingMode: editingModeFor(capabilities),
     sandbox: sandboxTokensFor(capabilities),
   };
+}
+
+/** The URL a hand-wiring host has to build. One function, used both to mount the
+ *  raw iframe and to print what that host wrote — a panel showing a URL it did
+ *  not navigate to would be the page's own version of the drift it is about. */
+function editorUrl({ mode, can }) {
+  const url = new URL(EDITOR_SRC, document.baseURI);
+  url.searchParams.set("mode", mode);
+  if (can) url.searchParams.set("can", can);
+  return url;
+}
+
+/**
+ * Prints the code THIS host writes, for this panel's mounting style.
+ *
+ * The two panels differ in exactly one thing and it was the hardest thing on the
+ * page to see. So each one shows its own source, generated from the same request
+ * that mounts it: a URL and a hand-derived sandbox on one side, and the markup on
+ * the other. `can="-download"` beside `?can=-download` is the whole argument for
+ * the element in two lines.
+ *
+ * No English: both strings are code, the way the event log is an event name and
+ * its own JSON. Complexity: O(1).
+ */
+function writeSource(panel, kind, request) {
+  const out = panel.querySelector("[data-wrote]");
+  if (!out) return;
+  const title = panel.dataset.frameTitle ?? "";
+  if (kind === "element") {
+    out.textContent = [
+      "<opendoc-editor",
+      `  mode="${request.mode}"`,
+      ...(request.can ? [`  can="${request.can}"`] : []),
+      `  editor-src=${JSON.stringify(EDITOR_SRC)}`,
+      `  frame-title=${JSON.stringify(title)}`,
+      "></opendoc-editor>",
+    ].join("\n");
+    return;
+  }
+  const url = editorUrl(request);
+  out.textContent = [
+    "<iframe",
+    `  src=${JSON.stringify(`${EDITOR_SRC}${url.search}`)}`,
+    `  sandbox=${JSON.stringify(resolveFor(request).sandbox.join(" "))}`,
+    `  title=${JSON.stringify(title)}`,
+    "></iframe>",
+  ].join("\n");
 }
 
 /** Paints a panel's readout.
@@ -169,6 +257,11 @@ function resolveFor(role) {
 function render(panel, { capabilities, editingMode, sandbox }) {
   panel.querySelector("[data-editing-mode]").textContent = editingMode;
   panel.querySelector("[data-sandbox]").textContent = [...sandbox].join(" ");
+  // Digits into the middle of a sentence the MARKUP owns, the same contract the
+  // playground's readout holds: "6 of 9 capabilities" is three nodes and this
+  // writes the two numbers.
+  set(panel, "[data-granted-count]", capabilities.size);
+  set(panel, "[data-capability-count]", CAPABILITIES.length);
   const list = panel.querySelector("[data-caps]");
   list.replaceChildren(
     ...CAPABILITIES.map((capability) => {
@@ -188,6 +281,11 @@ function render(panel, { capabilities, editingMode, sandbox }) {
       return item;
     }),
   );
+}
+
+function set(panel, selector, value) {
+  const node = panel.querySelector(selector);
+  if (node) node.textContent = String(value);
 }
 
 // ---- The host contract console (`docs/126` phase 2) ------------------------

@@ -117,7 +117,11 @@ const CEILINGS = new Map([
   // configuration playground. Measured. A page nobody can get to is the
   // reachability defect one level up (`docs/99` §9.4), so the two SDK pages link
   // to each other and the guard in `playground.spec.mjs` asserts both directions.
-  ["embedding.page.html", 353],
+  // 353 -> 352 when the "No host capability list" gap bullet came out. It had
+  // stopped being true — `?can=` and `resolveCapabilities({ withhold })` already
+  // shipped, and `<opendoc-editor>` now takes `can` and `chrome` as attributes —
+  // and understating is as false as overstating (`docs/99` §9.6). Measured.
+  ["embedding.page.html", 352],
   // The configuration playground (`docs/126`). MEASURED at 85, and it is worth
   // saying what they are, because this is the largest single site addition since
   // the table landed: about thirty of them are the GENERATED control rows — one

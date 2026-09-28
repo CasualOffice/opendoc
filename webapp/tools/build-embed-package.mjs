@@ -192,10 +192,17 @@ export declare function sandboxTokensFor(capabilities: unknown): readonly string
 /** Reads \`mode\`, \`autosave\` and the framing off a real window. */
 export declare function hostCapabilities(view?: unknown): Set<Capability>;
 
-/** Detail carried by the \`${"opendoc-capabilities"}\` event, fired once per mount. */
+/** Detail carried by the \`${"opendoc-capabilities"}\` event, fired once per mount.
+ *
+ *  \`can\` and \`chrome\` are the NORMALISED lists, as written into the frame's URL
+ *  — so a listener hears what was applied rather than what the host typed, and an
+ *  unknown entry they wrote is visibly gone. */
 export interface OpenDocCapabilitiesDetail {
   mode: string | null;
+  can: string | null;
+  chrome: string | null;
   capabilities: readonly Capability[];
+  regions: readonly Region[];
   editingMode: EditingMode;
   sandbox: readonly string[];
   src: string;
@@ -207,11 +214,18 @@ export interface OpenDocCapabilitiesDetail {
  *  \`role="readonly"\` would publish an invalid ARIA role to every assistive
  *  technology on the page.
  *
- *  Setting \`mode\` or \`editor-src\` after mount REMOUNTS. A permission handed
- *  over after the document is on screen was never a permission. */
+ *  \`can\` and \`chrome\` are attributes with no reflecting property, because
+ *  \`can(capability)\` already owns that name on the prototype and a \`can\`
+ *  accessor would replace it. Set them with \`setAttribute\` or in markup; read
+ *  back \`capabilities\`, \`regions\` and \`can(name)\`.
+ *
+ *  Setting \`mode\`, \`can\`, \`chrome\` or \`editor-src\` after mount REMOUNTS. A
+ *  permission handed over after the document is on screen was never a
+ *  permission. */
 export declare class OpenDocEditorElement extends HTMLElement {
   mode: string | null;
   readonly capabilities: readonly Capability[];
+  readonly regions: readonly Region[];
   readonly editingMode: EditingMode;
   readonly sandbox: readonly string[];
   readonly frame: HTMLIFrameElement | null;

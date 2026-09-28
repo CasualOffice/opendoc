@@ -146,8 +146,12 @@ function readState() {
     capabilities,
     regions,
     src: url.href,
-    // What a host writes, which is a path and a query rather than an absolute URL.
-    editorSrc: `${EDITOR_SRC}${url.search}`,
+    // What a host writes for `editor-src`: WHERE the editor is, and nothing else.
+    // Every value this page configures — the role and the two withhold lists —
+    // now has an attribute of its own, so putting them in the query as well would
+    // be teaching a host to write the same decision twice. The element unions the
+    // two, so a snippet that did both would still be correct and still be noise.
+    editorSrc: EDITOR_SRC,
     brand: readBrand(),
   };
 }
@@ -264,6 +268,12 @@ function set(selector, value) {
  *  opinion about how to mount an editor. */
 function paintSnippets(state) {
   const title = live?.dataset.frameTitle ?? "";
+  // `can` and `chrome` as ATTRIBUTES, not folded into `editor-src`'s query. The
+  // element reads both, and the whole point of this page is that a host can
+  // express what they configured here in the declarative API — a snippet that
+  // sent them back to hand-writing a query string would be teaching the shape the
+  // element exists to replace. Omitted when nothing is withheld, because
+  // `can=""` is noise a host would then copy forward.
   const element = [
     '<script type="module">',
     '  import "@casualoffice/opendoc-embed/define";',
@@ -271,6 +281,8 @@ function paintSnippets(state) {
     "",
     "<opendoc-editor",
     `  mode="${state.mode}"`,
+    ...(state.can ? [`  can="${state.can}"`] : []),
+    ...(state.chrome ? [`  chrome="${state.chrome}"`] : []),
     `  editor-src="${state.editorSrc.replaceAll("&", "&amp;")}"`,
     // `JSON.stringify` rather than an interpolated `"…"`, and not for elegance:
     // the string-site scanner reads `frame-title="…"` as a `title` sink and would

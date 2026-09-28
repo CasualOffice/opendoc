@@ -279,6 +279,69 @@ test("the simplest possible embed is not a standalone editor", async ({ page }) 
   }
 });
 
+test('an element carrying can="-download" is refused file.export.docx', async ({ page }) => {
+  // THE ATTRIBUTE, ALL THE WAY THROUGH, and asserted as the REFUSAL rather than as
+  // an absent button. A missing control proves nothing: it can be missing because
+  // the chrome is narrow, because a region was composed away, or because the page
+  // failed to paint. `capability-withheld` from the API can only mean the
+  // capability set the element resolved really lacks `download`.
+  //
+  // Driven through `embed.html`'s own control, not through markup written here, so
+  // this also proves the attribute is REACHABLE from a shipped page. `commentor`
+  // is the interesting role because it GRANTS `download` — the positive control is
+  // three lines down, and without it a page that exported nothing under any
+  // configuration would pass.
+  await page.goto("/embed.html");
+  const panel = page.locator('[data-embed="element"]');
+  await panel.locator("[data-role-select]").selectOption("commentor");
+
+  // Two things that were on screen when they should not have been, and that only
+  // a browser can tell you: the host sets `hidden` on both, and a `display` in a
+  // class beats the user-agent `[hidden]` rule. So the page shipped a transport
+  // picker and a live "Run it" with nothing to run them against, and — after a
+  // mount — the "the editor mounts here" placeholder sharing the stage with a
+  // running editor. Asserted as VISIBILITY, which is the guarantee; asserting the
+  // attribute would have passed throughout.
+  await expect(panel.locator("[data-console]")).toBeHidden();
+  await expect(panel.locator("[data-idle]")).toBeVisible();
+
+  const granted = await mountAndExport(page, panel);
+  await expect(panel.locator("[data-idle]")).toBeHidden();
+  await expect(panel.locator("[data-console]")).toBeVisible();
+  expect(granted.ok, `a commentor could not export, so this proves nothing: ${JSON.stringify(granted)}`).toBe(
+    true,
+  );
+
+  await panel.locator("[data-release]").click();
+  await panel.locator("[data-withhold]").check();
+  // The host's markup really changed — the page is teaching the declarative form,
+  // and a control that narrowed the container by some other route would be
+  // teaching something else.
+  const markup = await panel.locator("[data-wrote]").textContent();
+  expect(markup).toContain('can="-download"');
+
+  const withheld = await mountAndExport(page, panel);
+  expect(withheld.ok, "the element ignored can=\"-download\"").toBe(false);
+  expect(withheld.refusal.code).toBe("capability-withheld");
+  // And the element agrees with the frame it mounted, which is what stops the
+  // readout and the container from going wrong together.
+  const resolved = await panel.evaluate((node) => node.querySelector("opendoc-editor").capabilities);
+  expect(resolved).not.toContain("download");
+});
+
+/** Mounts the element panel and asks the live editor to export, over the API. */
+async function mountAndExport(page, panel) {
+  await panel.locator("[data-mount]").click();
+  const iframe = panel.locator("iframe");
+  await expect(iframe).toHaveCount(1);
+  const frame = await (await iframe.elementHandle()).contentFrame();
+  await waitForFramedEditor(frame);
+  return frame.evaluate(async () => {
+    const session = window.opendoc;
+    return session ? await session.execute("file.export.docx") : null;
+  });
+}
+
 test("the demo host is the page the package documents", async () => {
   // A README that shows an API the code does not have is the failure `docs/99`
   // §9.7 records about the design prototype, whose `doc.transaction()` and
@@ -286,7 +349,7 @@ test("the demo host is the page the package documents", async () => {
   // checked against the element that reads them.
   const readme = readFileSync(new URL("../../../packages/opendoc-embed/README.md", import.meta.url), "utf8");
   const element = readFileSync(new URL("../../src/embed_element.mjs", import.meta.url), "utf8");
-  for (const attribute of ["mode", "editor-src", "frame-title"]) {
+  for (const attribute of ["mode", "can", "chrome", "editor-src", "frame-title"]) {
     expect(readme, `the README does not document ${attribute}`).toContain(`\`${attribute}\``);
     expect(element, `the element does not read ${attribute}`).toContain(`"${attribute}"`);
   }

@@ -41,7 +41,7 @@ import {
   readCatalogues,
 } from "../tools/build-brand.mjs";
 import { readPalettes } from "../tools/palette_source.mjs";
-import { auditPalette } from "../src/contrast.mjs";
+import { TEXT_CONTRAST_FLOOR, auditPalette, contrastRatio, parseHex } from "../src/contrast.mjs";
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GENERATOR = join(WEBAPP, "tools", "build-brand.mjs");
@@ -127,7 +127,11 @@ test("a palette that fails AA is REFUSED, with the ratio and a value that would 
   const accentInk = failures.find((f) => f.includes("--accent-ink") && f.startsWith("light:"));
   assert.match(accentInk, /2\.04:1/, "the refusal must carry the MEASURED ratio");
   assert.match(accentInk, /must clear 4\.5:1/, "the refusal must name the floor");
-  assert.match(accentInk, /#[0-9a-f]{6} would pass/, "the refusal must offer a value that works");
+  assert.match(accentInk, /#[0-9a-f]{6} there would pass/, "the refusal must offer a value that works");
+  // This host set BOTH ends, so the ink is the one named — the conventional
+  // reading, and the one the palette's own guard uses. The case where they set
+  // only one is the test below.
+  assert.match(accentInk, /You set --accent-ink:/, "a host who set the ink is told about the ink");
   // And every theme is reported, not just the first: a host fixing one theme and
   // discovering the other on the next run is five builds for one mistake.
   for (const theme of ["light", "system dark", "explicit dark"]) {
@@ -136,6 +140,42 @@ test("a palette that fails AA is REFUSED, with the ratio and a value that would 
       `${theme} was not reported`,
     );
   }
+});
+
+test("the refusal names the value the host supplied, not the other end of the pair", () => {
+  // THE DEFECT. A host sets ONE token — `--accent`, the thing a brand actually
+  // is — and the pair that fails is `--accent-ink` on `--accent`. The refusal used
+  // to read "`--accent-ink` (#ffffff) … #484848 would pass", which tells them to
+  // darken a value that is not in their file, that they did not choose, and that
+  // they would have to go and look up to even find. The actionable half — what to
+  // make `--accent` — was missing entirely, and refusing rather than warning is
+  // only the better choice if the failure lands on the person who can fix it WITH
+  // the fix.
+  //
+  // Both halves are asserted, because naming the right token while suggesting the
+  // wrong end's number would be the same defect with better wording.
+  const raw = { version: 1, theme: { tokens: { "--accent": "#f5a524" }, light: {}, dark: {} } };
+  const { failures } = auditBrand(normalize(raw, themes), themes);
+  const pair = failures.find((f) => f.startsWith("light:") && f.includes("--accent-ink"));
+  assert.ok(pair, `no light --accent-ink failure: ${failures.join(" | ")}`);
+  assert.match(pair, /--accent-ink \(#ffffff\) on --accent \(#f5a524\)/, "the PAIR is still the fact");
+  assert.match(pair, /You set --accent:/, "the refusal must name the token the host wrote");
+  assert.doesNotMatch(pair, /You set --accent-ink:/, "the host never set --accent-ink");
+
+  // And the number really is a value for THAT token: white on it clears the floor.
+  const suggested = pair.match(/You set --accent: (#[0-9a-f]{6})/)?.[1];
+  assert.ok(suggested, `no suggestion in: ${pair}`);
+  assert.ok(
+    contrastRatio(parseHex("#ffffff"), parseHex(suggested)) >= TEXT_CONTRAST_FLOOR,
+    `${suggested} as --accent still fails under #ffffff ink — the refusal offered a fix that is not one`,
+  );
+
+  // The derived role too: `--accent-text` is `var(--accent)` in light, so its
+  // failure is the host's `--accent` as well and must say so rather than sending
+  // them after a token whose value is literally a reference to theirs.
+  const derived = failures.find((f) => f.startsWith("light:") && f.includes("--accent-text"));
+  assert.ok(derived, `no light --accent-text failure: ${failures.join(" | ")}`);
+  assert.match(derived, /You set --accent:/, "a plain var() indirection is followed to the host's token");
 });
 
 test("the refusal reaches the command line, on its real exit status", () => {
