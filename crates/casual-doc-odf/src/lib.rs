@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Security-bounded OpenDocument package admission and semantic import.
 
 #![deny(missing_docs)]

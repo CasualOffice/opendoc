@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Differential text-fidelity harness.
 //!
 //! For each `.docx` argument, extracts the document text two ways — through the

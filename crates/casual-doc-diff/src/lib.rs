@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! `casual-doc-diff` — the structural difference between two document states
 //! (`docs/140` §11, H3; `docs/139` §9, VH-008/VH-009).
 //!

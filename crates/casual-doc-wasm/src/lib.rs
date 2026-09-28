@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! `casual-doc-wasm` — the `wasm-bindgen` façade the browser/webview viewer drives.
 //!
 //! This crate is a **bridge, not an engine** (doc 57 §1): it exposes the existing

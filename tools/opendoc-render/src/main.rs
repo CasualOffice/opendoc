@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Batch corpus renderer — the committed generalization of the
 //! `casual-doc-render` `render_docx_page` example, for ongoing visual-regression
 //! checks over a folder of real `.docx` files.

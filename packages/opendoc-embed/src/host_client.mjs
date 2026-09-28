@@ -5,6 +5,7 @@
 // this file is not byte-identical to a fresh generation, so a hand edit here
 // is a build failure rather than a divergence nobody notices.
 
+// SPDX-License-Identifier: Apache-2.0
 // The `postMessage` transport, HOST side.
 //
 // `docs/126` phase 2. This is what a host across an iframe boundary holds, and

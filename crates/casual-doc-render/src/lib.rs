@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! CPU rasterization backend for the OpenDoc display list.
 //!
 //! Executes a [`casual_doc_layout::display::DisplayList`] onto a `tiny-skia`

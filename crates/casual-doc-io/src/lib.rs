@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Format-neutral document import/export contracts and deterministic dispatch.
 //!
 //! This crate is the adapter boundary described by doc 94. It does not parse or

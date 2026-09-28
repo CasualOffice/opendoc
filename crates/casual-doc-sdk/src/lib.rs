@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Host-facing OpenDoc engine and document-session facade.
 //!
 //! The Phase 0 API creates a blank document and applies grapheme-aware text

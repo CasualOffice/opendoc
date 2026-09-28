@@ -280,6 +280,17 @@ Do not report vulnerabilities, malicious fixtures, or confidential documents in
 public issues. Follow [SECURITY.md](SECURITY.md) and use
 [GitHub private vulnerability reporting](https://github.com/CasualOffice/opendoc/security/advisories/new).
 
-## License
+## Authorship and license
 
-OpenDoc is available under the [Apache License 2.0](LICENSE).
+OpenDoc is developed by the CasualOffice Team, copyright 2026 CasualOffice, and
+is licensed under the [Apache License 2.0](LICENSE).
+
+Contributions are welcome under the same license: unless you state otherwise, a
+contribution you submit for inclusion in OpenDoc is provided under Apache-2.0,
+without additional terms or conditions. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the workflow, and [GOVERNANCE.md](GOVERNANCE.md) records who decides what.
+
+[NOTICE](NOTICE) carries the attribution notice and the third-party works this
+repository ships — the bundled document fonts, the interface fonts, and the
+SCOWL word lists behind the spelling dictionaries — each with the committed
+license file it is taken from.

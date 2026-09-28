@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Validated logical caret, text-range and table-cell-range state for OpenDoc
 //! sessions.
 //!
