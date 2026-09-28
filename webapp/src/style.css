@@ -3456,7 +3456,20 @@ body.modal-open {
 
 /* ---- Line & paragraph spacing menu ----------------------------------------- */
 .spacing-menu {
-  min-width: 210px;
+  /* Wide enough for "Remove space before paragraph" — Word's and Docs' own
+     wording — because a row truncated to "R…" is not a row. */
+  min-width: 264px;
+}
+
+/* An explanation under a field, for the state where the field is empty because
+   the value comes from somewhere else. `--faint` is the same tone the menu's
+   own headings use. */
+.menu-note {
+  margin: 0;
+  padding: 0 10px 6px 37px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  line-height: 1.35;
 }
 
 .table-format-menu {

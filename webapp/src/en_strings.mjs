@@ -30,6 +30,25 @@ export const EN_STRINGS = Object.freeze({
   "status.characters.withSpaces": "{count} characters (with spaces)",
   // Reassigned from script on every render, so the markup sweep never sees it.
   "status.pageOf": "Page {page} of {total}",
+  // -- Line & paragraph spacing ---------------------------------------------
+  // The verb on each one-gesture row is chosen from the caret paragraph's
+  // current state, so the two spellings are two keys rather than one key and a
+  // glued-on word: a language that inflects the noun after "add" and after
+  // "remove" differently cannot be served by concatenation.
+  "spacing.addSpaceBefore": "Add space before paragraph",
+  "spacing.removeSpaceBefore": "Remove space before paragraph",
+  "spacing.addSpaceAfter": "Add space after paragraph",
+  "spacing.removeSpaceAfter": "Remove space after paragraph",
+  // Shown under the empty line-spacing box. `paragraphSpacing` reports DIRECT
+  // formatting only, so a paragraph that takes its spacing from its style reads
+  // back as nothing set; saying so is the honest answer, and ticking "Single"
+  // would be a lie for every document whose Normal style says 1.15.
+  "spacing.fromStyleHint": "This paragraph takes its line spacing from its style. Type a value to set it here.",
+  // Following a contents entry whose field carried no `\\h`, so there was no
+  // hyperlink to follow and the entry did nothing at all.
+  "toc.jumpedTo": "Jumped to {heading}",
+  "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
+  "paragraph.caretRequired": "Place the caret in a paragraph",
   "toolbar.undo": "Undo",
   "toolbar.redo": "Redo",
   // The engine names the action a step will undo ("Typing", "Table structure").
