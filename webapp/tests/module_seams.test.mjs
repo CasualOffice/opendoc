@@ -454,3 +454,232 @@ test("no module imports main.js", () => {
   const cyclic = scriptFiles().filter((f) => /from\s+["']\.\/main\.js["']/.test(read(f)));
   assert.deepEqual(cyclic, [], "the dependency runs one way: main.js → modules");
 });
+
+// ── Dead module-level bindings in main.js ──────────────────────────────────
+//
+// The line ratchet above cannot find these, and that is the whole reason this
+// guard exists: dead code sits under a ceiling quite happily, and it is paid for
+// twice — once in the ratchet, where it occupies lines an extraction had to buy,
+// and once by the next reader, who has to work out whether the binding matters
+// before they can change anything near it. Three were found when this landed —
+// `spacingMenu`, `styleCardsEnabled` and `reviewReplyParent` — one of them a
+// `document.getElementById` for a menu that another module already owns, and two
+// of them variables the file assigns to and never reads again.
+//
+// WHY THIS IS DECIDABLE AT ALL, and only here. `main.js` has ZERO exports and
+// `editor.html` has ZERO inline event-handler attributes, so nothing outside the
+// file can name anything inside it: not a test (there is no import), not the
+// markup (there is no `onclick="…"`), not another module (the test above forbids
+// the import). Both of those premises are ASSERTED below rather than asserted in
+// prose, so the day either stops holding this guard fails instead of quietly
+// becoming wrong. It is deliberately not run over the other modules: those DO
+// export, and "unreferenced inside its own file" says nothing about an export.
+//
+// WHAT THE SCANNER SEES:
+//   * comments, string BODIES and regular-expression bodies are blanked, so
+//     prose and data cannot look like code;
+//   * `${…}` inside a template literal is kept, because it IS code — a binding
+//     read only by an interpolation is read;
+//   * `{ name }` shorthand and `...name` spread count as reads;
+//   * `foo.name` and `foo?.name` do NOT count: a property is not this binding.
+//
+// WHAT IT CANNOT SEE, and therefore never reports:
+//   * a name inside a plain string — deliberately: `"spacingMenu"` in a
+//     `getElementById` is an element id, not a reference to a variable that
+//     happens to share its spelling, and treating it as one is what would make
+//     this guard unable to find the very binding it did find;
+//   * a name reached dynamically (`globalThis[x]`, `eval`) — nothing in this
+//     file does that, and if something did, this guard would be the least of it;
+//   * a binding declared by DESTRUCTURING at column 0 (`const { a } = …`): not
+//     collected at all, so such a binding is never reported either way;
+//   * anything below the top level. A dead local is a smaller problem and a much
+//     harder scan, and a scanner that guessed at scope would produce exactly the
+//     false positive that gets a working line deleted.
+//
+// A WRITE IS NOT A READ. `let x = 0;` followed only by `x = 1` is dead: the
+// value is never observed, so the binding and both statements can go. That is
+// how the two `let`s above were found, and a guard that only counted
+// OCCURRENCES would have called them live.
+
+/** Source with comments, string bodies and regex bodies blanked, and template
+ *  substitutions kept. Character-for-character the same length as the input, so
+ *  a reported line number is the real one.
+ *
+ *  A scanner and not a parser, for the reason `tools/string_sites.mjs` gives:
+ *  a parser is a second implementation of JavaScript to maintain, and what this
+ *  needs is determinism plus a bias towards calling something live. */
+function blankLiterals(src) {
+  const out = [];
+  const nest = [];
+  let prev = "";
+  let i = 0;
+  const blank = (ch) => (ch === "\n" ? "\n" : " ");
+  // A `/` opens a regex unless the previous significant character could end an
+  // expression. The classic ambiguity, with the classic heuristic; it matters
+  // because a regex such as `/["']/` would otherwise open a string literal and
+  // blank the rest of the file.
+  const regexHere = () => prev === "" || !/[\w$)\]"'`]/.test(prev);
+  while (i < src.length) {
+    const ch = src[i];
+    const two = src.slice(i, i + 2);
+    if (nest.at(-1) === "template") {
+      if (ch === "\\") {
+        out.push(" ", blank(src[i + 1] ?? ""));
+        i += 2;
+      } else if (ch === "`") {
+        out.push("`");
+        nest.pop();
+        prev = "`";
+        i += 1;
+      } else if (two === "${") {
+        out.push("$", "{");
+        nest.push("subst");
+        prev = "{";
+        i += 2;
+      } else {
+        out.push(blank(src[i]));
+        i += 1;
+      }
+      continue;
+    }
+    if (two === "//") {
+      while (i < src.length && src[i] !== "\n") out.push(blank(src[i++]));
+      continue;
+    }
+    if (two === "/*") {
+      const end = src.indexOf("*/", i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      while (i < stop) out.push(blank(src[i++]));
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      out.push(ch);
+      i += 1;
+      while (i < src.length && src[i] !== ch) {
+        if (src[i] === "\\") {
+          out.push(" ", blank(src[i + 1] ?? ""));
+          i += 2;
+          continue;
+        }
+        out.push(blank(src[i++]));
+      }
+      if (i < src.length) out.push(src[i++]);
+      prev = '"';
+      continue;
+    }
+    if (ch === "`") {
+      out.push("`");
+      nest.push("template");
+      prev = "`";
+      i += 1;
+      continue;
+    }
+    if (ch === "}" && nest.at(-1) === "subst") {
+      out.push("}");
+      nest.pop();
+      prev = "}";
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && regexHere()) {
+      out.push(" ");
+      i += 1;
+      let inClass = false;
+      while (i < src.length) {
+        const c = src[i];
+        if (c === "\\") {
+          out.push(" ", " ");
+          i += 2;
+          continue;
+        }
+        if (c === "[") inClass = true;
+        else if (c === "]") inClass = false;
+        else if (c === "/" && !inClass) {
+          out.push(" ");
+          i += 1;
+          break;
+        } else if (c === "\n") break;
+        out.push(blank(src[i++]));
+      }
+      while (i < src.length && /[a-z]/.test(src[i])) out.push(blank(src[i++]));
+      prev = ")";
+      continue;
+    }
+    out.push(ch);
+    if (!/\s/.test(ch)) prev = ch;
+    i += 1;
+  }
+  return out.join("");
+}
+
+/** Every binding declared at the TOP LEVEL — column zero — with its line. */
+function topLevelBindings(blanked) {
+  const found = [];
+  blanked.split("\n").forEach((line, index) => {
+    const at = index + 1;
+    const value = /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/.exec(line);
+    if (value) found.push({ name: value[1], line: at });
+    const fn = /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(line);
+    if (fn) found.push({ name: fn[1], line: at });
+    const cls = /^class\s+([A-Za-z_$][\w$]*)\b/.exec(line);
+    if (cls) found.push({ name: cls[1], line: at });
+  });
+  return found;
+}
+
+/** Assignment operators. An occurrence followed by one of these is a WRITE, and
+ *  the declaration itself is a write by the same rule — which is what makes
+ *  "zero reads" mean "nothing ever observes this". `=>` and the comparisons are
+ *  excluded, or every arrow function would read as an assignment. */
+const ASSIGNS =
+  /^\s*(?:=(?![=>])|\+=|-=|\*=|\/=|%=|\*\*=|&&=|\|\|=|\?\?=|&=|\|=|\^=|<<=|>>=|>>>=|\+\+|--)/;
+
+/** How many times a binding is READ in `body`. */
+function readCount(body, name) {
+  const pattern = new RegExp(`\\b${name.replace(/\$/g, "\\$")}\\b`, "g");
+  let reads = 0;
+  for (const hit of body.matchAll(pattern)) {
+    if (ASSIGNS.test(body.slice(hit.index + name.length))) continue;
+    reads += 1;
+  }
+  return reads;
+}
+
+test("main.js keeps no module-level binding nothing reads", () => {
+  const source = read("main.js");
+  // The two premises this guard stands on. Without them "nothing in this file
+  // reads it" would not imply "nothing reads it", and the guard would be an
+  // argument for deleting working code.
+  assert.equal(
+    /^\s*export[\s{]/m.test(blankLiterals(source)),
+    false,
+    "main.js has grown an export, so a binding may now be read from outside it and " +
+      "this guard's premise no longer holds. Either take the export out or scope this " +
+      "guard to what is still private.",
+  );
+  const markup = readFileSync(new URL("../editor.html", SRC), "utf8");
+  assert.deepEqual(
+    [...markup.matchAll(/\son[a-z]+\s*=\s*"/g)].map((m) => m[0].trim()),
+    [],
+    "editor.html has grown an inline event-handler attribute, which can name a " +
+      "main.js binding this scanner cannot see. Bind the listener in script instead.",
+  );
+
+  const blanked = blankLiterals(source);
+  // A property access is not a reference to a binding of the same name, so
+  // `.foo` and `?.foo` are removed before counting — but `...foo` is a SPREAD and
+  // must survive, which is what the lookbehind protects.
+  const body = blanked.replace(/(?<![.])(\?\.|\.)\s*([A-Za-z_$][\w$]*)/g, ".");
+  const dead = topLevelBindings(blanked)
+    .filter((binding) => readCount(body, binding.name) === 0)
+    .map((binding) => `main.js:${binding.line} ${binding.name}`);
+  assert.deepEqual(
+    dead,
+    [],
+    "a top-level binding in main.js that nothing reads. Delete it, and the " +
+      "statements that only write to it: it costs lines against the ratchet above " +
+      "and costs the next reader the work of proving it does not matter. If it IS " +
+      "reachable in a way this scan cannot model, say how in a comment here rather " +
+      "than leaving the guard to be argued with.",
+  );
+});
