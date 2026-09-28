@@ -39,7 +39,7 @@
 // convenient. Nothing here forecloses (1): the catalogue is the same artifact a
 // per-locale build would consume.
 
-import { setCatalogue, setLocale, t } from "./i18n.mjs";
+import { has, setCatalogue, setLocale, t } from "./i18n.mjs";
 import { applyDocumentLocale, fetchCatalogue, localizeTree } from "./localize.mjs";
 import { LOCALES, bestLocale } from "./locales.mjs";
 import { loadPrefObject, savePrefObject } from "./prefs.mjs";
@@ -59,7 +59,19 @@ const SETTINGS_KEY = "opendoc.settings";
 const CATALOGUES = new URL("../locales", import.meta.url).href;
 
 /** Catalogues already fetched, by tag, so switching back and forth is free. */
-const loaded = new Set([/* English is the markup; it is never fetched */ "en"]);
+const loaded = new Set();
+
+/** The locale currently PAINTED into the markup, or null while the page still
+ *  shows the English it was authored with.
+ *
+ *  This exists because of a defect the browser guard caught and the unit tests
+ *  could not: English is the markup, so the first paint needs no catalogue and
+ *  no request — but once German has been written into those elements, going
+ *  back to English by not-relabelling leaves German on the screen. A picker you
+ *  cannot use to escape is the one failure a picker must not have. So English
+ *  is free until something else has been painted, and costs one request after.
+ */
+let painted = null;
 
 /**
  * The locale to show, in precedence order: an explicit `?lang=` (so a bug
@@ -74,7 +86,7 @@ export function preferredLocale({ search, saved, browser } = {}) {
 }
 
 /**
- * Puts `tag` in force: fetch its catalogue if needed, then relabel the page.
+ * Puts `tag` in force: fetch its catalogue if one is needed, then relabel.
  *
  * Returns the locale actually in force, which is English when a catalogue
  * cannot be fetched — a page in the wrong language beats a page of dotted key
@@ -83,18 +95,26 @@ export function preferredLocale({ search, saved, browser } = {}) {
  * Complexity: O(elements carrying a key). Nothing here is per-word.
  */
 export async function useLocale(tag, { fetcher = fetchCatalogue } = {}) {
-  if (!loaded.has(tag)) {
+  // English needs no catalogue while the markup is still the English it was
+  // authored with. It needs one the moment another language has overwritten it.
+  const needsCatalogue = tag !== "en" || painted !== null;
+  if (needsCatalogue && !loaded.has(tag)) {
     const entries = await fetcher(tag, CATALOGUES);
-    if (!entries) return useLocale("en", { fetcher });
-    setCatalogue(tag, entries);
-    loaded.add(tag);
+    if (entries) {
+      setCatalogue(tag, entries);
+      loaded.add(tag);
+    } else if (tag !== "en") {
+      return useLocale("en", { fetcher });
+    }
+    // A failed fetch of ENGLISH cannot fall back any further, and must not
+    // recurse. The page keeps whatever it is showing and says so in `lang`.
   }
   setLocale(tag);
   applyDocumentLocale();
-  // English has no catalogue here, so `has()` answers false for every key and
-  // `localizeTree` leaves the markup exactly as authored. That is the whole
-  // reason the English text stays beside the key.
-  localizeTree();
+  if (loaded.has(tag)) {
+    localizeTree();
+    painted = tag === "en" ? null : tag;
+  }
   return tag;
 }
 
@@ -116,9 +136,16 @@ export function buildLanguagePicker(select, { saved, browser } = {}) {
   for (const option of [...select.options]) if (option !== automatic) option.remove();
   if (automatic) {
     const preferred = LOCALES.find((locale) => locale.tag === bestLocale(browser ?? []));
-    // `localizeTree` has already put this option's own words in the active
-    // language; the endonym is appended after, as a proper noun.
-    const words = t("site.header.languageAutomatic");
+    // `has()` FIRST, and the option's own text as the fallback.
+    //
+    // `t()` returns the KEY when no catalogue can answer, which is deliberate
+    // and ugly so it shows up in a screenshot — and it showed up in this one:
+    // English has no catalogue here (the markup IS English), so the control
+    // read "site.header.languag…" on the default page of the site. The English
+    // is already sitting in the option, which is the whole convention this seam
+    // is built on, so it is what the fallback uses.
+    const key = "site.header.languageAutomatic";
+    const words = has(key) ? t(key) : automatic.textContent.split(" \u2014 ")[0];
     automatic.textContent = preferred ? words + " \u2014 " + preferred.endonym : words;
   }
   for (const locale of LOCALES) {
@@ -163,10 +190,10 @@ export async function startSiteLocalisation({
   return inForce;
 }
 
-/** Test seam: forget which catalogues have been fetched. */
+/** Test seam: forget which catalogues have been fetched, and which is painted. */
 export function resetSiteLocales() {
   loaded.clear();
-  loaded.add("en");
+  painted = null;
 }
 
 // Auto-start only in a real page. Importing this module from a test must not

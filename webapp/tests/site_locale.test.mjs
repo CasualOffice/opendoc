@@ -175,8 +175,16 @@ test("the picker offers every shipped language by its own name, and shows itself
     "a picker that lists languages in a language you cannot read is one you cannot use to escape",
   );
   // The automatic entry names the language it would pick, because "Automatic"
-  // alone tells a reader nothing about what they are choosing.
-  assert.match(select.options[0].textContent, /Français$/);
+  // alone tells a reader nothing about what they are choosing — AND it says
+  // "Automatic" rather than `site.header.languageAutomatic`. The first version
+  // of this assertion only checked the endonym at the end, so it passed while
+  // the control on the live site read "site.header.languag…": English has no
+  // catalogue (the markup is English), and `t()` answers an unanswerable key
+  // with the key.
+  assert.equal(select.options[0].textContent, "Automatic — Français");
+  // Rebuilding it a second time must not append the endonym again.
+  withDocument(document, () => buildLanguagePicker(select, { saved: "de", browser: ["fr"] }));
+  assert.equal(select.options[0].textContent, "Automatic — Français");
   assert.equal(select.value, "de", "the saved choice is the one shown as selected");
   // And the control is revealed. It ships `hidden` so a page whose scripts did
   // not run never shows a picker with one option in it.
