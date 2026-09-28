@@ -278,7 +278,16 @@ const SRC = new URL("../src/", import.meta.url);
  *  that then landed the version-preview chrome fix and took its own number to
  *  16,487 underneath it, so 16,464 is a measurement of the merge and not
  *  arithmetic on two branches' figures. */
-const MAIN_JS_LINE_CEILING = 16464;
+/** Lowered to 16,453 by the dead-binding guard below, which is the ratchet
+ *  gaining an ally rather than the file being trimmed: the guard found three
+ *  top-level bindings nothing read — `spacingMenu`, `styleCardsEnabled` and
+ *  `reviewReplyParent` — and they went with the statements that only wrote to
+ *  them, ten lines that had been sitting under this ceiling being paid for
+ *  twice. One line went back in, the version panel's `capabilities` seam.
+ *
+ *  RE-MEASURED from the file after rebasing onto `origin/main`, which had moved
+ *  under the branch twice while this was in flight. */
+const MAIN_JS_LINE_CEILING = 16453;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
