@@ -2790,6 +2790,14 @@ mod tests {
             other => panic!("expected a shape, got {other:?}"),
         };
 
+        // Modeled is not shipped: the shape must have reached LAYOUT, because
+        // `objectRect` reports a placed anchor, not a model node.
+        assert_eq!(
+            document.object_rect(&shape).len(),
+            5,
+            "the inserted shape was placed on a page, not merely modeled"
+        );
+
         document
             .set_object_rotation_inner(&shape, Some(405.0))
             .expect("rotate it a turn and a bit");
