@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1169],
-  ["de", 1169],
-  ["es", 1169],
-  ["fr", 1169],
-  ["hi", 1169],
-  ["id", 1169],
-  ["it", 1169],
-  ["ja", 1169],
-  ["ko", 1169],
-  ["nl", 1169],
-  ["pl", 1169],
-  ["pt-BR", 1169],
-  ["ru", 1169],
-  ["tr", 1169],
-  ["uk", 1169],
-  ["vi", 1169],
-  ["zh-Hans", 1169],
-  ["zh-Hant", 1169],
+  ["ar", 1219],
+  ["de", 1219],
+  ["es", 1219],
+  ["fr", 1219],
+  ["hi", 1219],
+  ["id", 1219],
+  ["it", 1219],
+  ["ja", 1219],
+  ["ko", 1219],
+  ["nl", 1219],
+  ["pl", 1219],
+  ["pt-BR", 1219],
+  ["ru", 1219],
+  ["tr", 1219],
+  ["uk", 1219],
+  ["vi", 1219],
+  ["zh-Hans", 1219],
+  ["zh-Hant", 1219],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -150,6 +150,28 @@ const COVERAGE = new Map([
  *  100% to 95% while this gate stayed green. Six values are identical in every
  *  locale on purpose (the five numbering-format samples "1, 2, 3, …" and "100%"),
  *  which is a translation decision, not an omission.
+ *
+ *  1,169 → 1,219 with the SITE's shared chrome (`109` HF-198). Fifteen of those
+ *  are this change: the header's nav, badge, CTA and language control, and the
+ *  footer's three links, translated into all eighteen languages in the same
+ *  commit that routed them — the floor is a floor and not a target, and a picker
+ *  that switches to German and changes nothing visible is a feature that looks
+ *  broken. The other THIRTY-FIVE were already translated and were never recorded:
+ *  the rows said 1,169 while the catalogues answered 1,204. That is the floor
+ *  doing its job in the only direction it can — it cannot notice work that was
+ *  done — and it is why this row is re-MEASURED here rather than incremented by
+ *  fifteen.
+ *
+ *  "GitHub" is deliberately not among the fifteen. It is the same word in every
+ *  language, so a catalogue entry for it would be eighteen chances to mistype a
+ *  brand and no chance to improve a translation. The product name is absent for
+ *  the same reason and is not routed at all.
+ *
+ *  What these eighteen numbers do NOT cover is the rest of the site: about 460
+ *  keys of marketing and documentation prose now have a seam and no translation,
+ *  and they read as English because the markup carries it beside the key. That is
+ *  the honest state — routing a surface and translating it are two different
+ *  days' work, which is the reasoning this whole ratchet was built on.
  *
  *  The number in each row is still a floor, not a target, and at parity its
  *  job changes rather than ending: it is now what refuses a NEWLY routed
