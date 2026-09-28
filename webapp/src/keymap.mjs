@@ -144,6 +144,25 @@ export const KEYMAP = [
   // still advertised from the one table rather than from a literal.
   { chord: "⇧⏎", command: "insert.lineBreak", scope: EDITOR_SCOPE },
 
+  // ---- Table sizing from the keyboard --------------------------------------
+  // The keyboard half of the table chrome layer (`docs/141` D-1 §4.1.6): every
+  // pointer gesture the chrome adds has to be reachable without a pointer, or the
+  // new affordances are mouse-only capability.
+  //
+  // ⌥⇧ + arrow was MEASURED free before it was taken: of the 36 chords this table
+  // declared, exactly two used Alt at all (⌥H's platform twin ⌘⌥A, and ⌘⌥D /
+  // ⌘⌥M / ⌘⌥⏎ / ⌘⌥⌫, all of which also carry ⌘). Nothing here or in
+  // `navigationDirection` claims Alt+Shift+Arrow, and Word uses the same family
+  // of chords for table sizing.
+  //
+  // Right/Left move the caret's column boundary; Down/Up grow and shrink its row.
+  // The axis mapping is the physical one — a horizontal arrow moves a vertical
+  // border — which is the only mapping a user does not have to learn.
+  { chord: "⌥⇧→", command: "table.column.grow", scope: EDITOR_SCOPE },
+  { chord: "⌥⇧←", command: "table.column.shrink", scope: EDITOR_SCOPE },
+  { chord: "⌥⇧↓", command: "table.row.grow", scope: EDITOR_SCOPE },
+  { chord: "⌥⇧↑", command: "table.row.shrink", scope: EDITOR_SCOPE },
+
   // ---- View ----------------------------------------------------------------
   { chord: "⌘=", command: "view.zoomIn", scope: APP_SCOPE },
   { chord: "⌘-", command: "view.zoomOut", scope: APP_SCOPE },

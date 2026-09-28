@@ -46,6 +46,12 @@ const PROBES = {
   "drag-object-crop": { drag: "object-crop", handle: 1 },
   "drag-object-move": { drag: "object-move" },
   "drag-table-column": { drag: "table-column" },
+  "drag-table-row": { drag: "table-row" },
+  // The table chrome layer's hover zones (docs/141 D-1). Only an ARMED boundary
+  // is reported to the router, so the probe carries no mode flags: the arming
+  // decision is table_chrome_zones.mjs's and is guarded there.
+  "table-row-boundary": { tableBoundary: "row" },
+  "table-column-boundary": { tableBoundary: "column" },
   "format-painter": { formatPainting: true },
   "drag-text": { drag: "text" },
   "object-locked": { object: { canMove: true }, geometryBlocked: true },
@@ -338,7 +344,7 @@ test("the canvas keeps its pre-router baseline and loses the class it replaced",
 test("the known gaps are the ones we think they are", () => {
   assert.deepEqual(
     CURSOR_TARGETS.filter((row) => row.owner === "unprobed").map((row) => row.id),
-    ["object-rotate-handle", "table-row-boundary"],
+    ["object-rotate-handle", "table-select-strip"],
     "an `unprobed` row is a target the engine cannot yet report. Wiring one up " +
       "means changing its owner here; adding one means the surface grew a target " +
       "we cannot see. Either way this list is meant to be edited deliberately.",

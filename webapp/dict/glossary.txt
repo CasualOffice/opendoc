@@ -390,6 +390,7 @@ lossy
 macOS
 margined
 max
+memoised
 memoized
 meta
 metafile

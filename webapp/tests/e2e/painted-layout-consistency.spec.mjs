@@ -298,6 +298,17 @@ test("the table column-resize handles sit on the table that is painted", async (
   await right(page, HEAD_A.length);
   await strike(page, HEAD_B.length);
 
+  // Back to Editing with the markup view STILL ON, which is what this test needs
+  // and what the product allows: entering Suggesting turns markup on
+  // automatically, leaving it keeps whatever the reader last chose. The two
+  // layouts therefore still differ, which is the whole measurement — but the
+  // resize chrome is armed again, because `docs/141` D-1 stopped painting a grip
+  // that would refuse on release (TBL-35). Asserting the handle's position in
+  // Suggesting would now be asserting that a dead control is in the right place.
+  await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
+  await expect(page.locator("body")).toHaveClass(/showing-changes/);
+  await settledBox(page, page.locator(".page-wrap .page").first());
+
   await clickLocal(page, cell.at.x, cell.rect.y + cell.rect.h / 2);
   const handle = await local(page, ".table-col-resize-handle");
   expect(handle, "a regular table should expose column-resize handles").not.toBeNull();

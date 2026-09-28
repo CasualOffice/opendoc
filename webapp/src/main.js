@@ -182,6 +182,7 @@ import {
 import { followExternalTarget } from "./link_targets.mjs";
 import { pasteLossMessage } from "./paste_loss.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
+import { createTableChrome } from "./table_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
@@ -2598,7 +2599,6 @@ let objectCropSession = null;
 let objectMoveDrag = null;
 /** Current table-cell selection overlay, separate from text ranges. */
 let tableSelection = null; // { node, mode: "row" | "column" | "table" }
-let tableResizeDrag = null; // { node, col, page, startClientX, startWidthTwips, preview }
 let dragging = false;
 /** Primary-pointer gesture retained until pointerup so link activation is
  * suppressed after a drag/Shift extension. */
@@ -4074,6 +4074,11 @@ function replaceMisspelling(flagged, word) {
 function paintOverlayLayer() {
   if (!doc) return;
   clearOverlays();
+  // A repaint is the only thing that can move a table boundary, so it is the only
+  // place the chrome layer's geometry cache must be dropped — which is what makes a
+  // pointer-move a lookup rather than an engine query. AFTER `clearOverlays`,
+  // because the same call puts an in-flight drag's guide back (`docs/141` D-1).
+  tableChrome.invalidate();
   paintReviewMarkers();
   paintChecklistMarkers();
   spellChecker.paint();
@@ -4083,9 +4088,14 @@ function paintOverlayLayer() {
     paintObjectSelection();
   } else if (selection) {
     paintTableSelection();
-    paintActiveCell(selection.focus); // under the caret/highlight
+    // ONE `cellRect` for the whole table chrome. It used to be asked twice — once
+    // for the active-cell outline and once inside the handle query's own
+    // `inTable` — and it is a page scan each time.
+    const cellRect = doc.cellRect(selection.focus.node); // [page, x, y, w, h] or []
+    paintActiveCell(cellRect); // under the caret/highlight
     paintSelection(selection);
-    paintTableResizeHandles(selection.focus);
+    tableChrome.paintCaretColumnHandles(pages, cellRect);
+    tableChrome.paintTouchPills(pages);
   }
 }
 
@@ -4111,29 +4121,8 @@ function paintTableSelection() {
 
 /** Outlines the table cell the caret is in (nothing when not in a table), so the
  *  user always sees which cell they are editing. */
-function paintActiveCell(focus) {
-  const flat = doc.cellRect(focus.node); // [page, x, y, w, h] twips, or []
+function paintActiveCell(flat) {
   if (flat.length >= 5) place(flat, "cell-outline");
-}
-
-/** Draws Word-style internal column resize handles for the active regular table. */
-function paintTableResizeHandles(focus) {
-  if (!doc?.inTable(focus.node)) return;
-  const handles = doc.tableColumnResizeHandles(focus.node);
-  for (let i = 0; i + 4 < handles.length; i += 5) {
-    const [pageNumber, x, y, h, col] = handles.slice(i, i + 5);
-    const page = pages[pageNumber - 1];
-    if (!page?.overlay) continue;
-    const { sx, sy } = scaleOf(page);
-    const el = document.createElement("div");
-    el.className = "table-col-resize-handle";
-    el.dataset.col = String(col);
-    el.style.left = `${x * sx}px`;
-    el.style.top = `${y * sy}px`;
-    el.style.height = `${h * sy}px`;
-    el.addEventListener("pointerdown", (event) => startTableColumnResize(event, page, focus.node, col));
-    page.overlay.appendChild(el);
-  }
 }
 
 /** Paints the selected object's outline + exact supported resize handles from engine
@@ -6022,6 +6011,27 @@ function hideLinkChip() {
 
 /** The hover router (`docs/109` HF-179), so the pointer shape says what the
  *  thing under it will do. This is only the live state it reads. */
+/** The review-mode flags the pointer paths gate on, in one place: `editsBlocked`
+ *  is Viewing (or read-only), `geometryBlocked` is anything but Editing, because
+ *  a structural change has no tracked-change representation. */
+const pointerModeState = () => ({
+  editsBlocked: reviewMode === "viewing" || !!readOnlyReason,
+  geometryBlocked: reviewMode !== "editing" || !!readOnlyReason,
+});
+
+// The table chrome layer (`docs/141` D-1). It owns every pointer, keyboard and
+// touch gesture on a table BOUNDARY; `main.js` only routes events into it.
+const tableChrome = createTableChrome({
+  doc: () => doc,
+  pointToTwip,
+  scaleOf,
+  state: pointerModeState,
+  runEdit: (fn, options) => runEdit(fn, options),
+  status: (text, kind) => setStatus(text, kind),
+  t,
+  repaint: () => drawSelection(),
+});
+
 const pointerHover = createPointerHover({
   doc: () => doc,
   pages: () => pages,
@@ -6030,16 +6040,16 @@ const pointerHover = createPointerHover({
   linkAt,
   pointInsideObject,
   objectCapabilities,
+  tableBoundaryAt: (page, event) => tableChrome.targetKind(page, event),
   state: () => ({
     formatPainting: !!formatPainter,
-    editsBlocked: reviewMode === "viewing" || !!readOnlyReason,
-    geometryBlocked: reviewMode !== "editing" || !!readOnlyReason,
+    ...pointerModeState(),
     inRunningStory: !!runningEditBand,
     insideObjectNode: objectSelection?.mode === "editing" ? objectSelection.node : null,
     resizeDrag: objectResizeDrag,
     cropDrag: objectCropSession?.handleDrag ?? null,
     moveDrag: objectMoveDrag,
-    tableDrag: tableResizeDrag,
+    tableDrag: tableChrome.dragKind(),
     textDrag: dragging,
   }),
 });
@@ -6208,6 +6218,17 @@ function onPointerDown(page, event) {
   // which case there is nothing to deselect: the object is the surface, not the
   // target. Clearing it here dropped the user out of the box on every click in
   // its own empty space.
+  // A press on a table BOUNDARY is a resize, not a caret placement — and it works
+  // on any table on the page, not only the one the caret is in, which is the whole
+  // of `docs/141` D-1. Placed after the object path because an object drawn over a
+  // table is still the thing under the pointer (the same order
+  // `pointer_cursor.mjs` records), and before the caret path because the caret is
+  // what this gesture replaces.
+  if (tableChrome.tryBeginDrag(page, event)) return;
+  // A TOUCH tap inside a table arms 24px boundary pills, because hover — the
+  // affordance every branch above depends on — does not exist on touch. The first
+  // `pointerType` read in the product (TBL-18).
+  tableChrome.noteTouch(page, event);
   const wasSelected = objectSelection !== null;
   if (!editingHere) {
     objectSelection = null;
@@ -6289,41 +6310,6 @@ function onPointerDown(page, event) {
   event.preventDefault();
 }
 
-function startTableColumnResize(event, page, node, col) {
-  if (!doc || !selection) return;
-  event.preventDefault();
-  event.stopPropagation();
-  focusEditorSurface();
-  hideLinkChip();
-  hideContextMenu();
-  pointerHover.clear();
-  resetPointerGesture();
-  const startWidthTwips = doc.tableColumnWidthAt(node, col);
-  if (startWidthTwips <= 0) return;
-  const preview = document.createElement("div");
-  preview.className = "table-col-resize-preview";
-  preview.style.left = event.currentTarget.style.left;
-  preview.style.top = "0";
-  preview.style.height = `${page.overlay.clientHeight}px`;
-  page.overlay.appendChild(preview);
-  tableResizeDrag = {
-    node,
-    col,
-    page,
-    startClientX: event.clientX,
-    startWidthTwips,
-    preview,
-    lastWidthTwips: startWidthTwips,
-  };
-  event.currentTarget.setPointerCapture?.(event.pointerId);
-}
-
-function cancelTableColumnResize() {
-  if (!tableResizeDrag) return;
-  tableResizeDrag.preview.remove();
-  tableResizeDrag = null;
-}
-
 /** Aborts an in-progress object resize (pointer cancel / window blur), discarding
  *  the preview and committing nothing. */
 function cancelObjectResize() {
@@ -6332,31 +6318,6 @@ function cancelObjectResize() {
   clearSnapGuides(objectResizeDrag);
   objectResizeDrag = null;
   drawSelection();
-}
-
-function updateTableColumnResize(event) {
-  if (!tableResizeDrag) return;
-  const { sx } = scaleOf(tableResizeDrag.page);
-  const deltaTwips = Math.round((event.clientX - tableResizeDrag.startClientX) / sx);
-  const widthTwips = Math.max(72, tableResizeDrag.startWidthTwips + deltaTwips);
-  tableResizeDrag.lastWidthTwips = widthTwips;
-  const deltaPx = deltaTwips * sx;
-  tableResizeDrag.preview.style.transform = `translateX(${deltaPx}px)`;
-  event.preventDefault();
-}
-
-function finishTableColumnResize(event) {
-  if (!tableResizeDrag) return false;
-  const drag = tableResizeDrag;
-  tableResizeDrag = null;
-  drag.preview.remove();
-  event.preventDefault();
-  if (Math.abs(drag.lastWidthTwips - drag.startWidthTwips) >= 8) {
-    runEdit(() => doc.setTableColumnWidthAt(drag.node, drag.col, drag.lastWidthTwips), { gate: true });
-  } else {
-    drawSelection();
-  }
-  return true;
 }
 
 function onPointerMove(page, event) {
@@ -6368,8 +6329,8 @@ function onPointerMove(page, event) {
     updateObjectResize(event);
     return;
   }
-  if (tableResizeDrag) {
-    updateTableColumnResize(event);
+  if (tableChrome.dragging()) {
+    tableChrome.moveDrag(event);
     return;
   }
   if (dragging && event.buttons === 0) {
@@ -6481,7 +6442,7 @@ function onPointerUp(event) {
   document.body.style.cursor = ""; // the gesture no longer owns the cursor
   if (finishObjectMove(event)) return;
   if (finishObjectResize(event)) return;
-  if (finishTableColumnResize(event)) return;
+  if (tableChrome.finishDrag(event)) return;
   const gesture = pointerGesture;
   resetPointerGesture();
   // Format painter: this pointer gesture landed on the document, so consume it as
@@ -6665,8 +6626,8 @@ window.addEventListener("pointermove", (e) => {
     updateObjectResize(e);
     return;
   }
-  if (tableResizeDrag) {
-    updateTableColumnResize(e);
+  if (tableChrome.dragging()) {
+    tableChrome.moveDrag(e);
     return;
   }
   if (dragging) {
@@ -6782,26 +6743,26 @@ window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("pointercancel", () => {
   cancelObjectMove();
   cancelObjectResize();
-  cancelTableColumnResize();
+  tableChrome.cancelDrag();
   resetPointerGesture();
 });
 window.addEventListener("lostpointercapture", () => {
   cancelObjectMove();
   cancelObjectResize();
-  cancelTableColumnResize();
+  tableChrome.cancelDrag();
   resetPointerGesture();
 });
 window.addEventListener("blur", () => {
   cancelObjectMove();
   cancelObjectResize();
-  cancelTableColumnResize();
+  tableChrome.cancelDrag();
   resetPointerGesture();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     cancelObjectMove();
     cancelObjectResize();
-    cancelTableColumnResize();
+    tableChrome.cancelDrag();
     resetPointerGesture();
   }
 });
@@ -7098,7 +7059,23 @@ const TABLE_COMMAND_HOST = {
     tableBtn.click();
   },
   openTableProperties: () => toggleTableProperties(true),
+  stepTableBand,
 };
+
+/** Sizes the caret's table row or column by one grid step — the keyboard twin of
+ *  the boundary drag (`docs/141` D-1 §4.1.6), bound to Alt+Shift+Arrow. The page
+ *  comes from the `cellRect` the chrome layer needs anyway, so this costs one
+ *  page-scoped geometry call and no `tableInfo` walk. */
+function stepTableBand(axis, sign) {
+  if (!doc || !selection) return false;
+  const cell = doc.cellRect(selection.focus.node); // [page, x, y, w, h] or []
+  if (cell.length < 5) {
+    setStatus(t("table.reason.caretOutsideTable"), "warn");
+    return true;
+  }
+  const page = pages[cell[0] - 1];
+  return page ? tableChrome.stepFromCaret(page, selection.focus.node, cell, axis, sign) : false;
+}
 
 const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
 

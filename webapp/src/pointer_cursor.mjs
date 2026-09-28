@@ -180,6 +180,19 @@ export const CURSOR_TARGETS = [
     why: "Matches the handle's own hover cursor, so the shape does not change on press.",
     when: (p) => p.drag === "table-column",
   },
+  {
+    id: "drag-table-row",
+    cursor: "row-resize",
+    owner: "router",
+    selector: null,
+    gesture: "Changing a row height",
+    why:
+      "The row twin of the column drag, for the same reason: the shape must not " +
+      "change on press. ONLYOFFICE has no row-height drag at all — their border " +
+      "hit test carries row borders but the gesture is column-only — so this is " +
+      "the Google Docs behaviour, not theirs.",
+    when: (p) => p.drag === "table-row",
+  },
 
   // ---- Whole-surface modes ------------------------------------------------
   // Below the object and table drags, deliberately: with the painter armed a
@@ -249,6 +262,27 @@ export const CURSOR_TARGETS = [
     selector: ".overlay .table-col-resize-handle",
     gesture: "Dragging a column boundary",
     why: "`col-resize`, the same keyword ONLYOFFICE uses for a vertical cell border.",
+  },
+  {
+    id: "table-row-touch-pill",
+    cursor: "row-resize",
+    owner: "css",
+    selector: ".overlay .table-row-touch-pill",
+    gesture: "Dragging a row boundary by touch",
+    why:
+      "24 CSS px across the boundary (WCAG 2.5.8 Target Size Minimum), armed by a " +
+      "TAP rather than by hover, because hover does not exist on touch. The cursor " +
+      "is for the mouse that lands on one afterwards. ONLYOFFICE returns `null` " +
+      "from `IsTableBorder` under `IsMobileVersion()` — they have no table border " +
+      "interaction on mobile at all — so this is a lead, not a catch-up.",
+  },
+  {
+    id: "table-col-touch-pill",
+    cursor: "col-resize",
+    owner: "css",
+    selector: ".overlay .table-col-touch-pill",
+    gesture: "Dragging a column boundary by touch",
+    why: "The column twin of the row pill above; same size, same reason.",
   },
   {
     id: "checklist-checkbox",
@@ -377,6 +411,52 @@ export const CURSOR_TARGETS = [
       "and the click only selects — and a cursor that promises a drag which does " +
       "nothing is worse than the arrow. Docs also shows the arrow here.",
     when: (p) => !!p.object && !p.insideObject,
+  },
+  // ---- Table boundaries, on ANY table on the page --------------------------
+  // The row this whole change is about. Before it, a boundary was a hit target
+  // only for the table the CARET was in, because the only geometry query started
+  // from a caret NodeId — so widening a column meant clicking into the table
+  // first, which moves the caret and breaks the typing session. In Docs it is a
+  // gesture you perform on the way past.
+  //
+  // ROW WINS AT A CROSSING, and that is decided rather than accidental:
+  // ONLYOFFICE tests the top/bottom borders before left/right in
+  // `private_CheckHitInBorder`, so a corner resolves to the horizontal edge
+  // there too, and a pointer travelling along a row edge must not have the
+  // gesture change under it at every column. The zone is +/-5px about the
+  // border, KEPT from the existing column handle rather than narrowed to
+  // ONLYOFFICE's +/-3px.
+  //
+  // Only an ARMED boundary reaches here: the chrome layer returns `""` in
+  // Viewing and Suggesting, and for a column boundary on a merged or spanned
+  // table. That is the fix for a handle that was painted, draggable, and refused
+  // only on release (`docs/141` TBL-35).
+  {
+    id: "table-row-boundary",
+    cursor: "row-resize",
+    owner: "router",
+    selector: null,
+    gesture: "Dragging a row boundary",
+    why:
+      "`row-resize`, the horizontal twin of the column border's `col-resize`. " +
+      "ONLYOFFICE hit-tests row borders within 3px (`Table.js:3515` " +
+      "`IsTableBorder`) but offers no row-height drag on them; Google Docs does, " +
+      "and that is the behaviour followed here.",
+    when: (p) => p.tableBoundary === "row",
+  },
+  {
+    id: "table-column-boundary",
+    cursor: "col-resize",
+    owner: "router",
+    selector: null,
+    gesture: "Dragging a column boundary without clicking into the table first",
+    why:
+      "The same cursor the painted handle carries (`table-column-handle` below), " +
+      "because it is the same gesture — the difference is only that this one " +
+      "needs no caret in the table. Two rows rather than one because the two " +
+      "have different OWNERS: that one is dressed by CSS on an overlay element, " +
+      "this one is written onto the canvas by the router.",
+    when: (p) => p.tableBoundary === "column",
   },
   {
     id: "form-checkbox",
@@ -509,17 +589,20 @@ export const CURSOR_TARGETS = [
       "resize grips will turn correctly on the same day.",
   },
   {
-    id: "table-row-boundary",
-    cursor: "row-resize",
+    id: "table-select-strip",
+    cursor: "cell",
     owner: "unprobed",
     selector: null,
-    gesture: "Dragging a row boundary",
+    gesture: "Selecting a row or column from the strip beside the table",
     why:
-      "Only COLUMN resize handles exist (`tableColumnResizeHandles`), and only for " +
-      "the table the caret is in — so a boundary is not a hit target until a handle " +
-      "is painted on it. ONLYOFFICE hit-tests every border within 3 px and also " +
-      "carries row/column/cell SELECT zones with custom image cursors, none of " +
-      "which this editor has yet.",
+      "The EDGE STRIPS are still missing (`docs/141` D-2): clicking left of a row " +
+      "to select it, above a column to select it, and dragging along either. " +
+      "`tableChromeOnPage` reports the table's own bounding box, so the strip " +
+      "rectangles are derivable from it, but nothing paints or hit-tests them yet. " +
+      "ONLYOFFICE carries all three zones (`private_CheckHitInBorder`'s " +
+      "`RowSelection` / `ColumnSelection` / `CellSelection`) with custom image " +
+      "cursors, so they are ahead of us here. Recorded rather than omitted: an " +
+      "`unprobed` row stays visible in `pointer_cursor.test.mjs`.",
   },
 ];
 

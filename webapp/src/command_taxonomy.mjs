@@ -190,6 +190,10 @@ export const APP_MENU_SECTIONS = {
     ["table.merge", "table.unmerge", "table.split"],
     ["table.distribute.rows", "table.distribute.columns"],
     ["table.sort.ascending", "table.sort.descending"],
+    // Sizing the caret's band from the keyboard. These are the ONLY table
+    // commands with a chord (Alt+Shift+Arrow), and they are on the menu as well
+    // because a chord is not a surface a user browses.
+    ["table.column.grow", "table.column.shrink", "table.row.grow", "table.row.shrink"],
     ["table.cellFormat", "table.properties"],
     // Clearing the table style. The named styles are generated per document, so
     // they cannot be listed here — the ribbon's chooser and the palette's
@@ -235,6 +239,10 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.distribute.columns", "Distribute columns"],
   ["table.sort.ascending", "Sort ascending"],
   ["table.sort.descending", "Sort descending"],
+  ["table.column.grow", "Widen column"],
+  ["table.column.shrink", "Narrow column"],
+  ["table.row.grow", "Taller row"],
+  ["table.row.shrink", "Shorter row"],
   ["table.cellFormat", "Cell formatting…"],
   ["table.properties", "Table properties…"],
   ["table.style.none", "No table style"],
