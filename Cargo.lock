@@ -245,6 +245,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ooxml",
  "casual-doc-render",
+ "casual-doc-selection",
  "serde",
  "serde_json",
  "unicode-segmentation",

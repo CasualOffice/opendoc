@@ -105,6 +105,7 @@ use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::DocxPackage;
 use casual_doc_ooxml::PackageLimits;
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
+use casual_doc_selection::{CellRange, TableCellSelection, cell_grid_start};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use wasm_bindgen::Clamped;
@@ -6908,6 +6909,254 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// The normalised rectangle two cell endpoints describe, as
+    /// [`CellRangeInfo`] — what a drag gesture calls on every pointer-move to
+    /// learn what it has selected. `anchor_node` and `focus_node` are PARAGRAPH
+    /// (or cell) node ids; the innermost table containing them is used, so a
+    /// nested table selects within itself.
+    ///
+    /// This never throws: a range that cannot be produced comes back with
+    /// `found === false` and a `reason`, because the caller is a pointer handler
+    /// and a refusal must be sayable rather than thrown away.
+    ///
+    /// `expanded === true` means the rectangle grew past what was dragged to
+    /// contain a merged cell, so the UI can say so instead of appearing to select
+    /// more than the gesture covered (`docs/141` §4.3.5).
+    ///
+    /// Complexity: O(document) to locate the table — the same cost every table
+    /// facade query already pays, and row TBL-15 is the one that fixes it for all
+    /// of them — then O(cells of the table) for the rectangle. Nothing here is
+    /// quadratic in the document and it adds no `find_paragraph` scan (HF-184).
+    #[wasm_bindgen(js_name = tableCellRange)]
+    #[must_use]
+    pub fn table_cell_range(&self, anchor_node: &str, focus_node: &str) -> CellRangeInfo {
+        match self.cell_range_of(anchor_node, focus_node) {
+            Ok((table, _, range)) => CellRangeInfo::of(table, &range),
+            Err(reason) => CellRangeInfo::refused(reason),
+        }
+    }
+
+    /// Cell rectangles for the cell range `anchor_node`..`focus_node`, flattened as
+    /// `[page, x, y, w, h, …]` in page-local twips — the same stride
+    /// [`tableSelectionRects`](Self::table_selection_rects) uses, so the painter is
+    /// unchanged. One rectangle per cell, and a merged cell contributes ONE
+    /// rectangle covering its whole footprint.
+    ///
+    /// Empty when the range refuses; call [`tableCellRange`](Self::table_cell_range)
+    /// for the reason.
+    ///
+    /// Complexity: O(document) for the table lookup, then O(cells in the range).
+    #[wasm_bindgen(js_name = tableCellRangeRects)]
+    #[must_use]
+    pub fn table_cell_range_rects(&self, anchor_node: &str, focus_node: &str) -> Vec<i32> {
+        let Ok((_, table, range)) = self.cell_range_of(anchor_node, focus_node) else {
+            return Vec::new();
+        };
+        let layout = self.painted_snapshot();
+        let mut out = Vec::with_capacity(range.cells().len() * 5);
+        for anchor in cell_range_anchors(table, &range) {
+            if let Some((page, rect)) = layout.cell_rect(anchor) {
+                out.extend_from_slice(&flat_rect(page, rect));
+            }
+        }
+        out
+    }
+
+    /// One anchor paragraph node id per cell of the range — what a caller passes to
+    /// a per-cell command. A merged cell appears once.
+    ///
+    /// Complexity: O(document) for the table lookup, then O(cells in the range).
+    #[wasm_bindgen(js_name = tableCellRangeAnchorNodes)]
+    #[must_use]
+    pub fn table_cell_range_anchor_nodes(
+        &self,
+        anchor_node: &str,
+        focus_node: &str,
+    ) -> Vec<String> {
+        let Ok((_, table, range)) = self.cell_range_of(anchor_node, focus_node) else {
+            return Vec::new();
+        };
+        cell_range_anchors(table, &range)
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect()
+    }
+
+    /// One anchor paragraph node id per cell of the `"row"` / `"column"` /
+    /// `"table"` selection around `node` — the query the cell-format commands need
+    /// to stop applying to exactly one cell (`docs/141` §1.16, `docs/109` HF-219).
+    ///
+    /// This exposes `table_selection_anchors`, which
+    /// [`tableSelectionRects`](Self::table_selection_rects) already computes and
+    /// then throws away in favour of rectangles. Deriving the same list again in JS
+    /// would be a second implementation of one rule.
+    ///
+    /// Complexity: O(document) for the table lookup, then O(cells in the
+    /// selection).
+    #[wasm_bindgen(js_name = tableSelectionAnchorNodes)]
+    #[must_use]
+    pub fn table_selection_anchor_nodes(&self, node: &str, mode: &str) -> Vec<String> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        let Some((table, row, _)) = locate_table_row(&self.document, nid) else {
+            return Vec::new();
+        };
+        let Some((_, col)) = locate_table_cell(&self.document, nid) else {
+            return Vec::new();
+        };
+        let Some(t) = find_table(&self.document, table) else {
+            return Vec::new();
+        };
+        table_selection_anchors(t, row as usize, col as usize, mode)
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect()
+    }
+
+    /// Merges the rectangle of cells between `anchor_node` and `focus_node`.
+    ///
+    /// The engine already accepted an arbitrary rectangle: this calls
+    /// `merge_regular_table_selection(original, r0, r1, c0, c1, …)` unchanged, with
+    /// the rectangle the selection derives instead of one of the three degenerate
+    /// ones a mode string can name (`docs/141` §1.5, row TBL-17). No new operation
+    /// — a range is a selection, not an operation (ADR-030 I2).
+    ///
+    /// # Errors
+    /// When either endpoint is not in a table, the two are in different tables, the
+    /// rectangle is a single cell (*select two or more cells before merging*), or
+    /// the table already carries a merge.
+    #[wasm_bindgen(js_name = mergeTableCellRange)]
+    pub fn merge_table_cell_range(
+        &mut self,
+        anchor_node: &str,
+        focus_node: &str,
+    ) -> Result<EditResult, JsValue> {
+        self.merge_table_cell_range_inner(anchor_node, focus_node)
+            .map_err(to_js)
+    }
+
+    /// See [`WasmDocument::merge_table_cell_range`]. Split out so native tests read
+    /// the refusal text on the same path as the `#[wasm_bindgen]` boundary.
+    fn merge_table_cell_range_inner(
+        &mut self,
+        anchor_node: &str,
+        focus_node: &str,
+    ) -> Result<EditResult, String> {
+        let (table, original, range) = {
+            let (table, t, range) = self.cell_range_of(anchor_node, focus_node)?;
+            (table, t.clone(), range)
+        };
+        if !table_is_regular(&original) {
+            return Err("merge requires a regular table".to_owned());
+        }
+        if range.is_single_cell() {
+            return Err("select at least two cells to merge".to_owned());
+        }
+        let (r0, r1) = (range.first_row(), range.last_row());
+        let (c0, c1) = (range.first_column(), range.last_column());
+        let replacement =
+            merge_regular_table_selection(original, r0, r1, c0, c1, &mut self.edit_ids)?;
+        let fallback = node_id_msg(anchor_node)?;
+        let caret = replacement
+            .rows
+            .get(r0)
+            .and_then(|r| r.cells.get(c0))
+            .and_then(first_paragraph_of_cell)
+            .map_or(Pos::new(fallback, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            caret,
+        )
+    }
+
+    /// Sets or clears the background shading of EVERY cell in the range
+    /// `anchor_node`..`focus_node`, in one edit.
+    ///
+    /// This is the payoff of the cell range and the fix for `docs/109` HF-219:
+    /// select two cells, shade them, and both shade. Passing the same node twice
+    /// is a one-cell range, so this is a superset of
+    /// [`setCellShading`](Self::set_cell_shading).
+    ///
+    /// One action, therefore ONE undo entry for the whole block — not one per
+    /// cell.
+    ///
+    /// # Errors
+    /// When the range refuses (see [`tableCellRange`](Self::table_cell_range)).
+    #[wasm_bindgen(js_name = setCellShadingRange)]
+    pub fn set_cell_shading_range(
+        &mut self,
+        anchor_node: &str,
+        focus_node: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        clear: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_cell_props_range(anchor_node, focus_node, |p| {
+            p.shading.fill = if clear {
+                None
+            } else {
+                Some(RgbColor { r, g, b })
+            };
+        })
+        .map_err(to_js)
+    }
+
+    /// Sets the vertical text alignment of EVERY cell in the range
+    /// `anchor_node`..`focus_node` (`"top"` | `"center"` | `"bottom"`), in one
+    /// edit and one undo entry.
+    ///
+    /// # Errors
+    /// When the range refuses (see [`tableCellRange`](Self::table_cell_range)).
+    #[wasm_bindgen(js_name = setCellVerticalAlignRange)]
+    pub fn set_cell_vertical_align_range(
+        &mut self,
+        anchor_node: &str,
+        focus_node: &str,
+        align: &str,
+    ) -> Result<EditResult, JsValue> {
+        let va = match align {
+            "center" => CellVerticalAlignment::Center,
+            "bottom" => CellVerticalAlignment::Bottom,
+            _ => CellVerticalAlignment::Top,
+        };
+        self.apply_cell_props_range(anchor_node, focus_node, move |p| {
+            p.vertical_alignment = Some(va);
+        })
+        .map_err(to_js)
+    }
+
+    /// Applies a border `edges` preset to EVERY cell in the range
+    /// `anchor_node`..`focus_node`, in one edit and one undo entry. The presets are
+    /// [`setCellBorder`](Self::set_cell_border)'s.
+    ///
+    /// # Errors
+    /// When the range refuses (see [`tableCellRange`](Self::table_cell_range)).
+    #[wasm_bindgen(js_name = setCellBorderRange)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (range + preset + rgb + size)
+    pub fn set_cell_border_range(
+        &mut self,
+        anchor_node: &str,
+        focus_node: &str,
+        edges: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        size_eighth_points: u32,
+    ) -> Result<EditResult, JsValue> {
+        let edges = edges.to_string();
+        self.apply_cell_props_range(anchor_node, focus_node, move |p| {
+            set_table_borders_preset(&mut p.borders, &edges, || {
+                border_edge(r, g, b, size_eighth_points)
+            });
+        })
+        .map_err(to_js)
+    }
+
     /// Splits the active merged cell in the current regularized merged table back
     /// into normal cells. The top-left cell keeps the merged content; recreated
     /// cells are empty but valid.
@@ -12674,6 +12923,82 @@ impl WasmDocument {
     /// Reads the current properties of the cell containing `node`, applies `f`, and
     /// installs them via `SetTableCellProperties` (one undoable action). Errors when
     /// `node` is not inside a table cell.
+    /// Resolves two paragraph-or-cell node ids into the table they share and the
+    /// normalised cell rectangle between them.
+    ///
+    /// Node resolution goes through `locate_cell`, the existing single mechanism
+    /// for "which cell is this node in", which already picks the INNERMOST table;
+    /// the rectangle and the merged-cell expansion come from
+    /// `casual_doc_selection::TableCellSelection`, so the facade holds no grid
+    /// arithmetic of its own.
+    ///
+    /// Complexity: O(document) for the two `locate_cell` walks and the table
+    /// lookup, then O(cells of the table). No `find_paragraph` scan is added
+    /// (HF-184).
+    fn cell_range_of(
+        &self,
+        anchor_node: &str,
+        focus_node: &str,
+    ) -> Result<(NodeId, &Table, CellRange), String> {
+        let anchor = node_id_msg(anchor_node)?;
+        let focus = node_id_msg(focus_node)?;
+        let (anchor_table, anchor_cell) = locate_cell(&self.document, anchor)
+            .ok_or_else(|| "the selection start is not in a table cell".to_owned())?;
+        let (focus_table, focus_cell) = locate_cell(&self.document, focus)
+            .ok_or_else(|| "the selection end is not in a table cell".to_owned())?;
+        if anchor_table != focus_table {
+            return Err("a cell selection cannot span two tables".to_owned());
+        }
+        let table =
+            find_table(&self.document, anchor_table).ok_or_else(|| "table not found".to_owned())?;
+        let range = TableCellSelection::new(anchor_table, anchor_cell, focus_cell)
+            .normalised(table)
+            .map_err(|error| error.to_string())?;
+        Ok((anchor_table, table, range))
+    }
+
+    /// Applies one cell-property change to every cell of a range in a SINGLE
+    /// action, so the whole block is one undo entry rather than one per cell.
+    ///
+    /// This is the mechanism behind `docs/109` HF-219: the cell-format commands
+    /// used to commit through the caret's node alone, so shading a selected row
+    /// shaded exactly one cell.
+    ///
+    /// Complexity: O(document) for the range resolution, then O(cells in the
+    /// range) — the properties of each target cell are read from the table that
+    /// resolution already found, never re-looked-up per cell.
+    fn apply_cell_props_range(
+        &mut self,
+        anchor_node: &str,
+        focus_node: &str,
+        f: impl Fn(&mut TableCellProperties),
+    ) -> Result<EditResult, String> {
+        let targets: Vec<(NodeId, TableCellProperties)> = {
+            let (_, table, range) = self.cell_range_of(anchor_node, focus_node)?;
+            range
+                .cells()
+                .iter()
+                .filter_map(|id| {
+                    cell_in_table(table, *id).map(|cell| (*id, cell.properties.clone()))
+                })
+                .collect()
+        };
+        if targets.is_empty() {
+            return Err("the selection contains no cells".to_owned());
+        }
+        let ops = targets
+            .into_iter()
+            .map(|(cell, mut properties)| {
+                f(&mut properties);
+                Operation::SetTableCellProperties {
+                    cell,
+                    properties: Box::new(properties),
+                }
+            })
+            .collect();
+        self.apply_action(ops)
+    }
+
     fn apply_cell_props(
         &mut self,
         node: &str,
@@ -21575,6 +21900,172 @@ impl LinkHit {
     }
 }
 
+/// The cell with id `cell` in `table` (this level only — nested tables are their
+/// own grids and a cell range never spans two of them).
+///
+/// Complexity: O(cells of the table).
+fn cell_in_table(table: &Table, cell: NodeId) -> Option<&TableCell> {
+    table
+        .rows
+        .iter()
+        .flat_map(|row| row.cells.iter())
+        .find(|candidate| candidate.id == cell)
+}
+
+/// The anchor paragraph of every cell in `range` — the ids a per-cell command and
+/// the layout's `cell_rect` both take. A cell with no paragraph of its own is
+/// skipped rather than reported as an empty id.
+///
+/// Complexity: O(cells of the table) per cell of the range, because the range
+/// carries cell ids and the table is a tree; the ranges this runs on are the ones
+/// a user drags across.
+fn cell_range_anchors(table: &Table, range: &CellRange) -> Vec<NodeId> {
+    range
+        .cells()
+        .iter()
+        .filter_map(|id| cell_in_table(table, *id).and_then(first_paragraph_of_cell))
+        .collect()
+}
+
+/// The normalised rectangle of a table-cell selection, for the frontend: the grid
+/// rectangle, how many cells are in it, whether it had to grow around a merged
+/// cell, and — when it could not be produced — the reason, so a refusal is
+/// sayable rather than silent.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct CellRangeInfo {
+    found: bool,
+    table: String,
+    first_row: u32,
+    last_row: u32,
+    first_column: u32,
+    last_column: u32,
+    cells: u32,
+    expanded: bool,
+    reason: String,
+}
+
+impl CellRangeInfo {
+    fn of(table: NodeId, range: &CellRange) -> Self {
+        Self {
+            found: true,
+            table: table.to_string(),
+            first_row: range.first_row() as u32,
+            last_row: range.last_row() as u32,
+            first_column: range.first_column() as u32,
+            last_column: range.last_column() as u32,
+            cells: range.cells().len() as u32,
+            expanded: range.expanded(),
+            reason: String::new(),
+        }
+    }
+
+    fn refused(reason: String) -> Self {
+        Self {
+            found: false,
+            table: String::new(),
+            first_row: 0,
+            last_row: 0,
+            first_column: 0,
+            last_column: 0,
+            cells: 0,
+            expanded: false,
+            reason,
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl CellRangeInfo {
+    /// Whether a rectangle was produced. `false` carries a [`reason`](Self::reason).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn found(&self) -> bool {
+        self.found
+    }
+
+    /// The table the rectangle is in, or `""`.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn table(&self) -> String {
+        self.table.clone()
+    }
+
+    /// First row index, inclusive.
+    #[wasm_bindgen(getter, js_name = firstRow)]
+    #[must_use]
+    pub fn first_row(&self) -> u32 {
+        self.first_row
+    }
+
+    /// Last row index, inclusive.
+    #[wasm_bindgen(getter, js_name = lastRow)]
+    #[must_use]
+    pub fn last_row(&self) -> u32 {
+        self.last_row
+    }
+
+    /// First GRID column, inclusive — not a cell index.
+    #[wasm_bindgen(getter, js_name = firstColumn)]
+    #[must_use]
+    pub fn first_column(&self) -> u32 {
+        self.first_column
+    }
+
+    /// Last GRID column, inclusive — not a cell index.
+    #[wasm_bindgen(getter, js_name = lastColumn)]
+    #[must_use]
+    pub fn last_column(&self) -> u32 {
+        self.last_column
+    }
+
+    /// Rows covered.
+    #[wasm_bindgen(getter, js_name = rowCount)]
+    #[must_use]
+    pub fn row_count(&self) -> u32 {
+        if self.found {
+            self.last_row - self.first_row + 1
+        } else {
+            0
+        }
+    }
+
+    /// Grid columns covered.
+    #[wasm_bindgen(getter, js_name = columnCount)]
+    #[must_use]
+    pub fn column_count(&self) -> u32 {
+        if self.found {
+            self.last_column - self.first_column + 1
+        } else {
+            0
+        }
+    }
+
+    /// Cells in the rectangle, counting a merged cell once — so a 1 here means
+    /// merging is unavailable and the reason is *"Select two or more cells before
+    /// merging"*.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn cells(&self) -> u32 {
+        self.cells
+    }
+
+    /// Whether the rectangle grew past the dragged cells to contain a merged cell.
+    /// The UI says so rather than appearing to select more than was dragged.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Why no rectangle was produced; `""` when [`found`](Self::found).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn reason(&self) -> String {
+        self.reason.clone()
+    }
+}
+
 /// Current table context for editor table-selection and table-property controls.
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
@@ -22827,13 +23318,6 @@ fn split_table_cell(
 /// the sum of the grid spans of the cells before it. For a regular table this
 /// equals `col_index`, but with a horizontally merged cell earlier in the row
 /// the grid position runs ahead of the cell index.
-fn cell_grid_start(row: &TableRow, col_index: usize) -> usize {
-    row.cells[..col_index.min(row.cells.len())]
-        .iter()
-        .map(|cell| cell.properties.grid_span.unwrap_or(1).max(1) as usize)
-        .sum()
-}
-
 /// Splits the cell at (`row_index`, `col_index`) into a `requested_rows` x
 /// `requested_columns` grid within its own grid footprint (Word "Split Cells").
 /// `0, 0` unmerges a merged cell back to its component columns (see
@@ -31963,6 +32447,357 @@ mod tests {
         assert_eq!(d.table_column_resize_handles(&caret).len(), 2 * 5);
         assert!(d.table_selection_rects(&body_para, "table").is_empty());
         assert!(d.table_selection_rects(&caret, "unknown").is_empty());
+    }
+
+    /// The id of the table the caret `anchor` is in.
+    fn table_of(d: &WasmDocument, anchor: &str) -> NodeId {
+        let nid = NodeId::from_str(anchor).expect("anchor node id");
+        casual_doc_edit::locate_cell(&d.document, nid)
+            .expect("anchor is in a table cell")
+            .0
+    }
+
+    /// Every cell's first paragraph id, row-major, read out of the MODEL. The
+    /// range guards name their endpoints and check their results this way rather
+    /// than through the facade queries under test: an oracle that shares the code
+    /// under test agrees with its bugs.
+    fn cell_paragraphs(d: &WasmDocument, table: NodeId) -> Vec<Vec<String>> {
+        casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| match cell.blocks.first().expect("cell block") {
+                        BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+                        _ => panic!("cell starts with a paragraph"),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Every cell's shading fill, row-major, read out of the MODEL — "is this cell
+    /// shaded in the document", not "did the facade say so".
+    fn cell_fills(d: &WasmDocument, table: NodeId) -> Vec<Vec<Option<RgbColor>>> {
+        casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| cell.properties.shading.fill)
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn body_paragraph(d: &WasmDocument) -> String {
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables")
+    }
+
+    const INK: RgbColor = RgbColor {
+        r: 0x33,
+        g: 0x55,
+        b: 0xc4,
+    };
+
+    #[test]
+    fn shading_a_two_cell_range_shades_both_cells_in_the_document() {
+        // The defect this closes (`docs/109` HF-219, `docs/141` §1.16): every cell
+        // format committed through the caret's node, so selecting two cells and
+        // shading them shaded exactly one — silently.
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 2, 3).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+
+        d.set_cell_shading_range(&cells[0][0], &cells[0][1], INK.r, INK.g, INK.b, false)
+            .expect("shade the range");
+
+        let fills = cell_fills(&d, table);
+        assert_eq!(
+            fills[0][0],
+            Some(INK),
+            "the first selected cell must be shaded in the document"
+        );
+        assert_eq!(
+            fills[0][1],
+            Some(INK),
+            "the SECOND selected cell must be shaded too — this is the whole defect"
+        );
+        assert_eq!(fills[0][2], None, "an unselected cell must not be shaded");
+        assert_eq!(fills[1], vec![None, None, None], "row 1 was not selected");
+
+        // One action, so one undo entry puts both cells back.
+        d.undo().expect("undo the block shading");
+        assert_eq!(
+            cell_fills(&d, table),
+            vec![vec![None; 3], vec![None; 3]],
+            "one undo must revert the whole block, not one cell of it"
+        );
+    }
+
+    #[test]
+    fn shading_a_selected_row_shades_every_cell_of_that_row() {
+        // The gesture a user actually performs: Select row, then shade. The row's
+        // cell anchors come from the facade query the UI will call, and the result
+        // is read out of the model.
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 2, 3).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let row_anchors = d.table_selection_anchor_nodes(&anchor, "row");
+        assert_eq!(
+            row_anchors.len(),
+            3,
+            "a 3-column row has three cell anchors"
+        );
+
+        d.set_cell_shading_range(
+            row_anchors.first().expect("row start"),
+            row_anchors.last().expect("row end"),
+            INK.r,
+            INK.g,
+            INK.b,
+            false,
+        )
+        .expect("shade the selected row");
+
+        let fills = cell_fills(&d, table);
+        assert_eq!(
+            fills[0],
+            vec![Some(INK); 3],
+            "every cell of the selected row must be shaded"
+        );
+        assert_eq!(fills[1], vec![None; 3]);
+    }
+
+    #[test]
+    fn vertical_alignment_and_borders_also_apply_across_the_range() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 2, 2).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+
+        d.set_cell_vertical_align_range(&cells[0][0], &cells[1][1], "center")
+            .expect("align the block");
+        d.set_cell_border_range(&cells[0][0], &cells[1][1], "box", 0, 0, 0, 8)
+            .expect("border the block");
+
+        let t = casual_doc_edit::find_table(&d.document, table).expect("table");
+        for row in &t.rows {
+            for cell in &row.cells {
+                assert_eq!(
+                    cell.properties.vertical_alignment,
+                    Some(CellVerticalAlignment::Center),
+                    "every cell of the block is centred"
+                );
+                assert!(
+                    cell.properties.borders.top.is_some(),
+                    "every cell of the block has the preset's top edge"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_cell_range_reports_its_rectangle_and_refuses_with_a_reason() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+
+        let range = d.table_cell_range(&cells[0][1], &cells[2][2]);
+        assert!(range.found());
+        assert_eq!(
+            (
+                range.first_row(),
+                range.last_row(),
+                range.first_column(),
+                range.last_column()
+            ),
+            (0, 2, 1, 2)
+        );
+        assert_eq!(range.cells(), 6);
+        assert_eq!((range.row_count(), range.column_count()), (3, 2));
+        assert!(!range.expanded(), "a regular grid clips nothing");
+        assert_eq!(range.reason(), "");
+        assert_eq!(
+            d.table_cell_range_rects(&cells[0][1], &cells[2][2]).len(),
+            6 * 5,
+            "one painted rectangle per cell of the range"
+        );
+        assert_eq!(
+            d.table_cell_range_anchor_nodes(&cells[0][1], &cells[2][2])
+                .len(),
+            6
+        );
+
+        // A refusal is reported, never thrown: the caller is a pointer handler.
+        let outside = d.table_cell_range(&body, &cells[0][0]);
+        assert!(!outside.found());
+        assert!(
+            outside.reason().contains("not in a table cell"),
+            "refusal must say why, got {:?}",
+            outside.reason()
+        );
+        assert!(d.table_cell_range_rects(&body, &cells[0][0]).is_empty());
+    }
+
+    #[test]
+    fn merging_a_cell_rectangle_spans_it_and_undoes_as_one_action() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+
+        d.merge_table_cell_range(&cells[0][0], &cells[1][1])
+            .expect("merge the 2x2 rectangle");
+
+        let t = casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .clone();
+        assert_eq!(
+            t.rows[0].cells.len(),
+            3,
+            "the two merged columns of row 0 collapse into one cell"
+        );
+        assert_eq!(t.rows[0].cells[0].properties.grid_span, Some(2));
+        assert_eq!(
+            t.rows[0].cells[0].properties.vertical_merge,
+            Some(VerticalMerge::Restart)
+        );
+        assert_eq!(t.rows[1].cells[0].properties.grid_span, Some(2));
+        assert_eq!(
+            t.rows[1].cells[0].properties.vertical_merge,
+            Some(VerticalMerge::Continue)
+        );
+        assert_eq!(t.rows[2].cells.len(), 4, "row 2 was outside the rectangle");
+
+        d.undo().expect("undo the merge");
+        let restored = casual_doc_edit::find_table(&d.document, table).expect("table");
+        assert_eq!(
+            restored.rows[0].cells.len(),
+            4,
+            "one undo restores the grid"
+        );
+    }
+
+    #[test]
+    fn a_single_cell_range_refuses_to_merge_and_says_to_select_two() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 2, 2).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+        let message = d
+            .merge_table_cell_range_inner(&cells[0][0], &cells[0][0])
+            .expect_err("one cell cannot be merged");
+        assert!(
+            message.contains("at least two cells"),
+            "the refusal must name the remedy, got {message}"
+        );
+    }
+
+    #[test]
+    fn a_range_that_clips_a_merged_cell_expands_to_contain_it() {
+        // The merged condition is created by the real merge operation rather than a
+        // hand-written grid, so this is an independent check on the expansion rule
+        // the selection crate's own fixtures assert from the other side.
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+        d.merge_table_cell_range(&cells[0][0], &cells[1][1])
+            .expect("merge rows 0..=1 x columns 0..=1");
+
+        // Grid columns 0..=1 of rows 0..=1 are now ONE cell. Drag row 2 column 0 up
+        // to row 1's next cell, which starts at grid column 2: the rectangle
+        // rows 1..=2 x columns 0..=2 cuts the merged cell in half, so it must grow
+        // up to row 0.
+        let after = cell_paragraphs(&d, table);
+        let range = d.table_cell_range(&after[2][0], &after[1][1]);
+        assert!(range.found(), "{}", range.reason());
+        assert!(
+            range.expanded(),
+            "a rectangle that clips a merged cell must report that it grew"
+        );
+        assert_eq!(
+            (
+                range.first_row(),
+                range.last_row(),
+                range.first_column(),
+                range.last_column()
+            ),
+            (0, 2, 0, 2),
+            "the fixed point contains the whole merged cell"
+        );
+        assert_eq!(
+            range.cells(),
+            6,
+            "the merged cell counts once: 2 in row 0, 1 in row 1, 3 in row 2"
+        );
+
+        // And shading that expanded block shades the merged cell as one cell.
+        d.set_cell_shading_range(&after[2][0], &after[1][1], INK.r, INK.g, INK.b, false)
+            .expect("shade the expanded block");
+        let fills = cell_fills(&d, table);
+        assert_eq!(fills[0][0], Some(INK), "the merged cell is shaded");
+        assert_eq!(fills[0][1], Some(INK), "grid column 2 of row 0 is shaded");
+        assert_eq!(
+            fills[0][2], None,
+            "grid column 3 was outside the rectangle and stays unshaded"
+        );
+    }
+
+    #[test]
+    fn a_merged_table_refuses_a_further_merge_with_the_existing_reason() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+        d.merge_table_cell_range(&cells[0][0], &cells[1][1])
+            .expect("first merge");
+        let after = cell_paragraphs(&d, table);
+        let message = d
+            .merge_table_cell_range_inner(&after[2][0], &after[2][1])
+            .expect_err("a table with a merge refuses a further merge");
+        assert!(
+            message.contains("regular table"),
+            "the refusal must say why, got {message}"
+        );
+    }
+
+    #[test]
+    fn a_cell_range_cannot_span_two_tables() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let first = d.insert_table(&body, 2, 2).expect("first table").node();
+        let second_body = body_paragraph(&d);
+        let second = d.insert_table(&second_body, 2, 2).expect("second table");
+        let second_anchor = second.node();
+        let range = d.table_cell_range(&first, &second_anchor);
+        assert!(!range.found());
+        assert!(
+            range.reason().contains("two tables"),
+            "got {:?}",
+            range.reason()
+        );
     }
 
     #[test]
