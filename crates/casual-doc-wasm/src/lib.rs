@@ -123,6 +123,11 @@ mod objects;
 // already 35k lines and is owned by other lanes.
 mod references;
 
+// Table of contents: generation and the two updates (`docs/141`). Its own module
+// for the same reason as `references` — one feature, one document walk per
+// command — and because its complexity contract needs stating in one place.
+mod toc;
+
 // Version diff (`docs/140` H3). Its own module for the same reason, and because
 // it touches nothing in the live session: it takes two checkpoints' bytes and
 // returns a sidecar, which is exactly what makes it movable into a Worker later
@@ -746,7 +751,10 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         // section break the user inserted, and the undo label has to say so.
         Operation::SpliceSectionBoundary { .. } => HistoryKind::SectionBreak,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
-        Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
+        Operation::InsertField { .. }
+        | Operation::RemoveField { .. }
+        | Operation::InsertFieldRange { .. }
+        | Operation::RemoveFieldRange { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
@@ -24393,6 +24401,19 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             Operation::InsertField { at, .. } => *at,
             _ => Pos::new(doc_id, 0),
         },
+        // A field range is a block span, and both ops route through
+        // `apply_action_caret_as` with the caller's own caret (a generated table
+        // of contents lands the caret in its first entry, an update leaves the
+        // caret where the user left it). These arms only keep the match
+        // exhaustive: rest at the first inserted block, else the document root.
+        Operation::InsertFieldRange { blocks, .. } => blocks
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(Pos::new(paragraph.id, 0)),
+                _ => None,
+            })
+            .unwrap_or_else(|| Pos::new(doc_id, 0)),
+        Operation::RemoveFieldRange { .. } => Pos::new(doc_id, 0),
         // A note lives in `Definitions`, not the body flow: land the caret at the
         // start of the note body's first paragraph so the user can type into the
         // fresh note. Both note ops route through `apply_action_caret_as` with the

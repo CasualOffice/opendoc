@@ -1712,10 +1712,13 @@ fn decimal_page_labels(layout: &PaginatedLayout) -> Vec<String> {
 /// `@fmt` number format and the `@start` restart (a section carrying a start value
 /// resets the running counter at its first page; a section without one continues
 /// the count). NUMPAGES is unaffected (it stays the physical total).
-pub(crate) fn page_number_labels(
-    layout: &PaginatedLayout,
-    sections: &[SectionBoundary],
-) -> Vec<String> {
+///
+/// `pub` because a generated table of contents must print the same page label the
+/// reader sees printed on the page. Two implementations of "what page is this"
+/// would disagree the first time a document restarted its numbering in a second
+/// section, and the contents would be wrong in exactly the documents that need
+/// one most.
+pub fn page_number_labels(layout: &PaginatedLayout, sections: &[SectionBoundary]) -> Vec<String> {
     page_number_labels_for(layout.pages.iter().map(|page| page.section), sections)
 }
 
