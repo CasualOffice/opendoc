@@ -1017,7 +1017,6 @@
   "site.embedding.noDocumentIO": "No document I/O through the contract.",
   "site.embedding.noEditingRibbonAll": "no editing ribbon at all",
   "site.embedding.noFrameworkBindings": "No framework bindings",
-  "site.embedding.noHostCapabilityList": "No host capability list.",
   "site.embedding.noPasswords": "No passwords.",
   "site.embedding.noPerGroupSelection": "No per-GROUP selection inside a ribbon band.",
   "site.embedding.noWayHandYour": "No way to hand it your document.",
