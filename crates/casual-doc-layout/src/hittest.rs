@@ -1086,13 +1086,13 @@ impl<'a> LayoutSnapshot<'a> {
 // Table chrome geometry (docs/141 D-1)
 // ---------------------------------------------------------------------------
 
-/// Fragment visits made by the geometry walks in this module.
-///
-/// Compiled only for this crate's own tests, where it is the metric the
-/// complexity guard measures: `SKILL.md` §8 requires a *doubling* assertion
-/// rather than a millisecond threshold, and "how many fragments did the walk
-/// look at" is the quantity that doubles for a linear walk and quadruples for a
-/// per-cell one. Production builds get an empty function and pay nothing.
+// Fragment visits made by the geometry walks in this module.
+//
+// Compiled only for this crate's own tests, where it is the metric the
+// complexity guard measures: `SKILL.md` §8 requires a *doubling* assertion
+// rather than a millisecond threshold, and "how many fragments did the walk look
+// at" is the quantity that doubles for a linear walk and quadruples for a
+// per-cell one. Production builds get an empty function and pay nothing.
 #[cfg(test)]
 thread_local! {
     static FRAGMENT_VISITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
@@ -3497,6 +3497,276 @@ mod tests {
              each contributing their own, which is what made the first \
              characters of a list item unreachable. Stops: {stops:?}",
             4,
+        );
+    }
+}
+
+#[cfg(test)]
+mod table_chrome_tests {
+    use super::*;
+    use crate::block::{
+        BoxMetrics, BreakControl, CellBorders, CellContentMargins, CellFragment, CellVAlign,
+        CellVerticalMerge, ParagraphDecor,
+    };
+    use crate::paginate::{PageConfig, paginate};
+    use crate::text::{Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineLayout};
+    use casual_doc_model::v1::SectionId;
+
+    const ROW_H: i32 = 300;
+    const COL_W: i32 = 1_500;
+    const MARGIN: i32 = 1_440;
+
+    fn node(id: u64) -> NodeId {
+        NodeId::from_parts(id, 1).unwrap()
+    }
+
+    fn letter_config() -> PageConfig {
+        PageConfig {
+            section: SectionId::new(node(9)),
+            page_size: Size::new(Twip(12_240), Twip(15_840)),
+            margin_top: Twip(MARGIN),
+            margin_bottom: Twip(MARGIN),
+            margin_start: Twip(MARGIN),
+            margin_end: Twip(MARGIN),
+            header_distance: Twip(720),
+            footer_distance: Twip(720),
+            header_height: Twip::ZERO,
+            footer_height: Twip::ZERO,
+        }
+    }
+
+    /// A one-line paragraph fragment carrying one glyph, so it is a real caret
+    /// anchor rather than an empty box.
+    fn para(id: u64) -> BlockFragment {
+        BlockFragment::Paragraph {
+            id: node(id),
+            lines: LineLayout {
+                lines: vec![Line {
+                    runs: vec![GlyphRun {
+                        is_marker: false,
+                        is_leader: false,
+                        node: None,
+                        font: FontId(0),
+                        size: Twip(200),
+                        ascent: Twip(0),
+                        descent: Twip(0),
+                        character_scale_percent: 100,
+                        color: [0, 0, 0, 255],
+                        origin: Point::new(Twip::ZERO, Twip(200)),
+                        bidi_level: 0,
+                        decoration: Decoration::default(),
+                        highlight: None,
+                        shading: None,
+                        glyphs: vec![Glyph {
+                            id: 1,
+                            advance: Twip(100),
+                            cluster: 0,
+                            is_whitespace: false,
+                        }],
+                    }],
+                    ascent: Twip(200),
+                    descent: Twip::ZERO,
+                    height: Twip(200),
+                    clip: false,
+                    range: ModelRange::new(ModelPos::new(node(id), 0), ModelPos::new(node(id), 1)),
+                    line_break: LineBreak::ParagraphEnd,
+                    page_break_after: false,
+                    bars: Vec::new(),
+                    images: Vec::new(),
+                    fields: Vec::new(),
+                    notes: Vec::new(),
+                    text_boxes: Vec::new(),
+                    rules: Vec::new(),
+                }],
+            },
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+            decor: ParagraphDecor::default(),
+        }
+    }
+
+    /// An `rows` x `columns` regular table; every cell's paragraph id is distinct.
+    fn grid(rows: usize, columns: usize) -> Vec<BlockFragment> {
+        (0..rows)
+            .map(|r| {
+                let cells = (0..columns)
+                    .map(|c| {
+                        let seq = (r * columns + c) as u64;
+                        CellFragment {
+                            id: node(100_000 + seq),
+                            grid_span: 1,
+                            x: Twip(COL_W * c as i32),
+                            width: Twip(COL_W),
+                            cell_spacing: Default::default(),
+                            blocks: vec![para(200_000 + seq)],
+                            margins: CellContentMargins::default(),
+                            vertical_alignment: CellVAlign::Top,
+                            vertical_merge: CellVerticalMerge::None,
+                            borders: CellBorders::default(),
+                            table_borders: CellBorders::default(),
+                            shading: None,
+                        }
+                    })
+                    .collect();
+                BlockFragment::TableRow {
+                    id: node(1_000 + r as u64),
+                    table: node(7),
+                    cells,
+                    height: Twip(ROW_H),
+                    can_split: false,
+                    header: false,
+                    merge_keep_next: false,
+                    clip: false,
+                }
+            })
+            .collect()
+    }
+
+    /// The boundary geometry a hover resolves against must be the geometry the
+    /// raster drew: a column edge at the cell's trailing border, a row edge at the
+    /// row's bottom, and an anchor paragraph inside the band so a facade call
+    /// needs no second query.
+    #[test]
+    fn chrome_reports_column_and_row_boundaries_with_anchors() {
+        let paginated = paginate(&grid(3, 4), &letter_config());
+        let snap = LayoutSnapshot::new(&paginated);
+        let chrome = snap.table_chrome_on_page(1);
+        assert_eq!(chrome.len(), 1, "one table on the page");
+        let table = &chrome[0];
+        assert_eq!(table.table, node(7));
+        assert_eq!((table.rows, table.columns), (3, 4));
+
+        // Four column boundaries: three internal, then the table's own trailing
+        // edge. `x` is the trailing border of column `index`.
+        assert_eq!(table.column_edges.len(), 4);
+        for (i, edge) in table.column_edges.iter().enumerate() {
+            assert_eq!(edge.index, i as u32);
+            assert_eq!(
+                edge.x.raw(),
+                MARGIN + COL_W * (i as i32 + 1),
+                "column {i}'s trailing border"
+            );
+            assert_eq!(edge.outer, i == 3, "only the last column edge is outer");
+            assert_eq!(edge.length.raw(), ROW_H * 3, "the guide spans the table");
+            assert_eq!(edge.extent.raw(), COL_W);
+        }
+
+        // Three row boundaries, at each row's bottom; the last is the table's own
+        // bottom edge on this page.
+        assert_eq!(table.row_edges.len(), 3);
+        for (i, edge) in table.row_edges.iter().enumerate() {
+            assert_eq!(edge.index, i as u32);
+            assert_eq!(
+                edge.y.raw(),
+                MARGIN + ROW_H * (i as i32 + 1),
+                "row {i}'s bottom border"
+            );
+            assert_eq!(edge.outer, i == 2);
+            assert_eq!(edge.extent.raw(), ROW_H, "the row's painted height");
+            assert_eq!(edge.length.raw(), COL_W * 4, "the guide spans the table");
+            assert_eq!(
+                edge.anchor,
+                node(200_000 + (i * 4) as u64),
+                "the anchor is a paragraph in row {i}"
+            );
+        }
+    }
+
+    /// `SKILL.md` §8: guard the COMPLEXITY, not milliseconds. A timing threshold
+    /// cannot tell a slow constant from a quadratic; doubling the table can.
+    ///
+    /// `per_cell` is the shape `table_column_resize_handles` shipped — one
+    /// `cell_rect` per (row, column), each of which scans every placed fragment on
+    /// every page. `page_walk` is the single page walk. Both are measured in
+    /// fragment visits, the quantity a walk actually pays for.
+    #[test]
+    fn chrome_cost_doubles_with_the_table_where_the_per_cell_route_squared() {
+        let per_cell = |rows: usize| {
+            let paginated = paginate(&grid(rows, 4), &letter_config());
+            let snap = LayoutSnapshot::new(&paginated);
+            reset_fragment_visits();
+            for r in 0..rows {
+                for c in 0..3 {
+                    let _ = snap.cell_rect(node(200_000 + (r * 4 + c) as u64));
+                }
+            }
+            fragment_visits()
+        };
+        let page_walk = |rows: usize| {
+            let paginated = paginate(&grid(rows, 4), &letter_config());
+            let snap = LayoutSnapshot::new(&paginated);
+            reset_fragment_visits();
+            let chrome = snap.table_chrome_on_page(1);
+            assert_eq!(chrome.len(), 1, "the {rows}-row table is on page 1");
+            fragment_visits()
+        };
+
+        let (old_n, old_2n) = (per_cell(8), per_cell(16));
+        let (new_n, new_2n) = (page_walk(8), page_walk(16));
+        let old_ratio = old_2n as f64 / old_n as f64;
+        let new_ratio = new_2n as f64 / new_n as f64;
+        println!(
+            "TABLE_CHROME_FRAGMENT_VISITS per-cell 8 rows={old_n} 16 rows={old_2n} \
+             ratio={old_ratio:.2} | page-walk 8 rows={new_n} 16 rows={new_2n} ratio={new_ratio:.2}"
+        );
+
+        assert!(
+            old_ratio > 3.0,
+            "the per-cell route is quadratic in the row count — that is the defect \
+             being fixed, and if this stops holding, the comparison below is \
+             measuring nothing (ratio {old_ratio:.2}: {old_n} -> {old_2n})"
+        );
+        assert!(
+            new_ratio < 2.6,
+            "doubling the rows must roughly double the work, not square it \
+             (ratio {new_ratio:.2}: {new_n} -> {new_2n})"
+        );
+        assert!(
+            new_2n < old_2n / 4,
+            "the page walk must be dramatically cheaper than the per-cell route at \
+             the same size ({new_2n} vs {old_2n})"
+        );
+    }
+
+    /// A nested table is reported beside its host rather than swallowed by it, so
+    /// the chrome layer behaves the same inside a cell as in the body (the
+    /// uniform-pipeline rule).
+    #[test]
+    fn a_nested_table_is_reported_as_its_own_table() {
+        let mut outer = grid(1, 2);
+        let BlockFragment::TableRow { cells, .. } = &mut outer[0] else {
+            unreachable!("grid emits table rows");
+        };
+        cells[0].blocks = vec![BlockFragment::TableRow {
+            id: node(5_000),
+            table: node(77),
+            cells: vec![CellFragment {
+                id: node(5_001),
+                grid_span: 1,
+                x: Twip::ZERO,
+                width: Twip(600),
+                cell_spacing: Default::default(),
+                blocks: vec![para(900_001)],
+                margins: CellContentMargins::default(),
+                vertical_alignment: CellVAlign::Top,
+                vertical_merge: CellVerticalMerge::None,
+                borders: CellBorders::default(),
+                table_borders: CellBorders::default(),
+                shading: None,
+            }],
+            height: Twip(200),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        }];
+        let paginated = paginate(&outer, &letter_config());
+        let snap = LayoutSnapshot::new(&paginated);
+        let chrome = snap.table_chrome_on_page(1);
+        let tables: Vec<NodeId> = chrome.iter().map(|c| c.table).collect();
+        assert!(
+            tables.contains(&node(77)) && tables.contains(&node(7)),
+            "both the host and the nested table are reported: {tables:?}"
         );
     }
 }
