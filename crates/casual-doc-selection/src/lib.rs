@@ -1,4 +1,10 @@
-//! Validated logical caret and text-range state for OpenDoc sessions.
+//! Validated logical caret, text-range and table-cell-range state for OpenDoc
+//! sessions.
+//!
+//! Two selection kinds live here, because both have to be transformed the same
+//! way when OT lands (ADR-033, `docs/107`): [`TextSelection`], a directed pair of
+//! logical text positions, and [`TableCellSelection`], a rectangular block of
+//! table cells derived from an anchor cell and a focus cell.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -8,6 +14,10 @@ use std::fmt;
 
 use casual_doc_model::{BlockNode, Document, NodeId};
 use casual_doc_transaction::{Affinity, Position, PositionMap};
+
+pub mod table_cells;
+
+pub use table_cells::{CellRange, CellSelectionError, TableCellSelection, cell_grid_start};
 
 /// One directed logical text selection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
