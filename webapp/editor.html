@@ -1581,6 +1581,19 @@
       <button type="button" class="menu-item zoom-fit" data-zoom-mode="fit-page" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span data-i18n="zoomMenu.fitPage" class="menu-item-label">Fit page</span></button>
     </div>
 
+    <!-- The footer language picker. Its ROWS are built by `locale_boot.mjs`,
+         because the endonyms are a data table (`locales.mjs`) and not markup:
+         "Deutsch" is a proper noun in its own language and is never translated,
+         so it cannot come from a catalogue, and a hand-written row per shipped
+         locale would go stale the moment a nineteenth one shipped.
+         The note sits OUTSIDE the `role="menu"` element on purpose: a menu's
+         children must be menu items, and a paragraph among them is a structure
+         a screen reader cannot describe. -->
+    <div id="languageMenu" class="context-menu language-menu" hidden>
+      <div data-i18n-label="settings.language.label" id="languageMenuList" class="language-menu-list" role="menu" aria-label="Language"></div>
+      <p data-i18n="settings.language.note" class="settings-note language-menu-note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
+    </div>
+
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -2592,11 +2605,16 @@
              document's language here, at the bottom right, because it is
              status rather than a command — and a person who cannot read the
              chrome should not have to open a dialog written in a language they
-             cannot read to change it. The control is the SAME picker the
-             Settings dialog holds; there is one language setting, reachable
-             from two places (docs/124 §5). Priority 2: shed before the page
-             count on a narrow window, kept ahead of the mode label. -->
-        <button data-i18n-title="ui.language.title" data-i18n-label="ui.language.label" id="languageStatus" type="button" class="footer-language" data-status-priority="2" title="Language" aria-label="Language" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span><span id="languageStatusLabel" class="footer-language-label">English</span></button>
+             cannot read to change it.
+             So this control shows the LIST, in place, the way the zoom control
+             beside it shows its presets: it used to open the Settings dialog,
+             which is the one thing that sentence argues against — a reader who
+             cannot read the interface had to navigate an interface they cannot
+             read to escape it. There is still one language setting; Settings
+             keeps the same picker and the two reflect each other (docs/124 §5).
+             Priority 2: shed before the page count on a narrow window, kept
+             ahead of the mode label. -->
+        <button data-i18n-title="ui.language.title" data-i18n-label="ui.language.label" id="languageStatus" type="button" class="footer-language" data-status-priority="2" title="Language" aria-label="Language" aria-haspopup="menu" aria-controls="languageMenu" aria-expanded="false"><span class="ms" aria-hidden="true">language</span><span id="languageStatusLabel" class="footer-language-label">English</span></button>
         <span class="zoom">
           <button data-i18n-title="ui.zoomOut.title" data-i18n-label="ui.zoomOut.label" id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><span class="ms" aria-hidden="true">remove</span></button>
           <span class="zoom-value-control">

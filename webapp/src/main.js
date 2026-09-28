@@ -112,7 +112,8 @@ import {
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
-import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
+import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./popover_manager.mjs";
+import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, openingZoomMode } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
@@ -9047,7 +9048,7 @@ function updateToolbar() {
   // caret is a style the document is USING, so reflecting it also keeps it offered
   // by the gallery after the caret moves on (docs/115 §5.3).
   reflectParagraphStyle(hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "");
-  if (hasSel && doc) for (const p of popovers) if (!p.menu.hidden) p.reflect();
+  if (hasSel && doc) reflectOpenPopovers();
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
@@ -9240,14 +9241,6 @@ tableStyleMenu.addEventListener("click", (event) => {
  *
  *  A keyboard activation arrives as a `click` with `detail === 0` and no
  *  preceding mouse event, so both routes are the same one listener. */
-function onButton(el, handler) {
-  el.addEventListener("mousedown", (e) => e.preventDefault());
-  el.addEventListener("click", (e) => {
-    e.preventDefault();
-    handler(e);
-  });
-}
-
 /** Opens the Insert link dialog for the selected same-paragraph text (⌘K, the
  * ribbon Link button, and the command palette). The dialog owns the external
  * URL / bookmark / ScreenTip entry and applies through the same gated
@@ -9639,85 +9632,13 @@ fontSizeSel.addEventListener("change", () => {
   }
   applyFontSize(fontSizeSel.value);
 });
-// ---- Toolbar popovers (compact anchored menus such as spacing) --------------
-// One lightweight manager: anchor a menu under its button, only one open at a
-// time, dismiss on outside-pointerdown / Escape. Each popover registers a
-// `reflect()` that syncs its controls to the caret paragraph.
+// Toolbar popovers are `popover_manager.mjs`: anchoring, one-at-a-time, light
+// dismiss, Escape and focus return, for the ribbon's menus and the footer's
+// alike. The manager does not know what a selection is; this is the one thing
+// it asks the editor, so a menu that would act on the caret does not open when
+// there is no caret to act on.
+configurePopovers({ documentReady: () => !!selection || !!objectSelection });
 const TWIPS_PER_POINT = 20;
-const popovers = [];
-function openPopover(p, { keyboard = false, anchor = p.btn } = {}) {
-  // An object can be selected with no text caret behind it (clicking a float
-  // first thing), and its Fill/Outline pickers must still open.
-  if (!selection && !objectSelection) return;
-  for (const q of popovers) if (q !== p) closePopover(q);
-  // Measure the control the user actually activated, never a hidden popover owner.
-  const visibleAnchor = popoverAnchor(anchor, p.btn);
-  const r = visibleAnchor.getBoundingClientRect();
-  p.menu.hidden = false;
-  p.activeTrigger = visibleAnchor;
-  p.btn.setAttribute("aria-expanded", String(visibleAnchor === p.btn));
-  visibleAnchor.setAttribute("aria-expanded", "true");
-  p.reflect();
-  const at = popoverPosition(
-    r,
-    { width: p.menu.offsetWidth, height: p.menu.offsetHeight },
-    { width: window.innerWidth, height: window.innerHeight },
-  );
-  p.menu.style.left = `${at.left}px`;
-  p.menu.style.top = `${at.top}px`;
-  // Opened from the keyboard, the popover takes focus (docs/104 HF-070: it used
-  // to leave focus on the trigger, so reaching a swatch meant tabbing through
-  // the rest of the ribbon first). Opened by pointer it deliberately does NOT,
-  // because these menus preserve the document selection on mouse interaction —
-  // that is what the mousedown preventDefault in registerPopover is for.
-  if (keyboard) focusFirstIn(p.menu);
-}
-
-// A control that reports itself as the current choice. Focus belongs on it
-// rather than on the first row: opening the spacing menu should land on the
-// spacing this paragraph already has, the way a native menu opens on its checked
-// item, so the arrow keys start from where the user is (docs/104 HF-070).
-const CHECKED_SELECTOR = '[aria-checked="true"], [aria-pressed="true"], [aria-selected="true"]';
-
-/** Focuses the checked control inside `container`, or the first visible, enabled
- *  one when nothing is checked. */
-function focusFirstIn(container) {
-  const focusable = [
-    ...container.querySelectorAll(
-      "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
-    ),
-  ].filter((element) => element.getClientRects().length > 0);
-  const target = focusable.find((element) => element.matches(CHECKED_SELECTOR)) ?? focusable[0];
-  target?.focus({ preventScroll: true });
-  return target ?? null;
-}
-
-function closePopover(p) {
-  // Closing must not strand the keyboard: if focus is inside the menu it goes
-  // back to the trigger, which is where the user's place was.
-  const holdsFocus = p.menu.contains(document.activeElement);
-  const trigger = p.activeTrigger ?? p.btn;
-  p.menu.hidden = true;
-  p.btn.setAttribute("aria-expanded", "false");
-  if (trigger !== p.btn) trigger.setAttribute("aria-expanded", "false");
-  if (holdsFocus) trigger.focus({ preventScroll: true });
-  p.activeTrigger = null;
-}
-
-function registerPopover(btn, menu, reflect) {
-  const p = { btn, menu, reflect, activeTrigger: null };
-  popovers.push(p);
-  onButton(btn, (event) =>
-    menu.hidden ? openPopover(p, { keyboard: event?.detail === 0 }) : closePopover(p),
-  );
-  // Keep clicks inside the menu from stealing the selection focus, but let form
-  // controls (inputs, selects) focus, toggle, and open normally.
-  menu.addEventListener("mousedown", (e) => {
-    if (!["INPUT", "SELECT", "OPTION"].includes(e.target.tagName)) e.preventDefault();
-  });
-  return p;
-}
-
 tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
 
 // The Styles control: ONE trigger showing the caret's style, opening a SHORT list —
@@ -9737,26 +9658,6 @@ const stylesPopover = registerPopover(stylesTrigger, stylesMenu, () => {
   stylesMenuInput.value = "";
   renderStylesGallery();
   syncStylesGalleryActive();
-});
-
-// `pointerdown` — the phase every other dismissable surface uses (#556). The
-// last holdout on `mousedown`, which a pen or a consumed touch never produces.
-document.addEventListener("pointerdown", (e) => {
-  for (const p of popovers) {
-    if (
-      !p.menu.hidden &&
-      !p.menu.contains(e.target) &&
-      e.target !== p.btn &&
-      !p.btn.contains(e.target) &&
-      e.target !== p.activeTrigger &&
-      !p.activeTrigger?.contains(e.target)
-    ) {
-      closePopover(p);
-    }
-  }
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") for (const p of popovers) if (!p.menu.hidden) closePopover(p);
 });
 
 // -- Font family menu, color/highlight pickers, grow/shrink, change case -------
@@ -10629,7 +10530,7 @@ function toggleParagraphProperties(open, focusTarget = null) {
   paraOptsBtn.setAttribute("aria-expanded", String(show));
   if (show) {
     toggleTableProperties(false);
-    for (const popover of popovers) closePopover(popover);
+    closeAllPopovers();
     reflectParagraphProperties();
     queueMicrotask(() => (focusTarget?.() ?? paraPanelStyle).focus());
   } else if (returnFocus) {
@@ -16294,10 +16195,11 @@ applySettings();
 setPaneRenderer(() => renderFilePage());
 void startLocalisation({
   select: languageSelect,
-  status: document.getElementById("languageStatus"),
-  // Into the File page's pane when that page is open — that is where the
-  // settings element is parented — and the dialog otherwise.
-  openSettings: () => (showSettingsPane() ? undefined : toggleSettings(true)),
+  // The footer control is a POPOVER, on the same manager the zoom presets use,
+  // so the two footer controls dismiss, restore focus and stay mutually
+  // exclusive by one implementation rather than two. The module owns the rest
+  // of that control's DOM already, so it looks the elements up itself.
+  registerPopover,
   settings,
   saveSettings,
   onLocalised: () => {

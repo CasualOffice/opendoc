@@ -299,7 +299,33 @@ const SRC = new URL("../src/", import.meta.url);
  *
  *  MEASURED FROM THE MERGED FILE after rebasing onto `origin/main`, which had
  *  lowered this to 16,453 underneath the branch. */
-const MAIN_JS_LINE_CEILING = 16446;
+/** Lowered to 16,355 by the footer language picker. The file was AT its ceiling
+ *  with zero slack and the round needed three lines of it, so it paid by taking
+ *  out the thing the round actually needed a seam on: the 90-line ANCHORED
+ *  POPOVER MANAGER — `openPopover`, `closePopover`, `registerPopover`,
+ *  `focusFirstIn`, `onButton` and the two document-level listeners that light-
+ *  dismiss them — now `popover_manager.mjs`.
+ *
+ *  Worth more than the lines, and this is the HF-085 argument in its plainest
+ *  form: the rule "a small menu hangs off a button until you point somewhere
+ *  else" was reachable only from the file that happened to hold it, so every
+ *  surface wanting it had to be built in `main.js` too, and the ones built in
+ *  modules got it by having the manager handed down a function at a time
+ *  (`page_setup.mjs` takes `registerPopover` as an argument). The footer's
+ *  language picker lives in `locale_boot.mjs`, where the rest of the language
+ *  lifecycle already is, and it now imports the same manager the ribbon's
+ *  eighteen menus use instead of `main.js` growing a nineteenth copy of the
+ *  behaviour. The one thing the manager asks the editor — "is there anything to
+ *  act on" — is now an injected predicate, which is also what let the language
+ *  picker opt OUT of it: it is chrome, not a document command, and it must not
+ *  go dead while the engine is still loading.
+ *
+ *  RE-MEASURED FROM THE MERGED FILE after rebasing onto an `origin/main` that
+ *  had meanwhile lowered this to 16,446 under the branch. Neither that number
+ *  nor the branch's own 16,355 describes the merge — the two rounds took
+ *  different code out and both deletions applied — which is the trap the notes
+ *  above record five times. */
+const MAIN_JS_LINE_CEILING = 16348;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
