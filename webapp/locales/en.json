@@ -375,6 +375,7 @@
   "numberGalleryMenu.lowercaseRomanNumerals.label": "Lowercase Roman numerals",
   "numberGalleryMenu.uppercaseLetters.label": "Uppercase letters",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Uppercase Roman numerals",
+  "object.cropHint": "Drag the edges to crop",
   "outline.noHeadings": "No headings yet. Apply a Heading style to build an outline.",
   "outlinePanel.closeOutline.label": "Close outline",
   "outlinePanel.closeOutline.title": "Close outline",

@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "إغلاق المخطط التفصيلي",
   "outlinePanel.outline": "مخطط تفصيلي",
   "pageSetup.dimensions": "{width} × {height} بوصة",
+  "object.cropHint": "اسحب الحواف للاقتصاص",
   "pageSetup.sectionNumber": "المقطع {number}",
   "pageSetupMenu.8271169": "8.27 × 11.69 بوصة",
   "pageSetupMenu.appliesSectionCanBe": "يُطبَّق على هذا المقطع ويمكن التراجع عنه.",

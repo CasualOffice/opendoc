@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Overzicht sluiten",
   "outlinePanel.outline": "Overzicht",
   "pageSetup.dimensions": "{width} × {height} inch",
+  "object.cropHint": "Sleep de randen om bij te snijden",
   "pageSetup.sectionNumber": "Sectie {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 inch",
   "pageSetupMenu.appliesSectionCanBe": "Geldt voor deze sectie en kan ongedaan worden gemaakt.",

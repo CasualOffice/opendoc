@@ -69,6 +69,10 @@ import {
   renderMenuLevel as renderMenuLevelRows,
 } from "./menu_render.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object_crop_chrome.mjs";
+import { clearGuides, paintGuides, paintResizeHandles, paintSizeReadout } from "./object_guides.mjs";
+import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
+import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "./object_snap.mjs";
 import { t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator } from "./status_counts.mjs";
@@ -4145,33 +4149,22 @@ function paintObjectSelection() {
     return;
   }
   place(doc.objectRect(node), "object-outline");
-  const handles = doc.objectHandles(node); // [page, cx, cy, kind] * supported handle count
-  for (let i = 0; i + 3 < handles.length; i += 4) {
-    const [pageNumber, cx, cy, kind] = handles.slice(i, i + 4);
-    const page = pages[pageNumber - 1];
-    if (!page?.overlay) continue;
-    const { sx, sy } = scaleOf(page);
-    const el = document.createElement("div");
-    el.className = "object-handle";
-    el.dataset.handle = String(kind);
-    el.style.left = `${cx * sx}px`;
-    el.style.top = `${cy * sy}px`;
-    el.addEventListener("pointerdown", (event) => startObjectResize(event, page, node, kind));
-    page.overlay.appendChild(el);
-  }
+  paintResizeHandles(
+    (pageNumber) => {
+      const page = pages[pageNumber - 1];
+      return page?.overlay ? { overlay: page.overlay, scale: scaleOf(page) } : null;
+    },
+    doc.objectHandles(node), // [page, cx, cy, kind] * supported handle count
+    (event, pageNumber, kind) => startObjectResize(event, pages[pageNumber - 1], node, kind),
+  );
 }
 
 // ---- Image crop (direct-manipulation, Word/Docs standard) -------------------
-// The Crop button enters a live crop MODE on the selected image: the image keeps
-// its outline, the region that will be removed is dimmed, and eight crop handles
-// on the kept rectangle are dragged to adjust it. Enter (or clicking Crop again,
-// or clicking away) commits one SetImageCrop op; Esc cancels with no change.
-// Crop is picture-only and, like resize, not representable as a tracked revision,
-// so it is blocked in Suggesting/Viewing.
-//
-// Model note: `setImageCrop` insets are fractions of the SOURCE image and there
-// The engine returns the authored source crop, so entering crop is a refinement
-// of the current intent rather than a blind replacement.
+// The chrome, the clamping rule and the crop's own prose are in
+// `object_crop_chrome.mjs`. What stays here is entering, committing and
+// cancelling the MODE: crop is picture-only and, like resize, is not
+// representable as a tracked revision, so it is blocked in Suggesting/Viewing.
+// Double-clicking the picture is the doorway (Docs' gesture); Crop is surface 2.
 
 /** Enters crop mode on the selected image (or, if already cropping, commits). */
 function enterCropMode() {
@@ -4207,13 +4200,10 @@ function enterCropMode() {
   setStatus("Drag the handles to crop · Enter to apply · Esc to cancel");
 }
 
-// The smallest keep-fraction of the image per axis, so a crop can't collapse it.
-const MIN_CROP_KEEP = 0.08;
-
-/** Paints the crop chrome: the image outline, four dim strips over the removed
- *  margins (leaving the kept rectangle bright over the canvas image beneath),
- *  the kept-rectangle border, and eight draggable crop handles. Re-derives pixels
- *  from the stable box + live crop fractions, so it is correct after scroll/zoom. */
+/** Paints the crop chrome — the image outline, the dimmed region being cut, the
+ *  kept rectangle with its live size, and eight draggable grips. The geometry
+ *  and the clamping rule live in `object_crop_chrome.mjs`; what stays here is
+ *  resolving which page and which scale, which only the editor can answer. */
 function paintObjectCrop() {
   const s = objectCropSession;
   const [bx, by, bw, bh] = s.box;
@@ -4222,49 +4212,11 @@ function paintObjectCrop() {
   const pageNumber = rectFlat[0];
   const page = pages[pageNumber - 1];
   if (!page?.overlay) return;
-  const { sx, sy } = scaleOf(page);
   place([pageNumber, bx, by, bw, bh], "object-outline");
-  // Kept rectangle in twips (source box minus cropped edges).
-  const kx = bx + s.crop.l * bw;
-  const ky = by + s.crop.t * bh;
-  const kw = bw * (1 - s.crop.l - s.crop.r);
-  const kh = bh * (1 - s.crop.t - s.crop.b);
-  // Four dim strips covering the removed margins around the kept rectangle.
-  const strip = (x, y, w, h) => {
-    if (w <= 0 || h <= 0) return;
-    const el = document.createElement("div");
-    el.className = "object-crop-dim";
-    el.style.left = `${x * sx}px`;
-    el.style.top = `${y * sy}px`;
-    el.style.width = `${w * sx}px`;
-    el.style.height = `${h * sy}px`;
-    page.overlay.appendChild(el);
-  };
-  strip(bx, by, bw, ky - by); // top
-  strip(bx, ky + kh, bw, by + bh - (ky + kh)); // bottom
-  strip(bx, ky, kx - bx, kh); // left
-  strip(kx + kw, ky, bx + bw - (kx + kw), kh); // right
-  // Kept-rectangle border.
-  const rect = document.createElement("div");
-  rect.className = "object-crop-rect";
-  rect.style.left = `${kx * sx}px`;
-  rect.style.top = `${ky * sy}px`;
-  rect.style.width = `${kw * sx}px`;
-  rect.style.height = `${kh * sy}px`;
-  page.overlay.appendChild(rect);
-  // Eight crop handles on the kept rectangle (NW,N,NE,E,SE,S,SW,W).
-  const points = [
-    [kx, ky], [kx + kw / 2, ky], [kx + kw, ky], [kx + kw, ky + kh / 2],
-    [kx + kw, ky + kh], [kx + kw / 2, ky + kh], [kx, ky + kh], [kx, ky + kh / 2],
-  ];
-  points.forEach(([cx, cy], kind) => {
-    const el = document.createElement("div");
-    el.className = "object-crop-handle";
-    el.dataset.handle = String(kind);
-    el.style.left = `${cx * sx}px`;
-    el.style.top = `${cy * sy}px`;
-    el.addEventListener("pointerdown", (event) => startCropHandleDrag(event, page, kind));
-    page.overlay.appendChild(el);
+  const kept = keptRect(s.box, s.crop);
+  paintCropChrome(page.overlay, s.box, s.crop, scaleOf(page), {
+    sizeLabel: sizeLabel(kept.w, kept.h),
+    onGripDown: (event, kind) => startCropHandleDrag(event, page, kind),
   });
 }
 
@@ -4272,30 +4224,23 @@ function paintObjectCrop() {
  *  untouched until commit. */
 function startCropHandleDrag(event, page, handleKind) {
   if (!objectCropSession) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const s = objectCropSession;
-  s.handleDrag = {
+  objectCropSession.handleDrag = {
     handleKind,
     page,
     startClientX: event.clientX,
     startClientY: event.clientY,
-    startCrop: { ...s.crop },
+    startCrop: { ...objectCropSession.crop },
   };
-  const move = (e) => updateCropHandleDrag(e);
-  const up = (e) => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    if (objectCropSession) objectCropSession.handleDrag = null;
-    e.preventDefault();
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
+  beginGripDrag(event, {
+    onMove: updateCropHandleDrag,
+    onEnd: () => {
+      if (objectCropSession) objectCropSession.handleDrag = null;
+    },
+  });
 }
 
-/** Updates the kept rectangle from a crop-handle drag. Per-handle signs decide
- *  which edges move; each edge is clamped so opposite edges keep MIN_CROP_KEEP of
- *  the image between them and neither passes the image bounds. */
+/** Updates the kept rectangle from a crop-grip drag. The clamping rule is
+ *  `cropFromDrag`; the repaint carries the new kept size with it. */
 function updateCropHandleDrag(event) {
   const s = objectCropSession;
   if (!s || !s.handleDrag) return;
@@ -4304,17 +4249,7 @@ function updateCropHandleDrag(event) {
   const { sx, sy } = scaleOf(drag.page);
   const dxFrac = bw > 0 ? (event.clientX - drag.startClientX) / sx / bw : 0;
   const dyFrac = bh > 0 ? (event.clientY - drag.startClientY) / sy / bh : 0;
-  // Handle index → which edges it moves. NW,N,NE,E,SE,S,SW,W.
-  const movesLeft = [true, false, false, false, false, false, true, true][drag.handleKind];
-  const movesRight = [false, false, true, true, true, false, false, false][drag.handleKind];
-  const movesTop = [true, true, true, false, false, false, false, false][drag.handleKind];
-  const movesBottom = [false, false, false, false, true, true, true, false][drag.handleKind];
-  const c = { ...drag.startCrop };
-  if (movesLeft) c.l = Math.min(Math.max(0, drag.startCrop.l + dxFrac), 1 - drag.startCrop.r - MIN_CROP_KEEP);
-  if (movesRight) c.r = Math.min(Math.max(0, drag.startCrop.r - dxFrac), 1 - drag.startCrop.l - MIN_CROP_KEEP);
-  if (movesTop) c.t = Math.min(Math.max(0, drag.startCrop.t + dyFrac), 1 - drag.startCrop.b - MIN_CROP_KEEP);
-  if (movesBottom) c.b = Math.min(Math.max(0, drag.startCrop.b - dyFrac), 1 - drag.startCrop.t - MIN_CROP_KEEP);
-  s.crop = c;
+  s.crop = cropFromDrag(drag.startCrop, drag.handleKind, dxFrac, dyFrac);
   drawSelection();
   event.preventDefault();
 }
@@ -4395,6 +4330,8 @@ function startObjectResize(event, page, node, handleKind) {
     lastH: h,
     aspect: h > 0 ? w / h : 1,
     preview,
+    snap: snapContextFor(page),
+    guideEls: null,
   };
   event.currentTarget.setPointerCapture?.(event.pointerId);
 }
@@ -4411,29 +4348,55 @@ function updateObjectResize(event) {
   const { sx, sy } = scaleOf(drag.page);
   const dxTwip = Math.round((event.clientX - drag.startClientX) / sx);
   const dyTwip = Math.round((event.clientY - drag.startClientY) / sy);
-  // Handle index → (dw factor, dh factor). NW,N,NE,E,SE,S,SW,W.
-  const [fw, fh] = [
-    [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0],
-  ][drag.handleKind];
-  let newW = Math.max(MIN_OBJECT_TWIP, drag.startW + fw * dxTwip);
-  let newH = Math.max(MIN_OBJECT_TWIP, drag.startH + fh * dyTwip);
-  // Corner aspect-lock, kind-aware to match the platform norm: a PICTURE keeps
-  // its proportions by DEFAULT on a corner drag (Word/Docs lock aspect for
-  // images) and Shift frees it; a TEXT BOX resizes freely by default and Shift
-  // locks. Either way the constraint drives both edges from the axis that moved
-  // more, so the object keeps its proportions.
-  const isCorner = fw !== 0 && fh !== 0;
+  // A PICTURE aspect-locks on a corner by default and Shift frees it; a text box
+  // is the other way round. The rule itself is `resizeFromDrag`.
   const isImage = objectSelection?.kind === "image";
-  const lockAspect = isCorner && (isImage ? !event.shiftKey : event.shiftKey);
-  if (lockAspect) {
-    if (Math.abs(newW - drag.startW) >= Math.abs(newH - drag.startH)) {
-      newH = Math.max(MIN_OBJECT_TWIP, Math.round(newW / drag.aspect));
-    } else {
-      newW = Math.max(MIN_OBJECT_TWIP, Math.round(newH * drag.aspect));
+  const box = resizeFromDrag(
+    { x: drag.startX, y: drag.startY, w: drag.startW, h: drag.startH, aspect: drag.aspect },
+    drag.handleKind,
+    dxTwip,
+    dyTwip,
+    { lockAspect: isImage ? !event.shiftKey : event.shiftKey, minEdge: MIN_OBJECT_TWIP },
+  );
+  let { x: newX, y: newY, w: newW, h: newH } = box;
+  // Pull the edge under the pointer onto the page's alignment lines, so
+  // "make this image reach the right margin" is a drag and not an arithmetic
+  // problem. A corner drag that is aspect-locked is deliberately NOT snapped:
+  // correcting one axis onto a line would have to drive the other off the
+  // ratio, and a proportional resize that quietly stops being proportional is
+  // worse than one that does not snap. Alt suppresses the pull, as on a move.
+  const guides = [];
+  if (drag.snap && !event.altKey && !box.lockedAspect) {
+    if (box.changesWidth) {
+      const moving = box.movesWest ? newX : newX + newW;
+      const { edge, guide } = snapEdge(moving, drag.snap.targets.vertical, "vertical", drag.snap.tolerance);
+      if (guide) {
+        const pinnedRight = newX + newW; // whichever edge is NOT under the pointer stays
+        if (box.movesWest) {
+          newW = Math.max(MIN_OBJECT_TWIP, pinnedRight - edge);
+          newX = pinnedRight - newW;
+        } else {
+          newW = Math.max(MIN_OBJECT_TWIP, edge - newX);
+        }
+        guides.push(guide);
+      }
+    }
+    if (box.changesHeight) {
+      const moving = box.movesNorth ? newY : newY + newH;
+      const { edge, guide } = snapEdge(moving, drag.snap.targets.horizontal, "horizontal", drag.snap.tolerance);
+      if (guide) {
+        const pinnedBottom = newY + newH;
+        if (box.movesNorth) {
+          newH = Math.max(MIN_OBJECT_TWIP, pinnedBottom - edge);
+          newY = pinnedBottom - newH;
+        } else {
+          newH = Math.max(MIN_OBJECT_TWIP, edge - newY);
+        }
+        guides.push(guide);
+      }
     }
   }
-  const newX = fw < 0 ? drag.startX + drag.startW - newW : drag.startX;
-  const newY = fh < 0 ? drag.startY + drag.startH - newH : drag.startY;
+  paintSnapGuides(drag, guides);
   drag.lastX = newX;
   drag.lastY = newY;
   drag.lastW = newW;
@@ -4451,30 +4414,19 @@ function updateObjectResize(event) {
   event.preventDefault();
 }
 
-/** Paints the live dimensions onto the resize preview, in inches to two places
- *  because that is the unit the properties panel accepts — a readout in a unit
- *  the user cannot then type back is decoration. Announced politely as well: the
- *  bubble is meaningless to a screen reader, and resize is keyboard-reachable. */
+/** Paints the live dimensions onto the resize preview. */
 function updateObjectResizeReadout(drag, widthTwip, heightTwip) {
-  let readout = drag.readout;
-  if (!readout) {
-    readout = document.createElement("span");
-    readout.className = "object-resize-readout";
-    // Not a live region itself: it changes on every pointer move, and a live
-    // region here would flood the buffer. The committed size is announced once
-    // by `finishObjectResize`.
-    readout.setAttribute("aria-hidden", "true");
-    drag.preview.appendChild(readout);
-    drag.readout = readout;
-  }
+  drag.readout = paintSizeReadout(drag.preview, sizeLabel(widthTwip, heightTwip));
+}
+
+/** A placed size as the one sentence every size readout in the editor uses —
+ *  inches to two places, because that is the unit the properties panel accepts
+ *  and a readout in a unit you cannot type back is decoration. Through the key
+ *  Page Setup's own preview label already declares, so "in" is not an
+ *  untranslated corner in eighteen languages. */
+function sizeLabel(widthTwip, heightTwip) {
   const inches = (twip) => (twip / TWIPS_PER_INCH).toFixed(2);
-  // Through the seam, and through the key Page Setup's own preview label already
-  // declares: it is the same sentence, and a readout that says "in" in every
-  // language is the untranslated corner this ratchet exists to close.
-  readout.textContent = t("pageSetup.dimensions", {
-    width: inches(widthTwip),
-    height: inches(heightTwip),
-  });
+  return t("pageSetup.dimensions", { width: inches(widthTwip), height: inches(heightTwip) });
 }
 
 /** Commits (or cancels) the resize on release through one engine geometry
@@ -4485,6 +4437,7 @@ function finishObjectResize(event) {
   const drag = objectResizeDrag;
   objectResizeDrag = null;
   drag.preview.remove();
+  clearSnapGuides(drag);
   event.preventDefault();
   const changed =
     Math.abs(drag.lastX - drag.startX) >= 8 ||
@@ -4513,46 +4466,13 @@ function finishObjectResize(event) {
  *  host (and tests) can observe the grammar state machine without reading into
  *  the overlay. */
 function updateObjectSelectionState() {
-  if (objectSelection) {
-    pagesEl.dataset.objectSelected = objectSelection.node;
-    pagesEl.dataset.objectSurface = objectSelection.ref.surface;
-    pagesEl.dataset.objectRoot = objectSelection.ref.root;
-    pagesEl.dataset.objectSubject = objectSelection.ref.subject;
-    pagesEl.dataset.objectPath = objectSelection.ref.path.join(".");
-    pagesEl.dataset.objectKind = objectSelection.kind;
-    pagesEl.dataset.objectMode = objectSelection.mode;
-    pagesEl.dataset.objectCapabilities = OBJECT_CAPABILITY_KEYS
-      .filter((key) => objectSelection[key])
-      .join(",");
-  } else {
-    delete pagesEl.dataset.objectSelected;
-    delete pagesEl.dataset.objectSurface;
-    delete pagesEl.dataset.objectRoot;
-    delete pagesEl.dataset.objectSubject;
-    delete pagesEl.dataset.objectPath;
-    delete pagesEl.dataset.objectKind;
-    delete pagesEl.dataset.objectMode;
-    delete pagesEl.dataset.objectCapabilities;
-  }
+  reflectObjectSelection(pagesEl, objectSelection, OBJECT_CAPABILITY_KEYS);
   reflectShapeFormatState();
 }
 
-/** Reflects a selected shape's own fill and outline onto `#pages`, the same way
- *  the selection grammar is reflected. It is what the Fill/Outline swatches
- *  paint from, so what a test reads here is what the user sees on the control —
- *  `none` when the shape has no fill or no outline. */
+/** Reflects a selected shape's own fill and outline onto `#pages`. */
 function reflectShapeFormatState() {
-  const format = objectSelection?.kind === "shape" ? selectedShapeFormat() : null;
-  if (!format) {
-    delete pagesEl.dataset.shapeFill;
-    delete pagesEl.dataset.shapeOutline;
-    delete pagesEl.dataset.shapeOutlineWidth;
-    return;
-  }
-  pagesEl.dataset.shapeFill = format.fill ?? "none";
-  pagesEl.dataset.shapeOutline = format.outline ?? "none";
-  pagesEl.dataset.shapeOutlineWidth =
-    format.outlineWidthEmu == null ? "none" : String(format.outlineWidthEmu);
+  reflectShapeFormat(pagesEl, objectSelection?.kind === "shape" ? selectedShapeFormat() : null);
 }
 
 /** The lazily-created placeholder object context bar (docs/85 §4.1). */
@@ -4752,7 +4672,14 @@ function updateObjectContextBar() {
   const strong = document.createElement("strong");
   strong.textContent = label;
   objectContextBarEl.appendChild(strong);
-  if (objectSelection.canWrap) {
+  // While a crop is live the bar described the gesture it is NOT offering — it
+  // read "Drag handles to resize" over black crop grips. It says what they do.
+  const cropping = !!objectCropSession && objectCropSession.node === objectSelection.node;
+  if (cropping) {
+    const hint = document.createElement("small");
+    hint.textContent = t("object.cropHint");
+    objectContextBarEl.appendChild(hint);
+  } else if (objectSelection.canWrap) {
     // A floating object exposes a live Wrap control; move + resize are drags.
     const active = doc.objectWrap(objectSelection.ref.root);
     const wrap = document.createElement("div");
@@ -4803,7 +4730,6 @@ function updateObjectContextBar() {
     // Crop is a picture-only operation; a text box has no source rectangle.
     // Direct-manipulation crop (drag handles) is the primary gesture; while a
     // crop session is live the button becomes "Apply" and reads as active.
-    const cropping = !!objectCropSession && objectCropSession.node === objectSelection.node;
     const cropBtn = objectBarButton(
       "crop",
       cropping ? "Apply" : "Crop",
@@ -5674,6 +5600,44 @@ const MOVE_THRESHOLD_TWIP = 40;
 
 /** Begins a floating-object move drag (docs/85 §5.3): previews an outline that
  *  follows the pointer; the model is untouched until release. */
+// How close a dragged edge comes before the page pulls it onto a line, in CSS
+// pixels — converted to twips at the CURRENT zoom, so the pull is the same
+// distance under the finger at 50% as at 200%.
+const SNAP_TOLERANCE_PX = 7;
+
+/** The alignment lines `page` offers, and the snap radius in that page's twips.
+ *  Called ONCE per gesture (at pointer-down), never per pointer move: it asks
+ *  the engine for the page's ruler geometry, and a drag that re-asked would be
+ *  paying an engine call per sample for an answer that cannot change. */
+function snapContextFor(page) {
+  let targets;
+  try {
+    const g = doc.pageRulerGeometry(page.pageNumber - 1);
+    targets = pageSnapTargets({
+      widthTwip: g.widthTwip,
+      heightTwip: page.hTwip,
+      marginStartTwip: g.marginStartTwip,
+      marginEndTwip: g.marginEndTwip,
+    });
+    g.free?.();
+  } catch {
+    return null; // no geometry, no guides — the drag is simply free
+  }
+  const { sx } = scaleOf(page);
+  return { targets, tolerance: sx > 0 ? SNAP_TOLERANCE_PX / sx : 0 };
+}
+
+/** Draws (or hides) the alignment guides for a live drag, on the drag's page. */
+function paintSnapGuides(drag, guides) {
+  drag.guideEls = paintGuides(drag.page.overlay, drag.guideEls, guides, scaleOf(drag.page));
+}
+
+/** Removes a gesture's guides. */
+function clearSnapGuides(drag) {
+  clearGuides(drag?.guideEls);
+  if (drag) drag.guideEls = null;
+}
+
 function startObjectMove(event, page, node) {
   if (!doc || !objectSelection?.canMove || objectSelection.node !== node) return;
   if (reviewMode === "viewing" || reviewMode === "suggesting") {
@@ -5702,25 +5666,48 @@ function startObjectMove(event, page, node) {
     startClientY: event.clientY,
     startX: x,
     startY: y,
+    startW: w,
+    startH: h,
     lastX: x,
     lastY: y,
     moved: false,
     preview,
+    snap: snapContextFor(page),
+    guideEls: null,
   };
+  // The move gesture takes the pointer the way the resize gesture already does:
+  // a touch drag otherwise never became a move at all (the browser had already
+  // committed to scrolling by the time `updateObjectMove` ran), and a mouse drag
+  // died the moment the pointer left the sheet.
+  event.preventDefault();
+  page.overlay?.setPointerCapture?.(event.pointerId);
 }
 
-/** Updates the move preview from the pointer delta (page-local twips). */
+/** Updates the move preview from the pointer delta (page-local twips), pulled
+ *  onto the page's alignment lines when an edge or the centre comes close. */
 function updateObjectMove(event) {
   if (!objectMoveDrag) return;
   const drag = objectMoveDrag;
   const { sx, sy } = scaleOf(drag.page);
   const dxTwip = Math.round((event.clientX - drag.startClientX) / sx);
   const dyTwip = Math.round((event.clientY - drag.startClientY) / sy);
-  drag.lastX = Math.max(0, drag.startX + dxTwip);
-  drag.lastY = Math.max(0, drag.startY + dyTwip);
+  let x = Math.max(0, drag.startX + dxTwip);
+  let y = Math.max(0, drag.startY + dyTwip);
+  // Alt is the Word/Docs escape hatch: hold it and the page stops pulling, so a
+  // deliberate 2mm-off-centre placement is still reachable.
+  if (drag.snap && !event.altKey) {
+    const snapped = snapBox({ x, y, w: drag.startW, h: drag.startH }, drag.snap.targets, drag.snap.tolerance);
+    x = snapped.x;
+    y = snapped.y;
+    paintSnapGuides(drag, snapped.guides);
+  } else if (drag.guideEls) {
+    paintSnapGuides(drag, []);
+  }
+  drag.lastX = x;
+  drag.lastY = y;
   if (Math.abs(dxTwip) + Math.abs(dyTwip) > MOVE_THRESHOLD_TWIP) drag.moved = true;
-  drag.preview.style.left = `${drag.lastX * sx}px`;
-  drag.preview.style.top = `${drag.lastY * sy}px`;
+  drag.preview.style.left = `${x * sx}px`;
+  drag.preview.style.top = `${y * sy}px`;
   event.preventDefault();
 }
 
@@ -5732,6 +5719,7 @@ function finishObjectMove(event) {
   const drag = objectMoveDrag;
   objectMoveDrag = null;
   drag.preview.remove();
+  clearSnapGuides(drag);
   event.preventDefault();
   if (drag.moved) {
     runEdit(() => commitObjectMove(drag), { gate: true });
@@ -5801,6 +5789,7 @@ function commitObjectMove(drag) {
 function cancelObjectMove() {
   if (!objectMoveDrag) return;
   objectMoveDrag.preview.remove();
+  clearSnapGuides(objectMoveDrag);
   objectMoveDrag = null;
   drawSelection();
 }
@@ -6340,6 +6329,7 @@ function cancelTableColumnResize() {
 function cancelObjectResize() {
   if (!objectResizeDrag) return;
   objectResizeDrag.preview.remove();
+  clearSnapGuides(objectResizeDrag);
   objectResizeDrag = null;
   drawSelection();
 }
@@ -6734,6 +6724,16 @@ pagesEl.addEventListener("dblclick", (e) => {
         anchored,
         descriptor,
       );
+    }
+    // A picture has no flowed body to put a caret in, so "enter the object"
+    // means what it means in Google Docs: double-click an image and you are
+    // cropping it. The direct-manipulation crop chrome was already right; only
+    // its doorway was missing, so crop was reachable solely by finding the Crop
+    // button. A second double-click applies it, as the button turns into Apply.
+    if (objectSelection?.canCrop && !objectSelection.canEditText) {
+      enterCropMode();
+      e.preventDefault();
+      return;
     }
     let clicked = null;
     const inBox = doc.textBoxHitTest(page.pageNumber, x, y);

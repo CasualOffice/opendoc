@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Закрити структуру",
   "outlinePanel.outline": "Структура",
   "pageSetup.dimensions": "{width} × {height} дюйм",
+  "object.cropHint": "Перетягніть краї, щоб обрізати",
   "pageSetup.sectionNumber": "Розділ {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 дюйма",
   "pageSetupMenu.appliesSectionCanBe": "Застосовується до цього розділу, дію можна скасувати.",

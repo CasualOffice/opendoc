@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Anahatı kapat",
   "outlinePanel.outline": "Anahat",
   "pageSetup.dimensions": "{width} × {height} inç",
+  "object.cropHint": "Kırpmak için kenarları sürükleyin",
   "pageSetup.sectionNumber": "Bölüm {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 inç",
   "pageSetupMenu.appliesSectionCanBe": "Bu bölüme uygulanır ve geri alınabilir.",

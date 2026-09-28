@@ -6612,6 +6612,30 @@ body.is-format-painting .page-wrap * {
 .overlay .object-handle[data-handle="3"],
 .overlay .object-handle[data-handle="7"] { cursor: ew-resize; }
 
+/* Alignment guides (Word's green / Docs' blue): the line the dragged object has
+ * been pulled onto, drawn across the whole page so the relationship is visible
+ * rather than inferred. Host chrome only — it never commits anything, and it
+ * exists only while a pointer is down. */
+.overlay .object-align-guide {
+  position: absolute;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
+}
+.overlay .object-align-guide[hidden] { display: none; }
+.overlay .object-align-guide.is-vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+}
+.overlay .object-align-guide.is-horizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+  margin-top: -0.5px;
+}
+
 /* Live drag-resize preview outline (host chrome; the op commits once on release). */
 .overlay .object-resize-preview {
   position: absolute;

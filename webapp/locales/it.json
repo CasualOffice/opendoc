@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Chiudi la struttura",
   "outlinePanel.outline": "Struttura",
   "pageSetup.dimensions": "{width} × {height} in",
+  "object.cropHint": "Trascina i bordi per ritagliare",
   "pageSetup.sectionNumber": "Sezione {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 in",
   "pageSetupMenu.appliesSectionCanBe": "Si applica a questa sezione e può essere annullato.",

@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "アウトラインを閉じる",
   "outlinePanel.outline": "アウトライン",
   "pageSetup.dimensions": "{width} × {height} インチ",
+  "object.cropHint": "端をドラッグしてトリミング",
   "pageSetup.sectionNumber": "セクション {number}",
   "pageSetupMenu.8271169": "8.27 × 11.69 インチ",
   "pageSetupMenu.appliesSectionCanBe": "このセクションに適用され、元に戻せます。",

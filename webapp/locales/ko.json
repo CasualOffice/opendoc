@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "개요 닫기",
   "outlinePanel.outline": "개요",
   "pageSetup.dimensions": "{width} × {height}인치",
+  "object.cropHint": "가장자리를 끌어 자르기",
   "pageSetup.sectionNumber": "섹션 {number}",
   "pageSetupMenu.8271169": "8.27 × 11.69인치",
   "pageSetupMenu.appliesSectionCanBe": "이 구역에 적용되며 실행 취소할 수 있습니다.",

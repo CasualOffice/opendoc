@@ -50,6 +50,11 @@ export const EN_STRINGS = Object.freeze({
   // reads out whatever the size fields currently say.
   "pageSetup.sectionNumber": "Section {number}",
   "pageSetup.dimensions": "{width} \u00d7 {height} in",
+  // The object bar's hint while a crop session is live. It is its own key rather
+  // than a reuse of the resize hint because it names a different gesture: the
+  // grips under the pointer are crop grips, and the bar that said "Drag handles
+  // to resize" over them was describing the mode it had just left.
+  "object.cropHint": "Drag the edges to crop",
   // The two running-content variants. Their status lines and their palette rows
   // read as SWITCHES ("Different first page: on"), and a language that puts the
   // state before the name needs the whole sentence rather than a label with "on"

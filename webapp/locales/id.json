@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Tutup kerangka",
   "outlinePanel.outline": "Kerangka",
   "pageSetup.dimensions": "{width} × {height} inci",
+  "object.cropHint": "Seret tepinya untuk memangkas",
   "pageSetup.sectionNumber": "Bagian {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 inci",
   "pageSetupMenu.appliesSectionCanBe": "Berlaku untuk bagian ini dan dapat dibatalkan.",

@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "Fechar a estrutura de tópicos",
   "outlinePanel.outline": "Estrutura de tópicos",
   "pageSetup.dimensions": "{width} × {height} pol",
+  "object.cropHint": "Arraste as bordas para cortar",
   "pageSetup.sectionNumber": "Seção {number}",
   "pageSetupMenu.8271169": "8,27 × 11,69 pol.",
   "pageSetupMenu.appliesSectionCanBe": "Aplica-se a esta seção e pode ser desfeito.",

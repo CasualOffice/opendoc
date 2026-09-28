@@ -380,6 +380,7 @@
   "outlinePanel.closeOutline.title": "关闭大纲",
   "outlinePanel.outline": "大纲",
   "pageSetup.dimensions": "{width} × {height} 英寸",
+  "object.cropHint": "拖动边缘裁剪",
   "pageSetup.sectionNumber": "第 {number} 节",
   "pageSetupMenu.8271169": "8.27 × 11.69 英寸",
   "pageSetupMenu.appliesSectionCanBe": "应用于本节，且可撤消。",
