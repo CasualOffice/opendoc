@@ -6869,6 +6869,207 @@ impl WasmDocument {
         out
     }
 
+    /// Every table painted on page `page_number` (1-based) with its column and row
+    /// boundaries, as JSON — the geometry a pointer-driven table chrome layer
+    /// resolves a hover against (`docs/141` D-1).
+    ///
+    /// JSON rather than the flat-`Vec<i32>` convention the other geometry calls
+    /// use, because the payload must carry table **NodeIds** and a caret anchor
+    /// per boundary, which flat ints cannot express. `applyTableProperties`
+    /// already establishes JSON as this facade's structured-payload idiom.
+    ///
+    /// Shape: `{"tables":[{"node","regular","rows","columns","x","y","w","h",
+    /// "colEdges":[{"i","x","y","h","width","outer","anchor"}],
+    /// "rowEdges":[{"i","x","y","w","height","outer","anchor"}]}]}` — all
+    /// coordinates page-local twips. `i` is the grid position on the leading side
+    /// of the boundary, `outer` marks the table's own trailing edge, `anchor` is a
+    /// paragraph inside the band so a resize needs no second query to name what it
+    /// grabbed, and `width`/`height` are the painted extent of the band the
+    /// boundary closes (the row axis needs it because `setTableRowHeight` takes an
+    /// absolute height rather than a delta).
+    ///
+    /// **Complexity: O(fragments on `page_number`)** for the geometry — one walk
+    /// of that page's fragment tree — plus one document walk per table painted on
+    /// the page to read whether it is *regular*, which is a model question the
+    /// layout cannot answer and which decides whether a column boundary may be
+    /// dragged at all. That replaces the `R × (C−1)` whole-layout scans
+    /// `tableColumnResizeHandles` paid (`109` HF-222): a 20×5 table cost 80 of
+    /// them, inside a repaint that runs on every caret move, and a hover fires far
+    /// more often than a caret move. The frontend memoises the answer per page
+    /// between repaints, so a pointer-move costs nothing at all.
+    #[wasm_bindgen(js_name = tableChromeOnPage)]
+    #[must_use]
+    pub fn table_chrome_on_page(&self, page_number: u32) -> String {
+        let chrome = self.painted_snapshot().table_chrome_on_page(page_number);
+        let tables: Vec<ChromeTableJson> = chrome
+            .iter()
+            .map(|table| {
+                let model = find_table(&self.document, table.table);
+                ChromeTableJson {
+                    node: table.table.to_string(),
+                    // A merged or spanned table refuses a column-width write, so
+                    // the frontend must not arm a column boundary on one. Reported
+                    // from the MODEL, not from the rows visible here: a merge on a
+                    // continuation page would otherwise arm a gesture that then
+                    // refuses on release, which is the dead-control defect this
+                    // design exists to remove.
+                    regular: model.is_some_and(table_is_regular),
+                    rows: table.rows,
+                    columns: table.columns,
+                    x: table.rect.origin.x.raw(),
+                    y: table.rect.origin.y.raw(),
+                    w: table.rect.size.width.raw(),
+                    h: table.rect.size.height.raw(),
+                    col_edges: table
+                        .column_edges
+                        .iter()
+                        .map(|edge| ChromeEdgeJson {
+                            i: edge.index,
+                            x: edge.x.raw(),
+                            y: edge.y.raw(),
+                            w: 0,
+                            h: edge.length.raw(),
+                            width: edge.extent.raw(),
+                            height: 0,
+                            outer: edge.outer,
+                            anchor: edge.anchor.to_string(),
+                        })
+                        .collect(),
+                    row_edges: table
+                        .row_edges
+                        .iter()
+                        .map(|edge| ChromeEdgeJson {
+                            i: edge.index,
+                            x: edge.x.raw(),
+                            y: edge.y.raw(),
+                            w: edge.length.raw(),
+                            h: 0,
+                            width: 0,
+                            height: edge.extent.raw(),
+                            outer: edge.outer,
+                            anchor: edge.anchor.to_string(),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        serde_json::to_string(&ChromeJson { tables })
+            .unwrap_or_else(|_| "{\"tables\":[]}".to_owned())
+    }
+
+    /// Moves one column boundary of a regular table by `delta_twips`, as one
+    /// undoable resize.
+    ///
+    /// `mode` decides what absorbs the delta, and the distinction is the whole
+    /// reason this exists beside `setTableColumnWidthAt`:
+    ///
+    /// - `"border"` — column `boundary` grows by the delta and column
+    ///   `boundary + 1` shrinks by exactly as much, so **the table's total width
+    ///   does not change**. This is what dragging an INTERNAL border means in Word
+    ///   and Google Docs, and `setTableColumnWidthAt` could not express it: it set
+    ///   one column's absolute width and let the width solver decide the rest, so
+    ///   dragging column 1's right border widened the whole table.
+    /// - `"table"` — column `boundary` grows by the delta and the table grows with
+    ///   it. The right answer for the table's own trailing edge, and what
+    ///   `setTableColumnWidthAt` already did.
+    ///
+    /// Both columns are clamped at [`MIN_COLUMN_TWIPS`]; a delta that would push
+    /// the shrinking neighbour below it is reduced to the delta that lands it
+    /// exactly there, rather than refused, because a drag that stops moving is
+    /// better feedback than a drag that fails on release.
+    ///
+    /// Writes `grid[i].width_twips` and every row's `cells[i].properties.width`,
+    /// exactly as `setTableColumnWidthAt` does, and commits one
+    /// `Operation::ReplaceTable` under `HistoryKind::TableResize` — so one drag is
+    /// one undo entry. No new engine operation (ADR-030 I2).
+    #[wasm_bindgen(js_name = moveTableColumnBoundary)]
+    pub fn move_table_column_boundary(
+        &mut self,
+        node: &str,
+        boundary: u32,
+        delta_twips: i32,
+        mode: &str,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&replacement) {
+            return Err(to_js("column width requires a regular table".into()));
+        }
+        let columns = table_column_count(&replacement);
+        let col = boundary as usize;
+        if col >= columns {
+            return Err(to_js("column is outside the table".into()));
+        }
+        let painted = self.painted_column_widths(table);
+        let width_of = |index: usize| {
+            active_column_width(&replacement, index)
+                .or_else(|| painted.get(index).copied())
+                .unwrap_or(MIN_COLUMN_TWIPS)
+        };
+        let start = width_of(col);
+        // Clamp the grabbed column first, then — in "border" mode — reduce the
+        // delta again if the neighbour would go under the floor. Both floors are
+        // this one constant; the UI no longer carries a second copy.
+        let mut delta = start.saturating_add(delta_twips).max(MIN_COLUMN_TWIPS) - start;
+        let neighbour = (mode != "table" && col + 1 < columns).then(|| width_of(col + 1));
+        if let Some(neighbour_width) = neighbour {
+            delta = delta.min(neighbour_width - MIN_COLUMN_TWIPS);
+        }
+        let mut widths = vec![(col, start + delta)];
+        if let Some(neighbour_width) = neighbour {
+            widths.push((col + 1, neighbour_width - delta));
+        }
+        if replacement.grid.len() < columns {
+            replacement
+                .grid
+                .resize(columns, GridColumn { width_twips: None });
+        }
+        for (index, width) in widths {
+            let width = width.clamp(MIN_COLUMN_TWIPS, 31_680);
+            if let Some(grid_col) = replacement.grid.get_mut(index) {
+                grid_col.width_twips = Some(width);
+            }
+            for row in &mut replacement.rows {
+                if let Some(cell) = row.cells.get_mut(index) {
+                    cell.properties.width = Some(TableWidth::dxa(width));
+                }
+            }
+        }
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableResize,
+        )
+        .map_err(to_js)
+    }
+
+    /// The painted width of each of `table`'s columns, in twips — the fallback
+    /// when the model carries no preferred width for a column (an autofit table),
+    /// where a delta has nothing to be a delta *of*.
+    ///
+    /// O(fragments on the painted pages this table occupies).
+    fn painted_column_widths(&self, table: NodeId) -> Vec<i32> {
+        let snapshot = self.painted_snapshot();
+        for page in &snapshot.layout().pages {
+            for chrome in snapshot.table_chrome_on_page(page.number) {
+                if chrome.table == table {
+                    return chrome
+                        .column_edges
+                        .iter()
+                        .map(|edge| edge.extent.raw())
+                        .collect();
+                }
+            }
+        }
+        Vec::new()
+    }
+
     /// Merges the active table selection mode (`"row"`, `"column"`, `"table"`) in
     /// a regular table. Selected-cell content is preserved by moving it into the
     /// top-left merged cell in row-major order.
@@ -23060,6 +23261,54 @@ fn distribute_twips(total: i64, parts: usize) -> Result<Vec<i32>, JsValue> {
                 .map_err(|_| to_js("table dimensions are outside the supported range".into()))
         })
         .collect()
+}
+
+/// The narrowest a table column may be made by a resize gesture: 72 twips,
+/// 0.05 in.
+///
+/// One constant for one rule. It used to live twice — as a `Math.max(72, …)` in
+/// the webapp's drag and as a `clamp(1, 31_680)` in the facade — so the floor the
+/// user felt and the floor the model enforced were different numbers.
+const MIN_COLUMN_TWIPS: i32 = 72;
+
+/// The `tableChromeOnPage` payload. Field names are the JSON keys; `serde`'s
+/// rename carries the two camelCase ones.
+#[derive(serde::Serialize)]
+struct ChromeJson {
+    tables: Vec<ChromeTableJson>,
+}
+
+#[derive(serde::Serialize)]
+struct ChromeTableJson {
+    node: String,
+    regular: bool,
+    rows: u32,
+    columns: u32,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    #[serde(rename = "colEdges")]
+    col_edges: Vec<ChromeEdgeJson>,
+    #[serde(rename = "rowEdges")]
+    row_edges: Vec<ChromeEdgeJson>,
+}
+
+/// One boundary. A column edge fills `h` (its extent down the page) and `width`
+/// (the column it closes); a row edge fills `w` and `height`. The unused pair is
+/// zero rather than absent, so one shape serves both axes and the frontend's
+/// zone test reads the same fields either way.
+#[derive(serde::Serialize)]
+struct ChromeEdgeJson {
+    i: u32,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    width: i32,
+    height: i32,
+    outer: bool,
+    anchor: String,
 }
 
 fn table_is_regular(table: &Table) -> bool {
