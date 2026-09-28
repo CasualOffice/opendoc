@@ -186,10 +186,20 @@ test("the webapp manifest declares the licence a consumer would look for", () =>
  *  a list the next crate is missing from. */
 function licensingEntryPoints() {
   const paths = [];
-  for (const crate of readdirSync(join(REPO, "crates")).sort()) {
+  // Directories only. A macOS checkout leaves `.DS_Store` beside the crates, and
+  // reading `crates/.DS_Store/src/lib.rs` throws ENOTDIR — the guard then fails
+  // for everyone on a Mac while passing in CI, which is the least useful way for
+  // a guard to fail. `withFileTypes` asks the directory rather than guessing
+  // from the name, so an editor's stray file or a symlinked crate behaves.
+  const directories = (where) =>
+    readdirSync(join(REPO, where), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  for (const crate of directories("crates")) {
     paths.push(join(REPO, "crates", crate, "src", "lib.rs"));
   }
-  for (const tool of readdirSync(join(REPO, "tools")).sort()) {
+  for (const tool of directories("tools")) {
     paths.push(join(REPO, "tools", tool, "src", "main.rs"));
   }
   for (const name of [
