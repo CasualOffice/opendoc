@@ -154,12 +154,21 @@ function harness(engine, overrides = {}) {
   };
 }
 
-/** Runs the scan and waits for the lazy dictionary fetch to land. */
+/** Runs the scan and waits for everything it can set in motion to land: the
+ *  two lazy asset fetches, the worker round trip for each, and the re-check
+ *  each of those triggers.
+ *
+ *  A loop rather than a fixed pair of ticks, because the checker now COALESCES:
+ *  at most one check is in flight and a scan that arrives while one is
+ *  outstanding is deferred until the reply lands (`docs/146` §4, "budget and cap
+ *  the worker queue"). So "everything has settled" genuinely takes several
+ *  rounds, and a helper that hides the ordering is better than every test
+ *  guessing how many. */
 async function settle(h) {
-  h.checker.refresh();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  h.checker.refresh();
+  for (let round = 0; round < 6; round += 1) {
+    h.checker.refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 test("the checker flags the wrong word and leaves the right ones alone", async () => {
@@ -712,4 +721,32 @@ test("the in-process fallback is the worker's own responder, not a second checke
   await settle(viaExplicit);
   assert.deepEqual(viaExplicit.placedMarks(), viaDefault.placedMarks());
   assert.ok(viaDefault.placedMarks().length > 0, "and they both found something");
+});
+
+test("a reply that predates the word list does not poison the cache", async () => {
+  // A real ordering, not a contrived one, and the reason the freshness test is
+  // the KEY rather than the text: the first check of a paragraph is posted
+  // before the word list has arrived, so it comes back with grammar findings
+  // only — correct at the time. If that reply is written into the cache under
+  // the key the coordinator computes AFTER the list arrives, the re-check hits
+  // it and the document is never spell-checked at all. No text changed, so
+  // nothing about the document can see it; what changed was the resources.
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated and qzxtypo too";
+  const h = harness(engine, { grammarEnabled: () => true });
+  h.setWindow(1, 1);
+  await settle(h);
+
+  const marks = h.placedMarks();
+  assert.ok(
+    marks.some((mark) => mark.rule === "doubled-word"),
+    "the grammar finding, which arrives before the word list does",
+  );
+  assert.ok(
+    marks.some((mark) => mark.word === "qzxtypo"),
+    "and the spelling finding, which cannot arrive until it has. MUTATION: " +
+      "make `packVersionNow()` return the bare constant so the key stops " +
+      "naming which resources produced the answer, and this goes red with the " +
+      "grammar mark alone — a document that is silently never spell-checked.",
+  );
 });

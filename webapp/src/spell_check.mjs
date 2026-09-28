@@ -96,6 +96,25 @@ export const SPELL_SCROLL_QUIESCE_MS = 90;
  *  turning a scroll into a document walk. */
 export const MAX_SCAN_PARAGRAPHS = 400;
 
+/** How long a freshly constructed worker has to say it is alive before the
+ *  coordinator gives up on it and runs the checks in process.
+ *
+ *  A worker can fail in ways that never reach an `error` event — a module whose
+ *  top-level import rejects never evaluates, so it never registers a `message`
+ *  listener and never answers anything. Waiting for an event that will not come
+ *  is how proofing stops silently, and a document that is silently unchecked is
+ *  indistinguishable from a clean one (`docs/146` §1). */
+export const PROOF_READY_TIMEOUT_MS = 1500;
+
+/** How long one outstanding check may hold the queue closed.
+ *
+ *  The queue is capped at one check (`docs/146` §4) so that work about a state
+ *  the reader has already left cannot get in front of the answer they are
+ *  waiting for. The cap must not be able to become a deadlock: if a reply never
+ *  arrives, the next scan goes out anyway, and the abandoned reply is rejected
+ *  by its key if it ever turns up. */
+export const PROOF_REPLY_GRACE_MS = 3000;
+
 /** How many paragraph revisions are remembered. Only paragraphs that have been
  *  scanned are in here, and the map exists to answer "is this reply still about
  *  the current text" — a bound well above the scan bound costs nothing and
@@ -143,6 +162,19 @@ export function createSpellChecker(io) {
   const assets = new Map();
   /** "pending" | "ready" | "unavailable" for the product glossary. */
   let glossaryState = "";
+  /** Bumped whenever a word list or the glossary ARRIVES or fails.
+   *
+   *  It is part of `packVersion` in the cache key, and it has to be, for a
+   *  reason that cost a debugging session: the key otherwise says nothing about
+   *  WHICH resources produced an answer. A check posted before the word list
+   *  landed comes back with grammar findings only — correct at the time — and
+   *  its reply then writes that answer into the cache under a key the re-check
+   *  after the word list arrives computes identically. The re-check HITS, and
+   *  the document is never spell-checked at all. Clearing the cache on arrival
+   *  does not fix it: the stale reply lands after the clear. A key that names
+   *  the resources does, and it is what `docs/146` §4 asks for — a pack change
+   *  invalidates rather than serves. */
+  let assetsCounter = 0;
   /** Grammar rules the user has switched off for this session, by rule id. */
   let ignoredRules = new Set();
   /** Words the user asked to ignore for this session only. Word's behaviour:
@@ -162,7 +194,11 @@ export function createSpellChecker(io) {
    *  once per language instead of on every scroll. */
   let reportedUnsupported = new Set();
   let unsupportedTag = "";
-  /** The language whose list was asked for and refused, if any. */
+  /** The language of a paragraph IN THE WINDOW whose word list was asked for
+   *  and refused, if any. Derived by each scan rather than latched on failure:
+   *  a list that failed for a language the reader is not looking at is not a
+   *  standing condition for them, and a status note about it would be noise
+   *  about a document they do not have open. */
   let unavailableLanguage = "";
 
   /** Which document the findings are about. Bumped by `reset()`: node ids come
@@ -186,10 +222,31 @@ export function createSpellChecker(io) {
    *  every scan — so they are folded in here rather than given a hook each.
    *  Without them a paragraph checked with grammar off is served straight back
    *  from the cache when grammar is switched on, and the marks never appear. */
+  /** The `activePackVersion` of `docs/146` §4. Increment A ships one pack, so
+   *  the constant identifies the DATA and the counter identifies how much of it
+   *  has arrived. Increment B replaces the whole string with a real version. */
+  function packVersionNow() {
+    return `${BASIC_PACK_VERSION}.${assetsCounter}`;
+  }
+
   function settingsRevisionFor(spelling, grammar) {
     return `${settingsCounter}:${spelling ? "s" : ""}${grammar ? "g" : ""}`;
   }
   let requestId = 0;
+  /** The request id of the check currently in flight, or 0.
+   *
+   *  `docs/146` §4: "Budget and cap the worker queue" and "abort or supersede
+   *  stale work". The worker is ONE thread, and the scheduler can fire a scan
+   *  per scroll, per edit and per asset arrival — so an unbounded queue puts
+   *  work about a state the reader has already left in front of the answer they
+   *  are waiting for. At most one check is outstanding; anything that wants
+   *  another while one is in flight sets `rescanPending` and gets it the moment
+   *  the reply lands, with the newest document state, which is the answer that
+   *  was wanted anyway. */
+  let outstanding = 0;
+  let outstandingAt = 0;
+  let rescanPending = false;
+  const now = () => (io.now ? io.now() : Date.now());
 
   const scheduler = new SpellScheduler({ check: runScan, quiesceMs: SPELL_QUIESCE_MS });
 
@@ -206,6 +263,8 @@ export function createSpellChecker(io) {
   /** The last resources message, replayed if the worker has to be replaced. */
   let lastResources = null;
   let transport = null;
+  /** Whether a transport has said it is alive. An in-process one always is. */
+  let workerReady = false;
 
   /** An in-process responder, used when no worker can be built OR when one
    *  fails after being built. It is the SAME `createProofResponder` the worker
@@ -213,6 +272,7 @@ export function createSpellChecker(io) {
    *  is a transport, not a second implementation. */
   function inProcessTransport(onReply) {
     const responder = createProofResponder();
+    workerReady = true;
     return {
       post(message) {
         const reply = responder.handle(message);
@@ -234,6 +294,8 @@ export function createSpellChecker(io) {
     console.warn("proofing worker", reason);
     transport?.dispose();
     transport = inProcessTransport(onReply);
+    outstanding = 0;
+    rescanPending = false;
     if (lastResources) transport.post(lastResources);
     cache.clear();
     scheduler.flush();
@@ -254,6 +316,12 @@ export function createSpellChecker(io) {
       const worker = new Worker(url, { type: "module" });
       worker.addEventListener("message", (event) => onReply(event.data));
       worker.addEventListener("error", (event) => degrade(event.message ?? "worker error"));
+      // The deadline is the half of this that an event cannot give us: a module
+      // worker whose own import rejects never evaluates, so it registers no
+      // message listener, answers nothing, and reports nothing.
+      setTimeout(() => {
+        if (!workerReady) degrade(`no ready within ${PROOF_READY_TIMEOUT_MS}ms`);
+      }, PROOF_READY_TIMEOUT_MS);
       return { post: (message) => worker.postMessage(message), dispose: () => worker.terminate() };
     } catch {
       return inProcessTransport(onReply);
@@ -265,17 +333,28 @@ export function createSpellChecker(io) {
     transport.post(message);
   }
 
-  /** Tells the worker what it is checking WITH. Sent whenever any of it
-   *  changes, and replayed verbatim if the worker has to be replaced. */
+  /** Tells the worker what it is checking WITH.
+   *
+   *  ACCUMULATED, not replaced: the dictionary and the glossary arrive in
+   *  separate messages, and a replay that carried only the most recent one
+   *  would rebuild a worker with half its resources. Word lists accumulate by
+   *  locale, for the same reason. */
   function sendResources(patch) {
     lastResources = {
+      ...lastResources,
+      ...patch,
       type: PROOF_MESSAGE.resources,
-      packVersion: BASIC_PACK_VERSION,
+      packVersion: packVersionNow(),
       settingsRevision: settingsCounter,
       personal: [...personal],
       ignoredWords: [...ignored],
       ignoredRules: [...ignoredRules],
-      ...patch,
+      dictionaries: [
+        ...(lastResources?.dictionaries ?? []).filter(
+          (entry) => !(patch.dictionaries ?? []).some((next) => next.locale === entry.locale),
+        ),
+        ...(patch.dictionaries ?? []),
+      ],
     };
     post(lastResources);
   }
@@ -313,16 +392,16 @@ export function createSpellChecker(io) {
     fetchText(dictionaryUrl(GLOSSARY_FILE))
       .then((text) => {
         glossaryState = "ready";
+        assetsCounter += 1;
         sendResources({ glossaryText: text });
-        cache.clear();
         scheduler.flush();
       })
       .catch((error) => {
         // A glossary that fails to arrive degrades to "no glossary", which
         // flags our own product names: visible, and better than pretending.
         glossaryState = "ready";
+        assetsCounter += 1;
         sendResources({ glossaryText: "" });
-        cache.clear();
         scheduler.flush();
         console.warn("spelling glossary", error?.message ?? error);
       });
@@ -337,8 +416,8 @@ export function createSpellChecker(io) {
     fetchText(dictionaryUrl(language))
       .then((text) => {
         assets.set(language, "ready");
+        assetsCounter += 1;
         sendResources({ dictionaries: [{ locale: language, text }] });
-        cache.clear();
         scheduler.flush();
       })
       .catch((error) => {
@@ -349,9 +428,8 @@ export function createSpellChecker(io) {
         // is a third state, and the worker contributes no spelling findings for
         // it (`docs/146` §2 CORRECTION).
         assets.set(language, "unavailable");
-        unavailableLanguage = language;
+        assetsCounter += 1;
         sendResources({ dictionaries: [{ locale: language, unavailable: true }] });
-        cache.clear();
         io.status?.(unavailableLanguageMessage(language), "error");
         scheduler.flush();
         console.warn("spelling dictionary", language, error?.message ?? error);
@@ -474,8 +552,10 @@ export function createSpellChecker(io) {
     return next.revision;
   }
 
-  function revisionOf(node) {
-    return revisions.get(node)?.revision ?? null;
+  /** The key the coordinator would compute for `node` right now, or `null` when
+   *  it is not in the current scan. This is what a reply is checked against. */
+  function expectedKey(node) {
+    return scanned.find((row) => row.node === node)?.key ?? null;
   }
 
   // ---- The scan -------------------------------------------------------------
@@ -506,6 +586,7 @@ export function createSpellChecker(io) {
     const next = [];
     const ask = [];
     let missing = "";
+    let failed = "";
 
     for (const node of paragraphsInWindow(doc, pages)) {
       let length = 0;
@@ -532,7 +613,7 @@ export function createSpellChecker(io) {
       // by, a word list it does not consult.
       const spellingUsable =
         spelling && assets.get(locale) === "ready" && glossaryState === "ready";
-      if (spelling) requestDictionary(locale);
+      if (spelling && requestDictionary(locale) === "unavailable") failed = locale;
       if (!spellingUsable && !grammar) continue;
 
       const revision = revisionFor(node, text);
@@ -541,7 +622,7 @@ export function createSpellChecker(io) {
         paragraphId: node,
         paragraphRevision: revision,
         locale,
-        packVersion: BASIC_PACK_VERSION,
+        packVersion: packVersionNow(),
         settingsRevision: settingsRevisionFor(spelling, grammar),
         // Increment C's document terminology profile. Constant until it exists;
         // in the key now so that adding it later invalidates rather than serves
@@ -556,6 +637,7 @@ export function createSpellChecker(io) {
           paragraphRevision: revision,
           locale,
           text,
+          key,
           spelling: spellingUsable,
         });
       }
@@ -566,6 +648,7 @@ export function createSpellChecker(io) {
     const before = markerSignature(scanned);
     scanned = next;
     unsupportedTag = missing;
+    unavailableLanguage = failed;
     if (missing && !reportedUnsupported.has(missing)) {
       reportedUnsupported.add(missing);
       io.status?.(unsupportedLanguageMessage(missing));
@@ -573,10 +656,22 @@ export function createSpellChecker(io) {
     if (markerSignature(scanned) !== before) io.repaint?.();
 
     if (!ask.length) return;
+    if (outstanding && now() - outstandingAt < PROOF_REPLY_GRACE_MS) {
+      // A check is already in flight. Coalesce rather than queue: this scan's
+      // paragraphs are re-read from the document when the reply lands.
+      rescanPending = true;
+      // ...and if that reply never lands, come back anyway. A reply can be
+      // lost, and without this the cap on the queue becomes a stall that only a
+      // scroll would break.
+      scheduler.noteDirty(PROOF_REPLY_GRACE_MS);
+      return;
+    }
     // The worker is told which passes to run per REQUEST, and `spelling` is
     // narrowed per paragraph by the row's own flag, because a window can mix a
     // language whose list arrived with one whose list is still in flight.
     requestId += 1;
+    outstanding = requestId;
+    outstandingAt = now();
     post({
       type: PROOF_MESSAGE.check,
       requestId,
@@ -590,6 +685,7 @@ export function createSpellChecker(io) {
         paragraphId: row.paragraphId,
         paragraphRevision: row.paragraphRevision,
         locale: row.locale,
+        key: row.key,
         text: row.text,
       })),
     });
@@ -607,10 +703,13 @@ export function createSpellChecker(io) {
     if (message.type === PROOF_MESSAGE.ready) {
       if (message.version !== PROOF_PROTOCOL_VERSION) {
         degrade(`protocol ${message.version} != ${PROOF_PROTOCOL_VERSION}`);
+        return;
       }
+      workerReady = true;
       return;
     }
     if (message.type !== PROOF_MESSAGE.findings) return;
+    if (message.requestId === outstanding) outstanding = 0;
 
     // Deliberately NOT matched against a set of outstanding request ids. That
     // would be a SECOND staleness mechanism, and it would be the one actually
@@ -622,7 +721,7 @@ export function createSpellChecker(io) {
     for (const result of message.results ?? []) {
       // STALENESS. The reply describes a past state by construction; this is
       // the one question that decides whether that past is still the present.
-      if (!isFreshResult(result, { documentId, revisionOf })) continue;
+      if (!isFreshResult(result, { expectedKey })) continue;
       const row = scanned.find((candidate) => candidate.node === result.paragraphId);
       if (!row) continue;
       // The ONE place UTF-16 becomes UTF-8. Findings are JS string indices
@@ -641,6 +740,10 @@ export function createSpellChecker(io) {
     // whatever repaint the scroll or the edit already did. Without a repaint of
     // its own its results never reach the screen.
     if (changed) io.repaint?.();
+    if (!outstanding && rescanPending) {
+      rescanPending = false;
+      scheduler.flush();
+    }
   }
 
   /** A cheap identity for what `paint` would draw. */
@@ -830,6 +933,8 @@ export function createSpellChecker(io) {
      *  document cannot be painted onto this one. */
     reset() {
       documentId += 1;
+      outstanding = 0;
+      rescanPending = false;
       revisions.clear();
       cache.clear();
       ignored = new Set();

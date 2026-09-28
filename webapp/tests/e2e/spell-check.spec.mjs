@@ -434,3 +434,110 @@ test("our own product names are never flagged, and are not the user's words", as
   }
   expect(consoleErrors).toEqual([]);
 });
+
+// ---- Increment A: the worker, and the two failures it is about --------------------
+// `docs/146` §4/§9, ADR-042. These ask questions the unit tests cannot: whether
+// a real `Worker` is really constructed, and what a real failed asset fetch does
+// to a real document.
+
+test("checking runs in a Web Worker, not on the thread painting the document", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSpellingDocument(page);
+  // The positive case first — the checker is working at all.
+  await expect(page.locator(marker(spellingTypoForPage(1)))).toHaveCount(1, {
+    timeout: 20_000,
+  });
+  // `page.workers()` is the browser's own answer to "is there a worker", which
+  // is the only honest way to ask: the in-process fallback produces IDENTICAL
+  // findings on purpose, so no assertion about the marks could tell the two
+  // apart. That is what makes this spec worth its runtime.
+  await expect
+    .poll(() => page.workers().map((worker) => worker.url()).join(" "), { timeout: 20_000 })
+    .toContain("proof_worker");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("with spelling off, grammar still marks and NOTHING is fetched for spelling", async ({
+  page,
+  consoleErrors,
+}) => {
+  const dictionaryRequests = [];
+  page.on("request", (request) => {
+    if (/\/dict\//.test(request.url())) dictionaryRequests.push(request.url());
+  });
+
+  await openSpellingDocument(page);
+  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
+    timeout: 20_000,
+  });
+  // Off, and remembered — so the next load starts with spelling already off,
+  // which is the state `docs/146` §2 is about.
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
+  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+
+  dictionaryRequests.length = 0;
+  await openSpellingDocument(page);
+  // Grammar runs from a cold start with spelling off...
+  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  // ...and asked the network for neither the word list nor the glossary. The
+  // glossary was the one actually being requested; `docs/146` §2 named only the
+  // dictionary.
+  expect(dictionaryRequests).toEqual([]);
+
+  // Put spelling back so the stored preference does not leak into other specs.
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a word list that cannot be fetched marks nothing, says so, and leaves grammar running", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The defect this increment exists to prevent, through a real failed fetch:
+  // an empty word list means no word is known, so the whole document used to be
+  // underlined while the status line said the dictionary had failed.
+  //
+  // `gotoEditor` cannot be used here: it waits for an EMPTY, non-error status
+  // line, and the whole point of this state is a standing error message. So the
+  // readiness condition is the same one minus that clause, spelled out rather
+  // than weakened for everybody.
+  await page.route("**/dict/en-US.txt*", (route) => route.abort());
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/editor.html?fixture=rich");
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll(".page-wrap").length > 0 &&
+      document.body.dataset.fontsReady === "true",
+    null,
+    { timeout: 45_000 },
+  );
+  await page.setInputFiles("#file", {
+    name: "spelling.docx",
+    mimeType: DOCX_MIME,
+    buffer: Buffer.from(makeSpellingDocx(6)),
+  });
+  await expect.poll(() => documentPageCount(page), { timeout: 45_000 }).toBe(6);
+
+  // Grammar is the positive case: the document IS still being proofed, which is
+  // what makes "no spelling marks" a decision rather than a dead feature.
+  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.locator("#status")).toContainText("could not be loaded", {
+    timeout: 20_000,
+  });
+  await expect(
+    page.locator(".overlay .spell-error"),
+    "a failed word list must flag NOTHING — it used to flag every word in the document",
+  ).toHaveCount(0);
+  // The aborted request is this test's own doing and the browser reports it;
+  // everything ELSE must still be clean, which is the assertion that matters.
+  expect(
+    consoleErrors.filter((text) => !/Failed to load resource/.test(text)),
+  ).toEqual([]);
+});

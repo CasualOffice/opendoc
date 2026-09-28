@@ -12,6 +12,9 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 import {
   BASIC_PACK_VERSION,
@@ -99,33 +102,46 @@ test("every part of the cache key changes the key", () => {
 
 // ---- Staleness ------------------------------------------------------------------
 
-test("a reply about a replaced document, or an edited paragraph, is rejected", () => {
-  const revisions = new Map([["p1", 7]]);
-  const context = { documentId: 5, revisionOf: (id) => revisions.get(id) ?? null };
-  const reply = { documentId: 5, paragraphId: "p1", paragraphRevision: 7 };
+test("a reply computed under conditions that have moved on is rejected", () => {
+  // The key IS the test (`docs/146` §4): every way a past answer can be wrong
+  // about the present is a field of it, so each case below is the same
+  // comparison with one field changed — which is why there is one mechanism
+  // here and not four.
+  const conditions = {
+    documentId: 5,
+    paragraphId: "p1",
+    paragraphRevision: 7,
+    locale: "en-US",
+    packVersion: `${BASIC_PACK_VERSION}.2`,
+    settingsRevision: "1:sg",
+    profileRevision: 0,
+  };
+  const current = new Map([["p1", proofCacheKey(conditions)]]);
+  const context = { expectedKey: (id) => current.get(id) ?? null };
+  const reply = { paragraphId: "p1", key: proofCacheKey(conditions) };
 
-  // Positive first. Without this the three rejections below prove nothing: a
+  // Positive first. Without this the rejections below prove nothing: a
   // predicate that always returns false rejects stale replies perfectly.
   assert.equal(isFreshResult(reply, context), true);
 
-  assert.equal(
-    isFreshResult({ ...reply, documentId: 4 }, context),
-    false,
-    "node ids restart per import, so the previous document's findings would " +
-      "land on this document's paragraphs",
-  );
-  revisions.set("p1", 8);
+  for (const [field, value, why] of [
+    ["documentId", 4, "node ids restart per import, so the previous document's findings would land on this document's paragraphs"],
+    ["paragraphRevision", 8, "the paragraph was edited while the check was in flight"],
+    ["packVersion", `${BASIC_PACK_VERSION}.3`, "the word list arrived after the check was posted, so the answer knows nothing about spelling"],
+    ["settingsRevision", "2:sg", "a rule was switched off while the check was in flight"],
+    ["locale", "en-GB", "the paragraph's language changed under the answer"],
+  ]) {
+    current.set("p1", proofCacheKey({ ...conditions, [field]: value }));
+    assert.equal(isFreshResult(reply, context), false, why);
+  }
+
+  current.delete("p1");
   assert.equal(
     isFreshResult(reply, context),
     false,
-    "the paragraph was edited while the check was in flight",
+    "the paragraph is not in the current scan at all",
   );
-  revisions.delete("p1");
-  assert.equal(
-    isFreshResult(reply, context),
-    false,
-    "the paragraph is no longer tracked at all",
-  );
+  assert.equal(isFreshResult({ paragraphId: "p1" }, context), false, "and a reply with no key is not trusted");
 });
 
 // ---- The defect this increment exists to prevent ---------------------------------
@@ -387,5 +403,57 @@ test("suggestions arrive with the finding, and the deep search is budgeted hones
     false,
     "a word the budget never searched for must report that, or the menu says " +
       "'No spelling suggestions' about a search it did not do",
+  );
+});
+
+// ---- The worker shim, read as source -----------------------------------------------
+//
+// A source-shape guard, which this repository normally refuses — and the
+// exception is earned, because the defect it catches is invisible to every
+// other kind of test: no error, no warning, a healthy worker, and a document
+// that is simply never spell-checked.
+//
+// A module worker's queued messages are delivered once its script has finished
+// its INITIAL synchronous evaluation. Top-level `await` ends that evaluation at
+// the first suspension — so the worker starts dispatching before a `message`
+// listener registered after the `await` exists, and everything already queued is
+// dropped. The first message is the one carrying the word list, and it is sent
+// once, so the worker then answers every later check with grammar findings only,
+// for ever. Measured in the browser suite as "the document is never
+// spell-checked" in roughly half of a two-worker run, against a clean console.
+//
+// The guarantee is "a message posted before the protocol is loaded is answered,
+// not dropped", and the only place it can be checked without a browser is here.
+// `spell-check.spec.mjs` asserts the end of it with a real worker.
+
+test("the worker listens before it imports, and never suspends first", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "src", "proof_worker.js"), "utf8");
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  const listener = code.indexOf('addEventListener("message"');
+  const dynamicImport = code.indexOf("import(");
+  assert.ok(listener > 0, "the worker must register a message listener at all");
+  assert.ok(dynamicImport > 0, "and it loads the protocol dynamically, for the stamp");
+  assert.ok(
+    listener < dynamicImport,
+    "the listener must be registered BEFORE the import, or every message posted " +
+      "while the protocol loads is dropped — starting with the one carrying the " +
+      "word list. MUTATION: move the `addEventListener` below the `import(` and " +
+      "this goes red.",
+  );
+  assert.doesNotMatch(
+    code,
+    /(^|[\s(=])await\s/m,
+    "and there must be no top-level await: it ends the initial evaluation, which " +
+      "is exactly when the queued messages start being dispatched",
+  );
+  assert.match(
+    code,
+    /queued\.push/,
+    "anything that arrives before the protocol is loaded has to be KEPT, not " +
+      "answered with silence",
   );
 });

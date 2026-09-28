@@ -96,7 +96,7 @@ export const BASIC_PACK_VERSION = "basic-1";
  *  reader is waiting for. Past this budget a finding still carries whatever the
  *  cheap distance-1 pass found and reports `suggestionsComplete: false`, so the
  *  menu can say "not ready" instead of the lie "there are none". */
-export const DEEP_SUGGESTION_BUDGET = 64;
+export const DEEP_SUGGESTION_BUDGET = 24;
 
 /** Suggestions offered for one word. Word shows five. */
 export const MAX_SUGGESTIONS = 5;
@@ -160,13 +160,28 @@ export function proofCacheKey({
  * every reply is about a past state by construction; this is the one question
  * that decides whether that past is still the present.
  *
- * `current(paragraphId)` answers the paragraph's revision NOW, or `null` when
- * it is no longer being tracked.
+ * **The cache key is the test, and that is deliberate.** §4 names the document
+ * id and the paragraph revision, and both are IN the key — along with the
+ * locale, the pack version and the settings revision, which are the other three
+ * ways a past answer can be wrong about the present. A separate id-and-revision
+ * comparison beside this one would be a second mechanism that passes while this
+ * one is what actually decides, and it would leave neither drivable red.
+ *
+ * The case that made this necessary is not exotic and is not about editing: a
+ * check posted before the word list arrived comes back with grammar findings
+ * only — correct when it was asked — and applying it to a paragraph the
+ * coordinator is now ready to spell-check writes "no misspellings" into the
+ * cache under the key the NEXT check would compute. The document is then never
+ * spell-checked at all, in a way no text comparison can see, because the text
+ * never changed. The resources did.
+ *
+ * `expectedKey(paragraphId)` is the key the coordinator would compute for that
+ * paragraph right now, or `null` when it is not in the current scan.
  */
-export function isFreshResult(result, { documentId, revisionOf }) {
-  if (!result || result.documentId !== documentId) return false;
-  const now = revisionOf(result.paragraphId);
-  return now !== null && now === result.paragraphRevision;
+export function isFreshResult(result, { expectedKey }) {
+  if (!result || typeof result.key !== "string") return false;
+  const wanted = expectedKey(result.paragraphId);
+  return wanted !== null && wanted === result.key;
 }
 
 /**
@@ -334,6 +349,10 @@ export function createProofResponder() {
         paragraphRevision: paragraph.paragraphRevision,
         locale: paragraph.locale,
         documentId: message.documentId,
+        // Echoed, never interpreted. It is the caller's own identity for the
+        // conditions this answer was computed under, and the caller is the only
+        // one that can say whether they still hold.
+        key: paragraph.key,
         findings: proofParagraph(
           {
             text: paragraph.text,

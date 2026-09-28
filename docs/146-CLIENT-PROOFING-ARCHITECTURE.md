@@ -48,6 +48,44 @@ and text boxes have model-based entry points (`runningContentCaret`, `textBoxCar
 scan could use, but footnote and endnote bodies have **no route at all** and need a new
 export. That is `crates/**` work owned by another lane, and it is why this stays at P3.
 
+### What building Increment A found that the design did not ask about
+
+Recorded here rather than only in the PR (SKILL.md §8). All three are about the
+boundary the increment introduces, and none of them is visible from the design:
+
+1. **A module worker's top-level `await` drops the messages already queued for
+   it.** Queued messages are delivered once the script finishes its *initial*
+   evaluation, and top-level `await` ends that evaluation at the first
+   suspension — so a `message` listener registered after the `await` does not
+   exist yet, and everything waiting is discarded. The first message is the one
+   carrying the word list, and resources are sent once, so the worker then
+   answers every later check with grammar findings only, for ever. No error, no
+   warning, a healthy worker, a clean console, and a document that is simply
+   never spell-checked — measured in roughly half of a two-worker browser run.
+   The listener now goes on in the first synchronous statement and early
+   messages are queued in the worker.
+2. **The cache key has to name the RESOURCES, not just the document.** §4's
+   tuple does say `activePackVersion`, and this is why it matters before any
+   pack exists: a check posted before the word list arrives is answered
+   correctly, with grammar only, and that answer is written into the cache under
+   a key the re-check *after* the list arrives computes identically. The
+   re-check hits, and nothing is ever spell-checked. Nothing about the document
+   changed; the resources did. So the key carries how much of the pack has
+   loaded, and a reply is matched against **the key it was computed under**,
+   echoed back by the worker — which is also §4's "verify document ID and
+   paragraph revision", since both are fields of that key.
+3. **A cap on the worker queue must not become a stall.** At most one check is
+   in flight (§4, "budget and cap the worker queue"), and the first version of
+   that had no way out if a reply never came: nothing else would attempt another
+   scan until the reader happened to scroll. A coalesced scan now re-arms
+   itself, an unanswered check stops blocking after a grace period, and a worker
+   that has not said it is alive within a deadline is replaced by the in-process
+   responder.
+
+The shape of all three is the same, and it is worth stating once: **a worker
+boundary turns "nothing happened" into a legitimate-looking outcome.** Every
+one of these presented as a clean document.
+
 ---
 
 *Everything below this line is the owner's document of 2026-09-28, reproduced as written.*
