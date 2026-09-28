@@ -123,6 +123,11 @@ mod objects;
 // already 35k lines and is owned by other lanes.
 mod references;
 
+// Table of contents: generation and the two updates (`docs/141`). Its own module
+// for the same reason as `references` — one feature, one document walk per
+// command — and because its complexity contract needs stating in one place.
+mod toc;
+
 // Version diff (`docs/140` H3). Its own module for the same reason, and because
 // it touches nothing in the live session: it takes two checkpoints' bytes and
 // returns a sidecar, which is exactly what makes it movable into a Worker later
@@ -746,7 +751,10 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         // section break the user inserted, and the undo label has to say so.
         Operation::SpliceSectionBoundary { .. } => HistoryKind::SectionBreak,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
-        Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
+        Operation::InsertField { .. }
+        | Operation::RemoveField { .. }
+        | Operation::InsertFieldRange { .. }
+        | Operation::RemoveFieldRange { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
@@ -3625,6 +3633,86 @@ impl WasmDocument {
             .collect()
     }
 
+    /// Every paragraph-spanning complex field with **the paragraphs it covers**,
+    /// as `id\tinstruction\tnode node …` (the node ids space-separated, in
+    /// document order), in ascending id order.
+    ///
+    /// [`fieldRangeEntries`](Self::field_range_entries) says a document HOLDS a
+    /// table of contents; this says WHICH paragraphs are inside it, which is the
+    /// question a host actually has to answer — "is the caret in the contents
+    /// field?" decides whether Update Table is offered, and whether a click on
+    /// this line should follow an entry. Without it the only signal available was
+    /// the `TOC 1`..`TOC 9` / `Contents 1`..`Contents 10` paragraph style, which
+    /// is a real marking but only the one Word and ODF happen to write. That
+    /// style-based path stays correct and stays necessary: a hand-built table of
+    /// contents has no field at all, and this accessor reports nothing for it.
+    /// The two are complementary — field first, style as the fallback.
+    ///
+    /// A range's covered set is every paragraph from the one holding its
+    /// `FieldRangeStart` to the one holding its `FieldRangeEnd`, inclusive,
+    /// including paragraphs nested in tables, content controls and text boxes
+    /// inside that span. A range whose markers are missing reports an empty span
+    /// rather than being dropped, so a host is never told a field does not exist
+    /// when the definition says it does.
+    ///
+    /// **Complexity: O(document)** — one walk of every block surface, carrying
+    /// each paragraph (never a by-id lookup per id; see `docs/116`). This is not
+    /// a keystroke-path accessor: call it once per document revision and keep the
+    /// membership set, which then answers each click in O(1).
+    #[wasm_bindgen(js_name = fieldRangeSpans)]
+    #[must_use]
+    pub fn field_range_spans(&self) -> Vec<String> {
+        // Keyed by the range id's NodeId so the walk needs no id type of its own.
+        let mut covered: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        // Each surface is an independent inline stream: the model refuses a range
+        // that starts in one container and ends in another (`docs/128` §3), so the
+        // open set resets per surface and a stray marker cannot leak across.
+        for blocks in surface_block_lists(&self.document) {
+            let mut open: Vec<NodeId> = Vec::new();
+            visit_paragraphs(blocks, &mut |paragraph| {
+                let mut ended: Vec<NodeId> = Vec::new();
+                for inline in &paragraph.inlines {
+                    match inline {
+                        InlineNode::FieldRangeStart(marker) => {
+                            open.push(marker.field.node_id());
+                        }
+                        InlineNode::FieldRangeEnd(marker) => {
+                            ended.push(marker.field.node_id());
+                        }
+                        _ => {}
+                    }
+                }
+                // The paragraph holding either marker is itself covered, so the
+                // ends are applied AFTER this paragraph is recorded.
+                for field in open.iter().chain(&ended) {
+                    let entry = covered.entry(*field).or_default();
+                    if entry.last() != Some(paragraph.id).as_ref() {
+                        entry.push(paragraph.id);
+                    }
+                }
+                open.retain(|field| !ended.contains(field));
+            });
+        }
+        self.document
+            .definitions()
+            .field_ranges
+            .iter()
+            .map(|(id, range)| {
+                let nodes = covered
+                    .get(&id.node_id())
+                    .map(|nodes| {
+                        nodes
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                format!("{}\t{}\t{}", id.node_id(), range.instruction, nodes)
+            })
+            .collect()
+    }
+
     /// Creates a bookmark named `name` over the current selection (which may span
     /// two paragraphs), inserting its start/end markers and registering the name
     /// under a fresh id. One undoable action. The new id is discoverable via
@@ -6387,6 +6475,163 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Moves the row at `from` so that it ends up at row index `to` — the commit
+    /// behind a drag on the row gutter (`docs/141` §4.2.3). One undoable
+    /// [`Operation::ReplaceTable`] under `HistoryKind::TableStructure`, so a drag
+    /// is one undo step and no new engine operation is needed.
+    ///
+    /// `node` is any node inside the table (the gutter's anchor cell). Both
+    /// indices are 0-based, and `to` is the index the row occupies **after** the
+    /// move — what a drop target reads directly, with no off-by-one for the
+    /// caller to get wrong when dragging downwards.
+    ///
+    /// **Merged cells.** A horizontal merge (`w:gridSpan`) lives entirely inside
+    /// one row, so a row move can never tear one and horizontally merged tables
+    /// are moved normally. A **vertical** merge (`w:vMerge`) spans rows, and a
+    /// move would tear one in two ways: lifting a row out of a merge run, or
+    /// dropping a row into the middle of one. Both are refused with a reason
+    /// naming the row — a torn `restart`/`continue` pair silently changes which
+    /// cells are one cell, which is exactly the corruption this must not write.
+    ///
+    /// **Complexity: O(rows + cells)** — one clone of the table plus a `remove`
+    /// and an `insert` on the row vector. No walk of the document and no walk of
+    /// cell content, so a drag stays O(1) in document size.
+    #[wasm_bindgen(js_name = moveTableRow)]
+    pub fn move_table_row(
+        &mut self,
+        node: &str,
+        from: u32,
+        to: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.move_table_row_inner(node, from, to).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::move_table_row`]. Split out so native tests read the
+    /// refusal text on the same path as the `#[wasm_bindgen]` boundary — a
+    /// `JsValue` cannot be constructed off-wasm, so a refusal built there is a
+    /// refusal no guard can assert.
+    fn move_table_row_inner(
+        &mut self,
+        node: &str,
+        from: u32,
+        to: u32,
+    ) -> Result<EditResult, String> {
+        let nid = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        let (table, _, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| "table not found".to_owned())?
+            .clone();
+        let count = replacement.rows.len();
+        let (from, to) = ordered_move_indices("row", from, to, count)?;
+
+        let bound = vertically_bound_rows(&replacement);
+        if bound[from] {
+            return Err(format!(
+                "row {} is part of a vertically merged region; split the merge before moving it",
+                from + 1
+            ));
+        }
+        let moved = replacement.rows.remove(from);
+        if replacement
+            .rows
+            .get(to)
+            .is_some_and(row_has_vertical_continue)
+        {
+            return Err(format!(
+                "moving row {} here would split a vertically merged region",
+                from + 1
+            ));
+        }
+        replacement.rows.insert(to, moved);
+
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableStructure,
+        )
+    }
+
+    /// Moves the column at `from` so that it ends up at column index `to` — the
+    /// column half of [`moveTableRow`](Self::move_table_row), with the same
+    /// contract: `node` anchors the table, `to` is the post-move index, and the
+    /// whole drag commits as one [`Operation::ReplaceTable`].
+    ///
+    /// Every row's cell at `from` moves together with the shared `w:tblGrid`
+    /// entry, so column widths travel with the column instead of staying behind.
+    ///
+    /// **Merged cells.** A vertical merge (`w:vMerge`) lives entirely inside one
+    /// column, so the whole `restart`/`continue` run travels with the column and
+    /// vertically merged tables are moved normally. A **horizontal** merge
+    /// (`w:gridSpan` greater than 1) makes one cell occupy several grid columns,
+    /// so the grid index a drag reports does not identify a cell at all; such a
+    /// table is refused with a reason naming the row, rather than moved by an
+    /// index that means something different in every row. A row whose cell count
+    /// disagrees with the grid width is refused for the same reason.
+    ///
+    /// **Complexity: O(rows)** — one clone plus a `remove`/`insert` per row.
+    #[wasm_bindgen(js_name = moveTableColumn)]
+    pub fn move_table_column(
+        &mut self,
+        node: &str,
+        from: u32,
+        to: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.move_table_column_inner(node, from, to).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::move_table_column`]. Split out for the reason
+    /// [`WasmDocument::move_table_row_inner`] is: refusal text a native guard can
+    /// read.
+    fn move_table_column_inner(
+        &mut self,
+        node: &str,
+        from: u32,
+        to: u32,
+    ) -> Result<EditResult, String> {
+        let nid = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        let (table, _) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| "table not found".to_owned())?
+            .clone();
+        let columns = table_column_count(&replacement);
+        let (from, to) = ordered_move_indices("column", from, to, columns)?;
+
+        for (index, row) in replacement.rows.iter().enumerate() {
+            if row.cells.len() != columns
+                || row
+                    .cells
+                    .iter()
+                    .any(|cell| cell.properties.grid_span.is_some_and(|span| span > 1))
+            {
+                return Err(format!(
+                    "row {} merges cells across columns; split the merge before moving a column",
+                    index + 1
+                ));
+            }
+        }
+
+        if replacement.grid.len() == columns {
+            let moved = replacement.grid.remove(from);
+            replacement.grid.insert(to, moved);
+        }
+        for row in &mut replacement.rows {
+            let moved = row.cells.remove(from);
+            row.cells.insert(to, moved);
+        }
+
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableStructure,
+        )
+    }
+
     /// Sets or clears the current row's repeat-header flag.
     #[wasm_bindgen(js_name = setTableHeaderRow)]
     pub fn set_table_header_row(
@@ -8469,31 +8714,29 @@ impl WasmDocument {
         }
     }
 
-    /// The paragraph's spacing (space before/after in twips, and line spacing) — for
-    /// the toolbar's line-&-paragraph-spacing menu to reflect current state. `-1`
-    /// means unset for before/after; `line_rule` is `0` auto (percent), `1` atLeast,
-    /// `2` exact (twips).
+    /// The paragraph's **effective** spacing (space before/after in twips, and
+    /// line spacing) — for the toolbar's line-&-paragraph-spacing menu to tick a
+    /// preset and fill its value boxes. `-1` means unset for before/after;
+    /// `line_rule` is `0` auto (percent), `1` atLeast, `2` exact (twips); the
+    /// `*FromStyle` flags say whether the value was inherited.
+    ///
+    /// Resolved through the style cascade, not read off `w:pPr`. A direct read
+    /// reports "nothing set" for every paragraph of a document that puts its
+    /// spacing in `Normal`, which is most of them — see [`ParagraphSpacing`].
+    ///
+    /// **Complexity: O(document)** because resolving `node` to its paragraph is a
+    /// block-surface walk (`paragraph_properties`), plus O(style chain) to
+    /// cascade. Call it once per selection change, never in a loop over nodes.
     #[wasm_bindgen(js_name = paragraphSpacing)]
     #[must_use]
     pub fn paragraph_spacing(&self, node: &str) -> ParagraphSpacing {
-        let spacing = NodeId::from_str(node)
+        let Some(direct) = NodeId::from_str(node)
             .ok()
             .and_then(|nid| paragraph_properties(&self.document, nid))
-            .and_then(|p| p.spacing);
-        match spacing {
-            Some(s) => ParagraphSpacing {
-                before_twip: s.before_twips.unwrap_or(-1),
-                after_twip: s.after_twips.unwrap_or(-1),
-                line_percent: s.line_percent.map_or(0, u32::from),
-                line_rule: match s.line_rule {
-                    Some(casual_doc_model::v1::LineRule::AtLeast) => 1,
-                    Some(casual_doc_model::v1::LineRule::Exact) => 2,
-                    _ => 0,
-                },
-                line_twip: s.line_twips.unwrap_or(0),
-            },
-            None => ParagraphSpacing::default(),
-        }
+        else {
+            return ParagraphSpacing::default();
+        };
+        resolved_paragraph_spacing(&direct, &StyleCascade::new(self.document.definitions()))
     }
 
     /// Uniform paragraph properties over every paragraph touched by the model
@@ -10898,17 +11141,21 @@ impl WasmDocument {
             })
     }
 
-    /// The line-spacing percentage of the paragraph at `node` (0 if unset) — for
-    /// the toolbar's spacing dropdown.
+    /// The **effective** line-spacing percentage of the paragraph at `node` (0
+    /// when no `auto`-rule line spacing is in effect anywhere in its cascade) —
+    /// what the toolbar's spacing dropdown ticks.
+    ///
+    /// Resolved through the style cascade for the reason on
+    /// [`paragraphSpacing`](Self::paragraph_spacing): a paragraph that inherits
+    /// 1.15 lines from `Normal` used to answer `0` here, so no preset was ever
+    /// ticked on a real document.
+    ///
+    /// **Complexity: O(document)** — the same paragraph lookup
+    /// `paragraphSpacing` does. One call per selection change.
     #[wasm_bindgen(js_name = lineSpacingAt)]
     #[must_use]
     pub fn line_spacing_at(&self, node: &str) -> u32 {
-        NodeId::from_str(node)
-            .ok()
-            .and_then(|nid| paragraph_properties(&self.document, nid))
-            .and_then(|p| p.spacing)
-            .and_then(|s| s.line_percent)
-            .map_or(0, u32::from)
+        self.paragraph_spacing(node).line_percent
     }
 
     /// The alignment of the first paragraph the selection touches (`"start"`,
@@ -11011,8 +11258,8 @@ impl WasmDocument {
     }
 
     /// The resolved visual preview of paragraph style `name` — the font family,
-    /// size, weight, slant, underline, text color, and alignment a paragraph
-    /// carrying *only* that style would render with. Powers the Styles gallery,
+    /// size, weight, slant, underline, text color, alignment, and paragraph
+    /// spacing a paragraph carrying *only* that style would render with. Powers the Styles gallery,
     /// where each card is drawn in its own style (Word's Styles gallery). Returns
     /// a default (empty family, zero size) when the style is unknown, so the
     /// gallery degrades gracefully instead of throwing.
@@ -11053,6 +11300,7 @@ impl WasmDocument {
             underline: run.underline.unwrap_or(false),
             color,
             alignment,
+            spacing: spacing_view(paragraph.spacing),
         }
     }
 
@@ -23332,6 +23580,60 @@ struct ChromeEdgeJson {
     anchor: String,
 }
 
+/// Validates a `from`/`to` pair for a row or column move over `count` lines and
+/// returns them as `usize`. Refuses an index outside the table and a move that
+/// would not change anything, because a no-op commit would still push an undo
+/// step the user has to press Ctrl+Z through. `axis` is `"row"` or `"column"`
+/// and only spells the message.
+///
+/// **Complexity: O(1).**
+fn ordered_move_indices(
+    axis: &str,
+    from: u32,
+    to: u32,
+    count: usize,
+) -> Result<(usize, usize), String> {
+    let (from, to) = (from as usize, to as usize);
+    if from >= count || to >= count {
+        return Err(format!("{axis} is outside the table"));
+    }
+    if from == to {
+        return Err(format!("{axis} is already at that position"));
+    }
+    Ok((from, to))
+}
+
+/// Whether `row` holds a cell that continues a vertical merge started above it.
+///
+/// **Complexity: O(cells in the row).**
+fn row_has_vertical_continue(row: &TableRow) -> bool {
+    row.cells
+        .iter()
+        .any(|cell| cell.properties.vertical_merge == Some(VerticalMerge::Continue))
+}
+
+/// Per row, whether it participates in a vertical merge run — the `continue`
+/// row itself and the row directly above it, which is the `restart` (or an
+/// earlier `continue`) the run would be torn from.
+///
+/// A lone `restart` with nothing continuing it spans one row, so it is not a
+/// run and is deliberately NOT marked: refusing it would block a legal move for
+/// a marker that merges nothing.
+///
+/// **Complexity: O(rows × cells).**
+fn vertically_bound_rows(table: &Table) -> Vec<bool> {
+    let mut bound = vec![false; table.rows.len()];
+    for index in 0..table.rows.len() {
+        if row_has_vertical_continue(&table.rows[index]) {
+            bound[index] = true;
+            if index > 0 {
+                bound[index - 1] = true;
+            }
+        }
+    }
+    bound
+}
+
 fn table_is_regular(table: &Table) -> bool {
     let cols = table_column_count(table);
     if cols == 0 {
@@ -24099,6 +24401,19 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             Operation::InsertField { at, .. } => *at,
             _ => Pos::new(doc_id, 0),
         },
+        // A field range is a block span, and both ops route through
+        // `apply_action_caret_as` with the caller's own caret (a generated table
+        // of contents lands the caret in its first entry, an update leaves the
+        // caret where the user left it). These arms only keep the match
+        // exhaustive: rest at the first inserted block, else the document root.
+        Operation::InsertFieldRange { blocks, .. } => blocks
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(Pos::new(paragraph.id, 0)),
+                _ => None,
+            })
+            .unwrap_or_else(|| Pos::new(doc_id, 0)),
+        Operation::RemoveFieldRange { .. } => Pos::new(doc_id, 0),
         // A note lives in `Definitions`, not the body flow: land the caret at the
         // start of the note body's first paragraph so the user can type into the
         // fresh note. Both note ops route through `apply_action_caret_as` with the
@@ -24365,15 +24680,46 @@ impl Indents {
     }
 }
 
-/// A paragraph's spacing, for the toolbar's line-&-paragraph-spacing menu.
+/// A paragraph's **effective** spacing, for the toolbar's line-&-paragraph-spacing
+/// menu.
+///
+/// Effective, not direct: real documents put spacing in a style (a Word document
+/// whose body text is 1.15 lines says so once, in `Normal`), so reading
+/// `w:pPr/w:spacing` off the paragraph answers "nothing set" for almost every
+/// paragraph the user will ever click in. The menu then ticks no preset and the
+/// value box has nothing to show. The three `*FromStyle` flags keep the
+/// distinction the direct read used to carry: the value is real either way, and
+/// the flag says whether the paragraph wrote it or inherited it — so a host can
+/// still offer "clear the direct override" without guessing.
 #[wasm_bindgen]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct ParagraphSpacing {
     before_twip: i32,
     after_twip: i32,
     line_percent: u32,
     line_rule: u8,
     line_twip: i32,
+    before_from_style: bool,
+    after_from_style: bool,
+    line_from_style: bool,
+}
+
+/// Nothing set anywhere in the cascade. `-1`, not `0`, for the two gaps: the
+/// getters document `-1` as "unset", and a derived `Default` answered `0`, which
+/// is a real value ("no space before this paragraph") and not the same claim.
+impl Default for ParagraphSpacing {
+    fn default() -> Self {
+        Self {
+            before_twip: -1,
+            after_twip: -1,
+            line_percent: 0,
+            line_rule: 0,
+            line_twip: 0,
+            before_from_style: false,
+            after_from_style: false,
+            line_from_style: false,
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -24412,6 +24758,79 @@ impl ParagraphSpacing {
     pub fn line_twip(&self) -> i32 {
         self.line_twip
     }
+
+    /// Whether `beforeTwip` comes from the style cascade rather than from the
+    /// paragraph's own `w:pPr` (false when unset everywhere).
+    #[wasm_bindgen(getter, js_name = beforeFromStyle)]
+    #[must_use]
+    pub fn before_from_style(&self) -> bool {
+        self.before_from_style
+    }
+
+    /// Whether `afterTwip` comes from the style cascade rather than from the
+    /// paragraph's own `w:pPr` (false when unset everywhere).
+    #[wasm_bindgen(getter, js_name = afterFromStyle)]
+    #[must_use]
+    pub fn after_from_style(&self) -> bool {
+        self.after_from_style
+    }
+
+    /// Whether the line spacing (`linePercent`/`lineRule`/`lineTwip`) comes from
+    /// the style cascade rather than from the paragraph's own `w:pPr` (false when
+    /// unset everywhere).
+    #[wasm_bindgen(getter, js_name = lineFromStyle)]
+    #[must_use]
+    pub fn line_from_style(&self) -> bool {
+        self.line_from_style
+    }
+}
+
+/// Projects a resolved `w:spacing` into the host view, with every `*FromStyle`
+/// flag false. The single place the model's spacing shape is turned into the
+/// facade's, so the style gallery and the paragraph menu cannot disagree about
+/// what `lineRule: 0` means.
+///
+/// **Complexity: O(1).**
+fn spacing_view(spacing: Option<Spacing>) -> ParagraphSpacing {
+    match spacing {
+        Some(s) => ParagraphSpacing {
+            before_twip: s.before_twips.unwrap_or(-1),
+            after_twip: s.after_twips.unwrap_or(-1),
+            line_percent: s.line_percent.map_or(0, u32::from),
+            line_rule: match s.line_rule {
+                Some(casual_doc_model::v1::LineRule::AtLeast) => 1,
+                Some(casual_doc_model::v1::LineRule::Exact) => 2,
+                _ => 0,
+            },
+            line_twip: s.line_twips.unwrap_or(0),
+            ..ParagraphSpacing::default()
+        },
+        None => ParagraphSpacing::default(),
+    }
+}
+
+/// The spacing a paragraph carrying `direct` actually renders with, resolved
+/// through `cascade` (document defaults → style chain → direct), with each
+/// `*FromStyle` flag set when the effective value exists and `direct` did not
+/// write that dimension.
+///
+/// **Complexity: O(style chain depth)**, bounded at 64 by the cascade — no walk
+/// of the document. Safe on a per-keystroke path.
+fn resolved_paragraph_spacing(
+    direct: &ParagraphProperties,
+    cascade: &StyleCascade<'_>,
+) -> ParagraphSpacing {
+    let effective = cascade.resolve_paragraph(direct).spacing;
+    let mut view = spacing_view(effective);
+    let own = direct.spacing;
+    view.before_from_style = effective.and_then(|s| s.before_twips).is_some()
+        && own.and_then(|s| s.before_twips).is_none();
+    view.after_from_style = effective.and_then(|s| s.after_twips).is_some()
+        && own.and_then(|s| s.after_twips).is_none();
+    let line_set =
+        |s: Option<Spacing>| s.is_some_and(|s| s.line_percent.is_some() || s.line_twips.is_some());
+    view.line_from_style = line_set(effective) && !line_set(own);
+    view
 }
 
 /// Uniform paragraph properties over every paragraph touched by a selection.
@@ -24705,6 +25124,7 @@ pub struct StylePreview {
     underline: bool,
     color: String,
     alignment: String,
+    spacing: ParagraphSpacing,
 }
 
 #[wasm_bindgen]
@@ -24757,6 +25177,19 @@ impl StylePreview {
     #[must_use]
     pub fn alignment(&self) -> String {
         self.alignment.clone()
+    }
+
+    /// The spacing a paragraph carrying only this style renders with — the same
+    /// shape [`paragraphSpacing`](WasmDocument::paragraph_spacing) returns, so
+    /// the menu that ticks a preset for the caret can tick the same preset for a
+    /// style card without a second encoding.
+    ///
+    /// Every `*FromStyle` flag is false here: this *is* the style's value, so
+    /// "inherited from the style" is not a question the card can ask.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn spacing(&self) -> ParagraphSpacing {
+        self.spacing
     }
 }
 
@@ -29574,6 +30007,204 @@ mod tests {
     }
 
     #[test]
+    fn field_range_spans_names_the_paragraphs_the_field_covers() {
+        // The question the host could not ask: "is THIS paragraph inside the
+        // contents field?". Built from real markup, like the entries guard above,
+        // and asserted against the DOCUMENT's own paragraph ids — the span is
+        // compared with the body's block order, not with another accessor that
+        // could share the same bug.
+        let document = casual_doc_import::import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body>
+                <w:p><w:r><w:t>Before the table</w:t></w:r></w:p>
+                <w:p>
+                    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                    <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r>
+                    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                    <w:r><w:t>First chapter</w:t></w:r>
+                </w:p>
+                <w:p><w:r><w:t>Second chapter</w:t></w:r></w:p>
+                <w:p><w:r><w:t>Third chapter</w:t></w:r>
+                     <w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+                <w:p><w:r><w:t>After the table</w:t></w:r></w:p>
+            </w:body></w:document>"#,
+            casual_doc_import::ImportConfig::default(),
+        )
+        .expect("import")
+        .document;
+        let body: Vec<String> = document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph.id.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(body.len(), 5, "five body paragraphs: {body:?}");
+
+        let d = wasm_document(document);
+        let spans = d.field_range_spans();
+        assert_eq!(spans.len(), 1, "one paragraph-spanning field: {spans:?}");
+        let parts: Vec<&str> = spans[0].split('\t').collect();
+        assert_eq!(parts.len(), 3, "id\\tinstruction\\tnodes: {spans:?}");
+        assert_eq!(parts[1], r#" TOC \o "1-3" \h "#);
+        let covered: Vec<&str> = parts[2].split(' ').collect();
+        assert_eq!(
+            covered,
+            [&body[1], &body[2], &body[3]],
+            "the span runs from the paragraph holding `begin` to the one holding \
+             `end`, inclusive, and stops there"
+        );
+        assert!(
+            !covered.contains(&body[0].as_str()) && !covered.contains(&body[4].as_str()),
+            "a paragraph outside the markers is outside the field"
+        );
+
+        // The entries accessor keeps its own shape — the span is additive, so the
+        // surface that only needs "does a TOC exist" is not forced to parse nodes.
+        let entries = d.field_range_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].split('\t').next(),
+            Some(parts[0]),
+            "both accessors name the same field range id"
+        );
+    }
+
+    /// A one-paragraph document whose paragraph style — and nothing on the
+    /// paragraph itself — carries `spacing`. The shape the reported defect has:
+    /// a real document writes its body spacing once, in a style.
+    fn document_with_styled_spacing(spacing: Spacing) -> Document {
+        use casual_doc_model::v1::{Definitions, Style};
+
+        let style_id = StyleId::new(NodeId::from_parts(91, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(
+            style_id,
+            Style {
+                kind: StyleKind::Paragraph,
+                is_default: false,
+                name: Some("Spaced body".to_owned()),
+                aliases: None,
+                based_on: None,
+                next: None,
+                link: None,
+                hidden: false,
+                ui_priority: None,
+                semi_hidden: false,
+                unhide_when_used: false,
+                q_format: true,
+                locked: false,
+                paragraph: Some(ParagraphProperties {
+                    spacing: Some(spacing),
+                    ..ParagraphProperties::default()
+                }),
+                run: None,
+                table: None,
+                table_row: None,
+                table_cell: None,
+                conditional: Vec::new(),
+            },
+        );
+        Document::new(
+            NodeId::from_parts(91, 2).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(91, 3).unwrap(),
+                properties: ParagraphProperties {
+                    // No `spacing` here: the paragraph inherits ALL of it.
+                    style_ref: Some(style_id),
+                    ..ParagraphProperties::default()
+                }
+                .into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(91, 4).unwrap(),
+                    properties: RunProperties::default().into(),
+                    text: "Styled".to_owned(),
+                })],
+            })],
+            definitions,
+        )
+        .expect("valid document")
+    }
+
+    #[test]
+    fn paragraph_spacing_reports_a_value_the_paragraph_only_inherits() {
+        let spacing = Spacing {
+            before_twips: Some(120),
+            after_twips: Some(240),
+            line_percent: Some(150),
+            line_rule: None,
+            line_twips: None,
+            before_auto: None,
+            after_auto: None,
+        };
+        let d = wasm_document(document_with_styled_spacing(spacing));
+        let paragraph = match d.document.body().first().expect("a block") {
+            BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+            _ => panic!("paragraph"),
+        };
+
+        let read = d.paragraph_spacing(&paragraph);
+        assert_eq!(read.before_twip(), 120, "space before came from the style");
+        assert_eq!(read.after_twip(), 240, "space after came from the style");
+        assert_eq!(
+            read.line_percent(),
+            150,
+            "the menu can tick the 1.5 preset instead of ticking nothing"
+        );
+        assert_eq!(
+            d.line_spacing_at(&paragraph),
+            150,
+            "the dropdown accessor agrees with the full one"
+        );
+        assert!(
+            read.before_from_style() && read.after_from_style() && read.line_from_style(),
+            "inherited is still reported AS inherited, so a host can still offer \
+             to clear a direct override"
+        );
+
+        // A direct override wins and is reported as direct, so the distinction the
+        // old direct-only read carried is not lost.
+        let mut d = d;
+        d.set_line_spacing(&paragraph, 0, &paragraph, 0, 200)
+            .expect("set line spacing");
+        let overridden = d.paragraph_spacing(&paragraph);
+        assert_eq!(overridden.line_percent(), 200);
+        assert!(
+            !overridden.line_from_style(),
+            "the paragraph wrote this one itself"
+        );
+        assert!(
+            overridden.before_from_style(),
+            "the dimensions it did NOT write are still inherited"
+        );
+    }
+
+    #[test]
+    fn style_preview_carries_the_styles_own_spacing() {
+        let spacing = Spacing {
+            before_twips: Some(60),
+            after_twips: Some(360),
+            line_percent: None,
+            line_rule: Some(casual_doc_model::v1::LineRule::Exact),
+            line_twips: Some(480),
+            before_auto: None,
+            after_auto: None,
+        };
+        let d = wasm_document(document_with_styled_spacing(spacing));
+        let preview = d.style_preview("Spaced body");
+        assert_eq!(preview.spacing().before_twip(), 60);
+        assert_eq!(preview.spacing().after_twip(), 360);
+        assert_eq!(preview.spacing().line_rule(), 2, "2 = exact");
+        assert_eq!(preview.spacing().line_twip(), 480);
+        assert!(
+            !preview.spacing().line_from_style(),
+            "a style card shows the style's OWN value; there is nothing to inherit from"
+        );
+        // An unknown style still degrades rather than throwing.
+        assert_eq!(d.style_preview("No such style").spacing().before_twip(), -1);
+    }
+
+    #[test]
     fn parse_common_field_maps_kinds_and_rejects_unknown() {
         assert!(matches!(
             parse_common_field("page", String::new()),
@@ -33370,6 +34001,240 @@ mod tests {
         assert_eq!(d.copy_text(&col0[2], 0, &col0[2], 5), "Alpha");
     }
 
+    /// A fresh `rows`x`cols` table in the corpus document, with each cell's first
+    /// paragraph carrying its own text so a reorder can be proven by reading the
+    /// table back. Returns the document, the table anchor, and the table id.
+    fn move_fixture(rows: u32, cols: u32) -> (WasmDocument, String, NodeId) {
+        use casual_doc_edit::locate_table_cell;
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph");
+        let anchor = d
+            .insert_table(&body, rows, cols)
+            .expect("insert table")
+            .node();
+        let (table, _) = locate_table_cell(
+            &d.document,
+            NodeId::from_str(&anchor).expect("table anchor"),
+        )
+        .expect("table cell");
+        for row in 0..rows as usize {
+            for col in 0..cols as usize {
+                let node = move_cell_paragraph(&d, table, row, col);
+                d.insert_text(&node, 0, format!("r{row}c{col}"))
+                    .expect("cell text");
+            }
+        }
+        (d, anchor, table)
+    }
+
+    /// The id of the first paragraph in cell (`row`, `col`).
+    fn move_cell_paragraph(d: &WasmDocument, table: NodeId, row: usize, col: usize) -> String {
+        match casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows[row]
+            .cells[col]
+            .blocks
+            .first()
+            .expect("cell block")
+        {
+            BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+            _ => panic!("cell paragraph"),
+        }
+    }
+
+    /// The text of every cell in column `col`, read out of the DOCUMENT rather
+    /// than from any accessor that could share the move's own bug.
+    fn move_column_text(d: &WasmDocument, table: NodeId, col: usize) -> Vec<String> {
+        casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows
+            .iter()
+            .map(
+                |row| match row.cells[col].blocks.first().expect("cell block") {
+                    BlockNode::Paragraph(paragraph) => node_plain_text(&paragraph.inlines),
+                    _ => panic!("cell paragraph"),
+                },
+            )
+            .collect()
+    }
+
+    /// The text of every cell in row `row`.
+    fn move_row_text(d: &WasmDocument, table: NodeId, row: usize) -> Vec<String> {
+        casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .rows[row]
+            .cells
+            .iter()
+            .map(|cell| match cell.blocks.first().expect("cell block") {
+                BlockNode::Paragraph(paragraph) => node_plain_text(&paragraph.inlines),
+                _ => panic!("cell paragraph"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn moving_a_table_row_reorders_the_document_and_undoes_as_one_action() {
+        let (mut d, anchor, table) = move_fixture(3, 2);
+        assert_eq!(
+            move_column_text(&d, table, 0),
+            ["r0c0", "r1c0", "r2c0"],
+            "the fixture starts in document order"
+        );
+
+        d.move_table_row_inner(&anchor, 0, 2)
+            .expect("move row 0 to 2");
+        assert_eq!(
+            move_column_text(&d, table, 0),
+            ["r1c0", "r2c0", "r0c0"],
+            "`to` is the index the moved row OCCUPIES afterwards"
+        );
+        // The whole row travelled, not just the keyed column.
+        assert_eq!(move_row_text(&d, table, 2), ["r0c0", "r0c1"]);
+
+        d.undo().expect("undo the move");
+        assert_eq!(
+            move_column_text(&d, table, 0),
+            ["r0c0", "r1c0", "r2c0"],
+            "one drag is one undo step"
+        );
+    }
+
+    #[test]
+    fn moving_a_table_column_carries_its_cells_and_its_grid_width() {
+        let (mut d, anchor, table) = move_fixture(2, 3);
+        // Distinct widths, so a grid entry left behind is visible.
+        for (col, width) in [(0_u32, 1000_i32), (1, 2000), (2, 3000)] {
+            d.set_table_column_width_at(&anchor, col, width)
+                .expect("column width");
+        }
+        d.move_table_column_inner(&anchor, 0, 2)
+            .expect("move column 0 to 2");
+
+        assert_eq!(
+            move_row_text(&d, table, 0),
+            ["r0c1", "r0c2", "r0c0"],
+            "every row's cell moved with the column"
+        );
+        assert_eq!(
+            move_row_text(&d, table, 1),
+            ["r1c1", "r1c2", "r1c0"],
+            "including rows the caret was never in"
+        );
+        let widths = casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .grid
+            .iter()
+            .map(|column| column.width_twips)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            widths,
+            [Some(2000), Some(3000), Some(1000)],
+            "the shared grid entry travelled with the column"
+        );
+
+        d.undo().expect("undo the move");
+        assert_eq!(move_row_text(&d, table, 0), ["r0c0", "r0c1", "r0c2"]);
+    }
+
+    #[test]
+    fn moving_a_row_out_of_a_vertical_merge_is_refused_with_a_reason() {
+        let (mut d, anchor, table) = move_fixture(4, 2);
+        // Merge column 0 of rows 1 and 2 — a vMerge run in the middle of the table.
+        let (top, bottom) = (
+            move_cell_paragraph(&d, table, 1, 0),
+            move_cell_paragraph(&d, table, 2, 0),
+        );
+        d.merge_table_cell_range(&top, &bottom)
+            .expect("merge rows 1-2");
+
+        let before = move_column_text(&d, table, 1);
+        let err = d
+            .move_table_row_inner(&anchor, 1, 3)
+            .expect_err("a row inside a vMerge run must not move");
+        assert!(
+            err.contains("vertically merged"),
+            "the refusal says WHY: {err}"
+        );
+        assert_eq!(
+            move_column_text(&d, table, 1),
+            before,
+            "a refused move leaves the table exactly as it was"
+        );
+    }
+
+    #[test]
+    fn dropping_a_row_inside_a_vertical_merge_is_refused_with_a_reason() {
+        let (mut d, anchor, table) = move_fixture(4, 2);
+        let (top, bottom) = (
+            move_cell_paragraph(&d, table, 1, 0),
+            move_cell_paragraph(&d, table, 2, 0),
+        );
+        d.merge_table_cell_range(&top, &bottom)
+            .expect("merge rows 1-2");
+
+        let before = move_column_text(&d, table, 1);
+        // Row 3 is free to move, but index 2 is between the merge's two rows.
+        let err = d
+            .move_table_row_inner(&anchor, 3, 2)
+            .expect_err("a drop between restart and continue must be refused");
+        assert!(
+            err.contains("split a vertically merged region"),
+            "the refusal names the tear: {err}"
+        );
+        assert_eq!(move_column_text(&d, table, 1), before);
+
+        // The same row moving ABOVE the merge is legal — the refusal is about the
+        // tear, not about tables that happen to hold a merge.
+        d.move_table_row_inner(&anchor, 3, 0)
+            .expect("a legal move still commits");
+        assert_eq!(move_column_text(&d, table, 1)[0], "r3c1");
+    }
+
+    #[test]
+    fn moving_a_column_across_a_horizontal_merge_is_refused_with_a_reason() {
+        let (mut d, anchor, table) = move_fixture(3, 3);
+        let (left, right) = (
+            move_cell_paragraph(&d, table, 1, 0),
+            move_cell_paragraph(&d, table, 1, 1),
+        );
+        d.merge_table_cell_range(&left, &right)
+            .expect("merge two cells across columns");
+
+        let before = move_row_text(&d, table, 0);
+        let err = d
+            .move_table_column_inner(&anchor, 2, 0)
+            .expect_err("a gridSpan makes column indices meaningless");
+        assert!(
+            err.contains("merges cells across columns"),
+            "the refusal says WHY: {err}"
+        );
+        assert_eq!(move_row_text(&d, table, 0), before);
+    }
+
+    #[test]
+    fn a_move_to_the_same_index_is_refused_instead_of_pushing_an_empty_undo_step() {
+        let (mut d, anchor, _) = move_fixture(3, 2);
+        assert!(
+            d.move_table_row_inner(&anchor, 1, 1).is_err(),
+            "a drag that lands where it started commits nothing"
+        );
+        assert!(
+            d.move_table_row_inner(&anchor, 0, 9).is_err(),
+            "out of range"
+        );
+        assert!(
+            d.move_table_column_inner(&anchor, 0, 5).is_err(),
+            "out of range"
+        );
+    }
+
     #[test]
     fn table_properties_apply_reflect_and_undo() {
         use casual_doc_edit::{find_table, locate_table_cell};
@@ -35095,18 +35960,38 @@ mod tests {
             (0, 1, 360)
         );
 
-        // Space before/after in twips; a negative value clears back to unset (-1).
+        // Space before/after in twips, written directly on the paragraph.
         d.set_space_before(&node, 0, &node, 0, 240).expect("before");
         d.set_space_after(&node, 0, &node, 0, 160).expect("after");
         let s = d.paragraph_spacing(&node);
         assert_eq!((s.before_twip(), s.after_twip()), (240, 160));
+        assert!(
+            !s.before_from_style() && !s.after_from_style(),
+            "the paragraph wrote both of these itself"
+        );
+
+        // A negative value clears the paragraph's OWN value. What the accessor
+        // then reports is the EFFECTIVE spacing — the style's, flagged as
+        // inherited — not "nothing set": that is the whole point of resolving.
         d.set_space_before(&node, 0, &node, 0, -1)
             .expect("clear before");
-        assert_eq!(d.paragraph_spacing(&node).before_twip(), -1);
+        let direct = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .and_then(|p| p.spacing)
+            .and_then(|s| s.before_twips);
+        assert_eq!(direct, None, "the clear removed the paragraph's own value");
+        let cleared = d.paragraph_spacing(&node);
+        assert_eq!(
+            cleared.before_from_style(),
+            cleared.before_twip() != -1,
+            "a value survives the clear exactly when the style supplies one, and \
+             it is then reported as inherited"
+        );
 
-        // Undo the clear → space-before returns to 240.
+        // Undo the clear → space-before returns to 240, written by the paragraph.
         d.undo().expect("undo");
-        assert_eq!(d.paragraph_spacing(&node).before_twip(), 240);
+        let restored = d.paragraph_spacing(&node);
+        assert_eq!(restored.before_twip(), 240);
+        assert!(!restored.before_from_style());
     }
 
     /// Line-and-page-break flags and paragraph shading apply, reflect, and undo.

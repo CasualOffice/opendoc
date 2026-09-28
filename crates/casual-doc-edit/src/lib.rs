@@ -41,6 +41,9 @@ use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
+// The paragraph-spanning field range (`docs/128`): its definition payload, its id,
+// and the two body markers that delimit it.
+use casual_doc_model::v1::{FieldRange, FieldRangeId};
 use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
@@ -837,6 +840,57 @@ pub enum Operation {
     RemoveField {
         /// The field to remove.
         field: NodeId,
+    },
+    /// Install the paragraph-spanning field-range definition `definition` under
+    /// `field` and insert `blocks` into the document body at 0-based `index`, as
+    /// one step. The blocks must already carry the range's
+    /// [`InlineNode::FieldRangeStart`] and [`InlineNode::FieldRangeEnd`] markers;
+    /// this op does not synthesise them, exactly as [`Operation::InsertBlocks`]
+    /// does not synthesise content.
+    ///
+    /// **Why this is not a composition of existing ops.** A complex field that
+    /// spans paragraphs — the only encoding a table of contents can have, one
+    /// paragraph per entry — is a marker pair in body flow plus a payload in
+    /// `Definitions::field_ranges`, and the model (correctly) rejects a marker
+    /// whose definition is absent. No operation in the set writes that map, so no
+    /// sequence of them can reach a document that holds a generated table of
+    /// contents: the two halves have to land together or neither may land. Hence a
+    /// variant rather than a field added to [`Operation::InsertBlocks`], which
+    /// would change that op's shape for every existing caller (ADR-030 I2 is about
+    /// keeping the set CLOSED and additive, and a new variant is additive).
+    ///
+    /// Body-level only: a field range inside a table cell or content control is
+    /// out of this slice's scope, so that `RemoveFieldRange` can be its exact
+    /// inverse rather than a refusal in half the cases. Inverse:
+    /// [`Operation::RemoveFieldRange`] of the same id. Rejected (document left
+    /// unchanged) when `blocks` is empty, when `field` is already defined, when
+    /// `index` is past the body, or when the result does not validate.
+    InsertFieldRange {
+        /// The fresh field-range identity (the definition key, shared by both
+        /// markers in `blocks`).
+        field: FieldRangeId,
+        /// The range's payload — instruction, parsed kind, and update state.
+        /// Boxed to keep the enum small.
+        definition: Box<FieldRange>,
+        /// The 0-based body position the first block is inserted at.
+        index: u32,
+        /// The blocks to insert, in order, carrying the two markers.
+        blocks: Vec<BlockNode>,
+    },
+    /// Remove a paragraph-spanning field range by id: drop its definition and
+    /// every body block from the one holding its `FieldRangeStart` to the one
+    /// holding its `FieldRangeEnd`, inclusive — Word's "delete the table of
+    /// contents". Inverse: [`Operation::InsertFieldRange`] carrying the removed
+    /// definition, position and blocks, so undo restores the range verbatim.
+    ///
+    /// Refused, with the document untouched, when the id is unknown, when either
+    /// marker is not at the top level of a body paragraph, or when the boundary
+    /// paragraphs carry content OUTSIDE the markers — deleting those blocks would
+    /// take that content with it, and losing content silently is not a thing this
+    /// crate does.
+    RemoveFieldRange {
+        /// The field range to remove.
+        field: FieldRangeId,
     },
     /// Insert a footnote or endnote at the caret `at`: install its definition
     /// entry (keyed by `note`, in `Definitions::footnotes`/`endnotes` per `kind`)
@@ -2344,6 +2398,69 @@ pub fn apply(
             Ok(Operation::InsertField {
                 at: Pos::new(node, offset),
                 field: Box::new(removed),
+            })
+        }
+        Operation::InsertFieldRange {
+            field,
+            definition,
+            index,
+            blocks: to_insert,
+        } => {
+            if to_insert.is_empty() {
+                return Err(EditError::EmptyEdit);
+            }
+            if doc.definitions().field_ranges.contains_key(field) {
+                return Err(EditError::InvalidField);
+            }
+            let idx = *index as usize;
+            if idx > doc.body().len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            doc.definitions_mut()
+                .field_ranges
+                .insert(*field, (**definition).clone());
+            let body = doc.body_mut();
+            for (offset, block) in to_insert.iter().enumerate() {
+                body.insert(idx + offset, block.clone());
+            }
+            if doc.validate().is_err() {
+                // No partial mutation survives an error: take the blocks back out
+                // and drop the definition again.
+                let body = doc.body_mut();
+                body.splice(idx..idx + to_insert.len(), std::iter::empty());
+                doc.definitions_mut().field_ranges.remove(field);
+                return Err(EditError::InvalidField);
+            }
+            Ok(Operation::RemoveFieldRange { field: *field })
+        }
+        Operation::RemoveFieldRange { field } => {
+            let definition = doc
+                .definitions()
+                .field_ranges
+                .get(field)
+                .ok_or(EditError::FieldNotFound)?
+                .clone();
+            let (first, last) = body_field_range_blocks(doc.body(), *field)?;
+            let removed: Vec<BlockNode> = doc
+                .body_mut()
+                .splice(first..=last, std::iter::empty())
+                .collect();
+            let dropped = doc.definitions_mut().field_ranges.remove(field);
+            if doc.validate().is_err() {
+                let body = doc.body_mut();
+                for (offset, block) in removed.iter().enumerate() {
+                    body.insert(first + offset, block.clone());
+                }
+                if let Some(dropped) = dropped {
+                    doc.definitions_mut().field_ranges.insert(*field, dropped);
+                }
+                return Err(EditError::InvalidField);
+            }
+            Ok(Operation::InsertFieldRange {
+                field: *field,
+                definition: Box::new(definition),
+                index: first as u32,
+                blocks: removed,
             })
         }
         Operation::SetShapeFill { shape, fill } => {
@@ -6491,6 +6608,64 @@ fn locate_inline_object(blocks: &[BlockNode], object: NodeId) -> Option<(NodeId,
         }
     }
     None
+}
+
+/// The inclusive body block index range a paragraph-spanning field range covers:
+/// the block holding its `FieldRangeStart` and the block holding its
+/// `FieldRangeEnd`.
+///
+/// Both markers must sit in a **body top-level paragraph**, the start must be
+/// that paragraph's first inline and the end its last, and the start must not
+/// come after the end. Anything else is refused rather than removed: the
+/// boundary blocks are deleted whole, so content outside the markers would be
+/// deleted with them, and that is silent loss.
+///
+/// **Complexity: O(body blocks + inlines in them).** One pass, no per-id lookup.
+///
+/// `pub` because the facade needs the same span to rewrite a table of contents in
+/// place, and two answers to "where does this field range live" would drift.
+//
+// container-set: deliberately top level only — it does not descend `Hyperlink`,
+// `Field`, `Revision`, `Sdt`, `TextBox` or `Group`. The bound is the POINT, not an
+// oversight: this function decides which whole body blocks a removal may delete,
+// and a marker nested inside an inline wrapper does not delimit a body block span
+// at all — deleting the blocks around it would take the wrapper's other content
+// with it. Widening the descent would widen what gets deleted, which is the
+// opposite of what the two "content outside the markers" refusals here are for. A
+// range whose markers are nested is reported as `FieldNotFound` and left alone;
+// `fieldRangeSpans` in the facade still lists it, so it is refused, not hidden.
+pub fn body_field_range_blocks(
+    blocks: &[BlockNode],
+    field: FieldRangeId,
+) -> Result<(usize, usize), EditError> {
+    let (mut first, mut last) = (None, None);
+    for (index, block) in blocks.iter().enumerate() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        for (position, inline) in paragraph.inlines.iter().enumerate() {
+            match inline {
+                InlineNode::FieldRangeStart(marker) if marker.field == field => {
+                    if position != 0 {
+                        return Err(EditError::Unsupported);
+                    }
+                    first = Some(index);
+                }
+                InlineNode::FieldRangeEnd(marker) if marker.field == field => {
+                    if position + 1 != paragraph.inlines.len() {
+                        return Err(EditError::Unsupported);
+                    }
+                    last = Some(index);
+                }
+                _ => {}
+            }
+        }
+    }
+    match (first, last) {
+        (Some(first), Some(last)) if first <= last => Ok((first, last)),
+        (Some(_), Some(_)) => Err(EditError::Unsupported),
+        _ => Err(EditError::FieldNotFound),
+    }
 }
 
 /// Locates the top-level [`InlineNode::Field`] with id `field` among the body's
@@ -10808,6 +10983,152 @@ mod tests {
 
         apply(&mut d, &mut ids, &inverse).expect("undo");
         assert_eq!(inlines_of(&d, p), original);
+    }
+
+    /// A three-paragraph contents range: `before`, then the two entry
+    /// paragraphs carrying the markers, built the way `InsertFieldRange`'s
+    /// caller builds them.
+    fn contents_blocks(field: FieldRangeId) -> Vec<BlockNode> {
+        use casual_doc_model::v1::{FieldRangeEnd, FieldRangeStart};
+
+        vec![
+            para(
+                40,
+                vec![
+                    InlineNode::FieldRangeStart(FieldRangeStart { id: n(41), field }),
+                    run(42, "First"),
+                ],
+            ),
+            para(
+                43,
+                vec![
+                    run(44, "Second"),
+                    InlineNode::FieldRangeEnd(FieldRangeEnd { id: n(45), field }),
+                ],
+            ),
+        ]
+    }
+
+    fn contents_definition() -> Box<FieldRange> {
+        Box::new(FieldRange {
+            instruction: r#" TOC \o "1-3" "#.to_owned(),
+            kind: FieldKind::Toc,
+            update: FieldUpdateState::default(),
+        })
+    }
+
+    #[test]
+    fn a_field_range_lands_with_its_definition_and_its_inverse_removes_both() {
+        let field = FieldRangeId::new(n(39));
+        let mut d = doc(vec![para(2, vec![run(10, "Body")])]);
+        let mut ids = IdGenerator::new(80);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertFieldRange {
+                field,
+                definition: contents_definition(),
+                index: 0,
+                blocks: contents_blocks(field),
+            },
+        )
+        .expect("a field range and its definition land together");
+
+        assert_eq!(d.body().len(), 3, "two entry blocks were inserted");
+        assert!(
+            d.definitions().field_ranges.contains_key(&field),
+            "the definition landed with them — a marker without one does not validate"
+        );
+        assert_eq!(inverse, Operation::RemoveFieldRange { field });
+
+        let redo = apply(&mut d, &mut ids, &inverse).expect("remove the range");
+        assert_eq!(
+            d.body().len(),
+            1,
+            "the whole span went, not just the markers"
+        );
+        assert!(
+            d.definitions().field_ranges.is_empty(),
+            "and so did the definition"
+        );
+        // The inverse of the removal restores the range verbatim.
+        apply(&mut d, &mut ids, &redo).expect("re-insert");
+        assert_eq!(d.body().len(), 3);
+        assert_eq!(deep_text(&inlines_of(&d, n(40))), "First");
+    }
+
+    #[test]
+    fn a_duplicate_field_range_id_is_refused_and_changes_nothing() {
+        let field = FieldRangeId::new(n(39));
+        let mut d = doc(vec![para(2, vec![run(10, "Body")])]);
+        let mut ids = IdGenerator::new(80);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertFieldRange {
+                field,
+                definition: contents_definition(),
+                index: 0,
+                blocks: contents_blocks(field),
+            },
+        )
+        .expect("first insert");
+        let before = d.body().len();
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertFieldRange {
+                    field,
+                    definition: contents_definition(),
+                    index: 0,
+                    blocks: contents_blocks(field),
+                },
+            ),
+            Err(EditError::InvalidField),
+            "one id, one range"
+        );
+        assert_eq!(d.body().len(), before, "and nothing was inserted");
+        // The REFUSAL matters more than the error: a rollback that ran after the
+        // duplicate had already overwritten the map would take the FIRST range's
+        // definition out with it, leaving its markers dangling.
+        assert!(
+            d.definitions().field_ranges.contains_key(&field),
+            "the range that was already there is untouched"
+        );
+        assert_eq!(deep_text(&inlines_of(&d, n(40))), "First");
+    }
+
+    #[test]
+    fn removing_a_field_range_is_refused_when_it_would_take_content_with_it() {
+        // The author typed before the range's start marker. Deleting the block
+        // would delete that text too, and losing content silently is not a thing
+        // this crate does — so the removal is refused instead.
+        let field = FieldRangeId::new(n(39));
+        let mut blocks = contents_blocks(field);
+        let BlockNode::Paragraph(first) = &mut blocks[0] else {
+            panic!("paragraph");
+        };
+        first.inlines.insert(0, run(46, "Contents"));
+
+        let mut d = doc(vec![para(2, vec![run(10, "Body")])]);
+        let mut ids = IdGenerator::new(80);
+        d.definitions_mut()
+            .field_ranges
+            .insert(field, *contents_definition());
+        for (offset, block) in blocks.into_iter().enumerate() {
+            d.body_mut().insert(offset, block);
+        }
+        d.validate().expect("the fixture is a valid document");
+
+        assert_eq!(
+            apply(&mut d, &mut ids, &Operation::RemoveFieldRange { field }),
+            Err(EditError::Unsupported),
+            "refused rather than deleting the author's text with the table"
+        );
+        assert_eq!(d.body().len(), 3, "and nothing was removed");
+        assert!(d.definitions().field_ranges.contains_key(&field));
     }
 
     #[test]
