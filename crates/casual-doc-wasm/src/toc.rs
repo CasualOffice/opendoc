@@ -41,6 +41,9 @@
 //! guards it by DOUBLING the heading count rather than by timing.
 
 use casual_doc_edit::{Operation, Pos, body_field_range_blocks};
+// Its own line, not folded into a sorted block: a shared `use` list is where
+// parallel lanes collide (rustfmt is set to Preserve).
+use casual_doc_edit::refused;
 use casual_doc_layout::cascade::StyleCascade;
 use casual_doc_layout::paginate::page_number_labels;
 use casual_doc_model::NodeId;
@@ -400,7 +403,11 @@ impl WasmDocument {
         };
         let index = self.block_index_of(node);
         if index < 0 {
-            return Err("a table of contents is inserted in the document body".to_owned());
+            return Err(refused!(
+                "toc.body-only",
+                "A table of contents goes in the document body, not in a header, footer or note."
+            )
+            .to_owned());
         }
         let headings = self.toc_headings(max_level)?;
         if headings.is_empty() {
@@ -420,7 +427,13 @@ impl WasmDocument {
                 BlockNode::Paragraph(paragraph) => Some(Pos::new(paragraph.id, 0)),
                 _ => None,
             })
-            .ok_or_else(|| "no contents entry to place the caret in".to_owned())?;
+            .ok_or_else(|| {
+                refused!(
+                    "toc.empty",
+                    "This table of contents has no entries to go to."
+                )
+                .to_owned()
+            })?;
         let instruction = toc_instruction(max_level);
         ops.push(Operation::InsertFieldRange {
             field,
@@ -453,7 +466,12 @@ impl WasmDocument {
 
         let blocks = if mode == "entire" {
             if headings.is_empty() {
-                return Err("the document has no headings left to list".to_owned());
+                return Err(refused!(
+                    "toc.no-headings",
+                    "This document has no headings to list. Apply a heading style to the text \
+                     you want listed."
+                )
+                .to_owned());
             }
             let (style_ops, blocks) = self.toc_blocks(&headings, field)?;
             let mut ops = style_ops;
@@ -513,9 +531,13 @@ impl WasmDocument {
             .iter()
             .filter(|(_, range)| range.kind == FieldKind::Toc)
             .map(|(id, range)| (*id, range.instruction.clone()));
-        let first = found
-            .next()
-            .ok_or_else(|| "this document holds no table of contents".to_owned())?;
+        let first = found.next().ok_or_else(|| {
+            refused!(
+                "toc.none",
+                "This document has no table of contents to update."
+            )
+            .to_owned()
+        })?;
         if found.next().is_some() {
             return Err(
                 "this document holds more than one table of contents; name the one to update"
@@ -933,10 +955,17 @@ mod tests {
                 .expect_err("unknown mode")
                 .contains("pageNumbers or entire")
         );
+        let absent = d
+            .update_table_of_contents_inner("", "entire")
+            .expect_err("no table");
+        assert_eq!(
+            casual_doc_edit::refusal::split(&absent).1,
+            Some("toc.none"),
+            "the refusal carries a stable code a host can translate: {absent}"
+        );
         assert!(
-            d.update_table_of_contents_inner("", "entire")
-                .expect_err("no table")
-                .contains("holds no table of contents")
+            absent.contains("no table of contents"),
+            "and an English fallback that says which document state it means: {absent}"
         );
     }
 

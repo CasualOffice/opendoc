@@ -86,6 +86,12 @@ pub mod clone;
 // link in it fails `RUSTDOCFLAGS="-D warnings" cargo doc`.
 pub mod breaks;
 
+// How a refusal the engine has already explained reaches the reader, and how it
+// carries a stable code a host can translate. One module because it is one
+// contract shared by three crates and the webapp, and because a second place to
+// decide it is how the fifteen table refusals came to lose their reason.
+pub mod refusal;
+
 // The inline container set, declared once (`docs/109` HF-212). An `InlineNode` can
 // contain other inlines (`Hyperlink`, `Field`, `Revision`, `Sdt`) or block content
 // of its own (`TextBox`, `Group`), and until this module existed every walk in this
@@ -1202,22 +1208,32 @@ impl FieldRefusal {
     pub const fn reason(self) -> &'static str {
         match self {
             Self::PageNumberIsCalculated => {
-                "refused: the page number is calculated as the document is laid out — \
-                 select the whole number and type over it to replace the field with \
-                 fixed text"
+                refused!(
+                    "field.page-number-calculated",
+                    "The page number is calculated as the document is laid out — select \
+                     the whole number and type over it to replace the field with fixed text."
+                )
             }
             Self::PageCountIsCalculated => {
-                "refused: the total page count is calculated from the document — \
-                 select the whole number and type over it to replace the field with \
-                 fixed text"
+                refused!(
+                    "field.page-count-calculated",
+                    "The total page count is calculated from the document — select the \
+                     whole number and type over it to replace the field with fixed text."
+                )
             }
             Self::FieldCannotBeSplit => {
-                "refused: a field's result cannot be split across two paragraphs — \
-                 put the paragraph break before or after the field"
+                refused!(
+                    "field.result-cannot-split",
+                    "A field's result cannot be split across two paragraphs — put the \
+                     paragraph break before or after the field."
+                )
             }
             Self::PartialResultNotEditable => {
-                "refused: only part of a field's result is selected — select the \
-                 whole field to replace it"
+                refused!(
+                    "field.partial-result",
+                    "Only part of a field's result is selected — select the whole field \
+                     to replace it."
+                )
             }
         }
     }
