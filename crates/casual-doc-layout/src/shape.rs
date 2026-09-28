@@ -12,7 +12,7 @@
 //! font-name matching, fallback — is `P1C-002` (`40-FONT-MANAGEMENT-DESIGN.md`).
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // `FontStyle`/`FontWeight` are the same `parlance` types `parley` re-exports
@@ -83,7 +83,8 @@ pub struct ParleyShaper {
     /// these keeps its bundled `FontId` (so the bundled/golden path is byte-for-byte
     /// unchanged); a run resolved to any other face (a `system-fonts` OS fallback or
     /// a host-registered blob) is interned into [`Self::registry`] instead.
-    bundled_blobs: HashSet<u64>,
+    /// blob id -> the bundled [`FontId`] that blob was registered as.
+    bundled_blobs: HashMap<u64, FontId>,
     /// The shared dynamic registry: system- and host-resolved fallback faces the
     /// renderer fetches bytes from, plus the running coverage gap. Cloned handle —
     /// call [`Self::registry`] to share it with the renderer.
@@ -91,28 +92,64 @@ pub struct ParleyShaper {
 }
 
 impl ParleyShaper {
-    /// Creates a shaper with every target-bundled family registered into an empty
-    /// collection (no system fonts — deterministic). Browser builds may omit
-    /// host-provisioned families such as Roboto. Each run pushes its resolved
-    /// family plus weight/style, so `parley` selects the same face the resolver
-    /// did; the run's [`FontId`] rides the brush so the renderer draws the same.
+    /// Creates a shaper with every target-bundled family registered. Browser
+    /// builds may omit host-provisioned families such as Roboto. Each run pushes
+    /// its resolved family plus weight/style, so `parley` selects the same face
+    /// the resolver did; the run's [`FontId`] rides the brush so the renderer
+    /// draws the same.
+    ///
+    /// Under the `system-fonts` feature (on by default for native renders) this
+    /// ALSO sees the host's installed faces, which is the desktop half of the
+    /// font strategy. For the deterministic configuration — the one the browser
+    /// and the goldens run in — use
+    /// [`without_system_fonts`](Self::without_system_fonts).
     #[must_use]
     pub fn new() -> Self {
-        let mut fonts = FontContext::new();
+        Self::with_context(FontContext::new())
+    }
+
+    /// A shaper that can see ONLY the bundled faces and whatever a host
+    /// registers — no OS font discovery, whatever the build features say.
+    ///
+    /// This is the browser's configuration, and the one a coverage test has to
+    /// run in: on a developer's macOS machine the OS emoji face silently covers
+    /// every emoji, so a guard written against the default shaper passes there
+    /// and proves nothing about the bundle a browser downloads.
+    #[must_use]
+    pub fn without_system_fonts() -> Self {
+        Self::with_context(FontContext {
+            collection: fontique::Collection::new(fontique::CollectionOptions {
+                system_fonts: false,
+                ..fontique::CollectionOptions::default()
+            }),
+            source_cache: parley::fontique::SourceCache::default(),
+        })
+    }
+
+    fn with_context(mut fonts: FontContext) -> Self {
         let mut families: Vec<(u32, String)> = Vec::with_capacity(crate::fonts::FAMILIES.len());
-        let mut bundled_blobs = HashSet::new();
+        let mut bundled_blobs: HashMap<u64, FontId> = HashMap::new();
         // Parley family ids of every bundled family, wired below as mutual
         // fallbacks so a glyph missing from a run's own bundled face is drawn
         // from a sibling family that has it instead of `.notdef` (tofu).
         let mut bundled_family_ids: Vec<_> = Vec::with_capacity(crate::fonts::FAMILIES.len());
         for family in crate::fonts::FAMILIES {
             let mut family_id = None;
+            // A family whose four slots share one byte slice (Noto Emoji: emoji
+            // have no bold or italic) must be registered ONCE. Registering the
+            // same 2 MB four times would hold four copies in memory in every
+            // shaper; the ids are what differ, not the bytes.
+            let mut registered_slices: Vec<*const u8> = Vec::with_capacity(4);
             for offset in 0..4u32 {
                 let bytes = family.face_bytes(offset);
+                if registered_slices.contains(&bytes.as_ptr()) {
+                    continue;
+                }
+                registered_slices.push(bytes.as_ptr());
                 let blob = Blob::new(Arc::new(bytes.to_vec()));
                 // Remember the blob id so a run parley resolves to this exact face
                 // is recognized as bundled (and keeps its bundled `FontId`).
-                bundled_blobs.insert(blob.id());
+                bundled_blobs.insert(blob.id(), family.face_id(offset & 1 == 1, offset & 2 == 2));
                 let registered = fonts.collection.register_fonts(blob, None);
                 if family_id.is_none() {
                     family_id = registered.first().map(|(id, _)| *id);
@@ -254,7 +291,24 @@ impl ParleyShaper {
     /// source: after `register_fallback_font(noto_cjk, &["Hani", "Hira", "Kana",
     /// "Hang"])`, CJK runs resolve to the host face. Returns the registered faces'
     /// [`FontId`]s.
+    ///
+    /// **Where the face lands in the chain is decided by the face, not by the
+    /// call order.** A face carrying colour glyphs (`COLR`, `CBDT` or `sbix`)
+    /// goes to the FRONT of each script's fallback list; a monochrome one is
+    /// appended as before. Fallback candidates are per-script, and every
+    /// pictographic face a host provisions arrives under the same Common
+    /// (`Zyyy`) script, so with plain appending the winner was whichever bucket
+    /// the host happened to fetch first: a document holding an emoji-presentation
+    /// heart and a grinning face fetched the small monochrome symbols face,
+    /// which covers the heart, and painted it monochrome for good. The bundled
+    /// monochrome Noto Emoji base would have done the same to every later colour
+    /// face. Colour beats monochrome for a code point both cover, and that is a
+    /// property of the faces, so it is read from the faces.
+    ///
+    /// Complexity: O(faces already registered for these scripts) per call, at
+    /// registration time only — nothing here runs per glyph or per shaping pass.
     pub fn register_fallback_font(&self, bytes: Vec<u8>, scripts: &[&str]) -> Vec<FontId> {
+        let colour = face_has_colour_glyphs(&bytes);
         let blob = Blob::new(Arc::new(bytes));
         let registered = {
             let mut fonts = self.fonts.borrow_mut();
@@ -262,9 +316,24 @@ impl ParleyShaper {
             let family_ids: Vec<_> = registered.iter().map(|(family, _)| *family).collect();
             for code in scripts {
                 let script = Script::from_str_unchecked(code);
-                fonts
-                    .collection
-                    .append_fallbacks(script, family_ids.iter().copied());
+                if colour {
+                    let ordered: Vec<_> = family_ids
+                        .iter()
+                        .copied()
+                        .chain(
+                            fonts
+                                .collection
+                                .fallback_families(script)
+                                .filter(|id| !family_ids.contains(id))
+                                .collect::<Vec<_>>(),
+                        )
+                        .collect();
+                    fonts.collection.set_fallbacks(script, ordered.into_iter());
+                } else {
+                    fonts
+                        .collection
+                        .append_fallbacks(script, family_ids.iter().copied());
+                }
             }
             registered
         };
@@ -331,6 +400,42 @@ impl Default for ParleyShaper {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Whether two bundled [`FontId`]s address faces in the same bundled family.
+///
+/// Complexity: O(bundled families) — a fixed seven-entry table.
+fn same_bundled_family(a: FontId, b: FontId) -> bool {
+    crate::fonts::FAMILIES
+        .iter()
+        .any(|family| family.contains(a) && family.contains(b))
+}
+
+/// Whether a face carries colour glyphs — a `COLR` paint graph, or a `CBDT` /
+/// `sbix` bitmap strike. These are exactly the tables the renderer paints before
+/// it falls back to a monochrome outline, so this is the same question the
+/// painter asks, asked once at registration instead of once per glyph.
+///
+/// Complexity: O(tables in the font directory) — a few dozen entries, read once
+/// per `register_fallback_font` call.
+fn face_has_colour_glyphs(bytes: &[u8]) -> bool {
+    use skrifa::raw::{TableProvider, TopLevelTable};
+    // A collection (`.ttc`) is probed through its first face; a host font for a
+    // script bucket is a single face in practice, and being wrong here only
+    // costs the face its front-of-chain position.
+    let Ok(font) = skrifa::FontRef::from_index(bytes, 0) else {
+        return false;
+    };
+    for tag in [
+        skrifa::raw::tables::colr::Colr::TAG,
+        skrifa::raw::tables::cbdt::Cbdt::TAG,
+        skrifa::raw::tables::sbix::Sbix::TAG,
+    ] {
+        if font.data_for_tag(tag).is_some() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Word's default single-line height as a multiple of the run's font size (its
@@ -1119,11 +1224,31 @@ impl ParleyShaper {
                 // code points (`system-fonts`) or a host-registered blob — we
                 // intern it so the renderer fetches its bytes by the same `FontId`.
                 let resolved = run.font();
-                let is_fallback = !self.bundled_blobs.contains(&resolved.data.id());
-                let font = if is_fallback {
-                    self.registry.intern(resolved.data.clone(), resolved.index)
+                let resolved_bundled = self.bundled_blobs.get(&resolved.data.id()).copied();
+                let is_fallback = resolved_bundled.is_none();
+                let font = if let Some(bundled) = resolved_bundled {
+                    // Normally the resolved face IS the resolver's choice, and
+                    // `style.brush.font` is kept so the bundled/golden path is
+                    // byte-for-byte unchanged (the brush carries the run's real
+                    // bold/italic slot, which a synthesized style would not).
+                    //
+                    // But when the run's own family lacks a code point, parley
+                    // shapes it from a SIBLING bundled family — and the glyph ids
+                    // in that run index the sibling's `glyf`, not the brush's
+                    // face. Handing the renderer the brush id made it outline
+                    // whatever glyph happened to sit at that index in the wrong
+                    // font. The mutual-fallback wiring stopped the tofu and put
+                    // a wrong glyph in its place; the guard only asserted the
+                    // absence of `.notdef`, so nothing caught it. Cross-family
+                    // means the resolved face's own id.
+                    let brush = FontId(style.brush.font);
+                    if same_bundled_family(bundled, brush) {
+                        brush
+                    } else {
+                        bundled
+                    }
                 } else {
-                    FontId(style.brush.font)
+                    self.registry.intern(resolved.data.clone(), resolved.index)
                 };
                 // A run that shaped CJK text with a dynamic (non-bundled)
                 // coverage-fallback face marks the paragraph for run-font-driven line
@@ -1137,16 +1262,55 @@ impl ParleyShaper {
                 {
                     cjk_fallback = true;
                 }
-                // Record any code point that shaped to `.notdef` (glyph id 0) —
-                // no bundled, system, or host face covered it — as a coverage gap
+                // Record what this run could not draw properly, as a coverage gap
                 // a host can query (`registry.missing_coverage`) and fetch a face
                 // for. Harmless and output-neutral; only populates the registry.
-                for cluster in run.visual_clusters() {
-                    if cluster.glyphs().any(|glyph| glyph.id == 0)
-                        && let Some(slice) = text.get(cluster.text_range())
-                    {
-                        for ch in slice.chars() {
-                            self.registry.note_missing(ch);
+                //
+                // Two things count as a gap:
+                //
+                // 1. A glyph that shaped to `.notdef` (id 0) — no face covered it.
+                // 2. A code point served only by the bundled monochrome Noto
+                //    Emoji base. That is a real glyph, so rule 1 never sees it,
+                //    and without rule 2 bundling the base would have silently
+                //    switched OFF the browser's colour-emoji fetch: the host asks
+                //    for faces by coverage gap, and the gap would have been empty.
+                //    A monochrome stand-in for a colour emoji is a downgrade the
+                //    host must be able to learn about and repair.
+                //
+                // The reported span is the whole GRAPHEME cluster, not `parley`'s
+                // shaping cluster. A ZWJ sequence, an emoji-presentation sequence
+                // and a regional-indicator pair each shape as several `parley`
+                // clusters whose `text_range`s do not cover the trailing scalars,
+                // so reporting them verbatim reported the first scalar of each
+                // emoji and dropped the rest — enough to pick a font bucket by
+                // luck, and wrong as a loss report.
+                let emoji_base = crate::fonts::NOTO_EMOJI.contains(font);
+                if emoji_base || run.clusters().any(|c| c.glyphs().any(|g| g.id == 0)) {
+                    let run_range = run.text_range();
+                    if let Some(run_text) = text.get(run_range.clone()) {
+                        let mut flagged: Vec<usize> = Vec::new();
+                        if !emoji_base {
+                            for cluster in run.visual_clusters() {
+                                if cluster.glyphs().any(|glyph| glyph.id == 0) {
+                                    flagged.push(
+                                        cluster.text_range().start.saturating_sub(run_range.start),
+                                    );
+                                }
+                            }
+                        }
+                        let mut offset = 0usize;
+                        for grapheme in
+                            unicode_segmentation::UnicodeSegmentation::graphemes(run_text, true)
+                        {
+                            let end = offset + grapheme.len();
+                            if emoji_base
+                                || flagged.iter().any(|start| *start >= offset && *start < end)
+                            {
+                                for ch in grapheme.chars() {
+                                    self.registry.note_missing(ch);
+                                }
+                            }
+                            offset = end;
                         }
                     }
                 }

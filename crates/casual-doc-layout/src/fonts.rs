@@ -26,6 +26,9 @@
 //!   substitute for Times New Roman.
 //! - `FontId(20)..=23` — **Liberation Mono** (SIL OFL-1.1), a metric-compatible
 //!   substitute for Courier New.
+//! - `FontId(24)..=27` — **Noto Emoji** (SIL OFL-1.1), the monochrome emoji base.
+//!   One face serves all four slots (emoji have no bold or italic), so the
+//!   shaper registers its bytes once.
 //!
 //! Carlito and the Liberation families ship under the SIL Open Font License 1.1:
 //! a permissive license that governs only the font file (not this Apache-2.0
@@ -126,6 +129,19 @@ pub const LIBERATION_MONO_ITALIC: &[u8] =
 /// Liberation Mono Bold Italic.
 pub const LIBERATION_MONO_BOLD_ITALIC: &[u8] =
     include_bytes!("../fonts/liberation/LiberationMono-BoldItalic.ttf");
+
+/// Noto Emoji (SIL OFL-1.1) — the monochrome emoji base.
+///
+/// Emoji are ordinary document content and nothing else in the bundle covers a
+/// single pictographic scalar, so before this face every emoji in every build
+/// shaped to `.notdef` and painted as a box. A colour face is far too large to
+/// bundle (Noto Color Emoji is 10.9 MB of CBDT bitmaps, 5.0 MB as COLRv1), so
+/// the bundled base is the 2.0 MB monochrome outline face and a host upgrades
+/// it to colour through [`crate::shape::ParleyShaper::register_fallback_font`]
+/// — the same seam the browser already uses for CJK. That keeps the guarantee
+/// local-first: an emoji always draws as its own shape, offline, headless, and
+/// before any network face arrives.
+pub const NOTO_EMOJI_REGULAR: &[u8] = include_bytes!("../fonts/NotoEmoji-Variable.ttf");
 
 /// A bundled fallback family: four faces (regular, bold, italic, bold-italic)
 /// addressed by a contiguous [`FontId`] block starting at `base`. The face for a
@@ -245,6 +261,23 @@ pub const LIBERATION_MONO: BundledFamily = BundledFamily {
     ],
 };
 
+/// Noto Emoji — the monochrome emoji base, and the last family in the bundled
+/// fallback chain.
+///
+/// Emoji carry no bold or italic, so all four slots address the same bytes; the
+/// shaper registers each family's distinct byte slices once, so this costs one
+/// `Blob`, not four.
+pub const NOTO_EMOJI: BundledFamily = BundledFamily {
+    name: "Noto Emoji",
+    base: 24,
+    faces: [
+        NOTO_EMOJI_REGULAR,
+        NOTO_EMOJI_REGULAR,
+        NOTO_EMOJI_REGULAR,
+        NOTO_EMOJI_REGULAR,
+    ],
+};
+
 /// The target's deterministic default family. Browser builds use Liberation
 /// Sans until the host-provided Roboto family is registered; native/headless
 /// builds retain Roboto.
@@ -257,30 +290,34 @@ pub const DEFAULT_FAMILY: &BundledFamily = &LIBERATION_SANS;
 /// Every bundled family, in `base`-id order — the resolver's fallback chain and
 /// the shaper's registration order.
 #[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
-pub const FAMILIES: [&BundledFamily; 6] = [
+pub const FAMILIES: [&BundledFamily; 7] = [
     &ROBOTO,
     &CALADEA,
     &CARLITO,
     &LIBERATION_SANS,
     &LIBERATION_SERIF,
     &LIBERATION_MONO,
+    // Last: a pictographic face must never win a code point a text face covers.
+    &NOTO_EMOJI,
 ];
 
 /// The web bundle excludes Roboto's four blobs; the family remains a semantic
 /// resolver target and is supplied dynamically by the host.
 #[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
-pub const FAMILIES: [&BundledFamily; 5] = [
+pub const FAMILIES: [&BundledFamily; 6] = [
     &CALADEA,
     &CARLITO,
     &LIBERATION_SANS,
     &LIBERATION_SERIF,
     &LIBERATION_MONO,
+    // Last: a pictographic face must never win a code point a text face covers.
+    &NOTO_EMOJI,
 ];
 
 /// Every bundled face, `(FontId, bytes)`, in id order — the shaper registration
 /// and renderer lookup table.
 #[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
-pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
+pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
     (FontId(0), ROBOTO_REGULAR),
     (FontId(1), ROBOTO_BOLD),
     (FontId(2), ROBOTO_ITALIC),
@@ -305,11 +342,15 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(21), LIBERATION_MONO_BOLD),
     (FontId(22), LIBERATION_MONO_ITALIC),
     (FontId(23), LIBERATION_MONO_BOLD_ITALIC),
+    (FontId(24), NOTO_EMOJI_REGULAR),
+    (FontId(25), NOTO_EMOJI_REGULAR),
+    (FontId(26), NOTO_EMOJI_REGULAR),
+    (FontId(27), NOTO_EMOJI_REGULAR),
 ];
 
 /// Every face retained in the web bundle.
 #[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
-pub const BUNDLED_FACES: [(FontId, &[u8]); 20] = [
+pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(4), CALADEA_REGULAR),
     (FontId(5), CALADEA_BOLD),
     (FontId(6), CALADEA_ITALIC),
@@ -330,6 +371,10 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 20] = [
     (FontId(21), LIBERATION_MONO_BOLD),
     (FontId(22), LIBERATION_MONO_ITALIC),
     (FontId(23), LIBERATION_MONO_BOLD_ITALIC),
+    (FontId(24), NOTO_EMOJI_REGULAR),
+    (FontId(25), NOTO_EMOJI_REGULAR),
+    (FontId(26), NOTO_EMOJI_REGULAR),
+    (FontId(27), NOTO_EMOJI_REGULAR),
 ];
 
 /// The [`FontId`] of the target's bundled default face for the given bold/italic
@@ -367,18 +412,41 @@ mod tests {
     /// and they grow silently: adding a family is four more blobs, and nothing
     /// else in the build reports it.
     ///
-    /// Measured on the deployed bundle: the 20 embedded faces are 7.00 MB raw,
+    /// Measured on the deployed bundle: the 20 embedded faces were 7.00 MB raw,
     /// which is 2.18 MB of a 7.97 MB brotli download — about 27% of what a
     /// visitor actually transfers. That is the number worth defending. The
     /// uncompressed figure is not, and quoting it has already sent one
     /// size-reduction effort after the wrong target.
     ///
+    /// Adding the Noto Emoji base costs 1.89 MB raw / 1.12 MB brotli (measured
+    /// at quality 9), taking the web bundle from 7.00 MB to 8.89 MB raw and the
+    /// native one to 10.88 MB. It buys emoji that draw as their own shape on
+    /// every target with no network at all; the colour upgrade stays a
+    /// coverage-driven fetch, and is now 4.99 MB of COLRv1 rather than 10.87 MB
+    /// of CBDT bitmaps, so a document with emoji downloads LESS than before.
+    ///
+    /// **Distinct** faces, not entries: Noto Emoji fills four `FontId` slots
+    /// with one byte slice, and counting an `include_bytes!` static once per
+    /// slot would report 7.93 MB of emoji the binary does not contain. A size
+    /// ratchet that over-reports is a ratchet nobody can act on.
+    ///
     /// This is a ratchet, not a budget: if a family is deliberately added, raise
     /// the cap in the same commit and say why.
     #[test]
     fn the_bundled_face_budget_does_not_grow_unnoticed() {
-        let total: usize = BUNDLED_FACES.iter().map(|(_, bytes)| bytes.len()).sum();
-        const CAP_BYTES: usize = 10 * 1024 * 1024;
+        let mut seen: Vec<*const u8> = Vec::new();
+        let mut total = 0usize;
+        for (_, bytes) in BUNDLED_FACES {
+            if seen.contains(&bytes.as_ptr()) {
+                continue;
+            }
+            seen.push(bytes.as_ptr());
+            total += bytes.len();
+        }
+        // Raised from 10 MB with the Noto Emoji base (this commit). The native
+        // bundle is 10.88 MB; the 11.5 MB cap is deliberate headroom of about
+        // half a face, not room for another family.
+        const CAP_BYTES: usize = 11_534_336;
         assert!(
             total <= CAP_BYTES,
             "bundled faces are {:.2} MB, over the {:.0} MB cap — adding a family \

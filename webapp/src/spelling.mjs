@@ -118,6 +118,25 @@ export function emptyDictionary() {
  *  two tokens one of which is a single letter. */
 const WORD_BODY = /[\p{L}\p{M}\p{Nd}'’-]/u;
 
+/** Scalars that join an EMOJI cluster and never belong to a word.
+ *
+ *  U+FE0F (and the rest of the variation selectors) is Unicode category Mn, so
+ *  `\p{M}` above matched it and the tokenizer glued it onto whatever followed:
+ *  `"see ❤️world"` produced the token `"\uFE0Fworld"`, flagged a correctly
+ *  spelled word, and gave the replacement a span STARTING INSIDE the heart's
+ *  grapheme cluster — so accepting the suggestion ate the variation selector
+ *  and turned a red heart into a monochrome dingbat. A word boundary must not
+ *  fall inside a cluster.
+ *
+ *  U+200D is Cf and never matched, but it is listed for the same reason and so
+ *  the rule reads as one rule. */
+const CLUSTER_JOINER = /[\u200d\ufe00-\ufe0f]/u;
+
+/** Whether `ch` (one UTF-16 code unit) can sit inside a word. */
+function isWordChar(ch) {
+  return WORD_BODY.test(ch) && !CLUSTER_JOINER.test(ch);
+}
+
 /**
  * The spans of `text` that are an address rather than prose: a URL, an email,
  * a bare host name, a file path, or a dotted identifier.
@@ -168,7 +187,7 @@ export function tokenizeWords(text) {
   const tokens = [];
   let start = -1;
   for (let i = 0; i <= source.length; i += 1) {
-    const inWord = i < source.length && WORD_BODY.test(source[i]);
+    const inWord = i < source.length && isWordChar(source[i]);
     if (inWord && start < 0) start = i;
     if (!inWord && start >= 0) {
       // Trim leading/trailing connectors: `"don't"` keeps its apostrophe but
