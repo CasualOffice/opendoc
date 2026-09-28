@@ -328,6 +328,14 @@ const PALETTE_ONLY = new Map([
   ["layout.arrange.flipVertical", "needs the Rotate split button's dropdown"],
   ["layout.arrange.inLine", "needs a row on the object chip, beside wrap"],
   ["layout.arrange.addText", "needs a row on the object chip"],
+  // Word's Update Table is a BUTTON that opens a two-radio dialog; the radios
+  // are the surface, and these two commands are the same choices reachable by
+  // name. The durable control is `reference.updateFields`, which is on the
+  // References band — so neither mode is stranded in practice. A right-click
+  // row inside a contents field, the way Word offers Update Field there, would
+  // give each its own surface and let these come off the list.
+  ["reference.updateToc.pageNumbers", "the Update Table dialog's radio; band control opens it"],
+  ["reference.updateToc.entire", "the Update Table dialog's radio; band control opens it"],
 ]);
 
 test("no command is reachable from the command palette alone", async ({
