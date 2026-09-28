@@ -42,23 +42,47 @@
 // pointer-cursor sweep caught it: a form checkbox one line above a table stopped
 // being a control.
 //
-// ## Deliberately NOT in this slice
+// ## Drag-to-REORDER (`docs/141` §4.2.3)
 //
-// **Drag-to-reorder.** `docs/141` §4.2.3 specifies it as two facade
-// permutations, `moveTableRow(node, from, to)` and `moveTableColumn(...)`, both
-// `Operation::ReplaceTable`. Neither exists in `casual-doc-wasm` yet and this
-// lane does not own `crates/**`. Building the gesture against a method that is
-// not there would ship chrome that cannot commit — "built is not reachable",
-// the most expensive recurring pattern in this repository (SKILL §9.4) — so the
-// gesture is absent rather than dead, and no `table.move.*` command is
-// registered for it. Row and column ORDER is still changeable today by
-// insert + delete from four surfaces; what is missing is the direct gesture.
+// `moveTableRow(node, from, to)` and `moveTableColumn(...)` now exist — one
+// `Operation::ReplaceTable` under `HistoryKind::TableStructure`, so a whole drag
+// is ONE undo step — and this is the gesture on top of them.
+//
+// **Which gesture, and from which product.** *Word* has no drag-reorder on the
+// gutter at all: you select a row and move it with Alt+Shift+Up/Down. *Docs*
+// reorders by dragging a strip **that is already selected**, which is also how
+// it tells reorder apart from the select-drag that shares the same 14px strip.
+// **We followed Docs for the pointer and Word for the keyboard**: the strip
+// reorders once its band is the selected one, and `table.move.*` carries the
+// same capability to the menu, the palette and a chord — so the gesture is not
+// mouse-only capability, which is the rule every other gesture in this layer
+// already follows.
+//
+// One band moves, never several. The facade moves one row per call, and N calls
+// is N undo entries — so a multi-band selection keeps the select-drag rather
+// than committing something the word "one undo step" would stop describing.
+//
+// **The refusals are the feature, not the edge case.** A row inside a `vMerge`
+// run, a drop that would land between a `restart` and its `continue`, a column
+// whose grid index names no cell because of `gridSpan`, and a drop back where it
+// started are all refused BY THE ENGINE with a sentence naming the row. Those
+// sentences reach the status line verbatim: `runEdit` translates engine errors
+// into one generic sentence (`edit_errors.mjs`), which is right for internal
+// vocabulary and wrong for a refusal that already names the row the user is
+// looking at. So this module catches the throw itself and says what it said.
+//
+// **Cost.** ONE `tableInfo` call, at the press, converts the page-local band
+// index into the model index the facade wants; every pointer move after that is
+// arithmetic over the same memoised page chrome the rest of this layer reads.
+// A per-move `tableInfo` would be the quadratic the chrome layer removed.
 
 import {
   STRIP_PX,
   TOUCH_STRIP_PX,
   INSERT_TARGET_PX,
   armTableGutter,
+  dropBoundaryAt,
+  moveTargetIndex,
   stripRect,
   tableBands,
 } from "./table_gutter_zones.mjs";
@@ -179,6 +203,39 @@ export function createTableGutter(host) {
       return !!drag;
     },
 
+    /**
+     * Moves the caret's row or column one step — the command twin of the drag,
+     * and what puts reordering on the menu, the context menu and the palette
+     * rather than leaving it mouse-only.
+     *
+     * `sign` is -1 (up / left) or +1 (down / right). `to` is the post-move
+     * index, which for a one-step nudge is simply `from + sign`; the engine
+     * refuses a step off either end, and refuses the merge cases by name.
+     *
+     * Complexity: ONE `tableInfo` read per invocation — a command, not a
+     * keystroke — and one engine edit.
+     */
+    moveBand(node, axis, sign) {
+      if (!node) return false;
+      const grid = gridAt(node);
+      const from = axis === "row" ? grid?.row : grid?.column;
+      if (from == null) {
+        host.status(host.t("table.reason.caretOutsideTable"), "warn");
+        return true;
+      }
+      void commitReorder({ axis, anchor: node, from }, from + sign);
+      return true;
+    },
+
+    /** The gesture in flight as `pointer_cursor.mjs` names it, or `""`. The
+     *  cursor has to say which of the two strip drags this is: one is selecting
+     *  (`cell`, the strip's own shape) and one is carrying a row to a new place
+     *  (`grabbing`), and a pointer that outruns the strip must not lose either. */
+    dragKind() {
+      if (!drag) return "";
+      return drag.kind === "move" ? "table-strip-move" : "table-strip-select";
+    },
+
     /** What the cursor router should be told: `"row"`, `"column"`, `"insert"`,
      *  or `""`. The strips are real elements with their own CSS cursors, so this
      *  exists for the frame in which the pointer has entered the gutter and the
@@ -243,6 +300,16 @@ export function createTableGutter(host) {
         void commitInsert(target);
         return true;
       }
+      // Docs' rule: a strip whose band is ALREADY the selection reorders it. A
+      // press that has to select first cannot also be a move, or a single click
+      // on an unselected row would arm a gesture the user has not asked for.
+      const reorder = beginReorder(page, target);
+      if (reorder) {
+        drag = reorder;
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+        host.repaintOverlay();
+        return true;
+      }
       const mode = AXIS[target.axis].mode;
       const reason = host.range.selectMode(target.anchor, mode);
       if (reason) {
@@ -250,6 +317,7 @@ export function createTableGutter(host) {
         return true;
       }
       drag = {
+        kind: "select",
         page,
         axis: target.axis,
         anchor: target.anchor,
@@ -280,6 +348,10 @@ export function createTableGutter(host) {
     moveDrag(event) {
       if (!drag) return;
       event.preventDefault();
+      if (drag.kind === "move") {
+        moveReorder(event);
+        return;
+      }
       const page = host.pageFromClientPoint(event.clientX, event.clientY) ?? drag.page;
       const { target } = probe(page, event);
       const band = target?.axis === drag.axis ? target : bandUnderPointer(page, event, drag.axis);
@@ -295,11 +367,17 @@ export function createTableGutter(host) {
       host.repaintOverlay();
     },
 
-    /** Ends the strip drag and announces what it selected. */
+    /** Ends the strip drag: commits the reorder, or announces what the select
+     *  drag selected. */
     finishDrag(event) {
       if (!drag) return false;
+      const ending = drag;
       drag = null;
       event?.preventDefault?.();
+      if (ending.kind === "move") {
+        void commitReorder(ending, moveTargetIndex(ending.from, ending.pageOrigin + ending.boundary));
+        return true;
+      }
       host.range.announce();
       host.repaint();
       return true;
@@ -343,6 +421,7 @@ export function createTableGutter(host) {
           child(page, AXIS[axis].strip, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy);
         }
       }
+      paintDropIndicator(page, table, sx, sy);
       if (!target) return;
       const rowAxis = target.axis === "row";
       const strip = stripRect(table, target.axis, rowAxis ? target.strip.w : target.strip.h);
@@ -351,7 +430,7 @@ export function createTableGutter(host) {
       if (target.kind === "strip") {
         const band = bands.find((b) => b.i === target.index);
         if (!band) return;
-        child(
+        const el = child(
           page,
           "table-gutter-band",
           rowAxis ? strip.x * sx : band.start * sx,
@@ -359,6 +438,13 @@ export function createTableGutter(host) {
           rowAxis ? strip.w * sx : band.extent * sx,
           rowAxis ? band.extent * sy : strip.h * sy,
         );
+        // A band that IS the selection is a handle, and says so with `grab`.
+        // Not while a reorder is in flight: the band being carried keeps the
+        // `grabbing` the router holds for the whole drag.
+        if (!drag && !host.state().editsBlocked && movableBand(page, table, target.axis, target)) {
+          el.dataset.move = "ready";
+          el.title = host.t(rowAxis ? "table.dragToMoveRow" : "table.dragToMoveColumn");
+        }
         return;
       }
       const at = target.at;
@@ -376,6 +462,180 @@ export function createTableGutter(host) {
       disc.title = host.t(rowAxis ? "table.insertRowHere" : "table.insertColumnHere");
     },
   };
+
+  /** The grid coordinates of the cell holding `node`, or `null`.
+   *
+   *  The ONE document read a reorder costs. `tableChromeOnPage` numbers its row
+   *  edges per PAGE, so on the second page of a split table band 0 is not row 0
+   *  of the model — and the facade indexes the model. Asked once, at the press,
+   *  and turned into a page-to-model offset the whole drag then reuses.
+   *
+   *  Complexity: O(document) for this one call. Never called from `hover`,
+   *  `moveDrag` or `paint`. */
+  function gridAt(node) {
+    const doc = host.doc();
+    if (!doc?.tableInfo) return null;
+    const info = doc.tableInfo(node);
+    const value = info?.found ? { row: info.row, column: info.column } : null;
+    info?.free?.();
+    return value;
+  }
+
+  /**
+   * Whether a band is the one the current selection covers — the precondition
+   * for the reorder gesture, and for the `grab` cursor that advertises it.
+   *
+   * Answered in PAGE space, against the rectangles the selection painter already
+   * holds, and never by asking the engine which row is selected: this runs from
+   * `paint`, which runs on every overlay repaint, so a document read here would
+   * put an O(document) call on the repaint path. `gridRect` is the range's own
+   * memo and costs nothing new.
+   *
+   * Complexity: O(selected cells).
+   */
+  function movableBand(page, table, axis, target) {
+    if (target?.kind !== "strip" || !page?.pageNumber) return false;
+    const selection = host.range.descriptor();
+    if (!selection || selection.mode !== AXIS[axis].mode || selection.table !== table.node) {
+      return false;
+    }
+    const rect = host.range.gridRect();
+    if (!rect) return false;
+    // Several bands selected: one facade call moves one band, and N calls is N
+    // undo entries, so the strip keeps its select-drag rather than committing
+    // something "one undo step" would stop describing.
+    const single = axis === "row" ? rect.firstRow === rect.lastRow : rect.firstColumn === rect.lastColumn;
+    if (!single) return false;
+    const bands = tableBands(table, axis);
+    const band = bands.find((b) => b.i === target.index);
+    if (!band) return false;
+    const middle = (band.start + band.end) / 2;
+    const flat = host.range.rects();
+    for (let i = 0; i + 4 < flat.length; i += 5) {
+      const [pageNumber, x, y, width, height] = flat.slice(i, i + 5);
+      if (pageNumber !== page.pageNumber) continue;
+      const lo = axis === "row" ? y : x;
+      const extent = axis === "row" ? height : width;
+      if (middle >= lo && middle < lo + extent) return true;
+    }
+    return false;
+  }
+
+  /** Starts a reorder if this press is one, or `null` if it is a select drag.
+   *
+   *  The two preconditions are Docs' own: the pressed band is exactly the band
+   *  the current selection covers, and the mode allows a structural edit. A
+   *  refusal the MODE is responsible for is said here, because the strip is
+   *  still a legal select-drag afterwards and a user who pressed a selected row
+   *  meant to move it. */
+  function beginReorder(page, target) {
+    if (!movableBand(page, target.table, target.axis, target)) return null;
+    const state = host.state();
+    if (state.editsBlocked) return null; // Viewing: the strip still selects, silently
+    if (state.geometryBlocked) {
+      host.status(host.t("table.reason.notTracked"), "warn");
+      return null;
+    }
+    const grid = gridAt(target.anchor);
+    const from = target.axis === "row" ? grid?.row : grid?.column;
+    if (from == null) return null;
+    return {
+      kind: "move",
+      page,
+      axis: target.axis,
+      anchor: target.anchor,
+      tableNode: target.table.node,
+      // The model index of the FIRST band painted on this page, so every later
+      // boundary converts with one addition and no further document read.
+      pageOrigin: from - target.index,
+      from,
+      boundary: target.index,
+      moved: false,
+    };
+  }
+
+  /** Tracks the drop boundary under the pointer and repaints the indicator.
+   *
+   *  The drop is clamped to the page the press started on: the strip belongs to
+   *  one page's chrome, and a boundary index read off another page's bands would
+   *  name a different row of the model. A table that continues overleaf is
+   *  reordered from the page the row is on, which is the page the user is
+   *  looking at. */
+  function moveReorder(event) {
+    const page = host.pageFromClientPoint(event.clientX, event.clientY);
+    if (page && page.pageNumber !== drag.page.pageNumber) return;
+    const table = host.chromeOf(drag.page).find((t) => t.node === drag.tableNode);
+    if (!table) return;
+    const bands = tableBands(table, drag.axis);
+    const { x, y } = host.pointToTwip(drag.page, event);
+    const boundary = dropBoundaryAt(bands, drag.axis === "row" ? y : x);
+    if (boundary === drag.boundary && drag.moved) return;
+    drag.boundary = boundary;
+    drag.moved = true;
+    host.repaintOverlay();
+  }
+
+  /** The drop line, while a reorder is in flight.
+   *
+   *  A 2px rule across the table at the boundary the drop would use — Docs'
+   *  indicator — plus the strip's own band highlight, which the armed target
+   *  already paints on the row being carried. Painted from the repaint, so it
+   *  survives the overlay being rebuilt mid-drag. */
+  function paintDropIndicator(page, table, sx, sy) {
+    if (drag?.kind !== "move" || drag.tableNode !== table.node) return;
+    if (page.pageNumber !== drag.page.pageNumber) return;
+    const bands = tableBands(table, drag.axis);
+    if (!bands.length) return;
+    const k = Math.min(Math.max(drag.boundary, 0), bands.length);
+    const at = k === bands.length ? bands[bands.length - 1].end : bands[k].start;
+    const rowAxis = drag.axis === "row";
+    const line = child(
+      page,
+      "table-move-indicator",
+      rowAxis ? table.x * sx : at * sx,
+      rowAxis ? at * sy : table.y * sy,
+      rowAxis ? table.w * sx : 0,
+      rowAxis ? 0 : table.h * sy,
+    );
+    line.dataset.axis = drag.axis;
+  }
+
+  /** Commits the reorder, and says what the engine said when it refuses.
+   *
+   *  `runEdit` maps a thrown engine error onto one generic sentence, which is
+   *  correct for `Unsupported`/`CrossParagraph` and wrong for these four: the
+   *  engine already wrote a sentence naming the row and what to do about it. So
+   *  the throw is caught here and re-announced AFTER `runEdit` has written its
+   *  own, which is the ordering that leaves the specific sentence on screen. */
+  async function commitReorder(gesture, to) {
+    const doc = host.doc();
+    let refusal = "";
+    const move = gesture.axis === "row" ? doc.moveTableRow : doc.moveTableColumn;
+    await host.runEdit(
+      () => {
+        try {
+          return move.call(doc, gesture.anchor, gesture.from, to);
+        } catch (error) {
+          refusal = String(error?.message ?? error ?? "");
+          throw error;
+        }
+      },
+      { gate: true },
+    );
+    if (refusal) {
+      host.status(refusal, "warn");
+      host.repaintOverlay();
+      return;
+    }
+    host.status(
+      host.t(gesture.axis === "row" ? "table.rowMoved" : "table.columnMoved", {
+        from: gesture.from + 1,
+        to: to + 1,
+      }),
+    );
+    host.range.clear();
+    host.repaint();
+  }
 
   /** The gutter target under the pointer, but only for the table the gutter is
    *  armed on. `null` everywhere else, so neither the cursor router nor the press

@@ -193,6 +193,31 @@ export const CURSOR_TARGETS = [
       "the Google Docs behaviour, not theirs.",
     when: (p) => p.drag === "table-row",
   },
+  {
+    id: "drag-table-strip-select",
+    cursor: "cell",
+    owner: "router",
+    selector: null,
+    gesture: "Dragging along the gutter to select several rows or columns",
+    why:
+      "The strip's own `cell` cursor, held for the whole drag so the shape does " +
+      "not change on press — the rule the two boundary drags above already state.",
+    when: (p) => p.drag === "table-strip-select",
+  },
+  {
+    id: "drag-table-strip-move",
+    cursor: "grabbing",
+    owner: "router",
+    selector: null,
+    gesture: "Carrying a row or column to a new position",
+    why:
+      "`grab` -> `grabbing` is this product's pick-up-and-carry idiom (the ruler " +
+      "tab, and the object lifted off the ruler), and a reorder is exactly that: " +
+      "the band is held, not resized and not selected. Docs uses the same pair. " +
+      "It is deliberately NOT `move`, which this table reserves for an object " +
+      "being dragged around the page with no drop target to hit.",
+    when: (p) => p.drag === "table-strip-move",
+  },
 
   // ---- Whole-surface modes ------------------------------------------------
   // Below the object and table drags, deliberately: with the painter armed a
@@ -625,6 +650,20 @@ export const CURSOR_TARGETS = [
     selector: ".overlay .table-column-strip",
     gesture: "Selecting a column — or dragging across to select several",
     why: "The column twin of the row strip above; same keyword, same reason.",
+  },
+  {
+    id: "table-gutter-band-movable",
+    cursor: "grab",
+    owner: "css",
+    selector: '.overlay .table-gutter-band[data-move="ready"]',
+    gesture: "Picking up the selected row or column to reorder it",
+    why:
+      "The band the pointer is in, but only once it IS the selection — which is " +
+      "Docs' own rule for telling a reorder apart from the select-drag that " +
+      "shares the strip. `grab` is the promise that the press will pick this up, " +
+      "and it is the only thing that makes a gesture with no other affordance " +
+      "discoverable. An unselected band keeps the strip's `cell`, because a press " +
+      "there selects rather than moves.",
   },
   {
     id: "table-insert-target",

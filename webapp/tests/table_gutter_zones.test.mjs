@@ -17,7 +17,9 @@ import assert from "node:assert/strict";
 import {
   STRIP_PX,
   armTableGutter,
+  dropBoundaryAt,
   gutterAt,
+  moveTargetIndex,
   stripRect,
   tableBands,
 } from "../src/table_gutter_zones.mjs";
@@ -225,4 +227,40 @@ test("tableBands reads a band as [end - extent, end], leading edge first", () =>
       [2, 1600, 1900],
     ],
   );
+});
+
+// ---------------------------------------------------------------------------
+// The reorder drop (`docs/141` §4.2.3).
+
+test("the drop boundary flips at the MIDDLE of a band, not at its edge", () => {
+  const bands = tableBands(chromeTable({ rows: 3, rowH: 300, y: 1000 }), "row");
+  // Above the table, and just inside the first band: drop before row 0.
+  assert.equal(dropBoundaryAt(bands, 900), 0);
+  assert.equal(dropBoundaryAt(bands, 1100), 0);
+  // Past the middle of row 0: drop between rows 0 and 1. A drop that flipped
+  // only at the band EDGE would still say 0 here, and the indicator would lag
+  // the pointer by most of a row.
+  assert.equal(dropBoundaryAt(bands, 1160), 1);
+  assert.equal(dropBoundaryAt(bands, 1400), 1);
+  assert.equal(dropBoundaryAt(bands, 1460), 2);
+  // Past the last band, and well past it: clamped to the trailing boundary,
+  // because a drag that runs off the table has not stopped being a drag.
+  assert.equal(dropBoundaryAt(bands, 1860), 3);
+  assert.equal(dropBoundaryAt(bands, 9000), 3);
+  assert.equal(dropBoundaryAt([], 500), 0);
+});
+
+test("the post-move index loses one slot only when the band travels forwards", () => {
+  // Backwards: nothing above it has been vacated, so boundary == to.
+  assert.equal(moveTargetIndex(2, 0), 0);
+  assert.equal(moveTargetIndex(2, 1), 1);
+  // A drop on either of its own boundaries is the index it already has, which
+  // is what makes a no-op drag refusable rather than a silent undo entry.
+  assert.equal(moveTargetIndex(2, 2), 2);
+  assert.equal(moveTargetIndex(2, 3), 2);
+  // Forwards: it vacates its own slot on the way past, so to == boundary - 1.
+  // Getting this wrong moves the right row to the wrong place AND COMMITS —
+  // no refusal catches it, which is why it is asserted directly.
+  assert.equal(moveTargetIndex(0, 3), 2);
+  assert.equal(moveTargetIndex(0, 2), 1);
 });

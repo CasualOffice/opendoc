@@ -60,7 +60,16 @@ const geometry = (page) =>
       scroll: bar.scrollWidth,
       overflowX: getComputedStyle(bar).overflowX,
       moreShown: !!more && !more.hidden,
-      inline: [...bar.querySelectorAll(":scope > .cgroup")].map((g) => g.dataset.group),
+      // What the user actually gets. A CONTEXTUAL group that is not showing is
+      // not "inline" in any sense a budget cares about — the Table group is
+      // present in the DOM and hidden until the caret is in a table, exactly as
+      // the ribbon's Table TAB is disabled until then.
+      inline: [...bar.querySelectorAll(":scope > .cgroup")]
+        .filter((g) => !g.hidden)
+        .map((g) => g.dataset.group),
+      contextual: [...bar.querySelectorAll(":scope > .cgroup[hidden]")].map(
+        (g) => g.dataset.group,
+      ),
       folded: [...document.querySelectorAll("#compactOverflowMenu > .cgroup")].map(
         (g) => g.dataset.group,
       ),
@@ -103,6 +112,9 @@ test("at 1280px the whole compact bar is inline and nothing scrolls", async ({
     "indent",
     "clear",
   ]);
+  // The Table group is there and waiting for a caret in a table — contextual,
+  // as the ribbon's Table tab is, and therefore not part of the resting budget.
+  expect(g.contextual).toEqual(["table"]);
   // A scrollbar cannot come back by CSS either.
   expect(g.overflowX).toBe("hidden");
 
@@ -167,7 +179,7 @@ test("every control the layout table declares actually renders", async ({
     const mod = await import("/src/compact_toolbar.mjs");
     const declared = mod.compactCommandIds();
     const present = new Set(
-      [...document.querySelectorAll("#compactToolbar [data-command-id], #compactAlignMenu [data-command-id], #compactOverflowMenu [data-command-id]")].map(
+      [...document.querySelectorAll("#compactToolbar [data-command-id], #compactAlignMenu [data-command-id], #compactTableMenu [data-command-id], #compactOverflowMenu [data-command-id]")].map(
         (el) => el.dataset.commandId,
       ),
     );
@@ -393,6 +405,67 @@ test("compact text-color menus anchor to the visible compact controls", async ({
     await expect(menu).toBeHidden();
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
   }
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// TABLES IN THE COMPACT BAR (`docs/141` TBL-18).
+//
+// The Docs-shaped bar shipped with NO table command at all, so switching chrome
+// took every structural table capability off the screen — the contextual Table
+// BAND is a ribbon tab, and in compact mode there is no ribbon. This asserts the
+// capability and not the widget: a command RUNS from the dropdown and the
+// document changes. The group is CONTEXTUAL, as the ribbon's Table tab is, so
+// what this also has to prove is that "not shown" is not "not reachable".
+
+test("the compact bar's Table menu edits the table, and says why when it cannot", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.locator("#modeCompact").click();
+
+  // Outside a table the group is not shown — contextual, exactly as the
+  // ribbon's Table TAB is disabled until the caret is in one.
+  const trigger = page.locator("#compactTableBtn");
+  const menu = page.locator("#compactTableMenu");
+  await expect(trigger).toBeHidden();
+
+  // …and the capability is still reachable from this chrome, which is what makes
+  // "contextual" different from "gone": the compact chrome's Table MENU carries
+  // every row, present and disabled with its reason (UX-012).
+  await page.locator('.app-menu-button[data-menu="table"]').click();
+  const appMenu = page.locator("#appMenuPopover");
+  await expect(appMenu).toBeVisible();
+  const menuRow = appMenu.locator('.app-menu-item[data-command="table.insert.rowAbove"]');
+  await expect(menuRow).toHaveCount(1);
+  await expect(menuRow).toBeDisabled();
+  // Reordering reached that surface too, so the gutter drag is not its only way.
+  await expect(appMenu.locator('.app-menu-item[data-command="table.move.rowUp"]')).toHaveCount(1);
+  await page.keyboard.press("Escape");
+
+  // Now put a table in and use the bar's own dropdown for real.
+  await page.locator("#modeRibbon").click();
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertTableBtn").click();
+  await expect(page.locator("#insertTableMenu")).toBeVisible();
+  await page.locator('.gc[data-r="2"][data-c="2"]').click();
+  await page.locator("#modeCompact").click();
+  await expect(trigger).toBeVisible();
+
+  const rows = () =>
+    page.evaluate(() => document.querySelectorAll("#a11yDocument table tr").length);
+  const before = await rows();
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  const live = menu.locator('[data-command-id="table.insert.rowBelow"]');
+  await expect(live).toBeEnabled();
+  await live.click();
+
+  // THE DOCUMENT gained a row — not "the menu had a row in it".
+  await expect.poll(rows).toBe(before + 1);
 
   expect(consoleErrors).toEqual([]);
 });

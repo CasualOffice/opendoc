@@ -316,6 +316,30 @@ export function createTableChrome(host) {
      * means the same band the pointer would grab — there is no second notion of
      * which column is current.
      */
+    /**
+     * The same step, resolving the caret's page itself.
+     *
+     * Moved out of `main.js` (HF-085) rather than left as four lines of lookup
+     * there: the ONLY thing it did was turn a caret node into the page and the
+     * cell rectangle `stepFromCaret` already needs, which is this layer's own
+     * geometry and not the application's. `cellRect` answers `[page, x, y, w, h]`
+     * or an empty list, so an empty answer is "the caret is not in a table" and
+     * gets that sentence rather than a silent no-op.
+     *
+     * Complexity: one page-scoped geometry call; no `tableInfo` walk.
+     */
+    stepCaretBand(caretNode, pages, axis, sign) {
+      const doc = host.doc();
+      if (!doc || !caretNode) return false;
+      const cell = doc.cellRect(caretNode);
+      if (cell.length < 5) {
+        host.status(host.t("table.reason.caretOutsideTable"), "warn");
+        return true;
+      }
+      const page = pages[cell[0] - 1];
+      return page ? this.stepFromCaret(page, caretNode, cell, axis, sign) : false;
+    },
+
     stepFromCaret(page, caretNode, cellRect, axis, sign) {
       const doc = host.doc();
       if (!doc || !caretNode) return false;

@@ -123,6 +123,26 @@ export function tableToolCommands(context, host) {
       run: () => host.selectTableContext(context.anchor.node, "table"),
     },
   ];
+  // REORDERING a row or column (`docs/141` §4.2.3). The gutter's drag is the
+  // pointer half; this is the half that is not mouse-only, and it is the half
+  // Word ships (Alt+Shift+Up/Down moves the row the caret is in — no chord is
+  // claimed here, because this editor's Alt+Shift+Arrow already sizes the band).
+  //
+  // `moveTableRow(node, from, to)` takes `to` as the index AFTER the move, so a
+  // one-step nudge is `from ± 1` in both directions and there is no off-by-one
+  // to get wrong at this call site. `host.moveTableBand` resolves the caret's
+  // own index with the one `tableInfo` read and runs the gated edit; the engine
+  // refuses a step off either end, and refuses the merge cases by name.
+  const moveSubmenu = [
+    tableMutation("table.move.rowUp", "Move row up",
+      () => host.moveTableBand("row", -1), { group: "row" }),
+    tableMutation("table.move.rowDown", "Move row down",
+      () => host.moveTableBand("row", 1), { group: "row" }),
+    tableMutation("table.move.columnLeft", "Move column left",
+      () => host.moveTableBand("column", -1), { regular: true, group: "col" }),
+    tableMutation("table.move.columnRight", "Move column right",
+      () => host.moveTableBand("column", 1), { regular: true, group: "col" }),
+  ];
   const layoutSubmenu = [
     tableMutation("table.distribute.rows", "Distribute rows",
       () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
@@ -224,6 +244,16 @@ export function tableToolCommands(context, host) {
     tableMutation("table.split", "Split cell…",
       () => host.openSplitCellDialog(),
       { group: "table" }),
+    {
+      id: "table.move",
+      // Through the catalogue, unlike its four sibling submenu labels: those are
+      // debt this file INHERITED from `main.js` under a ratchet, and the way to
+      // not make a ratchet worse is to not add to it.
+      label: t("table.moveSubmenu"),
+      group: "table",
+      icon: "tableMove",
+      submenu: moveSubmenu,
+    },
     {
       id: "table.select",
       label: "Select",

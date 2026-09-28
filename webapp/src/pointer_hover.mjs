@@ -25,6 +25,11 @@ function dragOf(state) {
   if (state.cropDrag) return "object-crop";
   if (state.moveDrag) return "object-move";
   if (state.tableDrag) return state.tableDrag;
+  // The gutter's two strip drags. This state was reported as a BOOLEAN and read
+  // by nothing, so a drag along the strip kept whatever cursor the pointer had
+  // when it left the strip — and the reorder drag, which has to say `grabbing`
+  // for its whole life, had no way to say anything at all.
+  if (state.tableStripDrag) return state.tableStripDrag;
   return state.textDrag ? "text" : "";
 }
 

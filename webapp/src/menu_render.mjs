@@ -25,6 +25,7 @@ export const MENU_ICONS = {
   tableDelete: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M6.2 6.2 9.8 9.8M9.8 6.2 6.2 9.8"/>'),
   tableSelect: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M2.5 6.5h11M6.5 2.5v11"/>'),
   tableLayout: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M2.5 8h11M8 2.5v11"/>'),
+  tableMove: menuIcon('<rect x="2.5" y="6.5" width="11" height="3" rx="0.6"/><path d="M8 4.5 8 1.5M6.4 3 8 1.4 9.6 3"/><path d="M8 11.5v3M6.4 13 8 14.6 9.6 13"/>'),
   wrap: menuIcon('<rect x="2.5" y="3" width="6" height="6" rx="1"/><path d="M10.5 4h3M10.5 7h3M2.5 11.5h11M2.5 13.5h11"/>'),
   altText: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1.4"/><path d="M5 10.5 7 5l2 5.5M5.6 9h2.8"/><path d="M10.5 5v5.5"/>'),
   crop: menuIcon('<path d="M4.5 1.5v10a1 1 0 0 0 1 1h9M1.5 4.5h10a1 1 0 0 1 1 1v9"/>'),

@@ -25,6 +25,11 @@ import { createSpacingMenu } from "./spacing_menu.mjs";
 import { createTocNavigator } from "./toc_navigation.mjs";
 import { createDropCapDialog } from "./drop_cap.mjs";
 import { createReferenceCommands, objectMenuRows } from "./reference_commands.mjs";
+import { createTocCommands } from "./toc_commands.mjs";
+import {
+  ribbonSurfaceEnabled as surfaceEnabled,
+  ribbonSurfaceReason as surfaceReason,
+} from "./ribbon_surface.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
@@ -471,7 +476,7 @@ function selectRibbonTab(name) {
   // Where the cached stale-caption count is earned: the References tab is the only
   // route to the button, and a tab switch is a deliberate, infrequent interaction —
   // the same budget the Outline panel already spends.
-  if (name === "references") referenceCommands.numbering.refresh();
+  if (name === "references") { referenceCommands.numbering.refresh(); tocCommands.fields.refresh(); }
   ribbonTabStop = null;
   syncRibbonTabStops();
 }
@@ -1938,7 +1943,10 @@ function renderReviewMarginItems() {
       const composer = document.createElement("article");
       composer.className = "review-margin-card review-margin-composer expanded";
       composer.setAttribute("role", "group");
-      composer.setAttribute("aria-label", "Add comment");
+      // Through the catalogue: the ribbon's own Add comment button already has
+      // this sentence translated into all eighteen languages, and a second,
+      // English-only spelling of one name is how two surfaces start to disagree.
+      composer.setAttribute("aria-label", t("panelReview.addComment.label"));
       const textarea = document.createElement("textarea");
       textarea.rows = 3;
       textarea.maxLength = 4096;
@@ -3252,6 +3260,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     await renderAll();
     buildOutline();
     referenceCommands.numbering.refresh();
+    tocCommands.fields.refresh();
     buildAccessibilityTree();
     drawSelection();
     armBackgroundMeasure();
@@ -5945,7 +5954,7 @@ const pointerHover = createPointerHover({
     cropDrag: objectCropSession?.handleDrag ?? null,
     moveDrag: objectMoveDrag,
     tableDrag: tableChrome.dragKind(),
-    tableStripDrag: tableGutter.dragging(),
+    tableStripDrag: tableGutter.dragKind(),
     textDrag: dragging,
   }),
 });
@@ -7026,23 +7035,9 @@ const TABLE_COMMAND_HOST = {
     tableBtn.click();
   },
   openTableProperties: () => toggleTableProperties(true),
-  stepTableBand,
+  stepTableBand: (axis, sign) => tableChrome.stepCaretBand(selection?.focus?.node, pages, axis, sign),
+  moveTableBand: (axis, sign) => tableGutter.moveBand(selection?.focus?.node, axis, sign),
 };
-
-/** Sizes the caret's table row or column by one grid step — the keyboard twin of
- *  the boundary drag (`docs/141` D-1 §4.1.6), bound to Alt+Shift+Arrow. The page
- *  comes from the `cellRect` the chrome layer needs anyway, so this costs one
- *  page-scoped geometry call and no `tableInfo` walk. */
-function stepTableBand(axis, sign) {
-  if (!doc || !selection) return false;
-  const cell = doc.cellRect(selection.focus.node); // [page, x, y, w, h] or []
-  if (cell.length < 5) {
-    setStatus(t("table.reason.caretOutsideTable"), "warn");
-    return true;
-  }
-  const page = pages[cell[0] - 1];
-  return page ? tableChrome.stepFromCaret(page, selection.focus.node, cell, axis, sign) : false;
-}
 
 const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
 
@@ -7942,12 +7937,10 @@ const REFERENCE_SURFACE = [
     label: "Table of contents",
     kw: "table of contents toc outline headings index navigation",
     buttons: () => [refTocBtn],
-    requires: "missing",
-    // Narrowed to what is actually missing. NAVIGATING a table of contents is no
-    // longer gated on anything (`toc_navigation.mjs`); GENERATING one is, and a
-    // reason that claimed both was telling the user a working capability did not
-    // exist.
-    reason: "Inserting a table of contents needs field generation the engine does not expose yet; an existing one is navigable",
+    // Body-only, and for the engine's own reason: `insertTableOfContents`
+    // refuses a caret outside the body, as Word does.
+    requires: "bodyCaret",
+    run: () => tocCommands.insert.open(),
   },
   // The keyboard half of following a contents entry. The pointer half is a plain
   // click on the entry, and `contextMenu: true` puts the same row on the
@@ -8003,17 +7996,14 @@ const REFERENCE_SURFACE = [
     requires: "staleCaptions",
     run: () => void referenceCommands.numbering.update(),
   },
-  {
-    command: "reference.updateFields",
-    label: "Update fields",
-    kw: "update fields refresh recalculate page number date time",
-    buttons: () => [refUpdateFieldsBtn],
-    requires: "missing",
-    // PAGE/NUMPAGES already recompute at pagination; the cached kinds
-    // (date/time/filename/author) would need a re-evaluation pass, and
-    // `insertField` is the only field op the facade exposes.
-    reason: "Updating cached fields needs a field-evaluation pass the engine does not expose yet; page numbers already recompute at pagination",
-  },
+  // Word's Update Table, and its two-radio dialog. The id stays
+  // `reference.updateFields` because it is a published host-contract id; what
+  // changed is that it now runs something. The two MODES are commands of their
+  // own, so neither is reachable only from inside a modal — the same
+  // >=2-surface rule the rest of this table follows.
+  { command: "reference.updateFields", label: "Update table of contents", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [refUpdateFieldsBtn], requires: "tocField", run: () => tocCommands.update.open() },
+  { command: "reference.updateToc.pageNumbers", label: "Update table of contents: page numbers only", kw: "toc contents update page numbers only repaginate refresh", buttons: () => [], requires: "tocField", run: () => void tocCommands.update.run("pageNumbers") },
+  { command: "reference.updateToc.entire", label: "Update table of contents: entire table", kw: "toc contents update entire rebuild regenerate headings refresh", buttons: () => [], requires: "tocField", run: () => void tocCommands.update.run("entire") },
 ];
 
 /** The object/table right-click rows the References surface declares — see
@@ -8021,38 +8011,25 @@ const REFERENCE_SURFACE = [
 const referenceObjectMenuRows = () =>
   objectMenuRows(REFERENCE_SURFACE, ribbonSurfaceEnabled, ribbonSurfaceReason);
 
-/** Whether a Layout/References row's precondition is met right now. */
-function ribbonSurfaceEnabled(entry) {
-  if (entry.requires === "missing") return false;
-  if (!doc) return false;
-  if (entry.requires === "object") return !!(objectSelection && objectSelection.mode === "selected");
-  // A caption is body-only: the engine refuses one in a header, footer or note,
-  // as Word and ONLYOFFICE do, so the control says so rather than throwing.
-  if (entry.requires === "bodyCaret") return !!selection && !runningEditBand;
-  // O(1): the count is CACHED in `reference_commands.mjs` and never walked here.
-  // This runs on every keystroke, so a walk in it would make typing O(document).
-  if (entry.requires === "staleCaptions") return referenceCommands.numbering.count > 0;
-  if (entry.requires === "caret") return !!selection;
-  // O(1) amortised: `tocEntryTargetAt` returns immediately unless the document
-  // holds a TOC field, and the heading index behind it is built once per
-  // revision. This runs on every keystroke, so a walk here would make typing
-  // O(document).
-  if (entry.requires === "tocEntry") return !!selection && !!tocEntryTargetAt(selection.focus.node);
-  return true;
+/** The O(1) state the two surface rules read. `tocEntryTargetAt` returns
+ *  immediately unless the document holds a TOC field and the heading index
+ *  behind it is built once per revision; the two counts are caches. Nothing
+ *  here walks the document, because this runs on every keystroke. */
+function ribbonSurfaceState(entry) {
+  return {
+    hasDoc: !!doc,
+    objectSelected: !!(objectSelection && objectSelection.mode === "selected"),
+    hasCaret: !!selection,
+    inRunningStory: !!runningEditBand,
+    staleCaptions: referenceCommands.numbering.count,
+    tocFields: tocCommands.fields.count,
+    onTocEntry:
+      entry.requires === "tocEntry" && !!selection && !!tocEntryTargetAt(selection.focus.node),
+  };
 }
 
-/** Why a Layout/References row is unavailable, for the button title and the
- *  palette's `disabledReason`. */
-function ribbonSurfaceReason(entry) {
-  if (entry.requires === "missing") return entry.reason;
-  if (!doc) return "Open a document first";
-  if (entry.requires === "object") return "Select an image, shape or text box first";
-  if (entry.requires === "staleCaptions") return t("caption.numbersAlreadyRight");
-  if (entry.requires === "bodyCaret" && selection) return t("caption.bodyOnly");
-  if (entry.requires === "tocEntry") return t("toc.notAnEntry");
-  if (entry.requires === "caret" || entry.requires === "bodyCaret") return "Place the caret in a paragraph";
-  return "";
-}
+const ribbonSurfaceEnabled = (entry) => surfaceEnabled(entry, ribbonSurfaceState(entry));
+const ribbonSurfaceReason = (entry) => surfaceReason(entry, ribbonSurfaceState(entry));
 
 /** Opens the object inspector focused on one control — Layout ▸ Wrap text lands
  *  on the wrap control, not on the panel's first field. `object_inspector.mjs`. */
@@ -9195,6 +9172,8 @@ for (const entry of INSERT_SURFACE) {
   railReview.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   viewZoom.setEnabled(!!doc);
   tabTable.disabled = !inTable;
+  // The compact bar's Table group is contextual for the same reason this tab is.
+  compactToolbarUi?.setTableContext(inTable);
   if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
     selectRibbonTab("home");
   }
@@ -12353,11 +12332,14 @@ function editorCommands(context = { surface: "palette" }) {
         run: () => applyTableStyle(name),
       });
     }
-  } else if (context.surface === "menu") {
+  } else if (context.surface === "menu" || context.surface === "compact") {
     // The Table MENU must exist even when the caret is not in a table: an empty
     // popover says the editor cannot edit tables (UX-012). `command_taxonomy`
     // builds the greyed rows from the same label map the live rows use, and
     // `menu_taxonomy` fails if that map and the real command set disagree.
+    // The COMPACT bar's Table dropdown is the same surface by the same argument
+    // (TBL-18): in compact mode there is no ribbon, so this dropdown is where a
+    // user learns tables are editable at all, and an empty one says they are not.
     cmds.push(
       // The same sentence the BAND shows for the same precondition, from the one
       // catalogue entry (`docs/141` TBL-03).
@@ -12936,6 +12918,17 @@ const referenceCommands = createReferenceCommands({
   targetNode: () => selection?.focus.node ?? "",
   caret: () => (selection ? { node: selection.focus.node, offset: selection.focus.offset } : null),
   applyEdit: (run) => runEdit(run, { gate: true }),
+});
+
+// References ▸ Table of contents. Same shape and the same cache discipline as
+// the caption numbering beside it: the count the ribbon reads is refreshed on
+// the deliberate interactions that change it, never on the keystroke path.
+const tocCommands = createTocCommands({
+  registerModal, getDoc: () => doc, status: setStatus, fallbackFocus: () => pagesEl,
+  mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
+  caretNode: () => selection?.focus.node ?? "",
+  applyEdit: (run) => runEdit(run, { gate: true }),
+  changed: () => updateToolbar(),
 });
 
 // ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------

@@ -52,6 +52,34 @@
 // whose icon reports the current alignment, opening a menu of the same four
 // registry commands, is both the Docs shape and the smaller one.
 
+// ---- Tables (TBL-18) -------------------------------------------------------
+//
+// The compact bar shipped with NO table command at all, so switching the chrome
+// to the Docs-shaped bar took every structural table capability off the screen:
+// the contextual Table BAND is a ribbon tab, and in compact mode there is no
+// ribbon. Google Docs solves this with a Format ▸ Table submenu, which is a
+// menu and not twenty buttons, and that is what this borrows — one trigger whose
+// menu is `APP_MENU_SECTIONS.table`, the SAME declaration the Table menu and the
+// palette render, so the three cannot disagree about which commands exist, what
+// they are called, or when they refuse.
+//
+// Its two names come from the CATALOGUE (`appMenuBar.table`, already translated
+// into all eighteen languages for the menu bar) rather than from a fresh English
+// literal: the bar's older group labels are raw English under a ratchet, and the
+// way to not make that worse is to not add to it.
+//
+// **It is CONTEXTUAL, and that is not a width dodge — it is the standard.** The
+// ribbon's own Table tab appears only when the caret is in a table; Word's Table
+// Layout tab is contextual too, and Docs shows its table toolbar only over a
+// table. The width matters as well, and honestly: measured at the 1280px budget
+// this bar is held to, the twelve resting groups need 1237px of an available
+// 1256, so a permanent thirteenth group would have folded another one into the
+// `⋯` menu at the default viewport. Outside a table the capability is not gone —
+// the compact chrome's Table MENU carries every row, disabled with its reason,
+// which is where "never a dead control" is met.
+import { APP_MENU_SECTIONS, TABLE_MENU_LABELS } from "./command_taxonomy.mjs";
+import { t } from "./i18n.mjs";
+
 /** The ribbon-owned controls this bar borrows, by row `control` key.
  *
  *  Adopted, never cloned: one element means one set of listeners, one
@@ -150,6 +178,23 @@ export const COMPACT_TOOLBAR = [
     ],
   },
   {
+    // Beside Insert, because inserting a table is the gesture that creates the
+    // need for these, and unpinned so it folds before B/I/U do.
+    group: "table",
+    labelKey: "appMenuBar.table",
+    contextual: true,
+    items: [
+      {
+        kind: "menu",
+        id: "compactTable",
+        icon: "grid_on",
+        labelKey: "appMenuBar.table",
+        sections: APP_MENU_SECTIONS.table,
+        labels: TABLE_MENU_LABELS,
+      },
+    ],
+  },
+  {
     group: "align",
     label: "Alignment",
     divider: true,
@@ -222,6 +267,10 @@ export function compactCommandIds(table = COMPACT_TOOLBAR) {
   const ids = [];
   for (const group of table) {
     for (const item of group.items) {
+      if (item.kind === "menu") {
+        ids.push(...item.sections.flat());
+        continue; // its own `id` names the TRIGGER, not a command
+      }
       if (item.id) ids.push(item.id);
       if (item.kind === "align") ids.push(...item.ids);
     }
@@ -263,6 +312,10 @@ export function createCompactToolbar({
   const contributed = [];
   /** The rendered groups, in declaration order, for the fold. */
   let rendered = [];
+  /** Whether the caret is in a table, which is what shows the contextual group.
+   *  Kept here rather than asked per frame: the bar renders on mode entry and
+   *  this is pushed in by the one toolbar sync that already knows. */
+  let tableContext = false;
   let overflowBtn = null;
   let overflowMenu = null;
   let alignTrigger = null;
@@ -342,6 +395,96 @@ export function createCompactToolbar({
     }
     onButton(el, () => runCommand(command.id, el));
     return el;
+  }
+
+  // ---- A declared dropdown of registry rows (the Table menu) ----------------
+  // Trigger and surface are created ONCE and the ROWS are rebuilt every time the
+  // menu opens, which is the only shape that can be honest here: whether Merge
+  // cells is available depends on the selection at the moment of asking, and the
+  // bar renders on mode entry. Rebuilding on open is also what keeps the bar off
+  // the keystroke path — `editorCommands` walks the caret's table, so asking it
+  // per keystroke is exactly the O(document) typing `main-thread-budget` guards.
+  const menus = new Map();
+
+  function ensureMenu(entry) {
+    if (menus.has(entry.id)) return menus.get(entry.id);
+    const name = t(entry.labelKey);
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.id = `${entry.id}Btn`;
+    trigger.className = "ctool ctool-menu";
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-controls", `${entry.id}Menu`);
+    trigger.setAttribute("aria-label", name);
+    trigger.title = name;
+    trigger.appendChild(iconSpan(entry.icon));
+    const caret = iconSpan("arrow_drop_down");
+    caret.classList.add("ctool-caret");
+    trigger.appendChild(caret);
+
+    const surface = document.createElement("div");
+    surface.id = `${entry.id}Menu`;
+    surface.className = "context-menu compact-command-menu";
+    surface.hidden = true;
+    surface.setAttribute("role", "menu");
+    surface.setAttribute("aria-label", name);
+    // Hung off <body> for the reason the align menu is: the bar clips.
+    document.body.appendChild(surface);
+    registerPopover(trigger, surface, () => fillMenu(entry, surface));
+    // Filled once here as well as on every open. Two reasons, and neither is
+    // cosmetic: the rows are then in the DOM for anything that asks what this
+    // bar offers — including the guard that fails the build when a declared
+    // command id renders nothing, which is how the bar once shipped with no
+    // bulleted and no numbered list button — and a surface that is empty until
+    // it is opened cannot be told apart from one that is empty because the
+    // command set vanished.
+    fillMenu(entry, surface);
+    const pair = { trigger, surface };
+    menus.set(entry.id, pair);
+    return pair;
+  }
+
+  /** Rebuilds one dropdown's rows from the LIVE registry.
+   *
+   *  A command the registry does not answer at all is skipped; one it answers
+   *  DISABLED is rendered disabled carrying its reason, never dropped — the
+   *  whole point of the surface is that a user browsing it learns the editor can
+   *  do this and what is missing, which an absent row cannot say. */
+  function fillMenu(entry, surface) {
+    const commands = registry();
+    surface.replaceChildren();
+    for (const section of entry.sections) {
+      let wrote = false;
+      for (const id of section) {
+        const command = commands.get(id);
+        if (!command) continue;
+        if (surface.childElementCount && !wrote) {
+          const rule = document.createElement("div");
+          rule.className = "menu-divider";
+          surface.appendChild(rule);
+        }
+        wrote = true;
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "menu-item";
+        item.setAttribute("role", "menuitem");
+        item.dataset.commandId = id;
+        // The MENU label, not the palette's prefixed one: a row inside a menu
+        // called Table already has that noun in front of it.
+        item.textContent = entry.labels?.get(id) ?? command.label;
+        if (command.enabled === false) {
+          item.disabled = true;
+          // `title` and not only the disabled attribute: the reason is the
+          // sentence that turns a greyed row into an answer, and hover must not
+          // erase it (`109` HF-118).
+          item.title = command.disabledReason ?? "";
+        } else {
+          onButton(item, () => runCommand(id, item));
+        }
+        surface.appendChild(item);
+      }
+    }
   }
 
   // ---- The align dropdown --------------------------------------------------
@@ -463,6 +606,11 @@ export function createCompactToolbar({
     for (const group of rendered) host.insertBefore(group.el, overflowBtn);
     overflowMenu.replaceChildren();
     overflowBtn.hidden = true;
+    // A contextual group that is not showing takes part in nothing: it has no
+    // width, and counting the GAP beside it would make the bar fold a real group
+    // to make room for a group nobody can see.
+    const visible = rendered.filter((group) => !group.el.hidden);
+    if (visible.length === 0) return;
     const style = getComputedStyle(host);
     const avail =
       host.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
@@ -474,29 +622,29 @@ export function createCompactToolbar({
     // groups carry a left margin; measuring without it under-reported the bar
     // by 2px per divider, which is how "everything fits" was decided at a width
     // where the last group was in fact 8px outside the bar.
-    const widths = rendered.map((group) => {
+    const widths = visible.map((group) => {
       const box = getComputedStyle(group.el);
       return (
         group.el.offsetWidth + (parseFloat(box.marginLeft) || 0) + (parseFloat(box.marginRight) || 0)
       );
     });
-    let total = widths.reduce((sum, w) => sum + w, 0) + gap * (rendered.length - 1);
+    let total = widths.reduce((sum, w) => sum + w, 0) + gap * (visible.length - 1);
     if (total <= avail + 0.5) return; // everything fits — no overflow control
     const reserve = 38; // room for the ⋯ button itself
     const moved = new Set();
     for (let pass = 0; pass < 2 && total > avail - reserve; pass++) {
-      for (let i = rendered.length - 1; i >= 1 && total > avail - reserve; i--) {
+      for (let i = visible.length - 1; i >= 1 && total > avail - reserve; i--) {
         if (moved.has(i)) continue;
         // First pass folds only the unpinned groups; the second is the last
         // resort at a width where even B/I/U cannot stay, and it still leaves
         // the first group (undo/redo) inline.
-        if (pass === 0 && rendered[i].pinned) continue;
+        if (pass === 0 && visible[i].pinned) continue;
         moved.add(i);
         total -= widths[i] + gap;
       }
     }
-    for (let i = 0; i < rendered.length; i++) {
-      if (moved.has(i)) overflowMenu.appendChild(rendered[i].el);
+    for (let i = 0; i < visible.length; i++) {
+      if (moved.has(i)) overflowMenu.appendChild(visible[i].el);
     }
     overflowBtn.hidden = moved.size === 0;
   }
@@ -528,7 +676,7 @@ export function createCompactToolbar({
       el.className = "cgroup";
       el.dataset.group = group.group;
       el.setAttribute("role", "group");
-      el.setAttribute("aria-label", group.label);
+      el.setAttribute("aria-label", group.labelKey ? t(group.labelKey) : group.label);
       if (group.divider) el.dataset.divider = "true";
       for (const entry of group.items) {
         if (entry.kind === "adopt") {
@@ -546,13 +694,23 @@ export function createCompactToolbar({
           if (trigger) el.appendChild(trigger);
           continue;
         }
+        if (entry.kind === "menu") {
+          el.appendChild(ensureMenu(entry).trigger);
+          continue;
+        }
         const command = commands.get(entry.id);
         if (!command) continue; // the parity guard fails the build on this
         el.appendChild(button(command, entry));
       }
       if (el.childElementCount === 0) continue;
+      if (group.contextual) el.hidden = !tableContext;
       host.appendChild(el);
-      rendered.push({ el, group: group.group, pinned: !!group.pinned });
+      rendered.push({
+        el,
+        group: group.group,
+        pinned: !!group.pinned,
+        contextual: !!group.contextual,
+      });
     }
     host.appendChild(overflowBtn);
     reflow();
@@ -570,5 +728,20 @@ export function createCompactToolbar({
   // save us: the bar stays exactly as wide as the window.)
   if (document.fonts?.ready) document.fonts.ready.then(scheduleReflow).catch(() => {});
 
-  return { render, release, reflectAlign, reflow, scheduleReflow };
+  /** Shows or hides the contextual group(s). Called from the one toolbar sync,
+   *  which already knows whether the caret is in a table; re-laying out only on
+   *  a CHANGE keeps a caret move inside a table free. */
+  function setTableContext(inTable) {
+    if (tableContext === !!inTable) return;
+    tableContext = !!inTable;
+    let changed = false;
+    for (const group of rendered) {
+      if (!group.contextual) continue;
+      group.el.hidden = !tableContext;
+      changed = true;
+    }
+    if (changed) scheduleReflow();
+  }
+
+  return { render, release, reflectAlign, reflow, scheduleReflow, setTableContext };
 }

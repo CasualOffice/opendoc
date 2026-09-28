@@ -743,7 +743,7 @@
         <div id="panelReferences" class="ribbon-panel" data-panel="references" role="tabpanel" aria-labelledby="tabReferences" hidden>
           <div class="rgroup" data-group="ref-navigation" data-ribbon-pinned>
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelReferences.insertingTableContentsNeedsGeneration.title" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="Inserting a table of contents needs field generation the engine does not expose yet; an existing one is navigable" aria-label="Table of contents" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
+              <button data-i18n-title="toc.description" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="Lists every heading with the page it is on, as a field you can update later." aria-label="Table of contents" aria-haspopup="dialog" aria-controls="tocDialog" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
               <!-- Following a contents entry from the keyboard. The pointer path
                    is a plain click on the entry; this is the second surface, and
                    `contextMenu: true` on its declaration gives the third. -->
@@ -780,7 +780,7 @@
           <div class="rgroup" data-group="ref-fields">
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.insertFieldPageNumber.title" data-i18n-label="panelReferences.insertField.label" id="refFieldBtn" type="button" class="fmt fmt-big" title="Insert a field (page number, date, file name…)" aria-label="Insert field" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">data_object</span><span data-i18n="refFieldBtn.insertField" class="fmt-big-label">Insert field</span></button>
-              <button data-i18n-title="panelReferences.updatingCachedFieldsNeeds.title" data-i18n-label="panelReferences.updateFields.label" id="refUpdateFieldsBtn" type="button" class="fmt fmt-big" title="Updating cached fields needs a field-evaluation pass the engine does not expose yet; page numbers already recompute at pagination" aria-label="Update fields" disabled><span class="ms" aria-hidden="true">refresh</span><span data-i18n="refUpdateFieldsBtn.updateFields" class="fmt-big-label">Update fields</span></button>
+              <button data-i18n-title="toc.update.description" data-i18n-label="toc.update.title" id="refUpdateFieldsBtn" type="button" class="fmt fmt-big" title="Re-read the page numbers, or rebuild the entries from the headings." aria-label="Update table of contents" aria-haspopup="dialog" aria-controls="tocUpdateDialog" disabled><span class="ms" aria-hidden="true">refresh</span><span data-i18n="refUpdateFieldsBtn.updateTable" class="fmt-big-label">Update table</span></button>
             </div>
             <span data-i18n="panelReferences.fields" class="rgroup-label">Fields</span>
           </div>
@@ -1727,6 +1727,64 @@
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="dropCapCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" type="submit" form="dropCapForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- References ▸ Table of contents. Word's Insert dialog reduced to the one
+         control it actually asks for: "Show levels", 1..9, defaulting to 3.
+         Word's other two switches — "Show page numbers" and "Right align page
+         numbers" — are not offered because the generated field always carries
+         both and there is no operation to write either one off; an option that
+         cannot be honoured is a dead control with extra steps. -->
+    <div id="tocDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tocTitle" aria-describedby="tocDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="toc.title" id="tocTitle">Table of contents</h2>
+              <p data-i18n="toc.description" id="tocDescription">Lists every heading with the page it is on, as a field you can update later.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.close.label" id="tocClose" type="button" class="dialog-close" title="Close" aria-label="Close table of contents"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="tocForm" class="dialog-body">
+          <label data-i18n="toc.showLevels" class="dialog-field">Show levels<input data-i18n-title="toc.showLevels.title" id="tocLevels" type="number" min="1" max="9" step="1" inputmode="numeric" value="3" title="How deep to list: 1 lists only Heading 1, 3 is Word's default" /></label>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="tocCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="toc.insert" type="submit" form="tocForm" class="dialog-button dialog-button-primary">Insert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- References ▸ Update table. Word's two radios, in Word's order and with
+         Word's wording; ONLYOFFICE offers exactly the same pair. Each is also
+         its own command, so the choice is reachable without opening this. -->
+    <div id="tocUpdateDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tocUpdateTitle" aria-describedby="tocUpdateDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="toc.update.title" id="tocUpdateTitle">Update table of contents</h2>
+              <p data-i18n="toc.update.description" id="tocUpdateDescription">Re-read the page numbers, or rebuild the entries from the headings.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.update.close.label" id="tocUpdateClose" type="button" class="dialog-close" title="Close" aria-label="Close update table of contents"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="tocUpdateForm" class="dialog-body">
+          <fieldset class="dialog-group" data-i18n-label="toc.update.title" aria-label="Update table of contents">
+            <label class="dialog-check"><input type="radio" name="tocUpdateMode" value="pageNumbers" checked /><span data-i18n="toc.update.pageNumbers">Update page numbers only</span></label>
+            <label class="dialog-check"><input type="radio" name="tocUpdateMode" value="entire" /><span data-i18n="toc.update.entire">Update entire table</span></label>
+          </fieldset>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="tocUpdateCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="toc.update.apply" type="submit" form="tocUpdateForm" class="dialog-button dialog-button-primary">Update</button>
           </div>
         </footer>
       </section>

@@ -153,3 +153,83 @@ test("custom line spacing is blocked in Viewing mode", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+// ---------------------------------------------------------------------------
+// STYLE-RESOLVED spacing. `paragraphSpacing` now resolves through the style
+// cascade and carries `lineFromStyle` / `beforeFromStyle` / `afterFromStyle`.
+//
+// The defect this guards: the popover read DIRECT formatting only, so on a
+// paragraph that takes its line spacing from its style — most paragraphs in most
+// documents — nothing was ticked, the box was empty, and a note said in words
+// that the value came from somewhere else. Word shows the resolved number; Docs
+// ticks the resolved preset; a blank box is neither.
+//
+// The condition is CREATED here rather than found in the fixture, and the
+// precondition is explicit: 1.5 is set on one paragraph, pushed into its style,
+// and read back on a DIFFERENT paragraph carrying no direct spacing at all. A
+// guard that relied on the fixture happening to define a styled line spacing
+// would go green on the day the fixture changed, while proving nothing.
+
+test("the spacing menu ticks 1.5 on a paragraph whose 1.5 comes only from its style", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  // Create the condition: 1.5 on this paragraph, then written into its style.
+  await openSpacingMenu(page);
+  await page.locator('.spacing-line[data-percent="150"]').click();
+  await runPaletteCommand(page, "style.updateFromSelection", "match selection");
+  await expect(page.locator("#status")).toContainText("match the selection");
+
+  // A different paragraph, given that style and nothing else. Its 1.5 is
+  // inherited: there is no direct `w:spacing` on it at all.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await runPaletteCommand(page, "style.Heading 1", "Style: Heading 1");
+  await openSpacingMenu(page);
+
+  // Docs: the resolved preset is ticked.
+  const ticked = page.locator('.spacing-line[data-percent="150"]');
+  await expect(ticked).toHaveAttribute("aria-checked", "true");
+  // Word: the resolved number is in the box.
+  await expect(page.locator(valueInput)).toHaveValue("1.5");
+  await expect(page.locator(modeSel)).toHaveValue("multiple");
+  // …and the distinction Word's dialog drops is kept: the ticked row and the
+  // box both say the value was inherited, and the note says so in words.
+  await expect(ticked).toHaveAttribute("data-from-style", "true");
+  await expect(page.locator(valueInput)).toHaveAttribute("data-from-style", "true");
+  await expect(page.locator("#lineSpacingFromStyle")).toBeVisible();
+  await expect(page.locator("#lineSpacingFromStyle")).toContainText("from its style");
+
+  // Setting it HERE is a different reading of the same number: same tick, same
+  // value, and the inherited marks gone.
+  await page.locator('.spacing-line[data-percent="150"]').click();
+  await openSpacingMenu(page);
+  await expect(ticked).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(valueInput)).toHaveValue("1.5");
+  await expect(ticked).not.toHaveAttribute("data-from-style", "true");
+  await expect(page.locator("#lineSpacingFromStyle")).toBeHidden();
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("zero space before reads as zero, not as unset", async ({ page, consoleErrors }) => {
+  // `ParagraphSpacing::default()` answers -1 for before/after because 0 is a
+  // real value. The box therefore prints "0" for a paragraph that says "no space
+  // before me", and is empty only when nothing in the cascade says anything —
+  // the two states the old `0` default conflated.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await openSpacingMenu(page);
+  await page.locator("#spaceBefore").fill("0");
+  await page.locator("#spaceBefore").blur();
+  await closeSpacingMenu(page);
+  await openSpacingMenu(page);
+  await expect(page.locator("#spaceBefore")).toHaveValue("0");
+  expect(consoleErrors).toEqual([]);
+});

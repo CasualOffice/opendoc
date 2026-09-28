@@ -122,6 +122,57 @@ export function stripRect(table, axis, thickness, minimum = 0) {
   return h > minimum ? { x: table.x, y, w: table.w, h } : null;
 }
 
+/**
+ * Which BOUNDARY a reorder drag would drop on, for a pointer at `along`.
+ *
+ * `0` is before the first band, `bands.length` after the last: the insertion
+ * point idiom, decided by the midpoint of the band the pointer is in, so the
+ * indicator flips the moment the pointer passes the middle of a row rather than
+ * only at its edge. That is what makes the drop predictable while the pointer is
+ * still moving, which is the half a drag without an indicator was missing.
+ *
+ * Clamped at both ends, because a drag that runs past the table has not stopped
+ * being a drag — Docs keeps showing the first/last drop rather than dropping the
+ * indicator, and a pointer two pixels above the table still means "put it on
+ * top".
+ *
+ * Complexity: O(bands) — the same arithmetic over the same memoised page chrome
+ * every other zone here reads. Nothing is asked of the document.
+ *
+ * @param {Array<{start:number,end:number}>} bands from {@link tableBands}
+ * @param {number} along page-local twips on the band axis
+ * @returns {number} a boundary index in `[0, bands.length]`
+ */
+export function dropBoundaryAt(bands, along) {
+  if (!bands?.length) return 0;
+  for (let i = 0; i < bands.length; i++) {
+    const band = bands[i];
+    if (along < (band.start + band.end) / 2) return i;
+    if (along < band.end) return i + 1;
+  }
+  return bands.length;
+}
+
+/**
+ * The post-move index a move to `boundary` lands on, given the band is at
+ * `from`.
+ *
+ * The facade takes `to` as the index the band occupies AFTER the move, which is
+ * one less than the boundary whenever the band travels forwards — it vacates a
+ * slot on the way past. Doing this arithmetic in one named place is deliberate:
+ * an off-by-one here moves the right row to the wrong place and still commits,
+ * which no refusal can catch.
+ *
+ * Complexity: O(1).
+ *
+ * @param {number} from the band's current index
+ * @param {number} boundary a drop boundary, as {@link dropBoundaryAt} returns
+ * @returns {number} the `to` argument for `moveTableRow` / `moveTableColumn`
+ */
+export function moveTargetIndex(from, boundary) {
+  return boundary > from ? boundary - 1 : boundary;
+}
+
 /** Whether `v` lies in `[lo, hi)`. Half-open so two adjacent bands never both
  *  claim the point on their shared boundary. */
 function inBand(v, lo, hi) {

@@ -287,7 +287,19 @@ const SRC = new URL("../src/", import.meta.url);
  *
  *  RE-MEASURED from the file after rebasing onto `origin/main`, which had moved
  *  under the branch twice while this was in flight. */
-const MAIN_JS_LINE_CEILING = 16453;
+/** Lowered to 16,446 by the round that made PR #674's four engine capabilities
+ *  reachable. It needed a References surface row, a contextual-group hook and a
+ *  table-of-contents command host, and the file was AT its ceiling with zero
+ *  slack — so it paid with two extractions rather than with whitespace, which is
+ *  the mistake the 17,054 note above records. What came out: the two
+ *  Layout/References ENABLEMENT rules, which are a pure decision over an O(1)
+ *  state bag read by four callers (`ribbon_surface.mjs`); and `stepTableBand`,
+ *  whose whole job was turning a caret node into the page and cell rectangle the
+ *  table chrome layer already owns (`table_chrome.mjs` `stepCaretBand`).
+ *
+ *  MEASURED FROM THE MERGED FILE after rebasing onto `origin/main`, which had
+ *  lowered this to 16,453 underneath the branch. */
+const MAIN_JS_LINE_CEILING = 16446;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
