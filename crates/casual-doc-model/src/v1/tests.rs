@@ -2537,6 +2537,16 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                     width_emu: 800_000,
                     height_emu: 200_000,
                 },
+                // A text box with a REAL geometry and an authored guide, not a
+                // defaulted rectangle: the point of this fixture is that every
+                // field of a group child survives JSON, and a rectangle would
+                // serialize to nothing and prove nothing about the new triple.
+                geometry: ShapeGeometry::Star5,
+                preset: None,
+                adjustments: vec![ShapeAdjustment {
+                    name: "adj".to_owned(),
+                    formula: "val 30000".to_owned(),
+                }],
                 blocks: vec![paragraph_block(tid(33))],
                 // A gradient fill so the JSON round trip also exercises
                 // `Fill::Gradient` (stops + geometry), not only `Fill::Solid`.

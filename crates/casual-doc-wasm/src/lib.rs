@@ -113,6 +113,11 @@ use wasm_bindgen::prelude::*;
 
 mod window;
 
+// Floating-object position, grouping, z-order and transform. Its own module for
+// the same reason as `references`: one feature, one document walk per command,
+// and this file is already 40k lines and is owned by other lanes.
+mod objects;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -2384,12 +2389,31 @@ impl WasmDocument {
     }
 
     /// Word's Insert ▸ Shapes: a floating preset shape at the caret, filled and
-    /// outlined in the default accent, as one undoable action. `geometry` is one
-    /// of `rectangle`, `roundRectangle`, `ellipse`, `triangle`, `rightTriangle`,
-    /// `diamond`, `line`.
+    /// outlined in the default accent, as one undoable action.
+    ///
+    /// `geometry` is the OOXML `a:prstGeom@prst` token — `rect`, `roundRect`,
+    /// `ellipse`, `triangle`, `rtTriangle`, `diamond`, `line`, `pentagon`,
+    /// `hexagon`, `octagon`, `star5`, `star4`, `rightArrow`, `leftArrow`,
+    /// `upArrow`, `downArrow`, `leftRightArrow`, `parallelogram`, `trapezoid`,
+    /// `chevron`, `homePlate`, `plus` — resolved through
+    /// `ShapeGeometry::from_preset_token`, the same table import and export
+    /// use. That is deliberate: a gallery built from one hand-written list and
+    /// a model built from another drift, and the drift shows up as a preset
+    /// this build can READ but cannot OFFER. Asking for the token makes every
+    /// modeled preset insertable the moment it is modeled.
+    ///
+    /// The historical camelCase spellings (`rectangle`, `roundRectangle`,
+    /// `rightTriangle`) are still accepted, because a host already shipped
+    /// against them.
     ///
     /// The shape is wrapped in a group-of-one because that is the only shape a
     /// shape takes in this model — a lone autoshape imports the same way.
+    ///
+    /// # Errors
+    ///
+    /// When `geometry` names no typed preset. It is refused rather than
+    /// silently drawn as a rectangle, which is what a caller would otherwise
+    /// see and mistake for a rendering bug.
     #[wasm_bindgen(js_name = insertShape)]
     pub fn insert_shape(
         &mut self,
@@ -2405,12 +2429,9 @@ impl WasmDocument {
         let geometry = match geometry {
             "rectangle" => ShapeGeometry::Rectangle,
             "roundRectangle" => ShapeGeometry::RoundRectangle,
-            "ellipse" => ShapeGeometry::Ellipse,
-            "triangle" => ShapeGeometry::Triangle,
             "rightTriangle" => ShapeGeometry::RightTriangle,
-            "diamond" => ShapeGeometry::Diamond,
-            "line" => ShapeGeometry::Line,
-            other => return Err(to_js(format!("unknown shape {other:?}"))),
+            token => ShapeGeometry::from_preset_token(token)
+                .ok_or_else(|| to_js(format!("unknown shape {token:?}")))?,
         };
         let owner = node_id(node)?;
         let exhausted = || to_js("id space exhausted".into());
@@ -38352,7 +38373,8 @@ mod tests {
             HorizontalRuleAlign, InlineSdt, Math, MediaReference, MoveRangeEnd, MoveRangeStart,
             NoBreakHyphen, Note, NoteNumberMark, NoteReference, PositionalTab,
             PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, SdtProperties,
-            SoftHyphen, Tab, TableLook, TableRowProperties, TextBox, WrapDistances,
+            ShapeAdjustment, ShapeGeometry, SoftHyphen, Tab, TableLook, TableRowProperties,
+            TextBox, WrapDistances,
         };
         use casual_doc_model::v1::{BookmarkStart, Break};
         // Its own `use` line on purpose: a new v1 import added into the sorted
@@ -38569,6 +38591,19 @@ mod tests {
                         id: id(),
                         offset: PointEmu { x_emu: 0, y_emu: 0 },
                         extent,
+                        // Deliberately NOT the default geometry. This fixture
+                        // exists to prove a paste carries every inline kind
+                        // whole, and the census below counts kinds, not fields
+                        // — so a defaulted `geometry` would satisfy the
+                        // compiler while testing nothing about a field that
+                        // can be dropped (`105` CQ-003, SKILL §5a). A
+                        // non-default one is asserted on explicitly instead.
+                        geometry: ShapeGeometry::Ellipse,
+                        preset: None,
+                        adjustments: vec![ShapeAdjustment {
+                            name: "adj".to_owned(),
+                            formula: "val 30000".to_owned(),
+                        }],
                         blocks: vec![paragraph(id(), vec![run(id(), "in a grouped box")])],
                         fill: None,
                         border: None,
@@ -38846,6 +38881,32 @@ mod tests {
             after.get("run").copied().unwrap_or(0),
             before.get("run").copied().unwrap_or(0) * 2 - 1,
             "every run but the destination paragraph's own was duplicated"
+        );
+        // A kind census cannot see a field, so the grouped text box's SHAPE is
+        // asserted directly: every copy of it still has the ellipse geometry
+        // and the adjustment guide the fixture gave it.
+        let mut shaped = 0;
+        visit_paragraphs_in(&d.document, &mut |paragraph| {
+            for inline in &paragraph.inlines {
+                if let InlineNode::Group(group) = inline {
+                    for child in &group.children {
+                        if let GroupChild::TextBox(text_box) = child
+                            && text_box.geometry == casual_doc_model::v1::ShapeGeometry::Ellipse
+                            && text_box
+                                .adjustments
+                                .iter()
+                                .any(|guide| guide.formula == "val 30000")
+                        {
+                            shaped += 1;
+                        }
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            shaped, 2,
+            "both the original and the pasted grouped text box kept their \
+             preset geometry and its adjustment guide"
         );
 
         // Degraded: the ten markers of the five unique-reference families are not

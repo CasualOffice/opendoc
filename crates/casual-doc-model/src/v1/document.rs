@@ -1580,6 +1580,12 @@ impl Document {
                         return Err(ModelError::EmptyTextBox(text_box.id));
                     }
                     check_extent(&text_box.extent, "group.textBox.extent")?;
+                    check_preset_geometry(
+                        text_box.geometry,
+                        text_box.preset.as_ref(),
+                        &text_box.adjustments,
+                        &GROUP_TEXT_BOX_GEOMETRY,
+                    )?;
                     check_text_box_body_properties(
                         &text_box.body_properties,
                         "group.textBox.bodyProperties",
@@ -1596,30 +1602,12 @@ impl Document {
                 }
                 GroupChild::Shape(shape) => {
                     check_extent(&shape.extent, "group.shape.extent")?;
-                    if let Some(preset) = &shape.preset {
-                        check_domain(
-                            shape.geometry == ShapeGeometry::Other
-                                && !preset.is_empty()
-                                && preset.len() <= MAX_SHAPE_PRESET_BYTES,
-                            "group.shape.preset",
-                        )?;
-                    }
-                    check_domain(
-                        shape.adjustments.len() <= MAX_SHAPE_ADJUSTMENTS,
-                        "group.shape.adjustments",
+                    check_preset_geometry(
+                        shape.geometry,
+                        shape.preset.as_ref(),
+                        &shape.adjustments,
+                        &GROUP_SHAPE_GEOMETRY,
                     )?;
-                    for adjustment in &shape.adjustments {
-                        check_domain(
-                            !adjustment.name.is_empty()
-                                && adjustment.name.len() <= MAX_SHAPE_GUIDE_NAME_BYTES,
-                            "group.shape.adjustment.name",
-                        )?;
-                        check_domain(
-                            !adjustment.formula.is_empty()
-                                && adjustment.formula.len() <= MAX_SHAPE_FORMULA_BYTES,
-                            "group.shape.adjustment.formula",
-                        )?;
-                    }
                     if let Some(path) = &shape.path {
                         // A path only ever accompanies `Other`: a preset carries
                         // its own geometry and a file that supplies both is
@@ -2988,6 +2976,73 @@ fn check_wrap_distances(distances: &WrapDistances) -> Result<(), ModelError> {
 /// Bounds the four `a:srcRect` crop edges to `CROP_MIN..=CROP_MAX`, the range
 /// import clamps into and that [`CropRect`] round-trips verbatim; a value outside
 /// it names a source rectangle the model does not represent.
+/// The `ModelError` property names one container reports its preset-geometry
+/// domain failures under. [`check_domain`] takes a `&'static str`, so a caller
+/// supplies its own names rather than formatting a prefix.
+struct PresetGeometryNames {
+    preset: &'static str,
+    adjustments: &'static str,
+    adjustment_name: &'static str,
+    adjustment_formula: &'static str,
+}
+
+/// The names a text-free `wps:wsp` ([`GroupShape`]) reports under.
+const GROUP_SHAPE_GEOMETRY: PresetGeometryNames = PresetGeometryNames {
+    preset: "group.shape.preset",
+    adjustments: "group.shape.adjustments",
+    adjustment_name: "group.shape.adjustment.name",
+    adjustment_formula: "group.shape.adjustment.formula",
+};
+
+/// The names a text-bearing `wps:wsp` ([`GroupTextBox`]) reports under.
+const GROUP_TEXT_BOX_GEOMETRY: PresetGeometryNames = PresetGeometryNames {
+    preset: "group.textBox.preset",
+    adjustments: "group.textBox.adjustments",
+    adjustment_name: "group.textBox.adjustment.name",
+    adjustment_formula: "group.textBox.adjustment.formula",
+};
+
+/// Bounds the preset-geometry triple a `wps:wsp` carries, whether or not it
+/// holds text: a retained token exists only beside [`ShapeGeometry::Other`] and
+/// is non-empty and within [`MAX_SHAPE_PRESET_BYTES`], and the `a:avLst` guides
+/// are bounded in count, name length and formula length.
+///
+/// One function for both containers, because a hostile snapshot must not find a
+/// looser path by putting its unbounded token on the shape that has text in it.
+///
+/// Complexity: O(g) over this shape's own guides, refused past
+/// [`MAX_SHAPE_ADJUSTMENTS`].
+fn check_preset_geometry(
+    geometry: ShapeGeometry,
+    preset: Option<&String>,
+    adjustments: &[ShapeAdjustment],
+    names: &PresetGeometryNames,
+) -> Result<(), ModelError> {
+    if let Some(preset) = preset {
+        check_domain(
+            geometry == ShapeGeometry::Other
+                && !preset.is_empty()
+                && preset.len() <= MAX_SHAPE_PRESET_BYTES,
+            names.preset,
+        )?;
+    }
+    check_domain(
+        adjustments.len() <= MAX_SHAPE_ADJUSTMENTS,
+        names.adjustments,
+    )?;
+    for adjustment in adjustments {
+        check_domain(
+            !adjustment.name.is_empty() && adjustment.name.len() <= MAX_SHAPE_GUIDE_NAME_BYTES,
+            names.adjustment_name,
+        )?;
+        check_domain(
+            !adjustment.formula.is_empty() && adjustment.formula.len() <= MAX_SHAPE_FORMULA_BYTES,
+            names.adjustment_formula,
+        )?;
+    }
+    Ok(())
+}
+
 fn check_crop(crop: &CropRect, property: &'static str) -> Result<(), ModelError> {
     for edge in [crop.left, crop.top, crop.right, crop.bottom] {
         check_domain((CROP_MIN..=CROP_MAX).contains(&edge), property)?;

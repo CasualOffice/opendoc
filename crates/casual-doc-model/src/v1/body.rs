@@ -780,12 +780,24 @@ pub enum LineEndSize {
 /// bounded primitive subset implemented by layout/render is distinguished;
 /// every other preset is [`ShapeGeometry::Other`] (drawn as its bounding
 /// rectangle while its original token is retained by [`GroupShape::preset`]).
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// A variant is added here **only** when layout can draw the preset's real
+/// outline. A variant that painted its bounding rectangle would be
+/// [`ShapeGeometry::Other`] with a longer name and no more fidelity, so the
+/// typed set is exactly the set of presets a reader sees the right shape for.
+///
+/// Every variant names the `ST_ShapeType` token it maps to (ECMA-376 Part 1
+/// §20.1.10.56) and, where the preset's outline is governed by an `a:avLst`
+/// adjustment guide, says which guide is honored and what the preset default is
+/// when the document authors none.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ShapeGeometry {
     /// A rectangle (`rect`).
+    #[default]
     Rectangle,
-    /// A rounded rectangle (`roundRect`).
+    /// A rounded rectangle (`roundRect`). Honors `adj` (corner radius as a
+    /// 100000-based fraction of the shorter side); preset default `16667`.
     RoundRectangle,
     /// An ellipse (`ellipse`).
     Ellipse,
@@ -797,8 +809,162 @@ pub enum ShapeGeometry {
     Diamond,
     /// A straight line / connector (`line`, or a `wps:cxnSp` straight connector).
     Line,
+    /// A regular pentagon, apex up (`pentagon`). The preset declares no
+    /// adjustment guide: its outline is fixed, inscribed so it fills the
+    /// bounding box exactly.
+    Pentagon,
+    /// A hexagon with its two points on the left and right edges (`hexagon`).
+    /// Honors `adj` (the horizontal inset of the four corner vertices, as a
+    /// 100000-based fraction of the shorter side, clamped to half the width);
+    /// preset default `25000`. The `vf` guide, which stretches the preset
+    /// vertically, is not honored — the hexagon is fitted to the shape's own
+    /// box instead.
+    Hexagon,
+    /// An octagon (`octagon`). Honors `adj` (the corner cut, as a 100000-based
+    /// fraction of the shorter side, clamped to `50000`); preset default
+    /// `29289`, which is the regular octagon when the box is square.
+    Octagon,
+    /// A five-pointed star (`star5`). Honors `adj` (the inner radius, as a
+    /// fraction `adj / 50000` of the outer radius); preset default `19098`,
+    /// which is the regular pentagram. The `hf`/`vf` guides are not honored:
+    /// the star is fitted to the shape's own box, which is what they encode.
+    Star5,
+    /// A four-pointed star (`star4`). Honors `adj` (the inner radius, as a
+    /// fraction `adj / 50000` of the outer radius); preset default `12500`.
+    Star4,
+    /// A block arrow pointing right (`rightArrow`). Honors `adj1` (shaft
+    /// thickness as a 200000-based fraction of the height) and `adj2` (head
+    /// length as a 100000-based fraction of the shorter side); preset defaults
+    /// `50000` and `50000`.
+    RightArrow,
+    /// A block arrow pointing left (`leftArrow`); guides as
+    /// [`ShapeGeometry::RightArrow`].
+    LeftArrow,
+    /// A block arrow pointing up (`upArrow`). Honors `adj1` (shaft thickness as
+    /// a 200000-based fraction of the width) and `adj2` (head length as a
+    /// 100000-based fraction of the shorter side); preset defaults `50000`.
+    UpArrow,
+    /// A block arrow pointing down (`downArrow`); guides as
+    /// [`ShapeGeometry::UpArrow`].
+    DownArrow,
+    /// A double-headed block arrow (`leftRightArrow`). Honors `adj1` (shaft
+    /// thickness as a 200000-based fraction of the height) and `adj2` (each
+    /// head's length as a 100000-based fraction of the shorter side); preset
+    /// defaults `50000`.
+    LeftRightArrow,
+    /// A parallelogram leaning right (`parallelogram`). Honors `adj` (the
+    /// horizontal offset of the top edge, as a 100000-based fraction of the
+    /// shorter side); preset default `25000`.
+    Parallelogram,
+    /// An isosceles trapezoid with the wide edge at the bottom (`trapezoid`).
+    /// Honors `adj` (each top inset, as a 100000-based fraction of the shorter
+    /// side); preset default `25000`.
+    Trapezoid,
+    /// A chevron — an arrow head with a notched back (`chevron`). Honors `adj`
+    /// (the point depth, as a 100000-based fraction of the shorter side);
+    /// preset default `50000`.
+    Chevron,
+    /// The "pentagon" block arrow of Word's shape gallery — a rectangle with a
+    /// pointed right end (`homePlate`, which is the OOXML token; the regular
+    /// pentagon is [`ShapeGeometry::Pentagon`]). Honors `adj` (the point depth,
+    /// as a 100000-based fraction of the shorter side); preset default `50000`.
+    HomePlate,
+    /// A cross / plus sign (`plus`). Honors `adj` (the arm thickness inset, as
+    /// a 100000-based fraction of the shorter side, clamped to `50000`); preset
+    /// default `25000`.
+    Plus,
     /// Any other preset, drawn as its bounding rectangle.
     Other,
+}
+
+impl ShapeGeometry {
+    /// Every typed preset, in declaration order. [`ShapeGeometry::Other`] is
+    /// excluded: it is the catch-all, not a preset, and carries its authored
+    /// token in `GroupShape::preset` instead.
+    ///
+    /// Exhaustive by construction — a variant added without being listed here
+    /// fails [`ShapeGeometry::preset_token`]'s match, which has no wildcard.
+    pub const TYPED: [Self; 22] = [
+        Self::Rectangle,
+        Self::RoundRectangle,
+        Self::Ellipse,
+        Self::Triangle,
+        Self::RightTriangle,
+        Self::Diamond,
+        Self::Line,
+        Self::Pentagon,
+        Self::Hexagon,
+        Self::Octagon,
+        Self::Star5,
+        Self::Star4,
+        Self::RightArrow,
+        Self::LeftArrow,
+        Self::UpArrow,
+        Self::DownArrow,
+        Self::LeftRightArrow,
+        Self::Parallelogram,
+        Self::Trapezoid,
+        Self::Chevron,
+        Self::HomePlate,
+        Self::Plus,
+    ];
+
+    /// The canonical `a:prstGeom@prst` token for this geometry, or `None` for
+    /// [`ShapeGeometry::Other`], which has none of its own.
+    ///
+    /// This is the ONE token table. Import, export and the host-facing
+    /// insert-shape command all resolve through it, so a preset cannot be
+    /// readable and unwritable, or modeled and uninsertable — which is what
+    /// three separate matches drift into.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub const fn preset_token(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Rectangle => "rect",
+            Self::RoundRectangle => "roundRect",
+            Self::Ellipse => "ellipse",
+            Self::Triangle => "triangle",
+            Self::RightTriangle => "rtTriangle",
+            Self::Diamond => "diamond",
+            Self::Line => "line",
+            Self::Pentagon => "pentagon",
+            Self::Hexagon => "hexagon",
+            Self::Octagon => "octagon",
+            Self::Star5 => "star5",
+            Self::Star4 => "star4",
+            Self::RightArrow => "rightArrow",
+            Self::LeftArrow => "leftArrow",
+            Self::UpArrow => "upArrow",
+            Self::DownArrow => "downArrow",
+            Self::LeftRightArrow => "leftRightArrow",
+            Self::Parallelogram => "parallelogram",
+            Self::Trapezoid => "trapezoid",
+            Self::Chevron => "chevron",
+            Self::HomePlate => "homePlate",
+            Self::Plus => "plus",
+            Self::Other => return None,
+        })
+    }
+
+    /// The geometry an `a:prstGeom@prst` token names, or `None` when this build
+    /// has no typed primitive for it (the caller then keeps the token verbatim
+    /// in `GroupShape::preset` and paints the bounding rectangle).
+    ///
+    /// Accepts the aliases a real producer writes as well as the canonical
+    /// token — `straightConnector1` is the `wps:cxnSp` spelling of a line.
+    ///
+    /// Complexity: O(typed presets), a fixed 22-element scan over `&'static
+    /// str` — no allocation and no document access.
+    #[must_use]
+    pub fn from_preset_token(token: &str) -> Option<Self> {
+        if token == "straightConnector1" {
+            return Some(Self::Line);
+        }
+        Self::TYPED
+            .into_iter()
+            .find(|geometry| geometry.preset_token() == Some(token))
+    }
 }
 
 /// Maximum UTF-8 length of a retained DrawingML preset-geometry token.
@@ -1121,8 +1287,21 @@ fn is_default_text_box_auto_fit(value: &TextBoxAutoFit) -> bool {
     *value == TextBoxAutoFit::default()
 }
 
+/// Whether a text-bearing shape's geometry is the plain rectangle every text box
+/// had before the geometry was modeled — the value a snapshot written without the
+/// field deserializes to, so writing it back would only churn the JSON.
+fn is_rectangle_geometry(value: &ShapeGeometry) -> bool {
+    *value == ShapeGeometry::Rectangle
+}
+
 /// A text-box child of a [`WordprocessingGroup`] (`wps:wsp` with a `wps:txbx`):
 /// self-positioning block content with an optional fill and outline.
+///
+/// A `wps:wsp` carrying text is still a SHAPE — it has an `a:prstGeom` like any
+/// other, and Word draws that geometry with the text inside it. So this type
+/// carries the same [`geometry`](Self::geometry)/[`preset`](Self::preset)/
+/// [`adjustments`](Self::adjustments) triple as [`GroupShape`]; without them an
+/// authored ellipse or star was silently rewritten to `rect` on every save.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GroupTextBox {
@@ -1132,6 +1311,19 @@ pub struct GroupTextBox {
     pub offset: PointEmu,
     /// The box's size (`a:ext`, EMU).
     pub extent: Extent,
+    /// The preset geometry drawn behind the text (`a:prstGeom@prst`). Defaults
+    /// to [`ShapeGeometry::Rectangle`], which is both the plain text box and
+    /// what a snapshot written before this field carried implicitly.
+    #[serde(default, skip_serializing_if = "is_rectangle_geometry")]
+    pub geometry: ShapeGeometry,
+    /// Original bounded preset token when [`geometry`](Self::geometry) is
+    /// [`ShapeGeometry::Other`] because no typed primitive covers it yet.
+    /// Semantic export re-emits it instead of rewriting to `rect`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// Ordered preset adjustment guides (`a:avLst/a:gd`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjustments: Vec<ShapeAdjustment>,
     /// The box's block content (non-empty; paragraphs and nested tables), flowed
     /// through the same pipeline as the body.
     pub blocks: Vec<BlockNode>,

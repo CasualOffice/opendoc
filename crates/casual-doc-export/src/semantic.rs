@@ -6688,7 +6688,16 @@ fn write_group_text_box(
         text_box.flip_h,
         text_box.flip_v,
     )?;
-    write_prst_geom(w, "rect")?;
+    // A text box is a shape: re-emit the geometry it was authored with, through
+    // the same preset/token path `write_group_shape` takes. Hardcoding `rect`
+    // here rewrote every authored ellipse, star or arrow into a rectangle on
+    // save — a silent round-trip loss no loss report could see, because the
+    // model had already forgotten the preset.
+    let preset = text_box
+        .preset
+        .as_deref()
+        .unwrap_or_else(|| geometry_prst(text_box.geometry));
+    write_prst_geom_with_adjustments(w, preset, &text_box.adjustments)?;
     if let Some(fill) = &text_box.fill {
         write_fill(w, fill)?;
     } else {
@@ -6844,17 +6853,19 @@ fn write_cust_geom(
     Ok(())
 }
 
+/// The `a:prstGeom@prst` token (`ST_ShapeType`) for a typed preset geometry.
+///
+/// Exhaustive on purpose: a [`ShapeGeometry`] variant added without a token here
+/// fails to compile rather than being written back as the `rect` it is not.
+/// [`ShapeGeometry::Other`] is the one variant with no token of its own — a
+/// shape that reaches it carries its authored token in `preset`, which every
+/// caller prefers over this function.
+///
+/// Complexity: O(1).
 fn geometry_prst(geometry: ShapeGeometry) -> &'static str {
-    match geometry {
-        ShapeGeometry::Rectangle => "rect",
-        ShapeGeometry::RoundRectangle => "roundRect",
-        ShapeGeometry::Ellipse => "ellipse",
-        ShapeGeometry::Triangle => "triangle",
-        ShapeGeometry::RightTriangle => "rtTriangle",
-        ShapeGeometry::Diamond => "diamond",
-        ShapeGeometry::Line => "line",
-        ShapeGeometry::Other => "rect",
-    }
+    // `Other` alone has no token; every caller prefers the retained `preset`
+    // for it, and `rect` is the fallback when there is not even one of those.
+    geometry.preset_token().unwrap_or("rect")
 }
 
 /// Emits an `a:srgbClr` element for a resolved color, carrying an `a:alpha` child
