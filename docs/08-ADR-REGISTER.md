@@ -1199,6 +1199,93 @@ being **contradicted**.
   O(n·(n+m)) proving it — which is why a region with zero common keys now short-circuits.
 - The panel is a follow-on lane. `docs/140` §11.8 says exactly what it should call.
 
+## ADR-042 — Proofing is a versioned optional language-pack system, checked in a worker, behind an SDK boundary
+
+**Status:** Proposed as a whole; **Increment A accepted and implemented**. Design: `docs/146`
+(the owner's architecture of 2026-09-28, reproduced in the repository with its verification
+corrections in place). Predecessor: `docs/114`, which is the record of proofing **as shipped**
+and is not superseded. Code for this increment: `webapp/src/proof_protocol.mjs`,
+`webapp/src/proof_worker.mjs`, `webapp/src/spell_check.mjs`.
+
+**Context:** proofing shipped as an in-process, main-thread, body-only spelling and grammar
+pass over the page window (`docs/114`). It parses an ~84,000-word list into a `Set` on the
+main thread, runs every rule there, and has no versioning story for its data. `docs/146`
+proposes extending that seam into a versioned, optional **language-pack system** with the
+checking in a **Web Worker**, and sequences the work as five increments. This ADR records
+the decisions, including four the owner answered on 2026-09-29 that `docs/146` §10 had left
+open, so later increments are not designed against guesses.
+
+**Decision:**
+
+1. **Checking happens in a worker, behind a pure protocol.** The rules that decide a
+   finding live in `proof_protocol.mjs`, which is pure and in `PURE_MODULES`; the worker is
+   a transport shim over it, and an in-process responder over the *same* function is the
+   fallback where `Worker` is unavailable. One implementation of the rule, two transports —
+   a second implementation is how two answers to one question diverge.
+2. **Findings are versioned and stale ones are discarded.** A request carries
+   `documentId`, `paragraphId` and `paragraphRevision`; a reply is dropped unless all three
+   still match. Positions are never identified by canvas coordinates.
+3. **The wire is UTF-16, the engine is UTF-8, and the conversion happens at one boundary.**
+   Findings cross the worker boundary as JS string indices and are converted to engine byte
+   offsets only in the document adapter, guarded by round-trip tests over combining
+   characters, emoji, RTL and mixed scripts.
+4. **A failed or absent language asset means spelling is UNAVAILABLE for that language, and
+   says so.** It must never mean "an empty dictionary", which flags every word — the defect
+   this increment found and fixed. Grammar is decided independently of every spelling asset.
+5. **Corrections keep exactly one mutation path.** `doc.replaceRanges`, through the existing
+   undoable command, in every mode. No second path is added for proofing, now or in a later
+   increment (ADR-005, ADR-030 I2).
+6. **Proofing is a separate optional package, not a webapp feature** (owner, 2026-09-29).
+   The SDK surface is `configureProofing`, `installPack`, `removePack`,
+   `checkRange`/`checkDocument`, `onFindings`, `dispose`, with **network and storage
+   providers injected by the host**. Nothing in the protocol or the worker may reach a
+   webapp global, assume the editor's own `fetch`, or assume its storage; an embedder must
+   be able to omit proofing entirely or supply its own transport. The package is not
+   published yet — building behind the boundary now makes publishing packaging work rather
+   than a rewrite.
+7. **A small, audited runtime dependency is allowed** (owner, 2026-09-29). `webapp/package.json`
+   no longer has to stay at zero runtime dependencies for the pack and worker work. This
+   reverses the constraint `docs/114` §2.1 and §11.1 reasoned from, and what it unblocks is
+   the pack format being free to assume **Hunspell-shaped** inputs later — `nspell` (MIT) is
+   the named likely candidate when more languages come. It is **not** needed for the English
+   increment and is not being added now. Any dependency still gets a licence and provenance
+   review before it lands, and offline-first is not negotiable.
+8. **The pack size ceiling is ~50 MB per language** on the lowest supported device (owner,
+   2026-09-29). That is the cap to design tiers against, not the target, and it does not
+   remove the measurement obligation: cold pack load and worker memory are still instrumented
+   on desktop and on a midrange phone and published per pack (`docs/146` §9). Browser storage
+   is quota-bound and evictable, so an install degrades honestly when the quota refuses.
+9. **Terminology stays browser-local and document-local by default, with a host-provided
+   sync seam** (owner, 2026-09-29). No server, nothing leaves the machine; but the document
+   profile's interface must admit an injected host provider, so a host that wants to sync
+   terminology can, later, without the interface being rewritten. This binds Increment C's
+   design; for Increment A it only forbids baking browser-local storage into that interface.
+
+**Still open, deliberately:** **which source corpus is legally and practically suitable for a
+redistributed context pack** (`docs/146` §10, Increment D). A dataset's licence is not
+inferable from an engine's, and LanguageTool's own grammar rules carry an **LGPL** notice
+that must not be copied in without a deliberate compatibility and attribution review. Left
+unanswered rather than assumed.
+
+**Consequences:**
+
+- Increment A ships the stability half only: the grammar/dictionary decoupling, the pure
+  contracts, the worker, stale-finding rejection and the offset round-trips. **No download
+  UX, no pack manifest, no terminology profile, no confusion pairs.**
+- The main thread stops parsing the word list and stops running the rules. The coordinator's
+  remaining per-scan cost is engine reads for the paragraphs in the page window, which is
+  the O(window) it already was.
+- The result cache stays on the **coordinator** rather than in the worker, so an unchanged
+  window costs zero messages; the key is still the one `docs/146` §4 specifies. Recorded as
+  a deviation in `docs/146` §2 rather than left as a silent difference.
+- `docs/114` §8's remaining list — non-body stories, `w:noProof`, custom-dictionary
+  management, grammar breadth, a whole-document sweep — is **not** closed by this increment
+  and moves under `docs/146`'s P2/P3 rows.
+- Non-body stories are blocked on **enumeration in the engine**, not on the host: `hitTest`
+  is body-only and `moveCaret` stops at a story boundary by design, while painting already
+  works for those nodes. Footnote and endnote bodies have no host-reachable route at all.
+  That is `crates/**` work and is why `docs/146` ranks it P3.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
@@ -1210,4 +1297,5 @@ being **contradicted**.
 - document assistance, local semantic retrieval, and MCP adapter — **ADR-035 proposed experimental**;
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
+- proofing context pack: which source corpus is redistributable — **ADR-042** leaves it open;
 - whether layout uses fixed-point units internally.
