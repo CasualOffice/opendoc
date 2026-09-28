@@ -235,7 +235,7 @@ test("formatting with a row selected applies to the WHOLE row, in one undo entry
   expect(await page.locator("#undoBtn").getAttribute("title")).not.toBe(undoBefore);
 });
 
-test("a refused table edit never puts the engine's own prose on the status line", async ({
+test("a refused table edit says WHY, in words the engine meant a reader to see", async ({
   page,
 }) => {
   // `runNodeEdit` used to do `setStatus(err?.message ?? …)`, bypassing
@@ -255,11 +255,23 @@ test("a refused table edit never puts the engine's own prose on the status line"
 
   const said = await statusText(page);
   await expect(page.locator("#status")).toHaveClass(/error/);
-  // The guarantee, not the sentence: nothing the ENGINE says about its own internals
-  // reaches the reader. The facade's wording here is "formulas require a regular
-  // table" — readable-looking, unlocalised, and not ours to show.
+  // THE GUARANTEE MOVED, deliberately, and this guard moved with it.
+  //
+  // It used to assert the generic sentence, because the facade threw unmarked
+  // prose about its own internals ("formulas require a regular table") and
+  // `edit_errors.mjs` was right to replace anything like it. Refusals now carry
+  // a marker and a routing code, so a sentence the engine DELIBERATELY wrote for
+  // a reader passes through verbatim while everything unmarked still collapses
+  // to the generic one — that half is guarded where the rule lives, in
+  // `tests/edit_errors.test.mjs` ("any other refused edit keeps the generic
+  // selection message", "no engine error name ever reaches the user").
+  //
+  // So what this spec now defends is the thing a user feels: being told WHICH
+  // constraint they hit instead of being shrugged at. Asserting the generic
+  // sentence here would make the guard demand the defect back.
   expect(said).not.toMatch(/regular table|formulas require|Unsupported|CrossParagraph/);
-  expect(said).toBe("That edit isn't supported for this selection yet");
+  expect(said).not.toBe("That edit isn't supported for this selection yet");
+  expect(said).toMatch(/merged cell/i);
 });
 
 test("a disabled Table-band control states its reason and looks disabled", async ({ page }) => {
