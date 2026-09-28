@@ -633,7 +633,9 @@ fn out_of_group_child(
             group.anchor = Some(anchor);
             group.relative_height = relative_height;
             group.extent = group.transform.extent;
-            group.transform.offset = PointEmu { x_emu: 0, y_emu: 0 };
+            // The offset is NOT reset: the caller has already set it to the
+            // group's declared-box-to-content inset, which is what keeps the
+            // content on the anchor.
             InlineNode::Group(Box::new(group))
         }
         // A shape, or a transformed text box: wrapped in a group of one.
@@ -679,6 +681,17 @@ fn set_group_child_offset(child: &mut GroupChild, offset: PointEmu) {
         GroupChild::TextBox(text_box) => text_box.offset = offset,
         GroupChild::Shape(shape) => shape.offset = offset,
         GroupChild::Group(group) => group.transform.offset = offset,
+    }
+}
+
+/// An EMU magnitude from a float measurement, clamped into the model's domain.
+fn round_emu(value: f64) -> i64 {
+    if !value.is_finite() {
+        return 0;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    {
+        (value.round() as i64).clamp(-MAX_EMU, MAX_EMU)
     }
 }
 
@@ -1151,9 +1164,30 @@ impl WasmDocument {
 
         let mut children = Vec::with_capacity(members.len());
         for member in members {
-            let offset = PointEmu {
-                x_emu: member.left_emu - left,
-                y_emu: member.top_emu - top,
+            // A leaf's placed corner IS its box, so its new offset is just the
+            // delta. A GROUP's placed corner is where its CONTENT starts, which
+            // its declared `a:off`/`a:chOff` need not agree with — a child
+            // dragged out of the declared box makes them disagree — so the
+            // group is translated by the difference between the two rather
+            // than pinned to the content corner, which would shift everything
+            // inside it by the group's own internal offset.
+            let offset = match &member.inline {
+                InlineNode::Group(group) => {
+                    let bounds = crate::group_content_bounds(group, group.transform)
+                        .ok_or_else(|| "a grouped group has no bounded content".to_owned())?;
+                    PointEmu {
+                        x_emu: group.transform.offset.x_emu + member.left_emu
+                            - round_emu(bounds.left)
+                            - left,
+                        y_emu: group.transform.offset.y_emu + member.top_emu
+                            - round_emu(bounds.top)
+                            - top,
+                    }
+                }
+                _ => PointEmu {
+                    x_emu: member.left_emu - left,
+                    y_emu: member.top_emu - top,
+                },
             };
             let child_extent = Extent {
                 width_emu: member.width_emu.max(1),
@@ -1280,9 +1314,31 @@ impl WasmDocument {
         for child in group.children {
             let (left, top) = child_page_origin(&child, &placed)
                 .ok_or_else(|| "the group is not fully placed on the page".to_owned())?;
+            // The anchor goes on the content corner, so a nested group keeps
+            // the offset between its declared box and its content — the same
+            // correction grouping applies, in reverse. A leaf has no such
+            // offset and rests at zero.
+            let child = match child {
+                GroupChild::Group(nested) => {
+                    let bounds = crate::group_content_bounds(&nested, nested.transform)
+                        .ok_or_else(|| "a nested group has no bounded content".to_owned())?;
+                    let inset = PointEmu {
+                        x_emu: -round_emu(
+                            (bounds.left - nested.transform.offset.x_emu as f64) * scale.0,
+                        ),
+                        y_emu: -round_emu(
+                            (bounds.top - nested.transform.offset.y_emu as f64) * scale.1,
+                        ),
+                    };
+                    let mut nested = scaled_group_child(GroupChild::Group(nested), scale);
+                    set_group_child_offset(&mut nested, inset);
+                    nested
+                }
+                leaf => scaled_group_child(leaf, scale),
+            };
             let ids = &mut self.edit_ids;
             replacements.push(out_of_group_child(
-                scaled_group_child(child, scale),
+                child,
                 anchor_at_page(anchor.clone(), left, top),
                 relative_height,
                 || ids.next_id().map_err(|_| "id space exhausted".to_owned()),
@@ -2605,6 +2661,84 @@ mod tests {
                      {before:?} became {after:?}"
                 );
             }
+        }
+    }
+
+    /// A group's declared box and the box its content actually occupies are
+    /// two different rectangles — `a:chOff` is arbitrary, and a child dragged
+    /// out of the declared box makes them disagree. Both directions have to
+    /// translate by the CONTENT corner, not by the declared one, or every
+    /// member of an imported group shifts the moment it is grouped again.
+    #[test]
+    fn a_group_whose_content_sits_outside_its_declared_box_still_does_not_move() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        let (_, first, second) = two_boxes(&mut document);
+        document
+            .group_objects_inner(&format!("[\"{first}\",\"{second}\"]"))
+            .expect("group the inner pair");
+        let inner = only_group(&document)
+            .expect("the inner group")
+            .id
+            .to_string();
+
+        // Push the child that DEFINES the group's content corner up and to the
+        // left, so the content corner moves away from `a:chOff`. Nudging any
+        // other child would leave the minimum where it was and the guard would
+        // pass without ever creating the condition it is about.
+        document
+            .move_group_child_by(&first, -457_200.0, -457_200.0)
+            .expect("nudge a child outside the declared box");
+        assert_eq!(
+            document.object_rect(&first)[1..3],
+            [720, 720],
+            "the nudge really moved the content corner"
+        );
+
+        let third = document
+            .insert_text_box(&paragraph, 0)
+            .expect("a third box")
+            .node;
+        let third = owner_box(&document, &third);
+        document
+            .set_object_anchor_position(&third, 4_572_000.0, 914_400.0)
+            .expect("place it");
+
+        let before = [
+            document.object_rect(&first),
+            document.object_rect(&second),
+            document.object_rect(&third),
+        ];
+        document
+            .group_objects_inner(&format!("[\"{inner}\",\"{third}\"]"))
+            .expect("group the group with the third box");
+        let grouped = [
+            document.object_rect(&first),
+            document.object_rect(&second),
+            document.object_rect(&third),
+        ];
+        for (before, after) in before.iter().zip(grouped.iter()) {
+            assert_eq!(
+                before, after,
+                "grouping a group moved its content: {before:?} became {after:?}"
+            );
+        }
+
+        let outer = only_group(&document)
+            .expect("the outer group")
+            .id
+            .to_string();
+        document.ungroup_object_inner(&outer).expect("ungroup");
+        let ungrouped = [
+            document.object_rect(&first),
+            document.object_rect(&second),
+            document.object_rect(&third),
+        ];
+        for (before, after) in before.iter().zip(ungrouped.iter()) {
+            assert_eq!(
+                before, after,
+                "ungrouping moved a group's content: {before:?} became {after:?}"
+            );
         }
     }
 
