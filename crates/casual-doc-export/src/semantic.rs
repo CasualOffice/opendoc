@@ -6863,31 +6863,9 @@ fn write_cust_geom(
 ///
 /// Complexity: O(1).
 fn geometry_prst(geometry: ShapeGeometry) -> &'static str {
-    match geometry {
-        ShapeGeometry::Rectangle => "rect",
-        ShapeGeometry::RoundRectangle => "roundRect",
-        ShapeGeometry::Ellipse => "ellipse",
-        ShapeGeometry::Triangle => "triangle",
-        ShapeGeometry::RightTriangle => "rtTriangle",
-        ShapeGeometry::Diamond => "diamond",
-        ShapeGeometry::Line => "line",
-        ShapeGeometry::Pentagon => "pentagon",
-        ShapeGeometry::Hexagon => "hexagon",
-        ShapeGeometry::Octagon => "octagon",
-        ShapeGeometry::Star5 => "star5",
-        ShapeGeometry::Star4 => "star4",
-        ShapeGeometry::RightArrow => "rightArrow",
-        ShapeGeometry::LeftArrow => "leftArrow",
-        ShapeGeometry::UpArrow => "upArrow",
-        ShapeGeometry::DownArrow => "downArrow",
-        ShapeGeometry::LeftRightArrow => "leftRightArrow",
-        ShapeGeometry::Parallelogram => "parallelogram",
-        ShapeGeometry::Trapezoid => "trapezoid",
-        ShapeGeometry::Chevron => "chevron",
-        ShapeGeometry::HomePlate => "homePlate",
-        ShapeGeometry::Plus => "plus",
-        ShapeGeometry::Other => "rect",
-    }
+    // `Other` alone has no token; every caller prefers the retained `preset`
+    // for it, and `rect` is the fallback when there is not even one of those.
+    geometry.preset_token().unwrap_or("rect")
 }
 
 /// Emits an `a:srgbClr` element for a resolved color, carrying an `a:alpha` child

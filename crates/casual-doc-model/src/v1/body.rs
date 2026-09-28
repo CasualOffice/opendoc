@@ -877,6 +877,96 @@ pub enum ShapeGeometry {
     Other,
 }
 
+impl ShapeGeometry {
+    /// Every typed preset, in declaration order. [`ShapeGeometry::Other`] is
+    /// excluded: it is the catch-all, not a preset, and carries its authored
+    /// token in `GroupShape::preset` instead.
+    ///
+    /// Exhaustive by construction — a variant added without being listed here
+    /// fails [`ShapeGeometry::preset_token`]'s match, which has no wildcard.
+    pub const TYPED: [Self; 22] = [
+        Self::Rectangle,
+        Self::RoundRectangle,
+        Self::Ellipse,
+        Self::Triangle,
+        Self::RightTriangle,
+        Self::Diamond,
+        Self::Line,
+        Self::Pentagon,
+        Self::Hexagon,
+        Self::Octagon,
+        Self::Star5,
+        Self::Star4,
+        Self::RightArrow,
+        Self::LeftArrow,
+        Self::UpArrow,
+        Self::DownArrow,
+        Self::LeftRightArrow,
+        Self::Parallelogram,
+        Self::Trapezoid,
+        Self::Chevron,
+        Self::HomePlate,
+        Self::Plus,
+    ];
+
+    /// The canonical `a:prstGeom@prst` token for this geometry, or `None` for
+    /// [`ShapeGeometry::Other`], which has none of its own.
+    ///
+    /// This is the ONE token table. Import, export and the host-facing
+    /// insert-shape command all resolve through it, so a preset cannot be
+    /// readable and unwritable, or modeled and uninsertable — which is what
+    /// three separate matches drift into.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub const fn preset_token(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Rectangle => "rect",
+            Self::RoundRectangle => "roundRect",
+            Self::Ellipse => "ellipse",
+            Self::Triangle => "triangle",
+            Self::RightTriangle => "rtTriangle",
+            Self::Diamond => "diamond",
+            Self::Line => "line",
+            Self::Pentagon => "pentagon",
+            Self::Hexagon => "hexagon",
+            Self::Octagon => "octagon",
+            Self::Star5 => "star5",
+            Self::Star4 => "star4",
+            Self::RightArrow => "rightArrow",
+            Self::LeftArrow => "leftArrow",
+            Self::UpArrow => "upArrow",
+            Self::DownArrow => "downArrow",
+            Self::LeftRightArrow => "leftRightArrow",
+            Self::Parallelogram => "parallelogram",
+            Self::Trapezoid => "trapezoid",
+            Self::Chevron => "chevron",
+            Self::HomePlate => "homePlate",
+            Self::Plus => "plus",
+            Self::Other => return None,
+        })
+    }
+
+    /// The geometry an `a:prstGeom@prst` token names, or `None` when this build
+    /// has no typed primitive for it (the caller then keeps the token verbatim
+    /// in `GroupShape::preset` and paints the bounding rectangle).
+    ///
+    /// Accepts the aliases a real producer writes as well as the canonical
+    /// token — `straightConnector1` is the `wps:cxnSp` spelling of a line.
+    ///
+    /// Complexity: O(typed presets), a fixed 22-element scan over `&'static
+    /// str` — no allocation and no document access.
+    #[must_use]
+    pub fn from_preset_token(token: &str) -> Option<Self> {
+        if token == "straightConnector1" {
+            return Some(Self::Line);
+        }
+        Self::TYPED
+            .into_iter()
+            .find(|geometry| geometry.preset_token() == Some(token))
+    }
+}
+
 /// Maximum UTF-8 length of a retained DrawingML preset-geometry token.
 pub const MAX_SHAPE_PRESET_BYTES: usize = 64;
 

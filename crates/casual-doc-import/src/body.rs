@@ -373,31 +373,7 @@ struct ShapeBuilder {
 ///
 /// Complexity: O(1) — a fixed match over string literals, no document access.
 fn typed_preset_geometry(token: &str) -> Option<ShapeGeometry> {
-    Some(match token {
-        "rect" => ShapeGeometry::Rectangle,
-        "roundRect" => ShapeGeometry::RoundRectangle,
-        "ellipse" => ShapeGeometry::Ellipse,
-        "triangle" => ShapeGeometry::Triangle,
-        "rtTriangle" => ShapeGeometry::RightTriangle,
-        "diamond" => ShapeGeometry::Diamond,
-        "line" | "straightConnector1" => ShapeGeometry::Line,
-        "pentagon" => ShapeGeometry::Pentagon,
-        "hexagon" => ShapeGeometry::Hexagon,
-        "octagon" => ShapeGeometry::Octagon,
-        "star5" => ShapeGeometry::Star5,
-        "star4" => ShapeGeometry::Star4,
-        "rightArrow" => ShapeGeometry::RightArrow,
-        "leftArrow" => ShapeGeometry::LeftArrow,
-        "upArrow" => ShapeGeometry::UpArrow,
-        "downArrow" => ShapeGeometry::DownArrow,
-        "leftRightArrow" => ShapeGeometry::LeftRightArrow,
-        "parallelogram" => ShapeGeometry::Parallelogram,
-        "trapezoid" => ShapeGeometry::Trapezoid,
-        "chevron" => ShapeGeometry::Chevron,
-        "homePlate" => ShapeGeometry::HomePlate,
-        "plus" => ShapeGeometry::Plus,
-        _ => return None,
-    })
+    ShapeGeometry::from_preset_token(token)
 }
 
 /// Accumulator for an open `a:custGeom` on the current shape (docs/119).

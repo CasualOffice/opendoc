@@ -40,8 +40,8 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, Extent, GroupChild,
     GroupPicture, GroupTextBox, GroupTransform, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, MAX_EMU, PointEmu, TextBox, VerticalAlign, VerticalAnchor,
-    VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    HorizontalPosition, InlineNode, MAX_EMU, PointEmu, ShapeGeometry, TextBox, VerticalAlign,
+    VerticalAnchor, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -560,6 +560,14 @@ fn into_group_child(inline: InlineNode, offset: PointEmu, extent: Extent) -> Opt
                 id: text_box.id,
                 offset,
                 extent: text_box.extent.unwrap_or(extent),
+                // A top-level `TextBox` models no preset geometry, so the
+                // honest conversion is the rectangle it was being drawn as —
+                // the same shape import gives a lone `wps:wsp` and export
+                // writes back for one. Inventing a geometry here would make
+                // grouping change how a box looks.
+                geometry: ShapeGeometry::Rectangle,
+                preset: None,
+                adjustments: Vec::new(),
                 blocks: text_box.blocks,
                 fill: text_box.fill,
                 border: text_box.border,
@@ -2390,6 +2398,39 @@ mod tests {
         panic!("no text box owns {node}");
     }
 
+    /// The ids of every grouped shape in the body carrying `geometry`.
+    fn shapes_with(
+        document: &WasmDocument,
+        geometry: casual_doc_model::v1::ShapeGeometry,
+    ) -> Vec<String> {
+        fn walk(
+            group: &WordprocessingGroup,
+            geometry: casual_doc_model::v1::ShapeGeometry,
+            out: &mut Vec<String>,
+        ) {
+            for child in &group.children {
+                match child {
+                    GroupChild::Shape(shape) if shape.geometry == geometry => {
+                        out.push(shape.id.to_string());
+                    }
+                    GroupChild::Group(nested) => walk(nested, geometry, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for block in document.document.body() {
+            if let BlockNode::Paragraph(paragraph) = block {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Group(group) = inline {
+                        walk(group, geometry, &mut out);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The single top-level group in the body, if there is one.
     fn only_group(document: &WasmDocument) -> Option<&WordprocessingGroup> {
         for block in document.document.body() {
@@ -2929,6 +2970,69 @@ mod tests {
         // And a node that is not an object at all still answers nothing, so
         // the two cases stay distinguishable.
         assert_eq!(document.object_position(&paragraph), "");
+    }
+
+    /// Every preset the MODEL knows must be insertable from the host and must
+    /// reach layout. "Modeled is not shipped" is the rule this exists for: the
+    /// shape set grew by fifteen presets in the model, import, export and
+    /// layout, and a gallery built from a separate hand-written list would
+    /// have offered seven of them.
+    ///
+    /// Exhaustive over `ShapeGeometry::TYPED`, so a preset added later without
+    /// a token — or with a token `insertShape` will not take — fails here
+    /// rather than quietly never appearing in the product.
+    #[test]
+    fn every_modeled_preset_is_insertable_and_reaches_layout() {
+        use casual_doc_model::v1::ShapeGeometry;
+
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+
+        for geometry in ShapeGeometry::TYPED {
+            let token = geometry
+                .preset_token()
+                .unwrap_or_else(|| panic!("{geometry:?} has no preset token"));
+            // A `JsValue` calls a wasm-bindgen import when it is dropped OR
+            // formatted, either of which panics on a native target and would
+            // hide the token that actually failed — so the result is inspected
+            // and then leaked.
+            let inserted = document.insert_shape(&paragraph, 0, token);
+            let refused = inserted.is_err();
+            core::mem::forget(inserted);
+            assert!(!refused, "insertShape refused the modeled preset {token:?}");
+            // Each preset is inserted once, so the shape carrying this
+            // geometry is the one just added.
+            let shape = shapes_with(&document, geometry);
+            assert_eq!(
+                shape.len(),
+                1,
+                "{token:?} resolved to the wrong variant, or inserted nothing"
+            );
+            assert_eq!(
+                document.object_rect(&shape[0]).len(),
+                5,
+                "{token:?} was modeled but never placed on a page"
+            );
+        }
+
+        // A token no variant claims is refused, not silently drawn as a
+        // rectangle — which a caller would see and take for a rendering bug.
+        // The message is not inspected here: a `JsValue`'s `Debug` calls a
+        // wasm-bindgen import, which panics on a native test.
+        // A token no variant claims resolves to nothing, so `insertShape`
+        // refuses instead of silently drawing a rectangle — which a caller
+        // would see and take for a rendering bug. Asserted at the decision
+        // point rather than through the command, because BUILDING the
+        // command's error calls a wasm-bindgen import that panics natively.
+        assert!(
+            ShapeGeometry::from_preset_token("bentArrow").is_none(),
+            "a curved preset this build cannot draw stays untyped, not approximated"
+        );
+        assert_eq!(
+            ShapeGeometry::from_preset_token("straightConnector1"),
+            Some(ShapeGeometry::Line),
+            "the connector spelling of a line resolves to a line"
+        );
     }
 
     /// Bring to front / send to back must be exact even when the incoming keys
