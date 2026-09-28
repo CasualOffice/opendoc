@@ -43,9 +43,12 @@ test("a floating image is selectable and exposes move/resize/wrap controls", asy
   await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "image");
   await expect(page.locator(".overlay .object-outline")).toHaveCount(1);
   await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
-  // The context bar offers the live Wrap control (only floats get it).
+  // The chip offers the live Wrap control. SEVEN chips, not six: "In line" is a
+  // mode of this control, not a different state of the product — Word's Layout
+  // Options and Docs' image chip both put it above the six wrapping modes.
   await expect(page.locator(".object-wrap-menu")).toBeVisible();
-  await expect(page.locator(".object-wrap-btn")).toHaveCount(6);
+  await expect(page.locator(".object-wrap-btn")).toHaveCount(7);
+  await expect(page.locator('.object-wrap-btn[data-wrap="inline"]')).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
 });

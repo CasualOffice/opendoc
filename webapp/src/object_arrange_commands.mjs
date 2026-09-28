@@ -20,6 +20,7 @@
 //   `runEdit(fn,o)`  the gated, undoable edit path (async, resolves to a bool)
 //   `setStatus(s,k)`
 //   `t(key, params)`
+//   `select(entry)`  select the object an `objectOrder()` row describes
 //   `modifier`       the localised Ctrl/⌘ label, derived not spelled
 //
 // Cost: O(1) per command. `state()` is gathered once by the caller; nothing
@@ -41,9 +42,14 @@ export function createObjectArrangeCommands(io) {
    *
    *  Word, PowerPoint and Docs all build a multi-object selection with
    *  Ctrl/Cmd+click, and grouping is the only command here that needs more than
-   *  one object — which is why this is a plain list of root ids rather than a
-   *  second selection model. It is dropped whenever the primary selection changes
-   *  by any other route, so it can never name an object that is no longer there. */
+   *  one object — which is why this is a plain list rather than a second
+   *  selection model. It is dropped whenever the primary selection changes by
+   *  any other route, so it can never name an object that is no longer there.
+   *
+   *  Each entry carries BOTH ids, because the engine answers two different
+   *  questions from two different ones: `groupObjects` takes the top-level
+   *  ROOTS, and `objectRect` — which is what draws the held outline — is
+   *  answered for the SUBJECT. Holding only the root drew nothing at all. */
   let objectMultiSelect = [];
 
   /** The nodes a Group command acts on: the primary selection first, then the
@@ -51,7 +57,7 @@ export function createObjectArrangeCommands(io) {
    *  group's child order, and therefore as its paint order. */
   function groupCandidateNodes() {
     if (!io.selection() || io.selection().mode !== "selected") return [];
-    return [io.selection().ref.root, ...objectMultiSelect];
+    return [io.selection().ref.root, ...objectMultiSelect.map((held) => held.root)];
   }
 
   /** Whether Group is offered, and why not — the ENGINE's verdict and the
@@ -75,6 +81,27 @@ export function createObjectArrangeCommands(io) {
         verdict.reason ??
         io.t("object.group.selectMore", { modifier: OBJECT_MULTI_SELECT_MODIFIER }),
     };
+  }
+
+  /** Every placed top-level object right now — the "before" side of a diff.
+   *  O(objects), on a command, never on a repaint. */
+  function placedIds() {
+    try {
+      return new Set(JSON.parse(io.doc().objectOrder()).map((entry) => entry.node));
+    } catch {
+      return new Set();
+    }
+  }
+
+  /** Selects whatever object appeared since `before`. */
+  function selectAppeared(before) {
+    let entry = null;
+    try {
+      entry = JSON.parse(io.doc().objectOrder()).find((row) => !before.has(row.node)) ?? null;
+    } catch {
+      entry = null;
+    }
+    if (entry) io.select(entry);
   }
 
   /** Whether restacking applies. A top-level float is ordered by
@@ -104,7 +131,20 @@ export function createObjectArrangeCommands(io) {
     }, { gate: true });
   }
 
-  /** Word's Bring to Front / Bring Forward / Send Backward / Send to Back. */
+  /** Word's Bring to Front / Bring Forward / Send Backward / Send to Back.
+   *
+   *  WHICH node is restacked matters, because OOXML stacks the two cases
+   *  differently. A top-level float is ordered by `wp:anchor@relativeHeight`
+   *  against the other floats in its band; a shape inside a group is ordered by
+   *  its index among its siblings. Every shape this host inserts is wrapped in a
+   *  group-of-one — the only shape a shape takes in this model — so its SUBJECT
+   *  is technically a group child, and restacking it reorders it among its one
+   *  sibling: a silent no-op, which is exactly what it did. The subject is
+   *  restacked only when it really has siblings; otherwise the ROOT is, which is
+   *  the object the reader sees.
+   *
+   *  The sibling count costs ONE engine call, on the command, never on a
+   *  repaint. */
   function setObjectZOrderCommand(order) {
     const state = io.state();
     const availability = zOrderAvailability(state);
@@ -112,7 +152,16 @@ export function createObjectArrangeCommands(io) {
       io.setStatus(availability.reason, "error");
       return;
     }
-    void io.runEdit(() => io.doc().setObjectZOrder(state.node, order), { gate: true });
+    let siblings = 0;
+    if (state.node !== state.root) {
+      try {
+        siblings = JSON.parse(io.doc().objectDescendants(state.root)).length;
+      } catch {
+        siblings = 0;
+      }
+    }
+    const target = siblings > 1 ? state.node : state.root;
+    void io.runEdit(() => io.doc().setObjectZOrder(target, order), { gate: true });
   }
 
   /** Word's Arrange ▸ Group. */
@@ -123,9 +172,15 @@ export function createObjectArrangeCommands(io) {
       return;
     }
     const nodes = groupCandidateNodes();
+    // The object that appeared is the new group. The engine reports a caret, not
+    // the node it created, so the host diffs the placed order — the same way
+    // insert does. Selecting it is what Word does, and without it the chip goes
+    // on describing a shape that is now somebody's child.
+    const before = placedIds();
     const applied = await io.runEdit(() => io.doc().groupObjects(JSON.stringify(nodes)), { gate: true });
     if (!applied) return;
     objectMultiSelect = [];
+    selectAppeared(before);
     io.setStatus(io.t("object.grouped"));
   }
 
@@ -135,8 +190,11 @@ export function createObjectArrangeCommands(io) {
       io.setStatus(io.t("object.ungroup.notAGroup"), "error");
       return;
     }
+    const before = placedIds();
     const applied = await io.runEdit(() => io.doc().ungroupObject(io.selection().ref.root), { gate: true });
-    if (applied) io.setStatus(io.t("object.ungrouped"));
+    if (!applied) return;
+    selectAppeared(before);
+    io.setStatus(io.t("object.ungrouped"));
   }
 
   /** Word's Rotate menu. Flips are ABSOLUTE in the facade, so a menu row reads
@@ -174,10 +232,10 @@ export function createObjectArrangeCommands(io) {
     multiSelect: () => objectMultiSelect,
     /** Adds an object to the multi-selection (Ctrl/⌘+click), or removes it when
      *  it is already held — which is how both competitors' modifier behaves. */
-    toggleMember(root) {
-      const at = objectMultiSelect.indexOf(root);
+    toggleMember(ref) {
+      const at = objectMultiSelect.findIndex((held) => held.root === ref.root);
       if (at >= 0) objectMultiSelect.splice(at, 1);
-      else objectMultiSelect.push(root);
+      else objectMultiSelect.push({ root: ref.root, node: ref.subject ?? ref.root });
     },
     /** Drops the extra members. Called whenever the primary selection moves by
      *  any route but the modifier click, so the list can never name an object

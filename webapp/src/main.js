@@ -75,6 +75,7 @@ import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object
 import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles, paintSizeReadout } from "./object_guides.mjs";
 import { arrangeSurfaceRows, createObjectArrangeCommands } from "./object_arrange_commands.mjs";
 import { createObjectBar } from "./object_bar.mjs";
+import { renderShapeMenu } from "./shape_format_menu.mjs";
 import { createObjectInspector } from "./object_inspector.mjs";
 import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
 import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
@@ -4217,7 +4218,10 @@ function paintObjectSelection() {
   // never on a pointermove — which is why this is a loop and the object chip's
   // arrange gather is not.
   for (const member of objectArrange.multiSelect()) {
-    place(doc.objectRect(member), "object-outline is-co-selected");
+    // By SUBJECT: `objectRect` is answered for the subject, and a root id
+    // answers nothing at all — which is why holding only the root drew no
+    // outline for the second object.
+    place(doc.objectRect(member.node), "object-outline is-co-selected");
   }
   // A movable object's BODY needs `touch-action: none` the way its grips
   // already have it, or the browser starts scrolling at touch-start and the
@@ -4553,6 +4557,19 @@ function reflectShapeFormatState() {
   reflectShapeFormat(pagesEl, objectSelection?.kind === "shape" ? selectedShapeFormat() : null);
 }
 
+/** The object properties panel. Its 170 lines are `object_inspector.mjs`; what
+ *  stays here is the application state it reads and the gated edit path it
+ *  writes through. */
+const objectInspector = createObjectInspector({
+  doc: () => doc,
+  selection: () => objectSelection,
+  runEdit: (thunk, options) => runEdit(thunk, options),
+  setStatus: (text, kind) => setStatus(text, kind),
+  openShapeFill: () => shapeFillBtn.click(),
+  openShapeOutline: () => shapeOutlineBtn.click(),
+});
+const toggleObjectInspector = (open) => objectInspector.toggle(open);
+
 /** The floating object chip. Its rendering is `object_bar.mjs`; what stays here
  *  is the application state it renders and the verbs it calls. */
 const objectBar = createObjectBar({
@@ -4575,9 +4592,9 @@ const objectBar = createObjectBar({
   reflectShapeSwatches: () => reflectShapeSwatches(),
   fillButton: () => shapeFillBtn,
   outlineButton: () => shapeOutlineBtn,
-  positionButton: () => objectPositionBtn,
-  arrangeButton: () => objectArrangeBtn,
-  rotateButton: () => objectRotateBtn,
+  positionButton: () => labelledObjectMenuButton(objectPositionBtn),
+  arrangeButton: () => labelledObjectMenuButton(objectArrangeBtn),
+  rotateButton: () => labelledObjectMenuButton(objectRotateBtn),
 });
 const updateObjectContextBar = () => objectBar.update();
 const positionObjectContextBar = () => objectBar.reposition();
@@ -4614,6 +4631,7 @@ const objectArrange = createObjectArrangeCommands({
   state: () => arrangeState(),
   runEdit: (thunk, options) => runEdit(thunk, options),
   setStatus: (text, kind) => setStatus(text, kind),
+  select: (entry) => selectObject(entry.node, entry.kind, null, entry.anchored, entry),
   t,
   // Ctrl on Windows/Linux, ⌘ on a Mac — derived, never spelled, because a spec
   // that asserts a Mac glyph fails on the Linux runner (`105` UX-009).
@@ -6095,7 +6113,7 @@ function onPointerDown(page, event) {
     // records the new one alongside.
     if ((event.metaKey || event.ctrlKey) && objectSelection?.mode === "selected"
         && objectSelection.ref.root !== descriptor.root) {
-      objectArrange.toggleMember(descriptor.root);
+      objectArrange.toggleMember(descriptor);
       setStatus(t("object.addedToSelection"));
       drawSelection();
       event.preventDefault();
@@ -6665,7 +6683,13 @@ pagesEl.addEventListener("dblclick", (e) => {
     // the preset, its guides, its fill and its outline — a star stays a star.
     if (objectSelection?.kind === "shape" && !objectSelection.canEditText) {
       e.preventDefault();
-      void objectArrange.addText();
+      void objectArrange.addText().then((added) => {
+        // `addTextToShape` returns the new body's caret, and `refreshObject-
+        // Capabilities` has by then re-read `canEditText`. Entering the object
+        // is what makes the next keystroke go INTO the shape: while an object
+        // is merely "selected" a printable key has nowhere to land.
+        if (added) enterObjectEditMode(selection ? { ...selection.focus } : null);
+      });
       return;
     }
     let clicked = null;
@@ -8504,11 +8528,53 @@ function dropVanishedObjectSelection() {
   } catch {
     rect = [];
   }
-  if (rect.length >= 5) return;
+  if (rect.length >= 5) {
+    refreshObjectCapabilities();
+    return;
+  }
   objectSelection = null;
   objectCropSession = null;
   updateObjectSelectionState();
   updateObjectContextBar();
+}
+
+/** Re-reads the ENGINE's capability bits for the object that is still selected.
+ *
+ *  They were snapshotted when the object was selected and never read again, so
+ *  an edit that CHANGES what the object can do left the chip offering the old
+ *  answer. `setObjectAnchorKind` is exactly that edit: an object taken in line
+ *  can no longer be moved or wrapped — the flow decides where it sits — and the
+ *  chip went on offering Move and a wrap mode for a node that has no anchor.
+ *  The same is true of grouping, ungrouping and anything else that rewrites the
+ *  node under a live selection.
+ *
+ *  Cost: O(objects) once per EDIT, never per keystroke and never per pointermove
+ *  — `objectOrder()` is the same walk `objectPresence` already memoises, and a
+ *  document with no selected object pays nothing. */
+function refreshObjectCapabilities() {
+  const held = objectSelection;
+  if (!held || held.mode === "editing") return;
+  let entries;
+  try {
+    entries =
+      held.ref.subject === held.ref.root
+        ? JSON.parse(doc.objectOrder())
+        : JSON.parse(doc.objectDescendants(held.ref.root));
+  } catch {
+    return;
+  }
+  const fresh = Array.isArray(entries)
+    ? entries.find((entry) => entry.node === held.node)
+    : null;
+  // Not in the list any more (it became a group's child, say): leave what is
+  // held rather than guessing. `objectRect` already proved it is still placed.
+  if (!fresh) return;
+  objectSelection = {
+    ...held,
+    kind: fresh.kind ?? held.kind,
+    anchored: fresh.anchored ?? held.anchored,
+    ...objectCapabilities(fresh),
+  };
 }
 
 /** Ends the current typing gesture. The next printable key receives a fresh
@@ -10035,61 +10101,21 @@ function makeShapeBarButton(icon, label, title) {
 const shapeFillBtn = makeShapeBarButton("format_color_fill", "Fill", "Shape fill");
 const shapeOutlineBtn = makeShapeBarButton("border_color", "Outline", "Shape outline");
 
-/** Renders a shape color menu: the reset row Word leads with ("No fill" /
- *  "No outline"), the standard palette, and — for the outline — its weights. */
-function renderShapeMenu(kind) {
-  const menu = kind === "fill" ? shapeFillMenu : shapeOutlineMenu;
-  const format = selectedShapeFormat();
-  const active = (kind === "fill" ? format.fill : format.outline)?.toLowerCase() ?? null;
-  menu.replaceChildren();
+/** Word's Shape Fill / Shape Outline menus. `shape_format_menu.mjs`. */
+const shapeMenuHost = {
+  menu: (kind) => (kind === "fill" ? shapeFillMenu : shapeOutlineMenu),
+  format: () => selectedShapeFormat(),
+  heading: (text) => makeMenuHeading(text),
+  swatchGrid: (cells) => makeSwatchGrid(cells),
+  swatchCell: (...args) => makeSwatchCell(...args),
+  colors: () => TEXT_STANDARD_COLORS,
+  weights: () => OUTLINE_WEIGHTS,
+  emuPerPoint: EMU_PER_POINT,
+};
 
-  const reset = document.createElement("button");
-  reset.type = "button";
-  reset.className = "color-row-action";
-  reset.dataset.shapeNone = "1";
-  reset.innerHTML =
-    '<span class="color-chip color-chip-none"></span>' +
-    `<span>${kind === "fill" ? "No fill" : "No outline"}</span>`;
-  menu.appendChild(reset);
-
-  menu.appendChild(makeMenuHeading("Standard colors"));
-  menu.appendChild(
-    makeSwatchGrid(
-      TEXT_STANDARD_COLORS.map((hex) => {
-        const cell = makeSwatchCell("text", hex, hex, hex.toUpperCase(), hex.toLowerCase() === active);
-        // The grid helper tags cells for the TEXT handler; retag so a shape click
-        // cannot be mistaken for a text-color one.
-        delete cell.dataset.color;
-        cell.dataset.shapeColor = hex;
-        return cell;
-      }),
-    ),
-  );
-
-  if (kind === "outline") {
-    const current = format.outlineWidthEmu ?? null;
-    menu.appendChild(makeMenuHeading("Weight"));
-    const list = document.createElement("div");
-    list.className = "shape-weight-list";
-    for (const points of OUTLINE_WEIGHTS) {
-      const emu = Math.round(points * EMU_PER_POINT);
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "color-row-action shape-weight";
-      row.dataset.shapeWeight = String(emu);
-      if (current === emu) row.classList.add("is-active");
-      row.innerHTML =
-        `<span class="shape-weight-rule" style="--w:${Math.max(1, points)}px" aria-hidden="true"></span>` +
-        `<span>${points} pt</span>`;
-      list.appendChild(row);
-    }
-    menu.appendChild(list);
-  }
-}
-
-const shapeFillPopover = registerPopover(shapeFillBtn, shapeFillMenu, () => renderShapeMenu("fill"));
+const shapeFillPopover = registerPopover(shapeFillBtn, shapeFillMenu, () => renderShapeMenu("fill", shapeMenuHost));
 const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, () =>
-  renderShapeMenu("outline"),
+  renderShapeMenu("outline", shapeMenuHost),
 );
 
 // ---- The object chip's Arrange controls ------------------------------------
@@ -10105,7 +10131,11 @@ const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, (
 function makeObjectMenuButton(icon, labelKey, menuId) {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "object-bar-btn";
+  // Icon-only, like Word's own Arrange group and Docs' image chip. The chip is
+  // already the densest control in the product and these three would have added
+  // ~150px of text to a bar that sits OVER the object when there is no room
+  // above it. The name is on the tooltip AND on the accessible name.
+  btn.className = "object-bar-btn object-bar-icon";
   btn.setAttribute("aria-haspopup", "menu");
   btn.setAttribute("aria-expanded", "false");
   btn.setAttribute("aria-controls", menuId);
@@ -10114,13 +10144,20 @@ function makeObjectMenuButton(icon, labelKey, menuId) {
   glyph.setAttribute("aria-hidden", "true");
   glyph.textContent = icon;
   btn.appendChild(glyph);
-  const label = t(labelKey);
-  const text = document.createElement("span");
-  text.textContent = label;
-  btn.appendChild(text);
+  btn.dataset.objectMenu = menuId;
+  btn.dataset.labelKey = labelKey;
+  return labelledObjectMenuButton(btn);
+}
+
+/** Re-reads a chip menu button's name from the catalogue.
+ *
+ *  These buttons are built ONCE, at import, when no catalogue is loaded — so a
+ *  name baked in there is the KEY, in every language including English. Reading
+ *  it on every bar render is also what makes a locale switch reach them. */
+function labelledObjectMenuButton(btn) {
+  const label = t(btn.dataset.labelKey);
   btn.title = label;
   btn.setAttribute("aria-label", label);
-  btn.dataset.objectMenu = menuId;
   return btn;
 }
 
@@ -12801,7 +12838,10 @@ async function insertShapeObject(geometry, at = null) {
     try {
       await applyEditResult(
         doc.resizeObject(
-          shape.node,
+          // The ROOT, not the leaf: `insertShape` wraps the shape in a
+          // group-of-one (the only shape a shape takes in this model), and
+          // geometry belongs to the group. Resizing the leaf is refused.
+          shape.ref?.root ?? shape.root ?? shape.node,
           at.left * EMU_PER_TWIP,
           at.top * EMU_PER_TWIP,
           at.width * EMU_PER_TWIP,

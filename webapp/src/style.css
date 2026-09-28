@@ -6840,11 +6840,53 @@ body.is-format-painting .page-wrap * {
   pointer-events: auto;
 }
 .object-context-bar[hidden] { display: none; }
+/* Never wider than the window; the bar's own row wraps before anything inside
+   it is squeezed. */
+.object-context-bar {
+  max-width: calc(100vw - 16px);
+  flex-wrap: wrap;
+}
+/* The drag hint is the first thing to go when the window is narrow: it repeats
+   an affordance the handles already show, and the controls do not. */
+@media (max-width: 720px) {
+  .object-context-bar small { display: none; }
+  /* On a phone the bar may be three rows: the object is small, the page around
+     it is mostly empty, and a control clipped off the right-hand edge is one
+     the user cannot reach at all. Height is the cheaper cost. */
+  /* Selected through the bar so this outranks the desktop rule below it: a
+     media query adds no specificity, and the later rule would otherwise win. */
+  .object-context-bar .object-wrap-menu {
+    /* Its own row, wrapping inside itself: `flex: 0 0 auto` is what keeps it
+       from being squeezed on a desktop, and is exactly what clips it here. */
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .object-context-bar .object-bar-actions {
+    flex-wrap: wrap;
+  }
+}
+/* Icon-only chip buttons keep a 28px target (WCAG 2.5.8 asks 24). */
+.object-bar-btn { white-space: nowrap; }
+.object-bar-icon {
+  padding: 3px 6px;
+  min-width: 28px;
+  justify-content: center;
+}
 .object-context-bar strong { text-transform: capitalize; }
 .object-context-bar small { color: var(--muted); }
-/* Seven chips now that "In line" is a mode: they must be able to wrap, or the
-   chip runs off a 390px screen. */
-.object-wrap-menu { display: flex; flex-wrap: wrap; gap: 3px; }
+/* Seven chips now that "In line" is a mode. The ROW must not wrap and must not
+   be squeezed: the bar is placed ABOVE the object and falls back to overlapping
+   it when there is no room, so every extra line of bar is a line of the object
+   the user cannot reach. The BAR wraps instead, which only happens on a phone.
+   */
+.object-wrap-menu {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+.object-wrap-btn { white-space: nowrap; }
 .object-wrap-btn:disabled {
   cursor: not-allowed;
   color: var(--faint);

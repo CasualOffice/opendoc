@@ -206,7 +206,14 @@ export function createObjectBar(io) {
       barEl.hidden = true; // the object is scrolled out of the page view
       return;
     }
-    barEl.style.left = `${at.left}px`;
+    // Keep the bar inside the window. `objectBarPosition` aligns its left edge
+    // with the object's, which ran a wide bar off the right-hand side — where it
+    // wrapped to a second row, and every extra row of bar is a row of the
+    // OBJECT the user cannot reach, because the bar falls back to overlapping
+    // the object when there is no room above it.
+    const view = io.viewportRect();
+    const maxLeft = Math.max(8, view.right - barEl.offsetWidth - 8);
+    barEl.style.left = `${Math.min(at.left, maxLeft)}px`;
     barEl.style.top = `${at.top}px`;
   }
 

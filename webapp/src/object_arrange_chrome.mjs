@@ -98,6 +98,7 @@ export function renderPositionGallery(menu, io) {
     mark.className = `object-position-mark pos-${preset.v}-${preset.h}`;
     sheet.appendChild(mark);
     cell.appendChild(sheet);
+    if (!io.reason) cell.addEventListener("click", () => io.onPick(preset));
     grid.appendChild(cell);
   }
   menu.appendChild(grid);
