@@ -331,13 +331,30 @@ test("table of contents, cross-reference and update fields are disabled WITH a r
     await openTab(page, "tabReferences", "panelReferences");
   }
 
-  // Same treatment for the one Layout command with no engine operation.
+  // Layout's Arrange group has no permanently-missing command any more.
+  // `layout.arrange.bringForward` shipped disabled carrying "needs a z-order
+  // operation the engine does not expose yet"; `setObjectZOrder` exists, so the
+  // control is live and the reason is gone — a reason left standing after its
+  // gap closed is the same lie as an overstatement (`109` EV-007). What is left
+  // is an ordinary precondition: it needs an object selected, and it says that.
   await openTab(page, "tabLayout", "panelLayout");
-  await expect(page.locator("#layoutBringForwardBtn")).toBeDisabled();
-  await expect(page.locator("#layoutBringForwardBtn")).toHaveAttribute("title", /z-order/i);
+  for (const id of [
+    "#layoutBringForwardBtn",
+    "#layoutSendBackwardBtn",
+    "#layoutGroupBtn",
+    "#layoutUngroupBtn",
+    "#layoutRotateBtn",
+  ]) {
+    await expect(page.locator(id), `${id} must need a selection, not be dead`).toBeDisabled();
+    await expect(page.locator(id)).toHaveAttribute("title", /select an image, shape or text box/i);
+    await expect(page.locator(id), `${id} must not still claim a missing engine op`).not.toHaveAttribute(
+      "title",
+      /does not expose/i,
+    );
+  }
   const forward = await paletteRow(page, "Bring object forward", "Bring object forward");
   expect(forward.disabled).toBe(true);
-  expect(forward.hint).toMatch(/z-order/i);
+  expect(forward.hint).not.toMatch(/z-order operation/i);
 
   expect(consoleErrors).toEqual([]);
 });

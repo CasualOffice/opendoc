@@ -172,7 +172,11 @@ const CEILINGS = new Map([
   // `table_commands.mjs` (next entry), which is the same debt relocated and not
   // debt removed. In: nothing — every sentence this round adds is a `t()` key.
   // Measured, not calculated.
-  ["src/main.js", 312],
+  // 312 -> 304 with the drawing work: the object properties panel and the object
+  // chip came out of `main.js` (`object_inspector.mjs`, `object_bar.mjs`), and
+  // the wrap table's six English labels went through the seam when "In line"
+  // joined them as a seventh. MEASURED from the file, never calculated.
+  ["src/main.js", 304],
   // The nine `label:`/`disabledReason:` literals that moved out of `main.js` with
   // the `table.*` command tree. Same debt in a new place, not a new debt: `main.js`
   // came down by more than nine in the same commit. They stay English because this
@@ -193,6 +197,26 @@ const CEILINGS = new Map([
   // with the menu builder, so this is the same debt in a new place, not a new
   // debt — main.js came down by more than nine in the same commit.
   ["src/object_context_menu.mjs", 9],
+  // ---- The drawing/arrange modules ----------------------------------------
+  // All four are debt MOVED out of `main.js`, which came down by eight in the
+  // same commit, plus the twelve ribbon rows that were already English there.
+  //
+  // The object properties panel's four: the four `<legend>`/button labels its
+  // one `innerHTML` template carries. They were four of `main.js`'s, and they
+  // move with the panel.
+  ["src/object_inspector.mjs", 4],
+  // The object chip's action labels ("Alt text", "Properties", "Crop",
+  // "Delete", and the two drag hints). Same debt, new file.
+  ["src/object_bar.mjs", 1],
+  // The two `title`/`aria-label` compositions in the Arrange menus' disabled
+  // rows. The reason itself is localised and passed in; what is counted is the
+  // separator around it.
+  ["src/object_arrange_chrome.mjs", 2],
+  // The twelve Layout ▸ Arrange rows' `label:` strings. English at import for
+  // the reason every sibling row in `LAYOUT_SURFACE` is: the palette reads them
+  // before a catalogue exists, so a `t()` here would put the KEY in the palette.
+  // Routing the whole surface table is one piece of work, not twelve.
+  ["src/object_arrange_commands.mjs", 12],
   ["src/pages_panel.mjs", 4],
   // The sixteen highlight labels ("Bright green", "Gray 50%", …). They were
   // sixteen of `main.js`'s 364 and moved here with the table, so this is the

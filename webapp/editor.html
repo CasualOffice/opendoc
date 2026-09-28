@@ -717,11 +717,17 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelLayout.howTextWrapsAround.title" data-i18n-label="panelLayout.wrapText.label" id="layoutWrapBtn" type="button" class="fmt fmt-big" title="How text wraps around the selected object" aria-label="Wrap text" disabled><span class="ms" aria-hidden="true">wrap_text</span><span data-i18n="layoutWrapBtn.wrapText" class="fmt-big-label">Wrap text</span></button>
               <button data-i18n-title="panelLayout.exactPositionSizeSelected.title" data-i18n-label="panelLayout.objectPosition.label" id="layoutPositionBtn" type="button" class="fmt fmt-big" title="Exact position and size of the selected object" aria-label="Object position" disabled><span class="ms" aria-hidden="true">open_with</span><span data-i18n="layoutPositionBtn.position" class="fmt-big-label">Position</span></button>
-              <!-- Z-order has no engine op: `objectOrder()` reads paint order and
-                   nothing writes it. Shown disabled with the reason rather than
-                   omitted, so the gap is legible instead of looking like an
-                   oversight, and never as a button that does nothing (docs/63). -->
-              <button data-i18n-title="panelLayout.bringForwardNeedsZ.title" data-i18n-label="panelLayout.bringForward.label" id="layoutBringForwardBtn" type="button" class="fmt fmt-big" title="Bring forward needs a z-order operation the engine does not expose yet" aria-label="Bring forward" disabled><span class="ms" aria-hidden="true">flip_to_front</span><span data-i18n="layoutBringForwardBtn.bringForward" class="fmt-big-label">Bring forward</span></button>
+              <!-- Word's Arrange group. Bring forward shipped permanently
+                   disabled carrying "the engine does not expose a z-order
+                   operation yet"; `setObjectZOrder` exists now, so the control is
+                   live and the reason is gone. A reason left standing after its
+                   gap closed is the same lie as an overstatement (`109` EV-007). -->
+              <button data-i18n-title="panelLayout.bringSelectedForward.title" data-i18n-label="panelLayout.bringForward.label" id="layoutBringForwardBtn" type="button" class="fmt fmt-big" title="Bring the selected object forward one step" aria-label="Bring forward" disabled><span class="ms" aria-hidden="true">flip_to_front</span><span data-i18n="layoutBringForwardBtn.bringForward" class="fmt-big-label">Bring forward</span></button>
+              <button data-i18n-title="panelLayout.sendSelectedBackward.title" data-i18n-label="panelLayout.sendBackward.label" id="layoutSendBackwardBtn" type="button" class="fmt fmt-big" title="Send the selected object backward one step" aria-label="Send backward" disabled><span class="ms" aria-hidden="true">flip_to_back</span><span data-i18n="layoutSendBackwardBtn.sendBackward" class="fmt-big-label">Send backward</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <button data-i18n-title="panelLayout.groupSelectedObjects.title" data-i18n-label="panelLayout.group.label" id="layoutGroupBtn" type="button" class="fmt fmt-big" title="Group the selected objects into one" aria-label="Group objects" disabled><span class="ms" aria-hidden="true">workspaces</span><span data-i18n="layoutGroupBtn.group" class="fmt-big-label">Group</span></button>
+              <button data-i18n-title="panelLayout.ungroupSelectedGroup.title" data-i18n-label="panelLayout.ungroup.label" id="layoutUngroupBtn" type="button" class="fmt fmt-big" title="Split the selected group back into its objects" aria-label="Ungroup objects" disabled><span class="ms" aria-hidden="true">workspaces_outline</span><span data-i18n="layoutUngroupBtn.ungroup" class="fmt-big-label">Ungroup</span></button>
+              <button data-i18n-title="panelLayout.rotateSelectedRight.title" data-i18n-label="panelLayout.rotate.label" id="layoutRotateBtn" type="button" class="fmt fmt-big" title="Rotate the selected object right 90 degrees" aria-label="Rotate right" disabled><span class="ms" aria-hidden="true">rotate_right</span><span data-i18n="layoutRotateBtn.rotate" class="fmt-big-label">Rotate</span></button>
             </div>
             <span data-i18n="panelLayout.arrange" class="rgroup-label">Arrange</span>
           </div>
@@ -1522,6 +1528,12 @@
     <!-- Insert ▸ Shapes gallery: one entry per preset the engine models AND the
          renderer draws, so nothing in it can insert an invisible shape. -->
     <div data-i18n-label="ui.shapes.label" id="shapeGalleryMenu" class="context-menu" hidden role="menu" aria-label="Shapes"></div>
+    <!-- The object chip's three Arrange popovers (Word's Position gallery, its
+         Arrange menu and its Rotate menu). Their contents are built in script
+         from the selected object's engine-reported state. -->
+    <div data-i18n-label="ui.objectPosition.label" id="objectPositionMenu" class="context-menu object-position-menu" hidden role="menu" aria-label="Object position"></div>
+    <div data-i18n-label="ui.objectArrange.label" id="objectArrangeMenu" class="context-menu" hidden role="menu" aria-label="Arrange object"></div>
+    <div data-i18n-label="ui.objectRotate.label" id="objectRotateMenu" class="context-menu" hidden role="menu" aria-label="Rotate object"></div>
 
     <div data-i18n-label="ui.shapeFill.label" id="shapeFillMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Shape fill"></div>
     <div data-i18n-label="ui.shapeOutline.label" id="shapeOutlineMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Shape outline"></div>
