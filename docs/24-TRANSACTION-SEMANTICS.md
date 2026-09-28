@@ -1,6 +1,24 @@
 # Transaction Semantics
 
-**Status:** Accepted for Phase 0
+**Status:** Accepted for Phase 0. **Scope narrowed 2026-09-29 by `147` (ADR-043):** everything
+below describes the Phase-0 **schema-v0** engine, which now lives at
+`casual_doc_transaction::v0` and is reached only from `casual-doc-sdk` and
+`casual-doc-selection::TextSelection`. It is unchanged and still correct for that path.
+
+**It does not describe the live editing path.** The document the product opens, renders, edits
+and saves is `casual_doc_model::v1::Document`, and its transaction envelope differs from this
+one in three ways that `147` §3 and ADR-043 record:
+
+1. **Positions are UTF-8 byte offsets, not extended-grapheme offsets.** "Rejected
+   Alternatives" below rejects byte offsets; that rejection is *reversed for v1*, deliberately
+   and with reasons — grapheme boundaries are a caret-movement rule owned by the selection
+   layer, not a property of the operation vocabulary. `Affinity` is retained.
+2. **"Atomic Pipeline" steps 2 and 5 do not run.** The live envelope does not clone the
+   document per transaction and does not revalidate the whole model per transaction; both are
+   O(document) and would violate `107` §4 B1 on every keystroke. Atomicity comes instead from
+   validate-before-mutate per operation, plus one working copy for a multi-operation group.
+3. **The operation set is `casual-doc-edit`'s 55**, not the five below.
+
 **Decision date:** 2026-07-24
 **Tracker:** P0-002
 
@@ -189,6 +207,13 @@ snapshots remain useful for checkpoints and recovery.
 
 Rejected because operation semantics must align with user-perceived caret
 boundaries. Format and language bindings convert explicitly.
+
+**Reversed for v1 by ADR-043 (`147` §3.6).** The live op set is byte-addressed, in the same
+anchor space as hit-testing (`58` §3), because the caret-boundary rule this rejection was
+protecting belongs to selection and caret movement rather than to the operation vocabulary —
+and having two position spaces in one workspace is what made the transaction engine
+unreachable from the editor in the first place. This rejection still stands for the v0 engine
+described here.
 
 **Cross-paragraph delete in the first slice**
 

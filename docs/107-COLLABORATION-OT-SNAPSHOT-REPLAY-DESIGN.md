@@ -12,7 +12,8 @@ model. The owner's call is recorded and this document designs to it.
 measurable budget (§4), not an aspiration.
 
 **Relates to:** ADR-004 (no DOM as source of truth), ADR-005 (mutation through commands and
-transactions), ADR-006 (collaboration is adapter-based), ADR-030 / `45` (extensibility
+transactions), **ADR-043 / `147`** (the §2.1 unification, as built — read it with §2 below),
+ADR-006 (collaboration is adapter-based), ADR-030 / `45` (extensibility
 invariants I1–I4), `24-TRANSACTION-SEMANTICS.md`, `25-NORMALIZED-SNAPSHOT-IO.md`,
 `26-SELECTION-FOUNDATION.md`, `59-V1-EDITING-OP-SET.md`, `82-REVIEW-IDENTITY-AND-HISTORY-DESIGN.md`,
 `106` Phase 6, `143` provider/embed architecture, and `144` phased execution
@@ -54,6 +55,29 @@ its transform rules. §3 makes this tractable; §8 is honest about what is not y
 
 ## 2. The blocker: there are two op sets, and the live editor uses the wrong one
 
+> **Corrected 2026-09-29 by `147` (ADR-043), which implements §2.1 P-1…P-3.** Three things
+> below were wrong or missing when this section was written, and the third changed the design:
+>
+> 1. **`casual-doc-edit` has 55 operations, not 47.** The tier table in §3.1 is sized against
+>    the stale count.
+> 2. **The two stacks do not merely have different op sets — they edit different document
+>    models.** `casual-doc-transaction`, `casual-doc-selection::TextSelection` and
+>    `casual-doc-sdk` operate on the Phase-0 schema-**v0** `casual_doc_model::Document`
+>    (paragraphs of marked text runs; no tables, sections or objects). Everything the product
+>    imports, renders, edits and exports is `casual_doc_model::v1::Document`. That, not the
+>    op-set size, is *why* the live path could not call the transaction engine, and it is why
+>    P-1 cannot be executed as worded: deleting the 5-operation enum outright would delete
+>    `casual-doc-sdk`'s entire public API. `147` §6 states the boundary actually taken — the
+>    envelope moves to v1 and the Phase-0 engine is quarantined as
+>    `casual_doc_transaction::v0`, unchanged, until `126`'s v1 SDK retires it.
+> 3. **The two op sets use different position spaces**, which §2.1 did not notice it was
+>    choosing between: v0 is extended-grapheme with `Affinity`, v1 is UTF-8 byte offsets — and
+>    `24` had explicitly *rejected* byte offsets. ADR-043 takes that reversal deliberately and
+>    corrects `24` in place.
+>
+> Also corrected: §4 B1 is incompatible with `24`'s atomic pipeline, which clones the document
+> and revalidates it per transaction. The live envelope does neither; see `147` §3.2 and §4.
+
 This is the most consequential finding in the 2026-09 audit round, and it must be fixed
 before any OT work begins. Verified directly:
 
@@ -92,12 +116,12 @@ uses, the one with inverses, and the one `59` specifies. `casual-doc-transaction
 envelope — `RevisionId`, `TransactionId`, `Commit`, `base_revision`, `PositionMap` — and its
 5-operation enum is deleted, its mapping-step vocabulary generalised (§3.2).
 
-| Step | Work | Gate |
-| --- | --- | --- |
-| P-1 | Move the operation enum out of `casual-doc-transaction`; make it depend on `casual-doc-edit` (or extract both from a shared `casual-doc-ops`) | One `Operation` type in the workspace; no duplicate vocabulary |
-| P-2 | Route every `casual-doc-wasm` mutation through `Transaction` + `Commit`, so every edit allocates a `RevisionId` and emits a `PositionMap` | `casual_doc_transaction` reference count in the WASM facade > 0; ADR-005 provably honoured |
-| P-3 | Replace the flat `Vec<HistoryEntry>` undo stack with the commit log (§5.1); undo becomes "apply the inverse as a new commit" | Undo/redo behaviour unchanged under the existing 455-test browser suite; history survives a reload |
-| P-4 | Emit `MappingStep`s for the structural operations that currently produce none | Every operation either emits mapping steps or is classified Tier 3 (§3.1) with that recorded in its doc comment |
+| Step | Work | Gate | State |
+| --- | --- | --- | --- |
+| P-1 | Move the operation enum out of `casual-doc-transaction`; make it depend on `casual-doc-edit` (or extract both from a shared `casual-doc-ops`) | One `Operation` type in the workspace; no duplicate vocabulary | **Done for the live path** (`147`). The envelope is re-founded on `v1::Document` + `casual_doc_edit::Operation`. The v0 enum survives as `casual_doc_transaction::v0`, reachable only from the Phase-0 SDK facade, because deleting it means rewriting that facade's public API against v1 (`126`). |
+| P-2 | Route every `casual-doc-wasm` mutation through `Transaction` + `Commit`, so every edit allocates a `RevisionId` and emits a `PositionMap` | `casual_doc_transaction` reference count in the WASM facade > 0; ADR-005 provably honoured | **Done** (`147` §3.2, §5). Held by an exhaustive source guard, not by convention. |
+| P-3 | Replace the flat `Vec<HistoryEntry>` undo stack with the commit log (§5.1); undo becomes "apply the inverse as a new commit" | Undo/redo behaviour unchanged under the existing browser suite; history survives a reload | **Done, except durability** (`147` §3.4). The log is in memory; surviving a reload is 6.1. |
+| P-4 | Emit `MappingStep`s for the structural operations that currently produce none | Every operation either emits mapping steps or is classified Tier 3 (§3.1) with that recorded in its doc comment | **Open.** `147` emits steps for the four positional shapes the v0 map already covered and no more; §3.2's node-addressed steps and the per-operation tier classification are both still to write. |
 
 P-1 through P-3 are worth doing **even if OT were cancelled**: they close ADR-005, they give
 undo a durable basis, and they are the prerequisite for version history (`105` OO-004) and
@@ -263,7 +287,7 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 
 | Step | Work | Independently worth it? |
 | --- | --- | --- |
-| **6.0** | §2.1 P-1…P-4: unify the op set, route mutation through transactions, commit-log undo, mapping steps for structural ops. Plus the B1 prerequisite fix (`HF-111`) | **Yes** — closes ADR-005 and the `HF-111` perf defect |
+| **6.0** | §2.1 P-1…P-4: unify the op set, route mutation through transactions, commit-log undo, mapping steps for structural ops. Plus the B1 prerequisite fix (`HF-111`) | **Yes** — closes ADR-005 and the `HF-111` perf defect. **P-1…P-3 landed 2026-09-29** (`147`, ADR-043); P-4 and the v0-stack retirement remain |
 | **6.1** | Durable log + snapshot + compaction; crash recovery and autosave | **Yes** — closes `HF-011`, the oldest P1 data-safety row |
 | **6.2** | Version history: list, restore, per-author colouring | **Yes** — closes OO-004 |
 | **6.3** | T1 transform + tie-break + TP1 property tests + the §4 benchmarks. **No network yet** | Yes — offline compare/combine becomes possible |
