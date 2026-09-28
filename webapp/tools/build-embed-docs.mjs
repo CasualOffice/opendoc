@@ -702,10 +702,26 @@ function regionRows() {
   const mark = (on) => (on ? "yes" : "—");
   return REGIONS.map((id) => [
     `<code>${escape(id)}</code>`,
-    escape(REGION_MEANINGS[id]),
+    regionClause(id),
     mark(readonly.has(id)),
     mark(preview.has(id)),
   ]);
+}
+
+/** A region's one-clause description, ROUTED.
+ *
+ *  The generated tables are the bulk of what `no_unrouted_strings` still counts
+ *  on these two pages, and the note beside those numbers says the fix is teaching
+ *  this generator to emit `data-i18n`. This is that, for the one column both
+ *  pages share: the descriptions are written once here, keyed once, and land in
+ *  `locales/en.json` through `build-locale.mjs` like every other site string —
+ *  which is also why adding a region can now LOWER these numbers rather than
+ *  raise them.
+ *
+ *  Keyed on the region id with `.` swapped for `-`: a catalogue key is a dotted
+ *  path, so `band.file` would otherwise nest a level deeper than its siblings. */
+function regionClause(id) {
+  return `<span data-i18n="site.region.${id.replace(/\./g, "-")}">${escape(REGION_MEANINGS[id])}</span>`;
 }
 
 // ── The playground's controls (`webapp/playground.page.html`) ──────────────
@@ -987,7 +1003,7 @@ function regionControls() {
               group: "chrome",
               value: id,
               attribute: "data-region",
-              what: escape(REGION_MEANINGS[id]),
+              what: regionClause(id),
             }),
           )
           .join("\n"),

@@ -195,7 +195,7 @@
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
           <span data-claim="package-file-count">9</span> files,
-          <span data-claim="package-unpacked-kb">110 kB</span> unpacked,
+          <span data-claim="package-unpacked-kb">114 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b data-i18n="site.embedding.nothingPublishesRegistryYet">Nothing publishes it to a registry yet</b>, so today a host installs
           the tarball <code data-i18n="site.embedding.npmPack">npm pack</code> produces from a checkout. The
@@ -558,7 +558,7 @@ function resolveFor({ mode, can }</code></pre>
         </p>
         <p class="doc-body" data-i18n="site.embedding.chromeReflects">
           The chrome reflects that. A <code>readonly</code> container gets
-          <span data-claim="reading-region-count">6</span> regions — the menu bar, the
+          <span data-claim="reading-region-count">9</span> regions — the menu bar, the
           navigation rail, the status bar, zoom, find and the document title — and
           <strong data-i18n="site.embedding.noEditingRibbonAll">no editing ribbon at all</strong>, not a ribbon full of greyed
           buttons. A <code>preview</code> container gets
@@ -1046,7 +1046,7 @@ brand.json was refused:
 
         <h3 id="chrome-selection" class="doc-h3" data-i18n="site.embedding.chooseChrome">Choose the chrome</h3>
         <p class="doc-body">
-          <span data-claim="region-count">19</span> regions, of which
+          <span data-claim="region-count">24</span> regions, of which
           <span data-claim="band-count">8</span> are ribbon bands, each withheld
           independently with <code>chrome</code>. A withheld region is a presentation
           decision about your page, not a permission — so it is <em>absent</em> and
@@ -1063,115 +1063,145 @@ brand.json was refused:
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>brand</code></div>
-            <div class="disp-cell">Our name and mark in the top bar.</div>
+            <div class="disp-cell"><span data-i18n="site.region.brand">Our name and mark in the top bar.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>title</code></div>
-            <div class="disp-cell">The document name, and renaming it.</div>
+            <div class="disp-cell"><span data-i18n="site.region.title">The document name, and renaming it.</span></div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>state</code></div>
+            <div class="disp-cell"><span data-i18n="site.region.state">The document-state chips and Document properties in the top bar.</span></div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>menu</code></div>
-            <div class="disp-cell">The application menu bar — one of the two navigation axes.</div>
+            <div class="disp-cell"><span data-i18n="site.region.menu">The application menu bar — one of the two navigation axes.</span></div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>ribbon</code></div>
-            <div class="disp-cell">The whole tabbed ribbon, strip and bands together.</div>
+            <div class="disp-cell"><span data-i18n="site.region.ribbon">The whole tabbed ribbon, strip and bands together.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.file</code></div>
-            <div class="disp-cell">The File page: open, save, export, print, properties, settings.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-file">The File page: open, save, export, print, properties, settings.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.home</code></div>
-            <div class="disp-cell">Character and paragraph formatting, styles, clipboard, undo.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-home">Character and paragraph formatting, styles, clipboard, undo.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.insert</code></div>
-            <div class="disp-cell">Tables, pictures, shapes, links, comments, headers, symbols.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-insert">Tables, pictures, shapes, links, comments, headers, symbols.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.layout</code></div>
-            <div class="disp-cell">Page setup, margins, columns, spacing, watermark, arrange.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-layout">Page setup, margins, columns, spacing, watermark, arrange.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.references</code></div>
-            <div class="disp-cell">Captions, cross-references, contents, footnotes, fields.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-references">Captions, cross-references, contents, footnotes, fields.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.review</code></div>
-            <div class="disp-cell">Tracked changes, comments, proofing, the review mode control.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-review">Tracked changes, comments, proofing, the review mode control.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.view</code></div>
-            <div class="disp-cell">Outline, zoom, page setup, showing changes.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-view">Outline, zoom, page setup, showing changes.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.table</code></div>
-            <div class="disp-cell">The contextual table band, present when the caret is in a table.</div>
+            <div class="disp-cell"><span data-i18n="site.region.band-table">The contextual table band, present when the caret is in a table.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>rail</code></div>
-            <div class="disp-cell">The left navigation rail: outline and page thumbnails.</div>
+            <div class="disp-cell"><span data-i18n="site.region.rail">The left navigation rail: outline and page thumbnails.</span></div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
+            <div class="disp-name"><code>ruler</code></div>
+            <div class="disp-cell"><span data-i18n="site.region.ruler">The ruler strip above the page: indents and tab stops.</span></div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>caret</code></div>
+            <div class="disp-cell"><span data-i18n="site.region.caret">The text caret and the selection highlight on the page.</span></div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>context</code></div>
+            <div class="disp-cell"><span data-i18n="site.region.context">The right-click menu on the document.</span></div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>objects</code></div>
+            <div class="disp-cell"><span data-i18n="site.region.objects">Object selection: the outline, its handles and the object bar.</span></div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
             <div class="disp-name"><code>history</code></div>
-            <div class="disp-cell">The version-history timeline, its ribbon entry and its preview bar.</div>
+            <div class="disp-cell"><span data-i18n="site.region.history">The version-history timeline, its ribbon entry and its preview bar.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>status</code></div>
-            <div class="disp-cell">The status bar: counts, page number, language, mode.</div>
+            <div class="disp-cell"><span data-i18n="site.region.status">The status bar: counts, page number, language, mode.</span></div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>zoom</code></div>
-            <div class="disp-cell">The zoom cluster in the status bar.</div>
+            <div class="disp-cell"><span data-i18n="site.region.zoom">The zoom cluster in the status bar.</span></div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>find</code></div>
-            <div class="disp-cell">The find and replace card.</div>
+            <div class="disp-cell"><span data-i18n="site.region.find">The find and replace card.</span></div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>selection</code></div>
-            <div class="disp-cell">The floating toolbar above a selection.</div>
+            <div class="disp-cell"><span data-i18n="site.region.selection">The floating toolbar above a selection.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>settings</code></div>
-            <div class="disp-cell">The settings dialog and the gear that opens it.</div>
+            <div class="disp-cell"><span data-i18n="site.region.settings">The settings dialog and the gear that opens it.</span></div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
@@ -1368,7 +1398,7 @@ brand.json was refused:
           <li>
             <b data-i18n="site.embedding.noPerGroupSelection">No per-GROUP selection inside a ribbon band.</b> All eight bands are
             selectable and every one of the
-            <span data-claim="region-count">19</span> chrome regions can be
+            <span data-claim="region-count">24</span> chrome regions can be
             withheld, but the groups <em>inside</em> a band are not addressable:
             <span data-claim="unnamed-group-count">46</span> of them carry no
             <code>data-group</code> attribute at all, so a per-group roster would
