@@ -95,6 +95,71 @@ export function paintResizeHandles(pageOf, handles, onGripDown) {
 }
 
 /**
+ * Where the object bar goes: just above the object, clamped into the scrolling
+ * page view rather than the window — an object at the top of the view must not
+ * push the bar up behind the ribbon — and off screen entirely when the object
+ * it acts on has scrolled away. A bar left parked over unrelated paragraphs
+ * with a live Delete button aimed at an object the user can no longer see is
+ * `docs/104` HF-058, and it is the reason this is arithmetic that can be
+ * checked rather than four `style.top` assignments in a repaint.
+ *
+ * Returns `null` when the bar should be hidden.
+ *
+ * O(1).
+ *
+ * @param {{left: number, top: number, bottom: number}} object viewport pixels
+ * @param {{top: number, bottom: number}} view the scrolling page view's rect
+ * @param {number} barHeight the bar's measured height
+ * @param {number} [gap] the clearance in pixels
+ * @returns {{left: number, top: number} | null}
+ */
+export function objectBarPosition(object, view, barHeight, gap = 8) {
+  if (object.bottom <= view.top || object.top >= view.bottom) return null;
+  return {
+    left: Math.max(gap, object.left),
+    top: Math.round(
+      Math.max(view.top + gap, Math.min(object.top - barHeight - gap, view.bottom - barHeight - gap)),
+    ),
+  };
+}
+
+/**
+ * Puts a transparent move pad over a selected, movable object.
+ *
+ * The pad exists for ONE reason: `touch-action`. A page sheet is a canvas the
+ * browser is free to scroll, and that decision is taken at touch-start from the
+ * `touch-action` of the element under the finger — long before any handler can
+ * call `preventDefault`. So dragging a floating image with a finger scrolled
+ * the document and the image never moved, and no amount of pointer capture in
+ * the move handler could change that, because the gesture was already gone.
+ *
+ * The resize grips do not have this problem: they are real elements carrying
+ * `touch-action: none`. The pad gives the object's BODY the same footing, and
+ * only while the object is selected and movable — so a finger still scrolls the
+ * document everywhere else, including over the same picture when it is not
+ * selected.
+ *
+ * O(1).
+ *
+ * @param {Element} overlay the page overlay to paint into
+ * @param {[number, number, number, number]} box the object's box in twips
+ * @param {{sx: number, sy: number}} scale
+ * @param {(event: PointerEvent) => void} onPointerDown
+ */
+export function paintMovePad(overlay, box, scale, onPointerDown) {
+  const [x, y, w, h] = box;
+  const pad = document.createElement("div");
+  pad.className = "object-move-pad";
+  pad.style.left = `${x * scale.sx}px`;
+  pad.style.top = `${y * scale.sy}px`;
+  pad.style.width = `${w * scale.sx}px`;
+  pad.style.height = `${h * scale.sy}px`;
+  pad.addEventListener("pointerdown", onPointerDown);
+  overlay.appendChild(pad);
+  return pad;
+}
+
+/**
  * Puts (or updates) the live size bubble on a drag preview.
  *
  * The preview was an outline and nothing else, so resizing to a specific size

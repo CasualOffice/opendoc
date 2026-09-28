@@ -6612,6 +6612,24 @@ body.is-format-painting .page-wrap * {
 .overlay .object-handle[data-handle="3"],
 .overlay .object-handle[data-handle="7"] { cursor: ew-resize; }
 
+/* The move pad over a selected, movable object: invisible, and there purely so
+ * the object's body carries `touch-action: none` the way its grips already do.
+ * Without it the browser claims a finger drag for scrolling at touch-start and
+ * the move never begins.
+ *
+ * It carries NO `z-index`, deliberately, and is painted before the grips: a
+ * positioned element at `z-index: auto` is hit-tested in DOM order, so the
+ * grips stay on top. Lifting the pad to `z-index: 1` put it over the half of
+ * each grip that overlaps the object, and an edge drag resized nothing because
+ * the pad answered the press — caught by the margin-snap guard. */
+.overlay .object-move-pad {
+  position: absolute;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+
 /* Alignment guides (Word's green / Docs' blue): the line the dragged object has
  * been pulled onto, drawn across the whole page so the relationship is visible
  * rather than inferred. Host chrome only — it never commits anything, and it

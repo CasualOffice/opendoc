@@ -222,6 +222,18 @@ export const CURSOR_TARGETS = [
     why: "Eight grips, eight axis cursors — the mapping every editor shares.",
   },
   {
+    id: "object-move-pad",
+    cursor: "move",
+    owner: "css",
+    selector: ".overlay .object-move-pad",
+    gesture: "Dragging a selected floating object's body to move it",
+    why:
+      "The same `move` the router already promises over a movable object — the " +
+      "pad is that promise made touchable (`touch-action: none`), so it must not " +
+      "change what the pointer says. A pad with no row would have inherited the " +
+      "overlay's arrow and silently un-promised the move it exists to carry.",
+  },
+  {
     id: "object-crop-handle",
     cursor: null,
     directional: true,

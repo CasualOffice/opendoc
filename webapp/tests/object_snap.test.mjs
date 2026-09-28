@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { objectBarPosition } from "../src/object_guides.mjs";
 import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "../src/object_snap.mjs";
 
 // US Letter with 1in margins, in twips.
@@ -120,4 +121,41 @@ test("no drag can collapse an object below the minimum edge", () => {
   const box = resizeFromDrag(start, 4, -99999, -99999, { lockAspect: false, minEdge: 144 });
   assert.equal(box.w, 144);
   assert.equal(box.h, 144);
+});
+
+// ---- The object bar's placement (docs/104 HF-058) ---------------------------
+// It moved into `object_guides.mjs` with the rest of what a selected object
+// shows. The guarantees are that the bar never sits behind the ribbon and never
+// outlives its object's visibility — the defect the row records is a live
+// Delete button left aimed at an object the user can no longer see. In
+// `main.js` this was four `style.top` assignments in a repaint and unaskable.
+
+test("the bar sits just above its object when there is room", () => {
+  assert.deepEqual(
+    objectBarPosition({ left: 200, top: 500, bottom: 620 }, { top: 100, bottom: 900 }, 40),
+    { left: 200, top: 452 },
+  );
+});
+
+test("an object at the top of the view does not push the bar behind the ribbon", () => {
+  const at = objectBarPosition({ left: 200, top: 110, bottom: 240 }, { top: 100, bottom: 900 }, 40);
+  assert.equal(at.top, 108, "clamped to the page view's own top, not the window's");
+});
+
+test("the bar is hidden once its object has scrolled out of the page view", () => {
+  assert.equal(
+    objectBarPosition({ left: 200, top: -300, bottom: -100 }, { top: 100, bottom: 900 }, 40),
+    null,
+    "scrolled off the top",
+  );
+  assert.equal(
+    objectBarPosition({ left: 200, top: 950, bottom: 1100 }, { top: 100, bottom: 900 }, 40),
+    null,
+    "scrolled off the bottom",
+  );
+});
+
+test("the bar never runs off the left edge", () => {
+  const at = objectBarPosition({ left: -40, top: 500, bottom: 620 }, { top: 100, bottom: 900 }, 40);
+  assert.equal(at.left, 8);
 });

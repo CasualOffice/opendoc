@@ -70,7 +70,7 @@ import {
 } from "./menu_render.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object_crop_chrome.mjs";
-import { clearGuides, paintGuides, paintResizeHandles, paintSizeReadout } from "./object_guides.mjs";
+import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles, paintSizeReadout } from "./object_guides.mjs";
 import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
 import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "./object_snap.mjs";
 import { t } from "./i18n.mjs";
@@ -4148,7 +4148,16 @@ function paintObjectSelection() {
     paintObjectCrop();
     return;
   }
-  place(doc.objectRect(node), "object-outline");
+  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
+  place(rect, "object-outline");
+  // A movable object's BODY needs `touch-action: none` the way its grips
+  // already have it, or the browser starts scrolling at touch-start and the
+  // move gesture is gone before any handler runs. Selected + movable only.
+  const padPage = rect.length >= 5 ? pages[rect[0] - 1] : null;
+  if (objectSelection.canMove && padPage?.overlay) {
+    paintMovePad(padPage.overlay, rect.slice(1, 5), scaleOf(padPage), (event) =>
+      startObjectMove(event, padPage, node));
+  }
   paintResizeHandles(
     (pageNumber) => {
       const page = pages[pageNumber - 1];
@@ -4758,40 +4767,31 @@ function updateObjectContextBar() {
  *  screen when that object is not on screen.
  *
  *  The bar is body-level with fixed viewport coordinates, so nothing about a
- *  scroll moves it on its own: it used to stay parked at its original position
- *  over unrelated paragraphs or the ribbon after the object had scrolled away —
- *  with a live Delete button still aimed at an object the user could no longer
- *  see (docs/104 HF-058). Separated from `updateObjectContextBar` so a scroll
- *  only re-measures; it never rebuilds the bar's contents. */
+ *  scroll moves it on its own (docs/104 HF-058). Separated from
+ *  `updateObjectContextBar` so a scroll only re-measures; it never rebuilds the
+ *  bar's contents. The placement rule itself is `objectBarPosition`. */
 function positionObjectContextBar() {
   if (!objectContextBarEl || !doc) return;
-  if (!objectSelection || objectSelection.mode !== "selected") {
-    objectContextBarEl.hidden = true;
-    return;
-  }
-  const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h] twips
+  const rect = objectSelection?.mode === "selected" ? doc.objectRect(objectSelection.node) : [];
   const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
   if (!page) {
     objectContextBarEl.hidden = true;
     return;
   }
   const { rect: pageRect, sx, sy } = scaleOf(page);
-  const objectLeft = pageRect.left + rect[1] * sx;
-  const objectTop = pageRect.top + rect[2] * sy;
-  const objectBottom = objectTop + rect[4] * sy;
-  const view = viewportEl.getBoundingClientRect();
-  if (objectBottom <= view.top || objectTop >= view.bottom) {
+  const top = pageRect.top + rect[2] * sy;
+  objectContextBarEl.hidden = false; // must be visible to be measured
+  const at = objectBarPosition(
+    { left: pageRect.left + rect[1] * sx, top, bottom: top + rect[4] * sy },
+    viewportEl.getBoundingClientRect(),
+    objectContextBarEl.offsetHeight,
+  );
+  if (!at) {
     objectContextBarEl.hidden = true; // the object is scrolled out of the page view
     return;
   }
-  objectContextBarEl.hidden = false; // must be visible to be measured
-  const height = objectContextBarEl.offsetHeight;
-  const top = objectTop - height - 8;
-  objectContextBarEl.style.left = `${Math.max(8, objectLeft)}px`;
-  // Clamp into the scrolling page view rather than the window, so an object at
-  // the top of the view does not push the bar up behind the ribbon.
-  objectContextBarEl.style.top =
-    `${Math.round(Math.max(view.top + 8, Math.min(top, view.bottom - height - 8)))}px`;
+  objectContextBarEl.style.left = `${at.left}px`;
+  objectContextBarEl.style.top = `${at.top}px`;
 }
 
 // The five viewport scroll listeners never touched the object bar, and the page

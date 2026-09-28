@@ -274,33 +274,27 @@ test.describe("with a finger", () => {
     const before = await outline(page);
     const scrollBefore = await page.evaluate(() => document.getElementById("viewport").scrollTop);
 
-    // Playwright's touchscreen has no drag primitive, so the pointer events a
-    // touch produces are driven directly — with `pointerType: "touch"`, which
-    // is the thing the fix has to survive. Before pointer capture, these left
-    // the gesture to the browser's own scroll and the image never moved.
-    await page.evaluate(
-      ([x, y, dx, dy]) => {
-        const target = document.elementFromPoint(x, y);
-        const fire = (type, cx, cy) =>
-          target.dispatchEvent(
-            new PointerEvent(type, {
-              pointerId: 1,
-              pointerType: "touch",
-              isPrimary: true,
-              clientX: cx,
-              clientY: cy,
-              bubbles: true,
-              cancelable: true,
-            }),
-          );
-        fire("pointerdown", x, y);
-        for (let step = 1; step <= 10; step += 1) {
-          fire("pointermove", x + (dx * step) / 10, y + (dy * step) / 10);
-        }
-        fire("pointerup", x + dx, y + dy);
-      },
-      [before.x + before.w / 2, before.y + before.h / 2, 130, 0],
-    );
+    // REAL touch events, through CDP. Synthetic `PointerEvent`s dispatched from
+    // page script are NOT good enough here and this guard was briefly written
+    // that way: they never reach the browser's own scroll decision, so the
+    // spec passed unchanged with the fix removed — a guard that cannot fail.
+    // `Input.dispatchTouchEvent` goes in ahead of that decision, which is the
+    // only place `touch-action` and pointer capture mean anything.
+    const cdp = await page.context().newCDPSession(page);
+    const touchAt = async (type, x, y) => {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }],
+      });
+    };
+    const fromX = before.x + before.w / 2;
+    const fromY = before.y + before.h / 2;
+    const DX = 130;
+    await touchAt("touchStart", fromX, fromY);
+    for (let step = 1; step <= 10; step += 1) {
+      await touchAt("touchMove", fromX + (DX * step) / 10, fromY);
+    }
+    await touchAt("touchEnd", fromX + DX, fromY);
     await page.waitForTimeout(400);
 
     // THE GUARANTEE: the image is further right in the laid-out document, and
