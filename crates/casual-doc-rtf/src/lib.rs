@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Security-bounded Rich Text Format (RTF) admission and semantic import.
 //!
 //! RTF is not a package: it is a single brace-delimited stream of backslash

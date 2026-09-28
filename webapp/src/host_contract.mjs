@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // THE HOST CONTRACT: one schema, from which both transports are built.
 //
 // `docs/126` phase 2. A host gets a typed way to command the editor and to be

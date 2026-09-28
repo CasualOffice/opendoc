@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! DOCX package writer for the no-edit round-trip case.
 //!
 //! This is the "exact no-op return" that Retention mode enables: given the

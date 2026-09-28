@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Framework-free <opendoc-editor> custom element, the capability contract it resolves before first paint, and the host contract for commanding it.",
   "license": "Apache-2.0",
+  "author": "The CasualOffice Team (https://github.com/CasualOffice)",
   "type": "module",
   "main": "./src/embed_element.mjs",
   "module": "./src/embed_element.mjs",
@@ -36,7 +37,9 @@
   "files": [
     "src",
     "types",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "sideEffects": [
     "./src/embed_define.js"

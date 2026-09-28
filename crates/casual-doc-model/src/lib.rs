@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Normalized document values and invariants used inside the OpenDoc runtime.
 
 #![deny(missing_docs)]

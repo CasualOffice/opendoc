@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Atomic transaction application, inverses, and position mapping for OpenDoc.
 
 #![deny(missing_docs)]

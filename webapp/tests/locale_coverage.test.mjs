@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1234],
-  ["de", 1234],
-  ["es", 1234],
-  ["fr", 1234],
-  ["hi", 1234],
-  ["id", 1234],
-  ["it", 1234],
-  ["ja", 1234],
-  ["ko", 1234],
-  ["nl", 1234],
-  ["pl", 1234],
-  ["pt-BR", 1234],
-  ["ru", 1234],
-  ["tr", 1234],
-  ["uk", 1234],
-  ["vi", 1234],
-  ["zh-Hans", 1234],
-  ["zh-Hant", 1234],
+  ["ar", 1343],
+  ["de", 1343],
+  ["es", 1343],
+  ["fr", 1343],
+  ["hi", 1343],
+  ["id", 1343],
+  ["it", 1343],
+  ["ja", 1343],
+  ["ko", 1343],
+  ["nl", 1343],
+  ["pl", 1343],
+  ["pt-BR", 1343],
+  ["ru", 1343],
+  ["tr", 1343],
+  ["uk", 1343],
+  ["vi", 1343],
+  ["zh-Hans", 1343],
+  ["zh-Hant", 1343],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -197,7 +197,25 @@ const COVERAGE = new Map([
  *  same in every language and needs one form per locale instead of Arabic's six
  *  — a shape this catalogue already uses and one fewer way for eighteen
  *  catalogues to end up half-answered. MEASURED from the merged catalogues, not
- *  incremented by fifteen. */
+ *  incremented by fifteen.
+ *
+ *  1,234 -> 1,343 with the footer's authorship and licence lines. ONE of those
+ *  one hundred and nine is this change: `site.footer.licence`, translated into
+ *  all eighteen languages in the commit that routed it, beside a re-translated
+ *  `site.footer.copyright` whose English changed to carry the copyright line.
+ *  The other HUNDRED AND EIGHT were already translated and were never recorded.
+ *  A floor cannot notice work that was done, so it drifts downwards away from
+ *  the truth every time a surface lands translated without the row being moved,
+ *  and 1,234 had drifted that far.
+ *
+ *  RE-MEASURED FROM THE MERGED TREE, twice, which is the part that matters.
+ *  Measured before the rebase it read 1,323 against a `main` of 1,322; measured
+ *  after, it reads 1,343 against an `origin/main` of 1,342, because another
+ *  branch landed twenty more translated keys in between. Carrying the first
+ *  number forward would have published a floor twenty short of the truth while
+ *  this gate stayed green -- the merge trap `module_seams.test.mjs` records
+ *  three times, and the reason a number in this file is never arithmetic on two
+ *  branches' figures. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

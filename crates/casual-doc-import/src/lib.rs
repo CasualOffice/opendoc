@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Semantic WordprocessingML import into the normalized schema v1 model.
 //!
 //! This slice maps the main document body — paragraphs, runs, text, explicit

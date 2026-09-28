@@ -1,6 +1,8 @@
 {
   "name": "opendoc-webapp",
   "private": true,
+  "license": "Apache-2.0",
+  "author": "The CasualOffice Team (https://github.com/CasualOffice)",
   "type": "module",
   "scripts": {
     "test:unit": "node --test tests/*.test.mjs",

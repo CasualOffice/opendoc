@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // `<opendoc-editor>` — the thing a host puts on a page.
 //
 // Framework free on purpose. A custom element works in React, Vue, Svelte and

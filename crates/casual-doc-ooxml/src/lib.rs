@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Security-bounded DOCX package admission and on-demand part reads.
 
 #![deny(missing_docs)]

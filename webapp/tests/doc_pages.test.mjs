@@ -451,6 +451,14 @@ test("how much English the reference pages put on the site, measured and publish
   // would be a worse lie than leaving them in English. What the seam changes here
   // is only the chrome around them, which is the part a reader navigates with.
   // Measured, not calculated.
+  //
+  // 2005 -> 2005 when the footer gained the authorship and licence lines. The
+  // number is RE-MEASURED rather than assumed: the footer is inlined into all
+  // twelve of these pages, so a sentence added there costs twelve, and it cost
+  // nothing because both lines carry `data-i18n` keys with the English beside
+  // them. That is the figure earning its keep in the direction nobody watches —
+  // it is here to notice unrouted prose arriving in the shared chrome, and this
+  // is what it looks like when prose arrives routed.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );

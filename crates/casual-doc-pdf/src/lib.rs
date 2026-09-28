@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Real-text PDF export for OpenDoc.
 //!
 //! This crate turns the shared display list into a **vector** PDF: text is

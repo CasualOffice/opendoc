@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // The side-effect entry point: `import "@casualoffice/opendoc-embed/define"`
 // and `<opendoc-editor>` works.
 //

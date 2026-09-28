@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // What this editor is allowed to be, decided before the first paint.
 //
 // A framed editor is currently a STANDALONE editor: File ▸ New and File ▸ Open

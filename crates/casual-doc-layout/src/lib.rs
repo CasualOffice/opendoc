@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! The OpenDoc layout, pagination, and display-list engine (Phases 1C–1E).
 //!
 //! This crate turns a [`casual_doc_model::v1::Document`] into an immutable

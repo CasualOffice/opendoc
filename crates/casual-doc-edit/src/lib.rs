@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! The closed editing op set on `v1::Document` (doc 59).
 //!
 //! Editing mutates the **same model that is rendered** (`v1::Document`), not the

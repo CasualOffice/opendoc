@@ -5,6 +5,7 @@
 // this file is not byte-identical to a fresh generation, so a hand edit here
 // is a build failure rather than a divergence nobody notices.
 
+// SPDX-License-Identifier: Apache-2.0
 // The side-effect entry point: `import "@casualoffice/opendoc-embed/define"`
 // and `<opendoc-editor>` works.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Format-neutral, security-bounded ZIP package admission and part reads.
 //!
 //! This crate validates only the ZIP container. OPC, ODF, and other document

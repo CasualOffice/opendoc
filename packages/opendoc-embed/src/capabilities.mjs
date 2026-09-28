@@ -5,6 +5,7 @@
 // this file is not byte-identical to a fresh generation, so a hand edit here
 // is a build failure rather than a divergence nobody notices.
 
+// SPDX-License-Identifier: Apache-2.0
 // What this editor is allowed to be, decided before the first paint.
 //
 // A framed editor is currently a STANDALONE editor: File ▸ New and File ▸ Open
