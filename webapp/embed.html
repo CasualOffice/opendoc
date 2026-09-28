@@ -21,20 +21,71 @@
          the idle notice 4.47:1. Using a token is not the same as clearing the
          floor; `tests/e2e/site-contrast.spec.mjs` now measures this page.
          The tokens themselves are deliberate (docs/63) and this page is still
-         not the place to relitigate them. */
+         not the place to relitigate them.
+
+         THE READOUT SHAPE IS THE PLAYGROUND'S, on purpose. Both pages describe
+         one contract, and they had drifted into describing it two ways: this one
+         as a debug `<dl>` with the raw sandbox token string spelled out in full,
+         that one as pills, chips and a disclosure. Two shapes for one contract is
+         worse than either shape alone, so the names here mirror `.pg-*` and the
+         one difference that remains is the one that matters — which MOUNT you are
+         looking at. */
       .embed-page {
         max-width: 1180px;
         margin: 0 auto;
         padding: 40px 20px 64px;
       }
+      /* The intro used ~770px of a 1280px page and left the rest empty. Two
+         columns: the prose, and the facts the page is about — derived at runtime
+         from `capabilities.mjs`, never typed here. */
+      .embed-intro {
+        display: grid;
+        gap: 24px 40px;
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+      @media (min-width: 900px) {
+        .embed-intro {
+          grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+        }
+      }
+      .embed-intro h1 {
+        margin-top: 0;
+      }
       .embed-lede {
-        max-width: 68ch;
         color: var(--muted);
       }
-      /* Stacked, not side by side. The editor's ribbon is designed to fit
-         1280px with about 55px of slack (docs/63), so two embeds in two columns
-         would put both of them into overflow and demonstrate the chrome's
-         narrow fallback rather than the capability contract. */
+      .embed-stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius);
+        background: var(--line-2);
+        overflow: hidden;
+      }
+      .embed-stats li {
+        padding: 11px 14px;
+        background: var(--surface);
+        font-size: 0.78rem;
+        line-height: 1.35;
+        color: var(--muted-2);
+      }
+      .embed-stats b {
+        display: block;
+        font-size: 1.28rem;
+        font-weight: 600;
+        line-height: 1.1;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      /* Stacked, not side by side. The editor's ribbon fits 1280px with room to
+         spare, but two embeds in two columns would each get ~590px and would
+         demonstrate the chrome's narrow fallback rather than the capability
+         contract. */
       .embed-grid {
         display: grid;
         gap: 32px;
@@ -51,24 +102,64 @@
         min-width: 0;
       }
       .embed-panel > * {
-        padding: 16px 18px;
+        padding: 14px 18px;
       }
       .embed-panel-head {
         border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 10px 24px;
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+      @media (min-width: 860px) {
+        .embed-panel-head {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
       }
       .embed-panel-head h2 {
         margin: 0 0 4px;
         font-size: 1.05rem;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        flex-wrap: wrap;
       }
       .embed-panel-head p {
         margin: 0;
         color: var(--muted-3);
         font-size: 0.85rem;
       }
+      /* WHICH MOUNT THIS IS, said twice: in the heading badge and in the code the
+         host writes. The two panels differ in exactly one thing and it was the
+         hardest thing on the page to see. */
+      .embed-kind {
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        font-weight: 500;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--accent-line);
+        background: var(--accent-tint);
+        color: var(--accent-2);
+      }
+      .embed-wrote {
+        margin: 0;
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
+        padding: 9px 11px;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--muted-2);
+        overflow-x: auto;
+      }
       .embed-controls {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
+        gap: 12px 16px;
         align-items: flex-end;
         border-bottom: 1px solid var(--line);
       }
@@ -76,6 +167,7 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
+        margin: 0;
         font-size: 0.8rem;
         color: var(--muted-2);
       }
@@ -87,6 +179,20 @@
         background: var(--surface);
         border: 1px solid var(--line-strong);
         border-radius: var(--radius-sm);
+      }
+      .embed-switch {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 0;
+        padding-bottom: 7px;
+        font-size: 0.8rem;
+        color: var(--muted-2);
+      }
+      .embed-switch code {
+        font-family: var(--font-mono);
+        font-size: 0.74rem;
+        color: var(--ink);
       }
       .embed-btn {
         font: inherit;
@@ -107,37 +213,57 @@
         cursor: not-allowed;
         opacity: 0.55;
       }
-      .embed-readout {
+      /* ---- The resolved readout, in the playground's language ---------------- */
+      .embed-resolved {
         border-bottom: 1px solid var(--line);
-        font-size: 0.85rem;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
       }
-      .embed-readout dl {
-        display: grid;
-        grid-template-columns: max-content 1fr;
-        gap: 6px 14px;
+      .embed-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        list-style: none;
         margin: 0;
+        padding: 0;
       }
-      .embed-readout dt {
-        color: var(--muted-3);
+      .embed-pill {
+        font-size: 0.7rem;
+        line-height: 1.5;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--line-2);
+        background: var(--surface-2);
+        color: var(--muted-2);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
-      .embed-readout dd {
-        margin: 0;
+      .embed-pill b {
+        font-weight: 600;
         color: var(--ink);
+      }
+      .embed-pill--mode {
+        border-color: var(--accent-line);
+        background: var(--accent-tint);
+        color: var(--accent-2);
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
       }
       .embed-caps {
         display: flex;
         flex-wrap: wrap;
-        gap: 6px;
+        gap: 4px;
         list-style: none;
         margin: 0;
         padding: 0;
       }
       .embed-caps li {
         font-family: var(--font-mono);
-        font-size: 0.72rem;
-        padding: 2px 7px;
+        font-size: 0.68rem;
+        padding: 1px 7px;
         border-radius: 999px;
-        border: 1px solid var(--line-strong);
+        border: 1px solid var(--line-2);
         color: var(--muted-2);
         background: var(--surface-2);
       }
@@ -151,6 +277,56 @@
         /* --faint-on-paper, not --muted-3: this chip sits on --surface-2, where
            --muted-3 is 4.40:1. HF-189. */
         color: var(--faint-on-paper);
+      }
+      /* The sandbox token string is still here — it IS what the frame is given and
+         a host eventually wants to read it — but one disclosure away rather than
+         printed across the panel as a debug row. */
+      .embed-fold {
+        margin: 0;
+      }
+      .embed-fold-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px;
+        cursor: pointer;
+        list-style: none;
+        font-size: 0.74rem;
+        font-weight: 500;
+        color: var(--muted-2);
+      }
+      .embed-fold-head::-webkit-details-marker {
+        display: none;
+      }
+      .embed-fold-head::after {
+        content: "";
+        width: 5px;
+        height: 5px;
+        margin-left: 6px;
+        border-right: 1.5px solid var(--muted-2);
+        border-bottom: 1.5px solid var(--muted-2);
+        transform: rotate(45deg);
+        transform-origin: center;
+      }
+      .embed-fold[open] > .embed-fold-head::after {
+        transform: rotate(-135deg);
+      }
+      .embed-facts {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 4px 12px;
+        margin: 6px 0 2px;
+        font-size: 0.74rem;
+      }
+      .embed-facts dt {
+        color: var(--muted-2);
+      }
+      .embed-facts dd {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        word-break: break-word;
       }
       .embed-stage {
         padding: 0;
@@ -169,22 +345,43 @@
         min-height: 560px;
         border: 0;
       }
+      /* THE PLACEHOLDER IS A DELIBERATE STATE, AND HAS TO LOOK LIKE ONE.
+         It was ~330px of empty grey with "Not mounted." in small type sitting at
+         the bottom-centre, which reads as a broken layout rather than a decision.
+         Nothing boots on load on purpose — each editor holds ~100 MB of
+         WebAssembly and two of them unasked costs a visitor 200 MB — so the box
+         says what will appear, why it is waiting, and carries the action itself.
+         A placeholder whose reason is elsewhere on the page is a placeholder
+         nobody reads the reason for. */
       .embed-idle {
+        flex: 1 1 auto;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 24px;
+        gap: 10px;
+        padding: 32px 24px;
+        text-align: center;
+      }
+      .embed-idle-title {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .embed-idle-why {
+        margin: 0;
+        max-width: 46ch;
         /* On --paper, where --muted-3 is 4.47:1. HF-189. */
         color: var(--faint-on-paper);
-        font-size: 0.85rem;
-        text-align: center;
+        font-size: 0.82rem;
+        line-height: 1.55;
       }
       .embed-console {
         border-top: 1px solid var(--line);
         display: flex;
         flex-direction: column;
         gap: 12px;
-        padding: 16px 18px;
       }
       .embed-console-lede {
         margin: 0;
@@ -196,9 +393,23 @@
         border-bottom: 0;
         padding: 0;
       }
-      .embed-console .embed-readout {
-        border-bottom: 0;
-        padding: 0;
+      .embed-out {
+        display: grid;
+        gap: 12px 20px;
+        grid-template-columns: 1fr;
+      }
+      @media (min-width: 860px) {
+        .embed-out {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+      }
+      .embed-out h3 {
+        margin: 0 0 5px;
+        font-size: 0.74rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted-3);
       }
       .embed-json {
         font-family: var(--font-mono);
@@ -217,10 +428,27 @@
         overflow-y: auto;
         color: var(--muted-2);
       }
+      /* The two closing sections read side by side on a wide page rather than as
+         two more 78ch paragraphs down the left edge. */
+      .embed-layers {
+        display: grid;
+        gap: 8px 40px;
+        grid-template-columns: 1fr;
+        margin-top: 40px;
+      }
+      @media (min-width: 900px) {
+        .embed-layers {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .embed-layers h2 {
+        margin: 0 0 6px;
+        font-size: 1.05rem;
+      }
       .embed-note {
         font-size: 0.85rem;
         color: var(--muted);
-        max-width: 78ch;
+        line-height: 1.6;
       }
       .embed-note code {
         font-family: var(--font-mono);
@@ -230,20 +458,29 @@
   </head>
   <body>
     <main class="embed-page">
-      <h1>Embedding OpenDoc</h1>
-      <p class="embed-lede">
-        The same editor, embedded twice on one page: once in a plain
-        <code>&lt;iframe&gt;</code> a host wires itself, and once through the
-        <code>&lt;opendoc-editor&gt;</code> custom element. Both resolve their
-        capabilities from one authority before the frame's first navigation, so
-        neither can be talked out of the mode it was given.
-      </p>
-      <p class="embed-note">
-        Neither editor boots until you ask. Each one holds a WebAssembly instance
-        of roughly 100 MB, and a page that starts two of them on load is a page
-        that costs a visitor 200 MB for a demo they may not have wanted — the same
-        reason the home page's live demo is click-to-activate.
-      </p>
+      <div class="embed-intro">
+        <div>
+          <h1>Embedding OpenDoc</h1>
+          <p class="embed-lede">
+            The same editor, embedded twice on one page: once in a plain
+            <code>&lt;iframe&gt;</code> a host wires itself, and once through the
+            <code>&lt;opendoc-editor&gt;</code> custom element. Both resolve their
+            capabilities from one authority before the frame's first navigation,
+            so neither can be talked out of the mode it was given — and each panel
+            prints the code a host writes to get it, which is the only real
+            difference between them.
+          </p>
+        </div>
+        <!-- Digits only, written by `embed_host_demo.js` from `capabilities.mjs`
+             and from the editor's own `describe()`. A number typed into this page
+             would be a claim about someone else's code (`docs/99` §9.1). -->
+        <ul class="embed-stats">
+          <li><b data-stat="roles">—</b> roles</li>
+          <li><b data-stat="capabilities">—</b> capabilities</li>
+          <li><b data-stat="mounts">—</b> mounts on this page</li>
+          <li><b data-stat="transports">—</b> transports each</li>
+        </ul>
+      </div>
 
       <div class="embed-grid">
         <!-- Panel 1: the host wires the iframe itself. -->
@@ -254,39 +491,61 @@
           aria-labelledby="iframeHostHeading"
         >
           <div class="embed-panel-head">
-            <h2 id="iframeHostHeading">A plain iframe</h2>
-            <p>
-              The host builds the URL. <code>?mode=</code> carries the role, and
-              the editor resolves it before first paint.
-            </p>
+            <div>
+              <h2 id="iframeHostHeading">
+                A plain iframe <span class="embed-kind">&lt;iframe&gt;</span>
+              </h2>
+              <p>
+                The host builds the URL and the sandbox by hand. Every parameter
+                below is a decision this page had to make for itself.
+              </p>
+            </div>
+            <pre class="embed-wrote" data-wrote aria-label="The code this host writes"></pre>
           </div>
           <div class="embed-controls">
             <p class="embed-field">
               <label for="iframeRole">Role</label>
               <select id="iframeRole" data-role-select></select>
             </p>
-            <button type="button" class="embed-btn" data-mount>Mount the editor</button>
+            <label class="embed-switch">
+              <input type="checkbox" id="iframeWithhold" data-withhold value="download" />
+              <span>Withhold <code>download</code></span>
+            </label>
             <button type="button" class="embed-btn" data-variant="quiet" data-release disabled>
               Release it
             </button>
           </div>
-          <div class="embed-readout">
-            <dl>
-              <dt>Review mode</dt>
-              <dd data-editing-mode>—</dd>
-              <dt>Sandbox</dt>
-              <dd data-sandbox>—</dd>
-              <dt>Capabilities</dt>
-              <dd><ul
-                  class="embed-caps"
-                  data-caps
-                  data-granted-label="granted"
-                  data-withheld-label="withheld"
-                ></ul></dd>
-            </dl>
+          <div class="embed-resolved">
+            <ul class="embed-pills">
+              <li class="embed-pill embed-pill--mode" data-editing-mode>—</li>
+              <li class="embed-pill"><b data-granted-count>—</b> of <b data-capability-count>—</b> capabilities</li>
+            </ul>
+            <ul
+              class="embed-caps"
+              data-caps
+              data-granted-label="granted"
+              data-withheld-label="withheld"
+            ></ul>
+            <details class="embed-fold">
+              <summary class="embed-fold-head">What the frame is given</summary>
+              <dl class="embed-facts">
+                <dt>Frame sandbox</dt>
+                <dd data-sandbox>—</dd>
+              </dl>
+            </details>
           </div>
           <div class="embed-stage" data-stage>
-            <p class="embed-idle" data-idle>Not mounted.</p>
+            <div class="embed-idle" data-idle>
+              <p class="embed-idle-title">The editor mounts here</p>
+              <p class="embed-idle-why">
+                Nothing boots until you ask. Each editor holds a WebAssembly
+                instance of roughly 100&nbsp;MB, and a page that starts two of them
+                on load costs a visitor 200&nbsp;MB for a demo they may not have
+                wanted — the same reason the home page's live demo is
+                click-to-activate.
+              </p>
+              <button type="button" class="embed-btn" data-mount>Mount the editor</button>
+            </div>
           </div>
           <div class="embed-console" data-console hidden>
             <p class="embed-console-lede">
@@ -311,13 +570,15 @@
               </p>
               <button type="button" class="embed-btn" data-run>Run it</button>
             </div>
-            <div class="embed-readout">
-              <dl>
-                <dt>Result</dt>
-                <dd><pre class="embed-json" data-result>—</pre></dd>
-                <dt>Events</dt>
-                <dd><ol class="embed-events" data-events></ol></dd>
-              </dl>
+            <div class="embed-out">
+              <div>
+                <h3>Result</h3>
+                <pre class="embed-json" data-result>—</pre>
+              </div>
+              <div>
+                <h3>Events</h3>
+                <ol class="embed-events" data-events></ol>
+              </div>
             </div>
           </div>
         </section>
@@ -330,40 +591,63 @@
           aria-labelledby="elementHostHeading"
         >
           <div class="embed-panel-head">
-            <h2 id="elementHostHeading">The custom element</h2>
-            <p>
-              <code>&lt;opendoc-editor mode="…"&gt;</code>. The element resolves
-              the role, derives the iframe sandbox from it, and reports both back
-              on <code>opendoc-capabilities</code>.
-            </p>
+            <div>
+              <h2 id="elementHostHeading">
+                The custom element
+                <span class="embed-kind">&lt;opendoc-editor&gt;</span>
+              </h2>
+              <p>
+                The same configuration, declared. The element resolves the role and
+                both withhold lists, derives the iframe sandbox from them, and
+                reports all of it back on <code>opendoc-capabilities</code>.
+              </p>
+            </div>
+            <pre class="embed-wrote" data-wrote aria-label="The markup this host writes"></pre>
           </div>
           <div class="embed-controls">
             <p class="embed-field">
               <label for="elementRole">Role</label>
               <select id="elementRole" data-role-select></select>
             </p>
-            <button type="button" class="embed-btn" data-mount>Mount the editor</button>
+            <label class="embed-switch">
+              <input type="checkbox" id="elementWithhold" data-withhold value="download" />
+              <span>Withhold <code>download</code></span>
+            </label>
             <button type="button" class="embed-btn" data-variant="quiet" data-release disabled>
               Release it
             </button>
           </div>
-          <div class="embed-readout">
-            <dl>
-              <dt>Review mode</dt>
-              <dd data-editing-mode>—</dd>
-              <dt>Sandbox</dt>
-              <dd data-sandbox>—</dd>
-              <dt>Capabilities</dt>
-              <dd><ul
-                  class="embed-caps"
-                  data-caps
-                  data-granted-label="granted"
-                  data-withheld-label="withheld"
-                ></ul></dd>
-            </dl>
+          <div class="embed-resolved">
+            <ul class="embed-pills">
+              <li class="embed-pill embed-pill--mode" data-editing-mode>—</li>
+              <li class="embed-pill"><b data-granted-count>—</b> of <b data-capability-count>—</b> capabilities</li>
+            </ul>
+            <ul
+              class="embed-caps"
+              data-caps
+              data-granted-label="granted"
+              data-withheld-label="withheld"
+            ></ul>
+            <details class="embed-fold">
+              <summary class="embed-fold-head">What the frame is given</summary>
+              <dl class="embed-facts">
+                <dt>Frame sandbox</dt>
+                <dd data-sandbox>—</dd>
+              </dl>
+            </details>
           </div>
           <div class="embed-stage" data-stage>
-            <p class="embed-idle" data-idle>Not mounted.</p>
+            <div class="embed-idle" data-idle>
+              <p class="embed-idle-title">The editor mounts here</p>
+              <p class="embed-idle-why">
+                Nothing boots until you ask. Each editor holds a WebAssembly
+                instance of roughly 100&nbsp;MB, and a page that starts two of them
+                on load costs a visitor 200&nbsp;MB for a demo they may not have
+                wanted — the same reason the home page's live demo is
+                click-to-activate.
+              </p>
+              <button type="button" class="embed-btn" data-mount>Mount the editor</button>
+            </div>
           </div>
           <div class="embed-console" data-console hidden>
             <p class="embed-console-lede">
@@ -388,42 +672,54 @@
               </p>
               <button type="button" class="embed-btn" data-run>Run it</button>
             </div>
-            <div class="embed-readout">
-              <dl>
-                <dt>Result</dt>
-                <dd><pre class="embed-json" data-result>—</pre></dd>
-                <dt>Events</dt>
-                <dd><ol class="embed-events" data-events></ol></dd>
-              </dl>
+            <div class="embed-out">
+              <div>
+                <h3>Result</h3>
+                <pre class="embed-json" data-result>—</pre>
+              </div>
+              <div>
+                <h3>Events</h3>
+                <ol class="embed-events" data-events></ol>
+              </div>
             </div>
           </div>
         </section>
       </div>
 
-      <h2>What each layer actually enforces</h2>
-      <p class="embed-note">
-        The browser refuses a download the sandbox did not allow. The engine
-        refuses a mutation in Viewing mode at a single fail-closed choke point, so
-        a chrome defeated from devtools still meets it. And the chrome disables a
-        withheld capability <em>with a reason</em> rather than hiding it — a
-        control that vanishes teaches nothing, and a product that silently lacks a
-        feature is indistinguishable from one that is broken. Open the command
-        palette inside a <code>readonly</code> embed and look at
-        <em>Open…</em>: it is there, it is disabled, and it says why.
-      </p>
-
-      <h2>And the fourth layer: the API</h2>
-      <p class="embed-note">
-        A host that was not granted <code>edit</code> must not be able to run an
-        editing command <em>through the SDK</em> either, or the API is simply the
-        unlocked door beside three locked ones. So the capability gate runs
-        <em>before</em> dispatch: pick <code>preview</code> above, mount, and run
-        <code>format.bold</code> on either transport — the result is
-        <code>{"ok": false, "refusal": {"code": "capability-withheld"}}</code> and the
-        command never reaches the engine. A refusal is a <em>value</em>, not just a
-        toast: a host calling <code>file.save</code> on a <code>readonly</code> embed
-        gets something it can branch on, rather than a status line that says
-        &ldquo;Saved&rdquo; while no file was written.
+      <div class="embed-layers">
+        <section>
+          <h2>What each layer actually enforces</h2>
+          <p class="embed-note">
+            The browser refuses a download the sandbox did not allow. The engine
+            refuses a mutation in Viewing mode at a single fail-closed choke point,
+            so a chrome defeated from devtools still meets it. And the chrome
+            disables a withheld capability <em>with a reason</em> rather than
+            hiding it — a control that vanishes teaches nothing, and a product that
+            silently lacks a feature is indistinguishable from one that is broken.
+            Open the command palette inside a <code>readonly</code> embed and look
+            at <em>Open…</em>: it is there, it is disabled, and it says why.
+          </p>
+        </section>
+        <section>
+          <h2>And the fourth layer: the API</h2>
+          <p class="embed-note">
+            A host that was not granted <code>edit</code> must not be able to run an
+            editing command <em>through the SDK</em> either, or the API is simply
+            the unlocked door beside three locked ones. So the capability gate runs
+            <em>before</em> dispatch: pick <code>preview</code> above, mount, and
+            run <code>format.bold</code> on either transport — the result is
+            <code>{"ok": false, "refusal": {"code": "capability-withheld"}}</code>
+            and the command never reaches the engine. Withhold
+            <code>download</code> and run <code>file.export.docx</code> for the same
+            answer. A refusal is a <em>value</em>, not just a toast.
+          </p>
+        </section>
+      </div>
+      <p class="embed-note" style="margin-top: 24px">
+        To configure a container the other way round — every capability, every
+        chrome region and the brand palette, with the configuration written out for
+        you — use the <a href="./playground.html">SDK playground</a>. The reference
+        is <a href="./embedding.html">Embed the editor</a>.
       </p>
     </main>
 

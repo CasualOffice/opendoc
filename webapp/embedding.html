@@ -181,7 +181,7 @@
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
           <span data-claim="package-file-count">9</span> files,
-          <span data-claim="package-unpacked-kb">102 kB</span> unpacked,
+          <span data-claim="package-unpacked-kb">110 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b>Nothing publishes it to a registry yet</b>, so today a host installs
           the tarball <code>npm pack</code> produces from a checkout. The
@@ -253,11 +253,14 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
 
         <h2 id="mount" class="doc-h2">Mount it</h2>
         <p class="doc-body">
-          The element takes <span data-claim="attribute-count">3</span>
-          attributes and no configuration object. This is the package's own
-          documented usage, and a guard checks every attribute
-          in it against the attributes the element really reads, and the
-          <code>mode</code> value against the names the authority really accepts:
+          The element takes <span data-claim="attribute-count">5</span>
+          attributes and no configuration object. <code>mode</code> names a role;
+          <code>can</code> and <code>chrome</code> narrow it, per capability and
+          per region, so the role never has to be the unit of what a host can
+          express. This is the package's own documented usage, and a guard checks
+          every attribute in it against the attributes the element really reads,
+          and the <code>mode</code> value against the names the authority really
+          accepts:
         </p>
         <!-- @generated declarative-usage -->
         <div class="code-panel">
@@ -267,7 +270,9 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
 &lt;/script&gt;
 
 &lt;opendoc-editor
-  mode="readonly"
+  mode="commentor"
+  can="-download"
+  chrome="-brand"
   editor-src="/opendoc/editor.html"
   frame-title="Contract preview"
 &gt;&lt;/opendoc-editor&gt;</code></pre>
@@ -293,24 +298,13 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         <!-- @generated mount-element -->
         <div class="code-panel">
           <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — mountElement()</span></div>
-          <pre><code>/** The custom element's own path: the host sets `mode` and nothing else, and
- *  the element resolves, sandboxes and reports. The readout is taken from the
- *  element's event rather than recomputed here — if the page and the element
+          <pre><code>/** The custom element's own path: the host DECLARES the configuration and the
+ *  element resolves, sandboxes and reports. `can` is an attribute here, which
+ *  is the whole difference from the panel above — `mountIframe` has to build
+ *  the same list into a query string by hand. The readout is taken from the
+ *  element's event rather than recomputed here: if the page and the element
  *  disagreed, the page would be hiding it. */
-function mountElement(role) {
-  const element = document.createElement("opendoc-editor");
-  element.setAttribute("mode", role);
-  element.setAttribute("editor-src", EDITOR_SRC);
-  element.setAttribute("frame-title", panel.dataset.frameTitle ?? "");
-  element.addEventListener("opendoc-capabilities", (event) =&gt; {
-    render(panel, {
-      capabilities: new Set(event.detail.capabilities),
-      editingMode: event.detail.editingMode,
-      sandbox: event.detail.sandbox,
-    });
-  });
-  return element;
-}</code></pre>
+function mountElement({ mode, can }</code></pre>
         </div>
         <!-- @end mount-element -->
         <p class="doc-body">
@@ -328,17 +322,14 @@ function mountElement(role) {
           <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — mountIframe()</span></div>
           <pre><code>/** What a host writes with no package at all — and why they should not have
  *  to. Every line below is a decision the element already made: put the mode
- *  in the URL before the frame is attached, derive the sandbox from the
- *  capability set, and give the frame an accessible name. */
-function mountIframe(role) {
-  const url = new URL(EDITOR_SRC, document.baseURI);
-  url.searchParams.set("mode", role);
-  const resolved = resolveFor(role);
+ *  and the withhold list in the URL before the frame is attached, derive the
+ *  sandbox from the capability set, and give the frame an accessible name. */
+function mountIframe(request) {
   const frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", resolved.sandbox.join(" "));
+  frame.setAttribute("sandbox", resolveFor(request).sandbox.join(" "));
   frame.setAttribute("allow", "clipboard-read; clipboard-write");
   frame.title = panel.dataset.frameTitle ?? "";
-  frame.src = url.href;
+  frame.src = editorUrl(request).href;
   return frame;
 }</code></pre>
         </div>
@@ -352,16 +343,12 @@ function mountIframe(role) {
         <!-- @generated resolve-first -->
         <div class="code-panel">
           <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — resolveFor()</span></div>
-          <pre><code>/** The capability set, review mode and sandbox for a role, as an embed would
- *  see them: `framed: true`, because every embed on this page is framed. */
-function resolveFor(role) {
-  const capabilities = resolveCapabilities({ mode: role, framed: true });
-  return {
-    capabilities,
-    editingMode: editingModeFor(capabilities),
-    sandbox: sandboxTokensFor(capabilities),
-  };
-}</code></pre>
+          <pre><code>/** The capability set, review mode and sandbox for a host's request, as an embed
+ *  would see them: `framed: true`, because every embed on this page is framed.
+ *
+ *  `can` goes to the same `resolveCapabilities` the element and the editor page
+ *  both call, so the readout cannot describe a narrowing the frame did not get. */
+function resolveFor({ mode, can }</code></pre>
         </div>
         <!-- @end resolve-first -->
 
@@ -1028,11 +1015,11 @@ export function parseOriginAllowlist(raw, selfOrigin) {
           <div class="code-panel-head"><span>webapp/tools/build-brand.mjs — what a failing palette is told</span></div>
           <pre><code>$ node webapp/tools/build-brand.mjs
 brand.json was refused:
-  - light: --muted (#9aa0a6) on --surface (#ffffff) measures 2.64:1 and must clear 4.5:1. #72777b would pass, on the same hue.
-  - light: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. #484848 would pass, on the same hue.
-  - light: --accent-text (var(--accent)) on --surface (#ffffff) measures 2.04:1 and must clear 4.5:1. #a06c17 would pass, on the same hue.
-  - system dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. #484848 would pass, on the same hue.
-  - explicit dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. #484848 would pass, on the same hue.</code></pre>
+  - light: --muted (#9aa0a6) on --surface (#ffffff) measures 2.64:1 and must clear 4.5:1. You set --muted: #72777b there would pass, on the same hue.
+  - light: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
+  - light: --accent-text (var(--accent)) on --surface (#ffffff) measures 2.04:1 and must clear 4.5:1. You set --accent: #a06c17 there would pass, on the same hue.
+  - system dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
+  - explicit dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.</code></pre>
         </div>
         <!-- @end brand-refusal -->
         <p class="doc-body">
@@ -1357,18 +1344,12 @@ brand.json was refused:
             opens, so they are reachable by a person and not by a host.
           </li>
           <li>
-            <b>No way to hand it your document.</b> The element takes
-            <code>mode</code>, <code>editor-src</code> and
-            <code>frame-title</code>, and nothing else.
-            <code>editor-src</code> may carry the editor's own query parameters;
-            there is no host-supplied document URL or byte array.
-          </li>
-          <li>
-            <b>No host capability list.</b> A host picks one of the
-            <span data-claim="preset-count">8</span> preset names and may override
-            <code>autosave</code>. An arbitrary "these five, not those four" list
-            is not accepted yet, so a configuration like "comments only,
-            everything else off" cannot be expressed.
+            <b>No way to hand it your document.</b> The element's
+            <span data-claim="attribute-count">5</span> attributes configure what
+            the editor <em>is</em> — the role, the two withhold lists, where the
+            editor lives and the frame's accessible name — and none of them is a
+            document. <code>editor-src</code> may carry the editor's own query
+            parameters; there is no host-supplied document URL or byte array.
           </li>
           <li>
             <b>No per-GROUP selection inside a ribbon band.</b> All eight bands are

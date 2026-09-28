@@ -215,16 +215,27 @@ test("the element attribute count is the element's own", () => {
   assert.ok(table, "embed_element.mjs no longer declares MOUNT_ATTRIBUTES");
   const attributes = [...table[1].matchAll(/"([\w-]+)"/g)].map((m) => m[1]);
   assert.equal(claim("attribute-count"), String(attributes.length));
-  // And the page's "does not do yet" bullet is still TRUE. Understating is as
-  // false as overstating (`docs/99` §9.6): the day the element grows a `can`
-  // attribute, that bullet is a lie and this is what says so.
+  // The narrowing attributes exist, AND the snippet the page generates uses them.
+  // Both halves, because either one alone is the failure this repository keeps
+  // paying for: an attribute the element reads but nothing on the page writes is
+  // "built is not reachable" (`docs/99` §9.4), and a snippet that claimed an
+  // attribute the element did not read would be the page lying the other way.
   for (const name of ["can", "chrome"]) {
-    assert.ok(
-      !attributes.includes(name),
-      `<opendoc-editor> now reads a "${name}" attribute, so the page's "no attribute of ` +
-        `their own" bullet is false — say the new truth and generate the snippet with it`,
+    assert.ok(attributes.includes(name), `<opendoc-editor> stopped reading "${name}"`);
+    assert.match(
+      MODULE,
+      new RegExp(`\`\\s+${name}="\\$\\{state\\.${name}\\}"\``),
+      `the generated snippet no longer writes ${name} as an attribute, so a host reading ` +
+        "this page is still being taught to hand-write a query string",
     );
   }
+  // And the page no longer says they have no attribute of their own. A bullet
+  // that outlives the gap it describes is understating, which is as false as
+  // overstating (`docs/99` §9.6).
+  assert.ok(
+    !/no attribute of their\s+own/.test(PAGE),
+    'the page still lists "can and chrome have no attribute of their own" as a gap',
+  );
 });
 
 // ---- The refusal ------------------------------------------------------------

@@ -228,8 +228,13 @@ export function resolveColour(value, palette, depth = 0) {
  * Every role in a palette that fails its floor.
  *
  * `palette` is a plain `name → value` map — one theme's worth. Returns a list of
- * `{ role, on, value, ground, ratio, floor, suggestion }`, empty when the
- * palette passes, plus a list of values that could not be read at all.
+ * `{ role, on, value, ground, ratio, floor, suggestion, groundSuggestion }`,
+ * empty when the palette passes, plus a list of values that could not be read at
+ * all.
+ *
+ * `suggestion` fixes the INK and `groundSuggestion` fixes the GROUND — the same
+ * failure from either end, because a pair fails as a pair and only the caller
+ * knows which half somebody chose. `brand_contract.mjs` §BLAME picks.
  *
  * `suggestion` is the nearest value in the SAME HUE that clears the floor,
  * found by walking lightness towards the far end. It is offered so a refusal can
@@ -276,6 +281,15 @@ export function auditPalette(palette) {
       ratio,
       floor,
       suggestion: nearestLegible(composite(ink, ground), ground, floor),
+      // The SAME failure read from the other end: hold the ink still and move the
+      // ground. A pair fails as a pair, and which half is wrong is not something
+      // arithmetic can know — it depends on which one somebody chose. A caller who
+      // knows (the white-label contract knows exactly which tokens the host wrote)
+      // needs a fix for the value that was actually supplied, and telling a host
+      // who changed `--accent` to darken `--accent-ink` is advice about a value
+      // they never touched. Offering both readings here costs one bounded search
+      // and keeps the choosing where the knowledge is.
+      groundSuggestion: nearestLegibleGround(ink, ground, floor),
     });
   };
   for (const role of TEXT_ROLES) check(role, "--surface", TEXT_CONTRAST_FLOOR);
@@ -309,6 +323,31 @@ function nearestLegible(ink, ground, floor) {
         b: ink.b + (towardsWhite ? (255 - ink.b) * t : -ink.b * t),
       };
       if (contrastRatio(candidate, ground) >= floor) return toHex(candidate);
+    }
+  }
+  return null;
+}
+
+/** The nearest GROUND to `ground` that lets `ink` clear `floor` on it, on the same
+ *  hue, by the same two-direction walk.
+ *
+ *  Not `nearestLegible` with the arguments swapped, and the difference is real
+ *  rather than pedantic: the ink is re-composited over each candidate, so a
+ *  translucent ink is measured where it would actually sit. Swapping would have
+ *  measured the ink's own colour against a ground it is partly made of, which is
+ *  right only in the opaque case — and the opaque case is not the one that would
+ *  have caught it going wrong. */
+function nearestLegibleGround(ink, ground, floor) {
+  for (let step = 1; step <= 256; step += 1) {
+    const t = step / 256;
+    for (const towardsWhite of [false, true]) {
+      const candidate = {
+        r: ground.r + (towardsWhite ? (255 - ground.r) * t : -ground.r * t),
+        g: ground.g + (towardsWhite ? (255 - ground.g) * t : -ground.g * t),
+        b: ground.b + (towardsWhite ? (255 - ground.b) * t : -ground.b * t),
+        a: 1,
+      };
+      if (contrastRatio(composite(ink, candidate), candidate) >= floor) return toHex(candidate);
     }
   }
   return null;

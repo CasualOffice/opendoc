@@ -51,6 +51,53 @@
 // will ever be painted.
 import { auditPalette } from "./contrast.mjs";
 
+// §BLAME — A REFUSAL NAMES THE VALUE THE HOST SUPPLIED
+//
+// A contrast failure is a failure of a PAIR, and arithmetic cannot know which
+// half of a pair is wrong: `--accent-ink` on `--accent` at 2.04:1 is one fact
+// about two values. `auditPalette` therefore reports the pair from the ink's end,
+// because that is the only end it can know about — every one of its callers but
+// this one is measuring OUR palette, where both halves are ours.
+//
+// This caller knows more, and it is the one that matters: a host's `brand.json`
+// says exactly which tokens the host wrote. A host who set `--accent` and was
+// told "`--accent-ink` (#ffffff) … #d4d4d8 would pass" has been handed advice
+// about a value they never touched and cannot see in their own file — so the
+// refusal reads as a bug in us, and the actionable half (what to make `--accent`)
+// is missing. Refusing is only better than warning if the failure lands on the
+// person who can fix it WITH the fix; a refusal that names the wrong value is the
+// warning-nobody-reads in a stricter costume.
+//
+// So the pair is still stated in full — it is the fact — and the suggestion is
+// aimed at the end the host actually supplied.
+
+/** Which end of a failing pair the host is responsible for, and the fix for it.
+ *
+ *  Direct first: a token the host wrote, by name. Then one level of plain `var()`
+ *  indirection, which is exact — `--accent-text: var(--accent)` resolves to
+ *  `--accent` with no arithmetic in between, so a value that would work for one
+ *  works for the other. Deliberately NOT followed through `color-mix()`: a mix
+ *  towards white is arithmetic, and a value for the mixed result is not a value
+ *  for the input. Claiming one would be inventing a number, which is the thing a
+ *  refusal exists to avoid.
+ *
+ *  Complexity: O(1). */
+function blame(failure, supplied) {
+  const from = (token, value) => {
+    if (supplied.has(token)) return token;
+    const via = String(value ?? "").match(/^var\(\s*(--[\w-]+)\s*\)$/);
+    return via && supplied.has(via[1]) ? via[1] : null;
+  };
+  // The GROUND is only blamed when the ink is not the host's: a host who set both
+  // ends gets the ink, which is the conventional reading and the one the palette's
+  // own guard uses.
+  const ink = from(failure.role, failure.value);
+  if (ink) return { token: ink, suggestion: failure.suggestion };
+  const ground = from(failure.on, failure.ground);
+  if (ground) return { token: ground, suggestion: failure.groundSuggestion };
+  return { token: null, suggestion: failure.suggestion };
+}
+
 /** The product's own identity: the name the catalogues were written with, and
  *  the mark `editor.html` shipped with.
  *
@@ -283,6 +330,9 @@ export function auditBrand(config, themes) {
     const perTheme = themeName === "light" ? config.theme.light : config.theme.dark;
     const palette = { ...base, ...config.theme.tokens, ...perTheme };
     palettes.set(themeName, palette);
+    // Exactly what this host wrote, for this theme. The set the refusal is allowed
+    // to tell them to change — everything else in the palette is ours.
+    const supplied = new Set([...Object.keys(config.theme.tokens), ...Object.keys(perTheme)]);
     const { failures: bad, unreadable } = auditPalette(palette);
     for (const value of unreadable) {
       failures.push(
@@ -291,11 +341,22 @@ export function auditBrand(config, themes) {
       );
     }
     for (const f of bad) {
-      failures.push(
+      // The PAIR, always and in full: it is the fact, and a host who is told only
+      // about their own value cannot see what it is failing against.
+      const pair =
         `${themeName}: ${f.role} (${f.value}) on ${f.on} (${f.ground}) measures ` +
-          `${f.ratio.toFixed(2)}:1 and must clear ${f.floor}:1` +
-          (f.suggestion ? `. ${f.suggestion} would pass, on the same hue.` : "."),
-      );
+        `${f.ratio.toFixed(2)}:1 and must clear ${f.floor}:1`;
+      const { token, suggestion } = blame(f, supplied);
+      if (!suggestion) {
+        failures.push(`${pair}.`);
+      } else if (token) {
+        // `as <token>` because the number is only a fix for that token, and a bare
+        // hex after a two-value sentence is the ambiguity this whole change is
+        // about.
+        failures.push(`${pair}. You set ${token}: ${suggestion} there would pass, on the same hue.`);
+      } else {
+        failures.push(`${pair}. ${suggestion} would pass, on the same hue.`);
+      }
     }
   }
   return { palettes, failures };

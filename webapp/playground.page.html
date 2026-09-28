@@ -1235,12 +1235,15 @@
         <p class="pg-note">
           Both panels are rewritten on every change, and between them they are the
           whole of what a host writes. The element takes
-          <span data-claim="attribute-count">3</span> attributes; the per-capability
-          and per-region lists travel in <code>editor-src</code>, because the
-          editor resolves them before the frame's first navigation and a
-          configuration channel that arrives after the document is on screen would
-          be a permission granted too late. The URL parameters are
-          <code data-claim="url-parameters">autosave mode can chrome</code>.
+          <span data-claim="attribute-count">5</span> attributes, and everything
+          configured above has one: <code>mode</code> names the role,
+          <code>can</code> withholds capabilities and <code>chrome</code> withholds
+          regions. Both lists only ever <em>narrow</em> — nothing here can hand a
+          role something it was not given, which is the property the whole model
+          rests on. The element writes them into the frame's URL before its first
+          navigation, so the same decisions are also expressible as the parameters
+          <code data-claim="url-parameters">autosave mode can chrome</code> for a
+          host with no package at all.
         </p>
         <div class="code-panel">
           <div class="code-panel-head">
@@ -1332,15 +1335,6 @@
             one to a running editor without reloading it — and a channel that could
             would be a window in which the editor was something else. The brand
             controls do apply live, because a palette is a stylesheet.
-          </li>
-          <li>
-            <b><code>can</code> and <code>chrome</code> have no attribute of their
-            own.</b> The element reads
-            <span data-claim="attribute-count">3</span> attributes and they are not
-            among them, so the lists ride in <code>editor-src</code>'s query. That
-            works and is what the snippet above generates; an attribute apiece
-            would read better and belongs to the element and its published types
-            rather than to this page.
           </li>
           <li>
             <b>The brand preview is this page applying the generated stylesheet to

@@ -78,11 +78,17 @@ Framework bindings are deliberately not shipped.
 </script>
 
 <opendoc-editor
-  mode="readonly"
+  mode="commentor"
+  can="-download"
+  chrome="-brand"
   editor-src="/opendoc/editor.html"
   frame-title="Contract preview"
 ></opendoc-editor>
 ```
+
+That is a commentor who may not take the file away, in a frame carrying none of
+our brand — a real configuration, expressed declaratively. `can` and `chrome`
+only ever **narrow** the role, never widen it, whatever you put in them.
 
 Or keep the registration explicit:
 
@@ -102,8 +108,23 @@ does not carry the engine.
 | Attribute | Meaning |
 | --- | --- |
 | `mode` | One of the five roles, or a legacy preset name. Absent means the framed default, which an element-mounted editor always is — so absent is never `standalone`. |
-| `editor-src` | Where `editor.html` is. May carry your own query (`?blank=1`); `mode` is merged into it rather than appended twice. |
+| `can` | Capabilities to **withhold** from the role: `"-download"`, `"-print,-download"`. Narrows only. |
+| `chrome` | Chrome regions to withhold, by the same rule: `"-brand,-rail"`. Withholding `ribbon` withholds its bands too. |
+| `editor-src` | Where `editor.html` is. May carry your own query (`?blank=1`); `mode` is merged into it rather than appended twice, and `can`/`chrome` are unioned with any the query already carries. |
 | `frame-title` | The frame's accessible name, in **your** page's language. |
+
+`can` and `chrome` are attributes, rather than something you hand-write into
+`editor-src`'s query, because the per-capability list — not the role — is the
+unit of this model: "commentor, but without download" is a real configuration and
+not a rung on a ladder. A role is only a name for a subset, and nothing
+downstream branches on one.
+
+Both are **narrow-only**, in one direction, always: a list can take a capability
+away from a role and can never give one back. An unknown entry is dropped rather
+than refused, and dropping narrows nothing, so a typo cannot widen the result.
+That is what makes there be exactly one direction to audit — and it is why a
+value on the attribute is *unioned* with one already in `editor-src`, rather than
+replacing it. Replacing could hand back something the query had removed.
 
 It is `mode`, not `role`, because `role` is a global ARIA attribute:
 `role="readonly"` would publish an invalid ARIA role to every assistive
@@ -152,10 +173,11 @@ Three layers, in order of how hard they are to defeat.
    It never hides it: a control that vanishes teaches nothing, and a product
    that silently lacks a feature is indistinguishable from one that is broken.
 
-The mode is written into the frame's URL **before the frame is attached**, so
-there is no window in which the editor is standalone and is then told otherwise.
-Setting `mode` afterwards therefore remounts. A permission handed over after the
-document is on screen was never a permission.
+The mode and both withhold lists are written into the frame's URL **before the
+frame is attached**, so there is no window in which the editor is standalone and
+is then told otherwise. Setting `mode`, `can` or `chrome` afterwards therefore
+remounts. A permission handed over after the document is on screen was never a
+permission.
 
 ## Properties and events
 
@@ -163,6 +185,7 @@ document is on screen was never a permission.
 const editor = document.querySelector("opendoc-editor");
 
 editor.capabilities; // readonly ["print"]
+editor.regions;      // the chrome regions this container was offered
 editor.editingMode;  // "viewing"
 editor.sandbox;      // ["allow-scripts", "allow-same-origin", "allow-modals"]
 editor.can("edit");  // false
@@ -172,6 +195,12 @@ editor.addEventListener("opendoc-capabilities", (event) => {
   console.log(event.detail.editingMode, event.detail.capabilities);
 });
 ```
+
+`can` and `chrome` have no reflecting property, deliberately: `can(capability)`
+is already the method you ask "was I granted this", and a `can` accessor would
+replace it. Set them as attributes — `setAttribute("can", "-download")`, or in
+your markup — and read back what they resolved to from `capabilities`, `regions`
+and `can(name)`, which is the more useful question anyway.
 
 `opendoc-capabilities` fires once per mount. It is the capability contract
 announcing itself. The editor also exposes the typed host command/event contract
