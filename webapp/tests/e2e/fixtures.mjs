@@ -275,6 +275,47 @@ export async function setReviewMode(page, mode) {
   await expect(button).toHaveAttribute("aria-pressed", "true");
 }
 
+/** Proves nothing entered the undo history — from a surface that survives when
+ *  the editing chrome is composed away.
+ *
+ *  `#undoBtn` is on the Home BAND, and Viewing mode (like a version preview and
+ *  an engine-refused document before it) takes the ribbon off the screen
+ *  entirely, so every read-only guard that ended `expect(#undoBtn).toBeDisabled()`
+ *  was reaching for an element that is no longer painted. That is the
+ *  `expectEditorFocused` shape again: the guarantee is "the refused edit entered
+ *  no history", and `#undoBtn` was only ever one mechanism for asking. The Edit
+ *  menu's Undo row is the SAME command with the same `enabled: !!doc?.canUndo`,
+ *  on the axis a reader still has, so this asks the same question of a surface
+ *  that is there. Leaves no menu open. */
+export async function expectNothingToUndo(page) {
+  const popover = await openAppMenu(page, "edit");
+  const row = popover.locator('.app-menu-item[data-command="edit.undo"]');
+  await expect(row, "Undo should be reachable from the Edit menu").toBeVisible();
+  await expect(row, "a refused edit must not enter the undo history").toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+}
+
+/** Runs a command by its COMMAND ID through the command palette, which belongs to
+ *  no chrome region and so is reachable in reading chrome too — the surface a
+ *  reader keeps when Viewing mode composes the ribbon away.
+ *
+ *  By id rather than by label, because a label is prose that gets reworded and an
+ *  id is the contract; and the row is asserted visible AND enabled first, so a
+ *  command that stopped being offered fails loudly instead of the click silently
+ *  landing on nothing. The palette also passes the chosen row as the anchor for
+ *  any popover the command opens, so a picker reached this way is positioned
+ *  against the row rather than against a ribbon button that is not on screen. */
+export async function runPaletteCommand(page, commandId, query) {
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await expect(page.locator("#cmdPalette")).toBeVisible();
+  await page.locator("#cmdInput").fill(query);
+  const row = page.locator(`#cmdList .cmd-item[data-command-id="${commandId}"]`);
+  await expect(row, `"${commandId}" should be offered by the palette`).toBeVisible();
+  await expect(row, `"${commandId}" should be enabled in the palette`).toBeEnabled();
+  await row.click();
+}
+
 // Types `marker` at the caret, rewinds to just before it, then proves the
 // editor is still live by finding it via the real Find panel — the same
 // "click, type, find" recovery check used for every focus-recovery scenario.

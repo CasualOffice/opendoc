@@ -9605,6 +9605,12 @@ body:not(.doc-loaded) .drop-title {
 
 body.chrome-no-brand .brand,
 body.chrome-no-title .document-title-row,
+/* The document-STATE cluster: the saved/opened chip and the import-compatibility
+   count in header row 1, and Document properties in row 2. They report what the
+   document IS rather than offering a way to change it, which is why they are one
+   region across two rows rather than two. */
+body.chrome-no-state .controls-doc,
+body.chrome-no-state #propertiesBtn,
 body.chrome-no-ribbon .ribbon,
 body.chrome-no-ribbon .ribbon-nav,
 body.chrome-no-rail .rail,
@@ -9618,9 +9624,23 @@ body.chrome-no-history #viewVersionsBtn,
 body.chrome-no-history #railVersions,
 body.chrome-no-history #versionPreviewBanner,
 body.chrome-no-status .footer,
+/* The toast is the status line's OTHER channel — body-level, so it survives the
+   footer being taken away below 620px. A container that withheld `status`
+   withheld the message, not one of the two places it lands. */
+body.chrome-no-status #statusToast,
 body.chrome-no-zoom .zoom,
 body.chrome-no-find #findPanel,
 body.chrome-no-selection #selToolbar,
+/* The four regions INSIDE the work area (the owner's preview report). Withheld
+   means unreachable, not merely unpainted — `main.js` refuses the gesture at each
+   entry point — so these rules are the second half of that, not the whole of it. */
+body.chrome-no-ruler .ruler,
+body.chrome-no-caret .caret,
+body.chrome-no-caret .highlight,
+body.chrome-no-context .editor-context-menu,
+body.chrome-no-objects .object-outline,
+body.chrome-no-objects .object-handle,
+body.chrome-no-objects .object-bar-actions,
 body.chrome-no-settings #settingsBtn,
 body.chrome-no-settings #settingsPanel,
 body.chrome-no-band-file #tabFile,
@@ -9665,5 +9685,28 @@ body.chrome-no-menu #appMenuPopover {
    container that was given one of them and not the other. */
 body.chrome-no-ribbon .chrome-mode,
 body.chrome-no-menu .chrome-mode {
+  display: none;
+}
+
+/* A container with no caret has no text selection either — and the browser's own
+   selection is the half a `display: none` rule cannot reach. `preview` is the
+   runtime as a rendering engine: "it should be just pages.. and nothing". */
+body.chrome-no-caret .pages,
+body.chrome-no-caret .page-wrap {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* And when every region the top bar paints has been withheld, the bar itself goes
+   — otherwise a `preview` container, which composes ALL chrome away, still pays
+   58px for an empty strip above the document it exists to show. The selector IS
+   the bar's contents: brand, title, the state cluster, the menu bar, the ribbon's
+   tab strip and Settings. It is stated as a conjunction rather than as a separate
+   `no-bar` flag so there is no second mechanism to keep in step with the region
+   set — `chrome_regions.test.mjs` holds this list against the ids `.bar` really
+   contains, so a control added to the header without a region fails the build
+   instead of quietly re-inflating the strip. */
+body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ribbon.chrome-no-settings
+  .bar {
   display: none;
 }

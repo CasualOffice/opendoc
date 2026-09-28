@@ -12,6 +12,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  expectNothingToUndo,
   MOD,
 } from "./fixtures.mjs";
 
@@ -123,16 +124,16 @@ test("insert field: blocked in Viewing mode (read-only, nothing inserted)", asyn
   await setReviewMode(page, "viewing");
 
   // The per-kind palette command stays enabled with a caret, but the mutation
-  // fails closed: the read-only banner shows and no "Field change" enters
-  // history (the Undo control is still disabled).
+  // fails closed at the choke point: the read-only banner shows and no "Field
+  // change" enters history. History is read from the Edit MENU, because Viewing
+  // mode composes the Home band — and `#undoBtn` with it — off the screen.
   await page.keyboard.press(`${MOD}+Shift+P`);
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await page.locator("#cmdInput").fill("Insert field: Page number");
   await page.locator("#cmdInput").press("Enter");
 
   await expect(page.locator("#status")).toContainText("read-only");
-  await page.locator("#tabHome").click();
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 
   expect(consoleErrors).toEqual([]);
 });

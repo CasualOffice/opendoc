@@ -13,6 +13,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  runPaletteCommand,
 } from "./fixtures.mjs";
 
 const spacingBtn = "#spacingBtn";
@@ -138,9 +139,16 @@ test("custom line spacing is blocked in Viewing mode", async ({
   await setReviewMode(page, "viewing");
   await expect(page.locator("#viewingBanner")).toBeVisible();
 
-  // Attempting a custom multiple fails closed: read-only banner, no engine change.
-  await applyCustom(page, "multiple", "3.0");
+  // Attempting a line-spacing change fails closed: read-only banner, no engine
+  // change. Driven from the PALETTE, because Viewing mode composes the Home band
+  // away and the popover's trigger with it — and `applyLinePercent` is the very
+  // function the custom Multiple field commits through, so this is the same gate
+  // on the same path. The engine-backed field is read back once the band returns,
+  // which also proves leaving Viewing restores the chrome.
+  await runPaletteCommand(page, "paragraph.spacing.200", "Line spacing");
   await expect(page.locator("#status")).toContainText("read-only");
+  await setReviewMode(page, "editing");
+  await openSpacingMenu(page);
   await expect(page.locator(valueInput)).toHaveValue(initialValue);
 
   expect(consoleErrors).toEqual([]);

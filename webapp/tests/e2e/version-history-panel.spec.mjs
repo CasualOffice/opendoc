@@ -346,6 +346,11 @@ test("previewing a version composes the editing chrome away, and leaving it puts
   // included.
   await page.locator("#versionPreviewBack").click();
   await expect(page.locator("#versionPreviewBanner")).toBeHidden();
+  // The keyboard goes somewhere: "Back to current" lives in the banner and leaves
+  // with it, so the mode change that ends a preview MUST hand focus on rather
+  // than let it fall to `<body>` — which is what a blanket "never take focus on a
+  // mode change" would have done here, measured.
+  await expectEditorFocused(page);
   await expect(ribbon).toBeVisible();
   await expect(menuBar).toBeHidden();
   await expect(page.locator("#tabInsert")).toHaveAttribute("aria-selected", "true");

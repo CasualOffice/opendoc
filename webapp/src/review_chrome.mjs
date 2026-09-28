@@ -146,3 +146,27 @@ export function createCommentAffordance({ button, viewport, rect }) {
     },
   };
 }
+
+/**
+ * The two review-mode banners, bound once and reflected from the mode.
+ *
+ * A closure over the three elements rather than four assignments in `main.js`,
+ * because the thing worth getting right here is not the `hidden` flags: it is
+ * that the Viewing banner's AUTHORED sentence — the localised string in
+ * `editor.html` — must be captured before a read-only reason ever replaces it,
+ * or putting it back means keeping a second copy of that sentence in JavaScript.
+ * Capturing it at construction makes that structural rather than remembered.
+ *
+ * Complexity: O(1).
+ *
+ * @param {{suggesting: Element|null, viewing: Element|null, viewingText: Element|null}} els
+ * @returns {(mode: string, readOnlyReason: string) => void}
+ */
+export function createReviewBanners({ suggesting, viewing, viewingText }) {
+  const authored = viewingText?.textContent ?? "";
+  return (mode, readOnlyReason) => {
+    if (suggesting) suggesting.hidden = mode !== "suggesting";
+    if (viewing) viewing.hidden = mode !== "viewing";
+    if (viewingText) viewingText.textContent = readOnlyReason || authored;
+  };
+}

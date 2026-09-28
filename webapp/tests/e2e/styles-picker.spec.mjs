@@ -17,6 +17,7 @@ import {
   moveCaretToDocStart,
   reflectedParagraphStyle as reflectedStyle,
   setReviewMode,
+  runPaletteCommand,
 } from "./fixtures.mjs";
 
 /** Opens the Styles menu and leaves it open. */
@@ -87,15 +88,21 @@ test("picking a style is blocked in read-only Viewing mode", async ({
   await setReviewMode(page, "viewing");
   await expect(page.locator("#viewingBanner")).toBeVisible();
 
-  await openStyles(page);
-  await page
-    .locator(`#stylesMenu .style-option[data-style="${target}"]`)
-    .click();
+  // Through the PALETTE, because Viewing mode composes the Home band away with
+  // the rest of the ribbon. It is the same `setParagraphStyle` behind the same
+  // `runToolbarEdit`, so this still exercises the GATE rather than the dropdown:
+  // the command is offered, it is enabled, it runs, and the engine refuses it.
+  await runPaletteCommand(page, `style.${target}`, `Style: ${target}`);
 
-  // The mutation fails closed: the read-only status is emitted, the paragraph
-  // style is unchanged, and the trigger still names the style the caret is in.
+  // The mutation fails closed: the read-only status is emitted and the paragraph
+  // style is unchanged, read back from `paragraphStyleAt` through the trigger's
+  // `data-active-style` (an attribute, readable whether or not the band is painted).
   await expect(page.locator("#status")).toContainText("read-only");
   await expect.poll(() => reflectedStyle(page)).toBe(before);
+
+  // And the visible label still names it once the band comes back, which is also
+  // the proof that leaving Viewing restores the chrome it composed away.
+  await setReviewMode(page, "editing");
   await expect(page.locator("#stylesTriggerLabel")).toHaveText(before);
 
   expect(consoleErrors).toEqual([]);

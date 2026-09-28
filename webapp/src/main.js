@@ -113,7 +113,8 @@ import {
   stackReviewCards,
 } from "./review_layout.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
-import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
+import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, createReviewBanners, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
+import { makeMenuHeading, makeSwatchCell, makeSwatchGrid, makeUnderlineStyleOption, renderColorMenu as renderColorMenuChrome } from "./picker_chrome.mjs";
 import {
   formatReviewDate,
   reviewAuthorColor,
@@ -1274,9 +1275,7 @@ const suggestingBannerEdit = document.getElementById("suggestingBannerEdit");
 const viewingBanner = document.getElementById("viewingBanner");
 const viewingBannerText = document.getElementById("viewingBannerText");
 const viewingBannerEdit = document.getElementById("viewingBannerEdit");
-/** The banner's own authored sentence, so a read-only reason can replace it and
- *  be put back without a second copy of the string here. */
-const VIEWING_BANNER_DEFAULT = viewingBannerText?.textContent ?? "";
+const reflectReviewBanners = createReviewBanners({ suggesting: suggestingBanner, viewing: viewingBanner, viewingText: viewingBannerText });
 const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
@@ -1284,6 +1283,10 @@ const reviewMarginCommentBtn = document.getElementById("reviewMarginComment");
 // The host's grant, resolved once: a `readonly` embed is Viewing ON ARRIVAL,
 // not an Editing page with disabled buttons. See `capabilities.mjs`.
 const HOST_CAPS = hostCapabilities();
+/** Whether this CONTAINER may ever change the document — the host's grant, not
+ *  the review mode: a mode is reversible and explains itself, a grant is final
+ *  and is composed away silently. */
+const containerCanEdit = HOST_CAPS.has("edit") || HOST_CAPS.has("comment");
 const HOST_MODE = editingModeFor(HOST_CAPS);
 /** Which chrome this container paints (`docs/126` phase 3), in both of its shapes:
  *  the container's own, and the same container with its editing chrome composed
@@ -1291,21 +1294,43 @@ const HOST_MODE = editingModeFor(HOST_CAPS);
  *  first paint, and a different question from the capability set — a withheld
  *  region is a presentation decision, a withheld capability is a permission. */
 const HOST_CHROME = hostChrome();
-/** Composes the chrome for the document on screen. `readOnlyReason` is non-empty
- *  exactly when this document can never be edited — the engine refusing it, or a
- *  version preview standing in for it — which is "never, for you" for as long as
- *  it is there, so it gets the reading chrome (see `EDITING_REGIONS`). Reversible
- *  Read-only MODE is deliberately not here: that is "not right now", and its
- *  controls already say so. Leaving a preview restores exactly what was there, the
- *  active ribbon tab included — `applyRegions` re-selects a band only when the one
- *  on screen is stranded, and a reading container has none to move to. O(regions). */
+/** Composes the chrome for the document on screen: the reading chrome whenever it
+ *  cannot be edited, the container's own otherwise.
+ *
+ *  Two things mean that, asked as one question: `readOnlyReason` (the engine
+ *  refusing the document, or a version preview standing in for it) and Viewing
+ *  MODE. The mode was left out at first, on the reading that it is "not right
+ *  now" rather than "never, for you" — but a reader in Viewing mode cannot change
+ *  the document by any route, and a full ribbon over it is eight bands of controls
+ *  every one of which refuses; Google Docs collapses its toolbar there for that
+ *  reason. The mode control is in the footer's `status` region, which reading
+ *  chrome keeps, so the way back is on screen throughout.
+ *
+ *  Leaving restores exactly what was there, the active ribbon tab included:
+ *  `applyRegions` re-selects a band only when the one on screen is stranded, and
+ *  reading chrome has no band to move to, so `aria-selected` is untouched.
+ *  O(regions). */
 function reflectChrome() {
   applyRegions({
     body: document.body,
     root: document,
-    regions: readOnlyReason ? HOST_CHROME.reading : HOST_CHROME.editing,
+    regions: composedChrome(),
     selectBand: (band) => selectRibbonTab(band),
   });
+}
+/** The region set in force right now — the same object `reflectChrome` hands the
+ *  stylesheet, so a gesture and a rule cannot disagree. O(1). */
+function composedChrome() {
+  return !readOnlyReason && reviewMode !== "viewing" ? HOST_CHROME.editing : HOST_CHROME.reading;
+}
+/** Whether this container paints `region` at all.
+ *
+ *  THE GATE, and the reason there is one: `display: none` takes a thing off the
+ *  screen without taking the GESTURE away. A withheld `objects` region that only
+ *  hid the outline would leave a click still selecting the image and Delete still
+ *  aimed at it — "present but unreachable" (`docs/99` §9.4). */
+function chromeShows(region) {
+  return composedChrome().has(region);
 }
 /** The host contract (`docs/126` phase 2), built at the END of this file because
  *  its command registry cannot exist until everything below is declared, and
@@ -1509,17 +1534,21 @@ function paragraphColumnStart(node) {
 // and Accept-all/Reject-all need at least one tracked change, and bulk decisions
 // are hidden in read-only Viewing mode (REVIEW-GAP-018).
 function updateReviewControls() {
-  if (!doc) return;
-  let count = 0;
-  try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   // A document the engine will not let anyone edit cannot offer Editing or
-  // Suggesting: the buttons are disabled WITH the reason, not left live.
+  // Suggesting: the buttons are disabled WITH the reason, not left live. And the
+  // banner's "Switch to editing" is withdrawn rather than disabled — an offer
+  // that can never be taken is a dead control. Ahead of the `doc` guard: a
+  // container's grant is knowable with no document open.
   reflectReviewModeAccess({
     buttons: reviewModeButtons,
+    bannerEdit: viewingBannerEdit,
     capabilities: HOST_CAPS,
     readOnlyReason,
     withheldReason: t("capability.embedded"),
   });
+  if (!doc) return;
+  let count = 0;
+  try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   if (reviewPrevious) reviewPrevious.disabled = count === 0;
   if (reviewNext) reviewNext.disabled = count === 0;
   const canDecide = count > 0 && reviewMode !== "viewing";
@@ -1532,7 +1561,7 @@ function updateReviewControls() {
  *  edits directly, `suggesting` records them as tracked revisions, and
  *  `viewing` is fully read-only — no Operation reaches apply. Any unrecognized
  *  value falls back to `editing`. */
-function setReviewMode(mode) {
+function setReviewMode(mode, { restoreFocus = true } = {}) {
   const previous = reviewMode;
   // A read-only document has one mode. Asked for another — by a shortcut, the
   // palette, or a stale click — it stays where it is and says why.
@@ -1542,14 +1571,13 @@ function setReviewMode(mode) {
   }
   reviewMode =
     mode === "suggesting" ? "suggesting" : mode === "viewing" ? "viewing" : "editing";
-  suggestingBanner.hidden = reviewMode !== "suggesting";
-  if (viewingBanner) viewingBanner.hidden = reviewMode !== "viewing";
-  if (viewingBannerText) {
-    viewingBannerText.textContent = readOnlyReason || VIEWING_BANNER_DEFAULT;
-  }
-  // There is nothing to switch to: the offer would be a dead control.
-  if (viewingBannerEdit) viewingBannerEdit.hidden = !!readOnlyReason;
-  reflectChrome(); // every `readOnlyReason` edge — a preview's two included — is here
+  // The banners announce a MODE, so they show only where a mode can change: in a
+  // container granted neither `edit` nor `comment` the mode IS the container, and
+  // composition is silent (`docs/126`).
+  reflectReviewBanners(containerCanEdit ? reviewMode : "", readOnlyReason);
+  // The banner's "Switch to editing" offer is `updateReviewControls`'s, below,
+  // so the segments and the banner cannot disagree about whether editing is possible.
+  reflectChrome(); // every edge — `readOnlyReason`, a preview's two, and the MODE
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
   }
@@ -1575,8 +1603,13 @@ function setReviewMode(mode) {
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
   // typing, and deletion events are deliberately accepted only while the
-  // canvas editor owns focus.
-  focusEditorSurface();
+  // canvas editor owns focus. `restoreFocus: false` is for callers where the mode
+  // change is not the user's gesture at all — opening a document, a demo preset,
+  // entering and leaving a version preview — because those arrive while the user
+  // is working somewhere else (the version TIMELINE above all, which is how a
+  // preview is left again); moving focus out from under them there is not a
+  // safety measure, it is losing their place.
+  if (restoreFocus) focusEditorSurface();
 }
 
 function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
@@ -1824,7 +1857,10 @@ function renderReviewMarginItems() {
   // when the column is not. Deliberately NOT also gated on `reviewSheetMode()`
   // — at the sheet's widths the page is already wider than the window, so
   // `commentAffordanceSpot` refuses on the geometry first. See its note.
-  commentAffordance.sync(!show, bandOffset);
+  // …and only where this container annotates at all: the margin button is
+  // `review.comment`'s second face, and a preview is a picture of a document
+  // rather than a place to say something about one.
+  commentAffordance.sync(!show && HOST_CAPS.has("comment"), bandOffset);
   reviewBtn.setAttribute("aria-pressed", String(show));
   railReview.setAttribute("aria-pressed", String(show));
   if (!show) {
@@ -2714,6 +2750,11 @@ function editorSurfaceHasFocus() {
 }
 
 function eventTargetsEditor(event) {
+  // A container with no `caret` region has no keyboard surface on the document
+  // either: arrows, typing and copy all funnel through this one predicate. A
+  // selection nobody can see that Shift+Arrow still extends and ⌘C still copies
+  // is the same "present but unreachable" failure in the opposite coat.
+  if (!chromeShows("caret")) return false;
   const active = document.activeElement;
   return (
     event.target === pagesEl ||
@@ -3011,7 +3052,7 @@ async function applyDemoPreset(preset) {
     () => {
       try {
         if (preset.tab) selectRibbonTab(preset.tab);
-        if (preset.review) setReviewMode(preset.review);
+        if (preset.review) setReviewMode(preset.review, { restoreFocus: false });
         if (preset.sidebar) {
           reviewSidebarPreference = true;
           scheduleReviewMarginRender();
@@ -3140,7 +3181,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // mode and, now that chrome follows it, the reading chrome. Skipped only where
     // nothing can have changed — editing to editing.
     const openMode = readOnlyReason ? "viewing" : HOST_MODE;
-    if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode);
+    if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode, { restoreFocus: false });
     breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
@@ -4852,6 +4893,8 @@ function objectReference(source, node) {
 }
 
 function selectObject(node, kind, anchor, anchored = false, descriptor = null) {
+  // Handles nobody can see are still handles Delete is aimed at.
+  if (!chromeShows("objects")) return;
   if (anchor) selection = { anchor, focus: anchor };
   const ref = objectReference(descriptor, node);
   objectSelection = {
@@ -5905,6 +5948,9 @@ function paintChecklistMarkers() {
 
 /** Paints the caret or highlight for `sel` from engine geometry. */
 function paintSelection({ anchor, focus }) {
+  // A container with no `caret` region paints neither. The insertion point still
+  // EXISTS — the engine has to have one — it is just not shown or movable here.
+  if (!chromeShows("caret")) return;
   // Keep the editable proxy on the caret so an IME candidate window and the iOS
   // autocorrect bar anchor where the user is actually typing (docs/105 UX-001).
   positionEditorTextInput(focus);
@@ -6196,6 +6242,9 @@ function activateLink(link) {
 
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
+  // No caret region: a press neither places an insertion point nor starts a
+  // drag-selection. Scrolling and zooming are not gestures on the document.
+  if (!chromeShows("caret")) return;
   // A pointerdown that reaches the page during a crop (a crop handle's own
   // pointerdown stops propagation) is a click-away → commit the crop, exactly as
   // Word/Docs do. This click is consumed by the commit; the next click interacts.
@@ -7425,6 +7474,20 @@ function buildContextCommands(context) {
     run: () => toggleParagraphProperties(true),
   };
 
+  // A container that may NEVER change the document gets reading rows only: copy,
+  // select all, search, and the two ways of following a link. Not the editing menu
+  // greyed out — "never, for you" is composition and is silent (`docs/126`) — and
+  // the owner's report was exactly this: a read-only container still offering a
+  // table's structure commands and an image's properties. The review MODE is the
+  // other question, and still says "not right now" with a reason.
+  if (!containerCanEdit) {
+    return [
+      ...commands.filter((row) => row.id === "edit.copy" || row.id === "edit.selectAll"),
+      pick("edit.find", { group: "clipboard" }),
+      ...annotate.filter((row) => row.id === "link.open" || row.id === "reference.goToHeading"),
+    ].filter(Boolean);
+  }
+
   if (!inTable) {
     // Prose menu: annotations, then the text-arrangement rows.
     commands.push(...annotate);
@@ -7702,12 +7765,18 @@ function keyboardContextMenuPoint() {
 }
 
 pagesEl.addEventListener("contextmenu", (event) => {
+  // No menu region, no menu — and no `preventDefault` either, so a container that
+  // is a picture gives the visitor the browser's own menu instead of nothing.
+  if (!chromeShows("context")) return;
   const page = pageFromEvent(event);
   if (!page || !doc) return;
   // Object hit-test takes precedence (docs/85 §3.1): right-clicking a drawing /
   // image / text box selects it as a unit and shows its OBJECT menu, not the
   // paragraph-text menu.
-  const objectContext = objectContextAtEvent(page, event);
+  // …and only where this container selects objects: without the `objects` region
+  // a right-click on an image is a right-click on the TEXT under it, not a
+  // gateway to alt text, crop and properties (what the owner saw in read-only).
+  const objectContext = chromeShows("objects") ? objectContextAtEvent(page, event) : null;
   if (objectContext) {
     event.preventDefault();
     selectObject(
@@ -9850,99 +9919,21 @@ function reflectHighlightSwatch(name) {
   }
 }
 
-/** Builds one swatch cell button. `value` is what gets applied (a hex for text,
- *  a named color for highlight); `color` is the display hex; `active` lights it. */
-function makeSwatchCell(kind, value, color, label, active) {
-  const cell = document.createElement("button");
-  cell.type = "button";
-  cell.className = "swatch-cell";
-  cell.style.setProperty("--sw", color);
-  cell.title = label;
-  cell.setAttribute("aria-label", label);
-  cell.dataset[kind === "text" ? "color" : "highlight"] = value;
-  if (active) cell.classList.add("is-active");
-  if (color.toLowerCase() === "#ffffff") cell.classList.add("is-light");
-  return cell;
-}
-function makeSwatchGrid(cells) {
-  const grid = document.createElement("div");
-  grid.className = "swatch-grid";
-  grid.setAttribute("role", "group");
-  for (const cell of cells) grid.appendChild(cell);
-  return grid;
-}
-function makeMenuHeading(text) {
-  const h = document.createElement("div");
-  h.className = "menu-heading";
-  h.textContent = text;
-  return h;
-}
-
 /** (Re)renders a color picker menu, marking the active swatch and refreshing the
- *  recently-used row. Called on each open via the popover's reflect hook. */
+ *  recently-used row. Called on each open via the popover's reflect hook. The
+ *  menu's SHAPE is `picker_chrome.mjs`; what is here is the two vocabularies and
+ *  the session state that decide which swatch is lit. */
 function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highlightMenu) {
-  const activeValue = kind === "text" ? lastTextColor.toLowerCase() : lastHighlight;
-  menu.replaceChildren();
-
-  // Automatic (text) / No color (highlight) — the reset entry.
-  const reset = document.createElement("button");
-  reset.type = "button";
-  reset.className = "color-row-action";
-  if (kind === "text") {
-    reset.dataset.auto = "1";
-    reset.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic</span>';
-  } else {
-    reset.dataset.highlight = "none";
-    reset.innerHTML = '<span class="color-chip color-chip-none"></span><span>No color</span>';
-  }
-  menu.appendChild(reset);
-
-  menu.appendChild(makeMenuHeading(kind === "text" ? "Standard colors" : "Highlight colors"));
-  if (kind === "text") {
-    menu.appendChild(makeSwatchGrid(
-      TEXT_STANDARD_COLORS.map((hex) =>
-        makeSwatchCell("text", hex, hex, hex.toUpperCase(), hex.toLowerCase() === activeValue)),
-    ));
-  } else {
-    menu.appendChild(makeSwatchGrid(
-      HIGHLIGHT_COLORS.map((c) =>
-        makeSwatchCell("highlight", c.name, c.hex, c.label, c.name === activeValue)),
-    ));
-  }
-
-  const recents = kind === "text" ? recentTextColors : recentHighlights;
-  if (recents.length) {
-    menu.appendChild(makeMenuHeading("Recent"));
-    menu.appendChild(makeSwatchGrid(
-      recents.map((value) => {
-        const color = kind === "text" ? value : highlightHex(value) ?? "#000000";
-        const label = kind === "text" ? value.toUpperCase() : (HIGHLIGHT_LABEL.get(value) ?? value);
-        return makeSwatchCell(kind, value, color, label,
-          kind === "text" ? value.toLowerCase() === activeValue : value === activeValue);
-      }),
-    ));
-  }
-
-  if (kind === "text") {
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "color-row-action color-more";
-    more.dataset.more = "1";
-    more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
-    menu.appendChild(more);
-  }
-}
-
-function makeUnderlineStyleOption(style, label) {
-  const option = document.createElement("button");
-  option.type = "button";
-  option.className = "color-row-action underline-style-option";
-  option.dataset.underlineStyle = style;
-  const preview = document.createElement("span");
-  preview.className = `underline-style-preview underline-style-${style}`;
-  preview.textContent = style === "none" ? "ab" : "Sample";
-  option.append(preview, document.createTextNode(label));
-  return option;
+  const isText = kind === "text";
+  const active = isText ? lastTextColor.toLowerCase() : lastHighlight;
+  renderColorMenuChrome(menu, {
+    kind,
+    swatches: isText ? TEXT_STANDARD_COLORS : HIGHLIGHT_COLORS.map((c) => c.name),
+    recents: isText ? recentTextColors : recentHighlights,
+    colorOf: (v) => (isText ? v : highlightHex(v) ?? "#000000"),
+    labelOf: (v) => (isText ? v.toUpperCase() : HIGHLIGHT_LABEL.get(v) ?? v),
+    matches: (v) => (isText ? v.toLowerCase() === active : v === active),
+  });
 }
 
 /** Builds the combined underline style/color menu from canonical engine tokens.
@@ -11162,6 +11153,17 @@ gridPicker.addEventListener("keydown", (e) => {
   // Enter and Space need no handling: these are real buttons, so the browser
   // turns them into the same `click` the pointer path uses.
 });
+// The grid picker is a dialog-opening insert, so it refuses BEFORE it opens —
+// the same as Symbol, Emoji, Field and Drop cap, and for the reason
+// `insert-surface.spec.mjs` states for those: a reader must never be led into
+// choosing a size that cannot be applied. Registered ahead of `registerPopover`
+// so it runs first on the same button, and it stops there; the refusal itself is
+// still `blockMutationInViewing()`, the one choke point, not a disabled control.
+insertTableBtn.addEventListener("click", (event) => {
+  if (!insertTableMenu.hidden || !blockMutationInViewing()) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+});
 const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => {
   // Opening puts the keyboard inside the grid at 1×1. Without this the popover
   // opened behind the focus ring and Tab walked past it into the rest of the
@@ -12117,7 +12119,12 @@ function editorCommands(context = { surface: "palette" }) {
       enabled: insertCommandEnabled("insert.field"),
       run: () => insertFieldAtCaret(f.kind),
     })),
-    { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
+    // The outline lives in the RAIL, so a container that withheld the rail is not
+    // handed a command that opens it — the palette and the chord belong to no
+    // region, the hole `history` closed the same way ("no panels and nothing").
+    ...(HOST_CHROME.editing.has("rail")
+      ? [{ id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() }]
+      : []),
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
@@ -16067,6 +16074,10 @@ async function showVersionPreview(previewDoc) {
     ({ doc, selection, readOnlyReason } = versionPreviewHome);
     const home = versionPreviewHome;
     versionPreviewHome = null;
+    // LEAVING keeps the default focus restore, unlike entering: the control the
+    // reader pressed — "Back to current" — is part of the preview banner and goes
+    // away with it, so declining to move focus would drop the keyboard onto
+    // `<body>` and make them Tab in from the top. Measured, both ways.
     setReviewMode(home.reviewMode);
   }
   // A different document, so every answer cached about the last one is wrong: the
@@ -16084,7 +16095,7 @@ async function showVersionPreview(previewDoc) {
       focus: { node: start.node, offset: start.offset },
     };
     start.free();
-    setReviewMode("viewing");
+    setReviewMode("viewing", { restoreFocus: false });
   }
   armBackgroundMeasure();
   await renderAll();

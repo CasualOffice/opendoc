@@ -147,6 +147,22 @@ export const PRESET_NAMES = Object.freeze(Object.keys(PRESETS));
 export const REGIONS = Object.freeze([
   "brand", // the product mark in the top bar
   "title", // the document name, and renaming it
+  // The document-STATE cluster in the top bar: the saved/opened chip, the
+  // import-compatibility count, and Document properties.
+  //
+  // A region because it was the one thing in `header.bar` that belonged to none,
+  // and a cluster no region owns is a cluster a host cannot withhold: a `preview`
+  // container — the runtime as a rendering engine, which composes EVERYTHING away
+  // — still painted "Opened", "185 import findings" and an info button, and still
+  // paid 58px for the bar that held them. Withholding is what makes the bar
+  // collapse (`style.css`), so this entry is what closes that hole rather than a
+  // rule that hides three ids by hand.
+  //
+  // In `READING_REGIONS`: a reader is told whether what they are looking at
+  // loaded cleanly, and Word and Docs both keep their conversion/status chip in
+  // read-only. The cluster is not an editing surface — nothing in it changes the
+  // document — so it is not in `EDITING_REGIONS` either, and Viewing mode keeps it.
+  "state",
   "menu", // the application menu bar — one of the two navigation axes
   "ribbon", // the whole tabbed ribbon, strip and bands together
   "band.file",
@@ -158,6 +174,46 @@ export const REGIONS = Object.freeze([
   "band.view",
   "band.table",
   "rail", // the left navigation rail and its panels: outline, pages
+  // ── The four regions INSIDE the work area ───────────────────────────────────
+  //
+  // Added after the owner looked at a `preview` container and found it was not a
+  // picture of a document at all: "it should be just pages.. and nothing, no
+  // rulers and nothing.. no selection, no panels and nothing. I saw in read only
+  // and other as well I was able to see table and menus and selection image and
+  // also properties and others."
+  //
+  // Everything above this line is chrome AROUND the document, and `preview` is
+  // granted none of it — yet all of this was still painted, because it is drawn
+  // INTO the work area and so belonged to no region at all. A presentation a host
+  // cannot name is a presentation a host cannot withhold, which is the whole
+  // argument for regions; so each of these becomes one rather than being special
+  // -cased against a role name.
+  //
+  // They are four and not one because they divide differently for the two reading
+  // roles, which `docs/126` insists are not the same thing:
+  "ruler", // the ruler strip: indents and tab stops, an editing instrument
+  "caret", // the text caret and the selection highlight
+  "context", // the right-click menu on the document
+  "objects", // object selection: outline, handles, the object bar, guides, crop
+  // `caret` and `context` are READING affordances — a reader selects text to copy
+  // it and right-clicks for Copy and Search — so `readonly` keeps both and only
+  // `preview`, which is nearly replaceable by a static image, loses them.
+  //
+  // `ruler` is in `EDITING_REGIONS` below, so it goes wherever the ribbon goes: a
+  // reader has no use for tab stops. `objects` is NOT, deliberately, and the
+  // difference is the "never, for you" / "not right now" line again. A reading
+  // CONTAINER has no business with an image's handles at all, so neither reading
+  // preset lists it. Reversible Viewing MODE is the other case: there the handles
+  // stay and every object command is disabled with its reason, which is what
+  // `object-context-menu.spec.mjs` holds — a reader who can switch back to
+  // Editing is told what they would be able to do, rather than finding the object
+  // unselectable and being told nothing.
+  //
+  // WITHHELD MEANS UNREACHABLE, NOT UNPAINTED. A `display: none` outline over an
+  // object that is still selected, or a context menu that still opens off-screen,
+  // is the "present but unreachable" failure `docs/99` §9.4 records: `main.js`
+  // consults the composed set at the three entry points (selecting an object,
+  // raising the menu, placing the caret) so the gesture does not happen at all.
   // The version-history timeline: the panel, its View-band button, its preview
   // bar, and the command that opens them (`docs/139`, `docs/140`).
   //
@@ -211,7 +267,7 @@ const BAND_REGIONS = Object.freeze(REGIONS.filter((id) => id.startsWith("band.")
  *
  *  A subtraction and not a second whitelist: one list of what editing chrome IS
  *  cannot drift from `READING_REGIONS`, where two overlapping whitelists would. */
-export const EDITING_REGIONS = Object.freeze(["ribbon", ...BAND_REGIONS, "selection"]);
+export const EDITING_REGIONS = Object.freeze(["ribbon", ...BAND_REGIONS, "selection", "ruler"]);
 
 /** Every region — the presentation a page with no host gets. */
 const ALL_REGIONS = Object.freeze([...REGIONS]);
@@ -233,7 +289,7 @@ const ALL_REGIONS = Object.freeze([...REGIONS]);
  *
  *  And no `brand`: a reader is not somewhere we advertise, and no preset below
  *  `owner` grants `branding` anyway, so listing it would be a dead entry. */
-const READING_REGIONS = Object.freeze(["title", "menu", "rail", "status", "zoom", "find"]);
+const READING_REGIONS = Object.freeze(["title", "state", "menu", "rail", "status", "zoom", "find", "caret", "context"]);
 
 /** PREVIEW CHROME.
  *
@@ -490,9 +546,19 @@ export function allowsMode(capabilities, mode) {
  * `readOnlyReason` (the engine refusing the whole document) outranks a
  * host-withheld mode: it is the more specific truth and names the document.
  *
+ * `bannerEdit` is the Viewing banner's "Switch to editing" offer, and it is the
+ * one control here that is REMOVED rather than disabled, because it is an OFFER
+ * rather than a state: a disabled segment still tells the reader which of three
+ * modes they are in, where a disabled "Switch to editing" says only "no". It is
+ * hidden for a document the engine refuses — and, since this, for a container
+ * whose host withheld `edit`, which is the same "never, for you" arriving from
+ * the URL instead of from the document. A `preview` container was offering to
+ * switch into an editing mode it can never enter: a dead control, and the
+ * repository's standing rule is that there is never one.
+ *
  * Complexity: O(buttons).
  */
-export function reflectReviewModeAccess({ buttons, capabilities, readOnlyReason, withheldReason }) {
+export function reflectReviewModeAccess({ buttons, bannerEdit, capabilities, readOnlyReason, withheldReason }) {
   for (const button of buttons ?? []) {
     const withheld = !allowsMode(capabilities, button.dataset?.reviewMode);
     button.disabled = !!readOnlyReason || withheld;
@@ -500,6 +566,7 @@ export function reflectReviewModeAccess({ buttons, capabilities, readOnlyReason,
     else if (withheld) button.title = withheldReason;
     else button.removeAttribute("title");
   }
+  if (bannerEdit) bannerEdit.hidden = !!readOnlyReason || !allowsMode(capabilities, "editing");
 }
 
 /** Whether a capability set grants `name`, for any value at all.

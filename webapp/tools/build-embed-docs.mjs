@@ -664,6 +664,7 @@ function sampleRefusal() {
 const REGION_MEANINGS = Object.freeze({
   brand: "Our name and mark in the top bar.",
   title: "The document name, and renaming it.",
+  state: "The document-state chips and Document properties in the top bar.",
   menu: "The application menu bar — one of the two navigation axes.",
   ribbon: "The whole tabbed ribbon, strip and bands together.",
   "band.file": "The File page: open, save, export, print, properties, settings.",
@@ -675,6 +676,10 @@ const REGION_MEANINGS = Object.freeze({
   "band.view": "Outline, zoom, page setup, showing changes.",
   "band.table": "The contextual table band, present when the caret is in a table.",
   rail: "The left navigation rail: outline and page thumbnails.",
+  ruler: "The ruler strip above the page: indents and tab stops.",
+  caret: "The text caret and the selection highlight on the page.",
+  context: "The right-click menu on the document.",
+  objects: "Object selection: the outline, its handles and the object bar.",
   history: "The version-history timeline, its ribbon entry and its preview bar.",
   status: "The status bar: counts, page number, language, mode.",
   zoom: "The zoom cluster in the status bar.",
@@ -815,9 +820,9 @@ const CAPABILITY_GROUPS = Object.freeze([
  *  inside it. The other four groups are open, because folding a two-row group
  *  costs a click and saves nothing. */
 const REGION_GROUPS = Object.freeze([
-  Object.freeze({ title: "Top bar", ids: ["brand", "title", "menu", "ribbon"] }),
+  Object.freeze({ title: "Top bar", ids: ["brand", "title", "state", "menu", "ribbon"] }),
   Object.freeze({ title: "Ribbon bands", ids: REGIONS.filter((id) => id.startsWith("band.")), fold: true }),
-  Object.freeze({ title: "Beside the document", ids: ["rail", "history"] }),
+  Object.freeze({ title: "Beside the document", ids: ["rail", "ruler", "caret", "context", "objects", "history"] }),
   Object.freeze({ title: "Status bar", ids: ["status", "zoom"] }),
   Object.freeze({ title: "Overlays", ids: ["find", "selection", "settings"] }),
 ]);

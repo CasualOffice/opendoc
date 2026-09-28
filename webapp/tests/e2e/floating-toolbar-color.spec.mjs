@@ -16,6 +16,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  runPaletteCommand,
 } from "./fixtures.mjs";
 
 // Selects `count` characters forward from the current caret.
@@ -117,7 +118,7 @@ test("floating toolbar highlight picker applies a named highlight and clears it 
   expect(consoleErrors).toEqual([]);
 });
 
-test("floating toolbar color pickers are blocked in Viewing mode", async ({
+test("the color pickers are blocked in Viewing mode, where the floating bar is gone", async ({
   page,
   consoleErrors,
 }) => {
@@ -126,28 +127,37 @@ test("floating toolbar color pickers are blocked in Viewing mode", async ({
   await moveCaretToDocStart(page);
   await setReviewMode(page, "viewing");
 
-  // Selection still works in Viewing, so the floating bar appears.
+  // Selection still works in Viewing — it is not a mutation — but the floating
+  // bar does NOT appear: it offers formatting and nothing else, so Viewing mode
+  // composes it away with the ribbon. Google Docs does the same.
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   await selectForward(page, 6);
-  await expect(page.locator("#selToolbar")).toBeVisible();
+  await expect(page.locator("#selToolbar")).toBeHidden();
 
-  // Choosing a text-color swatch reports read-only instead of applying.
-  await page.locator("#selTextColorBtn").click();
-  await page.locator('#selTextColorMenu [data-color="#ff0000"]').click();
+  // The pickers themselves are still REACHABLE, from the palette, and refuse at
+  // the choke point rather than by having gone missing — which is the guarantee
+  // this test is for. The palette anchors the popover to its own row, so the
+  // picker opens against a control that is on screen.
+  await runPaletteCommand(page, "format.color", "Text color");
+  await page.locator('#textColorMenu [data-color="#ff0000"]').click();
   await expect(page.locator("#status")).toContainText("read-only");
 
   // The run was not changed: the first 12 chars stay uniform (no red boundary
-  // was introduced), read straight from the engine's run style.
+  // was introduced), read straight from the engine's run style — back in Editing,
+  // which also proves leaving Viewing puts the band back.
+  await setReviewMode(page, "editing");
   const textCtl = page.locator(".color-control:not(.color-control-highlight)");
   await reselectFromStart(page, 12);
   await expect(textCtl).not.toHaveClass(/is-mixed/);
 
   // The highlight picker is likewise blocked and leaves the run un-highlighted.
+  await setReviewMode(page, "viewing");
   await reselectFromStart(page, 6);
-  await page.locator("#selHighlightBtn").click();
-  await page.locator('#selHighlightMenu [data-highlight="green"]').click();
+  await runPaletteCommand(page, "format.highlight", "Highlight color");
+  await page.locator('#highlightMenu [data-highlight="green"]').click();
   await expect(page.locator("#status")).toContainText("read-only");
+  await setReviewMode(page, "editing");
   await reselectFromStart(page, 6);
   await expect.poll(() => barColor(page, "#highlightBar")).toBe("rgba(0, 0, 0, 0)");
 

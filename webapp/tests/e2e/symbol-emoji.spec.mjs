@@ -15,6 +15,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  expectNothingToUndo,
   MOD,
 } from "./fixtures.mjs";
 
@@ -173,8 +174,7 @@ test("insert symbol: blocked (read-only) in Viewing mode, nothing inserted", asy
 
   await expect(page.locator("#status")).toContainText("read-only");
   await expect(page.locator("#symbolDialog")).toBeHidden();
-  await page.locator("#tabHome").click();
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 
   expect(consoleErrors).toEqual([]);
 });

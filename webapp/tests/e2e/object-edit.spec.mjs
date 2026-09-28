@@ -5,7 +5,7 @@
 // Suggesting. The `?fixture=float` document holds one top-level floating image
 // (the shipped sample docs contain none); it is selected exactly as in
 // object-anchor.spec.mjs.
-import { test, expect } from "./fixtures.mjs";
+import { test, expect, expectNothingToUndo } from "./fixtures.mjs";
 
 // The floating image sits near the top-left of page 1 in the float fixture.
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
@@ -198,7 +198,8 @@ test("alt text, delete, and crop are all blocked (fail-closed) in Viewing mode",
   // Enter Viewing (read-only), then select the image and try each edit.
   await page.locator('#reviewModeControl [data-review-mode="viewing"]').click();
   await selectFloat(page);
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
+  await selectFloat(page);
 
   // Alt text: submitting is blocked and the read-only reason is surfaced.
   await altTextBtn(page).click();
@@ -220,7 +221,7 @@ test("alt text, delete, and crop are all blocked (fail-closed) in Viewing mode",
   await expect(page.locator("#status")).toContainText("read-only");
 
   // Nothing mutated: still nothing to undo.
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 
   expect(consoleErrors).toEqual([]);
 });

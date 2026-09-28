@@ -22,6 +22,8 @@ import {
   openCommandPalette,
   shortcutHint,
   openAppMenu,
+  expectNothingToUndo,
+  runAppMenuCommand,
 } from "./fixtures.mjs";
 
 // A 1×1 PNG — the smallest thing `createImageBitmap` will decode, so the test
@@ -490,30 +492,32 @@ test("every Insert command has a ribbon face on some tab", async ({ page, consol
 // The guards must hold on the path this change created — a ribbon insert with no
 // prior click. Every pre-existing read-only spec calls `clickIntoFirstPage`
 // first, so none of them covers this state.
-test("Viewing mode refuses every ribbon insert on a freshly loaded document", async ({
+test("Viewing mode refuses every insert on a freshly loaded document", async ({
   page,
   consoleErrors,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
   await setReviewMode(page, "viewing");
-  await openInsertTab(page);
 
-  // Each dialog-opening insert refuses BEFORE opening, so the user is never led
-  // into picking something that cannot be applied.
-  for (const [button, dialog] of [
-    ["#insertSymbolBtn", "#symbolDialog"],
-    ["#insertEmojiBtn", "#emojiDialog"],
-    ["#insertFieldBtn", "#fieldDialog"],
-    ["#insertDropCapBtn", "#dropCapDialog"],
+  // Through the Insert MENU, because Viewing mode composes the ribbon away — the
+  // band these four used to be clicked on is not on screen. Same commands, same
+  // gate: each dialog-opening insert refuses BEFORE opening, so the user is never
+  // led into picking something that cannot be applied, and the refusal comes from
+  // `blockMutationInViewing()` rather than from a disabled row.
+  for (const [command, dialog] of [
+    ["insert.symbol", "#symbolDialog"],
+    ["insert.emoji", "#emojiDialog"],
+    ["insert.field", "#fieldDialog"],
+    ["insert.dropCap", "#dropCapDialog"],
   ]) {
-    await page.locator(button).click();
+    await runAppMenuCommand(page, "insert", command);
     await expect(page.locator(dialog)).toBeHidden();
     await expect(page.locator("#status")).toContainText("read-only");
   }
 
   // Nothing entered history: a refused insert is not an edit.
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  await expectNothingToUndo(page);
 
   expect(consoleErrors).toEqual([]);
 });

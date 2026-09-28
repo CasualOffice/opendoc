@@ -16,6 +16,7 @@ import {
   clickIntoFirstPage,
   setReviewMode,
   stableBox,
+  expectNothingToUndo,
   MOD,
 } from "./fixtures.mjs";
 
@@ -134,7 +135,9 @@ test("creating a header is one undoable action, and refused in Viewing", async (
   await runCommand(page, "Edit header");
   await expect(page.locator("#status")).toContainText("read-only");
   expect(await band(page)).toBeNull();
-  await expect(page.locator("#undoBtn")).toBeDisabled();
+  // From the Edit MENU: Viewing composes the Home band, and `#undoBtn` with it,
+  // off the screen.
+  await expectNothingToUndo(page);
 
   // Back in Editing it creates, and one undo removes the whole thing — the body
   // and the section's link to it are a single action.

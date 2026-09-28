@@ -851,7 +851,7 @@
         <ul class="pg-stats">
           <li><b data-claim="role-count">5</b> roles</li>
           <li><b data-claim="capability-count">9</b> capabilities</li>
-          <li><b data-claim="region-count">19</b> chrome regions</li>
+          <li><b data-claim="region-count">24</b> chrome regions</li>
           <li><b data-claim="overridable-token-count">18</b> brand tokens</li>
         </ul>
       </header>
@@ -872,7 +872,7 @@
                 <span class="pg-choice-what">A picture of the document — a thumbnail, an attachment preview, a print preview.</span>
                 <span class="pg-choice-meta">
                   <span class="pg-pill">0 of 9 capabilities</span>
-                  <span class="pg-pill">0 of 19 regions</span>
+                  <span class="pg-pill">0 of 24 regions</span>
                   <span class="pg-pill pg-pill--mode">viewing</span>
                 </span>
               </li>
@@ -882,7 +882,7 @@
                 <span class="pg-choice-what">A published document, to read.</span>
                 <span class="pg-choice-meta">
                   <span class="pg-pill">1 of 9 capabilities</span>
-                  <span class="pg-pill">6 of 19 regions</span>
+                  <span class="pg-pill">9 of 24 regions</span>
                   <span class="pg-pill pg-pill--mode">viewing</span>
                 </span>
               </li>
@@ -892,7 +892,7 @@
                 <span class="pg-choice-what">Google Docs' Commenter, Word's reviewer.</span>
                 <span class="pg-choice-meta">
                   <span class="pg-pill">3 of 9 capabilities</span>
-                  <span class="pg-pill">18 of 19 regions</span>
+                  <span class="pg-pill">23 of 24 regions</span>
                   <span class="pg-pill pg-pill--mode">suggesting</span>
                 </span>
               </li>
@@ -902,7 +902,7 @@
                 <span class="pg-choice-what">The reason a host embeds an editor.</span>
                 <span class="pg-choice-meta">
                   <span class="pg-pill">6 of 9 capabilities</span>
-                  <span class="pg-pill">18 of 19 regions</span>
+                  <span class="pg-pill">23 of 24 regions</span>
                   <span class="pg-pill pg-pill--mode">editing</span>
                 </span>
               </li>
@@ -912,17 +912,17 @@
                 <span class="pg-choice-what">The page is ours, or the host has said it may as well be.</span>
                 <span class="pg-choice-meta">
                   <span class="pg-pill">9 of 9 capabilities</span>
-                  <span class="pg-pill">19 of 19 regions</span>
+                  <span class="pg-pill">24 of 24 regions</span>
                   <span class="pg-pill pg-pill--mode">editing</span>
                 </span>
               </li>
             </ul>
             <div class="pg-role-notes" data-role-notes>
-              <p class="pg-role-note" data-role-note="preview" hidden>The runtime as a layout and rendering engine, and nearly replaceable by a static image. Grants nothing at all, and is offered 0 of 19 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="readonly" hidden>Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome. Grants <code>print</code>, and is offered 6 of 19 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="commentor" hidden>Annotates and suggests; every body change is a tracked revision somebody else accepts. Grants <code>print</code> <code>download</code> <code>comment</code>, and is offered 18 of 19 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="edit">Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours. Grants <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code>, and is offered 18 of 19 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="owner" hidden>Grants <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code>, and is offered 19 of 19 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="preview" hidden>The runtime as a layout and rendering engine, and nearly replaceable by a static image. Grants nothing at all, and is offered 0 of 24 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="readonly" hidden>Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome. Grants <code>print</code>, and is offered 9 of 24 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="commentor" hidden>Annotates and suggests; every body change is a tracked revision somebody else accepts. Grants <code>print</code> <code>download</code> <code>comment</code>, and is offered 23 of 24 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="edit">Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours. Grants <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code>, and is offered 23 of 24 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="owner" hidden>Grants <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code>, and is offered 24 of 24 chrome regions.</p>
             </div>
             <!-- @end playground-role-controls -->
           </fieldset>
@@ -1012,7 +1012,7 @@
             </p>
             <!-- @generated playground-region-controls -->
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Top bar</span><span class="pg-fold-count">4</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Top bar</span><span class="pg-fold-count">5</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-brand" value="brand" data-region />
@@ -1023,6 +1023,11 @@
                 <input type="checkbox" class="pg-check" id="pg-chrome-title" value="title" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-title">title</label>
                 <span class="pg-toggle-what">The document name, and renaming it.</span>
+              </li>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-state" value="state" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-state">state</label>
+                <span class="pg-toggle-what">The document-state chips and Document properties in the top bar.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-menu" value="menu" data-region />
@@ -1082,12 +1087,32 @@
               </ul>
             </details>
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Beside the document</span><span class="pg-fold-count">2</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title">Beside the document</span><span class="pg-fold-count">6</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-rail" value="rail" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-rail">rail</label>
                 <span class="pg-toggle-what">The left navigation rail: outline and page thumbnails.</span>
+              </li>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-ruler" value="ruler" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-ruler">ruler</label>
+                <span class="pg-toggle-what">The ruler strip above the page: indents and tab stops.</span>
+              </li>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-caret" value="caret" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-caret">caret</label>
+                <span class="pg-toggle-what">The text caret and the selection highlight on the page.</span>
+              </li>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-context" value="context" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-context">context</label>
+                <span class="pg-toggle-what">The right-click menu on the document.</span>
+              </li>
+              <li class="pg-toggle">
+                <input type="checkbox" class="pg-check" id="pg-chrome-objects" value="objects" data-region />
+                <label class="pg-toggle-name" for="pg-chrome-objects">objects</label>
+                <span class="pg-toggle-what">Object selection: the outline, its handles and the object bar.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-history" value="history" data-region />
@@ -1191,7 +1216,7 @@
               </li>
               <li class="pg-pill">
                 <b data-region-count>—</b> of
-                <span data-claim="region-count">19</span> regions shown
+                <span data-claim="region-count">24</span> regions shown
               </li>
             </ul>
             <ul
@@ -1350,7 +1375,7 @@
             the Properties button, and the Viewing banner still offers
             &ldquo;Switch to editing&rdquo; — which a <code>preview</code>
             container can never do. Neither belongs to any of the
-            <span data-claim="region-count">19</span> regions, so neither can be
+            <span data-claim="region-count">24</span> regions, so neither can be
             withheld; deciding where they belong is a change to the region set
             rather than to this page, and it is filed rather than quietly patched.
           </li>
