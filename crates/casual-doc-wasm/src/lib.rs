@@ -42107,9 +42107,19 @@ mod tests {
         let mut scanned = 0usize;
         for (name, source) in sources {
             // Production half only: the guards below quote the marker on purpose.
-            let production = source
+            //
+            // Normalised first, because the delimiter is written with literal
+            // newlines and a Windows checkout hands these files over with CRLF
+            // (`core.autocrlf` defaults to true there). Unnormalised, the split
+            // finds nothing, `map_or` falls back to the WHOLE file, and the test
+            // module's own deliberate quotes trip the assertion — which is
+            // exactly how this failed on `platform (Windows-x64)` while every
+            // other job was green. A guard that reads source has to read it the
+            // same way on every platform, or it reports the checkout.
+            let normalised = source.replace("\r\n", "\n");
+            let production = normalised
                 .split_once("\n#[cfg(test)]\nmod tests {")
-                .map_or(source, |(head, _)| head);
+                .map_or(normalised.as_str(), |(head, _)| head);
             scanned += 1;
             assert!(
                 !production.contains("\"refused: "),
