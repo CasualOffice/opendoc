@@ -138,6 +138,28 @@ export function tableToolCommands(context, host) {
     tableMutation("table.sort.descending", "Sort descending",
       () => runEdit(() => doc.sortTable(context.anchor.node, "descending", context.table?.column ?? -1), { gate: true }),
       { regular: true, group: "sort" }),
+    // The KEYBOARD half of the table chrome layer's resize gestures (`docs/141`
+    // D-1 §4.1.6). They are commands rather than a keydown branch because
+    // `keymap.mjs` binds command IDS and nothing else: a chord that does not name
+    // a real command is a build failure there, which is what stops an advertised
+    // chord from being dead. Being commands also gets them onto the menu and the
+    // palette for free, so the pointer gesture is not mouse-only capability.
+    //
+    // One step is 36 twips (0.025 in), the grid step the properties inspector's
+    // own width and height fields move in — so the keyboard and the panel agree
+    // about what "a bit wider" means.
+    tableMutation("table.column.grow", "Widen column",
+      () => host.stepTableBand("column", 1),
+      { regular: true, group: "size" }),
+    tableMutation("table.column.shrink", "Narrow column",
+      () => host.stepTableBand("column", -1),
+      { regular: true, group: "size" }),
+    tableMutation("table.row.grow", "Taller row",
+      () => host.stepTableBand("row", 1),
+      { group: "size" }),
+    tableMutation("table.row.shrink", "Shorter row",
+      () => host.stepTableBand("row", -1),
+      { group: "size" }),
   ];
 
   return [

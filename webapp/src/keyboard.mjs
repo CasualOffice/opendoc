@@ -116,6 +116,12 @@ const SHORTCUT_GLYPHS = new Map([
   ["⌦", "Delete"],
   ["⎋", "Esc"],
   ["⇥", "Tab"],
+  // Arrow glyphs, so an Alt+Shift+Arrow chord is declarable in the one keymap
+  // rather than hand-branched in a keydown listener (docs/141 D-1 §4.1.6).
+  ["→", "Right"],
+  ["←", "Left"],
+  ["↑", "Up"],
+  ["↓", "Down"],
 ]);
 
 /** The named keys a spec can end in, and the `KeyboardEvent.key` each means.
@@ -134,6 +140,10 @@ const NAMED_KEYS = new Map([
   ["⌦", "Delete"],
   ["⎋", "Escape"],
   ["⇥", "Tab"],
+  ["→", "ArrowRight"],
+  ["←", "ArrowLeft"],
+  ["↑", "ArrowUp"],
+  ["↓", "ArrowDown"],
 ]);
 const MODIFIER_GLYPHS = new Set(["⌘", "⌃", "⌥", "⇧"]);
 

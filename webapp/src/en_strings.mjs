@@ -365,6 +365,21 @@ export const EN_STRINGS = Object.freeze({
   // `Selected table ${mode}`, the one table status line that was not localised
   // at all, and glueing a translated noun onto a fixed verb is what these three
   // keys exist to avoid.
+  // The table chrome layer's refusal and its two announcements (`docs/141` D-1).
+  //
+  // `notTracked` is the sentence `tableToolCommands` already shows on a disabled
+  // structural command, routed through a key so the boundary gesture and the menu
+  // say the same thing in every language. A boundary in Suggesting is not armed at
+  // all — the cursor stays `text` — so this is what a PRESS there says, because a
+  // user reaching for a gesture every other mode has deserves to know why it is
+  // absent rather than to find it silently missing.
+  "table.reason.notTracked": "This structural change cannot be tracked in Suggesting mode",
+  // A resize commits on release, and the only channel a screen-reader user has for
+  // the result is the live region. The size is preformatted in inches by the
+  // caller, the same two-decimal figure the properties inspector's own fields
+  // show, so the announcement and the panel cannot disagree about the number.
+  "table.rowHeightSet": "Row height {size} in",
+  "table.columnWidthSet": "Column width {size} in",
   "table.selectedRow": "Row selected",
   "table.selectedColumn": "Column selected",
   "table.selectedTable": "Table selected",

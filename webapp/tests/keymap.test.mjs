@@ -148,10 +148,28 @@ const EDITOR_COMMANDS_SOURCE = (() => {
   return MAIN_JS.slice(start, end);
 })();
 
-test("every chord names a command the registry actually returns", () => {
-  const registered = new Set(
-    [...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
+// The TABLE commands are not literals inside `editorCommands()` — that function
+// pushes `tableToolCommands(...)` wholesale, so the tree in `table_commands.mjs`
+// is genuinely in the registry while being invisible to the scan above. The push
+// site is asserted, so this extension cannot outlive the wiring it stands for: if
+// `editorCommands` stops composing that tree, the assertion fails here rather
+// than letting four table chords quietly go dead.
+const TABLE_COMMAND_IDS = (() => {
+  assert.match(
+    EDITOR_COMMANDS_SOURCE,
+    /flattenCommandTree\(tableToolCommands\(/,
+    "editorCommands() no longer composes tableToolCommands(); the table ids below " +
+      "are no longer in the registry and every table chord is dead",
   );
+  const source = readFileSync(new URL("../src/table_commands.mjs", import.meta.url), "utf8");
+  return [...source.matchAll(/(?:id: |tableMutation\()"([\w.]+)"/g)].map((match) => match[1]);
+})();
+
+test("every chord names a command the registry actually returns", () => {
+  const registered = new Set([
+    ...[...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
+    ...TABLE_COMMAND_IDS,
+  ]);
   assert.ok(registered.size > 80, `only ${registered.size} commands found; the scan has drifted`);
   const missing = [...new Set(KEYMAP.map((row) => row.command))].filter((id) => !registered.has(id));
   assert.deepEqual(

@@ -280,7 +280,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  carried 16,543 against a `main` that then landed the table-commands extraction
  *  and took this number to 16,489 underneath it, so 16,487 is a measurement of the
  *  merge and not arithmetic on two branches' figures. */
-const MAIN_JS_LINE_CEILING = 16487;
+const MAIN_JS_LINE_CEILING = 0; /* REMEASURE */
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

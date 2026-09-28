@@ -6858,6 +6858,42 @@ body.is-format-painting .page-wrap * {
   pointer-events: none;
 }
 
+/* The ROW guide (docs/141 D-1). The same rule turned through 90 degrees, from the
+   same token, because it is the same affordance on the other axis — and it spans
+   the TABLE, not the page: the column guide used to take its height from
+   `page.overlay.clientHeight` and drew a full-page rule for a three-row table. */
+.overlay .table-row-resize-preview {
+  position: absolute;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 80%, transparent);
+  pointer-events: none;
+}
+
+/* Touch boundary pills (docs/141 D-1 §4.1.7). Hover does not exist on touch, so
+   the affordance has to be a visible object a finger can land on: 24 CSS px
+   across the boundary, WCAG 2.5.8 Target Size (Minimum). One pill per boundary
+   rather than a continuous strip, so two adjacent boundaries never merge into one
+   target. Armed by a tap inside the table and cleared with the caret. */
+.overlay .table-row-touch-pill,
+.overlay .table-col-touch-pill {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.overlay .table-row-touch-pill {
+  cursor: row-resize;
+}
+
+.overlay .table-col-touch-pill {
+  cursor: col-resize;
+}
+
 /* Checklist checkbox click target (docs/67 — checklist authoring). The checkbox
    glyph is painted in the page raster; this transparent, clickable overlay sits
    over it in the hanging gutter so a click toggles the item. A faint hover ring

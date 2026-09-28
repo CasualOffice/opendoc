@@ -15,12 +15,16 @@ import { resolvePointerCursor } from "./pointer_cursor.mjs";
 
 /** The gesture in flight, named as `pointer_cursor.mjs` names it, or `""`.
  *  Derived here rather than in the host so the precedence between two drags
- *  that could in principle both be live is written down once. */
+ *  that could in principle both be live is written down once.
+ *
+ *  `tableDrag` is the chrome layer's own name for its gesture
+ *  (`"table-row"` / `"table-column"`), because a table resize now has two axes
+ *  and a boolean could not say which. */
 function dragOf(state) {
   if (state.resizeDrag) return "object-resize";
   if (state.cropDrag) return "object-crop";
   if (state.moveDrag) return "object-move";
-  if (state.tableDrag) return "table-column";
+  if (state.tableDrag) return state.tableDrag;
   return state.textDrag ? "text" : "";
 }
 
@@ -35,6 +39,7 @@ function dragOf(state) {
  * @param {(page, event) => object|null} host.linkAt
  * @param {(node, page, x, y) => boolean} host.pointInsideObject
  * @param {(payload) => object} host.objectCapabilities
+ * @param {(page, event) => string} [host.tableBoundaryAt] `"row"`, `"column"`, `""`
  * @param {() => object} host.state               the host flags, per frame
  * @returns {{ schedule: Function, clear: Function, dragKind: Function }}
  */
@@ -92,6 +97,16 @@ export function createPointerHover(host) {
         return probe;
       }
     }
+    // A table BOUNDARY, on any table on this page — not only the one the caret is
+    // in. This is what makes the pointer say "you can size this" before the user
+    // has committed to the table (`docs/141` D-1). It sits here, below the object
+    // probe and above the caret, because that is exactly where `onPointerDown`
+    // puts it, and the pointer must predict the press. It costs nothing: the chrome
+    // layer answers from a per-page cache the repaint filled, so a pointer-move
+    // makes no engine call at all. Only an ARMED boundary reports, so the cursor
+    // never promises a gesture the review mode refuses.
+    probe.tableBoundary = host.tableBoundaryAt?.(page, event) || "";
+    if (probe.tableBoundary) return probe;
     const hit = doc.hitTest(page.pageNumber, x, y);
     if (hit) {
       probe.formCheckbox = !!doc.formCheckboxAt(hit.node, hit.offset);
