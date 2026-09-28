@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Embed configuration playground — OpenDoc</title>
+    <title data-i18n="site.playground.embedConfigurationPlaygroundOpendo">Embed configuration playground — OpenDoc</title>
     <meta
       name="description"
       content="Change a role, withhold a capability, take away a chrome region or supply a brand colour, and watch an embedded OpenDoc editor change with it — then copy the configuration that reproduces exactly what is on screen."
@@ -836,22 +836,36 @@
   <body>
     <header class="site-header">
       <div class="site-header-inner">
-        <a class="brand" href="./" aria-label="OpenDoc home">
+        <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
-          <span class="brand-badge">Pre-release</span>
+          <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
         </a>
-        <nav class="site-nav" aria-label="Primary navigation">
-          <a href="./" data-nav="overview">Overview</a>
-          <a href="./editor.html" data-nav="editor">Editor</a>
-          <a href="./playground.html" data-nav="playground" aria-current="page">Playground</a>
-          <a href="./embedding.html" data-nav="embedding">Embedding</a>
-          <a href="./docs.html" data-nav="docs">Docs</a>
-          <a href="./fidelity.html" data-nav="fidelity">Fidelity</a>
+        <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+          <a href="./" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+          <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+          <a href="./playground.html" data-nav="playground" aria-current="page" data-i18n="site.header.playground">Playground</a>
+          <a href="./embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+          <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
         </nav>
         <div class="site-header-actions">
-          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
-          <a class="header-cta" href="./editor.html">Open the editor</a>
+          <!-- The language control. The markup carries only the automatic entry —
+               the one option with words in it, so the one that goes through the seam
+               like every other label here. The nineteen languages are appended by
+               `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+               noun that must never be translated and so does not belong in a
+               catalogue at all. The control stays `hidden` until that script has
+               run: a picker offering one choice is a dead control (docs/99 §10), and
+               a site whose scripts did not run is English with nothing to choose. -->
+          <label class="site-lang" hidden>
+            <span class="site-lang-icon ms" aria-hidden="true">language</span>
+            <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+              <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+            </select>
+          </label>
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+          <a class="header-cta" href="./editor.html" data-i18n="site.header.openEditor">Open the editor</a>
         </div>
       </div>
     </header>
@@ -859,9 +873,9 @@
     <main class="pg">
       <header class="pg-head">
         <div>
-          <p class="doc-eyebrow">SDK · Embedding</p>
-          <h1>Configure an embed, and watch it change</h1>
-          <p class="pg-lede">
+          <p class="doc-eyebrow" data-i18n="site.playground.sdkEmbedding">SDK · Embedding</p>
+          <h1 data-i18n="site.playground.configureEmbedWatchChange">Configure an embed, and watch it change</h1>
+          <p class="pg-lede" data-i18n="site.playground.editorBesideTheseControls">
             The editor beside these controls is running right now, configured by
             them. Change a role, withhold a capability, take a chrome region away
             or give it a brand colour, and it becomes the thing you configured —
@@ -877,10 +891,10 @@
       </header>
 
       <div class="pg-split">
-        <form class="pg-card pg-controls" data-controls aria-label="Embed configuration">
+        <form class="pg-card pg-controls" data-controls aria-label="Embed configuration" data-i18n-label="site.playground.embedConfiguration">
           <fieldset class="pg-group">
-            <legend>Role</legend>
-            <p class="pg-hint">
+            <legend data-i18n="site.playground.role">Role</legend>
+            <p class="pg-hint" data-i18n="site.playground.nameSubsetCapabilitySet">
               A name for a subset of the capability set, never the unit of
               enforcement. Switching one rewrites everything below it.
             </p>
@@ -951,8 +965,8 @@
             class="pg-group"
             data-narrow-reason="This role does not grant it. A capability list can only narrow a role, never widen one, so there is exactly one direction to audit."
           >
-            <legend>Capabilities</legend>
-            <p class="pg-hint">
+            <legend data-i18n="site.playground.capabilities">Capabilities</legend>
+            <p class="pg-hint" data-i18n="site.playground.withheldOneTimeList">
               Withheld one at a time. A list can only <em>narrow</em> a role, so a
               capability the role never granted is struck through and disabled.
             </p>
@@ -1024,8 +1038,8 @@
             class="pg-group"
             data-narrow-reason="This role is not offered that region, so there is nothing to take away. A chrome list narrows too: a preview with a ribbon is not a presentation anybody asked for."
           >
-            <legend>Chrome regions</legend>
-            <p class="pg-hint">
+            <legend data-i18n="site.playground.chromeRegions">Chrome regions</legend>
+            <p class="pg-hint" data-i18n="site.playground.wholePresentationsHostCan">
               Whole presentations a host can decline,
               <span data-claim="band-count">8</span> of them ribbon bands.
               Dropping <code>ribbon</code> drops every band with it.
@@ -1155,8 +1169,8 @@
           </fieldset>
 
           <fieldset class="pg-group">
-            <legend>Brand</legend>
-            <p class="pg-hint">
+            <legend data-i18n="site.playground.brand">Brand</legend>
+            <p class="pg-hint" data-i18n="site.playground.paletteTokensPublicContract">
               The palette tokens are a public contract; geometry and the paper
               layer are refused. These apply to the running editor with no reload.
             </p>
@@ -1181,7 +1195,7 @@
             </p>
             <!-- @end playground-brand-controls -->
             <div class="pg-btn-row">
-              <button type="button" class="pg-btn" data-variant="quiet" data-try-failing>
+              <button type="button" class="pg-btn" data-variant="quiet" data-try-failing data-i18n="site.playground.tryAccentFailsAa">
                 Try an accent that fails AA
                 (<code data-claim="failing-accent">#f5a524</code>)
               </button>
@@ -1192,12 +1206,12 @@
 
         <section class="pg-card pg-live" aria-labelledby="pgLiveHeading">
           <div class="pg-live-head">
-            <h2 id="pgLiveHeading">The live editor</h2>
+            <h2 id="pgLiveHeading" data-i18n="site.playground.liveEditor">The live editor</h2>
             <div class="pg-btn-row">
-              <button type="button" class="pg-btn" data-variant="quiet" data-reset>
+              <button type="button" class="pg-btn" data-variant="quiet" data-reset data-i18n="site.playground.reset">
                 Reset
               </button>
-              <button type="button" class="pg-btn" data-variant="quiet" data-remount>
+              <button type="button" class="pg-btn" data-variant="quiet" data-remount data-i18n="site.playground.restart">
                 Restart
               </button>
             </div>
@@ -1222,14 +1236,14 @@
             ></ul>
             <details class="pg-fold pg-fold--flat">
               <summary class="pg-fold-head">
-                <span class="pg-fold-title">What the frame is given</span>
+                <span class="pg-fold-title" data-i18n="site.playground.whatFrameGiven">What the frame is given</span>
               </summary>
               <dl class="pg-facts">
-                <dt>Chrome withheld</dt>
+                <dt data-i18n="site.playground.chromeWithheld">Chrome withheld</dt>
                 <dd data-withheld-regions data-none-label="nothing — every region is shown">
                   —
                 </dd>
-                <dt>Frame sandbox</dt>
+                <dt data-i18n="site.playground.frameSandbox">Frame sandbox</dt>
                 <dd data-sandbox>—</dd>
               </dl>
             </details>
@@ -1241,7 +1255,7 @@
           >
             <p class="pg-booting" data-booting>
               <span
-                >The editor holds a WebAssembly instance of roughly 100&nbsp;MB and
+                 data-i18n="site.playground.editorHoldsWebassemblyInstance">The editor holds a WebAssembly instance of roughly 100&nbsp;MB and
                 is booting now. The readout above is already live: it is resolved
                 from the same authority the editor resolves.</span
               >
@@ -1251,8 +1265,8 @@
       </div>
 
       <section class="pg-out">
-        <h2 class="doc-h2">The configuration this produces</h2>
-        <p class="pg-note">
+        <h2 class="doc-h2" data-i18n="site.playground.configurationProduces">The configuration this produces</h2>
+        <p class="pg-note" data-i18n="site.playground.bothPanelsRewrittenEvery">
           Both panels are rewritten on every change, and between them they are the
           whole of what a host writes. The element takes
           <span data-claim="attribute-count">5</span> attributes, and everything
@@ -1267,7 +1281,7 @@
         </p>
         <div class="code-panel">
           <div class="code-panel-head">
-            <span>The embed — paste this into your page</span>
+            <span data-i18n="site.playground.embedPasteIntoYour">The embed — paste this into your page</span>
             <button
               type="button"
               class="pg-btn"
@@ -1275,7 +1289,7 @@
               data-copy="element"
               data-idle-label="Copy"
               data-done-label="Copied"
-            >
+             data-i18n="site.playground.copy">
               Copy
             </button>
           </div>
@@ -1283,7 +1297,7 @@
         </div>
         <div class="code-panel">
           <div class="code-panel-head">
-            <span>webapp/brand.json — then run <code>node webapp/tools/build-brand.mjs</code></span>
+            <span data-i18n="site.playground.webappBrandJsonThen">webapp/brand.json — then run <code data-i18n="site.playground.nodeWebappToolsBuild">node webapp/tools/build-brand.mjs</code></span>
             <button
               type="button"
               class="pg-btn"
@@ -1291,13 +1305,13 @@
               data-copy="brand"
               data-idle-label="Copy"
               data-done-label="Copied"
-            >
+             data-i18n="site.playground.copy">
               Copy
             </button>
           </div>
           <pre><code data-snippet="brand"></code></pre>
         </div>
-        <p class="pg-note">
+        <p class="pg-note" data-i18n="site.playground.colourFailsWcagAa">
           A colour that fails WCAG AA is <em>refused</em> by that command, naming
           the pair, the measured ratio, the floor and the nearest value on the same
           hue that would pass — not corrected, because a product shipped in an
@@ -1313,32 +1327,32 @@
       </section>
 
       <section class="pg-out">
-        <h2 class="doc-h2">The rules these controls follow</h2>
+        <h2 class="doc-h2" data-i18n="site.playground.rulesTheseControlsFollow">The rules these controls follow</h2>
         <div class="pg-rules">
           <p class="pg-rule">
-            <b>Nothing here is gated.</b> ONLYOFFICE puts host customization behind
-            a licence check in code — <code>LayoutManager._applyCustomization</code>
-            returns early when <code>!_licensed</code> — so an integrator ships
+            <b data-i18n="site.playground.nothingHereGated">Nothing here is gated.</b> ONLYOFFICE puts host customization behind
+            a licence check in code — <code data-i18n="site.playground.layoutmanagerApplycustomization">LayoutManager._applyCustomization</code>
+            returns early when <code data-i18n="site.playground.licensed">!_licensed</code> — so an integrator ships
             their chrome and then discovers the modal. This is Apache-2.0, the
             permissive licence is the whole point of the project, and gating the
             one thing that makes it worth embedding would surrender it.
           </p>
           <p class="pg-rule">
-            <b>A capability list narrows; it never widens.</b> All
+            <b data-i18n="site.playground.capabilityListNarrowsNever">A capability list narrows; it never widens.</b> All
             <span data-claim="capability-count">9</span> are withheld
             independently — &ldquo;comments only, everything else off&rdquo; is a
             configuration, not a rung on a ladder — but a list can only take away
             from what the role granted, so there is exactly one direction to audit.
           </p>
           <p class="pg-rule">
-            <b>A region is not a capability.</b> Withholding a region is a decision
+            <b data-i18n="site.playground.regionNotCapability">A region is not a capability.</b> Withholding a region is a decision
             about your page; withholding a capability is a permission. That is why
             <code>preview</code> and <code>readonly</code> are different
             presentations rather than one with print turned off, and why the region
             list narrows the same way the capability list does.
           </p>
           <p class="pg-rule">
-            <b>A palette is a stylesheet.</b> The brand fields apply to the running
+            <b data-i18n="site.playground.paletteStylesheet">A palette is a stylesheet.</b> The brand fields apply to the running
             editor with no reload, because a white-labelled build is one swapped
             stylesheet. Everything else here is resolved before the frame's first
             navigation, so it remounts instead.
@@ -1347,24 +1361,24 @@
       </section>
 
       <section class="pg-out">
-        <h2 class="doc-h2">What this page does not do yet</h2>
+        <h2 class="doc-h2" data-i18n="site.playground.whatPageDoesNot">What this page does not do yet</h2>
         <ul class="doc-list pg-note">
           <li>
-            <b>Role, capability and region changes remount the frame.</b> They are
+            <b data-i18n="site.playground.roleCapabilityRegionChanges">Role, capability and region changes remount the frame.</b> They are
             resolved before the first paint on purpose, so there is no way to apply
             one to a running editor without reloading it — and a channel that could
             would be a window in which the editor was something else. The brand
             controls do apply live, because a palette is a stylesheet.
           </li>
           <li>
-            <b>The brand preview is this page applying the generated stylesheet to
+            <b data-i18n="site.playground.brandPreviewPageApplying">The brand preview is this page applying the generated stylesheet to
             the frame.</b> A real white-labelled deployment commits what
             <code>build-brand.mjs</code> writes and serves it; nothing here can
             write a file. The CSS in the panel above is the generator's own output,
             byte for byte.
           </li>
           <li>
-            <b>Two strips survive a container that was offered no region</b>, and
+            <b data-i18n="site.playground.twoStripsSurviveContainer">Two strips survive a container that was offered no region</b>, and
             this page is how they were found. In <code>preview</code> the top bar
             still carries the document-state chip, the import-findings count and
             the Properties button, and the Viewing banner still offers
@@ -1375,15 +1389,15 @@
             rather than to this page, and it is filed rather than quietly patched.
           </li>
           <li>
-            <b>One document, and no host commands.</b> The frame opens the shipped
+            <b data-i18n="site.playground.oneDocumentNoHost">One document, and no host commands.</b> The frame opens the shipped
             sample. For driving the editor over both transports — in-process and
-            <code>postMessage</code> — with every command the registry offers, the
+            <code data-i18n="site.playground.postmessage">postMessage</code> — with every command the registry offers, the
             two-panel host demo is <a href="./embed.html">embed.html</a>.
           </li>
         </ul>
-        <p class="pg-note">
+        <p class="pg-note" data-i18n="site.playground.referenceAll">
           The reference for all of it is
-          <a href="./embedding.html">Embed the editor</a>: the capability table, the
+          <a href="./embedding.html" data-i18n="site.playground.embedEditor">Embed the editor</a>: the capability table, the
           region table, the host contract, the refusal codes, and the tests that
           hold each claim up.
         </p>
@@ -1392,11 +1406,11 @@
 
     <footer class="site-footer">
       <div class="site-footer-inner">
-        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-copy" data-i18n="site.footer.copyright">OpenDoc — developed by CasualOffice · Apache-2.0</span>
         <span class="site-footer-spacer" aria-hidden="true"></span>
-        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
-        <a href="./reference/security.html">Security</a>
-        <a href="./reference/contributing.html">Contributing</a>
+        <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+        <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
+        <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
       </div>
     </footer>
     <script>
@@ -1429,6 +1443,7 @@
         }
       })();
     </script>
+    <script type="module" src="./src/site_locale.mjs"></script>
     <script type="module" src="./src/playground.js"></script>
   </body>
 </html>

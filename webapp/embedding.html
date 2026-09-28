@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Embed the editor — OpenDoc</title>
+    <title data-i18n="site.embedding.embedEditorOpendoc">Embed the editor — OpenDoc</title>
     <meta
       name="description"
       content="Embed the OpenDoc editor in your own page: an installable package, the <opendoc-editor> custom element, and a capability contract resolved before the frame's first navigation. Every example on this page is extracted from code that runs in CI."
@@ -83,108 +83,122 @@
   <body>
     <header class="site-header">
       <div class="site-header-inner">
-        <a class="brand" href="./" aria-label="OpenDoc home">
+        <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
-          <span class="brand-badge">Pre-release</span>
+          <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
         </a>
-        <nav class="site-nav" aria-label="Primary navigation">
-          <a href="./" data-nav="overview">Overview</a>
-          <a href="./editor.html" data-nav="editor">Editor</a>
-          <a href="./playground.html" data-nav="playground">Playground</a>
-          <a href="./embedding.html" data-nav="embedding" aria-current="page">Embedding</a>
-          <a href="./docs.html" data-nav="docs">Docs</a>
-          <a href="./fidelity.html" data-nav="fidelity">Fidelity</a>
+        <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+          <a href="./" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+          <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+          <a href="./playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
+          <a href="./embedding.html" data-nav="embedding" aria-current="page" data-i18n="site.header.embedding">Embedding</a>
+          <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
         </nav>
         <div class="site-header-actions">
-          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
-          <a class="header-cta" href="./editor.html">Open the editor</a>
+          <!-- The language control. The markup carries only the automatic entry —
+               the one option with words in it, so the one that goes through the seam
+               like every other label here. The nineteen languages are appended by
+               `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+               noun that must never be translated and so does not belong in a
+               catalogue at all. The control stays `hidden` until that script has
+               run: a picker offering one choice is a dead control (docs/99 §10), and
+               a site whose scripts did not run is English with nothing to choose. -->
+          <label class="site-lang" hidden>
+            <span class="site-lang-icon ms" aria-hidden="true">language</span>
+            <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+              <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+            </select>
+          </label>
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+          <a class="header-cta" href="./editor.html" data-i18n="site.header.openEditor">Open the editor</a>
         </div>
       </div>
     </header>
 
     <main class="doc-reader">
-      <aside class="doc-rail" aria-label="Documentation sections">
+      <aside class="doc-rail" aria-label="Documentation sections" data-i18n-label="site.embedding.documentationSections">
         <div class="doc-rail-inner">
-          <p class="doc-rail-title">Guides</p>
+          <p class="doc-rail-title" data-i18n="site.embedding.guides">Guides</p>
           <ul class="doc-rail-list">
             <li>
-              <a href="./reference/architecture.html">Architecture</a>
+              <a href="./reference/architecture.html" data-i18n="site.embedding.architecture">Architecture</a>
             </li>
-            <li><a href="./docs.html">Import a document</a></li>
-            <li><a class="is-active" href="./embedding.html">Embed the editor</a></li>
+            <li><a href="./docs.html" data-i18n="site.embedding.importDocument">Import a document</a></li>
+            <li><a class="is-active" href="./embedding.html" data-i18n="site.embedding.embedEditor">Embed the editor</a></li>
             <li>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md">Embedding the engine</a>
-            </li>
-            <li>
-              <a href="./reference/sdk-api-spec.html">SDK API specification</a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md" data-i18n="site.embedding.embeddingEngine">Embedding the engine</a>
             </li>
             <li>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/40-FONT-MANAGEMENT-DESIGN.md">Fonts &amp; coverage</a>
+              <a href="./reference/sdk-api-spec.html" data-i18n="site.embedding.sdkApiSpecification">SDK API specification</a>
             </li>
             <li>
-              <a href="./reference/docx-package-reader.html">Package limits</a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/40-FONT-MANAGEMENT-DESIGN.md" data-i18n="site.embedding.fontsAmpCoverage">Fonts &amp; coverage</a>
+            </li>
+            <li>
+              <a href="./reference/docx-package-reader.html" data-i18n="site.embedding.packageLimits">Package limits</a>
             </li>
           </ul>
 
-          <p class="doc-rail-title">Reference</p>
+          <p class="doc-rail-title" data-i18n="site.embedding.reference">Reference</p>
           <ul class="doc-rail-list">
-            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc-embed">The embed package</a></li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc-embed" data-i18n="site.embedding.embedPackage">The embed package</a></li>
             <li>
-              <a href="./reference/embeddability-plan.html">Embeddability plan</a>
+              <a href="./reference/embeddability-plan.html" data-i18n="site.embedding.embeddabilityPlan">Embeddability plan</a>
             </li>
-            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/crates">Crates</a></li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/crates" data-i18n="site.embedding.crates">Crates</a></li>
             <li>
-              <a href="./reference/error-code-registry.html">Error registry</a>
+              <a href="./reference/error-code-registry.html" data-i18n="site.embedding.errorRegistry">Error registry</a>
             </li>
             <li>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix</a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md" data-i18n="site.embedding.supportMatrix">Support matrix</a>
             </li>
           </ul>
         </div>
       </aside>
 
       <article class="doc-article">
-        <p class="doc-eyebrow">Guides · Embedding · SDK phase 1 of 3</p>
-        <h1 id="embed-the-editor">Embed the editor</h1>
-        <p class="doc-lede">
+        <p class="doc-eyebrow" data-i18n="site.embedding.guidesEmbeddingSdkPhase">Guides · Embedding · SDK phase 1 of 3</p>
+        <h1 id="embed-the-editor" data-i18n="site.embedding.embedEditor">Embed the editor</h1>
+        <p class="doc-lede" data-i18n="site.embedding.phase1SdkShips">
           Phase 1 of the SDK ships three things a host can use today: an
           installable package, a framework-free
-          <code>&lt;opendoc-editor&gt;</code> custom element, and a capability
-          contract that is resolved <b>before the frame's first navigation</b> —
+          <code data-i18n="site.embedding.ltOpendocEditorGt">&lt;opendoc-editor&gt;</code> custom element, and a capability
+          contract that is resolved <b data-i18n="site.embedding.beforeFrameSFirst">before the frame's first navigation</b> —
           so an embed cannot be talked out of the mode it was given. What it does
-          not ship yet is <a href="#not-yet">at the bottom of this page</a>, in as
+          not ship yet is <a href="#not-yet" data-i18n="site.embedding.bottomPage">at the bottom of this page</a>, in as
           many words.
         </p>
         <div class="doc-callout">
-          <p class="doc-callout-label">Try it first</p>
-          <p>
-            The <a href="./playground.html">configuration playground</a> puts every
+          <p class="doc-callout-label" data-i18n="site.embedding.tryFirst">Try it first</p>
+          <p data-i18n="site.embedding.the">
+            The <a href="./playground.html" data-i18n="site.embedding.configurationPlayground">configuration playground</a> puts every
             role, capability, chrome region and brand token on one page beside a
             running editor, and hands you the snippet that reproduces whatever you
             end up with. Reading a capability table is slower than switching to
             <code>readonly</code> and watching the ribbon go.
           </p>
         </div>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.everythingBelowExtractedCode">
           Everything below is extracted from code in this repository by
-          <code>webapp/tools/build-embed-docs.mjs</code>, and a guard fails the
+          <code data-i18n="site.embedding.webappToolsBuildEmbed">webapp/tools/build-embed-docs.mjs</code>, and a guard fails the
           build if the page and the code disagree. Each code panel's caption
           names the file it came from. That is not decoration: the public pages
           here have carried fabricated claims twice, in both directions, so no
           example on this page is typed and trusted — see
-          <a href="#evidence">how this page is kept honest</a>.
+          <a href="#evidence" data-i18n="site.embedding.howPageKeptHonest">how this page is kept honest</a>.
         </p>
 
-        <h2 id="install" class="doc-h2">Install it</h2>
+        <h2 id="install" class="doc-h2" data-i18n="site.embedding.install">Install it</h2>
         <p class="doc-body">
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
           <span data-claim="package-file-count">9</span> files,
           <span data-claim="package-unpacked-kb">110 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
-          <b>Nothing publishes it to a registry yet</b>, so today a host installs
-          the tarball <code>npm pack</code> produces from a checkout. The
+          <b data-i18n="site.embedding.nothingPublishesRegistryYet">Nothing publishes it to a registry yet</b>, so today a host installs
+          the tarball <code data-i18n="site.embedding.npmPack">npm pack</code> produces from a checkout. The
           packaging guard does exactly this — it packs the package, installs the
           tarball into an empty project, and imports it by its bare specifier, so
           "installable" is a measured fact rather than a manifest that looks
@@ -200,7 +214,7 @@ npm pack                       # -&gt; casualoffice-opendoc-embed-0.1.0.tgz
 npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         </div>
         <!-- @end install-commands -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.packageHas">
           The package has <span data-claim="entry-point-count">6</span> entry
           points, and a set of typings generated from the capability authority's
           real values rather than typed out beside it:
@@ -244,15 +258,15 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
           </div>
         </div>
         <!-- @end package-files -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.packageMountCapabilityContract">
           The package is the mount and the capability contract; it does not carry
           the engine. You also serve the editor's own static files
           (<code>editor.html</code> and the WebAssembly bundle beside it) from
           somewhere you control, and point <code>editor-src</code> at them.
         </p>
 
-        <h2 id="mount" class="doc-h2">Mount it</h2>
-        <p class="doc-body">
+        <h2 id="mount" class="doc-h2" data-i18n="site.embedding.mount">Mount it</h2>
+        <p class="doc-body" data-i18n="site.embedding.elementTakes">
           The element takes <span data-claim="attribute-count">5</span>
           attributes and no configuration object. <code>mode</code> names a role;
           <code>can</code> and <code>chrome</code> narrow it, per capability and
@@ -278,20 +292,20 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
 &gt;&lt;/opendoc-editor&gt;</code></pre>
         </div>
         <!-- @end declarative-usage -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.itIs">
           It is <code>mode</code> and not <code>role</code> because
           <code>role</code> is a global ARIA attribute:
-          <code>role="readonly"</code> would publish an invalid ARIA role to every
+          <code data-i18n="site.embedding.roleReadonly">role="readonly"</code> would publish an invalid ARIA role to every
           assistive technology on the page. <code>frame-title</code> has no
           default — an iframe with no accessible name is an axe
           <code>frame-title</code> violation, and the package has no business
           inventing English for your page, so you get one console warning and no
           label.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.mountingScriptSameThree">
           Mounting from script is the same three attributes. This is the code the
           demo host in this repository runs, not a paraphrase of it — the
-          <a href="./embed.html">embed demo page</a> mounts the editor twice, once
+          <a href="./embed.html" data-i18n="site.embedding.embedDemoPage">embed demo page</a> mounts the editor twice, once
           this way and once as a hand-wired iframe, and the browser suite drives
           both:
         </p>
@@ -307,12 +321,12 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
 function mountElement({ mode, can }</code></pre>
         </div>
         <!-- @end mount-element -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.setting">
           Setting <code>mode</code> or <code>editor-src</code> on a live element
           <b>remounts</b> it rather than retuning it. A permission handed over
           after the document is already on screen was never a permission.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.youDoNotHave">
           You do not have to use the package. A host can wire the iframe itself —
           and this is what that costs, which is also the argument for the element:
           every line here is a decision the element already made.
@@ -334,7 +348,7 @@ function mountIframe(request) {
 }</code></pre>
         </div>
         <!-- @end mount-iframe -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.resolutionPureHasNo">
           Resolution is pure and has no DOM, so a host can ask what a role grants
           <em>before</em> mounting anything — which matters, because each embed
           holds its own WebAssembly instance and a page should not have to boot
@@ -352,8 +366,8 @@ function resolveFor({ mode, can }</code></pre>
         </div>
         <!-- @end resolve-first -->
 
-        <h2 id="capabilities" class="doc-h2">Capabilities, and the five roles</h2>
-        <p class="doc-body">
+        <h2 id="capabilities" class="doc-h2" data-i18n="site.embedding.capabilitiesFiveRoles">Capabilities, and the five roles</h2>
+        <p class="doc-body" data-i18n="site.embedding.there">
           There are <span data-claim="capability-count">9</span> capabilities. A
           host grants or withholds them; the editor asks the resolved set and
           never asks for a role name.
@@ -453,7 +467,7 @@ function resolveFor({ mode, can }</code></pre>
           </div>
         </div>
         <!-- @end role-table -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.everyEmbedSFrame">
           Every embed's frame is sandboxed with
           <code data-claim="unconditional-sandbox">allow-scripts allow-same-origin</code>
           unconditionally — without them the editor cannot run its own
@@ -494,44 +508,44 @@ function resolveFor({ mode, can }</code></pre>
           </div>
         </div>
         <!-- @end legacy-table -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.hostWiresOwnIframe">
           A host that wires its own iframe passes the same vocabulary in the URL:
-          <code>?mode=readonly</code>. <b>Framing alone is enough</b> — a page that
+          <code data-i18n="site.embedding.modeReadonly">?mode=readonly</code>. <b data-i18n="site.embedding.framingAloneEnough">Framing alone is enough</b> — a page that
           is not the top window resolves to <code>embedded</code> without the host
           having to discover a parameter, which is the whole point: the defect
           this closed was a framed editor being a standalone one, with File ▸ Open
-          live inside someone else's page. <code>?autosave=1</code> and
-          <code>?autosave=0</code> move the one per-capability override there is.
+          live inside someone else's page. <code data-i18n="site.embedding.autosave1">?autosave=1</code> and
+          <code data-i18n="site.embedding.autosave0">?autosave=0</code> move the one per-capability override there is.
         </p>
 
-        <h2 id="per-capability" class="doc-h2">Per capability, not per tier</h2>
-        <p class="doc-body">
+        <h2 id="per-capability" class="doc-h2" data-i18n="site.embedding.perCapabilityNotPer">Per capability, not per tier</h2>
+        <p class="doc-body" data-i18n="site.embedding.rolesNamesSubsetsNever">
           The roles are names for subsets, never the unit of enforcement. Nothing
           downstream branches on a role name: the review mode, the sandbox tokens
           and every gated command are computed from the capability <em>set</em>.
           That is what makes "print, download, save, edit and comment are withheld
           independently" a property of the design rather than a promise.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.hostPicksOne">
           A host picks one of the
           <span data-claim="preset-count">8</span> accepted names and then narrows it,
           per capability, with <code>can</code>. An embed whose
           <code>editor-src</code> carries
-          <code>?can=-print,-download</code> on top of
-          <code>mode="commentor"</code> may comment and nothing else.
+          <code data-i18n="site.embedding.canPrintDownload">?can=-print,-download</code> on top of
+          <code data-i18n="site.embedding.modeCommentor">mode="commentor"</code> may comment and nothing else.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.listResolvesThroughSame">
           The list resolves through the
           same function the presets do, which is what keeps "roles are presets over
           the capability set" a fact rather than a claim — a guard proves every role
-          is reachable by narrowing the role above it. It only ever <em>takes
+          is reachable by narrowing the role above it. It only ever <em data-i18n="site.embedding.takesAway">takes
           away</em>, whether or not an entry carries its minus sign, and an unknown
           entry is dropped: dropping narrows nothing, so a typo in a URL can never
           grant more than the role did.
         </p>
 
         <h2 id="presentations" class="doc-h2"><code>preview</code> is not <code>readonly</code></h2>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.theyTwoDifferentPresentations">
           They are two different presentations, not two rungs of a ladder.
           <code>preview</code> is the runtime as a layout and rendering engine — a
           picture of the document, for a thumbnail, an attachment preview, a
@@ -542,17 +556,17 @@ function resolveFor({ mode, can }</code></pre>
           no, because the reader navigates and searches. So
           <code>preview</code> is not "<code>readonly</code> minus print".
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.chromeReflects">
           The chrome reflects that. A <code>readonly</code> container gets
           <span data-claim="reading-region-count">6</span> regions — the menu bar, the
           navigation rail, the status bar, zoom, find and the document title — and
-          <strong>no editing ribbon at all</strong>, not a ribbon full of greyed
+          <strong data-i18n="site.embedding.noEditingRibbonAll">no editing ribbon at all</strong>, not a ribbon full of greyed
           buttons. A <code>preview</code> container gets
           <span data-claim="preview-region-count">0</span>: the runtime paints the
           document and nothing else.
         </p>
         <div class="doc-callout">
-          <p class="doc-callout-label">Why the menu bar, and not just "no ribbon"</p>
+          <p class="doc-callout-label" data-i18n="site.embedding.whyMenuBarNot">Why the menu bar, and not just "no ribbon"</p>
           <p>
             <code>readonly</code> is granted exactly one capability —
             <code>print</code> — and File ▸ Print lives in the menu bar. Hiding the
@@ -564,23 +578,23 @@ function resolveFor({ mode, can }</code></pre>
           </p>
         </div>
 
-        <h2 id="enforcement" class="doc-h2">Three layers of enforcement</h2>
-        <p class="doc-body">
+        <h2 id="enforcement" class="doc-h2" data-i18n="site.embedding.threeLayersEnforcement">Three layers of enforcement</h2>
+        <p class="doc-body" data-i18n="site.embedding.orderHowHardThey">
           In order of how hard they are to defeat.
         </p>
         <p class="doc-body">
-          <b>1 · The browser.</b> The element derives the iframe's
+          <b data-i18n="site.embedding.1Browser">1 · The browser.</b> The element derives the iframe's
           <code>sandbox</code> tokens from the capability set, and the browser does
           not negotiate: a frame without <code>allow-downloads</code> cannot start
           a download however its chrome or its engine is persuaded, and one
           without <code>allow-modals</code> cannot open the print dialog. For
-          comparison, ONLYOFFICE's <code>createIframe</code>
-          (<code>apps/api/documents/api.js:1279</code>) sets no
+          comparison, ONLYOFFICE's <code data-i18n="site.embedding.createiframe">createIframe</code>
+          (<code data-i18n="site.embedding.appsApiDocumentsApi">apps/api/documents/api.js:1279</code>) sets no
           <code>sandbox</code> attribute at all — that file contains the string
           nowhere — so this is a layer they do not have.
         </p>
         <p class="doc-body">
-          <b>2 · The engine.</b> A capability set maps onto the editor's three
+          <b data-i18n="site.embedding.2Engine">2 · The engine.</b> A capability set maps onto the editor's three
           existing review modes: <code>edit</code> → Editing,
           <code>comment</code> → Suggesting (every body change recorded as a
           tracked revision), neither → Viewing. Viewing is read-only at a single
@@ -588,7 +602,7 @@ function resolveFor({ mode, can }</code></pre>
           deletion, paste, toolbar formatting, table operations, comment and
           revision decisions — rather than relying on any individual control being
           disabled. A <code>readonly</code> embed is therefore in Viewing
-          <b>on arrival</b>, not an Editing page with dimmed buttons, and the
+          <b data-i18n="site.embedding.arrival">on arrival</b>, not an Editing page with dimmed buttons, and the
           browser suite proves it by stripping every <code>disabled</code> and
           <code>aria-disabled</code> attribute in the frame and then attacking the
           document with typing, paste and
@@ -597,11 +611,11 @@ function resolveFor({ mode, can }</code></pre>
           is the engine's own word and character counts, not the DOM.
         </p>
         <p class="doc-body">
-          <b>3 · The chrome.</b> A withheld capability disables its control
-          <em>with a reason</em> and never hides it: a control that vanishes
+          <b data-i18n="site.embedding.3Chrome">3 · The chrome.</b> A withheld capability disables its control
+          <em data-i18n="site.embedding.reason">with a reason</em> and never hides it: a control that vanishes
           teaches nothing, and a product that silently lacks a feature is
           indistinguishable from one that is broken. Open the command palette
-          inside a <code>readonly</code> embed and look at <em>Open…</em> — it is
+          inside a <code>readonly</code> embed and look at <em data-i18n="site.embedding.open">Open…</em> — it is
           present, it is disabled, and its title says why. This is the layer that
           is least complete today: the editor page consults
           <span data-claim="chrome-consulted-count">8</span> of the
@@ -656,7 +670,7 @@ function resolveFor({ mode, can }</code></pre>
           </div>
         </div>
         <!-- @end chrome-table -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.otherLabel">
           The other <span data-claim="chrome-unconsulted-count">1</span> are not
           consulted by the chrome at all. <code>print</code>,
           <code>download</code> and <code>save</code> are withheld by the sandbox
@@ -668,20 +682,20 @@ function resolveFor({ mode, can }</code></pre>
           left to be discovered.
         </p>
 
-        <h2 id="licence" class="doc-h2">Nothing here is gated</h2>
-        <p class="doc-body">
+        <h2 id="licence" class="doc-h2" data-i18n="site.embedding.nothingHereGated">Nothing here is gated</h2>
+        <p class="doc-body" data-i18n="site.embedding.packageApache20">
           The package is Apache-2.0 and consults no licence, in any code path.
           That is the whole competitive position rather than a footnote:
           ONLYOFFICE's host-customization path early-returns when the editor is
           not licensed —
-          <code>apps/common/<wbr />main/lib/<wbr />controller/<wbr />LayoutManager.js:68</code>,
-          <code>if (!_licensed || !config) return;</code> — so the customization a
+          <code data-i18n="site.embedding.appsCommon">apps/common/<wbr  data-i18n="site.embedding.mainLib"/>main/lib/<wbr  data-i18n="site.embedding.controller"/>controller/<wbr  data-i18n="site.embedding.layoutmanagerJs68"/>LayoutManager.js:68</code>,
+          <code data-i18n="site.embedding.ifLicensedConfigReturn">if (!_licensed || !config) return;</code> — so the customization a
           host is offered is a licence check away from doing nothing. Gating ours
           would surrender the only structural advantage that cannot be copied.
         </p>
 
-        <h2 id="commanding" class="doc-h2">Commanding it, and being told what happened</h2>
-        <p class="doc-body">
+        <h2 id="commanding" class="doc-h2" data-i18n="site.embedding.commandingBeingToldWhat">Commanding it, and being told what happened</h2>
+        <p class="doc-body" data-i18n="site.embedding.hostGetsTypedWay">
           A host gets a typed way to command the editor and to hear what it did,
           and it is the same contract whether they hold a reference to the editor
           or are talking to it across an iframe boundary. Contract version
@@ -693,15 +707,15 @@ function resolveFor({ mode, can }</code></pre>
           <span data-claim="verb-count">4</span> verbs
           (<code data-claim="verbs">describe execute query ping</code>).
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.bothTransportsBuiltOne">
           Both transports are built from one schema,
-          <code>webapp/<wbr />src/<wbr />host_contract.mjs</code>. Neither carries
+          <code data-i18n="site.embedding.webapp">webapp/<wbr  data-i18n="site.embedding.src"/>src/<wbr />host_contract.mjs</code>. Neither carries
           a command list, an event list or a refusal code of its own — which is
           what makes adding a command to one without the other a build failure
           rather than a half-reachable API. The in-process handle is
           <code>window.opendoc</code> inside the frame; the
-          <code>postMessage</code> client is
-          <code>createHostClient</code>. The demo host drives both, and the
+          <code data-i18n="site.embedding.postmessage">postMessage</code> client is
+          <code data-i18n="site.embedding.createhostclient">createHostClient</code>. The demo host drives both, and the
           only difference between them is how the call travels:
         </p>
         <!-- @generated command-transports -->
@@ -723,12 +737,12 @@ async function runCommand(panel, transport, id) {
 }</code></pre>
         </div>
         <!-- @end command-transports -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.commandIdUnitAddressing">
           A command id is the unit of addressing because it already was: the
           editor's registry is reached by id, every keyboard chord resolves to one,
           and 111 ribbon controls carry <code>data-command</code>. Most ids are
           literals; some name a <em>value</em> of a control
-          (<code>format.family.Georgia</code>, <code>style.Heading&nbsp;1</code>,
+          (<code data-i18n="site.embedding.formatFamilyGeorgia">format.family.Georgia</code>, <code data-i18n="site.embedding.styleHeadingNbsp1">style.Heading&nbsp;1</code>,
           <code>view.zoom.150</code>) and those sets are generated from the
           document, the font inventory or markup, so the schema declares the family
           prefix instead. Measured in a browser, the registry offers 214 ids, of
@@ -737,7 +751,7 @@ async function runCommand(panel, transport, id) {
           on arrival.
         </p>
 
-        <h3 class="doc-h3">Events</h3>
+        <h3 class="doc-h3" data-i18n="site.embedding.events">Events</h3>
         <p class="doc-body">
           <code>change</code> carries a revision handle and a dirty flag, never a
           snapshot. An event that serialised the document on every keystroke would
@@ -789,11 +803,11 @@ async function runCommand(panel, transport, id) {
         </div>
         <!-- @end event-table -->
 
-        <h3 class="doc-h3">A refusal is a value, not a toast</h3>
+        <h3 class="doc-h3" data-i18n="site.embedding.refusalValueNotToast">A refusal is a value, not a toast</h3>
         <p class="doc-body">
           <code>execute</code> resolves to
-          <code>{ ok, command, revision }</code> or to
-          <code>{ ok: false, refusal: { code, command, requires, message } }</code>,
+          <code data-i18n="site.embedding.okCommandRevision">{ ok, command, revision }</code> or to
+          <code data-i18n="site.embedding.okFalseRefusalCode">{ ok: false, refusal: { code, command, requires, message } }</code>,
           and a host branches on the <em>code</em> — never on the message, which is
           localised and belongs to the chrome. This matters because the same defect
           has already been fixed one layer down: Save on a <code>readonly</code>
@@ -844,7 +858,7 @@ async function runCommand(panel, transport, id) {
           </div>
         </div>
         <!-- @end refusal-table -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.capabilityGateFourthEnforcement">
           The capability gate is the fourth enforcement layer, beside the browser
           sandbox, the engine's Viewing choke point and the chrome, and it runs
           <em>before</em> dispatch. A host that was not granted <code>edit</code>
@@ -852,21 +866,21 @@ async function runCommand(panel, transport, id) {
           point, because three locked doors and an unlocked one is one unlocked
           door. It is deliberately <em>stricter</em> than the chrome in one place:
           deciding a tracked change writes it into the document outright, so
-          <code>review.accept*</code> requires <code>edit</code> and a
+          <code data-i18n="site.embedding.reviewAccept">review.accept*</code> requires <code>edit</code> and a
           <code>commentor</code> cannot accept their own suggestions. Google Docs'
           Commenter cannot either.
         </p>
 
-        <h3 class="doc-h3">The origin contract</h3>
-        <p class="doc-body">
+        <h3 class="doc-h3" data-i18n="site.embedding.originContract">The origin contract</h3>
+        <p class="doc-body" data-i18n="site.embedding.wildcardTargetOriginEditor">
           A wildcard target origin in an editor that can be embedded anywhere is a
           security decision, not a default, so there is no default: the editor
           accepts its own origin and any origin the deployment names with
-          <code>?hostOrigin=</code>, and nothing else. A message from an unknown
+          <code data-i18n="site.embedding.hostorigin">?hostOrigin=</code>, and nothing else. A message from an unknown
           origin is dropped in silence rather than answered with an error, because
           an error reply tells whoever is probing what this frame is. Every outbound
           post names an explicit target;
-          <code>postMessage(msg,&nbsp;"*")</code> appears nowhere, and that is
+          <code data-i18n="site.embedding.postmessageMsgNbsp">postMessage(msg,&nbsp;"*")</code> appears nowhere, and that is
           driven rather than grepped — a source scan would pass the moment the
           wildcard arrived through a variable.
         </p>
@@ -930,8 +944,8 @@ export function parseOriginAllowlist(raw, selfOrigin) {
         </div>
         <!-- @end origin-policy -->
 
-        <h2 id="white-label" class="doc-h2">Make it your product</h2>
-        <p class="doc-body">
+        <h2 id="white-label" class="doc-h2" data-i18n="site.embedding.makeYourProduct">Make it your product</h2>
+        <p class="doc-body" data-i18n="site.embedding.nameMarkPaletteFont">
           Name, mark, palette, font and wording are one file —
           <code>webapp/brand.json</code> — and one command. Nothing below needs a code
           change: the generator writes the stylesheet, the module and the icon links
@@ -994,17 +1008,17 @@ export function parseOriginAllowlist(raw, selfOrigin) {
           overridable and frozen as a public contract: the accent family, the
           surfaces, the foregrounds, the lines and the primary action. Geometry,
           z-order and type scale are refused, because those are structure rather than
-          brand. So is the <code>--paper*</code> layer: the sheet is white in both
+          brand. So is the <code data-i18n="site.embedding.paper">--paper*</code> layer: the sheet is white in both
           themes on purpose so that everything drawn onto it has a fixed contrast
           partner, and a host who darkened it would put the dark theme's insertion
           and deletion marks on a dark page.
         </p>
 
-        <h3 id="legibility" class="doc-h3">An unreadable palette is refused, not shipped</h3>
-        <p class="doc-body">
+        <h3 id="legibility" class="doc-h3" data-i18n="site.embedding.unreadablePaletteRefusedNot">An unreadable palette is refused, not shipped</h3>
+        <p class="doc-body" data-i18n="site.embedding.hostPaletteMeasuredWill">
           A host palette is measured as it will <em>render</em> — our tokens with
-          yours written over them, per theme, with <code>var()</code> and
-          <code>color-mix()</code> resolved — because a brand colour measured on its
+          yours written over them, per theme, with <code data-i18n="site.embedding.var">var()</code> and
+          <code data-i18n="site.embedding.colorMix">color-mix()</code> resolved — because a brand colour measured on its
           own passes when it is unreadable only against the surface it will be painted
           on. Text pairs clear 4.5:1 and edges clear 3:1, which is WCAG's own split,
           so a hairline is not held to the prose bar. A failure stops the build and
@@ -1022,7 +1036,7 @@ brand.json was refused:
   - explicit dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.</code></pre>
         </div>
         <!-- @end brand-refusal -->
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.refusedRatherThanCorrected">
           Refused rather than corrected, because shipping your product in a colour you
           did not choose is a worse outcome than a failed build — and rather than
           warned about, because a warning in a build log is read once and then the
@@ -1030,7 +1044,7 @@ brand.json was refused:
           at the moment it is free to fix.
         </p>
 
-        <h3 id="chrome-selection" class="doc-h3">Choose the chrome</h3>
+        <h3 id="chrome-selection" class="doc-h3" data-i18n="site.embedding.chooseChrome">Choose the chrome</h3>
         <p class="doc-body">
           <span data-claim="region-count">19</span> regions, of which
           <span data-claim="band-count">8</span> are ribbon bands, each withheld
@@ -1164,8 +1178,8 @@ brand.json was refused:
         </div>
         <!-- @end region-table -->
 
-        <h3 id="wording" class="doc-h3">Change the words</h3>
-        <p class="doc-body">
+        <h3 id="wording" class="doc-h3" data-i18n="site.embedding.changeWords">Change the words</h3>
+        <p class="doc-body" data-i18n="site.embedding.setting">
           Setting <code>name</code> renames the product in all nineteen languages. The
           override set is derived by substitution over the committed catalogues rather
           than written per locale, because nineteen hand-written overrides are nineteen
@@ -1174,7 +1188,7 @@ brand.json was refused:
           resolve through — <code>*</code> for every language, an exact tag to narrow —
           and there is deliberately no second string mechanism.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.faceNamedFileYou">
           A face is named as a file you place beside the editor, never a URL. The
           chrome self-hosts every font it uses and a test asserts no remote font
           reference, because local-first means the chrome paints with the network off;
@@ -1182,9 +1196,9 @@ brand.json was refused:
           deployment that used it.
         </p>
 
-        <h3 id="release" class="doc-h3">What you installed, and what it speaks</h3>
+        <h3 id="release" class="doc-h3" data-i18n="site.embedding.whatYouInstalledWhat">What you installed, and what it speaks</h3>
         <p class="doc-body">
-          <code>@casualoffice/opendoc-embed/release</code> reports three numbers, and
+          <code data-i18n="site.embedding.casualofficeOpendocEmbedRelease">@casualoffice/opendoc-embed/release</code> reports three numbers, and
           they are deliberately not one. The package version is what npm resolved; the
           engine version (<span data-claim="release-engine">0.0.1</span>) is the Rust
           workspace the WebAssembly came from; the contract version
@@ -1195,14 +1209,14 @@ brand.json was refused:
           <span data-claim="release-licence">Apache-2.0</span>, with no licence check,
           no tab counting and no modal anywhere in it.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.thereNoBuildCommit">
           There is no build commit in that module. The commit is stamped into the
           deployed assets at deploy time; a committed file carrying a hash would be
           wrong for every build after the one that wrote it.
         </p>
 
-        <h2 id="evidence" class="doc-h2">How this page is kept honest</h2>
-        <p class="doc-body">
+        <h2 id="evidence" class="doc-h2" data-i18n="site.embedding.howPageKeptHonest2">How this page is kept honest</h2>
+        <p class="doc-body" data-i18n="site.embedding.pagesSiteHaveCarried">
           The pages of this site have carried fabricated claims twice, in both
           directions — a parity figure that contradicted the fidelity page, a
           corpus file that did not exist, a repaint timing with no benchmark, and
@@ -1210,20 +1224,20 @@ brand.json was refused:
           So this page is built the way the package is:
         </p>
         <p class="doc-body">
-          <code>webapp/tools/build-embed-docs.mjs</code> generates every code
+          <code data-i18n="site.embedding.webappToolsBuildEmbed">webapp/tools/build-embed-docs.mjs</code> generates every code
           panel, every table and every number above from the code they document,
-          and <code>--check</code> fails when the committed page is not what a
+          and <code data-i18n="site.embedding.check">--check</code> fails when the committed page is not what a
           fresh run produces. That makes both directions of drift a build failure:
           editing the page by hand, and changing the code without regenerating the
-          page. <code>webapp/tests/embedding_page.test.mjs</code> then re-derives
+          page. <code data-i18n="site.embedding.webappTestsEmbeddingPage">webapp/tests/embedding_page.test.mjs</code> then re-derives
           the numbers independently of the generator, proves each extracted
           snippet still appears verbatim in the file its caption names, and proves
           every item under "does not do yet" is still true. Both run in the
-          <code>browser-smoke</code> job of <code>.github/workflows/ci.yml</code>,
+          <code>browser-smoke</code> job of <code data-i18n="site.embedding.githubWorkflowsCiYml">.github/workflows/ci.yml</code>,
           which is itself asserted, because a gate nobody armed has been claimed
           here before.
         </p>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.embedding.behaviouralClaimsNotPage">
           The behavioural claims are not this page's word either. These are the
           tests they rest on:
         </p>
@@ -1307,24 +1321,24 @@ brand.json was refused:
         </div>
         <!-- @end evidence-table -->
 
-        <h2 id="not-yet" class="doc-h2">What this does not do yet</h2>
-        <p class="doc-body">
+        <h2 id="not-yet" class="doc-h2" data-i18n="site.embedding.whatDoesNotDo">What this does not do yet</h2>
+        <p class="doc-body" data-i18n="site.embedding.phase1OneThree">
           Phase 1 is one of three. Each item here is checked by the guard, so it
           cannot outlive the gap it describes.
         </p>
         <ul class="doc-body">
           <li>
-            <b>The element itself has no command methods.</b> The command and event
+            <b data-i18n="site.embedding.elementItselfHasNo">The element itself has no command methods.</b> The command and event
             API is reached through <code>window.opendoc</code> inside the frame or
-            through <code>createHostClient</code> over
-            <code>postMessage</code>; <code>&lt;opendoc-editor&gt;</code> still
+            through <code data-i18n="site.embedding.createhostclient">createHostClient</code> over
+            <code data-i18n="site.embedding.postmessage">postMessage</code>; <code data-i18n="site.embedding.ltOpendocEditorGt">&lt;opendoc-editor&gt;</code> still
             fires exactly one event of its own,
             <code>opendoc-capabilities</code>, which is the capability contract
             announcing itself rather than the editor reporting on a document. A
             host holds the contract, not the element.
           </li>
           <li>
-            <b>No arguments for most commands.</b> The schema declares an argument
+            <b data-i18n="site.embedding.noArgumentsMostCommands">No arguments for most commands.</b> The schema declares an argument
             list, and exactly one command has one
             (<code>view.zoom</code>, a percentage). Everything else is a verb: you
             cannot yet ask for a font size by value through
@@ -1332,19 +1346,19 @@ brand.json was refused:
             already means that value (<code>format.size.14</code>).
           </li>
           <li>
-            <b>No document I/O through the contract.</b> There is no
-            <code>open(bytes)</code> and no <code>export()</code> that returns the
-            bytes to the host: <code>file.export.*</code> hands the file to the
+            <b data-i18n="site.embedding.noDocumentIO">No document I/O through the contract.</b> There is no
+            <code data-i18n="site.embedding.openBytes">open(bytes)</code> and no <code data-i18n="site.embedding.export">export()</code> that returns the
+            bytes to the host: <code data-i18n="site.embedding.fileExport">file.export.*</code> hands the file to the
             visitor, and the <code>export</code> event reports the format, the name
             and the byte count. A host that wants the bytes cannot have them yet.
           </li>
           <li>
-            <b>The context menu's word-level commands are outside the contract.</b>
+            <b data-i18n="site.embedding.contextMenuSWord">The context menu's word-level commands are outside the contract.</b>
             Spelling suggestions and grammar rules are built per word when the menu
             opens, so they are reachable by a person and not by a host.
           </li>
           <li>
-            <b>No way to hand it your document.</b> The element's
+            <b data-i18n="site.embedding.noWayHandYour">No way to hand it your document.</b> The element's
             <span data-claim="attribute-count">5</span> attributes configure what
             the editor <em>is</em> — the role, the two withhold lists, where the
             editor lives and the frame's accessible name — and none of them is a
@@ -1352,7 +1366,7 @@ brand.json was refused:
             parameters; there is no host-supplied document URL or byte array.
           </li>
           <li>
-            <b>No per-GROUP selection inside a ribbon band.</b> All eight bands are
+            <b data-i18n="site.embedding.noPerGroupSelection">No per-GROUP selection inside a ribbon band.</b> All eight bands are
             selectable and every one of the
             <span data-claim="region-count">19</span> chrome regions can be
             withheld, but the groups <em>inside</em> a band are not addressable:
@@ -1361,14 +1375,14 @@ brand.json was refused:
             be half expressible. The honest grain for a host is the band.
           </li>
           <li>
-            <b>A browser-enforced refusal does not explain itself.</b> Withholding
+            <b data-i18n="site.embedding.browserEnforcedRefusalDoes">A browser-enforced refusal does not explain itself.</b> Withholding
             <code>print</code>, <code>download</code> or <code>save</code> is
             enforced by the sandbox, and the control that triggers it is still
             offered — so the refusal arrives as the browser declining, and the
             editor can still report a save that never reached the visitor's disk.
           </li>
           <li>
-            <b>The favicon, the canonical URL and the meta description are not
+            <b data-i18n="site.embedding.faviconCanonicalUrlMeta">The favicon, the canonical URL and the meta description are not
             configuration.</b> The brand mark in the top bar is a token and the
             icon links are generated, so <code>brand.json</code> reaches both. The
             canonical URL and the page description are still authored in
@@ -1377,17 +1391,17 @@ brand.json was refused:
             editor is configuration; two things a crawler sees are not.
           </li>
           <li>
-            <b>No framework bindings</b>, by choice. A custom element needs no
+            <b data-i18n="site.embedding.noFrameworkBindings">No framework bindings</b>, by choice. A custom element needs no
             binding layer; the package ships none and declares no framework entry
             point. The repository exercises it in plain HTML and in Node, not
             inside a framework.
           </li>
           <li>
-            <b>Not published.</b> No workflow publishes the package to a registry.
+            <b data-i18n="site.embedding.notPublished">Not published.</b> No workflow publishes the package to a registry.
             Install the tarball, or vendor the files.
           </li>
           <li>
-            <b>The Rust facade declares this contract; it does not run the
+            <b data-i18n="site.embedding.rustFacadeDeclaresContract">The Rust facade declares this contract; it does not run the
             editor.</b> <code>crates/casual-doc-sdk</code> holds the same events,
             refusal codes, request verbs and version, and a Rust test reads the
             editor's schema and fails when the two disagree — so a native host and a
@@ -1397,38 +1411,38 @@ brand.json was refused:
             piece of work and it gates nothing on this page.
           </li>
           <li>
-            <b>No passwords.</b> Deliberately out of scope until there is format
+            <b data-i18n="site.embedding.noPasswords">No passwords.</b> Deliberately out of scope until there is format
             work to make an encrypted document mean anything.
           </li>
         </ul>
 
-        <nav class="doc-pager" aria-label="Related guides">
+        <nav class="doc-pager" aria-label="Related guides" data-i18n-label="site.embedding.relatedGuides">
           <a class="prev" href="./docs.html">
-            <div class="doc-pager-dir">← Previous</div>
-            <div class="doc-pager-title">Import a document</div>
+            <div class="doc-pager-dir" data-i18n="site.embedding.previous">← Previous</div>
+            <div class="doc-pager-title" data-i18n="site.embedding.importDocument">Import a document</div>
           </a>
           <a class="next" href="./reference/embeddability-plan.html">
-            <div class="doc-pager-dir">Next →</div>
-            <div class="doc-pager-title">The three-phase embeddability plan</div>
+            <div class="doc-pager-dir" data-i18n="site.embedding.next">Next →</div>
+            <div class="doc-pager-title" data-i18n="site.embedding.threePhaseEmbeddabilityPlan">The three-phase embeddability plan</div>
           </a>
         </nav>
       </article>
 
-      <aside class="doc-toc" aria-label="On this page">
+      <aside class="doc-toc" aria-label="On this page" data-i18n-label="site.embedding.page">
         <div class="doc-toc-inner">
-          <p class="doc-toc-title">On this page</p>
+          <p class="doc-toc-title" data-i18n="site.embedding.page">On this page</p>
           <ul class="doc-toc-list">
-            <li><a href="#embed-the-editor" aria-current="true">Embed the editor</a></li>
-            <li><a href="#install">Install it</a></li>
-            <li><a href="#mount">Mount it</a></li>
-            <li><a href="#capabilities">Capabilities and roles</a></li>
-            <li><a href="#per-capability">Per capability, not per tier</a></li>
-            <li><a href="#presentations">preview is not readonly</a></li>
-            <li><a href="#enforcement">Three layers of enforcement</a></li>
-            <li><a href="#licence">Nothing here is gated</a></li>
-            <li><a href="#commanding">Commanding it</a></li>
-            <li><a href="#evidence">How this page is kept honest</a></li>
-            <li><a href="#not-yet">What this does not do yet</a></li>
+            <li><a href="#embed-the-editor" aria-current="true" data-i18n="site.embedding.embedEditor">Embed the editor</a></li>
+            <li><a href="#install" data-i18n="site.embedding.install">Install it</a></li>
+            <li><a href="#mount" data-i18n="site.embedding.mount">Mount it</a></li>
+            <li><a href="#capabilities" data-i18n="site.embedding.capabilitiesRoles">Capabilities and roles</a></li>
+            <li><a href="#per-capability" data-i18n="site.embedding.perCapabilityNotPer">Per capability, not per tier</a></li>
+            <li><a href="#presentations" data-i18n="site.embedding.previewNotReadonly">preview is not readonly</a></li>
+            <li><a href="#enforcement" data-i18n="site.embedding.threeLayersEnforcement">Three layers of enforcement</a></li>
+            <li><a href="#licence" data-i18n="site.embedding.nothingHereGated">Nothing here is gated</a></li>
+            <li><a href="#commanding" data-i18n="site.embedding.commanding">Commanding it</a></li>
+            <li><a href="#evidence" data-i18n="site.embedding.howPageKeptHonest2">How this page is kept honest</a></li>
+            <li><a href="#not-yet" data-i18n="site.embedding.whatDoesNotDo">What this does not do yet</a></li>
           </ul>
         </div>
       </aside>
@@ -1436,11 +1450,11 @@ brand.json was refused:
 
     <footer class="site-footer">
       <div class="site-footer-inner">
-        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-copy" data-i18n="site.footer.copyright">OpenDoc — developed by CasualOffice · Apache-2.0</span>
         <span class="site-footer-spacer" aria-hidden="true"></span>
-        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
-        <a href="./reference/security.html">Security</a>
-        <a href="./reference/contributing.html">Contributing</a>
+        <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+        <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
+        <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
       </div>
     </footer>
     <script>
@@ -1473,5 +1487,6 @@ brand.json was refused:
         }
       })();
     </script>
+    <script type="module" src="./src/site_locale.mjs"></script>
   </body>
 </html>

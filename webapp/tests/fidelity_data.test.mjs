@@ -280,7 +280,7 @@ test("the fidelity page's family-count tile matches the data it renders", () => 
   for (const page of ["../fidelity.page.html", "../fidelity.html"]) {
     const html = readFileSync(new URL(page, import.meta.url), "utf8");
     const match = html.match(
-      /<div class="fid-stat-num">(\d+)<\/div>\s*<div class="fid-stat-label">Construct families graded below<\/div>/,
+      /<div class="fid-stat-num"[^>]*>(\d+)<\/div>\s*<div class="fid-stat-label"[^>]*>Construct families graded below<\/div>/,
     );
     assert.ok(match, `${page} must carry the families tile`);
     assert.equal(

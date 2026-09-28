@@ -12,6 +12,14 @@
 //     beside them (the text content, or the attribute the key names);
 //   * `webapp/src/**` — `t("key")` calls whose English is registered in
 //     `EN_STRINGS`, the one place a script-side string is written down.
+//
+// Three sources since `109` HF-198, because the public SITE went through the
+// same seam: the `*.page.html` templates and the shared `_partials/*.html` are
+// markup exactly like `editor.html` is, and their keys are extracted by the same
+// function. The TEMPLATES and not the generated `*.html` — a generated page
+// inlines the partials, so extracting from both would read the same key twice
+// and make one edit to a partial look like six. `build-site.py --check`
+// guarantees the generated pages are nothing but the templates.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,8 +116,50 @@ export function isDeclared(key, catalogue) {
   return Object.keys(catalogue).some((declared) => declared.startsWith(prefix));
 }
 
+/** The site's markup sources, in a stable order: every page template, then
+ *  every shared partial. Sorted so the catalogue is byte-identical whatever the
+ *  filesystem hands back. */
+export function siteSources(root = WEBAPP) {
+  const pages = readdirSync(root)
+    .filter((name) => name.endsWith(".page.html"))
+    .sort();
+  const partials = readdirSync(join(root, "_partials"))
+    .filter((name) => name.endsWith(".html"))
+    .sort()
+    .map((name) => join("_partials", name));
+  return [...pages, ...partials];
+}
+
+/** Every key the SITE declares, with the English beside it.
+ *
+ *  A key may legitimately appear in more than one file — the header partial is
+ *  one file, but nothing stops two pages naming `site.docs.import`. What may
+ *  NOT happen is the same key carrying two different sentences: the catalogue
+ *  holds one value per key, so the second would silently win and one of the two
+ *  pages would be translated into the other's words. That is a build failure
+ *  here rather than a discovery on a screenshot.
+ */
+export function keysFromSite(root = WEBAPP) {
+  const found = new Map();
+  const clashes = [];
+  for (const source of siteSources(root)) {
+    for (const [key, english] of keysFromMarkup(readFileSync(join(root, source), "utf8"))) {
+      const existing = found.get(key);
+      if (existing !== undefined && existing !== english) {
+        clashes.push(`${key}: ${JSON.stringify(existing)} vs ${JSON.stringify(english)} (${source})`);
+      }
+      found.set(key, english);
+    }
+  }
+  if (clashes.length) throw new Error(`site keys with two different English strings:\n  ${clashes.join("\n  ")}`);
+  return found;
+}
+
 export async function buildCatalogue() {
-  const markup = keysFromMarkup(readFileSync(join(WEBAPP, "editor.html"), "utf8"));
+  const markup = new Map([
+    ...keysFromMarkup(readFileSync(join(WEBAPP, "editor.html"), "utf8")),
+    ...keysFromSite(),
+  ]);
   const script = await scriptStrings();
   const clash = [...markup.keys()].filter((key) => script.has(key));
   if (clash.length) throw new Error(`keys declared twice: ${clash.join(", ")}`);

@@ -103,7 +103,7 @@ test("the sampled matrix rows state the grades fidelity.js actually gives", () =
 });
 
 test("the 'not yet' list names only what genuinely does not render", () => {
-  const line = page.match(/<b>Not yet:<\/b>([\s\S]*?)<a /);
+  const line = page.match(/<b[^>]*>Not yet:<\/b>([\s\S]*?)<a /);
   assert.ok(line, "the roadmap must carry a 'Not yet' line");
 
   // Every gap declares where the claim comes from, so the check is exact rather

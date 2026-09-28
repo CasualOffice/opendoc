@@ -368,7 +368,7 @@ test("every reference page is reachable, and links its way back", () => {
   );
   assert.match(
     BUILT[0].committed,
-    /<a href="\.\.\/docs\.html" data-nav="docs" aria-current="page">/,
+    /<a href="\.\.\/docs\.html" data-nav="docs" aria-current="page"[^>]*>/,
     "a reference page must mark Docs as the active primary-nav item — it is where it lives",
   );
 });
@@ -440,14 +440,25 @@ test("how much English the reference pages put on the site, measured and publish
   // the same commit that regenerates them updates this figure — one number, in
   // the same pass, deliberately. A figure that updated itself would let the
   // excluded region grow silently, which is the one thing it exists to prevent.
+  //
+  // 2185 -> 2005 with the SITE LOCALISATION SEAM (`109` HF-198), and this is the
+  // first time this figure has come DOWN. Nothing was deleted: these pages inline
+  // the shared header and footer, and those fifteen chrome strings now carry
+  // `data-i18n` keys, so twelve pages lost fifteen unrouted strings each. The
+  // ARTICLE bodies are untouched and stay out of scope for exactly the reason the
+  // paragraph above gives — a design document cannot be routed through `t()`, and
+  // machine-translating twelve engineering documents into nineteen languages
+  // would be a worse lie than leaving them in English. What the seam changes here
+  // is only the chrome around them, which is the part a reader navigates with.
+  // Measured, not calculated.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2185,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2185). That ` +
+    2005,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2005). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),
@@ -492,10 +503,15 @@ test("how much English the reference pages put on the site, measured and publish
       `${file} is not declared in no_unrouted_strings.test.mjs, so this guard has nothing to ` +
         "compare against and would pass by failing to look",
     );
+    // `?? 0`: `scanTree` lists a PARTIAL only when it still has sites, so a
+    // partial routed all the way to zero is absent from the map rather than
+    // present at zero. `site-footer.html` is the first file to reach that state
+    // (`109` HF-198); without this, finishing the job would fail the guard that
+    // exists to notice work being left undone.
     assert.equal(
-      counts.get(file)?.length,
+      counts.get(file)?.length ?? 0,
       expected,
-      `${file} measures ${counts.get(file)?.length} but the string table declares ${expected}. ` +
+      `${file} measures ${counts.get(file)?.length ?? 0} but the string table declares ${expected}. ` +
         "Either a reference page put prose on a hand-authored page, or the page changed without " +
         "the table being updated",
     );
