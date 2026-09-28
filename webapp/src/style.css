@@ -6990,6 +6990,60 @@ body.is-format-painting .page-wrap * {
   cursor: col-resize;
 }
 
+/* The table GUTTER (docs/141 D-2): the row and column grab strips, the hovered
+   band inside one, and the `+` insert disc on a boundary.
+
+   Every one of these sits OUTSIDE the table's own box, in the page margin beside
+   it, which is what makes them free: unlike a boundary zone, a strip can be as
+   wide as a finger needs without taking a single pixel away from clicking in a
+   cell to place the caret. They are hover chrome — painted for the one table the
+   pointer is over, taken down when it leaves — so nothing rests on the page.
+
+   `cursor: cell` is the CSS keyword whose meaning is "select a table cell", and
+   it is what `pointer_cursor.mjs` row `table-row-strip` promises. No new token:
+   the fills are the accent at three strengths, the same way the cell selection
+   and the touch pills are drawn. */
+.overlay .table-row-strip,
+.overlay .table-column-strip {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: cell;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* The band the pointer is in, so "click selects THIS row" is visible before the
+   click rather than only after it. */
+.overlay .table-gutter-band {
+  position: absolute;
+  pointer-events: none;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+/* A 16px disc centred on the boundary, inside the strip. Solid accent on the
+   surface colour is the pairing the AA contrast sweep already covers, and the
+   glyph is a plain `+` rather than an icon font so it needs no ligature and no
+   translation. */
+.overlay .table-insert-target {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--surface);
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 85%, transparent);
+}
+
 /* Checklist checkbox click target (docs/67 — checklist authoring). The checkbox
    glyph is painted in the page raster; this transparent, clickable overlay sits
    over it in the hanging gutter so a click toggles the item. A faint hover ring

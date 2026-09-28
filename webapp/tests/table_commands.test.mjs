@@ -55,7 +55,7 @@ function stubDoc() {
     distributeTableRows: record("distributeTableRows"),
     distributeTableColumns: record("distributeTableColumns"),
     sortTable: record("sortTable"),
-    mergeTableSelection: record("mergeTableSelection"),
+    mergeTableCellRange: record("mergeTableCellRange"),
     splitMergedCell: record("splitMergedCell"),
   };
 }
@@ -170,16 +170,32 @@ test("Merge cells refuses with the ONE sentence the product has for it", () => {
   // unreachable. One meaning, one sentence (`docs/141` TBL-05).
   const { row } = build({ regular: true, tableSelection: null });
   assert.equal(row("table.merge").enabled, false);
-  assert.equal(row("table.merge").disabledReason, "Select a row, column, or table before merging");
+  assert.equal(row("table.merge").disabledReason, "Select two or more cells before merging");
 });
 
-test("Merge acts on the SELECTION's node and mode, then drops the selection", () => {
-  const { doc, row } = build({ regular: true, tableSelection: { node: "cell-1", mode: "row" } });
+test("Merge refuses a ONE-CELL rectangle, with the reason that says why", () => {
+  // A drag that never left its starting cell, or a click in a single cell, is a
+  // caret with a fill on it. The engine refuses it ("select at least two cells to
+  // merge") and so must the command, before the engine is asked — otherwise the
+  // only feedback is a facade sentence on the status line (`docs/141` TBL-04).
+  const { row } = build({
+    regular: true,
+    tableSelection: { anchorNode: "cell-1", focusNode: "cell-1", table: "t1", cells: 1 },
+  });
+  assert.equal(row("table.merge").enabled, false);
+  assert.equal(row("table.merge").disabledReason, "Select two or more cells before merging");
+});
+
+test("Merge acts on the RECTANGLE's two endpoints, then drops the selection", () => {
+  const { doc, row } = build({
+    regular: true,
+    tableSelection: { anchorNode: "cell-1", focusNode: "cell-4", table: "t1", cells: 4 },
+  });
   assert.equal(row("table.merge").enabled, true);
   return row("table.merge").run().then(() => {
     assert.deepEqual(doc.calls, [
       ["runEdit", []],
-      ["mergeTableSelection", ["cell-1", "row"]],
+      ["mergeTableCellRange", ["cell-1", "cell-4"]],
       ["clearTableSelection", []],
     ]);
   });

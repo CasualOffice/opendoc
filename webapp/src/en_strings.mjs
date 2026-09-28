@@ -363,7 +363,15 @@ export const EN_STRINGS = Object.freeze({
   "table.reason.caretOutsideTable": "Place the caret in a table",
   "table.reason.merged": "Unavailable for merged or spanned tables",
   "table.reason.rowHeights": "Rows need a fixed or minimum height before distribution",
-  "table.reason.mergeSelection": "Select a row, column, or table before merging",
+  // REWORDED with the cell range (`docs/141` D-3). It used to read "Select a
+  // row, column, or table before merging", which named the three degenerate
+  // rectangles `mergeTableSelection` could take — and was therefore a statement
+  // about the old API rather than about the rule. `mergeTableCellRange` takes any
+  // rectangle, so the rule is simply that one cell is not two: a one-cell
+  // selection is a caret with a fill on it, and there is nothing to merge it
+  // with. This is also the sentence a user sees when a drag selected exactly one
+  // cell, which is the common way to meet it.
+  "table.reason.mergeSelection": "Select two or more cells before merging",
   // Unmerge is offered whenever the table HAS a merge somewhere, because
   // `TableInfo` reports no per-cell merge state (TBL-20) — `regular` is a
   // whole-table boolean. A table with no merge at all can therefore be refused
@@ -374,12 +382,6 @@ export const EN_STRINGS = Object.freeze({
   // the live region is the only channel a reader who cannot see it has.
   "table.rowAppended": "Row added at the end of the table",
   "table.atFirstCell": "The caret is already in the first cell of the table",
-  // INTERIM (TBL-08). Cell shading, vertical alignment and the cell-border
-  // presets act on the caret's cell alone, so with a row or column selected the
-  // gesture formatted one cell and nothing said so. Refusing is the honest
-  // interim until a cell range can be formatted as one.
-  "table.cellFormatOneCell":
-    "Shading, alignment and cell borders apply to one cell — put the caret in the cell to format it",
   // The row/column/table selection's own status line. It was built as
   // `Selected table ${mode}`, the one table status line that was not localised
   // at all, and glueing a translated noun onto a fixed verb is what these three
@@ -402,4 +404,25 @@ export const EN_STRINGS = Object.freeze({
   "table.selectedRow": "Row selected",
   "table.selectedColumn": "Column selected",
   "table.selectedTable": "Table selected",
+  // The cell RANGE's own announcement (`docs/141` D-3). A plural family rather
+  // than "{count} cells": the live region is the only channel a reader who
+  // cannot see the fill has, and "1 cells selected" is the kind of thing a
+  // catalogue exists to stop. `one` is reachable — a drag can shrink back to its
+  // starting cell — even though merge refuses there.
+  "table.cellsSelected.one": "{count} cell selected",
+  "table.cellsSelected.other": "{count} cells selected",
+  // Said when the engine GREW the rectangle past what was dragged, to contain
+  // whole merged cells (`CellRangeInfo.expanded`). Without it an expanded
+  // selection reads as the editor selecting more than you asked for; with it,
+  // it reads as the rule it is — a merged cell is one cell and cannot be half
+  // selected.
+  "table.selectionExpanded": "expanded to whole merged cells",
+  // The gutter's insert affordance (`docs/141` D-2). The tooltip is what the `+`
+  // disc says before it is pressed and the announcement is what it says after,
+  // because the disc is a pointer affordance and the live region is the only
+  // channel that reports the result.
+  "table.insertRowHere": "Insert a row here",
+  "table.insertColumnHere": "Insert a column here",
+  "table.rowInserted": "Row inserted",
+  "table.columnInserted": "Column inserted",
 });

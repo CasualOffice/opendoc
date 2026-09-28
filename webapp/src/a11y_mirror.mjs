@@ -64,7 +64,22 @@ function appendCheckbox(parent, node) {
   parent.appendChild(box);
 }
 
-export function renderAccessibilityMirror(doc, focusNode) {
+/**
+ * Rebuilds the off-screen accessibility mirror.
+ *
+ * `cellSelection` is the table CELL RECTANGLE currently selected, as
+ * `{firstRow, lastRow, firstColumn, lastColumn}`, or `null`. It is expressed on
+ * the mirror rather than only announced because a fill on a canvas says nothing
+ * to a screen reader: the caller's live-region sentence tells you the selection
+ * CHANGED, and this tells you what is in it when you walk back over the table.
+ *
+ * The table it applies to is the caret's own top-level block — `blockIndexOf`
+ * returns the body block CONTAINING a node, so for a paragraph inside a cell it
+ * is the table's index, and `accessibilityTreeWindow` projects top-level blocks
+ * from `start`. So the caret's table is `nodes[caretBlock - windowStart]` and no
+ * matching by shape is needed.
+ */
+export function renderAccessibilityMirror(doc, focusNode, cellSelection = null) {
   const a11yDocument = document.getElementById("a11yDocument");
   if (!a11yDocument) return;
   if (!doc) {
@@ -83,8 +98,9 @@ export function renderAccessibilityMirror(doc, focusNode) {
   let nodes = [];
   let total = 0;
   let windowStart = 0;
+  let caretBlock = -1;
   try {
-    const caretBlock = focusNode ? doc.blockIndexOf(focusNode) : -1;
+    caretBlock = focusNode ? doc.blockIndexOf(focusNode) : -1;
     const anchor = caretBlock >= 0 ? caretBlock : a11yWindowStart;
     windowStart = Math.max(0, anchor - Math.floor(A11Y_WINDOW_BLOCKS / 2));
     const payload = JSON.parse(doc.accessibilityTreeWindow(windowStart, A11Y_WINDOW_BLOCKS));
@@ -109,7 +125,8 @@ export function renderAccessibilityMirror(doc, focusNode) {
       listStack = [];
     }
   };
-  for (const node of Array.isArray(nodes) ? nodes : []) {
+  const caretIndex = caretBlock >= 0 ? caretBlock - windowStart : -1;
+  for (const [blockIndex, node] of (Array.isArray(nodes) ? nodes : []).entries()) {
     if (node.kind === "listItem") {
       const depth = Math.max(0, Number(node.level) || 0);
       const ordered = !!node.ordered;
@@ -166,6 +183,16 @@ export function renderAccessibilityMirror(doc, focusNode) {
       frag.appendChild(wrap);
     } else if (node.kind === "table") {
       const table = document.createElement("table");
+      // A cell selection turns THIS table into an ARIA grid for as long as it
+      // lasts. `aria-selected` is only meaningful on a `gridcell`, so the roles
+      // and the selection state are one decision, not two — and a table with no
+      // selection keeps its plain `<table>` semantics, which is what a reader
+      // wants for reading rather than for selecting.
+      const selected = blockIndex === caretIndex ? cellSelection : null;
+      if (selected) {
+        table.setAttribute("role", "grid");
+        table.setAttribute("aria-multiselectable", "true");
+      }
       // A table's header geometry is what lets a reader say "Revenue, Q3" while
       // moving through cells instead of reading a bare grid of numbers. The
       // engine now reports which rows are headers (`w:tblHeader`, `cnfStyle`, or
@@ -188,11 +215,21 @@ export function renderAccessibilityMirror(doc, focusNode) {
       for (const [index, row] of rows.entries()) {
         const tr = document.createElement("tr");
         const isHeaderRow = headerRows.has(index);
+        if (selected) tr.setAttribute("role", "row");
         for (const [column, cell] of (Array.isArray(row) ? row : []).entries()) {
           // A header ROW heads its column; a header COLUMN heads its row.
           const heads = isHeaderRow || (rowHeaderColumn && column === 0);
           const el = document.createElement(heads ? "th" : "td");
           if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
+          if (selected) {
+            el.setAttribute("role", heads ? (isHeaderRow ? "columnheader" : "rowheader") : "gridcell");
+            const inside =
+              index >= selected.firstRow &&
+              index <= selected.lastRow &&
+              column >= selected.firstColumn &&
+              column <= selected.lastColumn;
+            el.setAttribute("aria-selected", inside ? "true" : "false");
+          }
           // A cell is `{ text, checkboxes }`: a form puts its controls in
           // cells, and a string can carry a control's glyph but not its role,
           // its state or its name. Older payloads sent a bare string.

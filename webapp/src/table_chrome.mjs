@@ -157,6 +157,16 @@ export function createTableChrome(host) {
       if (drag && !drag.guide.isConnected) drag.page.overlay?.appendChild(drag.guide);
     },
 
+    /** This page's table chrome, from the cache or from one engine walk.
+     *
+     *  Exposed so the GUTTER layer (`table_gutter.mjs`) reads the same memo
+     *  rather than asking the engine again: the strips, the insert discs and the
+     *  boundary zones are three affordances over one geometry, and a second
+     *  query would be a second answer that could disagree with the first. */
+    chromeOf(page) {
+      return chromeOf(page);
+    },
+
     /** The armed boundary under a pointer event, plus the reason when a boundary
      *  is there and the mode will not allow it. `{ boundary, refusal }`. */
     at(page, event) {
