@@ -133,6 +133,13 @@ export const KEYMAP = [
   { chord: "⌘⇧L", command: "paragraph.list.bullet", scope: EDITOR_SCOPE },
   { chord: "⌘M", command: "paragraph.indent.increase", scope: EDITOR_SCOPE },
   { chord: "⌘⇧M", command: "paragraph.indent.decrease", scope: EDITOR_SCOPE },
+  // Line spacing had no chord at all, while Word has bound these three since
+  // Word 97 and Docs binds the same three. The command ids are the ones the
+  // Home popover's own preset rows generate, so a preset added to the markup
+  // keeps its chord's meaning rather than a literal drifting away from it.
+  { chord: "⌘1", command: "paragraph.spacing.100", scope: EDITOR_SCOPE },
+  { chord: "⌘5", command: "paragraph.spacing.150", scope: EDITOR_SCOPE },
+  { chord: "⌘2", command: "paragraph.spacing.200", scope: EDITOR_SCOPE },
 
   // ---- Insert --------------------------------------------------------------
   { chord: "⌘K", command: "insert.link", scope: EDITOR_SCOPE },

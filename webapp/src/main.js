@@ -21,6 +21,8 @@ import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
+import { createSpacingMenu } from "./spacing_menu.mjs";
+import { createTocNavigator } from "./toc_navigation.mjs";
 import { createDropCapDialog } from "./drop_cap.mjs";
 import { createReferenceCommands, objectMenuRows } from "./reference_commands.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
@@ -278,11 +280,6 @@ const clearFormattingBtn = document.getElementById("clearFormatting");
 const formatPainterBtn = document.getElementById("formatPainter");
 const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
-const spaceBeforeInput = document.getElementById("spaceBefore");
-const spaceAfterInput = document.getElementById("spaceAfter");
-const lineSpacingMode = document.getElementById("lineSpacingMode");
-const lineSpacingValue = document.getElementById("lineSpacingValue");
-const lineSpacingUnit = document.getElementById("lineSpacingUnit");
 const paraOptsBtn = document.getElementById("paraOptsBtn");
 const paragraphPropertiesPanel = document.getElementById("paragraphPropertiesPanel");
 const paragraphPropertiesContext = document.getElementById("paragraphPropertiesContext");
@@ -381,6 +378,7 @@ const layoutPositionBtn = document.getElementById("layoutPositionBtn");
 const layoutBringForwardBtn = document.getElementById("layoutBringForwardBtn");
 // References band (the IA half of OO-001/OO-005).
 const refTocBtn = document.getElementById("refTocBtn");
+const refGoToHeadingBtn = document.getElementById("refGoToHeadingBtn");
 const refBookmarkBtn = document.getElementById("refBookmarkBtn");
 const refCaptionBtn = document.getElementById("refCaptionBtn");
 const refCrossRefBtn = document.getElementById("refCrossRefBtn");
@@ -5980,6 +5978,23 @@ function navigateToAnchor(node, offset, pageNumber) {
   scrollCaretIntoView("center");
 }
 
+// -- Contents entries that were never hyperlinked -----------------------------
+// `toc_navigation.mjs` carries the finding, the measured evidence and the rule;
+// the navigator holds the two revision-keyed caches that keep a click O(1).
+const tocNavigator = createTocNavigator({ doc: () => doc, revision: documentVersion });
+
+/** The heading the contents entry at `node` names, or null. */
+const tocEntryTargetAt = (node, offset = null) => tocNavigator.targetAt(node, offset);
+
+/** Follows the contents entry at `node`, if it is one. Returns whether it did. */
+function followTocEntry(node, offset = null) {
+  const target = tocEntryTargetAt(node, offset);
+  if (!target) return false;
+  navigateToAnchor(target.node, 0, 0);
+  setStatus(t("toc.jumpedTo", { heading: target.label }));
+  return true;
+}
+
 /** Copies a WASM-owned link hit into an ordinary JS value, then frees it. */
 function linkAt(page, event) {
   if (!doc) return false;
@@ -6039,6 +6054,7 @@ const pointerHover = createPointerHover({
   materializedPages,
   pointToTwip,
   linkAt,
+  tocEntryAt: (node, offset) => !!tocEntryTargetAt(node, offset),
   pointInsideObject,
   objectCapabilities,
   tableBoundaryAt: (page, event) => tableChrome.targetKind(page, event),
@@ -6462,6 +6478,10 @@ function onPointerUp(event) {
     const link = linkAt(gesture.page, event);
     if (link?.kind === "internal" && link.targetNode && link.targetPage) {
       activateLink(link);
+    } else if (!link && followTocEntry(selection?.focus?.node, selection?.focus?.offset)) {
+      // A contents entry whose field carried no `\h`, so there is no authored
+      // link to follow. The caret is already on the entry — this click placed it
+      // — so the paragraph is known without a second hit-test.
     } else {
       showLinkChipAt(gesture.page, event);
     }
@@ -7170,6 +7190,18 @@ function buildContextCommands(context) {
   // pointer. Assembled here, placed after the primary group for prose and after
   // the table tools inside a cell.
   const annotate = [];
+  // A contents entry the author's field never hyperlinked. Beside Open link
+  // because it IS Open link for that case, reached by the same gesture — a
+  // right-click on the entry. O(1); see `toc_navigation.mjs`.
+  if (!context.link && tocEntryTargetAt(selection?.focus?.node)) {
+    annotate.push({
+      id: "reference.goToHeading",
+      label: "Go to the heading this entry names",
+      group: "annotate",
+      icon: "linkOpen",
+      run: () => void followTocEntry(selection?.focus?.node),
+    });
+  }
   if (context.link) {
     const linkReason = context.suggesting
       ? "Link changes cannot be tracked in Suggesting mode"
@@ -7913,7 +7945,27 @@ const REFERENCE_SURFACE = [
     kw: "table of contents toc outline headings index navigation",
     buttons: () => [refTocBtn],
     requires: "missing",
-    reason: "A table of contents needs field evaluation and update, which the engine does not expose yet",
+    // Narrowed to what is actually missing. NAVIGATING a table of contents is no
+    // longer gated on anything (`toc_navigation.mjs`); GENERATING one is, and a
+    // reason that claimed both was telling the user a working capability did not
+    // exist.
+    reason: "Inserting a table of contents needs field generation the engine does not expose yet; an existing one is navigable",
+  },
+  // The keyboard half of following a contents entry. The pointer half is a plain
+  // click on the entry, and `contextMenu: true` puts the same row on the
+  // right-click menu, so the capability is reachable from three surfaces and from
+  // none of them only.
+  {
+    command: "reference.goToHeading",
+    label: "Go to the heading this entry names",
+    kw: "toc table of contents entry heading navigate go to jump follow outline",
+    buttons: () => [refGoToHeadingBtn],
+    requires: "tocEntry",
+    // NOT `contextMenu: true` — that flag puts a row on the OBJECT and table
+    // right-click menus, and a contents entry is text. Its right-click row is
+    // built with the other text rows, beside Open link, which is the same
+    // capability for the case where the author's field did hyperlink it.
+    run: () => void followTocEntry(selection?.focus?.node),
   },
   // Word's Captions group. A caption attaches to the caret's block — which is
   // also the block that holds a selected picture or table, since selecting an
@@ -7983,6 +8035,11 @@ function ribbonSurfaceEnabled(entry) {
   // This runs on every keystroke, so a walk in it would make typing O(document).
   if (entry.requires === "staleCaptions") return referenceCommands.numbering.count > 0;
   if (entry.requires === "caret") return !!selection;
+  // O(1) amortised: `tocEntryTargetAt` returns immediately unless the document
+  // holds a TOC field, and the heading index behind it is built once per
+  // revision. This runs on every keystroke, so a walk here would make typing
+  // O(document).
+  if (entry.requires === "tocEntry") return !!selection && !!tocEntryTargetAt(selection.focus.node);
   return true;
 }
 
@@ -7994,6 +8051,7 @@ function ribbonSurfaceReason(entry) {
   if (entry.requires === "object") return "Select an image, shape or text box first";
   if (entry.requires === "staleCaptions") return t("caption.numbersAlreadyRight");
   if (entry.requires === "bodyCaret" && selection) return t("caption.bodyOnly");
+  if (entry.requires === "tocEntry") return t("toc.notAnEntry");
   if (entry.requires === "caret" || entry.requires === "bodyCaret") return "Place the caret in a paragraph";
   return "";
 }
@@ -8315,8 +8373,24 @@ function noteDocumentEdited(revision) {
   hostSession?.noteChange();
 }
 
+/** How many documents this tab has opened.
+ *
+ *  `currentRevision` restarts at 0 for each one, so it identifies a document's
+ *  STATE but not the document — and a cache keyed on it alone silently survives
+ *  an open. That is not hypothetical: the contents-entry cache, keyed on the
+ *  revision, answered "this document has no table of contents" for a TOC
+ *  document, because the demo opened before it had already asked at revision 0.
+ *  Paired with the revision, this makes the key identify both. */
+let documentEpoch = 0;
+
+/** A token that changes whenever the document changes OR is replaced. */
+function documentVersion() {
+  return `${documentEpoch}:${currentRevision}`;
+}
+
 /** Re-baseline onto a freshly opened document: nothing is unsaved yet. */
 function resetDirtyTracking(name) {
+  documentEpoch += 1;
   savedRevision = 0;
   currentRevision = 0;
   savedName = name;
@@ -10422,96 +10496,16 @@ wireListGallery(bulletGalleryMenu, bulletGalleryPopover);
 wireListGallery(numberGalleryMenu, numberGalleryPopover);
 
 // -- Line & paragraph spacing --------------------------------------------------
-/** Reflect the caret paragraph's spacing into the menu (line-preset check +
- *  space before/after fields). */
-function reflectSpacingMenu() {
-  if (!doc || !selection) return;
-  const s = doc.paragraphSpacing(selection.focus.node);
-  const percent = s.lineRule === 0 ? s.linePercent : 0; // presets are `auto` multiples
-  for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
-    b.setAttribute("aria-checked", String(Number(b.dataset.percent) === percent));
-  }
-  // Reflect the mode + value fields (lineRule: 0 auto/multiple, 1 atLeast, 2 exact).
-  const editingCustom =
-    document.activeElement === lineSpacingMode ||
-    document.activeElement === lineSpacingValue;
-  if (!editingCustom) {
-    if (s.lineRule === 1) {
-      lineSpacingMode.value = "atLeast";
-      lineSpacingValue.value = s.lineTwip > 0 ? String(round2(s.lineTwip / TWIPS_PER_POINT)) : "";
-    } else if (s.lineRule === 2) {
-      lineSpacingMode.value = "exact";
-      lineSpacingValue.value = s.lineTwip > 0 ? String(round2(s.lineTwip / TWIPS_PER_POINT)) : "";
-    } else {
-      lineSpacingMode.value = "multiple";
-      lineSpacingValue.value = s.linePercent > 0 ? String(round2(s.linePercent / 100)) : "";
-    }
-    reflectLineSpacingUnit();
-  }
-  // Don't overwrite a field the user is mid-edit in.
-  if (document.activeElement !== spaceBeforeInput) {
-    spaceBeforeInput.value = s.beforeTwip >= 0 ? String(Math.round(s.beforeTwip / TWIPS_PER_POINT)) : "";
-  }
-  if (document.activeElement !== spaceAfterInput) {
-    spaceAfterInput.value = s.afterTwip >= 0 ? String(Math.round(s.afterTwip / TWIPS_PER_POINT)) : "";
-  }
-}
-registerPopover(spacingBtn, spacingMenu, reflectSpacingMenu);
-
-for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
-  onButton(b, () => {
-    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, Number(b.dataset.percent)), { paragraphLevel: true });
-    reflectSpacingMenu();
-  });
-}
-
-/** Sync the value field's unit label + step to the current mode (× for a
- *  multiple, pt for atLeast/exact). */
-function reflectLineSpacingUnit() {
-  const multiple = lineSpacingMode.value === "multiple";
-  lineSpacingUnit.textContent = multiple ? "×" : "pt";
-  lineSpacingValue.step = multiple ? "0.05" : "1";
-}
-
-/** Commit the custom line-spacing mode + value. Multiple rides `setLineSpacing`
- *  (the `auto` percent rule); At least / Exactly ride `setLineSpacingExact`
- *  (twips + `at_least` flag: true → atLeast, false → exact). Blank/non-numeric
- *  is ignored. */
-function applyCustomLineSpacing() {
-  const raw = lineSpacingValue.value.trim();
-  if (raw === "" || !Number.isFinite(Number(raw))) return;
-  const v = Number(raw);
-  if (v <= 0) return;
-  const mode = lineSpacingMode.value;
-  if (mode === "multiple") {
-    const percent = Math.round(v * 100);
-    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, percent), { paragraphLevel: true });
-  } else {
-    const twips = Math.max(0, Math.round(v * TWIPS_PER_POINT));
-    const atLeast = mode === "atLeast";
-    runToolbarEdit((a, x, c, d) => doc.setLineSpacingExact(a, x, c, d, twips, atLeast), { paragraphLevel: true });
-  }
-  reflectSpacingMenu();
-}
-// Switching mode only reinterprets the value's unit; it never auto-applies (a
-// multiple typed as "1.5" must not be re-read as 1.5 pt). Commit on value change.
-lineSpacingMode.addEventListener("change", reflectLineSpacingUnit);
-lineSpacingValue.addEventListener("change", applyCustomLineSpacing);
-
-/** Commit a space-before/after field: blank clears (back to style default),
- *  otherwise points → twips (clamped ≥ 0). Ignores non-numeric input. */
-function applySpace(input, setter) {
-  const raw = input.value.trim();
-  if (raw !== "" && !Number.isFinite(Number(raw))) return;
-  const twips = raw === "" ? -1 : Math.max(0, Math.round(Number(raw) * TWIPS_PER_POINT));
-  runToolbarEdit((a, x, c, d) => setter(a, x, c, d, twips));
-}
-spaceBeforeInput.addEventListener("change", () =>
-  applySpace(spaceBeforeInput, (a, b, c, d, t) => doc.setSpaceBefore(a, b, c, d, t)),
-);
-spaceAfterInput.addEventListener("change", () =>
-  applySpace(spaceAfterInput, (a, b, c, d, t) => doc.setSpaceAfter(a, b, c, d, t)),
-);
+// Wiring lives in `spacing_menu.mjs`; the competitive reference and the reason
+// an inherited line spacing reads back as "from the style" are recorded there.
+const spacingMenuControl = createSpacingMenu({
+  doc: () => doc,
+  focusNode: () => selection?.focus?.node ?? null,
+  runToolbarEdit,
+  registerPopover,
+  onButton,
+  t,
+});
 
 // -- Paragraph properties inspector ------------------------------------------
 /** An inches field's value → twips (≥ 0); "" or non-numeric → 0. */
@@ -10683,15 +10677,19 @@ paraLineSpacing.addEventListener("change", () => {
   runToolbarEdit((a, b, c, d) =>
     doc.setLineSpacing(a, b, c, d, Number(paraLineSpacing.value)), { paragraphLevel: true });
 });
+/** A points field's value → twips (≥ 0); "" clears the paragraph's own value so
+ *  the style decides again, which is what `-1` means to the engine. */
+function applySpace(input, setter) {
+  const raw = input.value.trim();
+  if (raw !== "" && !Number.isFinite(Number(raw))) return;
+  const twips = raw === "" ? -1 : Math.max(0, Math.round(Number(raw) * TWIPS_PER_POINT));
+  runToolbarEdit((a, b, c, d) => setter(a, b, c, d, twips));
+}
 paraSpaceBefore.addEventListener("change", () =>
-  applySpace(paraSpaceBefore, (a, b, c, d, twips) =>
-    doc.setSpaceBefore(a, b, c, d, twips),
-  ),
+  applySpace(paraSpaceBefore, (a, b, c, d, twips) => doc.setSpaceBefore(a, b, c, d, twips)),
 );
 paraSpaceAfter.addEventListener("change", () =>
-  applySpace(paraSpaceAfter, (a, b, c, d, twips) =>
-    doc.setSpaceAfter(a, b, c, d, twips),
-  ),
+  applySpace(paraSpaceAfter, (a, b, c, d, twips) => doc.setSpaceAfter(a, b, c, d, twips)),
 );
 
 // -- Table & cell formatting (a single-node edit: applies to the caret's cell) --
@@ -12250,19 +12248,11 @@ function editorCommands(context = { surface: "palette" }) {
   // needs. A preset or bullet style added to the markup therefore gets its
   // command for free, and none of these labels can drift from the control they
   // mirror. Both run the same functions the popovers run.
+  // The line-spacing presets and the two one-gesture space rows, generated from
+  // the popover's own markup by `spacing_menu.mjs` so a preset added there gets
+  // its command — and its ⌘1 / ⌘5 / ⌘2 chord's meaning — for free.
+  cmds.push(...spacingMenuControl.commands({ enabled: !!doc && !!selection }));
   if (doc) {
-    for (const preset of spacingMenu?.querySelectorAll(".spacing-line") ?? []) {
-      const percent = Number(preset.dataset.percent);
-      cmds.push({
-        id: `paragraph.spacing.${percent}`,
-        label: `Line spacing: ${preset.textContent.trim()}`,
-        group: "Paragraph",
-        kw: "line spacing leading single double space",
-        enabled: !!selection,
-        disabledReason: "Place the caret in a paragraph",
-        run: () => runToolbarEdit((a, o, e, f) => doc.setLineSpacing(a, o, e, f, percent), { paragraphLevel: true }),
-      });
-    }
     for (const [menu, noun] of [[bulletGalleryMenu, "Bullet style"], [numberGalleryMenu, "Numbering format"]]) {
       for (const cell of menu?.querySelectorAll(".list-gallery-cell") ?? []) {
         const spec = cell.dataset.spec;

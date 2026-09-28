@@ -737,7 +737,11 @@
         <div id="panelReferences" class="ribbon-panel" data-panel="references" role="tabpanel" aria-labelledby="tabReferences" hidden>
           <div class="rgroup" data-group="ref-navigation" data-ribbon-pinned>
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelReferences.tableContentsNeedsField.title" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="A table of contents needs field evaluation and update, which the engine does not expose yet" aria-label="Table of contents" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
+              <button data-i18n-title="panelReferences.insertingTableContentsNeedsGeneration.title" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="Inserting a table of contents needs field generation the engine does not expose yet; an existing one is navigable" aria-label="Table of contents" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
+              <!-- Following a contents entry from the keyboard. The pointer path
+                   is a plain click on the entry; this is the second surface, and
+                   `contextMenu: true` on its declaration gives the third. -->
+              <button data-i18n-title="panelReferences.goToTheHeadingThisEntryNames.title" data-i18n-label="panelReferences.goToHeading.label" id="refGoToHeadingBtn" type="button" class="fmt fmt-big" title="Go to the heading this entry names" aria-label="Go to heading" disabled><span class="ms" aria-hidden="true">my_location</span><span data-i18n="refGoToHeadingBtn.goTo" class="fmt-big-label">Go to</span></button>
               <button data-i18n-title="panelReferences.createRenameGoBookmark.title" data-i18n-label="panelReferences.bookmark.label" id="refBookmarkBtn" type="button" class="fmt fmt-big" title="Create, rename, or go to a bookmark" aria-label="Bookmark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">bookmark</span><span data-i18n="refBookmarkBtn.bookmarks" class="fmt-big-label">Bookmarks</span></button>
             </div>
             <span data-i18n="panelReferences.navigation" class="rgroup-label">Navigation</span>
@@ -1405,6 +1409,18 @@
         <option data-i18n="lineSpacingMode.exactly" value="exact">Exactly</option>
       </select></label>
       <label data-i18n="spacingMenu.value" class="menu-row">Value<input data-i18n-label="spacingMenu.lineSpacingValue.label" id="lineSpacingValue" type="number" min="0" step="0.05" inputmode="decimal" aria-label="Line spacing value" /><span class="menu-unit" id="lineSpacingUnit">&times;</span></label>
+      <!-- Shown only when the paragraph carries no line spacing of its own, which
+           is most paragraphs in most documents. The value box is 56px wide, so a
+           sentence put in it is three characters of sentence. -->
+      <p id="lineSpacingFromStyle" class="menu-note" hidden></p>
+      <div class="menu-divider"></div>
+      <!-- Google Docs' one-gesture rows, with Word's 12 pt. The verb flips from
+           the caret paragraph's current state (`spacing_menu.mjs` says why one
+           flipping row beats Word's two, one of which is always a no-op), so
+           the label is written at reflect time and the markup here only has to
+           carry an initial English for the extractor. -->
+      <button type="button" class="menu-item" id="spaceBeforeToggle" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label"></span></button>
+      <button type="button" class="menu-item" id="spaceAfterToggle" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label"></span></button>
       <div class="menu-divider"></div>
       <label data-i18n="spacingMenu.spaceBefore" class="menu-row">Space before<input id="spaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
       <label data-i18n="spacingMenu.spaceAfter" class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>

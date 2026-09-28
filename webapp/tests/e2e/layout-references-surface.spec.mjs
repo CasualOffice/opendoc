@@ -314,7 +314,11 @@ test("table of contents, cross-reference and update fields are disabled WITH a r
   // after the gap it describes is closed is the same lie as a claim that is too
   // generous — `109` EV-007, "understating is also false".
   const unavailable = [
-    ["#refTocBtn", "Table of contents", /field evaluation/i],
+    // The reason was narrowed when contents entries became navigable: what is
+    // missing is GENERATING a table, not evaluating one. A reason that claims a
+    // working capability does not exist is the same lie as one left standing
+    // after its gap closed.
+    ["#refTocBtn", "Table of contents", /field generation/i],
     ["#refUpdateFieldsBtn", "Update fields", /field-evaluation pass/i],
   ];
   for (const [selector, label, reason] of unavailable) {

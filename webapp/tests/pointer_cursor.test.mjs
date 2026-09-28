@@ -59,6 +59,7 @@ const PROBES = {
   "object-selectable": { object: { canMove: false } },
   "form-checkbox": { formCheckbox: true },
   hyperlink: { link: true },
+  "contents-entry": { contentsEntry: true },
   "read-only-text": { editsBlocked: true },
   "running-content-band": { band: "header" },
   "body-text": {},

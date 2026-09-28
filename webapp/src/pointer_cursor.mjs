@@ -488,6 +488,22 @@ export const CURSOR_TARGETS = [
     when: (p) => p.link === true,
   },
   {
+    id: "contents-entry",
+    cursor: "pointer",
+    owner: "router",
+    selector: null,
+    gesture: "Going to the heading this contents entry names",
+    why:
+      "A table of contents written without `\\h` has no hyperlink anywhere in it, " +
+      "so the `hyperlink` row above never fires and the pointer stayed an I-beam " +
+      "over every entry — measured, on a 54-page document, alongside a click that " +
+      "did nothing at all. The press now navigates (`toc_navigation.mjs`), and the " +
+      "pointer must predict the press, so it is the same hand the authored-link " +
+      "case shows: one gesture, one shape, whatever switch the author's field " +
+      "happened to carry.",
+    when: (p) => p.contentsEntry === true && p.link !== true,
+  },
+  {
     id: "read-only-text",
     cursor: "text",
     owner: "router",
@@ -640,6 +656,8 @@ export const TARGET_BY_ID = new Map(CURSOR_TARGETS.map((row) => [row.id, row]));
  *                     which makes it a text surface rather than a target
  *  - `formCheckbox`   the point is inside a form checkbox control
  *  - `link`           a hyperlink is painted at the point
+ *  - `contentsEntry`  the point is on a table-of-contents entry that resolves
+ *                     to a heading, and no hyperlink is painted there
  *  - `band`           `"header" | "footer" | ""`
  *  - `inRunningStory` that band is already open for editing
  *  - `editsBlocked`   content edits are refused (Viewing, or an engine refusal)

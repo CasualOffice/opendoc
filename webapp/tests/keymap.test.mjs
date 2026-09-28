@@ -165,10 +165,40 @@ const TABLE_COMMAND_IDS = (() => {
   return [...source.matchAll(/(?:id: |tableMutation\()"([\w.]+)"/g)].map((match) => match[1]);
 })();
 
+// The LINE-SPACING preset commands are generated from the popover's own markup —
+// `id: \`paragraph.spacing.${percent}\`` over every `.spacing-line` button in
+// `editor.html` — so they are genuinely in the registry while being invisible to
+// a scan for literal ids, exactly like the table tree above. Both halves are
+// asserted: the generator is still in `editorCommands`, and the percentages come
+// from the markup rather than from a list here, so a preset removed from the
+// popover takes its chord's target with it and this test says so.
+const SPACING_COMMAND_IDS = (() => {
+  const spacing = readFileSync(new URL("../src/spacing_menu.mjs", import.meta.url), "utf8");
+  assert.match(
+    spacing,
+    /id: `paragraph\.spacing\.\$\{percent\}`/,
+    "spacing_menu.mjs no longer generates the line-spacing preset commands; the " +
+      "⌘1 / ⌘5 / ⌘2 chords are dead",
+  );
+  assert.match(
+    EDITOR_COMMANDS_SOURCE,
+    /spacingMenuControl\.commands\(/,
+    "editorCommands() no longer composes the spacing command rows, so they are " +
+      "not in the registry and the ⌘1 / ⌘5 / ⌘2 chords are dead",
+  );
+  const markup = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
+  const ids = [...markup.matchAll(/spacing-line"[^>]*data-percent="(\d+)"/g)].map(
+    (match) => `paragraph.spacing.${match[1]}`,
+  );
+  assert.ok(ids.length >= 4, `only ${ids.length} line-spacing presets found in the markup`);
+  return ids;
+})();
+
 test("every chord names a command the registry actually returns", () => {
   const registered = new Set([
     ...[...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
     ...TABLE_COMMAND_IDS,
+    ...SPACING_COMMAND_IDS,
   ]);
   assert.ok(registered.size > 80, `only ${registered.size} commands found; the scan has drifted`);
   const missing = [...new Set(KEYMAP.map((row) => row.command))].filter((id) => !registered.has(id));

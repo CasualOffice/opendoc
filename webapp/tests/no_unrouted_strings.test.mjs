@@ -227,6 +227,14 @@ const CEILINGS = new Map([
   // came down by more than nine in the same commit. They stay English because this
   // table's sibling labels do (`TABLE_MENU_LABELS` is read at import, before a
   // catalogue exists); routing the whole family is its own piece of work.
+  // ONE literal, moved out of `main.js` with the line-spacing command rows and
+  // not added by them: `"Line spacing: "`, the prefix in front of a preset's own
+  // label, which is read from the popover markup the catalogue already covers.
+  // `main.js` came down by more than one in the same commit. Routing it means
+  // giving the four presets a second name in `EN_STRINGS` beside the one their
+  // markup already carries, which is how two spellings of one control start to
+  // drift; that is its own piece of work.
+  ["src/spacing_menu.mjs", 1],
   ["src/table_commands.mjs", 9],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",

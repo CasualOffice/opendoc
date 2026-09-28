@@ -108,11 +108,20 @@ export function createPointerHover(host) {
     probe.tableBoundary = host.tableBoundaryAt?.(page, event) || "";
     if (probe.tableBoundary) return probe;
     const hit = doc.hitTest(page.pageNumber, x, y);
+    let hitNode = null;
+    let hitOffset = 0;
     if (hit) {
+      hitNode = hit.node;
+      hitOffset = hit.offset;
       probe.formCheckbox = !!doc.formCheckboxAt(hit.node, hit.offset);
       hit.free?.();
     }
     if (!probe.formCheckbox) probe.link = !!host.linkAt(page, event);
+    // A contents entry with no authored link under it. Asked LAST and only when
+    // nothing above claimed the point, and `tocEntryTargetAt` itself returns
+    // immediately unless the document holds a TOC field — so the ordinary
+    // document, and the ordinary paragraph, pay one boolean.
+    if (!probe.link && hitNode) probe.contentsEntry = !!host.tocEntryAt?.(hitNode, hitOffset);
     return probe;
   }
 

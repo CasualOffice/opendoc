@@ -328,6 +328,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("reference.caption", "mutate"),
   exact("reference.crossReference", "mutate"),
   exact("reference.tableOfContents", "mutate"),
+  // Navigation, not mutation: it moves the caret to the heading a contents entry
+  // names and changes nothing. `null` is the same grade `view.zoom.` carries.
+  exact("reference.goToHeading", null),
   exact("reference.updateFields", "mutate"),
   exact("reference.updateCaptionNumbers", "mutate"),
 
@@ -416,6 +419,8 @@ export const COMMAND_FAMILIES = Object.freeze([
   family("format.size.", "mutate", "always"),
   family("format.underline.", "mutate", "always"),
   family("paragraph.spacing.", "mutate", "always"),
+  // The two one-gesture space rows, generated beside the spacing presets.
+  family("paragraph.space.", "mutate", "always"),
   family("paragraph.listFormat.", "mutate", "always"),
   // Generated from the field-kind table, and from the document's own style list.
   family("insert.field.", "mutate", "always"),
