@@ -433,8 +433,9 @@ test("how much English the reference pages put on the site, measured and publish
   // the rule that whole document exists to state (`docs/142` LST-31). 2161 once
   // `docs/126` recorded the configuration playground — the demo the owner asked
   // for, the page that makes all three SDK phases reachable — which is the same
-  // document again and the same reason. Editing a
-  // published document
+  // document again and the same reason. 2185 once Playground and Embedding joined
+  // the primary nav: two words each, on all twelve pages, because the shared
+  // header is inlined into every one of them. Editing a published document
   // already fails `build-doc-pages --check` until the pages are regenerated, so
   // the same commit that regenerates them updates this figure — one number, in
   // the same pass, deliberately. A figure that updated itself would let the
@@ -445,8 +446,8 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2161,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2161). That ` +
+    2185,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2185). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),

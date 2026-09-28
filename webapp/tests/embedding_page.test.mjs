@@ -512,14 +512,21 @@ test("the page adds no styling of its own", () => {
 });
 
 test("the page is navigable, and the chrome stays DRY", () => {
-  // Authored from the shared partials like every other page, and marked as a
-  // Docs page — the primary nav is deliberately still the four links
-  // `site-nav-consistency` asserts, so the guide is reached from the docs rail
-  // rather than by widening the header.
-  assert.match(page, /<!-- @include site-header active=docs -->/);
+  // Authored from the shared partials like every other page, and marked with its
+  // OWN nav key. It used to say `active=docs`: the guide lit up somebody else's
+  // tab and was reachable only from a rail on a page a reader had to find first.
+  // That was the reasoning this comment used to carry — "reached from the docs
+  // rail rather than by widening the header" — and it is why embedding, and then
+  // the playground, shipped unfindable. Widening the header was the right move;
+  // `site_nav_reach.test.mjs` now fails the build for a page without its own entry.
+  assert.match(page, /<!-- @include site-header active=embedding -->/);
   assert.match(page, /<!-- @include site-footer -->/);
   assert.match(built, /class="site-header"/, "the built page must carry the inlined header");
-  assert.match(built, /aria-current="page"[^>]*>Docs<|data-nav="docs" aria-current="page"/);
+  assert.match(built, /data-nav="embedding" aria-current="page"/);
+  assert.ok(
+    !/data-nav="docs" aria-current="page"/.test(built),
+    "the embedding guide must not mark the Docs tab active — it has a tab of its own",
+  );
   // Reachable: the docs page's rail and this page's own rail both link it.
   for (const template of ["docs.page.html", "embedding.page.html"]) {
     assert.match(

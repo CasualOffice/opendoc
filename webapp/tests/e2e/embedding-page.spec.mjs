@@ -31,10 +31,10 @@ test("the embedding guide renders with the site chrome and marks itself in the n
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Embed the editor");
   const nav = page.locator('header.site-header nav[aria-label="Primary navigation"]');
-  // A Docs page, not a fifth primary link: the header stays the four links
-  // `site-nav-consistency` asserts, and the guide is reached from the docs rail.
-  await expect(nav.getByRole("link")).toHaveCount(4);
-  await expect(page.locator('header nav a[data-nav="docs"]')).toHaveAttribute(
+  // Its own primary link, not a borrowed Docs tab. The guide used to be reachable
+  // only from the docs rail, which meant a reader had to already know it existed.
+  await expect(nav.getByRole("link")).toHaveCount(6);
+  await expect(page.locator('header nav a[data-nav="embedding"]')).toHaveAttribute(
     "aria-current",
     "page",
   );
