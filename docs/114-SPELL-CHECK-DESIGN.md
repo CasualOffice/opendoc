@@ -6,6 +6,15 @@ marked **CORRECTION** with what was done instead and why — three of them are s
 (§2.3, §5.3, §5.4) and one changed a number rather than a decision. **Owner:** unassigned.
 **Row:** `109` **HF-035** (P1, L) / `105` **OO-003**.
 
+> **SUCCEEDED, not superseded, 2026-09-29.** `docs/146` is the owner's client-side
+> proofing architecture and **ADR-042** decides it. This document stays the record of
+> what SHIPPED and why; `docs/146` is the plan for what comes next, and its Increment A
+> has now been built. Three decisions here were changed by it, and each is marked
+> **CORRECTION (146)** in place below: where the checking runs (§5), when suggestions
+> are computed (§5.4), and the zero-runtime-dependency constraint §2.1 and §11.1 both
+> reason from. Most of §8's "not in this design" list is now `docs/146` §8's P2/P3
+> rows rather than this document's backlog.
+
 > **SCOPE CHANGED, 2026-09-23.** This document was written "spelling only — grammar is a
 > separate row and is not designed here". The owner reversed that mid-build, in their own
 > words: *"also in dictonaries /spelling try to add industry glossary dictionary and
@@ -68,6 +77,16 @@ This is the part that can block the approach, so it is settled first.
 | Hunspell `.dic` + `.aff` with our own affix expander | The `.dic` is stems plus affix flags, so it is useless without implementing `SFX`/`PFX` and then `NEEDAFFIX`, `ONLYINCOMPOUND`, `CIRCUMFIX`, `COMPOUND*` and `REP`. That is a subsystem, and it buys nothing a pre-expanded list does not already have. |
 | A server-side check | Forbidden: §1. |
 | macOS `/usr/share/dict/words` | Not shippable, not reproducible, and it lacks inflections while carrying archaic junk. |
+
+> **CORRECTION (146) — the owner made that decision on 2026-09-29, and it is YES**
+> (ADR-042 §7): a small, audited runtime dependency is acceptable for the pack and
+> worker work, subject to a licence and provenance review, with offline-first
+> non-negotiable. `nspell` (MIT) is named as the likely candidate when more languages
+> come, and is explicitly **not** needed for English — so nothing here changes what
+> shipped, and no dependency was added. What it unblocks is the pack format being
+> free to assume Hunspell-shaped inputs later. The same correction applies to §11.1,
+> which rejects `retext`/`write-good` on the same now-lifted grounds; their licences
+> were never the problem and a rule set of somebody else's curation still is.
 
 ### 2.2 What to use — SCOWL's pre-expanded word lists
 
@@ -285,6 +304,17 @@ non-deterministic for no user benefit.
 | `webapp/src/spell_check.mjs` | DOM | Lazy dictionary fetch, the windowed scan, the per-paragraph cache, overlay painting, suggestion-on-demand, the context-menu rows' behaviour. |
 | `webapp/src/drafts.mjs` | DOM (existing) | The personal-dictionary store, added to the existing IndexedDB seam. |
 
+> **CORRECTION (146) — the checking no longer happens in either of these.**
+> `docs/146` §4 and ADR-042 moved every decision that produces a finding into
+> `webapp/src/proof_protocol.mjs`, which is pure and in `PURE_MODULES`, and runs it
+> in `webapp/src/proof_worker.js`. `spelling.mjs` and `grammar.mjs` are unchanged and
+> are what the protocol calls; `spell_check.mjs` is now the COORDINATOR — extraction,
+> transport, painting and the one undoable mutation — and owns no dictionary. The
+> ~84,000-entry `Set` a word list parses into is built in the worker, which is the
+> single largest piece of main-thread work this feature ever did. Where no `Worker`
+> can be built, an in-process fallback calls the SAME `createProofResponder`, so the
+> findings are identical and there is one implementation of the rule, not two.
+
 ### 5.2 Scanning
 
 - **Enumerate**: `hitTest` the vertical middle of each page in the window (definitely body,
@@ -367,6 +397,23 @@ opens**, for one word.
   > a word of four or more, because `teh` → `Th` is noise.
 - **Zero suggestions must still show a row**: a disabled "No spelling suggestions" entry,
   never an empty menu (SKILL.md §10).
+
+> **CORRECTION (146) — "on demand only, never while checking" is reversed.**
+> The rule existed for one reason: the bounded dictionary scan costs 2.6–19.5 ms and
+> was being paid **on the main thread, inside a right-click**. `docs/146` §4 moved
+> checking into a worker, which removes that reason — so suggestions are now computed
+> while checking and arrive WITH the finding, and the right-click is instant instead
+> of stalling a frame or three.
+>
+> What replaces the old rule is a budget, because "not on the main thread" is not the
+> same as "unbounded": `DEEP_SUGGESTION_BUDGET` caps how many distinct unknown words
+> one check may spend the dictionary scan on, a per-word memo makes a repeated typo
+> cost once, and `suggestionsFor` gained a `deepScan` flag to be the lever. A finding
+> past the budget carries whatever the cheap distance-1 pass found and reports
+> `suggestionsComplete: false`, and the menu then says the search has not finished —
+> because a shallow pass that found nothing has **not** established that there is
+> nothing, and "No spelling suggestions" would be a confident lie about a search that
+> was never run.
 
 ### 5.5 The context menu
 
@@ -490,6 +537,24 @@ go red, record the output, restore. For this feature specifically:
 - **Languages other than English** (§2.5), and per-run language spans on mixed paragraphs
   beyond the fallback in §4.1.
 - **Autocorrect.** Adjacent, tempting, and a different row.
+
+> **CORRECTION (146) — this list is no longer this document's backlog.** Every row
+> above now has a home in `docs/146` §8: header/footer/note/text-box stories and
+> mixed-language spans are **P3** (and are blocked on the ENGINE, not on the host —
+> `hitTest` walks body fragments only and `moveCaret` stops at a story boundary by
+> design, while painting those nodes already works), `w:noProof` is **P3**, a
+> whole-document sweep and custom-dictionary management belong with the pack and
+> profile work, and grammar breadth is **P2**. None of them is in Increment A.
+>
+> One item here was wrong rather than deferred. **"A dictionary that did not arrive
+> is a checker that is not running, and the user has to be able to tell that from a
+> clean document"** was implemented by installing an EMPTY word list — and an empty
+> word list means no word is known, so a failed fetch underlined **every word in the
+> document**. Measured at eight marks on a one-paragraph document with one deliberate
+> typo. Fixed in Increment A: a language whose list failed is held as UNAVAILABLE, a
+> third state distinct from "not asked yet" and from a parsed list; it contributes no
+> spelling findings at all, and the failure is a STANDING condition `statusNote()`
+> re-answers rather than a message announced once.
 
 Two more, found while building and stated here rather than discovered later:
 

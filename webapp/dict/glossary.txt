@@ -102,6 +102,7 @@ LOC
 LRU
 LST
 LTR
+LanguageTool
 LayoutNG
 LibreOffice
 Lifecycle
@@ -409,6 +410,7 @@ nav
 newtype
 nonmodal
 npm
+nspell
 odf
 offline
 offscreen
