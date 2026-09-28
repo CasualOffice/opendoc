@@ -109,6 +109,8 @@ pub enum BreakRefusal {
     NoSectionToSplit,
 }
 
+use crate::refused;
+
 impl BreakRefusal {
     /// The user-facing reason, in the voice the rest of the engine's refusals
     /// use. The engine owns this vocabulary for the same reason it owns undo
@@ -116,18 +118,40 @@ impl BreakRefusal {
     #[must_use]
     pub const fn reason(self) -> &'static str {
         match self {
-            Self::NoSuchParagraph => "refused: there is no paragraph at the caret",
-            Self::InTableCell => "refused: a break cannot be inserted inside a table",
-            Self::InTextBox => "refused: a break cannot be inserted inside a text box or shape",
-            Self::InContentControl => {
-                "refused: a break cannot be inserted inside a content control"
+            Self::NoSuchParagraph => {
+                refused!("break.no-paragraph", "There is no paragraph at the caret.")
             }
-            Self::InRunningContent => "refused: a break cannot be inserted in a header or footer",
-            Self::InNote => "refused: a break cannot be inserted in a footnote or endnote",
-            Self::InComment => "refused: a break cannot be inserted in a comment",
+            Self::InTableCell => refused!(
+                "break.in-table",
+                "A break cannot be inserted inside a table."
+            ),
+            Self::InTextBox => refused!(
+                "break.in-text-box",
+                "A break cannot be inserted inside a text box or shape."
+            ),
+            Self::InContentControl => {
+                refused!(
+                    "break.in-content-control",
+                    "A break cannot be inserted inside a content control."
+                )
+            }
+            Self::InRunningContent => refused!(
+                "break.in-running-content",
+                "A break cannot be inserted in a header or footer."
+            ),
+            Self::InNote => refused!(
+                "break.in-note",
+                "A break cannot be inserted in a footnote or endnote."
+            ),
+            Self::InComment => refused!(
+                "break.in-comment",
+                "A break cannot be inserted in a comment."
+            ),
             Self::NoSectionToSplit => {
-                "refused: this document declares no page setup, so it has no \
-                 section to split"
+                refused!(
+                    "break.no-section",
+                    "This document declares no page setup, so it has no section to split."
+                )
             }
         }
     }

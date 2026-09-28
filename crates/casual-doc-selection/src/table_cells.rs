@@ -192,6 +192,102 @@ impl TableGrid {
     }
 }
 
+/// Where one cell sits in the shared grid, and the merged region it belongs to
+/// (`docs/141` TBL-20).
+///
+/// A UI asking "is THIS cell merged" has until now had only the whole-table
+/// answer — `table_is_regular` — which is true of a table with one merge in it
+/// and says nothing about the cell under the caret. That is why Unmerge was
+/// offered on every cell of an irregular table and refused per cell afterwards,
+/// and why a column-resize zone was disarmed across a whole table. Row and
+/// column are reported the way the grid means them: `first_row` is a ROW INDEX,
+/// `first_column` and `grid_column` are GRID COLUMNS, because a cell index is
+/// not a grid column the moment any cell carries `w:gridSpan`.
+///
+/// An unmerged cell is a 1x1 region at its own position, so a caller never has
+/// to branch on `merged` to read a rectangle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CellMerge {
+    /// Whether this cell's region covers more than one grid cell — the question
+    /// "may Unmerge run HERE".
+    pub merged: bool,
+    /// The grid column this cell starts at.
+    pub grid_column: u32,
+    /// Row index of the region's top-left cell.
+    pub first_row: u32,
+    /// Grid column of the region's top-left cell.
+    pub first_column: u32,
+    /// Rows the region covers, at least 1.
+    pub rows: u32,
+    /// Grid columns the region covers, at least 1.
+    pub columns: u32,
+}
+
+/// The merged region the cell at (`row_index`, `cell_index`) belongs to, or
+/// `None` when that cell is not in the table.
+///
+/// `cell_index` is an index into the row's `cells`, which is what a caret
+/// resolves to; the answer is in grid columns.
+///
+/// Complexity: O(cells of `table`) — one pass over this table's rows, and no
+/// document access at all. It is O(1) in DOCUMENT size, which is the budget that
+/// matters: this is asked on the caret path (`docs/107` §4).
+#[must_use]
+pub fn cell_merge(table: &Table, row_index: usize, cell_index: usize) -> Option<CellMerge> {
+    let grid = TableGrid::build(table).ok()?;
+    let slot = *grid.rows.get(row_index)?.get(cell_index)?;
+    let region = grid.regions[slot.region];
+    Some(CellMerge {
+        merged: region.last_row > region.first_row || region.last_column > region.first_column,
+        grid_column: slot.grid_start as u32,
+        first_row: region.first_row as u32,
+        first_column: region.first_column as u32,
+        rows: (region.last_row - region.first_row + 1) as u32,
+        columns: (region.last_column - region.first_column + 1) as u32,
+    })
+}
+
+/// The column boundaries of `table` that **no cell straddles**, as the grid
+/// column on the leading side of each.
+///
+/// Boundary `i` lies between grid columns `i` and `i + 1`. It is straddled when
+/// some row has one cell covering both sides of it, and only then is a resize
+/// ambiguous: there is no single cell on either side whose width the drag means.
+/// Every other boundary is as resizable in a merged table as in a regular one,
+/// which is the difference between disarming a gesture on four boundaries and
+/// disarming it on one.
+///
+/// A row that stops short of a boundary does not straddle it — a ragged grid
+/// disarms nothing it does not have to.
+///
+/// Complexity: O(cells of `table`); O(1) in document size. Returns an empty list
+/// for a table with no rows, or one grid column, where there is no boundary to
+/// drag.
+#[must_use]
+pub fn unstraddled_column_boundaries(table: &Table) -> Vec<u32> {
+    let Ok(grid) = TableGrid::build(table) else {
+        return Vec::new();
+    };
+    if grid.columns < 2 {
+        return Vec::new();
+    }
+    let mut straddled = vec![false; grid.columns - 1];
+    for slot in grid.rows.iter().flatten() {
+        // A cell covering `[start, end]` straddles every boundary strictly
+        // inside it: `start`, `start + 1`, … `end - 1`.
+        // `.max(grid_start)` only so the slice range can never invert; a cell
+        // always starts inside the grid, so this changes no answer.
+        let inside = slot.grid_start..slot.grid_end().min(grid.columns - 1).max(slot.grid_start);
+        for crossed in &mut straddled[inside] {
+            *crossed = true;
+        }
+    }
+    (0..grid.columns - 1)
+        .filter(|boundary| !straddled[*boundary])
+        .map(|boundary| boundary as u32)
+        .collect()
+}
+
 /// A rectangular block of table cells, as the user dragged it: `anchor` is the
 /// cell the gesture started in, `focus` the cell it is currently over. Both are
 /// **cell** ids; a host holding a paragraph id resolves it first (the wasm facade

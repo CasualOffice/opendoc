@@ -36,6 +36,9 @@
 //! `moveGroupChildBy` already expresses an intra-group move.
 
 use casual_doc_edit::{Operation, Pos, find_paragraph_any};
+// Its own line, not folded into a sorted block: a shared `use` list is where
+// parallel lanes collide (rustfmt is set to Preserve).
+use casual_doc_edit::refused;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, DrawingAnchor, Extent,
@@ -1101,7 +1104,11 @@ impl WasmDocument {
             .filter(|placed| ids.contains(&placed.root))
             .collect();
         if boxes.len() != ids.len() {
-            return Err("every object must be currently placed on the page".to_owned());
+            return Err(refused!(
+                "object.group-unplaced",
+                "One of these objects is not laid out on the page yet, so it cannot be grouped."
+            )
+            .to_owned());
         }
 
         // Document order, which is paint order, which is the child order. The
@@ -1136,7 +1143,11 @@ impl WasmDocument {
             taken.is_none()
         });
         if members.len() != ids.len() {
-            return Err("every object must sit directly in one paragraph".to_owned());
+            return Err(refused!(
+                "object.group-not-sibling",
+                "Objects can only be grouped when they are anchored to the same paragraph."
+            )
+            .to_owned());
         }
 
         let left = members.iter().map(|m| m.left_emu).min().unwrap_or(0);
@@ -1203,8 +1214,14 @@ impl WasmDocument {
                 height_emu: member.height_emu.max(1),
             };
             children.push(
-                into_group_child(member.inline, offset, child_extent)
-                    .ok_or_else(|| "only floating objects can be grouped".to_owned())?,
+                into_group_child(member.inline, offset, child_extent).ok_or_else(|| {
+                    refused!(
+                        "object.group-inline",
+                        "Only floating objects can be grouped. An object that sits in the line \
+                         of text has to be made floating first."
+                    )
+                    .to_owned()
+                })?,
             );
         }
 
@@ -1625,7 +1642,11 @@ impl WasmDocument {
             }
         }
         if ids.len() < 2 {
-            return Err("grouping needs at least two objects".to_owned());
+            return Err(refused!(
+                "object.group-too-few",
+                "Select at least two objects to group."
+            )
+            .to_owned());
         }
 
         let mut paragraph = None;
@@ -1684,12 +1705,20 @@ impl WasmDocument {
                 None => page = Some(object.page),
                 Some(first) if first == object.page => {}
                 Some(_) => {
-                    return Err("objects on different pages cannot be grouped".to_owned());
+                    return Err(refused!(
+                        "object.group-across-pages",
+                        "Objects on different pages cannot be grouped."
+                    )
+                    .to_owned());
                 }
             }
         }
         if placed != ids.len() {
-            return Err("every object must be currently placed on the page".to_owned());
+            return Err(refused!(
+                "object.group-unplaced",
+                "One of these objects is not laid out on the page yet, so it cannot be grouped."
+            )
+            .to_owned());
         }
         Ok((paragraph, ids))
     }
@@ -1830,7 +1859,11 @@ impl WasmDocument {
             .ok_or_else(|| "not an object".to_owned())?;
         let mut inlines = source.inlines.clone();
         if !edit_transform_in_inlines(&mut inlines, object, edit) {
-            return Err("this object does not model a rotation or a flip".to_owned());
+            return Err(refused!(
+                "object.no-rotation",
+                "This object has no rotation or flip to change."
+            )
+            .to_owned());
         }
         self.apply_action_caret_as(
             vec![Operation::SetInlines {

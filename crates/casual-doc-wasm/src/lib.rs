@@ -14,7 +14,10 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::ParagraphIndex;
+// Its own line, not folded into a sorted block: a shared `use` list is where
+// parallel lanes collide (rustfmt is set to Preserve).
 use casual_doc_edit::SplitProperties;
+use casual_doc_edit::refused;
 // The total structural deep copy (`docs/129` §2) and the report of what a
 // same-document copy could not duplicate. Its own `use` line, where the pinned
 // rustfmt sorts it, so a parallel branch adding an import does not conflict here.
@@ -106,6 +109,9 @@ use casual_doc_ooxml::DocxPackage;
 use casual_doc_ooxml::PackageLimits;
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
 use casual_doc_selection::{CellRange, TableCellSelection, cell_grid_start};
+// Its own line, not folded into the block above: a shared `use` list is where
+// parallel lanes collide (rustfmt is set to Preserve).
+use casual_doc_selection::{cell_merge, unstraddled_column_boundaries};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use wasm_bindgen::Clamped;
@@ -2759,7 +2765,13 @@ impl WasmDocument {
             cursor = insert_end;
         }
         if ops.is_empty() {
-            return Err(to_js("nothing to paste".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.clipboard-empty",
+                    "There is nothing on the clipboard to paste."
+                )
+                .into(),
+            ));
         }
         self.apply_action_caret_as(ops, cursor, HistoryKind::Paste)
             .map_err(to_js)
@@ -2847,7 +2859,13 @@ impl WasmDocument {
         let fragment: StructuredClipboard = serde_json::from_str(&fragment_json)
             .map_err(|e| to_js(format!("invalid structured clipboard payload: {e}")))?;
         if fragment.blocks.is_empty() {
-            return Err(to_js("nothing to paste".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.clipboard-empty",
+                    "There is nothing on the clipboard to paste."
+                )
+                .into(),
+            ));
         }
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
@@ -2861,13 +2879,31 @@ impl WasmDocument {
         // between whole body blocks.
         let body = self.document.body();
         let Some(block_index) = body.iter().position(|b| block_holds(b, start.node)) else {
-            return Err(to_js("paste target is not in the document body".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.body-only",
+                    "This content can only be pasted into the document body."
+                )
+                .into(),
+            ));
         };
         let Some(BlockNode::Paragraph(caret_paragraph)) = body.get(block_index) else {
-            return Err(to_js("structured paste targets a body paragraph".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.body-paragraph-only",
+                    "This content can only be pasted into an ordinary body paragraph."
+                )
+                .into(),
+            ));
         };
         if caret_paragraph.id != start.node {
-            return Err(to_js("structured paste targets a body paragraph".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.body-paragraph-only",
+                    "This content can only be pasted into an ordinary body paragraph."
+                )
+                .into(),
+            ));
         }
         let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
 
@@ -2944,7 +2980,13 @@ impl WasmDocument {
         let fragment: ExternalFragment = serde_json::from_str(&fragment_json)
             .map_err(|e| to_js(format!("invalid external structured payload: {e}")))?;
         if fragment.blocks.is_empty() {
-            return Err(to_js("nothing to paste".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.clipboard-empty",
+                    "There is nothing on the clipboard to paste."
+                )
+                .into(),
+            ));
         }
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
@@ -2958,13 +3000,31 @@ impl WasmDocument {
         // between whole body blocks.
         let body = self.document.body();
         let Some(block_index) = body.iter().position(|b| block_holds(b, start.node)) else {
-            return Err(to_js("paste target is not in the document body".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.body-only",
+                    "This content can only be pasted into the document body."
+                )
+                .into(),
+            ));
         };
         let Some(BlockNode::Paragraph(caret_paragraph)) = body.get(block_index) else {
-            return Err(to_js("structured paste targets a body paragraph".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.body-paragraph-only",
+                    "This content can only be pasted into an ordinary body paragraph."
+                )
+                .into(),
+            ));
         };
         if caret_paragraph.id != start.node {
-            return Err(to_js("structured paste targets a body paragraph".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.body-paragraph-only",
+                    "This content can only be pasted into an ordinary body paragraph."
+                )
+                .into(),
+            ));
         }
         let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
 
@@ -2974,7 +3034,13 @@ impl WasmDocument {
             blocks.push(self.build_external_block(block).map_err(to_js)?);
         }
         if blocks.is_empty() {
-            return Err(to_js("nothing to paste".into()));
+            return Err(to_js(
+                refused!(
+                    "paste.clipboard-empty",
+                    "There is nothing on the clipboard to paste."
+                )
+                .into(),
+            ));
         }
         let caret = blocks
             .first()
@@ -3990,7 +4056,9 @@ impl WasmDocument {
             .sections
             .iter()
             .find(|boundary| boundary.id == split.current)
-            .ok_or_else(|| "refused: the caret's section is not defined".to_owned())?
+            .ok_or_else(|| {
+                refused!("section.not-defined", "The caret's section is not defined.").to_owned()
+            })?
             .clone();
         let new_section = SectionId::new(
             self.edit_ids
@@ -5577,7 +5645,13 @@ impl WasmDocument {
             });
         }
         if ops.is_empty() {
-            return Err(to_js("no contiguous numbered items to restart".into()));
+            return Err(to_js(
+                refused!(
+                    "list.restart-none",
+                    "There are no numbered items here to restart."
+                )
+                .into(),
+            ));
         }
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
@@ -5747,7 +5821,13 @@ impl WasmDocument {
         let Some(current) =
             paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
         else {
-            return Err(to_js("list formatting requires a list item".into()));
+            return Err(to_js(
+                refused!(
+                    "list.format-not-list",
+                    "List formatting applies to a list item."
+                )
+                .into(),
+            ));
         };
         let level = current.level;
 
@@ -5831,7 +5911,13 @@ impl WasmDocument {
             });
         }
         if ops.is_empty() {
-            return Err(to_js("no list paragraphs to reformat".into()));
+            return Err(to_js(
+                refused!(
+                    "list.reformat-none",
+                    "This selection has no list items to reformat."
+                )
+                .into(),
+            ));
         }
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
@@ -6099,6 +6185,21 @@ impl WasmDocument {
     /// Metadata about the innermost table containing `node`, used by the editor's
     /// table-selection affordances. Returns an empty/not-found object when the
     /// node is outside a table.
+    ///
+    /// Carries per-cell merge state as well as the whole-table `regular` flag
+    /// (`docs/141` TBL-20): [`TableInfo::merged`] and the `merge*` rectangle
+    /// answer "is THIS cell merged, and which region", and
+    /// [`TableInfo::resizable_column_boundaries`] answers "which boundaries may
+    /// be dragged" — the two questions the UI was previously guessing at from
+    /// `regular` alone.
+    ///
+    /// **Complexity: O(document) for the three id lookups it already made, plus
+    /// O(cells of THIS table) for the merge geometry** — one pass over the
+    /// table's own rows, which is why the merge work is computed from the table
+    /// already in hand and never by resolving a cell id per cell. This is the
+    /// caret path (`docs/107` §4), so the added cost must not grow with the
+    /// document, and `table_info_is_linear_in_the_table_not_the_document` holds
+    /// it by doubling.
     #[wasm_bindgen(js_name = tableInfo)]
     #[must_use]
     pub fn table_info(&self, node: &str) -> TableInfo {
@@ -6114,6 +6215,7 @@ impl WasmDocument {
         let Some(t) = find_table(&self.document, table) else {
             return TableInfo::none();
         };
+        let merge = cell_merge(t, row as usize, col as usize);
         TableInfo {
             found: true,
             table: table.to_string(),
@@ -6122,6 +6224,13 @@ impl WasmDocument {
             rows: t.rows.len() as u32,
             columns: table_column_count(t) as u32,
             regular: table_is_regular(t),
+            merged: merge.is_some_and(|m| m.merged),
+            grid_column: merge.map_or(col, |m| m.grid_column),
+            merge_first_row: merge.map_or(row, |m| m.first_row),
+            merge_first_column: merge.map_or(col, |m| m.first_column),
+            merge_rows: merge.map_or(1, |m| m.rows),
+            merge_columns: merge.map_or(1, |m| m.columns),
+            resizable_column_boundaries: unstraddled_column_boundaries(t),
             header_row: t
                 .rows
                 .get(row as usize)
@@ -6262,13 +6371,23 @@ impl WasmDocument {
                 }
             };
         } else if patch.row_height_twips.is_some() {
-            return Err(to_js("row height requires a row height rule".into()));
+            return Err(to_js(
+                refused!(
+                    "table.row-height-rule-required",
+                    "Choose a row height rule (At least, or Exactly) before setting the height."
+                )
+                .into(),
+            ));
         }
 
         if let Some(width) = patch.column_width_twips {
             ensure_optional_twips("column width", width)?;
             if !table_is_regular(&replacement) {
-                return Err(to_js("column width requires a regular table".into()));
+                return Err(to_js(refused!(
+                    "table.column-width-merged",
+                    "A column width applies to the whole column, and a merged cell here crosses \
+                     it. Unmerge the cells in this column first."
+                ).into()));
             }
             let column = column as usize;
             let columns = table_column_count(&replacement);
@@ -6338,7 +6457,11 @@ impl WasmDocument {
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
         if !table_is_regular(&replacement) {
-            return Err(to_js("column width requires a regular table".into()));
+            return Err(to_js(refused!(
+                "table.column-width-merged",
+                "A column width applies to the whole column, and a merged cell here crosses it. \
+                 Unmerge the cells in this column first."
+            ).into()));
         }
         let col = column as usize;
         if col >= table_column_count(&replacement) {
@@ -6380,7 +6503,14 @@ impl WasmDocument {
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
         if !table_is_regular(&replacement) {
-            return Err(to_js("column distribution requires a regular table".into()));
+            return Err(to_js(
+                refused!(
+                    "table.distribute-columns-merged",
+                    "Distribute columns evenly needs a table with no merged cells. Unmerge them \
+                 first."
+                )
+                .into(),
+            ));
         }
         let columns = table_column_count(&replacement);
         if columns < 2 {
@@ -6394,7 +6524,13 @@ impl WasmDocument {
             .take(columns)
             .map(|column| column.width_twips)
             .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| to_js("column distribution requires explicit column widths".into()))?;
+            .ok_or_else(|| {
+                to_js(refused!(
+                "table.distribute-columns-no-widths",
+                "This table has no column widths to share out yet. Set a column width first, or \
+                 switch it to a fixed layout."
+            ).into())
+            })?;
         let total = widths.iter().map(|width| i64::from(*width)).sum::<i64>();
         let distributed = distribute_twips(total, columns)?;
         replacement
@@ -6428,18 +6564,38 @@ impl WasmDocument {
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
         if !table_is_regular(&replacement) {
-            return Err(to_js("row distribution requires a regular table".into()));
+            return Err(to_js(
+                refused!(
+                    "table.distribute-rows-merged",
+                    "Distribute rows evenly needs a table with no merged cells. Unmerge them first."
+                )
+                .into(),
+            ));
         }
         let rows = replacement.rows.len();
         if rows < 2 {
-            return Err(to_js("row distribution requires at least two rows".into()));
+            return Err(to_js(
+                refused!(
+                    "table.distribute-rows-too-few",
+                    "Distribute rows evenly needs at least two rows."
+                )
+                .into(),
+            ));
         }
         let rule = replacement.rows[0]
             .properties
             .height
             .rule
             .filter(|rule| matches!(rule, HeightRule::AtLeast | HeightRule::Exact))
-            .ok_or_else(|| to_js("row distribution requires explicit row heights".into()))?;
+            .ok_or_else(|| {
+                to_js(
+                    refused!(
+                        "table.distribute-rows-no-heights",
+                        "These rows have no set height to share out. Give a row a height first."
+                    )
+                    .into(),
+                )
+            })?;
         let heights = replacement
             .rows
             .iter()
@@ -6454,7 +6610,12 @@ impl WasmDocument {
                     .value_twips
                     .filter(|value| *value > 0)
                     .map(i64::from)
-                    .ok_or_else(|| to_js("row distribution requires explicit row heights".into()))
+                    .ok_or_else(|| {
+                        to_js(refused!(
+                        "table.distribute-rows-no-heights",
+                        "These rows have no set height to share out. Give a row a height first."
+                    ).into())
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let total = heights.iter().sum::<i64>();
@@ -6749,7 +6910,15 @@ impl WasmDocument {
                     style.kind == StyleKind::Table && style.name.as_deref() == Some(name)
                 })
                 .map(|(id, _)| *id)
-                .ok_or_else(|| to_js(format!("no table style named {name:?}")))?;
+                .ok_or_else(|| {
+                    to_js(format!(
+                        refused!(
+                            "table.style-unknown",
+                            "This document has no table style named {0:?}."
+                        ),
+                        name
+                    ))
+                })?;
             Some(id)
         };
         let mut properties = find_table(&self.document, table)
@@ -6781,7 +6950,14 @@ impl WasmDocument {
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
         if !table_is_regular(&replacement) {
-            return Err(to_js("sorting requires a regular table".into()));
+            return Err(to_js(
+                refused!(
+                    "table.sort-merged",
+                    "Sorting needs a table with no merged cells, because a merged cell belongs to \
+                 more than one row. Unmerge them first."
+                )
+                .into(),
+            ));
         }
         let descending = match direction {
             "ascending" | "asc" => false,
@@ -6804,7 +6980,13 @@ impl WasmDocument {
             .is_some_and(|row| row.properties.header);
         let start = usize::from(header);
         if replacement.rows.len().saturating_sub(start) < 2 {
-            return Err(to_js("sorting requires at least two data rows".into()));
+            return Err(to_js(
+                refused!(
+                    "table.sort-too-few-rows",
+                    "Sorting needs at least two rows below the header row."
+                )
+                .into(),
+            ));
         }
         let mut keyed = replacement.rows.split_off(start);
         for row in &keyed {
@@ -6848,19 +7030,40 @@ impl WasmDocument {
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
         if !table_is_regular(&replacement) {
-            return Err(to_js("formulas require a regular table".into()));
+            return Err(to_js(
+                refused!(
+                    "table.formula-merged",
+                    "A table formula needs a table with no merged cells, because a merged cell \
+                 belongs to more than one row and column."
+                )
+                .into(),
+            ));
         }
         let (operation, range) = parse_table_formula(formula)?;
         let values = formula_values(&replacement, row as usize, column as usize, &range)?;
         if values.is_empty() {
-            return Err(to_js("formula range contains no numeric cells".into()));
+            return Err(to_js(
+                refused!(
+                    "table.formula-no-numbers",
+                    "The cells this formula covers hold no numbers."
+                )
+                .into(),
+            ));
         }
         let result = match operation.as_str() {
             "SUM" => values.iter().sum::<f64>(),
             "AVERAGE" => values.iter().sum::<f64>() / values.len() as f64,
             "MIN" => values.iter().copied().fold(f64::INFINITY, f64::min),
             "MAX" => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            _ => return Err(to_js("unsupported table formula operation".into())),
+            _ => {
+                return Err(to_js(
+                    refused!(
+                        "table.formula-unsupported-function",
+                        "That formula function is not supported yet."
+                    )
+                    .into(),
+                ));
+            }
         };
         let cell = replacement
             .rows
@@ -6874,7 +7077,12 @@ impl WasmDocument {
                 BlockNode::Paragraph(paragraph) => Some(paragraph),
                 _ => None,
             })
-            .ok_or_else(|| to_js("formula cell must begin with a paragraph".into()))?;
+            .ok_or_else(|| {
+                to_js(refused!(
+                "table.formula-target-not-text",
+                "A formula goes in a cell that starts with a paragraph, and this one does not."
+            ).into())
+            })?;
         let run_id = paragraph
             .inlines
             .iter()
@@ -7029,7 +7237,15 @@ impl WasmDocument {
             .ok_or_else(|| to_js("caret is not inside a table".into()))?;
         let target = self
             .table_cell_anchor(table, row, col, forward)
-            .ok_or_else(|| to_js("no adjacent table cell".into()))?;
+            .ok_or_else(|| {
+                to_js(
+                    refused!(
+                        "table.no-adjacent-cell",
+                        "There is no next cell in this table."
+                    )
+                    .into(),
+                )
+            })?;
         Ok(Caret {
             node: target.to_string(),
             offset: 0,
@@ -7180,6 +7396,18 @@ impl WasmDocument {
                     // refuses on release, which is the dead-control defect this
                     // design exists to remove.
                     regular: model.is_some_and(table_is_regular),
+                    // Per boundary, so a merge disarms the boundary it makes
+                    // ambiguous rather than the whole table (`docs/141` TBL-20).
+                    // Read from the MODEL for the same reason `regular` is: a
+                    // merge on a continuation page must disarm the same boundary
+                    // on page one, or the reader sees a zone that refuses on
+                    // release and nothing on screen explaining why.
+                    draggable_columns: model.map_or_else(Vec::new, |table| {
+                        let mut columns = unstraddled_column_boundaries(table);
+                        let outer = table_column_count(table).saturating_sub(1) as u32;
+                        columns.push(outer);
+                        columns
+                    }),
                     rows: table.rows,
                     columns: table.columns,
                     x: table.rect.origin.x.raw(),
@@ -7256,19 +7484,44 @@ impl WasmDocument {
         delta_twips: i32,
         mode: &str,
     ) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
+        self.move_table_column_boundary_inner(node, boundary, delta_twips, mode)
+            .map_err(to_js)
+    }
+
+    /// See [`WasmDocument::move_table_column_boundary`]. Split out for the reason
+    /// [`WasmDocument::move_table_row_inner`] is: refusal text a native guard can
+    /// read, since a native target cannot build a `JsError` at all.
+    fn move_table_column_boundary_inner(
+        &mut self,
+        node: &str,
+        boundary: u32,
+        delta_twips: i32,
+        mode: &str,
+    ) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
         let (table, _) = locate_table_cell(&self.document, nid)
-            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
         let mut replacement = find_table(&self.document, table)
-            .ok_or_else(|| to_js("table not found".into()))?
+            .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        if !table_is_regular(&replacement) {
-            return Err(to_js("column width requires a regular table".into()));
-        }
         let columns = table_column_count(&replacement);
         let col = boundary as usize;
         if col >= columns {
-            return Err(to_js("column is outside the table".into()));
+            return Err("column is outside the table".to_owned());
+        }
+        // Per BOUNDARY, not per table (`docs/141` TBL-20). A merge makes one
+        // boundary ambiguous — the cell covering both of its sides has no line
+        // there to drag — and says nothing about the other three. Refusing the
+        // whole table disarmed a gesture that works. The table's own trailing
+        // edge is never straddled, so it stays draggable.
+        let draggable = unstraddled_column_boundaries(&replacement);
+        if col + 1 < columns && !draggable.contains(&boundary) {
+            return Err(refused!(
+                "table.column-boundary-straddled",
+                "A merged cell covers both sides of this border, so there is no single \
+                 column to resize. Unmerge it first."
+            )
+            .to_owned());
         }
         let painted = self.painted_column_widths(table);
         let width_of = |index: usize| {
@@ -7294,14 +7547,39 @@ impl WasmDocument {
                 .grid
                 .resize(columns, GridColumn { width_twips: None });
         }
+        let mut touched = Vec::with_capacity(widths.len());
         for (index, width) in widths {
             let width = width.clamp(MIN_COLUMN_TWIPS, 31_680);
             if let Some(grid_col) = replacement.grid.get_mut(index) {
                 grid_col.width_twips = Some(width);
             }
-            for row in &mut replacement.rows {
-                if let Some(cell) = row.cells.get_mut(index) {
-                    cell.properties.width = Some(TableWidth::dxa(width));
+            touched.push(index);
+        }
+        // Each affected cell's `w:tcW` is re-derived from the grid columns it
+        // COVERS, rather than written at `cells[index]`. Cell index is grid column
+        // only until some cell carries `w:gridSpan`, so the old write landed on
+        // the wrong cell in every row below a merge — and a cell spanning two
+        // columns has to carry their sum, not one of them. On a regular table
+        // every span is 1 and this is the previous behaviour exactly.
+        let grid: Vec<Option<i32>> = replacement
+            .grid
+            .iter()
+            .map(|column| column.width_twips)
+            .collect();
+        for row in &mut replacement.rows {
+            let mut start = 0usize;
+            for cell in &mut row.cells {
+                let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+                let covered = start..start + span;
+                start += span;
+                if !touched.iter().any(|index| covered.contains(index)) {
+                    continue;
+                }
+                let total: Option<i32> = grid
+                    .get(covered)
+                    .and_then(|columns| columns.iter().copied().sum::<Option<i32>>());
+                if let Some(total) = total {
+                    cell.properties.width = Some(TableWidth::dxa(total));
                 }
             }
         }
@@ -7312,7 +7590,6 @@ impl WasmDocument {
             }],
             HistoryKind::TableResize,
         )
-        .map_err(to_js)
     }
 
     /// The painted width of each of `table`'s columns, in twips — the fallback
@@ -7350,7 +7627,13 @@ impl WasmDocument {
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
         if !table_is_regular(&original) {
-            return Err(to_js("merge requires a regular table".into()));
+            return Err(to_js(
+                refused!(
+                    "table.merge-already-merged",
+                    "This table already has merged cells. Unmerge them before merging a new range."
+                )
+                .into(),
+            ));
         }
         let rows = original.rows.len();
         let cols = table_column_count(&original);
@@ -7361,7 +7644,13 @@ impl WasmDocument {
             _ => return Err(to_js("unknown table selection mode".into())),
         };
         if r0 == r1 && c0 == c1 {
-            return Err(to_js("select at least two cells to merge".into()));
+            return Err(to_js(
+                refused!(
+                    "table.merge-too-few-cells",
+                    "Select at least two cells to merge."
+                )
+                .into(),
+            ));
         }
         let replacement =
             merge_regular_table_selection(original, r0, r1, c0, c1, &mut self.edit_ids)
@@ -7521,10 +7810,18 @@ impl WasmDocument {
             (table, t.clone(), range)
         };
         if !table_is_regular(&original) {
-            return Err("merge requires a regular table".to_owned());
+            return Err(refused!(
+                "table.merge-already-merged",
+                "This table already has merged cells. Unmerge them before merging a new range."
+            )
+            .to_owned());
         }
         if range.is_single_cell() {
-            return Err("select at least two cells to merge".to_owned());
+            return Err(refused!(
+                "table.merge-too-few-cells",
+                "Select at least two cells to merge."
+            )
+            .to_owned());
         }
         let (r0, r1) = (range.first_row(), range.last_row());
         let (c0, c1) = (range.first_column(), range.last_column());
@@ -9190,12 +9487,20 @@ impl WasmDocument {
         date: Option<String>,
     ) -> Result<EditResult, String> {
         if text.is_empty() {
-            return Err("comment range and text must be non-empty".to_string());
+            return Err(refused!(
+                "comment.text-required",
+                "Select some text and write a comment on it."
+            )
+            .to_string());
         }
         let start_node = node_id_msg(start_node)?;
         let end_node = node_id_msg(end_node)?;
         if start_node == end_node && start >= end {
-            return Err("comment range and text must be non-empty".to_string());
+            return Err(refused!(
+                "comment.text-required",
+                "Select some text and write a comment on it."
+            )
+            .to_string());
         }
         let author = self.resolve_author(author);
         let initials = self.resolve_initials(initials);
@@ -9336,7 +9641,13 @@ impl WasmDocument {
         date: Option<String>,
     ) -> Result<EditResult, JsValue> {
         if text.is_empty() {
-            return Err(to_js("reply text must be non-empty".to_string()));
+            return Err(to_js(
+                refused!(
+                    "comment.reply-text-required",
+                    "Write something before posting the reply."
+                )
+                .to_string(),
+            ));
         }
         let author = self.resolve_author(author);
         let initials = self.resolve_initials(initials);
@@ -9962,7 +10273,11 @@ impl WasmDocument {
                     },
                     &mut self.edit_ids,
                 ) {
-                    return Err("suggested deletion requires top-level paragraph text".to_string());
+                    return Err(refused!(
+                        "review.deletion-not-body-text",
+                        "A deletion can only be suggested over ordinary paragraph text."
+                    )
+                    .to_string());
                 }
             }
             *body = mixed;
@@ -9990,7 +10305,11 @@ impl WasmDocument {
             },
             &mut self.edit_ids,
         ) {
-            return Err("suggested deletion requires top-level paragraph text".to_string());
+            return Err(refused!(
+                "review.deletion-not-body-text",
+                "A deletion can only be suggested over ordinary paragraph text."
+            )
+            .to_string());
         }
         Ok(())
     }
@@ -10140,7 +10459,11 @@ impl WasmDocument {
             .ok_or_else(|| "paragraph not found".to_string())?;
         let caret = Pos::new(node, self.paragraph_text(node).len() as u32);
         let Some(next) = adjacent_next_paragraph(&self.document, node) else {
-            return Err("There is no following paragraph to join this one to".to_string());
+            return Err(refused!(
+                "review.no-following-paragraph",
+                "There is no following paragraph to join this one to."
+            )
+            .to_string());
         };
         let operation = match &current.mark_revision {
             Some(mark) if mark.kind == MarkRevisionKind::Insertion && mark.author == author => {
@@ -10253,7 +10576,11 @@ impl WasmDocument {
         let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
         let nodes = self.paragraphs_in_selection(start, end);
         if nodes.len() < 2 {
-            return Err("a cross-paragraph suggestion needs a range across paragraphs".to_string());
+            return Err(refused!(
+                "review.cross-paragraph-range-required",
+                "This suggestion needs a selection that crosses a paragraph break."
+            )
+            .to_string());
         }
         for pair in nodes.windows(2) {
             if adjacent_next_paragraph(&self.document, pair[0]) != Some(pair[1]) {
@@ -10351,7 +10678,12 @@ impl WasmDocument {
                     }
                     Some(mark) if mark.kind == MarkRevisionKind::Deletion => {}
                     Some(_) => {
-                        return Err("A paragraph break in this range is another reviewer's suggestion; accept or reject it first".to_string());
+                        return Err(refused!(
+                            "review.paragraph-break-other-author",
+                            "A paragraph break in this range is another reviewer's suggestion. \
+                             Accept or reject that first."
+                        )
+                        .to_string());
                     }
                     None => {
                         next.mark_revision = Some(Box::new(MarkRevision {
@@ -10749,7 +11081,13 @@ impl WasmDocument {
         collect_review_format_ids_all(&self.document, &mut format_ids);
         let paragraph_revisions = collect_paragraph_revisions_all(&self.document);
         if ids.is_empty() && format_ids.is_empty() && paragraph_revisions.is_empty() {
-            return Err(to_js("no tracked revisions".to_string()));
+            return Err(to_js(
+                refused!(
+                    "review.no-revisions",
+                    "This document has no tracked changes."
+                )
+                .to_string(),
+            ));
         }
         let pairs = collect_review_move_pairs_all(&self.document);
         let paired_move_ids: BTreeSet<NodeId> = pairs
@@ -11217,7 +11555,10 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let style_ref = self.style_id_by_name(style_name);
         if !style_name.is_empty() && style_ref.is_none() {
-            return Err(to_js(format!("no paragraph style named {style_name:?}")));
+            return Err(to_js(format!(
+                refused!("style.unknown", "This document has no style named {0:?}."),
+                style_name
+            )));
         }
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
             p.style_ref = style_ref;
@@ -11321,9 +11662,12 @@ impl WasmDocument {
         let (start, _end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let id = self
-            .style_id_by_name(name)
-            .ok_or_else(|| to_js(format!("no paragraph style named {name:?}")))?;
+        let id = self.style_id_by_name(name).ok_or_else(|| {
+            to_js(format!(
+                refused!("style.unknown", "This document has no style named {0:?}."),
+                name
+            ))
+        })?;
         let mut style = self
             .document
             .definitions()
@@ -11359,10 +11703,15 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let name = name.trim();
         if name.is_empty() {
-            return Err(to_js("style name required".into()));
+            return Err(to_js(
+                refused!("style.name-required", "Give the style a name.").into(),
+            ));
         }
         if self.style_id_by_name(name).is_some() {
-            return Err(to_js(format!("a style named {name:?} already exists")));
+            return Err(to_js(format!(
+                refused!("style.name-taken", "A style named {0:?} already exists."),
+                name
+            )));
         }
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
@@ -12197,7 +12546,11 @@ impl WasmDocument {
     /// `JsValue` panics off-wasm).
     fn update_comment_inner(&mut self, comment: &str, text: &str) -> Result<EditResult, String> {
         if text.is_empty() {
-            return Err("comment text must be non-empty".to_string());
+            return Err(refused!(
+                "comment.edit-text-required",
+                "Write something before posting the comment."
+            )
+            .to_string());
         }
         let id = NodeId::from_str(comment)
             .map(CommentId::new)
@@ -12881,9 +13234,11 @@ impl WasmDocument {
         }
         for op in ops {
             if !self.op_is_inside_a_form_field(op) {
-                return Err("refused: This document is protected: only its form \
-                     fields can be edited"
-                    .to_owned());
+                return Err(refused!(
+                    "document.protected-forms-only",
+                    "This document is protected: only its form fields can be edited."
+                )
+                .to_owned());
             }
         }
         Ok(())
@@ -13423,7 +13778,11 @@ impl WasmDocument {
         let (focus_table, focus_cell) = locate_cell(&self.document, focus)
             .ok_or_else(|| "the selection end is not in a table cell".to_owned())?;
         if anchor_table != focus_table {
-            return Err("a cell selection cannot span two tables".to_owned());
+            return Err(refused!(
+                "table.selection-two-tables",
+                "A cell selection has to stay inside one table."
+            )
+            .to_owned());
         }
         let table =
             find_table(&self.document, anchor_table).ok_or_else(|| "table not found".to_owned())?;
@@ -13460,7 +13819,11 @@ impl WasmDocument {
                 .collect()
         };
         if targets.is_empty() {
-            return Err("the selection contains no cells".to_owned());
+            return Err(refused!(
+                "table.selection-no-cells",
+                "This selection covers no table cells."
+            )
+            .to_owned());
         }
         let ops = targets
             .into_iter()
@@ -13561,10 +13924,18 @@ impl WasmDocument {
         let Some(current) =
             paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
         else {
-            return Err("continue numbering requires a numbered list item".into());
+            return Err(refused!(
+                "list.continue-not-numbered",
+                "Continue numbering works on a numbered list item."
+            )
+            .into());
         };
         if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
-            return Err("continue numbering requires a numbered list item".into());
+            return Err(refused!(
+                "list.continue-not-numbered",
+                "Continue numbering works on a numbered list item."
+            )
+            .into());
         }
 
         // One index over every paragraph, built by a single walk: resolving each
@@ -13591,13 +13962,21 @@ impl WasmDocument {
                 continue;
             }
             if numbering.instance == current.instance {
-                return Err("this item is already part of a continuous numbered list".into());
+                return Err(refused!(
+                    "list.continue-already",
+                    "This item already continues the numbering above it."
+                )
+                .into());
             }
             target_instance = Some(numbering.instance);
             break;
         }
         let Some(target_instance) = target_instance else {
-            return Err("no preceding numbered list at this level to continue".into());
+            return Err(refused!(
+                "list.continue-no-preceding",
+                "There is no earlier numbered list at this level to continue from."
+            )
+            .into());
         };
 
         // Adopt the earlier list's instance for the caret item and the contiguous
@@ -13624,7 +14003,11 @@ impl WasmDocument {
             });
         }
         if ops.is_empty() {
-            return Err("no contiguous numbered items to continue".into());
+            return Err(refused!(
+                "list.continue-none",
+                "There are no numbered items here to continue."
+            )
+            .into());
         }
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
     }
@@ -14613,13 +14996,21 @@ fn drop_cap_size_half_points(lines: u8) -> u32 {
 /// building the `JsValue` panics outside a browser.
 fn drop_cap_cut(text: &str) -> Result<u32, String> {
     let mut chars = text.chars();
-    let first = chars
-        .next()
-        .ok_or_else(|| "an empty paragraph has no initial to drop".to_string())?;
+    let first = chars.next().ok_or_else(|| {
+        refused!(
+            "dropcap.paragraph-empty",
+            "An empty paragraph has no first letter to drop."
+        )
+        .to_string()
+    })?;
     if chars.next().is_none() {
         // A frame needs a following paragraph to wrap beside it (`flow.rs` pairs
         // them), so a one-character paragraph would be framed and draw nothing.
-        return Err("a one-character paragraph has no body to wrap beside the initial".to_string());
+        return Err(refused!(
+            "dropcap.paragraph-too-short",
+            "A one-character paragraph has no text left to wrap beside a drop cap."
+        )
+        .to_string());
     }
     u32::try_from(first.len_utf8()).map_err(|_| "initial too long to address".to_string())
 }
@@ -17350,7 +17741,11 @@ fn validate_authored_revision_author(author: Option<&str>) -> Result<(), String>
     if author.is_some_and(|value| !value.is_empty() && value.len() <= 255) {
         Ok(())
     } else {
-        Err("editor-authored suggestions require a non-empty author".to_owned())
+        Err(refused!(
+            "review.author-required",
+            "Set an author name before making suggestions."
+        )
+        .to_owned())
     }
 }
 
@@ -17360,7 +17755,7 @@ fn validate_active_author_name(name: &str) -> Result<(), String> {
     if name.len() <= 255 {
         Ok(())
     } else {
-        Err("active author name must be at most 255 bytes".to_owned())
+        Err(refused!("review.author-too-long", "That author name is too long.").to_owned())
     }
 }
 
@@ -22419,6 +22814,7 @@ pub struct CellRangeInfo {
     cells: u32,
     expanded: bool,
     reason: String,
+    reason_code: String,
 }
 
 impl CellRangeInfo {
@@ -22433,10 +22829,24 @@ impl CellRangeInfo {
             cells: range.cells().len() as u32,
             expanded: range.expanded(),
             reason: String::new(),
+            reason_code: String::new(),
         }
     }
 
-    fn refused(reason: String) -> Self {
+    /// A refusal, split into the sentence a reader sees and the code a host
+    /// routes.
+    ///
+    /// [`reason`](Self::reason) is READ AND DISPLAYED directly
+    /// (`webapp/src/table_range.mjs` passes it to the status line), never thrown,
+    /// so it does not pass through `to_js` and must not carry the wire format's
+    /// marker or its machine field. Splitting here is what keeps one refusal
+    /// mechanism serving both a thrown error and a reported one.
+    fn refused(message: String) -> Self {
+        let (text, code) = casual_doc_edit::refusal::split(&message);
+        let reason = text
+            .strip_prefix(casual_doc_edit::refusal::MARKER)
+            .unwrap_or(text)
+            .to_owned();
         Self {
             found: false,
             table: String::new(),
@@ -22446,6 +22856,7 @@ impl CellRangeInfo {
             last_column: 0,
             cells: 0,
             expanded: false,
+            reason_code: code.unwrap_or_default().to_owned(),
             reason,
         }
     }
@@ -22534,11 +22945,21 @@ impl CellRangeInfo {
         self.expanded
     }
 
-    /// Why no rectangle was produced; `""` when [`found`](Self::found).
+    /// Why no rectangle was produced, as a sentence for the reader; `""` when
+    /// [`found`](Self::found).
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn reason(&self) -> String {
         self.reason.clone()
+    }
+
+    /// The stable code for [`reason`](Self::reason), for a host that routes it
+    /// through its own catalogue so a non-English reader gets the specific
+    /// reason rather than a generic one. `""` when there is none.
+    #[wasm_bindgen(getter, js_name = reasonCode)]
+    #[must_use]
+    pub fn reason_code(&self) -> String {
+        self.reason_code.clone()
     }
 }
 
@@ -22553,6 +22974,13 @@ pub struct TableInfo {
     rows: u32,
     columns: u32,
     regular: bool,
+    merged: bool,
+    grid_column: u32,
+    merge_first_row: u32,
+    merge_first_column: u32,
+    merge_rows: u32,
+    merge_columns: u32,
+    resizable_column_boundaries: Vec<u32>,
     header_row: bool,
     column_width_twips: i32,
     table_width_twips: i32,
@@ -22577,6 +23005,13 @@ impl TableInfo {
             rows: 0,
             columns: 0,
             regular: false,
+            merged: false,
+            grid_column: 0,
+            merge_first_row: 0,
+            merge_first_column: 0,
+            merge_rows: 0,
+            merge_columns: 0,
+            resizable_column_boundaries: Vec::new(),
             header_row: false,
             column_width_twips: -1,
             table_width_twips: -1,
@@ -22635,6 +23070,76 @@ impl TableInfo {
     #[must_use]
     pub fn regular(&self) -> bool {
         self.regular
+    }
+
+    /// Whether the caret's own cell is part of a merged region (`docs/141`
+    /// TBL-20).
+    ///
+    /// Not the same question as [`regular`](Self::regular), which is true of the
+    /// whole table and answers "does a merge exist ANYWHERE in it". Unmerge was
+    /// enabled off that whole-table answer, so it was offered on every cell of a
+    /// table with one merge in it and refused per cell on click — a control that
+    /// looks live and is not.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn merged(&self) -> bool {
+        self.merged
+    }
+
+    /// The grid column the caret's cell starts at.
+    ///
+    /// [`column`](Self::column) is an index into the row's cells, and the two
+    /// differ the moment any earlier cell in the row carries `w:gridSpan`.
+    #[wasm_bindgen(getter, js_name = gridColumn)]
+    #[must_use]
+    pub fn grid_column(&self) -> u32 {
+        self.grid_column
+    }
+
+    /// Row index of the top-left cell of the caret's merged region — where an
+    /// unmerge has to run from.
+    #[wasm_bindgen(getter, js_name = mergeFirstRow)]
+    #[must_use]
+    pub fn merge_first_row(&self) -> u32 {
+        self.merge_first_row
+    }
+
+    /// Grid column of the top-left cell of the caret's merged region.
+    #[wasm_bindgen(getter, js_name = mergeFirstColumn)]
+    #[must_use]
+    pub fn merge_first_column(&self) -> u32 {
+        self.merge_first_column
+    }
+
+    /// Rows the caret's merged region covers; 1 for an unmerged cell.
+    #[wasm_bindgen(getter, js_name = mergeRows)]
+    #[must_use]
+    pub fn merge_rows(&self) -> u32 {
+        self.merge_rows
+    }
+
+    /// Grid columns the caret's merged region covers; 1 for an unmerged cell.
+    #[wasm_bindgen(getter, js_name = mergeColumns)]
+    #[must_use]
+    pub fn merge_columns(&self) -> u32 {
+        self.merge_columns
+    }
+
+    /// The column boundaries of this table that no cell straddles, by the grid
+    /// column on their leading side — the boundaries a column-resize zone may
+    /// arm (`docs/141` TBL-20).
+    ///
+    /// A merged table used to disarm the resize zone entirely. Only a boundary a
+    /// single cell covers BOTH sides of is genuinely ambiguous; every other one
+    /// resizes exactly as it does in a regular table, and
+    /// `moveTableColumnBoundary` accepts precisely this set. It is a MODEL
+    /// answer, not a page one, so a table split across pages arms the same
+    /// boundaries on its continuation as on its first page — the residual case
+    /// where a merge on page two silently disarmed page one.
+    #[wasm_bindgen(getter, js_name = resizableColumnBoundaries)]
+    #[must_use]
+    pub fn resizable_column_boundaries(&self) -> Vec<u32> {
+        self.resizable_column_boundaries.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -22987,12 +23492,46 @@ fn compatibility_report_json(report: &IoCompatibilityReport) -> Result<String, S
         .map_err(|error| format!("serialize compatibility report: {error}"))
 }
 
+/// A thrown JS `Error`, viewed only to attach the refusal's routing code.
+///
+/// Declared here rather than reached for through `js_sys::Reflect` because
+/// `js-sys` is not a dependency of this crate and is not in the lockfile: one
+/// setter is cheaper than a new dependency and a `dependency-policy` argument.
+#[wasm_bindgen]
+extern "C" {
+    type RefusalError;
+
+    #[wasm_bindgen(method, setter = code)]
+    fn set_code(this: &RefusalError, code: &str);
+}
+
 /// Converts an internal error message to a thrown JS `Error`. Only ever runs at
 /// the `#[wasm_bindgen]` boundary (never under native tests, where constructing a
-/// `JsValue` would panic). Placeholder until the structured `SdkError` model
-/// carries `code`/`severity` across the boundary (doc 57 §5.5).
+/// `JsValue` would panic).
+///
+/// **This is the only place an engine refusal becomes a JS value** (ADR-030 I1),
+/// which is what lets a marked refusal carry two things in one string: the
+/// message arrives here as `refused: <sentence>\u{1f}<code>`, and leaves as an
+/// `Error` whose `message` is `refused: <sentence>` — exactly what
+/// `webapp/src/edit_errors.mjs` already passes through verbatim — and whose
+/// `code` is the stable key a host routes to its own catalogue, so a non-English
+/// reader gets the specific reason rather than the generic one. See
+/// [`casual_doc_edit::refusal`] for the contract and why the code rides inside
+/// the message. An unmarked error is untouched, so nothing here turns internal
+/// vocabulary into prose.
+///
+/// Still the placeholder the structured `SdkError` model will replace when it
+/// carries `code`/`severity` across the boundary (doc 57 §5.5); this key is what
+/// its reader-facing code field will carry.
+///
+/// Complexity: O(message length).
 fn to_js(message: String) -> JsValue {
-    JsError::new(&message).into()
+    let (text, code) = casual_doc_edit::refusal::split(&message);
+    let error: JsValue = JsError::new(text).into();
+    if let Some(code) = code {
+        error.unchecked_ref::<RefusalError>().set_code(code);
+    }
+    error
 }
 
 /// Maps a highlight name (case-insensitive) to a [`HighlightColor`]; unknown
@@ -23551,6 +24090,11 @@ struct ChromeJson {
 struct ChromeTableJson {
     node: String,
     regular: bool,
+    /// Grid columns on the leading side of every column boundary this table
+    /// allows a drag on, plus its own trailing edge (`docs/141` TBL-20). A
+    /// `colEdges` entry whose `i` is absent here is the ambiguous one.
+    #[serde(rename = "draggableColumns")]
+    draggable_columns: Vec<u32>,
     rows: u32,
     columns: u32,
     x: i32,
@@ -23705,18 +24249,36 @@ fn nth_cell_plain_text(row: &TableRow, col: usize) -> Result<String, String> {
             BlockNode::Paragraph(paragraph) => Some(paragraph),
             _ => None,
         })
-        .ok_or_else(|| "sorting requires paragraph text in the sort column".to_owned())?;
+        .ok_or_else(|| {
+            refused!(
+            "table.sort-non-text-cell",
+            "Every cell in the column being sorted has to hold plain paragraph text, and one of \
+             them does not."
+        ).to_owned()
+        })?;
     Ok(node_plain_text(&paragraph.inlines))
 }
 
 fn parse_table_formula(formula: &str) -> Result<(String, String), JsValue> {
     let formula = formula.trim().to_ascii_uppercase();
-    let (operation, rest) = formula
-        .split_once('(')
-        .ok_or_else(|| to_js("formula must look like =SUM(ABOVE)".into()))?;
-    let range = rest
-        .strip_suffix(')')
-        .ok_or_else(|| to_js("formula must end with ')'".into()))?;
+    let (operation, rest) = formula.split_once('(').ok_or_else(|| {
+        to_js(
+            refused!(
+                "table.formula-malformed",
+                "A table formula looks like =SUM(ABOVE)."
+            )
+            .into(),
+        )
+    })?;
+    let range = rest.strip_suffix(')').ok_or_else(|| {
+        to_js(
+            refused!(
+                "table.formula-unclosed",
+                "This formula is missing its closing bracket."
+            )
+            .into(),
+        )
+    })?;
     let operation = operation.strip_prefix('=').unwrap_or(operation);
     if !matches!(operation, "SUM" | "AVERAGE" | "MIN" | "MAX") || !matches!(range, "ABOVE" | "LEFT")
     {
@@ -23748,7 +24310,15 @@ fn formula_values(
             .map(|r| &r.cells[column])
             .collect::<Vec<_>>(),
         "LEFT" => table.rows[row].cells[..column].iter().collect::<Vec<_>>(),
-        _ => return Err(to_js("unsupported formula range".into())),
+        _ => {
+            return Err(to_js(
+                refused!(
+                    "table.formula-unsupported-range",
+                    "That formula range is not supported; use ABOVE, BELOW, LEFT or RIGHT."
+                )
+                .into(),
+            ));
+        }
     };
     for cell in cells {
         let text = cell
@@ -23758,7 +24328,12 @@ fn formula_values(
                 BlockNode::Paragraph(paragraph) => Some(node_plain_text(&paragraph.inlines)),
                 _ => None,
             })
-            .ok_or_else(|| to_js("formula range contains a non-paragraph cell".into()))?;
+            .ok_or_else(|| {
+                to_js(refused!(
+                "table.formula-non-text-cell",
+                "One of the cells this formula covers holds something other than paragraph text."
+            ).into())
+            })?;
         if let Ok(value) = text.trim().parse::<f64>() {
             values.push(value);
         }
@@ -23783,7 +24358,11 @@ fn merge_regular_table_selection(
     ids: &mut IdGenerator,
 ) -> Result<Table, String> {
     if !table_is_regular(&table) || r0 > r1 || c0 > c1 || r1 >= table.rows.len() {
-        return Err("selection is not a regular rectangular table range".into());
+        return Err(refused!(
+            "table.range-not-rectangular",
+            "A cell range has to be a full rectangle of cells, and this selection is not one."
+        )
+        .into());
     }
     let cols = table_column_count(&table);
     if c1 >= cols {
@@ -23848,7 +24427,11 @@ fn split_table_cell(
         cell.properties.vertical_merge,
         Some(VerticalMerge::Continue)
     ) {
-        return Err("split from the top-left merged cell".into());
+        return Err(refused!(
+            "table.unmerge-not-anchor",
+            "Unmerge from the top-left cell of the merged area."
+        )
+        .into());
     }
     let width = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
     let mut height = 1usize;
@@ -23867,7 +24450,11 @@ fn split_table_cell(
         }
     }
     if width == 1 && height == 1 {
-        return Err("cell is not merged".into());
+        return Err(refused!(
+            "table.unmerge-not-merged",
+            "This cell is not merged, so there is nothing to unmerge."
+        )
+        .into());
     }
 
     for r in row_index..row_index + height {
@@ -23928,10 +24515,18 @@ fn split_table_cell_counts(
     let rows = requested_rows.max(1);
     let columns = requested_columns.max(1);
     if rows == 1 && columns == 1 {
-        return Err("choose more than one row or column to split the cell".into());
+        return Err(refused!(
+            "table.split-needs-more-than-one",
+            "Choose more than one row or more than one column to split this cell."
+        )
+        .into());
     }
     if rows > 20 || columns > 20 {
-        return Err("split counts must be between 1 and 20".into());
+        return Err(refused!(
+            "table.split-count-out-of-range",
+            "Split counts have to be between 1 and 20."
+        )
+        .into());
     }
     let target_row = table
         .rows
@@ -23942,15 +24537,27 @@ fn split_table_cell_counts(
         .get(col_index)
         .ok_or_else(|| "cell column is outside the table".to_owned())?;
     if target.properties.vertical_merge.is_some() {
-        return Err("splitting a vertically merged cell is not supported".into());
+        return Err(refused!(
+            "table.split-vertically-merged",
+            "A cell merged down the rows cannot be split into a grid yet. Unmerge it first."
+        )
+        .into());
     }
     let width = target.properties.grid_span.unwrap_or(1).max(1) as usize;
     if columns < width {
-        return Err("columns must be at least the cell's current column span".into());
+        return Err(refused!(
+            "table.split-too-few-columns",
+            "Split into at least as many columns as this cell already spans."
+        )
+        .into());
     }
     let g0 = cell_grid_start(target_row, col_index);
     if table.grid.len() < g0 + width {
-        return Err("the split cell extends past the table grid".into());
+        return Err(refused!(
+            "table.split-past-grid",
+            "This cell reaches past the end of the table grid, so it cannot be split."
+        )
+        .into());
     }
     split_cell_columns_phase(&mut table, row_index, col_index, g0, width, columns, ids)?;
     if rows > 1 {
@@ -23976,8 +24583,13 @@ fn split_cell_columns_phase(
         .iter()
         .map(|column| column.width_twips.unwrap_or(1))
         .sum::<i32>();
-    let widths = distribute_twips(i64::from(grid_total), columns)
-        .map_err(|_| "the cell is too small to split into that many columns".to_owned())?;
+    let widths = distribute_twips(i64::from(grid_total), columns).map_err(|_| {
+        refused!(
+            "table.split-too-narrow",
+            "This cell is too narrow to split into that many columns."
+        )
+        .to_owned()
+    })?;
     table.grid.splice(
         g0..footprint_end,
         widths.iter().map(|width| GridColumn {
@@ -24001,7 +24613,11 @@ fn split_cell_columns_phase(
             .map(|(ci, _)| ci)
             .collect();
         let Some(&first_ci) = overlapping.first() else {
-            return Err("a table row does not reach the split column".into());
+            return Err(refused!(
+                "table.split-row-too-short",
+                "A row of this table does not reach the column being split."
+            )
+            .into());
         };
         let &last_ci = overlapping.last().expect("non-empty overlap");
         let (first_a, _) = ranges[first_ci];
@@ -24027,11 +24643,21 @@ fn split_cell_columns_phase(
             // Several cells tile the footprint (e.g. the plain row under a
             // merged one). They must align to the footprint's edges.
             if first_a != g0 || last_b != footprint_end {
-                return Err("the cells around the split are not aligned to a regular grid".into());
+                return Err(refused!(
+                    "table.split-unaligned",
+                    "The cells around this one do not line up with its edges, so the split would \
+                     be ambiguous. Unmerge the neighbouring cells first."
+                )
+                .into());
             }
             let existing = overlapping.len();
             if columns < existing {
-                return Err("cannot split into fewer columns than the row already spans".into());
+                return Err(refused!(
+                    "table.split-fewer-than-spanned",
+                    "This cell cannot be split into fewer columns than the row below it already \
+                     uses."
+                )
+                .into());
             }
             for (offset, &ci) in overlapping.iter().enumerate() {
                 row.cells[ci].properties.grid_span = None;
@@ -24248,7 +24874,9 @@ fn number_format_from_token(token: &str) -> Option<NumberFormat> {
 fn apply_marker_spec(level: &mut NumberingLevel, spec: &str) -> Result<(), String> {
     if let Some(glyph) = spec.strip_prefix("bullet:") {
         if glyph.is_empty() {
-            return Err("bullet marker requires a glyph".into());
+            return Err(
+                refused!("list.bullet-glyph-required", "Choose a bullet character.").into(),
+            );
         }
         level.num_fmt = Some(NumberFormat::Bullet);
         level.lvl_text = Some(glyph.to_string());
@@ -33684,9 +34312,15 @@ mod tests {
         let message = d
             .merge_table_cell_range_inner(&after[2][0], &after[2][1])
             .expect_err("a table with a merge refuses a further merge");
+        let (sentence, code) = casual_doc_edit::refusal::split(&message);
+        assert_eq!(
+            code,
+            Some("table.merge-already-merged"),
+            "the refusal must be routable, got {message}"
+        );
         assert!(
-            message.contains("regular table"),
-            "the refusal must say why, got {message}"
+            sentence.contains("merged cells"),
+            "and its English fallback must still say why, got {sentence}"
         );
     }
 
@@ -33700,9 +34334,20 @@ mod tests {
         let second_anchor = second.node();
         let range = d.table_cell_range(&first, &second_anchor);
         assert!(!range.found());
+        assert_eq!(
+            range.reason_code(),
+            "table.selection-two-tables",
+            "a REPORTED refusal carries the same code a thrown one does",
+        );
         assert!(
-            range.reason().contains("two tables"),
+            range.reason().contains("one table"),
             "got {:?}",
+            range.reason()
+        );
+        assert!(
+            !range.reason().starts_with("refused: ") && !range.reason().contains('\u{1f}'),
+            "and `reason` is displayed as-is by the host, so it carries neither the \
+             marker nor the machine field: {:?}",
             range.reason()
         );
     }
@@ -34704,9 +35349,11 @@ mod tests {
         let err = d
             .continue_list_inner(NodeId::from_str(&node).unwrap())
             .expect_err("first item cannot continue");
-        assert!(
-            err.contains("no preceding"),
-            "the leading list item reports nothing to continue, got: {err}"
+        assert_eq!(
+            casual_doc_edit::refusal::split(&err).1,
+            Some("list.continue-no-preceding"),
+            "the leading list item reports nothing to continue, and reports it by a \
+             STABLE code rather than by a phrase a reword would silently drop: {err}"
         );
         // An item already contiguous with the list above it is rejected too.
         let already = d
@@ -41437,6 +42084,258 @@ mod tests {
             })
             .expect_err("an out-of-range delete is refused");
         assert_eq!(plain, "OffsetOutOfRange");
+    }
+
+    /// Every refusal this facade explains must be written through the one
+    /// mechanism, so it carries a routing code.
+    ///
+    /// A bare `"refused: …"` literal is the drift this closes: it passes the
+    /// host's marker test and reaches the reader in English, and there is no way
+    /// for a host to translate it — which is how a second, codeless family would
+    /// grow back beside the first. The macro is the only way to write the marker,
+    /// so this guard is a source scan.
+    #[test]
+    fn no_module_writes_the_refusal_marker_by_hand() {
+        let sources = [
+            ("lib.rs", include_str!("lib.rs")),
+            ("objects.rs", include_str!("objects.rs")),
+            ("references.rs", include_str!("references.rs")),
+            ("toc.rs", include_str!("toc.rs")),
+            ("diff.rs", include_str!("diff.rs")),
+            ("window.rs", include_str!("window.rs")),
+        ];
+        let mut scanned = 0usize;
+        for (name, source) in sources {
+            // Production half only: the guards below quote the marker on purpose.
+            //
+            // Normalised first, because the delimiter is written with literal
+            // newlines and a Windows checkout hands these files over with CRLF
+            // (`core.autocrlf` defaults to true there). Unnormalised, the split
+            // finds nothing, `map_or` falls back to the WHOLE file, and the test
+            // module's own deliberate quotes trip the assertion — which is
+            // exactly how this failed on `platform (Windows-x64)` while every
+            // other job was green. A guard that reads source has to read it the
+            // same way on every platform, or it reports the checkout.
+            let normalised = source.replace("\r\n", "\n");
+            let production = normalised
+                .split_once("\n#[cfg(test)]\nmod tests {")
+                .map_or(normalised.as_str(), |(head, _)| head);
+            scanned += 1;
+            assert!(
+                !production.contains("\"refused: "),
+                "{name} writes the refusal marker as a literal; use \
+                 `refused!(\"code\", \"Sentence.\")` so the refusal carries a code a \
+                 host can translate (`casual_doc_edit::refusal`)"
+            );
+        }
+        assert_eq!(
+            scanned, 6,
+            "every module of this crate must be scanned, or the rule is unenforced \
+             in the one that is not"
+        );
+    }
+
+    /// A table refusal reaches the host as ITS OWN sentence and ITS OWN code.
+    ///
+    /// The reported defect: `editRefusalMessage` passes a message through
+    /// verbatim only when it carries the `refused: ` marker, and about fifteen
+    /// table refusals carried none — so "this cell is not merged" arrived as
+    /// "that edit isn't supported for this selection yet", which is wrong about
+    /// the selection and silent about the cell. Asserting only that an error came
+    /// back would have passed the whole time the defect existed, so this asserts
+    /// the specific refusal ARRIVES.
+    #[test]
+    fn a_table_refusal_arrives_with_its_own_sentence_and_its_own_code() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+
+        // The refusal on the channel a native test can read: the same `String`
+        // `to_js` is handed at the boundary, since a native target cannot build a
+        // `JsError` at all.
+        let refusal = split_table_cell(
+            casual_doc_edit::find_table(&d.document, table)
+                .expect("table")
+                .clone(),
+            2,
+            3,
+            &mut d.edit_ids,
+        )
+        .expect_err("an unmerged cell has nothing to unmerge");
+        let (sentence, code) = casual_doc_edit::refusal::split(&refusal);
+        assert_eq!(
+            code,
+            Some("table.unmerge-not-merged"),
+            "the host routes the reason by this code: {refusal}"
+        );
+        assert_eq!(
+            sentence, "refused: This cell is not merged, so there is nothing to unmerge.",
+            "and the English fallback is the specific reason, marked so \
+             `edit_errors.mjs` passes it through instead of generalising it"
+        );
+    }
+
+    /// `tableInfo` answers "is THIS cell merged", not only "does this table hold
+    /// a merge somewhere" (`docs/141` TBL-20).
+    ///
+    /// Unmerge was enabled off the whole-table `regular` flag, so it was offered
+    /// on every cell of a table with one merge in it and refused per cell on
+    /// click. A guard that only checked `regular` could not tell the two apart —
+    /// this one reads the same table from two carets and requires different
+    /// answers.
+    #[test]
+    fn table_info_reports_the_merged_region_of_the_cell_under_the_caret() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+        d.merge_table_cell_range(&cells[0][0], &cells[1][1])
+            .expect("merge the top-left 2x2 block");
+        let after = cell_paragraphs(&d, table);
+
+        let merged = d.table_info(&after[0][0]);
+        assert!(
+            merged.found() && !merged.regular(),
+            "the table holds a merge"
+        );
+        assert!(merged.merged(), "and the caret is inside it");
+        assert_eq!(
+            (
+                merged.merge_first_row(),
+                merged.merge_first_column(),
+                merged.merge_rows(),
+                merged.merge_columns()
+            ),
+            (0, 0, 2, 2),
+            "the region is the 2x2 block that was merged"
+        );
+
+        let plain = d.table_info(&after[2][0]);
+        assert!(
+            plain.found() && !plain.regular(),
+            "the same table, so the whole-table flag says the same thing"
+        );
+        assert!(
+            !plain.merged(),
+            "but THIS cell is not merged — the distinction the UI was missing"
+        );
+        assert_eq!(
+            (
+                plain.merge_first_row(),
+                plain.merge_first_column(),
+                plain.merge_rows(),
+                plain.merge_columns()
+            ),
+            (2, 0, 1, 1),
+            "an unmerged cell is a 1x1 region at its own position, so a caller \
+             never has to branch on `merged` to read a rectangle"
+        );
+    }
+
+    /// A merged table still arms every column boundary no cell straddles, and the
+    /// engine accepts exactly those (`docs/141` TBL-20).
+    ///
+    /// The zone was disarmed for the whole table, so three working boundaries
+    /// were disabled to protect one. The refusal on the ambiguous one is specific
+    /// and marked, so the reader is told which border and why.
+    #[test]
+    fn a_merged_table_arms_the_boundaries_no_cell_straddles() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = body_paragraph(&d);
+        let anchor = d.insert_table(&body, 3, 4).expect("insert table").node();
+        let table = table_of(&d, &anchor);
+        let cells = cell_paragraphs(&d, table);
+        d.merge_table_cell_range(&cells[0][0], &cells[1][1])
+            .expect("merge the top-left 2x2 block");
+        let after = cell_paragraphs(&d, table);
+
+        let info = d.table_info(&after[2][0]);
+        assert_eq!(
+            info.resizable_column_boundaries(),
+            vec![1, 2],
+            "boundary 0 runs through the merged cell; 1 and 2 are as unambiguous \
+             as in any regular table"
+        );
+
+        let refusal = d
+            .move_table_column_boundary_inner(&after[2][0], 0, 200, "border")
+            .expect_err("boundary 0 is straddled by the merged cell");
+        let (sentence, code) = casual_doc_edit::refusal::split(&refusal);
+        assert_eq!(
+            code,
+            Some("table.column-boundary-straddled"),
+            "and it refuses with a routable reason: {refusal}"
+        );
+        assert!(
+            sentence.contains("both sides"),
+            "whose English says which border and why: {sentence}"
+        );
+
+        let before = column_widths(&d, table);
+        d.move_table_column_boundary_inner(&after[2][0], 1, 200, "border")
+            .expect("boundary 1 is draggable in a merged table");
+        let now = column_widths(&d, table);
+        assert_eq!(
+            (now[1] - before[1], now[2] - before[2]),
+            (200, -200),
+            "a border drag moves the two columns it separates and leaves the \
+             table's width alone: {before:?} -> {now:?}"
+        );
+    }
+
+    /// Every grid column's width, out of the MODEL.
+    fn column_widths(d: &WasmDocument, table: NodeId) -> Vec<i32> {
+        casual_doc_edit::find_table(&d.document, table)
+            .expect("table")
+            .grid
+            .iter()
+            .map(|column| column.width_twips.unwrap_or(0))
+            .collect()
+    }
+
+    /// `tableInfo`'s new merge geometry must cost the TABLE, not the document.
+    ///
+    /// It is asked on the caret path (`docs/107` §4), and the way this repository
+    /// has shipped a quadratic before is a lookup-by-id inside a loop over ids —
+    /// `find_paragraph` and its siblings are linear walks that read as accessors.
+    /// The document here is essentially just the table, so an implementation that
+    /// resolved one id per cell would be quadratic in `n` and the ratio arm
+    /// catches it; the honest implementation resolves none at all and charges
+    /// zero at both sizes, which is the strongest outcome rather than a hole.
+    ///
+    /// A ratio, never a clock: a millisecond threshold cannot tell a quadratic
+    /// from a slow constant and is flaky under load.
+    #[test]
+    fn table_info_merge_state_is_linear_in_the_table_not_its_square() {
+        fn visits(rows: u32) -> u64 {
+            let mut d = open_document(b"Table").expect("open plain text");
+            let body = body_paragraph(&d);
+            let anchor = d.insert_table(&body, rows, 4).expect("insert").node();
+            let table = table_of(&d, &anchor);
+            let cells = cell_paragraphs(&d, table);
+            d.merge_table_cell_range(&cells[0][0], &cells[1][1])
+                .expect("merge");
+            let probe = cell_paragraphs(&d, table)[2][0].clone();
+            lookup_visits(&d, |d| {
+                let info = d.table_info(&probe);
+                assert!(info.found() && !info.merged(), "the probe cell is plain");
+                assert_eq!(
+                    info.resizable_column_boundaries(),
+                    vec![1, 2],
+                    "and the answer is the same at both sizes, so the ratio is \
+                     comparing equal work"
+                );
+            })
+        }
+        let small = visits(8);
+        let large = visits(16);
+        assert!(
+            large < small * 3 || (small == 0 && large == 0),
+            "merge geometry must cost the table once, not once per cell: \
+             {small} block visits at 8 rows and {large} at 16"
+        );
     }
 
     /// Selecting a table cell that holds a text box inside an inline content

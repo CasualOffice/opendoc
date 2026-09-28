@@ -18,6 +18,8 @@ use casual_doc_transaction::{Affinity, Position, PositionMap};
 pub mod table_cells;
 
 pub use table_cells::{CellRange, CellSelectionError, TableCellSelection, cell_grid_start};
+// Its own line so parallel lanes do not collide in the sorted block above.
+pub use table_cells::{CellMerge, cell_merge, unstraddled_column_boundaries};
 
 /// One directed logical text selection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -28,6 +28,9 @@ use casual_doc_edit::references::{
     above_below, caption_paragraph, caption_style, reference_field,
 };
 use casual_doc_edit::{Operation, Pos, Surface, surface_of};
+// Its own line, not folded into a sorted block: a shared `use` list is where
+// parallel lanes collide (rustfmt is set to Preserve).
+use casual_doc_edit::refused;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Bookmark, BookmarkId, Document, FieldKind, InlineNode, Paragraph, StyleId,
@@ -743,7 +746,9 @@ impl WasmDocument {
     pub fn update_caption_numbers(&mut self) -> Result<EditResult, JsValue> {
         let (ops, first) = self.caption_renumber_operations();
         let Some(first) = first else {
-            return Err(to_js("the document has no captions to update".to_owned()));
+            return Err(to_js(
+                refused!("caption.none", "This document has no captions to update.").to_owned(),
+            ));
         };
         if ops.is_empty() {
             return Err(to_js(
@@ -785,7 +790,13 @@ impl WasmDocument {
         let target = node_id(target_node)?;
         let label = label.trim();
         if label.is_empty() {
-            return Err(to_js("a caption needs a label".into()));
+            return Err(to_js(
+                refused!(
+                    "caption.label-required",
+                    "Choose a caption label, such as Figure or Table."
+                )
+                .into(),
+            ));
         }
         let position = match position {
             "above" => CaptionPosition::Above,
@@ -798,7 +809,13 @@ impl WasmDocument {
             None
         } else {
             if !(1..=9).contains(&chapter_level) {
-                return Err(to_js("a chapter heading level is 1 to 9".into()));
+                return Err(to_js(
+                    refused!(
+                        "caption.chapter-level-out-of-range",
+                        "A chapter heading level has to be between 1 and 9."
+                    )
+                    .into(),
+                ));
             }
             Some(CaptionChapter {
                 heading_level: chapter_level,
@@ -816,8 +833,14 @@ impl WasmDocument {
             interest: &[target],
             keep_inlines: true,
         });
-        let (container, index) = locate_block(&self.document, target)
-            .ok_or_else(|| to_js("a caption attaches to something in the document body".into()))?;
+        let (container, index) =
+            locate_block(&self.document, target).ok_or_else(|| {
+                to_js(refused!(
+                "caption.body-only",
+                "A caption attaches to something in the document body, not in a header, footer \
+                 or note."
+            ).into())
+            })?;
 
         let spec = CaptionSpec {
             label: label.to_owned(),
@@ -969,14 +992,26 @@ impl WasmDocument {
         // The target's OWN plain text, untrimmed, because these offsets address the
         // model. The trimmed text a picker displays is a different string and using
         // it here silently shortens every bookmark.
-        let offsets = scan
-            .found(target)
-            .ok_or_else(|| to_js("the cross-reference target is not in the document".into()))?;
+        let offsets = scan.found(target).ok_or_else(|| {
+            to_js(
+                refused!(
+                    "crossref.target-missing",
+                    "The thing this cross-reference points at is no longer in the document."
+                )
+                .into(),
+            )
+        })?;
         let length = offsets.length;
         let after_sequence = offsets.after_sequence;
-        let text = self
-            .paragraph_text_of(target)
-            .ok_or_else(|| to_js("the cross-reference target is not in the document".into()))?;
+        let text = self.paragraph_text_of(target).ok_or_else(|| {
+            to_js(
+                refused!(
+                    "crossref.target-missing",
+                    "The thing this cross-reference points at is no longer in the document."
+                )
+                .into(),
+            )
+        })?;
 
         // Word's three caption reference kinds differ ONLY in what the bookmark
         // covers, not in the field instruction — "Entire caption", "Only label and
