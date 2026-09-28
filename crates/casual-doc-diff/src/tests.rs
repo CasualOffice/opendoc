@@ -638,10 +638,18 @@ fn a_redefined_style_is_keyed_by_name_and_names_the_changed_property() {
 #[test]
 fn every_definitions_field_is_either_compared_or_a_story() {
     const SOURCE: &str = include_str!("../../casual-doc-model/src/v1/definitions.rs");
-    let start = SOURCE
+    // Normalised first, because the delimiter below is a literal newline and a
+    // Windows checkout (`core.autocrlf=true`, which is the default there) hands
+    // this file over with CRLF. `find("\n}\n")` then matches nothing and the
+    // guard panics — on Windows only, which is exactly where it did: the macOS
+    // and Linux jobs were green and `platform (Windows-x64)` failed with "the
+    // struct closes". A guard that reads source has to read it the same way on
+    // every platform, or it reports the checkout rather than the model.
+    let source = SOURCE.replace("\r\n", "\n");
+    let start = source
         .find("pub struct Definitions {")
         .expect("the struct is in that file");
-    let body = &SOURCE[start..];
+    let body = &source[start..];
     let end = body.find("\n}\n").expect("the struct closes");
     let fields: Vec<String> = body[..end]
         .lines()
