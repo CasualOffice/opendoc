@@ -243,6 +243,7 @@ dependencies = [
 name = "casual-doc-transaction"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-edit",
  "casual-doc-model",
  "unicode-segmentation",
 ]

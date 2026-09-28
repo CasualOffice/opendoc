@@ -10,7 +10,12 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+# The envelope is defined OVER the closed op set rather than owning a rival one
+# (doc 147 §3.1, ADR-043). This dependency is the inversion that made the
+# transaction engine reachable from the live editing path at all.
+casual-doc-edit.workspace = true
 casual-doc-model.workspace = true
+# Used only by the Phase-0 `v0` module, whose positions are extended graphemes.
 unicode-segmentation.workspace = true
 
 [lints]
