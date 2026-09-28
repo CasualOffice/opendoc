@@ -322,12 +322,47 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.headerFooterSettings", "mutate"),
   exact("layout.arrange.position", "mutate"),
   exact("layout.arrange.wrap", "mutate"),
+  // Word's Arrange group, all of it. `bringForward` was the only one declared
+  // because it was the only one that existed — it shipped permanently disabled
+  // carrying "the engine does not expose a z-order operation yet", and the rest
+  // of the group arrived with #677 when `setObjectZOrder`, `groupObjects`,
+  // `ungroupObject`, `setObjectRotation`/`setObjectFlip`, `setObjectAnchorKind`
+  // and `addTextToShape` were finally called from the editor.
+  //
+  // Every one is a MUTATION: each writes the document and each is refused by the
+  // same fail-closed gate in Viewing and Suggesting. None takes an argument —
+  // the value is in the command id, as it is for `paragraph.indent.increase`,
+  // because a host sending "bring forward" is not choosing a magnitude.
   exact("layout.arrange.bringForward", "mutate"),
+  exact("layout.arrange.sendBackward", "mutate"),
+  exact("layout.arrange.bringToFront", "mutate"),
+  exact("layout.arrange.sendToBack", "mutate"),
+  exact("layout.arrange.group", "mutate"),
+  exact("layout.arrange.ungroup", "mutate"),
+  exact("layout.arrange.rotateRight", "mutate"),
+  exact("layout.arrange.rotateLeft", "mutate"),
+  exact("layout.arrange.flipHorizontal", "mutate"),
+  exact("layout.arrange.flipVertical", "mutate"),
+  // "In line with text" is a wrap MODE, not a separate capability — it rewrites
+  // the anchor (`wp:inline` vs `wp:anchor`) rather than setting a wrap, which is
+  // why it is its own command beside `layout.arrange.wrap` rather than a value of
+  // it.
+  exact("layout.arrange.inLine", "mutate"),
+  // Word's and Docs' Add Text on a shape. A `wps:wsp` with a `wps:txbx` IS a
+  // shape with text, so this writes a text body into the shape it names.
+  exact("layout.arrange.addText", "mutate"),
 
   // ---- references ---------------------------------------------------------
   exact("reference.caption", "mutate"),
   exact("reference.crossReference", "mutate"),
   exact("reference.tableOfContents", "mutate"),
+  // Word's Update Table: one button, a two-radio dialog, two commands. Both
+  // rewrite the contents field's own content, so both are mutations. Declared
+  // here with the Arrange group because they arrived in the same window and were
+  // missing for the same reason — the registry gained them and the contract did
+  // not, which this guard is the only thing that notices.
+  exact("reference.updateToc.pageNumbers", "mutate"),
+  exact("reference.updateToc.entire", "mutate"),
   // Navigation, not mutation: it moves the caret to the heading a contents entry
   // names and changes nothing. `null` is the same grade `view.zoom.` carries.
   exact("reference.goToHeading", null),
