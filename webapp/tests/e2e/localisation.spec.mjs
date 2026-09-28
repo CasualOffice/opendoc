@@ -198,27 +198,190 @@ test("choosing a language relabels what is already on screen, and it sticks", as
   expect(consoleErrors).toEqual([]);
 });
 
-test("the status bar names the language, and is a way back out", async ({
+test("the status bar names the language, and IS the way out — no dialog", async ({
   page,
   consoleErrors,
 }) => {
   // Word and Docs both put language at the bottom right. It matters more here
   // than status usually does: a person who cannot read the chrome should not
-  // have to open a dialog written in a language they cannot read to change it,
-  // so the control names the language in ITSELF and opens the picker.
+  // have to open a dialog written in a language they cannot read to change it.
+  //
+  // The control used to do exactly that — `aria-haspopup="dialog"`, opening
+  // Settings — which is the failure the sentence above describes, shipped. So
+  // this asserts the LIST appears in place, that no dialog appears with it, and
+  // that choosing from it changes the language for real: a popover that opens
+  // and does nothing would satisfy a weaker assertion.
   await openIn(page, "fr");
   await expect(page.locator("#languageStatusLabel")).toHaveText("Français");
-  await page.locator("#languageStatus").click();
-  await expect(page.locator("#settingsPanel")).toBeVisible();
 
-  // And the CHOICE wins over `?lang=`. That parameter exists so a bug report
-  // can name a locale; once someone has picked one from the dialog in front of
-  // them, re-deriving the answer put the URL's locale straight back and the
-  // picker appeared to do nothing.
-  await page.locator("#languageSelect").selectOption("ja");
-  await expect(page.locator("#languageStatusLabel")).toHaveText("日本語");
+  const status = page.locator("#languageStatus");
+  await expect(status).toHaveAttribute("aria-haspopup", "menu");
+  await status.click();
+  await expect(page.locator("#languageMenu")).toBeVisible();
+  await expect(status).toHaveAttribute("aria-expanded", "true");
+  // The dialog this control used to open must NOT be on screen. Written as a
+  // visibility check on the settings panel rather than on a class: the defect
+  // was "a dialog appears", whatever its markup.
+  await expect(page.locator("#settingsPanel")).toBeHidden();
+
+  // Every language names ITSELF, in its own script — the one property that
+  // makes the list usable by the person who needs it.
+  const rows = page.locator("#languageMenuList .language-option");
+  await expect(rows).toHaveCount(20);
+  const labels = await rows.locator(".menu-item-label").allTextContents();
+  for (const endonym of ["Deutsch", "日本語", "Русский", "العربية", "简体中文", "한국어"]) {
+    expect(labels, `${endonym} must name itself in the footer list`).toContain(endonym);
+  }
+  // …and each is TAGGED with its own language, so the browser picks a font that
+  // can draw it instead of the interface language's fallback.
+  await expect(rows.filter({ hasText: "日本語" })).toHaveAttribute("aria-checked", "false");
+  expect(
+    await rows.locator(".menu-item-label[lang='ja']").textContent(),
+    "the Japanese row must carry lang=ja or it can be painted as tofu",
+  ).toBe("日本語");
+  // Exactly ONE row is ticked, and it is the saved choice — the same answer the
+  // dialog's `<select>` gives, because there is one setting. Nothing is saved
+  // here (the locale came from `?lang=`), so the tick is on the automatic row,
+  // and that row names the language it would resolve to rather than saying only
+  // "System default".
+  await expect(
+    page.locator('#languageMenuList .language-option[aria-checked="true"]'),
+  ).toHaveCount(1);
+  await expect(rows.first()).toHaveAttribute("aria-checked", "true");
+  await expect(rows.first()).toHaveAttribute("data-lang", "");
+  expect(await rows.first().textContent()).toMatch(/English/);
+
+  // Choosing from the footer changes the INTERFACE LANGUAGE — the engine's own
+  // count sentence, which is script-side and cannot be faked by a markup sweep.
+  await rows.locator(".menu-item-label[lang='ja']").click();
   await expect(page.locator("html")).toHaveAttribute("lang", "ja");
+  await expect(page.locator("#languageStatusLabel")).toHaveText("日本語");
   await expect(page.locator("#statWords")).toHaveText(/単語$/);
+  await expect(page.locator("#languageMenu")).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the footer picker behaves like the footer's other popover", async ({
+  page,
+  consoleErrors,
+}) => {
+  // Zoom is the nearest neighbour and the shape the owner asked this to match:
+  // keyboard-operable, Escape closes, focus returns to the trigger, an outside
+  // pointer press dismisses, and only one of the two is ever open.
+  await gotoEditor(page);
+  const status = page.locator("#languageStatus");
+  const menu = page.locator("#languageMenu");
+
+  // Keyboard: focus the trigger and press Enter. Focus must land INSIDE the
+  // menu, or the list is a pointer-only surface wearing menu semantics.
+  await status.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeVisible();
+  expect(await page.evaluate(() => !!document.activeElement?.closest("#languageMenu"))).toBe(true);
+  // Arrow keys walk it — twenty rows is too many for Tab alone.
+  const first = await page.evaluate(() => document.activeElement?.textContent);
+  await page.keyboard.press("ArrowDown");
+  expect(await page.evaluate(() => document.activeElement?.textContent)).not.toBe(first);
+
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(status).toBeFocused();
+  await expect(status).toHaveAttribute("aria-expanded", "false");
+
+  // One at a time: opening zoom closes this one.
+  await status.click();
+  await expect(menu).toBeVisible();
+  await page.locator("#zoomMenuBtn").click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator("#zoomMenu")).toBeVisible();
+
+  // Light dismiss on an outside pointer press.
+  await status.click();
+  await expect(menu).toBeVisible();
+  await page.mouse.click(page.viewportSize().width / 2, page.viewportSize().height * 0.45);
+  await expect(menu).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the two language surfaces are one setting, and reflect each other", async ({
+  page,
+  consoleErrors,
+}) => {
+  // docs/124 §5: one language setting, reachable from two places. Both
+  // directions, because a picker that only writes is half a surface.
+  await gotoEditor(page);
+  await page.locator("#languageStatus").click();
+  await page.locator("#languageMenuList .menu-item-label[lang='pl']").click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "pl");
+
+  // The dialog's picker shows what the footer chose.
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator("#languageSelect")).toHaveValue("pl");
+  await page.locator("#languageSelect").selectOption("de");
+  await expect(page.locator("html")).toHaveAttribute("lang", "de");
+  await page.keyboard.press("Escape");
+
+  // …and the footer shows what the dialog chose, both in its label and in the
+  // tick on its list.
+  await expect(page.locator("#languageStatusLabel")).toHaveText("Deutsch");
+  await page.locator("#languageStatus").click();
+  await expect(
+    page.locator("#languageMenuList .language-option").filter({ has: page.locator("[lang='de']") }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the footer picker works at 390px, where the footer is crowded", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The footer sheds by `data-status-priority` at 700px, and the language
+  // control is priority 2 — but it is the ONE priority-2 item that is not a
+  // count, and the one whose alternative route is a dialog in a language the
+  // reader cannot read. So it survives the rung as a glyph, and the list still
+  // opens and still changes the language. The counts beside it do NOT survive,
+  // which is what proves the ladder is intact rather than disabled.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoEditor(page);
+  await expect(page.locator("#statChars")).toBeHidden();
+  await expect(page.locator("#languageStatus")).toBeVisible();
+  const target = await page.locator("#languageStatus").boundingBox();
+  expect(target.width, "a 24px touch target").toBeGreaterThanOrEqual(24);
+  expect(target.height).toBeGreaterThanOrEqual(24);
+
+  await page.locator("#languageStatus").click();
+  await expect(page.locator("#languageMenu")).toBeVisible();
+  const narrow = await page.locator("#languageMenu").boundingBox();
+  expect(narrow.x, "the menu must not paint off the left edge").toBeGreaterThanOrEqual(0);
+  expect(narrow.x + narrow.width).toBeLessThanOrEqual(390);
+  await page.locator("#languageMenuList .menu-item-label[lang='ja']").click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ja");
+  await expect(page.locator("#languageMenu")).toBeHidden();
+
+  // The dialog's picker is the second surface, and it agrees.
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator("#languageSelect")).toHaveValue("ja");
+  await page.keyboard.press("Escape");
+
+  // And where the control IS on screen but the window is still short, the menu
+  // must fit rather than paint off the top: 780px is the rung above the shed.
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.locator("#languageStatus").click();
+  const menu = page.locator("#languageMenu");
+  await expect(menu).toBeVisible();
+  const box = await menu.boundingBox();
+  expect(box.y, "the menu must not paint off the top of the window").toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(600);
+  // And it must stay a POPOVER rather than becoming a takeover: the control is
+  // at the bottom of a short window, so twenty unconstrained rows reach almost
+  // to the top and bury the document the reader is trying to keep their place
+  // in. `.context-menu`'s own `100vh - 16px` does not prevent that; the
+  // language menu's shorter ceiling does.
+  expect(box.height, "a status popover must not swallow the window").toBeLessThanOrEqual(600 * 0.7);
+  // Every row is reachable: the list scrolls rather than clipping.
+  const last = page.locator("#languageMenuList .language-option").last();
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 

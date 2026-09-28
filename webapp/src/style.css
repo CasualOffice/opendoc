@@ -8182,6 +8182,26 @@ body:not(.doc-loaded) .drop-title {
   .footer [data-status-priority="2"] {
     display: none;
   }
+
+  /* …with ONE exception, and it is the whole reason this control sits in the
+     status bar. Every other priority-2 item is a count — information a narrow
+     window can do without. This one is the way OUT of a language you cannot
+     read, and the alternative route is a dialog written in that language, so
+     shedding it takes the escape hatch away exactly where it is hardest to
+     replace. It survives narrowed to its glyph, which costs the row ~28px
+     instead of the ~110px the endonym needs, and the list it opens names every
+     language including the one in force. */
+  .footer .footer-language {
+    display: inline-flex;
+    /* A real touch target on a row of 13px text. */
+    min-width: 24px;
+    min-height: 24px;
+    justify-content: center;
+  }
+
+  .footer-language-label {
+    display: none;
+  }
 }
 
 /* Condense before clipping: the same compaction the phone tier already used,
@@ -9374,6 +9394,51 @@ body[data-shape-draw] .page-wrap * {
 
 .zoom-menu [aria-checked="true"] .menu-check {
   opacity: 1;
+}
+
+/* ---- Footer language picker ------------------------------------------------
+   Zoom's neighbour, and deliberately zoom's shape: the same anchored menu, the
+   same tick on the current choice. The note about machine translation is the
+   one thing the list is not — it is prose about the choice rather than a choice
+   — so it sits below the scroll region and stays put while nineteen endonyms
+   move under it. */
+.language-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 208px;
+  /* Shorter than a full-height menu on purpose: the control is at the BOTTOM of
+     the window, so a menu tall enough to need the whole viewport is one whose
+     first rows are painted over the document it belongs to. */
+  max-height: min(56vh, calc(100vh - 16px));
+  overflow: hidden;
+}
+
+.language-menu-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.language-option {
+  /* 24px of pointer target on a row of 13px text, which is the touch floor the
+     footer's other controls already meet. */
+  min-height: 24px;
+}
+
+.language-option[aria-checked="true"] {
+  color: var(--accent-text);
+}
+
+.language-option[aria-checked="true"] .menu-check {
+  opacity: 1;
+}
+
+.language-menu-note {
+  flex: 0 0 auto;
+  max-width: 34ch;
+  margin: 5px 4px 1px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  white-space: normal;
 }
 
 /* ---- Paste-options chip ---------------------------------------------------- */
