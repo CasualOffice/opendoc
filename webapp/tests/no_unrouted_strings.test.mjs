@@ -113,7 +113,27 @@ const CEILINGS = new Map([
   // the version-history timeline a host can withhold (`docs/139`, `docs/140`) —
   // adds its one-line description here. Measured, and it is the generator's row
   // rather than hand-written prose, which is why it is a single site.
-  ["embedding.page.html", 350],
+  // 350 -> 353 with the three-sentence "Try it first" callout that points at the
+  // configuration playground. Measured. A page nobody can get to is the
+  // reachability defect one level up (`docs/99` §9.4), so the two SDK pages link
+  // to each other and the guard in `playground.spec.mjs` asserts both directions.
+  ["embedding.page.html", 353],
+  // The configuration playground (`docs/126`). MEASURED at 85, and it is worth
+  // saying what they are, because this is the largest single site addition since
+  // the table landed: about thirty of them are the GENERATED control rows — one
+  // clause per role, per capability and per region, written by
+  // `tools/build-embed-docs.mjs` from the same `MEANINGS` and `REGION_MEANINGS`
+  // tables the embedding guide's columns already use — and the rest is the page's
+  // own prose, its field labels and its two "does not do yet" lists. Adding a
+  // tenth capability moves this number by one with nobody editing the page, which
+  // is the point of generating the controls rather than typing them.
+  //
+  // The SCRIPT beside it, `src/playground.js`, carries ZERO and has no entry at
+  // all: every word it puts on screen comes out of the markup as a `data-`
+  // attribute, the same contract `embed_host_demo.js` holds, and
+  // `playground.test.mjs` asserts it with `scanScript`. That is the direction this
+  // table is for.
+  ["playground.page.html", 85],
   ["fidelity.page.html", 84],
   ["index.page.html", 157],
   // The shared header and footer, counted where they are AUTHORED. The generated
@@ -215,6 +235,7 @@ const SEAMLESS = new Set([
   "embedding.page.html",
   "fidelity.page.html",
   "index.page.html",
+  "playground.page.html",
   "_partials/site-footer.html",
   "_partials/site-header.html",
 ]);
@@ -418,6 +439,7 @@ test("how much the code exemptions suppress is measured, per file", () => {
     "docs.page.html": 2,
     "embedding.page.html": 4,
     "index.page.html": 2,
+    "playground.page.html": 2,
   };
   const measured = {};
   for (const file of [...CEILINGS.keys()].filter((name) => name.endsWith(".html"))) {

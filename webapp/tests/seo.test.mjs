@@ -447,6 +447,13 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   // different project from translating a product surface.
   //
   // MEASURED by running this test, not by arithmetic: 46 + 12 × 13 would give 202.
+  //
+  // 201 → 212 with the configuration playground (`docs/126`): one indexable page,
+  // carrying the six readable meta values above, its schema `name`, `headline` and
+  // `description`, and a three-step breadcrumb whose middle step names the
+  // embedding guide. MEASURED, and the arithmetic would have been wrong in the
+  // usual direction — six plus three is nine, and the breadcrumb is the other
+  // three.
   const READABLE_META = [
     "description",
     "og:title",
@@ -469,9 +476,9 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   }
   assert.equal(
     strings,
-    201,
+    212,
     `the site publishes ${strings} human-readable metadata strings outside the i18n ` +
-      `seam (was 201). That is not a failure — it is the number, and it moved. Update ` +
+      `seam (was 212). That is not a failure — it is the number, and it moved. Update ` +
       `it deliberately, and note that localising these needs per-language pages with ` +
       `hreflang, which does not exist yet.`,
   );

@@ -316,6 +316,118 @@ attachment preview a reading UI it does not want, or every published document a 
 canvas with no way to get to page 40. They are separate presentations and Phase 2/3 must
 keep them so.
 
+---
+
+## The configuration playground — landed 2026-09-28
+
+Owner instruction, verbatim: *"we have SDK .. configuration other things ready ..
+but no demo added still on about to use it.. and realtime configuration control to
+see and help on how to configuration and demo page its needed for sdk"*.
+
+All three phases had shipped and **none of them was reachable**. A prospective host
+could read the embedding guide's tables and could not try the thing, which is
+`docs/99` §9.4's "built is not reachable" arriving at the one subject least able to
+survive it: the only convincing argument that `preview` and `readonly` are
+different presentations is watching them be different.
+
+`webapp/playground.html` is the answer. Controls on the left, a running editor on
+the right, and a copyable snippet at the bottom that reproduces whatever is on
+screen.
+
+### A new page, not a bigger `embed.html`
+
+Three reasons, in order of weight.
+
+1. `embed.html` is the fixture `host-contract.spec.mjs` drives. Growing a test
+   fixture into a public teaching page couples them: a control added for a reader
+   becomes a control that spec has to keep working around.
+2. It declares `noindex` and carries no site chrome, because it plays a host's own
+   site. The playground is a page **of** the site — in the sitemap, under the
+   shared header, swept by the contrast and nav guards.
+3. It mounts the editor **twice** on purpose, to show one contract over two
+   transports. The playground mounts it once and spends the room on configuration.
+
+They link to each other and neither does the other's job.
+
+### The controls are generated, not typed
+
+`tools/build-embed-docs.mjs` — the generator that already keeps the embedding guide
+honest — now renders **two** pages. The playground's switches come from
+`capabilities.mjs`: one radio per role, one checkbox per capability, one per region,
+each clause read from the same `MEANINGS` / `REGION_MEANINGS` tables the guide's
+columns use. A tenth capability puts a tenth switch on the page with nobody editing
+it, and a capability with no clause fails the build in both places at once.
+
+Extending the existing generator rather than adding a sixth `--check` to `build.sh`
+was deliberate: a second generator would be a second place that knows what a
+capability is, which is the defect this whole tool exists to prevent.
+
+Every number is derived with its recipe stated — the role, capability, region and
+band counts, the overridable token count, `<opendoc-editor>`'s attribute count, the
+URL parameters read out of `hostConfig()`, and the WCAG floors out of
+`contrast.mjs`.
+
+### The refusal is the generator's own, by construction
+
+A colour that fails AA has to show a host the message
+`node webapp/tools/build-brand.mjs` would give them — the pair, the measured ratio,
+the floor, the nearest passing value — and the only honest way to publish that is to
+run the code the command line runs. `tools/build-brand.mjs` opened with `node:fs`,
+so the pure half moved out:
+
+| Module | What it holds |
+| --- | --- |
+| `webapp/src/brand_contract.mjs` | `OVERRIDABLE`, the locked prefixes, `normalize`, `auditBrand`, `brandCss`, `markPaths`, `BrandRefusal`, and §AA — the argument for refusing rather than correcting or nagging |
+| `webapp/src/palette_parse.mjs` | How a palette is read out of stylesheet **text** |
+
+The generator keeps the file reading, the catalogues, the `editor.html` regions and
+the command line, and re-exports every name that moved, so `build-embed-docs.mjs`
+and `tests/brand.test.mjs` did not move with it. The page fetches `src/style.css`
+and audits the host's palette against the palette the editor will really render.
+Nothing is duplicated: a committed JSON copy of the palette for the browser would be
+the second source of truth `palette_source.mjs`'s own header argues against.
+
+**A refused palette is not applied.** That is the difference between refusing and
+nagging, and `playground.spec.mjs` asserts it against the live frame's computed
+`--accent`.
+
+### What is live, and what cannot be
+
+* The brand palette is live: it is a stylesheet, and a white-labelled build is a
+  swapped stylesheet. No reload.
+* Role, capabilities and regions **remount** the frame. They are resolved before the
+  frame's first navigation on purpose, and a channel that could widen a live
+  container is the second channel `capabilities.mjs` refuses to add. The page says
+  so in its own "does not do yet" list rather than hiding it.
+
+Per interaction the work is O(roles + capabilities + regions) and independent of
+document size; a change that resolves to the same URL reloads nothing.
+
+### What the page found
+
+This is the argument for having built it. In a `preview` container — offered none of
+the nineteen regions — two strips survive:
+
+* the top bar still paints the document-state chip, the import-findings count and
+  the Properties button;
+* the Viewing banner still offers **"Switch to editing"**, which a `preview`
+  container can never do — a dead control in the strictest sense.
+
+Neither belongs to any region, so neither can be withheld. Said plainly on the page
+and **filed rather than patched here**: deciding where they belong is a change to
+the region set, in files two other lanes were in.
+
+### Deliberately not done
+
+* **No `can` / `chrome` attribute on `<opendoc-editor>`.** The lists ride in
+  `editor-src`'s query, which is what the snippet generates. An attribute apiece
+  would read better and belongs to the element and its published types rather than
+  to a documentation PR; the page says so with a guard that fails when it stops
+  being true.
+* **No host commands here.** `embed.html` already drives every command over both
+  transports, and the playground links to it.
+* **No fix for the two chrome strips above**, for the reason given.
+
 ## Site documentation is part of every phase, including Phase 1
 
 Owner instruction: the SDK documentation goes **on the site**, attached to the phases,

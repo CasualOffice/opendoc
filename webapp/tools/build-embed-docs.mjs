@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Generates the code blocks, tables and numbers on `webapp/embedding.page.html`
-// from the code they document.
+// Generates the code blocks, tables, controls and numbers on the two SDK pages —
+// `webapp/embedding.page.html` and `webapp/playground.page.html` — from the code
+// they document.
 //
 // WHY THIS TOOL EXISTS, rather than a page somebody typed: the public pages of
 // this repository have carried fabricated claims twice, in both directions
@@ -31,6 +32,16 @@
 // and check. `embedding_page.test.mjs` re-derives the numbers independently,
 // proves each extraction still appears verbatim in its source, and proves the
 // "does not do yet" list is still true — because understating is also false.
+//
+// TWO PAGES, ONE TOOL, and that is the point rather than a convenience. The
+// playground's CONTROLS are generated the same way its neighbour's tables are:
+// one radio per role, one checkbox per capability, one per region, every label and
+// every clause read from `capabilities.mjs` and from the description tables below.
+// So adding a tenth capability puts a tenth switch on the playground with nobody
+// editing the page — and forgetting to describe it fails the build rather than
+// shipping an unexplained control. A second generator for the second page would
+// have been a sixth `--check` in `build.sh` and, worse, a second place that knows
+// what a capability is.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -46,7 +57,15 @@ import {
   sandboxTokensFor,
 } from "../src/capabilities.mjs";
 import { REGIONS, resolveRegions } from "../src/capabilities.mjs";
-import { OVERRIDABLE, auditBrand, normalize as normalizeBrand } from "./build-brand.mjs";
+import { TEXT_CONTRAST_FLOOR, UI_CONTRAST_FLOOR } from "../src/contrast.mjs";
+import {
+  BrandRefusal,
+  OVERRIDABLE,
+  PRODUCT,
+  TAB_TITLE_POLICIES,
+  auditBrand,
+  normalize as normalizeBrand,
+} from "./build-brand.mjs";
 import { readPalettes } from "./palette_source.mjs";
 import { RELEASE } from "../../packages/opendoc-embed/src/release.mjs";
 import {
@@ -62,6 +81,7 @@ const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = join(WEBAPP, "..");
 const PACKAGE = join(REPO, "packages", "opendoc-embed");
 const PAGE = join(WEBAPP, "embedding.page.html");
+const PLAYGROUND = join(WEBAPP, "playground.page.html");
 
 const read = (path) => readFileSync(path, "utf8");
 const rel = (path) => relative(REPO, path);
@@ -240,19 +260,24 @@ function dedent(text) {
  *  deliberately not published: it depends on the zlib the packer happens to
  *  ship, so a number derived from it would differ between a developer's machine
  *  and CI and the guard would fail for a reason that is not a drift. The
- *  unpacked size is a function of the committed bytes alone. */
+ *  unpacked size is a function of the committed bytes alone.
+ *
+ *  Memoized: it forks `npm`, and this tool now renders two pages that both ask. */
+let packedOnce = null;
 function packed() {
+  if (packedOnce) return packedOnce;
   const out = execFileSync("npm", ["pack", "--dry-run", "--json"], {
     cwd: PACKAGE,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
   const [result] = JSON.parse(out);
-  return {
+  packedOnce = {
     filename: result.filename,
     files: result.files.map((file) => file.path).sort(),
     unpackedKb: Math.round(result.unpackedSize / 1024),
   };
+  return packedOnce;
 }
 
 /** Which capabilities the EDITOR PAGE consults, read out of `main.js`.
@@ -678,7 +703,262 @@ function regionRows() {
   ]);
 }
 
-/** Region name → generated HTML. */
+// ── The playground's controls (`webapp/playground.page.html`) ──────────────
+//
+// A control per role, per capability and per region, generated from the authority
+// rather than typed into the page. The rule this enforces is the one `docs/126`'s
+// container policy states: "anything a role can express, an explicit capability
+// list must also be able to express, and the two must resolve through the same
+// code". A page whose switches were hand-listed would be a third table, and the
+// first thing to drift.
+
+/** What each role IS, in one clause. The only authored column; everything else
+ *  in a role's row is asked of `resolveCapabilities` / `resolveRegions`.
+ *
+ *  `preview` and `readonly` are the two that matter and the two that get the most
+ *  words, because `docs/126` is explicit that they are NOT the same thing and the
+ *  playground is where a reader can watch the difference. */
+const ROLE_MEANINGS = Object.freeze({
+  preview: "A picture of the document — a thumbnail, an attachment preview, a print preview. The runtime as a layout and rendering engine, and nearly replaceable by a static image.",
+  readonly: "A published document, to read. Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome.",
+  commentor: "Google Docs' Commenter, Word's reviewer. Annotates and suggests; every body change is a tracked revision somebody else accepts.",
+  edit: "The reason a host embeds an editor. Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours.",
+  owner: "The page is ours, or the host has said it may as well be.",
+});
+
+/** An accent value that really does fail the AA floor, for the page's
+ *  &ldquo;try a colour that fails&rdquo; button.
+ *
+ *  Published as a claim rather than typed into the markup, and ASSERTED to still
+ *  fail below — a button that promises a refusal and produces none would be the
+ *  page teaching the opposite of the lesson. A plausible first attempt, not a
+ *  contrived one: a bright brand orange, the kind a design tool hands over. */
+const FAILING_ACCENT = "#f5a524";
+
+/** The role the playground opens on.
+ *
+ *  `edit` rather than `commentor` (which is where `embed.html` opens) because this
+ *  page is subtractive: a visitor arrives at a normal editor with everything on and
+ *  learns the contract by taking things away and watching them go. Starting narrow
+ *  would make the first interaction "add something back", which the authority
+ *  refuses by design — a list only ever narrows.
+ *
+ *  Declared here and nowhere else: `playground.js` reads which radio the markup
+ *  has `checked` rather than carrying its own default, so this constant is the one
+ *  statement of it. */
+const DEFAULT_ROLE = "edit";
+
+/** One `<li class="pg-switch">`: the control, its machine name, and one clause.
+ *
+ *  `<label for>` rather than a wrapping label, because the clause sits in a third
+ *  grid cell and a label wrapping all three would read the whole paragraph as the
+ *  control's name to a screen reader. */
+function switchRow({ type, group, id, value, what, attribute, checked }) {
+  const domId = `pg-${group}-${value.replace(/\./g, "-")}`;
+  const name = type === "radio" ? ` name="${group}"` : "";
+  const on = checked ? " checked" : "";
+  return [
+    '  <li class="pg-switch">',
+    `    <input type="${type}"${name} id="${domId}" value="${escape(value)}" ${attribute}${on} />`,
+    `    <label class="pg-switch-name" for="${domId}">${escape(value)}</label>`,
+    `    <span class="pg-switch-what">${what}</span>`,
+    "  </li>",
+  ].join("\n");
+}
+
+function switchList(rows, { scroll = false } = {}) {
+  return [`<ul class="pg-switches"${scroll ? " data-scroll" : ""}>`, ...rows, "</ul>"].join("\n");
+}
+
+/** The role radios. Each clause ends with what the role actually resolves to, so
+ *  the difference between `preview` and `readonly` is on screen before anything is
+ *  mounted — derived from the authority, both halves. */
+function roleControls() {
+  const unexplained = ROLES.filter((role) => !ROLE_MEANINGS[role]);
+  if (unexplained.length) {
+    throw new Error(
+      `build-embed-docs: role(s) with no clause in ROLE_MEANINGS: ${unexplained.join(", ")}. ` +
+        "The playground puts a control on screen for each one, and a control with no " +
+        "explanation is a control a host has to guess at.",
+    );
+  }
+  return switchList(
+    ROLES.map((role) => {
+      const capabilities = resolveCapabilities({ mode: role, framed: true });
+      const shown = resolveRegions({ mode: role, framed: true, capabilities });
+      const grants = capabilities.size ? codeList(capabilities) : "nothing at all";
+      return switchRow({
+        type: "radio",
+        group: "role",
+        value: role,
+        attribute: "data-role",
+        checked: role === DEFAULT_ROLE,
+        what:
+          `${escape(ROLE_MEANINGS[role])}<br />Grants ${grants} · ` +
+          `${shown.size} of ${REGIONS.length} regions · ` +
+          `<code>${editingModeFor(capabilities)}</code>`,
+      });
+    }),
+  );
+}
+
+/** The capability checkboxes, described by the same `MEANINGS` table the
+ *  embedding guide's capability column uses — one statement of what a capability
+ *  is, serving a table and a control. */
+function capabilityControls() {
+  const unexplained = CAPABILITIES.filter((capability) => !MEANINGS[capability]);
+  if (unexplained.length) {
+    throw new Error(
+      `build-embed-docs: capability(s) with no entry in MEANINGS: ${unexplained.join(", ")}. ` +
+        "The playground puts a switch on screen for each one.",
+    );
+  }
+  return switchList(
+    CAPABILITIES.map((capability) =>
+      switchRow({
+        type: "checkbox",
+        group: "cap",
+        value: capability,
+        attribute: "data-capability",
+        what: escape(MEANINGS[capability]),
+      }),
+    ),
+  );
+}
+
+/** The region checkboxes, described by `REGION_MEANINGS` — likewise shared with
+ *  the region table on the embedding page. */
+function regionControls() {
+  const unexplained = REGIONS.filter((id) => !REGION_MEANINGS[id]);
+  if (unexplained.length) {
+    throw new Error(
+      `build-embed-docs: region(s) with no description: ${unexplained.join(", ")}. ` +
+        "The playground puts a switch on screen for each one.",
+    );
+  }
+  return switchList(
+    REGIONS.map((id) =>
+      switchRow({
+        type: "checkbox",
+        group: "chrome",
+        value: id,
+        attribute: "data-region",
+        what: escape(REGION_MEANINGS[id]),
+      }),
+    ),
+    { scroll: true },
+  );
+}
+
+/** The brand fields. Generated because two of their values are facts about the
+ *  code: the tab-title options are `TAB_TITLE_POLICIES`, and the accent the
+ *  picker opens on is the editor's own `--accent`, read out of `style.css`. A
+ *  swatch that opened on a colour the editor does not use would be the page's
+ *  first small lie. */
+function brandControls() {
+  const { themes } = readPalettes();
+  const accent = themes.get("light")?.["--accent"];
+  if (!/^#[0-9a-f]{6}$/i.test(accent ?? "")) {
+    throw new Error(
+      `build-embed-docs: the editor's --accent reads ${JSON.stringify(accent)}, which a ` +
+        "colour input cannot open on. The playground's picker needs a six-digit hex.",
+    );
+  }
+  const options = TAB_TITLE_POLICIES.map(
+    (policy) => `    <option value="${policy}">${escape(policy)}</option>`,
+  ).join("\n");
+  return [
+    '<p class="pg-field">',
+    '  <label for="pg-brand-name">Product name</label>',
+    `  <input type="text" id="pg-brand-name" data-brand-name placeholder="${PRODUCT.name}" autocomplete="off" spellcheck="false" />`,
+    "</p>",
+    '<p class="pg-field">',
+    '  <label for="pg-brand-accent-hex">Accent colour</label>',
+    '  <span class="pg-colour-row">',
+    `    <input type="color" id="pg-brand-accent" value="${accent}" data-brand-accent aria-label="Accent colour, as a swatch" />`,
+    `    <input type="text" id="pg-brand-accent-hex" value="${accent}" data-brand-accent-hex autocomplete="off" spellcheck="false" aria-label="Accent colour, as hex" />`,
+    "  </span>",
+    "</p>",
+    '<p class="pg-field">',
+    '  <label for="pg-brand-tab-title">The host browser tab says</label>',
+    '  <select id="pg-brand-tab-title" data-brand-tab-title>',
+    options,
+    "  </select>",
+    "</p>",
+  ].join("\n");
+}
+
+/** The four host inputs that travel on the editor's URL, read out of
+ *  `hostConfig()` rather than listed.
+ *
+ *  The playground's whole output is a URL, so the parameter names are the page's
+ *  most load-bearing claim about someone else's code. Read in source order. */
+export function urlParameters(source = read(SOURCES.capabilities)) {
+  const body = source.match(/export function hostConfig\([\s\S]*?\n}/);
+  if (!body) throw new Error(`build-embed-docs: no hostConfig() in ${rel(SOURCES.capabilities)}`);
+  const names = [...body[0].matchAll(/params\??\.get\("([\w-]+)"\)/g)].map((m) => m[1]);
+  const unique = [...new Set(names)];
+  if (unique.length < 4) {
+    throw new Error(
+      `build-embed-docs: hostConfig() reads only ${unique.length} URL parameter(s) ` +
+        `(${unique.join(", ")}); the playground documents four.`,
+    );
+  }
+  return unique;
+}
+
+/** The refusal `FAILING_ACCENT` really produces, as the generator's own message.
+ *
+ *  Not published on the page — the page computes it live, in the browser, from the
+ *  same `normalize`/`auditBrand` in `src/brand_contract.mjs`. What this does is
+ *  PROVE the button's promise: a "try a colour that fails" control whose colour
+ *  has quietly started passing would teach the opposite of the lesson, and the day
+ *  the palette moves under it this throws instead. */
+function failingAccentRefusal() {
+  const { themes } = readPalettes();
+  const config = normalizeBrand(
+    { version: 1, theme: { tokens: { "--accent": FAILING_ACCENT }, light: {}, dark: {} } },
+    themes,
+  );
+  const { failures } = auditBrand(config, themes);
+  if (!failures.length) {
+    throw new Error(
+      `build-embed-docs: ${FAILING_ACCENT} no longer fails the AA audit, so the playground's ` +
+        "“try an accent that fails” button would promise a refusal and produce none. " +
+        "Pick a value that does fail, or take the button out.",
+    );
+  }
+  return new BrandRefusal(failures).message;
+}
+
+/** Region name → generated HTML, for the playground. */
+function playgroundRegions() {
+  return {
+    "playground-role-controls": roleControls(),
+    "playground-capability-controls": capabilityControls(),
+    "playground-region-controls": regionControls(),
+    "playground-brand-controls": brandControls(),
+  };
+}
+
+/** Claim name → value, for the playground. */
+function playgroundClaims() {
+  failingAccentRefusal(); // Throws if the button's promise has stopped being true.
+  return {
+    "role-count": String(ROLES.length),
+    "capability-count": String(CAPABILITIES.length),
+    "region-count": String(REGIONS.length),
+    "band-count": String(REGIONS.filter((id) => id.startsWith("band.")).length),
+    "overridable-token-count": String(OVERRIDABLE.length),
+    "attribute-count": String(mountAttributes().length),
+    "url-parameters": urlParameters().join(" "),
+    "text-contrast-floor": String(TEXT_CONTRAST_FLOOR),
+    "ui-contrast-floor": String(UI_CONTRAST_FLOOR),
+    "failing-accent": FAILING_ACCENT,
+  };
+}
+
+/** Region name → generated HTML, for the embedding guide. */
 function regions() {
   const pack = packed();
   const manifest = JSON.parse(read(SOURCES.manifest));
@@ -843,10 +1123,24 @@ function indentHtml(block, indent) {
     .join("\n");
 }
 
-/** Rewrites every generated region and every claim value in the page. */
-function render(page) {
-  const generated = regions();
-  const values = claims();
+/** The pages this tool owns, each with the region and claim maps it uses.
+ *
+ *  Two of them, and the region/claim namespaces are PER PAGE rather than shared:
+ *  both pages publish a `capability-count`, derived the same way from the same
+ *  authority, and merging the namespaces would have meant naming the second one
+ *  `playground-capability-count` — a second name for one fact, which is the shape
+ *  of defect this whole tool exists to prevent. The "generated but never used"
+ *  check below therefore runs per page, so a region the playground defines and
+ *  never shows fails even though the embedding guide is complete. */
+const PAGES = Object.freeze([
+  Object.freeze({ path: PAGE, regions, claims }),
+  Object.freeze({ path: PLAYGROUND, regions: playgroundRegions, claims: playgroundClaims }),
+]);
+
+/** Rewrites every generated region and every claim value in one page. */
+function render(page, build) {
+  const generated = build.regions();
+  const values = build.claims();
   const seenRegions = new Set();
   const seenClaims = new Set();
 
@@ -887,22 +1181,35 @@ function render(page) {
 
 function main() {
   const check = process.argv.includes("--check");
-  const current = read(PAGE);
-  const fresh = render(current);
-  if (current === fresh) {
-    if (check) console.log(`build-embed-docs --check: ${rel(PAGE)} is up to date.`);
-    return;
+  const stale = [];
+  const written = [];
+  for (const build of PAGES) {
+    const current = read(build.path);
+    const fresh = render(current, build);
+    if (current === fresh) continue;
+    if (check) {
+      stale.push(rel(build.path));
+      continue;
+    }
+    writeFileSync(build.path, fresh);
+    written.push(rel(build.path));
   }
   if (check) {
-    console.error(
-      `build-embed-docs --check: ${rel(PAGE)} is stale.\n` +
-        "Its generated regions or claim values are not what the code it documents produces.\n" +
-        "Run `node webapp/tools/build-embed-docs.mjs`, then `webapp/build-site.py`, and commit both.",
+    if (stale.length) {
+      console.error(
+        `build-embed-docs --check: ${stale.join(", ")} stale.\n` +
+          "The generated regions or claim values are not what the code they document produce.\n" +
+          "Run `node webapp/tools/build-embed-docs.mjs`, then `webapp/build-site.py`, and commit both.",
+      );
+      process.exit(1);
+    }
+    console.log(
+      `build-embed-docs --check: ${PAGES.map((build) => rel(build.path)).join(", ")} up to date.`,
     );
-    process.exit(1);
+    return;
   }
-  writeFileSync(PAGE, fresh);
-  console.log(`build-embed-docs: wrote ${rel(PAGE)}`);
+  for (const path of written) console.log(`build-embed-docs: wrote ${path}`);
+  if (!written.length) console.log("build-embed-docs: both pages were already current.");
 }
 
 main();
