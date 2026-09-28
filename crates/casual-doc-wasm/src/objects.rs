@@ -38,10 +38,11 @@
 use casual_doc_edit::{Operation, Pos, find_paragraph_any};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, Extent, GroupChild,
-    GroupPicture, GroupTextBox, GroupTransform, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, MAX_EMU, PointEmu, ShapeGeometry, TextBox, VerticalAlign,
-    VerticalAnchor, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, DrawingAnchor, Extent,
+    GroupChild, GroupPicture, GroupTextBox, GroupTransform, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, InlineNode, MAX_EMU, Paragraph, ParagraphProperties, PointEmu,
+    ShapeGeometry, TextBox, TextBoxBodyProperties, VerticalAlign, VerticalAnchor, VerticalPosition,
+    WordprocessingGroup, WrapDistances, WrapMode,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -1412,6 +1413,67 @@ impl WasmDocument {
         self.restack_float(object, step)
     }
 
+    /// Word's Add Text / Edit Text on a shape: gives the shape `node` a text
+    /// body it keeps its geometry behind, as one undoable action. The returned
+    /// caret is the new body's paragraph, so the host focuses it and the user
+    /// types straight into the shape.
+    ///
+    /// OOXML has one element for both — a `wps:wsp` with a `wps:txbx` IS a
+    /// shape with text — so this is not a wrapper or an overlay: the shape
+    /// becomes a text-bearing shape, keeping its id, its preset, its
+    /// adjustment guides, its fill and its outline. A star stays a star and
+    /// gets words inside it.
+    ///
+    /// Calling it on a shape that already has text is a no-op reporting
+    /// success, so a host can bind it to a double-click without tracking
+    /// state.
+    ///
+    /// # Errors
+    ///
+    /// When `node` is not a shape inside a group, or when it is a FREEFORM
+    /// (`a:custGeom`) shape: `GroupTextBox` models no custom path, so giving
+    /// one text would silently flatten it to its bounding rectangle. It is
+    /// refused with that reason rather than quietly reshaped.
+    ///
+    /// **O(document), ONE walk.**
+    #[wasm_bindgen(js_name = addTextToShape)]
+    pub fn add_text_to_shape(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        self.add_text_to_shape_inner(node).map_err(to_js)
+    }
+
+    /// [`add_text_to_shape`](Self::add_text_to_shape) with a plain error, so
+    /// the behaviour is reachable from a native test.
+    fn add_text_to_shape_inner(&mut self, node: &str) -> Result<EditResult, String> {
+        let object = node
+            .parse::<NodeId>()
+            .map_err(|_| "invalid node id".to_owned())?;
+        let paragraph = self
+            .paragraph_containing_inline_deep(object)
+            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+        let mut inlines = source.inlines.clone();
+        let body = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| "id space exhausted".to_owned())?;
+        match add_text_in_inlines(&mut inlines, object, body)? {
+            AddText::Added => {}
+            // Already a text-bearing shape. Report success with the existing
+            // body's caret and no undo entry.
+            AddText::Already(existing) => return Ok(self.finish_edit(Pos::new(existing, 0))),
+            AddText::NotAShape => return Err("not a shape inside a group".to_owned()),
+        }
+        self.apply_action_caret_as(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            Pos::new(body, 0),
+            HistoryKind::ObjectInsert,
+        )
+    }
+
     /// The rotation and flips of the object `node`, as
     /// `{"rotationDegrees":45.0,"flipH":false,"flipV":false}` — or `""` if
     /// `node` is not an object that models them.
@@ -1899,6 +1961,99 @@ fn restack_child_in_group(group: &mut WordprocessingGroup, object: NodeId, step:
         }
     }
     false
+}
+
+/// What [`add_text_in_inlines`] found.
+enum AddText {
+    /// The shape was converted; its new body paragraph is the caller's caret.
+    Added,
+    /// It already had text; this is its first paragraph.
+    Already(NodeId),
+    /// `object` is not a shape inside a group.
+    NotAShape,
+}
+
+/// Converts the group shape `object` into a text-bearing shape with one empty
+/// paragraph identified by `body`, keeping everything `GroupTextBox` can model.
+fn add_text_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    body: NodeId,
+) -> Result<AddText, String> {
+    for inline in inlines.iter_mut() {
+        let found = match inline {
+            InlineNode::Group(group) => add_text_in_group(group, object, body)?,
+            InlineNode::Hyperlink(link) => add_text_in_inlines(&mut link.inlines, object, body)?,
+            InlineNode::Revision(revision) => {
+                add_text_in_inlines(&mut revision.inlines, object, body)?
+            }
+            InlineNode::Sdt(sdt) => add_text_in_inlines(&mut sdt.inlines, object, body)?,
+            _ => AddText::NotAShape,
+        };
+        if !matches!(found, AddText::NotAShape) {
+            return Ok(found);
+        }
+    }
+    Ok(AddText::NotAShape)
+}
+
+/// [`add_text_in_inlines`] within one group, descending into nested ones.
+fn add_text_in_group(
+    group: &mut WordprocessingGroup,
+    object: NodeId,
+    body: NodeId,
+) -> Result<AddText, String> {
+    for child in &mut group.children {
+        match child {
+            GroupChild::TextBox(text_box) if text_box.id == object => {
+                let first = text_box.blocks.iter().find_map(|block| match block {
+                    BlockNode::Paragraph(paragraph) => Some(paragraph.id),
+                    _ => None,
+                });
+                return Ok(first.map_or(AddText::NotAShape, AddText::Already));
+            }
+            GroupChild::Shape(shape) if shape.id == object => {
+                if shape.path.is_some() {
+                    return Err(
+                        "a freeform shape cannot hold text in this build; its custom \
+                         geometry would be flattened to a rectangle"
+                            .to_owned(),
+                    );
+                }
+                *child = GroupChild::TextBox(GroupTextBox {
+                    id: shape.id,
+                    offset: shape.offset,
+                    extent: shape.extent,
+                    geometry: shape.geometry,
+                    preset: shape.preset.clone(),
+                    adjustments: shape.adjustments.clone(),
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: body,
+                        properties: ParagraphProperties::default().into(),
+                        inlines: Vec::new(),
+                    })],
+                    fill: shape.fill.clone(),
+                    // `a:ln` is the same element on both; only the field name
+                    // differs, so nothing about the outline is lost.
+                    border: shape.stroke,
+                    body_properties: TextBoxBodyProperties::default(),
+                    hyperlink: shape.hyperlink.clone(),
+                    flip_h: shape.flip_h,
+                    flip_v: shape.flip_v,
+                    rotation: shape.rotation,
+                });
+                return Ok(AddText::Added);
+            }
+            GroupChild::Group(nested) => {
+                let found = add_text_in_group(nested, object, body)?;
+                if !matches!(found, AddText::NotAShape) {
+                    return Ok(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(AddText::NotAShape)
 }
 
 /// Which half of the transform an edit is changing.
@@ -2396,6 +2551,38 @@ mod tests {
             }
         }
         panic!("no text box owns {node}");
+    }
+
+    /// The grouped text box whose id is `wanted`.
+    fn grouped_text_box<'a>(document: &'a WasmDocument, wanted: &str) -> Option<&'a GroupTextBox> {
+        fn walk<'a>(group: &'a WordprocessingGroup, wanted: &str) -> Option<&'a GroupTextBox> {
+            for child in &group.children {
+                match child {
+                    GroupChild::TextBox(text_box) if text_box.id.to_string() == wanted => {
+                        return Some(text_box);
+                    }
+                    GroupChild::Group(nested) => {
+                        if let Some(found) = walk(nested, wanted) {
+                            return Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        for block in document.document.body() {
+            if let BlockNode::Paragraph(paragraph) = block {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Group(group) = inline
+                        && let Some(found) = walk(group, wanted)
+                    {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// The ids of every grouped shape in the body carrying `geometry`.
@@ -3032,6 +3219,124 @@ mod tests {
             ShapeGeometry::from_preset_token("straightConnector1"),
             Some(ShapeGeometry::Line),
             "the connector spelling of a line resolves to a line"
+        );
+    }
+
+    /// A star with words in it is one OOXML element, not a text box parked on
+    /// top of a shape. Adding text must keep the geometry — and the geometry
+    /// must still PAINT, and must still be there after a DOCX round trip, or
+    /// "a shape you can type in" is a text box wearing a shape's id.
+    #[test]
+    fn adding_text_to_a_shape_keeps_the_shape() {
+        use casual_doc_model::v1::ShapeGeometry;
+
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "star5")
+            .expect("insert a star");
+        let shape = shapes_with(&document, ShapeGeometry::Star5);
+        assert_eq!(shape.len(), 1, "one star");
+        let shape = shape[0].clone();
+
+        let result = document
+            .add_text_to_shape_inner(&shape)
+            .expect("give the star a text body");
+        // The caret is inside the shape, so the host focuses it and types.
+        document
+            .insert_text(&result.node, result.offset, "INSIDE".to_owned())
+            .expect("type into the star");
+
+        let text_shape = grouped_text_box(&document, &shape).expect("the star now holds text");
+        assert_eq!(
+            text_shape.geometry,
+            ShapeGeometry::Star5,
+            "adding text kept the star geometry instead of flattening it"
+        );
+
+        // Still painted, and still painted as a star: layout resolves it
+        // through the same geometry mapping a text-free shape uses.
+        assert_eq!(
+            document.object_rect(&shape).len(),
+            5,
+            "the text-bearing star is still placed on a page"
+        );
+
+        // And it is still a star after a DOCX round trip, with its words.
+        let bytes = document.export_docx().expect("export");
+        let reopened = open_document(&bytes).expect("reopen");
+        let mut found = 0;
+        for block in reopened.document.body() {
+            if let BlockNode::Paragraph(paragraph) = block {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Group(group) = inline {
+                        for child in &group.children {
+                            if let GroupChild::TextBox(text_box) = child
+                                && text_box.geometry == ShapeGeometry::Star5
+                            {
+                                found += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            found, 1,
+            "the text-bearing star survived the DOCX round trip as a star"
+        );
+    }
+
+    /// A freeform shape has a custom path `GroupTextBox` cannot model, so
+    /// giving it text is REFUSED rather than silently flattening it.
+    #[test]
+    fn a_freeform_shape_refuses_text_instead_of_losing_its_path() {
+        use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "rect")
+            .expect("insert a shape");
+        let shape = only_group(&document)
+            .and_then(|group| match group.children.first() {
+                Some(GroupChild::Shape(shape)) => Some(shape.id),
+                _ => None,
+            })
+            .expect("a shape");
+
+        // Give it a custom geometry, as an imported freeform carries.
+        for block in document.document.body_mut() {
+            if let BlockNode::Paragraph(paragraph) = block {
+                for inline in &mut paragraph.inlines {
+                    if let InlineNode::Group(group) = inline {
+                        for child in &mut group.children {
+                            if let GroupChild::Shape(target) = child
+                                && target.id == shape
+                            {
+                                target.path = Some(ShapePath {
+                                    width_emu: 0,
+                                    height_emu: 0,
+                                    commands: vec![
+                                        ShapePathCommand::MoveTo {
+                                            point: PointEmu { x_emu: 0, y_emu: 0 },
+                                        },
+                                        ShapePathCommand::Close,
+                                    ],
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let error = document
+            .add_text_to_shape_inner(&shape.to_string())
+            .expect_err("a freeform refuses text");
+        assert!(
+            error.contains("freeform"),
+            "the refusal says why, so a host can disable the command with a reason: {error}"
         );
     }
 
