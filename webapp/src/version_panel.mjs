@@ -28,7 +28,25 @@
 // | Restore also offered prominently while previewing | on the preview bar, beside "Back to current" | — |
 // | Restore this version, current state kept as a version | same | Docs restores without confirming; this asks once, because the confirmation is where the reader is TOLD their current work is kept — see `confirmRestore` |
 // | "Show changes" diff toggle | present and disabled, with the reason | the structural diff is `docs/140` H3 and is not built. SKILL §10: a command that does not exist yet ships disabled with a reason, never as a button that does nothing |
-// | Make a copy / Download this version | not built | needs a format→MIME answer the export registry owns; `docs/139` VH-007 stays open, and the report says so rather than the panel implying it |
+// | Make a copy | same, and it replaces the document in the tab | Docs opens the copy as a NEW file in Drive and leaves yours alone. There is no document manager here, so the copy arrives where the reader is — which is a real difference and is therefore CONFIRMED, and the current document becomes a version of its own first so nothing is left in neither place |
+// | Download this version | same | the bytes are the checkpoint's, handed over unchanged; see `downloadVersion` for why that is the whole point |
+//
+// ## Getting a version OUT (`docs/139` VH-007)
+//
+// Both of these were the half a reader could not reach: the timeline could show
+// an old version and preview it, and then the only way out was to REPLACE the
+// document with it. "Make a copy" and "Download this version" are what Google
+// Docs offers at exactly that moment, and they are the natural next gesture
+// after previewing.
+//
+// **Neither re-derives anything.** The bytes are already in the checkpoint
+// store, hash-verified on read, and they are the same bytes the preview parsed —
+// so a download cannot differ from what was on screen, because it is not a fresh
+// export of a re-opened document but the artifact itself. What CAN differ from
+// the reader's expectation is what was already lost when that artifact was
+// written, and that is reported rather than left silent: the version row carries
+// the export's own finding count, and a version written in a format this build
+// no longer recognises says so instead of quietly arriving as `.document`.
 //
 // ## The row actions, and why the list had to stop being a listbox
 //
@@ -64,6 +82,8 @@
 // ## Where each action's second surface is (SKILL §10: never one surface)
 //
 //   Restore         the row menu, and the preview bar's "Restore this version"
+//   Make a copy     the row menu, and the preview bar's "Make a copy"
+//   Download        the row menu, and the preview bar's "Download"
 //   Name            the row menu, and **F2** on the focused row
 //   Delete          the row menu, and **Delete** on the focused row
 //   Keep            the row menu, and the row's right-click / Shift+F10 menu
@@ -96,7 +116,9 @@
 
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import { describeDraftSize } from "./drafts.mjs";
+import { downloadNameForFormat, formatInfo, isKnownFormat } from "./format_io.mjs";
 import { t } from "./i18n.mjs";
+import { downloadBytes } from "./save_formats.mjs";
 import { formatShortcut, matchesShortcut } from "./keyboard.mjs";
 import { focusMenuIndex, renderMenuLevel } from "./menu_render.mjs";
 import {
@@ -185,6 +207,15 @@ function iconSpan(name, className = "") {
  * @param {() => object} deps.documentInfo `{name, docKey, revision, engine, actor, hasDocument}`.
  * @param {() => object} deps.settings the live settings object.
  * @param {() => boolean} deps.hostAllows whether this page may keep local data at all.
+ * @param {() => Set<string>|null} [deps.capabilities] the host's resolved capability
+ *        set. `download` gates "Download this version" and `open` gates "Make a
+ *        copy", because a copy is a DIFFERENT document arriving in the frame —
+ *        which is the grant a framed `edit` role deliberately withholds so a
+ *        visitor cannot swap the host's document out from inside the host's own
+ *        chrome (`capabilities.mjs`). Neither is removed when withheld: the row
+ *        ships disabled with the reason (SKILL §10). `null` means "no host policy
+ *        was resolved", which happens in no shipped path — `main.js` always
+ *        passes `HOST_CAPS` — and grants both rather than inventing a refusal.
  * @param {(text: string, kind?: string) => void} deps.publish the status channel.
  * @param {(options: object) => Promise<boolean>} deps.confirm the application's one yes/no card.
  * @param {(current: string) => Promise<string|null>} deps.promptName the name dialog.
@@ -200,6 +231,7 @@ export function createVersionHistory({
   documentInfo,
   settings,
   hostAllows,
+  capabilities = () => null,
   publish,
   confirm,
   promptName,
@@ -226,6 +258,8 @@ export function createVersionHistory({
   const bannerText = document.getElementById("versionPreviewBannerText");
   const bannerBack = document.getElementById("versionPreviewBack");
   const bannerRestore = document.getElementById("versionPreviewRestore");
+  const bannerCopy = document.getElementById("versionPreviewCopy");
+  const bannerDownload = document.getElementById("versionPreviewDownload");
   const clearBtn = document.getElementById("versionClearBtn");
 
   /** The store, once. `null` until asked for; `storeReason` is non-empty once
@@ -292,6 +326,13 @@ export function createVersionHistory({
       );
     }
     return opening;
+  }
+
+  /** Whether the host granted a capability. An unresolved set grants it — see
+   *  the `capabilities` parameter. O(1). */
+  function allows(capability) {
+    const granted = capabilities();
+    return !granted || granted.has(capability);
   }
 
   /** Whether the user's settings and the host's policy allow history at all. */
@@ -585,6 +626,12 @@ export function createVersionHistory({
    * cannot be previewed (`openPreview` returns early), so whenever this bar is on
    * screen the version behind it is restorable.
    *
+   * Its Make a copy and Download do need one, and it is a HOST refusal rather
+   * than a state: both stay on the bar and go disabled with the reason, because
+   * a reader who finds no Download at all cannot tell a withheld permission from
+   * a missing feature — the same argument `exportCommands` already makes for the
+   * File menu's export rows.
+   *
    * O(1).
    */
   function reflectActions() {
@@ -596,6 +643,20 @@ export function createVersionHistory({
     }
     if (bannerBack) bannerBack.hidden = !previewing;
     if (bannerRestore) bannerRestore.hidden = !previewing;
+    for (const [button, capability] of [
+      [bannerCopy, "open"],
+      [bannerDownload, "download"],
+    ]) {
+      if (!button) continue;
+      button.hidden = !previewing;
+      const granted = allows(capability);
+      button.disabled = !granted;
+      // The reason lives on the control, in the language in force, and is set
+      // every time rather than captured once at boot — a snapshot taken before a
+      // catalogue exists is always the English in the markup (`localize.mjs`).
+      if (granted) button.removeAttribute("title");
+      else button.title = t("capability.notGranted");
+    }
     if (banner) banner.hidden = !previewing;
   }
 
@@ -718,6 +779,25 @@ export function createVersionHistory({
         enabled: !isHead,
         disabledReason: t("versionHistory.headNotRestorable"),
         run: () => void queue(() => restore(id)),
+      },
+      {
+        // Offered for EVERY row, the head included: "make a copy of the document
+        // as it is now" is a thing a reader wants, and it is the same act. Only
+        // the host can refuse it, and then it says so.
+        id: "version.copy",
+        group: "copy",
+        label: t("versionPanel.makeACopy"),
+        enabled: allows("open"),
+        disabledReason: t("capability.notGranted"),
+        run: () => void queue(() => makeCopy(id)),
+      },
+      {
+        id: "version.download",
+        group: "copy",
+        label: t("versionPanel.downloadThisVersion"),
+        enabled: allows("download"),
+        disabledReason: t("capability.notGranted"),
+        run: () => void queue(() => downloadVersion(id)),
       },
       {
         id: "version.name",
@@ -973,6 +1053,20 @@ export function createVersionHistory({
     const row = rows.find((candidate) => candidate.versionId === versionId);
     if (!ready || !row) return;
     if (!(await confirmRestore(row))) return;
+    // BACK TO THE LIVE DOCUMENT BEFORE TAKING THE SNAPSHOT, and this ordering is
+    // load-bearing rather than tidy.
+    //
+    // `snapshot()` exports whatever the canvas is showing, and while a preview is
+    // up that is the PREVIEW. Restore is reachable from the preview bar — it is
+    // the main way anyone reaches it — so taking the snapshot first captured the
+    // old version as "the current document kept as a version" and let the
+    // reader's unsaved work go when the restore replaced the document. The
+    // pre-restore capture is the one thing standing between a restore and lost
+    // work (`docs/140` §9), and it was capturing the wrong document.
+    //
+    // `closePreview` is idempotent, so the later call is a no-op. O(1) when
+    // nothing is being previewed.
+    await closePreview();
     const info = documentInfo();
     let current = null;
     try {
@@ -1020,6 +1114,9 @@ export function createVersionHistory({
     const committed = await ready.commitRestore({ opId: prepared.operation.opId, retention: retention() });
     if (committed.status !== HISTORY_STATUS.RESTORE_COMMITTED) return void report(committed);
 
+    // Already closed above, before the snapshot; kept because it is idempotent
+    // and because a restore must never activate over a preview even if the
+    // ordering above is ever changed again.
     await closePreview();
     const words = versionRowText(row, { isHead: false });
     await activateRestored(committed.bytes, info.name);
@@ -1053,6 +1150,164 @@ export function createVersionHistory({
       note: t("versionHistory.restore.note"),
       icon: "history",
     });
+  }
+
+  /**
+   * The file name a version would arrive under.
+   *
+   * The DOCUMENT's name with the VERSION's extension: a `.txt` opened and
+   * promoted to DOCX is kept as DOCX, so the row's own `formatId` is what says
+   * what the bytes are — the same reasoning `restoreDraft` follows for a promoted
+   * draft. O(1).
+   */
+  function fileNameFor(row) {
+    return downloadNameForFormat(documentInfo().name || "", formatInfo(row.formatId).extension);
+  }
+
+  /**
+   * Hands a stored version to the reader as a file (`docs/139` VH-007).
+   *
+   * THE BYTES ARE THE CHECKPOINT'S, UNCHANGED. Nothing is re-exported: the store
+   * reads the artifact and verifies it against the hash its key claims, and those
+   * are the same bytes the preview parsed, so what lands on disk cannot be a
+   * different document from what was on screen. Re-deriving it — opening the
+   * version and exporting the result — is the obvious implementation and is the
+   * wrong one: it would put the version through a second lossy conversion and the
+   * reader would have no way to know.
+   *
+   * WHAT IS REPORTED RATHER THAN SILENT. Two things can still surprise a reader,
+   * and both are said out loud:
+   *
+   *   * the artifact was written with compatibility findings — that loss happened
+   *     when the version was captured, is recorded on the row, and is the same
+   *     sentence a Save gives for the same fact;
+   *   * this build does not recognise the format the version was written in, which
+   *     a checkpoint from an older build can be. The bytes are still handed over,
+   *     under a generic media type, and the message says so rather than letting
+   *     `report.document` be discovered later.
+   *
+   * Complexity: O(version bytes) for the read and the digest, once, on an
+   * explicit act. It never touches the live document and never walks the
+   * timeline.
+   */
+  async function downloadVersion(versionId) {
+    if (!allows("download")) return void publish(t("capability.notGranted"), "error");
+    const ready = await ensureStore();
+    const row = rows.find((candidate) => candidate.versionId === versionId);
+    if (!ready || !row) return;
+    const loaded = await ready.readCheckpoint(row.checkpointId);
+    if (!loaded.ok) return void report(loaded);
+    const format = formatInfo(row.formatId);
+    const saved = downloadBytes(loaded.bytes, format.mime, fileNameFor(row), document);
+    if (!isKnownFormat(row.formatId)) {
+      publish(t("versionHistory.download.unknownFormat", { name: saved, format: row.formatId }), "error");
+      return;
+    }
+    // Deliberately NOT a plural family. A count of findings is reported the way
+    // the rest of this catalogue reports one — as a labelled number — so the
+    // sentence needs one form per language instead of six in Arabic, and adding
+    // a format cannot leave eighteen catalogues half-answered.
+    publish(
+      row.findings > 0
+        ? t("versionHistory.download.lossy", { name: saved, count: row.findings })
+        : t("versionHistory.downloaded", { name: saved }),
+      "",
+    );
+  }
+
+  /**
+   * Opens a version as a NEW document (`docs/139` VH-007).
+   *
+   * Google Docs puts the copy in Drive and leaves the reader where they are.
+   * There is no document manager here, so the copy arrives in the tab — a real
+   * difference, and the reason this confirms rather than just doing it. The
+   * confirmation is also where the reader is told the current document is kept as
+   * a version, which is the same sentence `confirmRestore` exists to deliver.
+   *
+   * The order is restore's, for restore's reason (`docs/140` §9): the current
+   * document becomes a version BEFORE anything on screen changes, and if it
+   * cannot be captured the copy is refused with it — there is no state in which
+   * the work is in neither place. Then the bytes are validated in isolation, and
+   * only a document that parses reaches the canvas.
+   *
+   * THE COPY IS A NEW TIMELINE. It is a different document with a different name,
+   * so continuing the original's lineage would append the copy's future to the
+   * original's past and the two would be impossible to tell apart. The store
+   * already anticipated this: `openLineage({ fresh: true })` mints one.
+   *
+   * Complexity: O(version bytes) to validate plus O(current document) for the
+   * pre-copy capture, once, on an explicit act.
+   */
+  async function makeCopy(versionId) {
+    if (!allows("open")) return void publish(t("capability.notGranted"), "error");
+    const ready = await ensureStore();
+    const row = rows.find((candidate) => candidate.versionId === versionId);
+    if (!ready || !row) return;
+    const copyName = t("versionHistory.copy.name", { name: fileNameFor(row) });
+    const words = versionRowText(row, { isHead: row.versionId === headVersionId });
+    const ok = await confirm({
+      title: t("versionHistory.copy.title"),
+      message: t("versionHistory.copy.message", { name: copyName, when: words.timestamp }),
+      confirmLabel: t("versionHistory.copy.confirm"),
+      cancelLabel: t("versionHistory.copy.cancel"),
+      note: t("versionHistory.copy.note"),
+      icon: "file_copy",
+    });
+    if (!ok) return;
+    const loaded = await ready.readCheckpoint(row.checkpointId);
+    if (!loaded.ok) return void report(loaded);
+    // Back to the live document before the capture, for the reason `restore`
+    // spells out: `snapshot()` exports what the canvas is showing.
+    await closePreview();
+    // The current document, kept. `MANUAL` because a person pressed something,
+    // which is also what stops it being suppressed as unchanged — leaving the
+    // tab is exactly when a row has to exist whether or not the bytes moved.
+    const kept = await captureNow(CAPTURE_REASON.MANUAL);
+    if (kept && !kept.ok && kept.status !== HISTORY_STATUS.UNCHANGED) return;
+    let validated = null;
+    try {
+      validated = parse(loaded.bytes);
+    } catch (err) {
+      publish(t("versionHistory.copy.failed", { message: String(err?.message ?? err) }), "error");
+      return;
+    }
+    // Validated only; the canvas is activated from the BYTES through the ordinary
+    // open path, so a copy is indistinguishable from an opened document.
+    validated.free();
+    await activateRestored(loaded.bytes, copyName);
+    await adoptCopy();
+    publish(t("versionHistory.copied", { name: copyName }), "");
+  }
+
+  /**
+   * Joins the freshly opened COPY to a timeline of its own.
+   *
+   * `activateRestored` goes through the ordinary open path with the application's
+   * import-baseline hook suppressed — that suppression exists so a restore does
+   * not record a baseline on top of the restore version it just committed — so
+   * the copy would otherwise keep pointing at the original's lineage and its next
+   * autosave would land in the original's past. This is `adopt()` with
+   * `fresh: true`: a new lineage, and the copy's own import baseline.
+   *
+   * Called inline rather than through `queue`, because every caller is already
+   * inside a queued job and queueing from inside one would wait on itself.
+   *
+   * O(versions in the new lineage), which is none.
+   */
+  async function adoptCopy() {
+    const ready = await ensureStore();
+    if (!ready) return;
+    const info = documentInfo();
+    const lineage = await ready.openLineage({ docKey: info.docKey, name: info.name, fresh: true });
+    lineageId = lineage.lineageId;
+    headVersionId = lineage.headVersionId;
+    rows = lineage.versions;
+    selectedId = "";
+    await captureNow(CAPTURE_REASON.OPEN);
+    if (isOpen()) {
+      renderList();
+      await reflectSummary();
+    }
   }
 
   /** Name or rename. Naming pins (`docs/139` §8.3): the label makes a version
@@ -1226,6 +1481,10 @@ export function createVersionHistory({
   for (const entry of entryPoints) entry.addEventListener("click", () => void toggle());
   bannerBack?.addEventListener("click", () => void closePreview());
   bannerRestore?.addEventListener("click", () => void queue(() => restore(previewVersionId)));
+  // The version the bar is about is the one being previewed, which is why these
+  // two need no selection of their own: the bar only exists while one is up.
+  bannerCopy?.addEventListener("click", () => void queue(() => makeCopy(previewVersionId)));
+  bannerDownload?.addEventListener("click", () => void queue(() => downloadVersion(previewVersionId)));
   namedOnlyBox?.addEventListener("change", () => renderList());
   clearBtn?.addEventListener("click", () => void queue(() => clearHistory()));
 
@@ -1322,6 +1581,10 @@ export function createVersionHistory({
         entry.disabled = Boolean(reason);
         entry.title = reason || t("versionHistory.command");
       }
+      // The preview bar's two host-gated controls carry their reason as a
+      // tooltip, and a tooltip is a sentence — so a locale change has to reach
+      // them even when the panel is shut, because the bar is not in the panel.
+      reflectActions();
       if (!isOpen()) return;
       renderList();
       void reflectSummary();

@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1219],
-  ["de", 1219],
-  ["es", 1219],
-  ["fr", 1219],
-  ["hi", 1219],
-  ["id", 1219],
-  ["it", 1219],
-  ["ja", 1219],
-  ["ko", 1219],
-  ["nl", 1219],
-  ["pl", 1219],
-  ["pt-BR", 1219],
-  ["ru", 1219],
-  ["tr", 1219],
-  ["uk", 1219],
-  ["vi", 1219],
-  ["zh-Hans", 1219],
-  ["zh-Hant", 1219],
+  ["ar", 1234],
+  ["de", 1234],
+  ["es", 1234],
+  ["fr", 1234],
+  ["hi", 1234],
+  ["id", 1234],
+  ["it", 1234],
+  ["ja", 1234],
+  ["ko", 1234],
+  ["nl", 1234],
+  ["pl", 1234],
+  ["pt-BR", 1234],
+  ["ru", 1234],
+  ["tr", 1234],
+  ["uk", 1234],
+  ["vi", 1234],
+  ["zh-Hans", 1234],
+  ["zh-Hant", 1234],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -176,7 +176,28 @@ const COVERAGE = new Map([
  *  The number in each row is still a floor, not a target, and at parity its
  *  job changes rather than ending: it is now what refuses a NEWLY routed
  *  surface that ships untranslated. Whoever adds keys to `en.json` raises this
- *  number in the same PR or the gate says so. */
+ *  number in the same PR or the gate says so.
+ *
+ *  1,219 → 1,234 is "Make a copy" and "Download this version" (`docs/139`
+ *  VH-007): the two row-menu labels, the two preview-bar buttons, the copy's
+ *  confirmation card, and the sentences a download says when the artifact was
+ *  written with compatibility findings or in a format this build no longer
+ *  recognises. All fifteen landed translated into all eighteen languages in the
+ *  same change that routed them — which is this floor doing the job the note
+ *  above gives it, rather than the floor noticing afterwards.
+ *
+ *  Two of the fifteen are not new translations and deliberately so: the copy
+ *  card's Cancel is each locale's own `confirmDialog.cancel`, and the preview
+ *  bar's "Make a copy" is the same string as the row menu's. Two words for one
+ *  button is how a dialog starts reading as a different product from the one
+ *  beside it.
+ *
+ *  The findings sentence is deliberately NOT a plural family. It reports a
+ *  labelled number ("Compatibility findings recorded …: 3"), which reads the
+ *  same in every language and needs one form per locale instead of Arabic's six
+ *  — a shape this catalogue already uses and one fewer way for eighteen
+ *  catalogues to end up half-answered. MEASURED from the merged catalogues, not
+ *  incremented by fifteen. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

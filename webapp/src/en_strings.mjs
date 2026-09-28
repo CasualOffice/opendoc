@@ -283,6 +283,10 @@ export const EN_STRINGS = Object.freeze({
   // because "More actions" repeated once per row names nothing.
   "versionHistory.rowActions": "Actions for the version from {when}",
   "versionPanel.restoreThisVersion": "Restore this version",
+  // The two ways out of a version that are not "replace my document with it"
+  // (`docs/139` VH-007). Google Docs offers both at exactly this moment.
+  "versionPanel.makeACopy": "Make a copy",
+  "versionPanel.downloadThisVersion": "Download this version",
   "versionPanel.nameThisVersion": "Name this version…",
   "versionPanel.keepThisVersion": "Keep this version",
   "versionPanel.showChanges": "Show changes",
@@ -339,6 +343,31 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.restore.failed": "That version could not be restored: {message}",
   "versionHistory.restored":
     "Restored the version from {when}. The document you replaced is still in the timeline.",
+
+  // ---- Getting a version out (docs/139 VH-007) -----------------------------
+  // A download hands over the checkpoint's own bytes, so it cannot differ from
+  // what the preview showed. What CAN surprise a reader is what was already lost
+  // when that artifact was written, and a format this build no longer knows —
+  // both are said rather than left to be discovered.
+  //
+  // The findings sentence is deliberately NOT a plural family: a labelled number
+  // needs one form per language instead of Arabic's six, and a count the reader
+  // can act on reads the same either way.
+  "versionHistory.downloaded": "Downloaded “{name}”.",
+  "versionHistory.download.lossy":
+    "Downloaded “{name}”. Compatibility findings recorded when this version was written: {count}.",
+  "versionHistory.download.unknownFormat":
+    "Downloaded “{name}”. This build does not recognise the format this version was written in ({format}), so the file is exactly the stored bytes.",
+
+  "versionHistory.copy.name": "Copy of {name}",
+  "versionHistory.copy.title": "Make a copy of this version?",
+  "versionHistory.copy.message":
+    "“{name}” opens here, from the version of {when}. The document on screen is kept as a version of its own first.",
+  "versionHistory.copy.confirm": "Make a copy",
+  "versionHistory.copy.cancel": "Cancel",
+  "versionHistory.copy.note": "The copy is unsaved until you save it to a file, and starts its own history.",
+  "versionHistory.copied": "Made a copy: “{name}”. It is unsaved until you save it to a file.",
+  "versionHistory.copy.failed": "That version could not be copied: {message}",
 
   "versionHistory.named": "Named this version “{name}”.",
   "versionHistory.pinned": "This version is now kept until you say otherwise.",

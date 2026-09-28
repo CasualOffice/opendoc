@@ -2091,6 +2091,15 @@
       <span class="ms" aria-hidden="true">history</span>
       <span id="versionPreviewBannerText"></span>
       <button data-i18n="versionPreviewBanner.restoreThisVersion" id="versionPreviewRestore" type="button">Restore this version</button>
+      <!-- The two ways OUT of a version that are not "replace my document with
+           it" (`docs/139` VH-007). Both are also on every row's ⋮ menu, so
+           neither is a single-surface capability; here they are the natural next
+           gesture after previewing, which is where Google Docs puts them too.
+           Host-gated: `download` for the file, `open` for the copy — a copy is a
+           DIFFERENT document arriving in the frame. Withheld, they stay and go
+           disabled with the reason on their title, never removed. -->
+      <button data-i18n="versionPreviewBanner.makeACopy" id="versionPreviewCopy" type="button">Make a copy</button>
+      <button data-i18n="versionPreviewBanner.download" id="versionPreviewDownload" type="button">Download</button>
       <button data-i18n="versionPreviewBanner.backToCurrent" id="versionPreviewBack" type="button">Back to current</button>
     </div>
 

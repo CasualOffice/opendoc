@@ -16130,6 +16130,7 @@ const versionHistory = createVersionHistory({
   }),
   settings: () => settings,
   hostAllows: () => AUTOSAVE_ALLOWED_HERE,
+  capabilities: () => HOST_CAPS,
   publish: (text, kind) => statusChannel.publish(text, kind),
   confirm: (options) => confirmModal(options),
   promptName: (current) => versionNamePrompt.prompt(current),
