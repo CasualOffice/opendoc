@@ -643,6 +643,18 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   // is the gesture under test.
   await page.locator("#versionPanelClose").click();
   await openTimeline(page);
+  // ASSERTED, not assumed, and that is what makes the rest of this test
+  // trustworthy. The claim above — opening the panel puts the keyboard in the
+  // timeline — is an EVENTUAL one: `open()` awaits the store before it places
+  // focus, and the File page it was run from restores focus as it closes, so a
+  // key pressed on the next line sometimes went to the document instead. The
+  // test then failed three assertions later on a focus that had never arrived,
+  // and it failed 2 runs in 5 on `main` before this branch touched it. Waiting on
+  // the state change rather than sampling once is the fix this repository's own
+  // note about clock-bound tests asks for.
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest("#versionPanelBody"))))
+    .toBe(true);
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowRight");
   expect(await focusedCell(page)).toEqual({ row: ids[ids.length - 1], cell: "menu" });
