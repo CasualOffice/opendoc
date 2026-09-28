@@ -1368,13 +1368,21 @@ export function createVersionHistory({
       skipIfUnchanged: suppressesUnchanged(reason),
     });
     if (result.status === HISTORY_STATUS.UNCHANGED) {
-      // Nothing was written, so nothing is noted: `noteCaptured` would start the
-      // interval over and skip the NEXT tick, which is the one that would have had
-      // something to keep. And nothing is an error — the timeline simply gained no
-      // row, which is what was asked for. Said aloud only while the timeline is on
-      // screen, where the reader can see the row not appear; on a Save with the
-      // panel shut it would be a toast about a non-event.
-      if (isOpen()) report(result);
+      // NOTHING IS SAID, and that is decided rather than skipped.
+      //
+      // A suppressed capture is not a refusal: nothing was promised and withheld,
+      // and `report` exists for the case where somebody's work could not be kept.
+      // Every reason that a PERSON asks for by name — Name this version, and a
+      // manual capture — is on the `KEEP_UNCHANGED` side, so no surface ever offers
+      // to make a version and then quietly does nothing; the suppressed reasons are
+      // all implicit. Saying it anyway would put a second sentence on the status
+      // channel about one act and RACE the Save's own "Saved <name>", which is the
+      // message the reader actually needs. What tells the truth is the timeline
+      // itself: no row appeared, the head is still marked as the current version,
+      // and the disclosure line still says how many are kept.
+      //
+      // And nothing is noted: `noteCaptured` would start the interval over and skip
+      // the NEXT tick — the one that would have had something to keep.
       return result;
     }
     if (result.ok) {

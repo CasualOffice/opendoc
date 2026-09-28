@@ -13,7 +13,11 @@
 // store proves nothing: the timeline would be empty, every action absent, and the
 // assertions would pass over a feature that does not work. So each test below
 // first makes a version exist — by opening a document (the import baseline) and,
-// where it needs two, by saving — and asserts on rows that are really there.
+// where it needs two, by CHANGING the document and saving — and asserts on rows
+// that are really there. The change is not decoration: a Save with nothing in it
+// no longer lays down a version (`docs/139` §18 q3, reversed by the owner on
+// 2026-09-28), so a test that saved an untouched document would now be asserting
+// two rows against one and would have been asserting a duplicate before.
 //
 // The second round of this panel moved every per-version action out of a bar
 // below the list and onto the row it acts on, and added the rail entry the owner
@@ -22,9 +26,11 @@
 // reader can reach it, so the keyboard route is asserted for every action rather
 // than assumed from the pointer route working.
 import {
+  clickIntoFirstPage,
   expect,
   expectEditorFocused,
   gotoEditor,
+  moveCaretToDocStart,
   runFilePageCommand,
   saveDocument,
   test,
@@ -55,6 +61,22 @@ async function openTimeline(page) {
  *  what a reader is waiting for — so the row arrives shortly after the document. */
 async function waitForBaseline(page) {
   await expect(page.locator(rows)).toHaveCount(1);
+}
+
+/** A SECOND version, which now takes a real change.
+ *
+ *  `docs/139` §18 q3 originally said an explicit Save always lays down a version,
+ *  identical bytes or not; the owner reversed that on 2026-09-28 — "version should
+ *  not be logged if nothing has changed" — so a Save over an unmodified document
+ *  reports `history.unchanged` and writes nothing. Every test below that needs two
+ *  rows therefore CHANGES the document before saving, which is a better condition
+ *  than the one it replaces: the row it then asserts on is a version of something
+ *  that really happened rather than a duplicate of the head. */
+async function saveAnEdit(page, marker) {
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.type(marker);
+  await saveDocument(page);
 }
 
 /** The id of whatever really holds the keyboard, and the class of its cell —
@@ -217,16 +239,121 @@ test("saving lays down a version, and the timeline is metadata only", async ({ p
   await openTimeline(page);
   await waitForBaseline(page);
 
-  // An explicit Save is ALWAYS a version (ADR-038 / `docs/139` §18 q3): it is the
-  // point a user recognises, and content-addressed checkpoints make a no-change
-  // Save cost one row rather than a second copy of the document.
-  await saveDocument(page);
+  // A Save lays down a version when there is something to keep. It is NOT
+  // unconditional: `docs/139` §18 q3 said it was, the owner reversed that on
+  // 2026-09-28, and the Save with nothing in it has its own test below.
+  await saveAnEdit(page, "VHSAVE");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
   // Newest first, which is the Docs order and the only one a timeline can have.
   await expect(page.locator(rows).first()).toContainText("Saved");
   await expect(page.locator(rows).last()).toContainText("Opened");
   await expect(page.locator("#versionPanelSummary")).toContainText("2 versions kept");
+});
+
+test("a Save with nothing in it does not lay down a version", async ({ page, consoleErrors }) => {
+  // THE OWNER'S DEFECT, and the condition has to be created or the test proves
+  // nothing: open a document (which captures the import baseline), then save it
+  // WITHOUT touching it, twice. A guard that saved once over a document that was
+  // never opened would have no head to be identical to and would pass whatever the
+  // code did.
+  await gotoEditor(page);
+  await openTimeline(page);
+  await waitForBaseline(page);
+  const opened = await page.locator(rows).first().getAttribute("data-version-id");
+
+  await saveDocument(page);
+  await openTimeline(page);
+  // Still ONE row, and it is the same row: nothing was appended and the head did
+  // not move.
+  await expect(page.locator(rows)).toHaveCount(1);
+  await expect(page.locator(rows).first()).toHaveAttribute("data-version-id", opened);
+  await expect(page.locator("#versionPanelSummary")).toContainText("1 version kept");
+
+  // Twice, because a fix that suppressed only the FIRST duplicate would still fill
+  // a timeline for somebody who saves out of habit.
+  await saveDocument(page);
+  await openTimeline(page);
+  await expect(page.locator(rows)).toHaveCount(1);
+
+  // Nothing went wrong, so nothing is said and nothing is an error: the reader is
+  // told by the Save ("Saved <name>"), and the timeline tells the rest by still
+  // marking the head as the current version. A refusal here would be a broken
+  // promise reported about an act that kept every promise it made.
+  const status = page.locator("#status");
+  await expect(status).not.toHaveClass(/error/);
+  await expect(status).toContainText("Saved");
+  await expect(page.locator(rows).first()).toContainText("Current version");
+
+  // And a real change still does lay one down, which is what says the suppression
+  // is about CONTENT and not about Save.
+  await saveAnEdit(page, "VHCHANGED");
+  await openTimeline(page);
+  await expect(page.locator(rows)).toHaveCount(2);
+  await expect(page.locator(rows).first()).toContainText("Saved");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("previewing a version composes the editing chrome away, and leaving it puts everything back", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The owner's other defect: the preview was read-only, said so, and disabled
+  // Editing and Suggesting — over a document wearing the full editing ribbon.
+  // `docs/126`'s container policy: "never, for you" is composition and is silent,
+  // and a preview is that for as long as it is on screen.
+  await gotoEditor(page);
+  await saveAnEdit(page, "VHCHROME");
+  await openTimeline(page);
+  await expect(page.locator(rows)).toHaveCount(2);
+
+  // BEFORE: the ribbon is there, and a band that is NOT the default one is the
+  // active tab — so "the tab came back" cannot pass by accident on Home.
+  const ribbon = page.locator(".ribbon");
+  const menuBar = page.locator("#appMenuBar");
+  await page.locator("#tabInsert").click();
+  await expect(page.locator("#tabInsert")).toHaveAttribute("aria-selected", "true");
+  await expect(ribbon).toBeVisible();
+  await expect(menuBar).toBeHidden();
+  const selectionToolbarWas = await page.locator("#selToolbar").count();
+
+  // DURING: select the older entry, which previews it.
+  await page.locator(rows).last().locator(".version-item-entry").click();
+  await expect(page.locator("#versionPreviewBanner")).toBeVisible();
+  // No ribbon at all — not a ribbon of greyed bands. Asserted on the ribbon and on
+  // a control inside it, because a band left painted inside a hidden ribbon would
+  // still be a wall of dead controls to anyone who reached it.
+  await expect(ribbon).toBeHidden();
+  await expect(page.locator("#tabInsert")).toBeHidden();
+  await expect(page.locator("#bold")).toBeHidden();
+  await expect(page.locator("#selToolbar")).toBeHidden();
+  // The composed-away set is published on `<body>`, so what went is readable
+  // rather than inferred from eighteen classes.
+  const withheld = (await page.locator("body").getAttribute("data-chrome-withheld")) ?? "";
+  expect(withheld.split(" ")).toContain("ribbon");
+  expect(withheld.split(" ")).toContain("selection");
+  // ONE navigation axis, never none: withholding the ribbon reveals the menu bar,
+  // which is where File ▸ Print lives (`109` UX-014, `docs/122`).
+  await expect(menuBar).toBeVisible();
+  // And the way BACK survives — the rail's Versions entry and the timeline itself.
+  // Without these the reader is stranded in a preview of their own document.
+  await expect(page.locator("#railVersions")).toBeVisible();
+  await expect(page.locator(panel)).toBeVisible();
+  await expect(page.locator("#versionPreviewBack")).toBeVisible();
+
+  // AFTER: back to current restores exactly what was there, the active tab
+  // included.
+  await page.locator("#versionPreviewBack").click();
+  await expect(page.locator("#versionPreviewBanner")).toBeHidden();
+  await expect(ribbon).toBeVisible();
+  await expect(menuBar).toBeHidden();
+  await expect(page.locator("#tabInsert")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#panelInsert")).toBeVisible();
+  expect(await page.locator("#selToolbar").count()).toBe(selectionToolbarWas);
+  expect((await page.locator("body").getAttribute("data-chrome-withheld")) ?? "").toBe("");
+
+  expect(consoleErrors).toEqual([]);
 });
 
 test("selecting an entry previews it read-only, and Back to current returns", async ({
@@ -236,7 +363,7 @@ test("selecting an entry previews it read-only, and Back to current returns", as
   // Two versions, so there is one that is NOT the head to preview. Previewing the
   // head is a no-op by design: it would swap the live session for a byte-identical
   // copy and throw the caret away for nothing.
-  await saveDocument(page);
+  await saveAnEdit(page, "VHPREVIEW");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
@@ -281,7 +408,7 @@ test("restore is non-destructive: the document you replace becomes a version", a
   page,
 }) => {
   await gotoEditor(page);
-  await saveDocument(page);
+  await saveAnEdit(page, "VHRESTORE");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
@@ -325,7 +452,7 @@ test("the panel is a grid: arrows move rows and cells, and the keyboard really l
   page,
 }) => {
   await gotoEditor(page);
-  await saveDocument(page);
+  await saveAnEdit(page, "VHGRID");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
@@ -374,7 +501,7 @@ test("the panel is a grid: arrows move rows and cells, and the keyboard really l
 
 test("the timeline keeps the keyboard when a preview opens under it", async ({ page }) => {
   await gotoEditor(page);
-  await saveDocument(page);
+  await saveAnEdit(page, "VHFOCUS");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
   const ids = await page.locator(rows).evaluateAll((els) => els.map((el) => el.id));
@@ -440,7 +567,7 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  await saveDocument(page);
+  await saveAnEdit(page, "VHMENU");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
   const ids = await page.locator(rows).evaluateAll((els) => els.map((el) => el.id));
@@ -525,7 +652,7 @@ test("naming a version pins it — from the row menu by keyboard, and from F2", 
   page,
 }) => {
   await gotoEditor(page);
-  await saveDocument(page);
+  await saveAnEdit(page, "VHNAME");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 
@@ -580,7 +707,7 @@ test("naming a version pins it — from the row menu by keyboard, and from F2", 
 
 test("Delete removes a version from the row menu, and from the Delete key", async ({ page }) => {
   await gotoEditor(page);
-  await saveDocument(page);
+  await saveAnEdit(page, "VHDELETE");
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(2);
 

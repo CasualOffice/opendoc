@@ -202,6 +202,20 @@ test("a document too large to lay out whole opens windowed, and its far pages st
       await expect(buttons.nth(i)).toHaveAttribute("title", /page-window at a time/);
     }
   }
+  // And "disable what cannot work" stops at the CONTROL, not at the surface. A
+  // whole editing ribbon over a document the engine will never let anyone edit is
+  // "never, for you" presented as "not right now" — the distinction `docs/126`'s
+  // container policy draws — so the ribbon is composed away entirely rather than
+  // greyed, exactly as a `readonly` container's is. The mode control above is in
+  // the FOOTER, so it survives and the reason above is still readable.
+  await expect(page.locator(".ribbon")).toBeHidden();
+  await expect(page.locator("#tabHome")).toBeHidden();
+  // Never NO navigation axis: withholding the ribbon reveals the menu bar, which
+  // is where File ▸ Print lives (`109` UX-014, `docs/122`).
+  await expect(page.locator("#appMenuBar")).toBeVisible();
+  expect(
+    ((await page.locator("body").getAttribute("data-chrome-withheld")) ?? "").split(" "),
+  ).toContain("ribbon");
 
   // And typing says the same thing. "QZX" rather than any marker containing
   // "@": the corpus has e-mail addresses in it and every search matches those.
