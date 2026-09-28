@@ -383,6 +383,12 @@ jobs:
       - name: Reject merge-conflict markers
         shell: bash
         run: |
-          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)'; then
+          # Git writes a marker as exactly seven characters: `<<<<<<< ` and
+          # `>>>>>>> ` carry a ref after them, `|||||||` is diff3's base, and
+          # `=======` sits alone on its line. Matching a PREFIX instead flags an
+          # ornamental rule — a NOTICE separating its third-party sections with
+          # a line of equals signs is not a conflict, and this job failed on
+          # exactly that. Anchored, so it still catches every real marker.
+          if git grep -nE '^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( |$)|^=======$'; then
             exit 1
           fi
