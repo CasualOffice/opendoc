@@ -1075,6 +1075,130 @@ is the full mapping; what follows is only what it decided differently, and why.
 - No engine operation was added (ADR-030 I2). The preview and the restore both go through
   `open`, which is the ordinary format path with the ordinary admission limits.
 
+## ADR-041 — A version diff is anchored content alignment, not node identity, and it runs as a budgeted job the host places
+
+**Status:** Accepted and implemented for the engine and the facade. Requirements: `docs/139`
+§9 (VH-008, VH-009). Architecture: `docs/140` §11, H3. Builds on **ADR-038** (the store) and
+**ADR-040** (the panel that ships "Show changes" disabled). Code: `crates/casual-doc-diff/**`
+and `crates/casual-doc-wasm/src/diff.rs`. The panel and overlay that consume it are a separate
+lane and are **not** built, so "Show changes" stays disabled until they are.
+
+**Context:** `docs/140` §11.2 step 2 instructed the diff to "match stable `NodeId` identities
+when the states share the same retained lineage", and `docs/140` §20 question 8 left the
+structural matching algorithm open. Both are settled here, and the first one is settled by
+being **contradicted**.
+
+**Decision:**
+
+1. **Node identity is an anchor, never a match key.** Every id in this model — `NodeId` and
+   every definition id that wraps one — is minted by `IdGenerator::new(config.id_namespace)`,
+   a counter that restarts at one for each import. Two checkpoints are two independent
+   imports, so nothing about the two id spaces relates them:
+
+   - a **DOCX** pair uses namespace 1 on both sides, so the same id names a *different*
+     paragraph on each side the moment anything is inserted above it. Matching on it would
+     misalign everything below the insertion, confidently.
+   - a **plain-text** pair derives its namespace from a hash of the whole text
+     (`casual_doc_io::text::text_namespace`), so the two sides share **no** id at all.
+     Matching on it would report every paragraph as deleted and re-added.
+
+   Opposite failures, same conclusion. Both are guarded:
+   `node_ids_are_ordinal_across_two_parses_so_they_are_anchors_and_not_match_keys` and
+   `plain_text_checkpoints_share_no_node_ids_at_all`. **`docs/140` §11.2 step 2 is corrected
+   in place** rather than left to be rediscovered.
+
+   What ids are used for is what they are good for: every change record carries the id of the
+   block on each side, in the `{node, start, end}` shape the review surface already emits, so
+   a host can navigate a session parsed from those same bytes. Because a parse is
+   deterministic, the ids in a preview session opened from a checkpoint are the ids the diff
+   reported for it — the same property that makes them useless as match keys makes them
+   reproducible as anchors. For a *live* document, whose ids have moved on since it was
+   parsed, the anchor's container `path` is the reliable half.
+
+   The identities that genuinely survive two parses are the ones the **source format** writes,
+   and they are used wherever they exist: a comment's `w16cid:durableId` (else `w14:paraId`),
+   a style's `w:name`, a bookmark's name, a media part's package path, and a header's semantic
+   position (section ordinal plus page type, not its id). A body paragraph's `w14:paraId` is
+   **not** among them: this engine reports that attribute as a located loss on save (FID-R-03),
+   so it is not available to match on. Retaining it would make a later diff materially better,
+   and that is now a recorded reason to do it rather than a side effect.
+
+2. **The algorithm is anchored sequence alignment over a hash forest, not tree edit
+   distance.** This answers `docs/140` §20 question 8. Composed from established parts:
+   a **Merkle hash tree** over the ordered container forest, so an identical subtree costs one
+   comparison; **common prefix/suffix trim**; **patience anchoring** (keys unique on both
+   sides, then the longest increasing subsequence of their pairings — Bram Cohen,
+   `git diff --patience`); **Myers' greedy O(ND) diff** (1986) on what is left; a second pass
+   of the same aligner on a weaker key to tell an edited block from a deletion plus an
+   addition; and a **hash join** on subtree hash for moves.
+
+   **General tree edit distance (Zhang–Shasha and descendants) is rejected.** It is O(n²) at
+   best with tree-depth factors on top, and its relabel/reparent edit script has no
+   counterpart in what a reader of a document wants to know. A word-processing body is an
+   *ordered* forest of typed containers, so aligning sibling lists and recursing into matched
+   containers is both exact and near-linear.
+
+   Two thresholds are decisions rather than tuning. A **move** is reported only when its
+   content is unique on both sides; anything else is a deletion plus an insertion with an
+   `ambiguous_match` finding, never a guess. A **pairing** inside a replace region is accepted
+   outright when the kinds correspond one to one — one cell replaced by one cell is that cell,
+   however different its text — and only on a similarity threshold when the region is ragged.
+
+3. **Typed field names are reflected from the model, not listed.** A formatting or property
+   change names `spacing.beforeTwips`, `borders.top.sizeEighthPoints`,
+   `runProperties[0].bold`, read from the type's own serde field names. A hand-written list is
+   the SKILL §5a defect in a new place: adding a field to a struct breaks every literal loudly
+   and every list that reads it silently. `Definitions` is the one exception — reflecting it
+   would be an O(document) encode of both sides, because it holds the headers, footers, notes
+   and comments — so its fields are named explicitly and
+   `every_definitions_field_is_either_compared_or_a_story` derives the list from the model's
+   own source and fails until a new field is accounted for.
+
+4. **The presentation vocabulary is review's vocabulary.** `insertion`, `deletion`,
+   `move_from`, `move_to`, `formatting` — the exact strings `casual-doc-wasm`'s review
+   projection already emits — plus `property` for a definition change that review markup has
+   no inline form for. A version diff is a different *thing* (two snapshots, no authorship,
+   nothing accept-able), but a reader does not have two vocabularies for "this sentence was
+   added". No English is minted in the engine; ADR-040 §6 already settled that wording is a
+   module, and a diff record carries a family, a kind and typed field names for
+   `version_policy.mjs` to word through `t()`.
+
+5. **The host places the work; the engine makes that possible.** Diffing two documents is
+   O(document), and SKILL §8 forbids running that on the main thread uninterrupted. So the
+   engine exposes a **budgeted coroutine**: `DiffJob::step(sides, budget)` does at most that
+   much work and returns, holds no borrow of either document, reports blocks actually
+   projected, and `cancel()` produces nothing. `beginVersionDiff(leftBytes, rightBytes)` wraps
+   it with the two parses as their own slices.
+
+   A Worker is the right home and is **not available today**: `webapp/` contains no `new
+   Worker` at all, the wasm module is instantiated once on the main thread and holds the live
+   document, and sharing that memory needs `SharedArrayBuffer`, which needs COOP/COEP headers
+   GitHub Pages cannot send. A *separate* wasm instance in a worker needs no shared memory,
+   which is why this facade takes bytes in and hands JSON out and references nothing in the
+   live session: moving it is a `webapp/` change with no engine change. Until then the main
+   thread drives it in slices, as `background_measure.mjs` already does for measuring a long
+   document.
+
+**Consequences**
+
+- No engine operation was added (ADR-030 I2); a diff is a read, and the closed 53-variant set
+  is untouched.
+- A diff does **not** paginate. `import_for_diff` runs the format registry and stops, so it
+  skips the shaper and the paginator — the expensive half of opening a document.
+- `VersionDiff::complete` is false whenever any finding is present, so a diff cannot be
+  labelled the complete document diff while a family was skipped (`docs/139` VH-009). The
+  families that are deliberately not characterised, and what a reader sees instead, are
+  enumerated in `docs/140` §11.7 and in the crate's own documentation.
+- Media bytes are the host's, not the model's: the facade computes part digests from the
+  imported resources so a replaced image is seen. A caller that supplies none gets a
+  `missing_resource` finding rather than a diff that calls two different images the same
+  image.
+- Complexity is guarded by **doubling**, not by a clock: two guards build documents of n and
+  2n and assert the comparison counter roughly doubles. The first of them found a real
+  quadratic while being written — a fully rewritten body shares no key, and Myers was spending
+  O(n·(n+m)) proving it — which is why a region with zero common keys now short-circuits.
+- The panel is a follow-on lane. `docs/140` §11.8 says exactly what it should call.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
