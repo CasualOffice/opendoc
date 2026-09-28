@@ -65,9 +65,7 @@ const EDITOR_SRC = "./editor.html";
 
 const form = document.querySelector("[data-controls]");
 const live = document.querySelector("[data-stage]");
-const idle = live?.querySelector("[data-idle]");
-const mountButton = document.querySelector("[data-mount]");
-const releaseButton = document.querySelector("[data-release]");
+const booting = live?.querySelector("[data-booting]");
 
 /** The visitor's WITHHOLDING intent, which outlives a role change.
  *
@@ -208,11 +206,23 @@ function reflectSwitches(state) {
   }
 }
 
-/** Paints the resolved readout: review mode, sandbox, capability chips, the
- *  regions composed away, and the URL. Every value is derived. */
+/** Paints the resolved readout: review mode, the two counts, capability chips,
+ *  the regions composed away, and the sandbox. Every value is derived.
+ *
+ *  THE COUNTS ARE DIGITS, NOT SENTENCES. "6 of 9 capabilities" is three nodes in
+ *  the markup and this writes the one number into the middle of it, so the module
+ *  still puts no English on screen — the contract `playground.test.mjs` holds it
+ *  to with `scanScript`. */
 function paintReadout(state) {
   set("[data-editing-mode]", editingModeFor(state.capabilities));
   set("[data-sandbox]", sandboxTokensFor(state.capabilities).join(" "));
+  set("[data-granted-count]", String(state.capabilities.size));
+  set("[data-region-count]", String(state.regions.size));
+  // One note per role is in the markup and four of them are `hidden`; this flips
+  // which. The page's language stays in the page.
+  for (const note of document.querySelectorAll("[data-role-note]")) {
+    note.hidden = note.dataset.roleNote !== state.mode;
+  }
   const withheld = REGIONS.filter((id) => !state.regions.has(id));
   const regionsOut = document.querySelector("[data-withheld-regions]");
   if (regionsOut) {
@@ -318,8 +328,13 @@ function applyBrand(state) {
  *  file's contents from outside the file, and both are transformations rather than
  *  fudges:
  *
- *    * `--brand-mark`'s `url()` is written relative to `src/brand.css`. A `<style>`
- *      element in the page resolves against the PAGE, so the `../` becomes `./`.
+ *    * EVERY `url()` IS MADE ABSOLUTE. A relative URL inside a custom property is
+ *      not resolved against the `<style>` that declares it — it is resolved where
+ *      the property is USED, which for `--brand-mark` is `src/style.css`. So the
+ *      generator's `./opendoc-mark.svg` was fetched as `/src/opendoc-mark.svg` and
+ *      404ed in the frame's console. Resolving against the frame document's base
+ *      here removes the question, and it replaces a `.replace("url(\"../\"` that
+ *      rewrote only the FIRST occurrence.
  *    * `applySettings()` has already written an inline `--accent` from the
  *      visitor's stored preference, and an inline declaration beats any
  *      stylesheet. In a real build the generator's `--brand-accent-pinned: 1`
@@ -329,7 +344,10 @@ function paintFrameBrand(config) {
   const frame = live?.querySelector("iframe");
   const doc = frame?.contentDocument ?? null;
   if (!doc?.head) return;
-  const css = brandCss(config, markPaths(config)).replace('url("../', 'url("./');
+  const css = brandCss(config, markPaths(config)).replace(
+    /url\("([^"]+)"\)/g,
+    (whole, path) => (/^[a-z]+:/i.test(path) ? whole : `url("${new URL(path, doc.baseURI).href}")`),
+  );
   if (!brandStyle || !brandStyle.isConnected || brandStyle.ownerDocument !== doc) {
     brandStyle = doc.createElement("style");
     brandStyle.dataset.playgroundBrand = "true";
@@ -361,7 +379,7 @@ function paintFrameBrand(config) {
  *  `embed.html` is where both paths are driven side by side; here the point is the
  *  configuration, not the mounting. */
 function mount(state) {
-  release({ keepButton: true });
+  release();
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", sandboxTokensFor(state.capabilities).join(" "));
   frame.setAttribute("allow", "clipboard-read; clipboard-write");
@@ -373,14 +391,17 @@ function mount(state) {
     // survived only until the next role change would be a worse demonstration
     // than none.
     applyBrand(readState());
+    // And the booting notice goes only once there is something behind it. It is
+    // an OVERLAY on the stage rather than a sibling that shares the flex row,
+    // which is the bug a screenshot caught the first time.
+    if (booting) booting.hidden = true;
   });
   mountedSrc = state.src;
-  if (idle) idle.hidden = true;
+  if (booting) booting.hidden = false;
   live?.append(frame);
-  if (releaseButton) releaseButton.disabled = false;
 }
 
-function release({ keepButton = false } = {}) {
+function release() {
   const frame = live?.querySelector("iframe");
   if (frame) {
     // Blank before detaching so the WebAssembly instance starts being released
@@ -394,9 +415,6 @@ function release({ keepButton = false } = {}) {
   }
   brandStyle = null;
   mountedSrc = "";
-  if (keepButton) return;
-  if (idle) idle.hidden = false;
-  if (releaseButton) releaseButton.disabled = true;
 }
 
 // ---- The loop --------------------------------------------------------------
@@ -472,8 +490,32 @@ document.querySelector("[data-try-failing]")?.addEventListener("click", () => {
   sync();
 });
 
-mountButton?.addEventListener("click", () => mount(readState()));
-releaseButton?.addEventListener("click", () => release());
+// THE TWO BUTTONS ARE HONEST ABOUT WHAT THEY DO, which is why neither of them is
+// called Start any more. The editor is mounted on arrival — a configuration page
+// that shows nothing until a visitor finds a button teaches nothing, and the
+// readout it left above an empty stage was a promise about a thing that was not
+// running. So what is left is the two gestures a configurator really needs:
+// throw the frame away and boot it again at the same URL, and put every control
+// back where the generator left it.
+document.querySelector("[data-remount]")?.addEventListener("click", () => mount(readState()));
+
+document.querySelector("[data-reset]")?.addEventListener("click", () => {
+  // `defaultChecked`/`defaultValue`/`defaultSelected` — the values the ATTRIBUTES
+  // carry, which is where `build-embed-docs.mjs` wrote the defaults. Reading them
+  // back rather than holding a copy means this module still has no opinion about
+  // which role the page opens on.
+  withheldCapabilities.clear();
+  withheldRegions.clear();
+  for (const radio of form?.querySelectorAll("[data-role]") ?? []) {
+    radio.checked = radio.defaultChecked;
+  }
+  for (const field of form?.querySelectorAll("[data-brand-name], [data-brand-accent], [data-brand-accent-hex]") ?? []) {
+    field.value = field.defaultValue;
+  }
+  const tabTitle = form?.querySelector("[data-brand-tab-title]");
+  if (tabTitle) tabTitle.selectedIndex = 0;
+  sync();
+});
 
 for (const button of document.querySelectorAll("[data-copy]")) {
   button.addEventListener("click", async () => {
@@ -494,11 +536,36 @@ for (const button of document.querySelectorAll("[data-copy]")) {
   });
 }
 
+/** Publishes the site header's height as `--pg-stick`, so the sticky live pane
+ *  can sit exactly under it.
+ *
+ *  The header is sticky and its height is not a constant: measured at 57px at
+ *  1280, 99px where the primary nav wraps to two rows, and 121px at 390. A CSS
+ *  constant would have parked the live card behind the nav on a phone, and a
+ *  number in a media query would go stale the day a nav entry is added — which
+ *  happened to this page's own nav entry this week.
+ *
+ *  Complexity: O(1), on layout changes only, and it touches no document. */
+function publishHeaderHeight() {
+  const header = document.querySelector(".site-header");
+  if (!header) return;
+  const paint = () =>
+    document.documentElement.style.setProperty(
+      "--pg-stick",
+      `${Math.round(header.getBoundingClientRect().height)}px`,
+    );
+  paint();
+  if (typeof ResizeObserver === "function") new ResizeObserver(paint).observe(header);
+}
+
+publishHeaderHeight();
+
 // The palette, then the first paint. Fetched rather than declared: `style.css` is
 // where a token's value is decided, so the live audit measures the palette the
 // editor will actually render — and a brand panel that guessed would be the second
 // source of truth `palette_parse.mjs` exists to avoid.
 sync();
+mount(readState());
 fetch(new URL("./src/style.css", document.baseURI))
   .then((response) => (response.ok ? response.text() : Promise.reject(response.status)))
   .then((css) => {

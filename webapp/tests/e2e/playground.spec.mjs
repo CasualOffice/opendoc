@@ -32,8 +32,12 @@ async function liveFrame(page) {
 }
 
 async function mount(page) {
+  // NO CLICK. The editor is mounted and configured on arrival — the page used to
+  // show a readout above an empty stage until a visitor found "Start the editor",
+  // which is a configuration page that teaches nothing until you hunt for a
+  // button. Guarded on its own below, too, because this helper would go on passing
+  // if a button came back: it waits for the frame either way.
   await page.goto("/playground.html");
-  await page.getByRole("button", { name: /Start the editor/ }).click();
   return liveFrame(page);
 }
 
@@ -71,6 +75,65 @@ async function painted(frame) {
     };
   });
 }
+
+// ---- The editor is running on arrival --------------------------------------
+
+test("the editor is mounted and configured on arrival, with no click at all", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The first defect of the first version, and the one everything else followed
+  // from: the right half of the page was blank until you pressed a button, so the
+  // readout described a container that was not running and the controls changed
+  // nothing you could see. This asserts the guarantee — a live frame at the
+  // default role, reached without any interaction — rather than the mechanism.
+  await page.goto("/playground.html");
+  const frame = await liveFrame(page);
+  expect(frame.url()).toContain("mode=edit");
+  // And no control exists that a visitor would have to find first. `preview` and
+  // `readonly` are role names on this page, so the sweep is over BUTTONS only.
+  const starters = await page
+    .locator("button")
+    // Anchored: "Restart" is a legitimate control and contains "start".
+    .filter({ hasText: /^\s*(start|launch|boot|run|load)\b/i })
+    .count();
+  expect(starters, "the page still has a button that has to be pressed first").toBe(0);
+  // The booting notice is gone once there is something behind it, rather than
+  // sharing the stage with the frame it was covering.
+  await expect(page.locator("[data-booting]")).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the preview is still on screen when the controls are scrolled", async ({ page }) => {
+  // THE SECOND DEFECT: scrolling to the control you wanted scrolled the editor you
+  // were configuring off the screen, so you could not see the effect of the thing
+  // you were changing. That is the property the configurator pattern exists for,
+  // and it is measured here at both widths rather than asserted of a CSS value —
+  // `position: sticky` is silently inert inside a single-column grid, which is
+  // exactly how this would regress.
+  for (const viewport of [
+    { width: 1280, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/playground.html");
+    await liveFrame(page);
+    // The last control in the column — the brand fields, which in the first
+    // version sat about 2,000px below the top of the panel.
+    const last = page.locator("#pg-brand-tab-title");
+    await last.scrollIntoViewIfNeeded();
+    await expect(last).toBeInViewport();
+    const onScreen = await page.evaluate(() => {
+      const box = document.querySelector("[data-stage] iframe").getBoundingClientRect();
+      return Math.min(box.bottom, window.innerHeight) - Math.max(box.top, 0);
+    });
+    expect(
+      onScreen,
+      `at ${viewport.width}px the editor is ${Math.round(onScreen)}px tall on screen ` +
+        "while its own controls are being used",
+    ).toBeGreaterThan(200);
+  }
+});
 
 // ---- The owner's point: preview and readonly are not the same thing ---------
 
@@ -352,6 +415,14 @@ test("every control has an accessible name and a keyboard path", async ({ page }
     return bad;
   });
   expect(unnamed).toEqual([]);
+
+  // A switch inside a folded group is still reachable: the eight ribbon bands sit
+  // in a closed `<details>`, and a disclosure nobody can open would be worse than
+  // the 330px scroller it replaced.
+  const bands = page.locator("#pg-chrome-band-home");
+  await expect(bands).toBeHidden();
+  await page.locator(".pg-fold-title", { hasText: /^Ribbon bands$/ }).click();
+  await expect(bands).toBeVisible();
 
   // And the first switch really takes focus and toggles from the keyboard, rather
   // than merely being in the tab order.

@@ -22,7 +22,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CAPABILITIES, REGIONS, ROLES, resolveCapabilities, resolveRegions } from "../src/capabilities.mjs";
+import {
+  CAPABILITIES,
+  REGIONS,
+  ROLES,
+  editingModeFor,
+  resolveCapabilities,
+  resolveRegions,
+} from "../src/capabilities.mjs";
 import { BrandRefusal, auditBrand, normalize } from "../src/brand_contract.mjs";
 import { TEXT_CONTRAST_FLOOR, UI_CONTRAST_FLOOR } from "../src/contrast.mjs";
 import { parsePalettes } from "../src/palette_parse.mjs";
@@ -105,29 +112,57 @@ test("exactly one role is checked on arrival, and it is a role", () => {
   assert.ok(ROLES.includes(checked[0]), `the default role ${checked[0]} is not a role`);
 });
 
-test("a role's row says what it resolves to, and says it correctly", () => {
-  // The clause on each radio ends with the grant, the region count and the review
-  // mode. That is the page's most load-bearing claim — it is what a host compares
-  // `preview` and `readonly` with before mounting anything — so it is re-derived
-  // here rather than trusted.
+test("a role's card and its note say what it resolves to, and say it correctly", () => {
+  // The page's most load-bearing claim — it is what a host compares `preview` and
+  // `readonly` with before mounting anything — so it is re-derived here rather
+  // than trusted. It now lives in two places, for a UX reason, and this checks
+  // both: the CARD carries the two counts and the review mode as pills, because
+  // those are the three facts that differ between roles and a reader compares them
+  // at a glance; the NOTE below the list carries the grant list in full, for the
+  // selected role only, because five grant lists on screen at once was the essay
+  // this redesign exists to remove.
   for (const role of ROLES) {
-    const row = PAGE.match(
-      new RegExp(`for="pg-role-${role}"[\\s\\S]*?<span class="pg-switch-what">([\\s\\S]*?)</span>`),
-    );
-    assert.ok(row, `no control row for the ${role} role`);
     const capabilities = resolveCapabilities({ mode: role, framed: true });
     const shown = resolveRegions({ mode: role, framed: true, capabilities });
-    assert.ok(
-      row[1].includes(`${shown.size} of ${REGIONS.length} regions`),
-      `the ${role} row does not say it gets ${shown.size} of ${REGIONS.length} regions: ${row[1]}`,
+    const card = PAGE.match(
+      new RegExp(
+        `for="pg-role-${role}"[\\s\\S]*?<span class="pg-choice-meta">([\\s\\S]*?)</span>\\s*</li>`,
+      ),
     );
+    assert.ok(card, `no control card for the ${role} role`);
+    assert.ok(
+      card[1].includes(`${capabilities.size} of ${CAPABILITIES.length} capabilities`),
+      `the ${role} card does not say it grants ${capabilities.size} of ${CAPABILITIES.length}: ${card[1]}`,
+    );
+    assert.ok(
+      card[1].includes(`${shown.size} of ${REGIONS.length} regions`),
+      `the ${role} card does not say it gets ${shown.size} of ${REGIONS.length} regions: ${card[1]}`,
+    );
+    assert.ok(
+      card[1].includes(`>${editingModeFor(capabilities)}<`),
+      `the ${role} card does not say it lands in ${editingModeFor(capabilities)}: ${card[1]}`,
+    );
+    const note = PAGE.match(new RegExp(`data-role-note="${role}"[^>]*>([\\s\\S]*?)</p>`));
+    assert.ok(note, `no note for the ${role} role`);
     for (const capability of capabilities) {
       assert.ok(
-        row[1].includes(`<code>${capability}</code>`),
-        `the ${role} row does not list its ${capability} grant`,
+        note[1].includes(`<code>${capability}</code>`),
+        `the ${role} note does not list its ${capability} grant`,
       );
     }
   }
+});
+
+test("exactly one role note is showing, and it is the checked role's", () => {
+  // The note is five paragraphs in the markup with four of them `hidden`, and
+  // `playground.js` flips which — that is what keeps the page's language in the
+  // page and that module out of the string table. Two of them visible would be two
+  // roles described at once on arrival.
+  const showing = [...PAGE.matchAll(/data-role-note="([\w-]+)"([^>]*)>/g)]
+    .filter((match) => !match[2].includes("hidden"))
+    .map((match) => match[1]);
+  const checked = PAGE.match(/<input[^>]*\bvalue="([^"]*)"[^>]*data-role checked/)?.[1];
+  assert.deepEqual(showing, [checked], "the visible role note is not the checked role's");
 });
 
 test("the two reading roles are described as different, because they are", () => {
