@@ -586,8 +586,10 @@ of a separate tracked-comparison document. This does not block safe local versio
 
 ## 18. Open product decisions
 
-Questions 1 through 5 are **settled by ADR-038** and implemented; the answers are recorded
-here rather than only in the ADR because this is the document a reader checks first.
+Questions 1 through 5 were **settled by ADR-038** and implemented; the answers are recorded
+here rather than only in the ADR because this is the document a reader checks first. Question 3
+was later **reversed by the owner** and the reversal is recorded in place, with its date and its
+reason, rather than by leaving the old answer standing beside code that contradicts it.
 
 1. **Settled.** Defaults are 25 versions / 7 days / a 3-version floor / 120 MB / 15 named,
    configurable in `settings_defaults.mjs` and clamped to engine hard ceilings. A single
@@ -595,9 +597,32 @@ here rather than only in the ADR because this is the document a reader checks fi
    bound and it is already a setting a host can lower.
 2. **Settled: yes**, on by default and tied to the autosave switch — a data-safety net nobody
    turns on is not one, and one switch must not promise what the other has stopped doing.
-3. **Settled: always a version.** It is the point a user recognises, and content-addressed
-   checkpoints make a no-change Save cost one ~300-byte row rather than a second copy of the
-   document.
+3. **REVERSED by the owner, 2026-09-28. A capture with nothing new in it is suppressed.**
+   The original answer was *always a version* — an explicit Save is a point a user recognises,
+   and content addressing makes a no-change Save cost one ~300-byte row rather than a second
+   copy of the document. That reasoning was about STORAGE, and storage was never the problem:
+   the owner's words are *"version should not be logged if nothing has changed"*, and the cost
+   is to the TIMELINE. Opening a document laid down an `import` entry identical to the head and
+   saving an unmodified one laid a `saved` entry beside it, so a reader got entries they cannot
+   tell apart, cannot act on, and which push real versions out of a 25-row budget.
+   So a capture whose artifact is byte-identical to the lineage head reports
+   `history.unchanged` and writes nothing — **per reason**, because the reasons are not the
+   same kind of thing:
+   - **suppressed:** `open`, `save`, and autosave's own `quiesce` / `ceiling` / `hidden` /
+     `rename`. All implicit: nobody asked for a version. The one open that carries real
+     information — the import baseline of a document with no timeline yet — has no head to be
+     identical to, so it is never suppressed;
+   - **kept:** `name` and `manual`, because they are explicit user acts and a command that
+     appears to do nothing is the worse failure; and `pre_restore`, `restore` and `recovery`,
+     because they are integrity captures. §9 of `docs/140` makes the pre-restore capture a
+     *precondition* of restore — the current state becomes a version before the head moves, or
+     the restore is refused — and that invariant is stated over a record existing. Trading it
+     for one row, in the rare case of restoring without having edited, is a bad trade.
+   The comparison is a SHA-256 checkpoint id against the head's, made inside the transaction
+   that already reads those rows, on bytes the capture had already hashed: no extra read, no
+   extra hash, nothing walked twice. `VersionCapturePolicy.shouldCapture` — the editing path's
+   only contribution — is untouched and still O(1) with no storage access, because a content
+   question needs bytes and it may not have them. Recorded in ADR-038 decision 5.
 4. **Settled: yes.** Pinning is available without a label; the label makes a version findable,
    the pin makes it durable, and they are separable operations.
 5. **Settled: yes**, a pin limit of 15 against the count cap of 25. It exists so that pins can

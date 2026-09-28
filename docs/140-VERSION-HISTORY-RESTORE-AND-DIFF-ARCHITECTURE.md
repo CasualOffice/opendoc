@@ -450,7 +450,7 @@ owned by another lane, so these are the call sites and nothing more.
 | Where in `main.js` | What it calls | Why there |
 | --- | --- | --- |
 | `writeDraft`, after `store.putDraft` succeeded | `capturePolicy.shouldCapture({reason, revision, now})`, then `history.captureVersion` with the **same `snapshot.bytes`** | the artifact is already exported and already verified at that point; capturing anywhere else would export the document twice |
-| `markDocumentSaved` | the same pair with `reason: "save"` | an explicit Save is always a version (ADR-038) |
+| `markDocumentSaved` | the same pair with `reason: "save"` | an explicit Save always ASKS for a version — past the watermark and the interval — but one whose bytes already are the head is suppressed (`docs/139` §18 q3, reversed 2026-09-28; ADR-038 decision 5) |
 | `openBytes` / `adoptDraftDocument` | `history.openLineage({docKey, name})`, then a capture with `reason: "open"` | the import baseline, and the point at which a reopened file rejoins its own timeline |
 | boot, after the recovery bar | `history.resolvePendingRestores()` and `history.sweep()` | a prepared restore left by a killed tab, and the age window, are both boot-time work |
 | the existing `statusChannel.publish` | `historyStatusKind(status)` as the kind | one feedback channel, and the refusal/confirmation distinction is already its own |

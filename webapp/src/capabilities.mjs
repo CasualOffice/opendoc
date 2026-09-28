@@ -188,6 +188,31 @@ export const REGIONS = Object.freeze([
  *  withholds them too. Derived, not listed twice. */
 const BAND_REGIONS = Object.freeze(REGIONS.filter((id) => id.startsWith("band.")));
 
+/** THE EDITING CHROME: the regions whose whole purpose is changing the document.
+ *
+ *  They are named as a set because a container sometimes has a document on screen
+ *  that **cannot be edited at all** — one the engine refuses (`docs/113` §8.7), or
+ *  a stored version being previewed (`docs/139` §8.4) — and that is the same
+ *  "never, for you" the container policy above describes, arriving from the
+ *  document rather than from the host. The honest chrome for it is no editing
+ *  ribbon, not a ribbon of greyed bands.
+ *
+ *  The ribbon and its eight bands, because the ribbon IS the editing surface; and
+ *  the floating selection toolbar, because it offers formatting and nothing else
+ *  — which is exactly why `READING_REGIONS` leaves it out too.
+ *
+ *  NOT the menu bar: withholding the ribbon reveals it (`style.css`), so a reader
+ *  keeps one navigation axis and can still reach File ▸ Print. NOT `settings`
+ *  (appearance and identity are not document edits, and a reader who cannot
+ *  change the theme for the duration of a preview has lost something for no
+ *  reason), NOT `brand` (it is still our page), NOT `history` (the timeline is how
+ *  a preview is left again — withholding it would strand the reader in the
+ *  preview, since `#versionPanel` and `#versionPreviewBanner` are both in it).
+ *
+ *  A subtraction and not a second whitelist: one list of what editing chrome IS
+ *  cannot drift from `READING_REGIONS`, where two overlapping whitelists would. */
+export const EDITING_REGIONS = Object.freeze(["ribbon", ...BAND_REGIONS, "selection"]);
+
 /** Every region — the presentation a page with no host gets. */
 const ALL_REGIONS = Object.freeze([...REGIONS]);
 
@@ -562,16 +587,47 @@ export function hostCapabilities(view = globalThis) {
   return resolveCapabilities(hostConfig(view));
 }
 
-/** The regions a real page shows, from the same inputs. */
+/** The regions a real page shows, from the same inputs. The `editing` half of
+ *  [`hostChrome`], and delegated rather than computed a second time: two functions
+ *  reading the same URL are two answers waiting to disagree. */
 export function hostRegions(view = globalThis) {
+  return hostChrome(view).editing;
+}
+
+/**
+ * The TWO region sets a real page needs, from the one set of host inputs.
+ *
+ * `editing` is what `hostRegions` has always returned: the chrome this container
+ * paints. `reading` is the same container with its editing chrome composed away,
+ * for as long as the document on screen cannot be edited at all — a document the
+ * engine refuses, and a version preview.
+ *
+ * BOTH COME FROM `resolveRegions`, and `reading` is produced by appending
+ * `EDITING_REGIONS` to the host's own `?chrome=` withhold list rather than by
+ * filtering the result. That is not a stylistic choice: `parseWithheld` can only
+ * ever take regions away, so `reading ⊆ editing` holds structurally instead of by
+ * inspection, and a `preview` or `readonly` container — which already has no
+ * ribbon — is unchanged by it. There is no second mechanism and nothing is hidden
+ * by hand; a mode cannot widen what a host composed.
+ *
+ * Complexity: O(regions) twice, once at boot.
+ *
+ * @param {object} [view]
+ * @returns {{editing: Set<string>, reading: Set<string>}}
+ */
+export function hostChrome(view = globalThis) {
   const config = hostConfig(view);
-  return resolveRegions({
+  const shared = {
     mode: config.mode,
     framed: config.framed,
-    withhold: config.chrome,
     // The same grant `hostCapabilities` resolves, handed over rather than resolved
     // again: `branding` is one of the capabilities a `?can=` list can withhold, and
     // the `brand` region follows it.
     capabilities: resolveCapabilities(config),
-  });
+  };
+  const withheld = [config.chrome ?? "", ...EDITING_REGIONS.map((id) => `-${id}`)].join(",");
+  return {
+    editing: resolveRegions({ ...shared, withhold: config.chrome }),
+    reading: resolveRegions({ ...shared, withhold: withheld }),
+  };
 }

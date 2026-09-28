@@ -107,6 +107,7 @@ import {
   openHistoryStore,
   resolveRetention,
   sanitiseVersionName,
+  suppressesUnchanged,
 } from "./version_history.mjs";
 import {
   groupVersions,
@@ -1360,7 +1361,30 @@ export function createVersionHistory({
       actor: info.actor,
       kind: kind ?? kindFor(reason),
       retention: retention(),
+      // Nothing new to keep is not a version (`docs/139` §18 q3, reversed by the
+      // owner on 2026-09-28). Per REASON, because the reasons are not the same
+      // kind of thing — `SUPPRESS_UNCHANGED` argues each one — and decided here
+      // rather than in `shouldCapture`, which may not touch bytes or storage.
+      skipIfUnchanged: suppressesUnchanged(reason),
     });
+    if (result.status === HISTORY_STATUS.UNCHANGED) {
+      // NOTHING IS SAID, and that is decided rather than skipped.
+      //
+      // A suppressed capture is not a refusal: nothing was promised and withheld,
+      // and `report` exists for the case where somebody's work could not be kept.
+      // Every reason that a PERSON asks for by name — Name this version, and a
+      // manual capture — is on the `KEEP_UNCHANGED` side, so no surface ever offers
+      // to make a version and then quietly does nothing; the suppressed reasons are
+      // all implicit. Saying it anyway would put a second sentence on the status
+      // channel about one act and RACE the Save's own "Saved <name>", which is the
+      // message the reader actually needs. What tells the truth is the timeline
+      // itself: no row appeared, the head is still marked as the current version,
+      // and the disclosure line still says how many are kept.
+      //
+      // And nothing is noted: `noteCaptured` would start the interval over and skip
+      // the NEXT tick — the one that would have had something to keep.
+      return result;
+    }
     if (result.ok) {
       capturePolicy.noteCaptured(Date.now(), info.revision);
       rows = await ready.listVersions(lineageId);

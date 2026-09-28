@@ -24,10 +24,12 @@ import assert from "node:assert/strict";
 import {
   CAPABILITIES,
   CAPABILITY_AFFORDANCES,
+  EDITING_REGIONS,
   PRESET_NAMES,
   REGIONS,
   ROLES,
   editingModeFor,
+  hostChrome,
   hostConfig,
   hostRegions,
   parseWithheld,
@@ -235,6 +237,74 @@ test("the URL is the one configuration channel, read in one place", () => {
   // we ARE framed, which is the safer answer.
   const hostile = { location: { search: "" }, get self() { throw new Error("cross-origin"); } };
   assert.equal(hostConfig(hostile).framed, true);
+});
+
+// ── The reading chrome, for a document that cannot be edited ──────────────────
+
+test("a document that cannot be edited loses the editing chrome and NOTHING else", () => {
+  // The owner's report: previewing a stored version showed the whole editing ribbon
+  // over a document you cannot edit. That is the same "never, for you" `docs/126`
+  // draws — arriving from the DOCUMENT rather than from the host — so the honest
+  // answer is the same one `readonly` already gets: no editing ribbon, not a ribbon
+  // of greyed bands.
+  const { editing, reading } = hostChrome({ location: { search: "" }, self: 1, top: 1 });
+  assert.equal(editing.has("ribbon"), true, "our own page has the ribbon to begin with");
+  for (const id of EDITING_REGIONS) {
+    assert.equal(reading.has(id), false, `${id} is editing chrome and must be composed away`);
+  }
+  // And everything else survives, named rather than counted. The rail in particular:
+  // it carries the Versions entry, so a preview that took it away would strand the
+  // reader in the preview with no way back to the timeline they came from.
+  for (const id of REGIONS.filter((r) => !EDITING_REGIONS.includes(r))) {
+    assert.equal(reading.has(id), true, `${id} is not editing chrome and must survive`);
+  }
+  assert.equal(reading.has("rail"), true, "the way back to the timeline");
+  assert.equal(reading.has("history"), true, "the panel and its preview bar live here");
+  assert.equal(reading.has("menu"), true, "one navigation axis, which the ribbon's absence reveals");
+  assert.equal(reading.has("settings"), true, "preferences are not document edits");
+  assert.equal(reading.has("brand"), true, "it is still our own page");
+});
+
+test("the reading chrome can only narrow what a host composed, never widen it", () => {
+  // Structural, not incidental: `reading` is produced by APPENDING the editing
+  // regions to the host's own `?chrome=` withhold list, and `parseWithheld` runs in
+  // one direction. So a mode cannot hand back a surface the host took away — which
+  // is the whole reason composition and permission are separate axes.
+  for (const search of [
+    "",
+    "?mode=readonly",
+    "?mode=preview",
+    "?mode=viewer",
+    "?mode=commentor",
+    "?mode=embedded",
+    "?chrome=-rail,-find,-status",
+    "?mode=owner&can=-branding",
+  ]) {
+    const { editing, reading } = hostChrome({ location: { search }, self: 1, top: 2 });
+    for (const id of reading) {
+      assert.ok(editing.has(id), `"${search}" let the reading chrome add "${id}"`);
+    }
+  }
+  // A host that withheld the rail does not get it back for a preview.
+  const narrowed = hostChrome({ location: { search: "?chrome=-rail" }, self: 1, top: 1 });
+  assert.equal(narrowed.reading.has("rail"), false);
+  // And a container that already had no ribbon is unchanged by the distinction —
+  // which is what says the two answers agree wherever the host has said anything.
+  const reader = hostChrome({ location: { search: "?mode=readonly" }, self: 1, top: 2 });
+  assert.deepEqual([...reader.reading].sort(), [...reader.editing].sort());
+  const preview = hostChrome({ location: { search: "?mode=preview" }, self: 1, top: 2 });
+  assert.equal(preview.editing.size, 0);
+  assert.equal(preview.reading.size, 0);
+});
+
+test("`hostRegions` and `hostChrome().editing` are one answer, not two", () => {
+  // `hostRegions` used to read the URL and resolve on its own. Two functions reading
+  // the same inputs are two answers waiting to disagree — the defect this file's own
+  // comments record for the `shortcut:` labels and the key bindings — so it delegates.
+  for (const search of ["", "?mode=readonly", "?chrome=-ribbon", "?mode=edit&can=-print"]) {
+    const view = { location: { search }, self: 1, top: 2 };
+    assert.deepEqual([...hostRegions(view)].sort(), [...hostChrome(view).editing].sort());
+  }
 });
 
 test("`branding` is consulted: an embedded editor does not advertise us", () => {

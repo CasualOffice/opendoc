@@ -20,6 +20,8 @@ import {
   CAPTURE_REASON,
   HISTORY_LIMITS,
   HISTORY_STATUS,
+  KEEP_UNCHANGED,
+  SUPPRESS_UNCHANGED,
   VERSION_KIND,
   VersionCapturePolicy,
   historyStatusCodes,
@@ -29,6 +31,7 @@ import {
   planRetention,
   resolveRetention,
   sanitiseVersionName,
+  suppressesUnchanged,
 } from "../src/version_history.mjs";
 import { DEFAULT_SETTINGS } from "../src/settings_defaults.mjs";
 import { announcementRegion, needsToast } from "../src/status_policy.mjs";
@@ -266,9 +269,12 @@ test("nothing changed means no version, and an explicit Save always means one", 
     { capture: false, kind: null, why: HISTORY_STATUS.UNCHANGED },
     "the engine revision watermark is the authority on whether anything changed",
   );
-  // Save, naming, open, restore: points a person recognises. `docs/139` §18
-  // question 3 asked whether Save always makes a version; ADR-038 says yes, and
-  // content-addressed checkpoints are why it is cheap.
+  // Save, naming, open, restore: points a person recognises, so none of them is
+  // withheld by the watermark or the interval. That is all this decision claims —
+  // whether the version is actually WRITTEN also depends on whether its content is
+  // new, which needs bytes and is settled at capture time (`docs/139` §18 q3 as the
+  // owner reversed it on 2026-09-28). This function still reads no storage and
+  // takes no bytes, which is the whole reason the split exists.
   for (const [reason, kind] of [
     [CAPTURE_REASON.SAVE, VERSION_KIND.SAVED],
     [CAPTURE_REASON.NAME, VERSION_KIND.NAMED],
@@ -286,6 +292,129 @@ test("nothing changed means no version, and an explicit Save always means one", 
     false,
     "the switch is honoured below the UI",
   );
+});
+
+test("every capture reason is classified as suppressed-or-kept when nothing changed, exactly once", () => {
+  // The same "classify it deliberately" guard the status codes have. A new reason
+  // that nobody thought about would otherwise default to whichever branch the code
+  // happens to fall through to — and for `pre_restore` that default is an integrity
+  // invariant (`docs/140` §9). Listed rather than inferred, so adding a reason
+  // fails here until someone has decided.
+  const all = Object.values(CAPTURE_REASON);
+  for (const reason of all) {
+    const suppressed = SUPPRESS_UNCHANGED.includes(reason);
+    const kept = KEEP_UNCHANGED.includes(reason);
+    assert.ok(
+      suppressed !== kept,
+      `${reason} is in ${suppressed && kept ? "both" : "neither"} of SUPPRESS_UNCHANGED and ` +
+        "KEEP_UNCHANGED; every capture reason must be in exactly one",
+    );
+    assert.equal(suppressesUnchanged(reason), suppressed);
+  }
+  assert.equal(SUPPRESS_UNCHANGED.length + KEEP_UNCHANGED.length, all.length);
+  // And the three integrity reasons are on the KEEP side, named here rather than
+  // counted: `docs/140` §9's non-destructive restore is stated over a pre-restore
+  // RECORD existing, and this is the assertion that would fail if a later tidy-up
+  // decided identical bytes meant it could be skipped.
+  for (const reason of [
+    CAPTURE_REASON.PRE_RESTORE,
+    CAPTURE_REASON.RESTORE,
+    CAPTURE_REASON.RECOVERY,
+  ]) {
+    assert.equal(suppressesUnchanged(reason), false, `${reason} is an integrity capture`);
+  }
+  // As are the two explicit user acts: a command that appears to do nothing is the
+  // worse failure, and content addressing makes the duplicate one row.
+  assert.equal(suppressesUnchanged(CAPTURE_REASON.NAME), false);
+  assert.equal(suppressesUnchanged(CAPTURE_REASON.MANUAL), false);
+  // And the owner's two targets are on the suppressed side.
+  assert.equal(suppressesUnchanged(CAPTURE_REASON.OPEN), true);
+  assert.equal(suppressesUnchanged(CAPTURE_REASON.SAVE), true);
+});
+
+test("a capture with nothing new in it writes nothing, and says so without calling it an error", async () => {
+  // THE CONDITION IS CREATED: a lineage with a head, and then the SAME bytes
+  // offered again. A test that captured once and asserted one version would pass
+  // over a store that never suppressed anything.
+  const { store, db, lineageId } = await seeded(1, { bytesEach: 2048 });
+  const same = new Uint8Array(2048).fill(0); // exactly what `seeded` wrote for i = 0
+  const head = (await store.listVersions(lineageId))[0];
+
+  const before = db.requests;
+  const skipped = await store.captureVersion({
+    lineageId,
+    bytes: same,
+    formatId: "docx",
+    revision: 99,
+    now: NOW + 60_000,
+    retention: policy(),
+    kind: VERSION_KIND.SAVED,
+    skipIfUnchanged: true,
+  });
+  assert.equal(skipped.status, HISTORY_STATUS.UNCHANGED);
+  assert.equal(await store.head(lineageId), head.versionId, "the head did not move");
+  assert.equal((await store.listVersions(lineageId)).length, 1, "no second row was written");
+  // Nothing went wrong, so nothing is reported as a failure: `ok` is true, the
+  // channel kind is the quiet one, and the code is not in the refusal set.
+  assert.equal(skipped.ok, true);
+  assert.equal(skipped.kind, "");
+  assert.equal(historyStatusKind(HISTORY_STATUS.UNCHANGED), "");
+  assert.equal(isHistoryRefusal(HISTORY_STATUS.UNCHANGED), false);
+  // It says WHICH version already holds these bytes, rather than only refusing.
+  assert.equal(skipped.version?.versionId, head.versionId);
+  // And it is cheaper than a capture, not dearer: it leaves the transaction
+  // without writing a blob, a row, a head or a retention plan.
+  const suppressedCost = db.requests - before;
+
+  // The same bytes WITHOUT the flag still capture — which is what keeps the
+  // restore path's pre-restore checkpoint unconditional (`docs/140` §9).
+  const kept = await store.captureVersion({
+    lineageId,
+    bytes: same,
+    formatId: "docx",
+    revision: 99,
+    now: NOW + 120_000,
+    retention: policy(),
+    kind: VERSION_KIND.PRE_RESTORE,
+  });
+  assert.equal(kept.status, HISTORY_STATUS.RECORDED);
+  assert.equal((await store.listVersions(lineageId)).length, 2);
+  const keptCost = db.requests - before - suppressedCost;
+  assert.ok(
+    suppressedCost < keptCost,
+    `a suppressed capture issued ${suppressedCost} store requests and a real one ${keptCost}; ` +
+      "suppression must do less work, not more",
+  );
+  store.close();
+});
+
+test("unchanged means identical to the HEAD, not identical to anything ever stored", async () => {
+  // The distinction matters: a document edited, reverted by hand and then saved has
+  // bytes that match an OLDER version, and that is a real point in its past. Only
+  // the head — the state already on screen — is the one a new row would duplicate.
+  const indexedDB = fakeIndexedDB();
+  const store = await openHistoryStore({ indexedDB, name: "opendoc-drafts", subtle: null });
+  const { lineageId } = await store.openLineage({ docKey: "k1", name: "a.docx", now: NOW });
+  const a = new Uint8Array(1024).fill(1);
+  const b = new Uint8Array(1024).fill(2);
+  const capture = (bytes, at) =>
+    store.captureVersion({
+      lineageId,
+      bytes,
+      formatId: "docx",
+      revision: at,
+      now: NOW + at * 60_000,
+      retention: policy(),
+      kind: VERSION_KIND.SAVED,
+      skipIfUnchanged: true,
+    });
+
+  assert.equal((await capture(a, 1)).status, HISTORY_STATUS.RECORDED, "the first has no head");
+  assert.equal((await capture(a, 2)).status, HISTORY_STATUS.UNCHANGED, "a is the head");
+  assert.equal((await capture(b, 3)).status, HISTORY_STATUS.RECORDED);
+  assert.equal((await capture(a, 4)).status, HISTORY_STATUS.RECORDED, "a is no longer the head");
+  assert.equal((await store.listVersions(lineageId)).length, 3);
+  store.close();
 });
 
 test("the capture decision is O(1) in the number of stored versions", async () => {
