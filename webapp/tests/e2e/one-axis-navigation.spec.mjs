@@ -310,6 +310,24 @@ const PALETTE_ONLY = new Map([
   // than caused by the restructure; queued in `109` as HF-190 (it was HF-179 until 2026-09-27, when that id turned out to name two different defects; the pointer-cursor row keeps HF-179).
   ["review.acceptAtCaret", "needs the Review band's Accept split button (109 HF-190)"],
   ["review.rejectAtCaret", "needs the Review band's Reject split button (109 HF-190)"],
+  // The object arrange family, same shape and same remedy. Word puts each of
+  // these in a SPLIT button: "Bring Forward" is the face and "Bring to Front"
+  // its first dropdown row; Send Backward fronts Send to Back; Rotate Right
+  // fronts Rotate Left and both flips. We ship the faces — `bringForward`,
+  // `sendBackward`, `rotateRight` all have controls — and no dropdowns, so the
+  // far end of each pair is palette-only. `inLine` and `addText` are different:
+  // both belong on the object chip beside the wrap control, which is where a
+  // reader is already looking when they want them.
+  //
+  // Recorded rather than dissolved, because the fix is a real control and this
+  // list is where an unfinished one stays visible.
+  ["layout.arrange.bringToFront", "needs the Bring Forward split button's dropdown"],
+  ["layout.arrange.sendToBack", "needs the Send Backward split button's dropdown"],
+  ["layout.arrange.rotateLeft", "needs the Rotate split button's dropdown"],
+  ["layout.arrange.flipHorizontal", "needs the Rotate split button's dropdown"],
+  ["layout.arrange.flipVertical", "needs the Rotate split button's dropdown"],
+  ["layout.arrange.inLine", "needs a row on the object chip, beside wrap"],
+  ["layout.arrange.addText", "needs a row on the object chip"],
 ]);
 
 test("no command is reachable from the command palette alone", async ({
