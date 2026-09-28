@@ -355,26 +355,147 @@ function unconditionalTokens() {
 const escape = (text) =>
   String(text).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-/** A captioned code panel whose caption is the file the code came from. */
+// ── The localisation seam, inside generated markup (`109` HF-198 → HF-2xx) ──
+//
+// The site went through the editor's seam — `data-i18n` in the markup with the
+// English beside it, `tools/build-locale.mjs` extracting it into the same
+// `locales/en.json`, `i18n.mjs` resolving it — and these two pages were left out
+// of that pass, correctly: everything between `@generated` and `@end` is written
+// HERE, so hand-editing the pages to add attributes would have been undone by
+// the next run and `--check` would have failed the build for exactly the right
+// reason. Routing them means teaching THIS to emit the attribute, which is what
+// the code below does.
+//
+// ONE KEY PER DATUM, NOT ONE PER SENTENCE. A capability's clause is keyed by the
+// capability, a region's by the region, an event's by the event and a refusal's
+// by its code — so renaming a sentence keeps its translations and adding a
+// capability adds a key rather than silently reusing a neighbour's. The keys live
+// under `site.*` rather than `site.embedding.*`/`site.playground.*` because
+// the SAME clause serves both pages: `MEANINGS` is the embedding guide's "What it
+// is" column and the playground's switch description, and two keys for one
+// sentence is how the table and the control come to disagree about what
+// `autosave` is. `keysFromSite` refuses one key with two different English
+// strings, so sharing is checked rather than assumed.
+//
+// WHAT IS NOT ROUTED, deliberately:
+//
+//   * code — identifiers, paths, import specifiers, `npm run test:unit`. A
+//     translated `package.json` path is a lie about someone else's repository.
+//   * TEST TITLES in the evidence table. They are cited as evidence and a reader
+//     is meant to be able to `grep` for them; a translated title names no test.
+//   * role, capability and region NAMES. They are the API's own words, and a
+//     host types them into a URL.
+//   * numbers. Those are `data-claim` values, re-derived every run.
+//
+// So these two pages keep a floor of unroutable sites, and the ceilings in
+// `no_unrouted_strings.test.mjs` are re-measured rather than driven to zero.
+
+/** A cell or heading whose English goes through the seam.
+ *
+ *  `table()` and the control builders below understand this shape and emit the
+ *  `data-i18n` attribute themselves, so a call site says WHAT the sentence is
+ *  and never has to remember to route it. */
+const say = (key, text) => ({ key, text });
+
+/** An inline routed fragment, for a cell that is part prose and part code.
+ *
+ *  Used where a sentence and an identifier share a cell — "browser
+ *  (`allow-downloads`)" — so the prose half is translatable and the token is
+ *  left alone. Every fragment is a WHOLE clause, never half a sentence: splitting
+ *  one sentence across two keys is the classic localisation defect, because word
+ *  order is not a property a generator can assume. */
+const said = (key, text) => `<span data-i18n="${key}">${escape(text)}</span>`;
+
+/** Column heading → its key, or `null` for a heading that must not be
+ *  translated.
+ *
+ *  Headings repeat across tables ("Grants" is the role table's and the legacy
+ *  table's), so they are keyed by the WORDS rather than by the table: one column
+ *  name, one translation, everywhere. `table()` fails on a heading that is not in
+ *  here, which is what stops a new column shipping unrouted. */
+const COLUMN_KEYS = Object.freeze({
+  Capability: "site.column.capability",
+  "What it is": "site.column.whatItIs",
+  "Enforced by": "site.column.enforcedBy",
+  Role: "site.column.role",
+  "Review mode": "site.column.reviewMode",
+  Grants: "site.column.grants",
+  "Legacy name": "site.column.legacyName",
+  Relationship: "site.column.relationship",
+  "Command id": "site.column.commandId",
+  "What it decides": "site.column.whatItDecides",
+  Event: "site.column.event",
+  Detail: "site.column.detail",
+  "When it fires": "site.column.whenItFires",
+  "Refusal code": "site.column.refusalCode",
+  "What it means": "site.column.whatItMeans",
+  "Decided by": "site.column.decidedBy",
+  Region: "site.column.region",
+  File: "site.column.file",
+  "Ships as": "site.column.shipsAs",
+  Lane: "site.column.lane",
+  "The test": "site.column.theTest",
+  // The two ROLE columns of the region table. A role name is API vocabulary — a
+  // host types it into a URL — so it is the one heading that stays English on
+  // purpose rather than by omission.
+  readonly: null,
+  preview: null,
+});
+
+/** A captioned code panel.
+ *
+ *  The caption is a file path and a clause about it. The PATH is code and stays
+ *  as it is; the clause goes through the seam, which is why the two are separate
+ *  elements rather than one string joined with an em dash. */
 function codePanel(caption, code) {
+  // Kept as `<span>`s rather than promoted to `<code>`: the head's typography is
+  // the docs shell's and this change is about the seam, not about restyling
+  // (SKILL §11 — design tokens are deliberate).
+  const head = caption.key
+    ? `<span>${escape(caption.path)}</span> — ${said(caption.key, caption.text)}`
+    : `<span>${escape(caption.path)}</span>`;
   return [
     '<div class="code-panel">',
-    `  <div class="code-panel-head"><span>${escape(caption)}</span></div>`,
+    `  <div class="code-panel-head">${head}</div>`,
     `  <pre><code>${escape(code)}</code></pre>`,
     "</div>",
   ].join("\n");
 }
 
-/** A three-column `disp-table`, the docs shell's existing table component. */
+/** A three-column `disp-table`, the docs shell's existing table component.
+ *
+ *  A cell is either raw HTML (code, or prose already wrapped by `said`) or a
+ *  `say(key, text)`, in which case the ROW ELEMENT carries the attribute and
+ *  there is no extra span — a `disp-cell` that holds one sentence is exactly the
+ *  element the seam wants. */
 function table(head, rows) {
   const cells = (row) =>
     row
-      .map((cell, index) => `    <div class="${index === 0 ? "disp-name" : "disp-cell"}">${cell}</div>`)
+      .map((cell, index) => {
+        const className = index === 0 ? "disp-name" : "disp-cell";
+        if (cell && typeof cell === "object" && cell.key) {
+          return `    <div class="${className}" data-i18n="${cell.key}">${escape(cell.text)}</div>`;
+        }
+        return `    <div class="${className}">${cell}</div>`;
+      })
       .join("\n");
+  const heading = (label) => {
+    if (!Object.hasOwn(COLUMN_KEYS, label)) {
+      throw new Error(
+        `build-embed-docs: the column heading "${label}" has no entry in COLUMN_KEYS. ` +
+          "Add a key so it goes through the localisation seam, or map it to null if it " +
+          "is API vocabulary that must stay English.",
+      );
+    }
+    const key = COLUMN_KEYS[label];
+    return key
+      ? `    <div data-i18n="${key}">${escape(label)}</div>`
+      : `    <div>${escape(label)}</div>`;
+  };
   return [
     '<div class="disp-table">',
     '  <div class="disp-row head">',
-    ...head.map((label) => `    <div>${escape(label)}</div>`),
+    ...head.map(heading),
     "  </div>",
     ...rows.map((row) => ['  <div class="disp-row">', cells(row), "  </div>"].join("\n")),
     "</div>",
@@ -415,15 +536,24 @@ function capabilityRows() {
           "Add one clause describing it, so the page cannot ship an unexplained row.",
       );
     }
+    // Each LAYER is a whole clause with its own key, and the sandbox token
+    // inside the browser one is left as code. Three clauses and a comma, not one
+    // sentence cut into pieces.
     const layers = [];
     const token = sandboxTokenFor(capability);
-    if (token) layers.push(`browser (<code>${escape(token)}</code>)`);
-    if (["edit", "comment"].includes(capability)) layers.push("engine (review mode)");
-    if (consulted.has(capability)) layers.push("chrome");
+    if (token) {
+      layers.push(`${said("site.layer.browser", "browser")} (<code>${escape(token)}</code>)`);
+    }
+    if (["edit", "comment"].includes(capability)) {
+      layers.push(said("site.layer.engine", "engine (review mode)"));
+    }
+    if (consulted.has(capability)) layers.push(said("site.layer.chrome", "chrome"));
     return [
       `<code>${capability}</code>`,
-      escape(meaning),
-      layers.length ? layers.join(", ") : "<b>nothing yet</b>",
+      say(`site.capability.${capability}`, meaning),
+      layers.length
+        ? layers.join(", ")
+        : `<b data-i18n="site.layer.nothingYet">nothing yet</b>`,
     ];
   });
 }
@@ -434,11 +564,19 @@ function roleRows() {
     const extra = sandboxTokensFor(capabilities).filter(
       (token) => !unconditionalTokens().includes(token),
     );
+    // "Sandbox:" is a LABEL in front of a list of tokens, not the opening of a
+    // sentence — so it routes as a label and the tokens stay as code.
+    const sandbox = extra.length
+      ? `${said("site.role.sandboxAdds", "Sandbox adds")} ${codeList(extra)}`
+      : said("site.role.sandboxNone", "Sandbox: no tokens beyond the unconditional two");
     return [
       `<code>${role}</code>`,
       `<code>${editingModeFor(capabilities)}</code>`,
-      `${capabilities.size ? codeList(capabilities) : "Nothing at all."}<br />` +
-        `Sandbox: ${extra.length ? `adds ${codeList(extra)}` : "no tokens beyond the unconditional two"}`,
+      `${
+        capabilities.size
+          ? codeList(capabilities)
+          : said("site.role.grantsNothing", "Nothing at all.")
+      }<br />${sandbox}`,
     ];
   });
 }
@@ -448,7 +586,9 @@ function legacyRows() {
     const set = resolveCapabilities({ mode: legacy, framed: true });
     return [
       `<code>${legacy}</code>`,
-      role ? `Exactly <code>${role}</code>.` : "Not an alias of any role.",
+      role
+        ? `${said("site.legacy.exactly", "Exactly")} <code>${role}</code>.`
+        : say("site.legacy.notAnAlias", "Not an alias of any role."),
       codeList(set),
     ];
   });
@@ -470,7 +610,7 @@ function chromeRows() {
       return [
         `<code>${capability}</code>`,
         id ? `<code>${escape(id)}</code>` : "—",
-        escape(note),
+        say(`site.chrome.${capability}`, note),
       ];
     });
 }
@@ -484,7 +624,11 @@ function eventRows() {
           "EVENT_WHEN has no clause saying when it fires.",
       );
     }
-    return [`<code>${event.name}</code>`, codeList(event.detail), escape(when)];
+    return [
+      `<code>${event.name}</code>`,
+      codeList(event.detail),
+      say(`site.event.${event.name}`, when),
+    ];
   });
 }
 
@@ -498,7 +642,11 @@ function refusalRows() {
       );
     }
     const [meaning, decided] = entry;
-    return [`<code>${code}</code>`, escape(meaning), escape(decided)];
+    return [
+      `<code>${code}</code>`,
+      say(`site.refusal.${code}.meaning`, meaning),
+      say(`site.refusal.${code}.decidedBy`, decided),
+    ];
   });
 }
 
@@ -699,30 +847,29 @@ function regionRows() {
   if (extra.length) {
     throw new Error(`build-embed-docs: described regions that do not exist: ${extra.join(", ")}`);
   }
+  // "yes" and "—" are not prose — a bare lowercase word and a dash — so the
+  // scanner already leaves them alone and routing them would put "yes" in
+  // eighteen catalogues for no reader's benefit.
   const mark = (on) => (on ? "yes" : "—");
   return REGIONS.map((id) => [
     `<code>${escape(id)}</code>`,
-    regionClause(id),
+    say(regionKey(id), REGION_MEANINGS[id]),
     mark(readonly.has(id)),
     mark(preview.has(id)),
   ]);
 }
 
-/** A region's one-clause description, ROUTED.
+/** A region's key.
  *
- *  The generated tables are the bulk of what `no_unrouted_strings` still counts
- *  on these two pages, and the note beside those numbers says the fix is teaching
- *  this generator to emit `data-i18n`. This is that, for the one column both
- *  pages share: the descriptions are written once here, keyed once, and land in
- *  `locales/en.json` through `build-locale.mjs` like every other site string —
- *  which is also why adding a region can now LOWER these numbers rather than
- *  raise them.
+ *  The descriptions are written once in `REGION_MEANINGS`, keyed once here, and
+ *  land in `locales/en.json` through `build-locale.mjs` like every other site
+ *  string — which is also why ADDING a region now lowers these pages' unrouted
+ *  count rather than raising it.
  *
  *  Keyed on the region id with `.` swapped for `-`: a catalogue key is a dotted
- *  path, so `band.file` would otherwise nest a level deeper than its siblings. */
-function regionClause(id) {
-  return `<span data-i18n="site.region.${id.replace(/\./g, "-")}">${escape(REGION_MEANINGS[id])}</span>`;
-}
+ *  path, so `band.file` would otherwise nest a level deeper than its siblings,
+ *  and nothing downstream has to escape it. */
+const regionKey = (id) => `site.region.${id.replaceAll(".", "-")}`;
 
 // ── The playground's controls (`webapp/playground.page.html`) ──────────────
 //
@@ -819,9 +966,18 @@ const DEFAULT_ROLE = "edit";
  *  surfaces describing one contract cannot present it three ways. A tenth
  *  capability lands outside a group and fails the build. */
 const CAPABILITY_GROUPS = Object.freeze([
-  Object.freeze({ title: "Getting documents in and out", ids: ["open", "new", "save", "download", "print"] }),
-  Object.freeze({ title: "Changing the document", ids: ["edit", "comment"] }),
-  Object.freeze({ title: "Inside the frame", ids: ["branding", "autosave"] }),
+  Object.freeze({
+    title: say("site.group.inAndOut", "Getting documents in and out"),
+    ids: ["open", "new", "save", "download", "print"],
+  }),
+  Object.freeze({
+    title: say("site.group.changing", "Changing the document"),
+    ids: ["edit", "comment"],
+  }),
+  Object.freeze({
+    title: say("site.group.insideTheFrame", "Inside the frame"),
+    ids: ["branding", "autosave"],
+  }),
 ]);
 
 /** How the chrome switches are grouped — the same partition rule, and one of the
@@ -836,11 +992,24 @@ const CAPABILITY_GROUPS = Object.freeze([
  *  inside it. The other four groups are open, because folding a two-row group
  *  costs a click and saves nothing. */
 const REGION_GROUPS = Object.freeze([
-  Object.freeze({ title: "Top bar", ids: ["brand", "title", "state", "menu", "ribbon"] }),
-  Object.freeze({ title: "Ribbon bands", ids: REGIONS.filter((id) => id.startsWith("band.")), fold: true }),
-  Object.freeze({ title: "Beside the document", ids: ["rail", "ruler", "caret", "context", "objects", "history"] }),
-  Object.freeze({ title: "Status bar", ids: ["status", "zoom"] }),
-  Object.freeze({ title: "Overlays", ids: ["find", "selection", "settings"] }),
+  Object.freeze({
+    title: say("site.group.topBar", "Top bar"),
+    ids: ["brand", "title", "state", "menu", "ribbon"],
+  }),
+  Object.freeze({
+    title: say("site.group.ribbonBands", "Ribbon bands"),
+    ids: REGIONS.filter((id) => id.startsWith("band.")),
+    fold: true,
+  }),
+  Object.freeze({
+    title: say("site.group.besideTheDocument", "Beside the document"),
+    ids: ["rail", "ruler", "caret", "context", "objects", "history"],
+  }),
+  Object.freeze({ title: say("site.group.statusBar", "Status bar"), ids: ["status", "zoom"] }),
+  Object.freeze({
+    title: say("site.group.overlays", "Overlays"),
+    ids: ["find", "selection", "settings"],
+  }),
 ]);
 
 /** Fails unless the groups are exactly the authority's list, in order. */
@@ -875,8 +1044,10 @@ function toggleRow({ group, value, what, attribute }) {
   return [
     '  <li class="pg-toggle">',
     `    <input type="checkbox" class="pg-check" id="${id}" value="${escape(value)}" ${attribute} />`,
+    // The NAME is the capability or region id — API vocabulary a host types into
+    // a URL — so it stays as it is; the clause beside it is the sentence.
     `    <label class="pg-toggle-name" for="${id}">${escape(value)}</label>`,
-    `    <span class="pg-toggle-what">${what}</span>`,
+    `    <span class="pg-toggle-what" data-i18n="${what.key}">${escape(what.text)}</span>`,
     "  </li>",
   ].join("\n");
 }
@@ -885,7 +1056,8 @@ function toggleRow({ group, value, what, attribute }) {
 function foldGroup({ title, count, open, body }) {
   return [
     `<details class="pg-fold"${open ? " open" : ""}>`,
-    `  <summary class="pg-fold-head"><span class="pg-fold-title">${escape(title)}</span>` +
+    `  <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="${title.key}">` +
+      `${escape(title.text)}</span>` +
       `<span class="pg-fold-count">${count}</span></summary>`,
     '  <ul class="pg-toggles">',
     body,
@@ -917,10 +1089,17 @@ function roleControls() {
       '  <li class="pg-choice">',
       `    <input type="radio" class="pg-check" name="role" id="${id}" value="${escape(role)}" data-role${role === DEFAULT_ROLE ? " checked" : ""} />`,
       `    <label class="pg-choice-name" for="${id}">${escape(role)}</label>`,
-      `    <span class="pg-choice-what">${escape(ROLE_MEANINGS[role].is)}</span>`,
+      `    <span class="pg-choice-what" data-i18n="site.role.${role}.is">${escape(ROLE_MEANINGS[role].is)}</span>`,
       '    <span class="pg-choice-meta">',
-      `      <span class="pg-pill">${capabilities.size} of ${CAPABILITIES.length} capabilities</span>`,
-      `      <span class="pg-pill">${shown.size} of ${REGIONS.length} regions</span>`,
+      // A COUNT AND A NOUN, not a sentence with numbers in it. "6 of 9
+      // capabilities" reads as one string and would have to go into the
+      // catalogue with its numbers baked in — so it is a ratio the generator
+      // writes and a noun the seam translates, which is also how the numbers stay
+      // derived rather than published inside a translation.
+      `      <span class="pg-pill"><b class="pg-pill-n">${capabilities.size}/${CAPABILITIES.length}</b> ` +
+        `${said("site.pill.capabilities", "capabilities")}</span>`,
+      `      <span class="pg-pill"><b class="pg-pill-n">${shown.size}/${REGIONS.length}</b> ` +
+        `${said("site.pill.regions", "regions")}</span>`,
       `      <span class="pg-pill pg-pill--mode">${editingModeFor(capabilities)}</span>`,
       "    </span>",
       "  </li>",
@@ -929,14 +1108,29 @@ function roleControls() {
   // One note per role, all five present and four of them `hidden`. `playground.js`
   // flips which one is shown and writes nothing: the page's language stays in the
   // page, which is the contract that keeps that module out of the string table.
+  // THREE LABELLED FACTS, not one sentence assembled from fragments.
+  //
+  // The note used to read "<why> Grants <a> <b>, and is offered 6 of 19 chrome
+  // regions." — one English sentence with code and numbers spliced into it, which
+  // cannot go through the seam whole (the extractor reads the text up to the
+  // first tag) and must not go through it in pieces (word order is not a property
+  // a generator may assume). So it becomes the argument, then a labelled grant
+  // list, then a labelled ratio: each label is a complete clause a translator can
+  // work with, and the derived parts stay derived.
   const notes = ROLES.map((role) => {
     const capabilities = resolveCapabilities({ mode: role, framed: true });
     const shown = resolveRegions({ mode: role, framed: true, capabilities });
-    const why = ROLE_MEANINGS[role].why ? `${escape(ROLE_MEANINGS[role].why)} ` : "";
+    const why = ROLE_MEANINGS[role].why
+      ? `<span data-i18n="site.role.${role}.why">${escape(ROLE_MEANINGS[role].why)}</span> `
+      : "";
+    const grants = capabilities.size
+      ? codeList(capabilities)
+      : said("site.role.grantsNothing", "Nothing at all.");
     return (
       `  <p class="pg-role-note" data-role-note="${escape(role)}"${role === DEFAULT_ROLE ? "" : " hidden"}>` +
-      `${why}Grants ${capabilities.size ? codeList(capabilities) : "nothing at all"}, ` +
-      `and is offered ${shown.size} of ${REGIONS.length} chrome regions.</p>`
+      `${why}<span class="pg-role-fact">${said("site.role.grantsLabel", "Grants")} ${grants}</span> ` +
+      `<span class="pg-role-fact">${said("site.role.chromeLabel", "Chrome regions offered")} ` +
+      `<b class="pg-pill-n">${shown.size}/${REGIONS.length}</b></span></p>`
     );
   });
   return [
@@ -972,7 +1166,7 @@ function capabilityControls() {
               group: "cap",
               value: capability,
               attribute: "data-capability",
-              what: escape(MEANINGS[capability]),
+              what: say(`site.capability.${capability}`, MEANINGS[capability]),
             }),
           )
           .join("\n"),
@@ -1003,7 +1197,7 @@ function regionControls() {
               group: "chrome",
               value: id,
               attribute: "data-region",
-              what: regionClause(id),
+              what: say(regionKey(id), REGION_MEANINGS[id]),
             }),
           )
           .join("\n"),
@@ -1029,20 +1223,22 @@ function brandControls() {
   const options = TAB_TITLE_POLICIES.map(
     (policy) => `    <option value="${policy}">${escape(policy)}</option>`,
   ).join("\n");
+  // The PLACEHOLDER is the product's own name and is not translated — it is a
+  // proper noun, and the site header leaves it unrouted for the same reason.
   return [
     '<p class="pg-field">',
-    '  <label for="pg-brand-name">Product name</label>',
+    '  <label for="pg-brand-name" data-i18n="site.brand.productName">Product name</label>',
     `  <input type="text" id="pg-brand-name" data-brand-name placeholder="${PRODUCT.name}" autocomplete="off" spellcheck="false" />`,
     "</p>",
     '<p class="pg-field">',
-    '  <label for="pg-brand-accent-hex">Accent colour</label>',
+    '  <label for="pg-brand-accent-hex" data-i18n="site.brand.accent">Accent colour</label>',
     '  <span class="pg-colour-row">',
-    `    <input type="color" id="pg-brand-accent" value="${accent}" data-brand-accent aria-label="Accent colour, as a swatch" />`,
-    `    <input type="text" id="pg-brand-accent-hex" value="${accent}" data-brand-accent-hex autocomplete="off" spellcheck="false" aria-label="Accent colour, as hex" />`,
+    `    <input type="color" id="pg-brand-accent" value="${accent}" data-brand-accent data-i18n-label="site.brand.accentSwatch" aria-label="Accent colour, as a swatch" />`,
+    `    <input type="text" id="pg-brand-accent-hex" value="${accent}" data-brand-accent-hex autocomplete="off" spellcheck="false" data-i18n-label="site.brand.accentHex" aria-label="Accent colour, as hex" />`,
     "  </span>",
     "</p>",
     '<p class="pg-field">',
-    '  <label for="pg-brand-tab-title">The host browser tab says</label>',
+    '  <label for="pg-brand-tab-title" data-i18n="site.brand.tabTitle">The host browser tab says</label>',
     '  <select id="pg-brand-tab-title" data-brand-tab-title>',
     options,
     "  </select>",
@@ -1126,7 +1322,11 @@ function regions() {
   const manifest = JSON.parse(read(SOURCES.manifest));
   return {
     "install-commands": codePanel(
-      `${rel(SOURCES.packaging)} — what the packaging guard really runs`,
+      {
+        path: rel(SOURCES.packaging),
+        key: "site.panel.installCommands",
+        text: "what the packaging guard really runs",
+      },
       [
         `# Nothing publishes ${manifest.name} to a registry yet, so a host`,
         "# installs the tarball `npm pack` produces from the checkout.",
@@ -1141,57 +1341,64 @@ function regions() {
         [
           pathCode(manifest.main),
           `<code>import ${pathCode(`"${manifest.name}"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
-          "The element class, the capability authority it re-exports, and <code>defineOpenDocEditor</code>.",
+          // The clause is the sentence; `defineOpenDocEditor` is an export name
+          // and stays as code, which is why this cell is a fragment and not a
+          // `say()`.
+          `${said("site.file.main", "The element class, the capability authority it re-exports, and")} <code>defineOpenDocEditor</code>.`,
         ],
         [
           pathCode("./src/embed_define.js"),
           `<code>import ${pathCode(`"${manifest.name}/define"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
-          "The side-effect entry: importing it registers the tag and nothing else.",
+          say("site.file.define", "The side-effect entry: importing it registers the tag and nothing else."),
         ],
         [
           pathCode("./src/capabilities.mjs"),
           `<code>import ${pathCode(`"${manifest.name}/capabilities"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
-          "Resolve a capability set without mounting anything — no DOM, so it answers in Node.",
+          say("site.file.capabilities", "Resolve a capability set without mounting anything — no DOM, so it answers in Node."),
         ],
         [
           pathCode("./src/host_contract.mjs"),
           `<code>import ${pathCode(`"${manifest.name}/contract"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
-          "The host contract: what each command requires, which events exist, what a refusal can say, and the envelope. No DOM.",
+          say("site.file.contract", "The host contract: what each command requires, which events exist, what a refusal can say, and the envelope. No DOM."),
         ],
         [
           pathCode("./src/host_client.mjs"),
           `<code>import ${pathCode(`"${manifest.name}/client"`).replace(/^<code>|<\/code>$/g, "")}</code>`,
-          "<code>createHostClient</code> \u2014 the <code>postMessage</code> transport, for a host that cannot reach into the frame.",
+          `<code>createHostClient</code> \u2014 ${said("site.file.client", "the postMessage transport, for a host that cannot reach into the frame.")}`,
         ],
         [
           pathCode(manifest.types),
-          "Types",
-          "Generated from the authority's real values, so a role cannot exist in the types without existing in the code.",
+          say("site.file.typesColumn", "Types"),
+          say("site.file.types", "Generated from the authority's real values, so a role cannot exist in the types without existing in the code."),
         ],
       ],
     ),
     "declarative-usage": codePanel(
-      `${rel(SOURCES.readme)} — the package's own usage, checked against the element`,
+      {
+        path: rel(SOURCES.readme),
+        key: "site.panel.declarativeUsage",
+        text: "the package's own usage, checked against the element",
+      },
       fencedBlock(SOURCES.readme, "html"),
     ),
     "mount-element": codePanel(
-      `${rel(SOURCES.demo)} — mountElement()`,
+      { path: `${rel(SOURCES.demo)} — mountElement()` },
       functionSource(SOURCES.demo, "mountElement"),
     ),
     "mount-iframe": codePanel(
-      `${rel(SOURCES.demo)} — mountIframe()`,
+      { path: `${rel(SOURCES.demo)} — mountIframe()` },
       functionSource(SOURCES.demo, "mountIframe"),
     ),
     "resolve-first": codePanel(
-      `${rel(SOURCES.demo)} — resolveFor()`,
+      { path: `${rel(SOURCES.demo)} — resolveFor()` },
       functionSource(SOURCES.demo, "resolveFor"),
     ),
     "command-transports": codePanel(
-      `${rel(SOURCES.demo)} \u2014 runCommand()`,
+      { path: `${rel(SOURCES.demo)} \u2014 runCommand()` },
       functionSource(SOURCES.demo, "runCommand"),
     ),
     "origin-policy": codePanel(
-      `${rel(SOURCES.contract)} \u2014 parseOriginAllowlist()`,
+      { path: `${rel(SOURCES.contract)} \u2014 parseOriginAllowlist()` },
       functionSource(SOURCES.contract, "parseOriginAllowlist"),
     ),
     "event-table": table(["Event", "Detail", "When it fires"], eventRows()),
@@ -1207,7 +1414,11 @@ function regions() {
     // editor. So the snippet on the page is the input to a test that runs in CI,
     // which is the only kind of example `docs/99` §9 permits.
     "brand-config": codePanel(
-      `${rel(SOURCES.brandExample)} — a white-label, and the input to its own guard`,
+      {
+        path: rel(SOURCES.brandExample),
+        key: "site.panel.brandConfig",
+        text: "a white-label, and the input to its own guard",
+      },
       brandExampleShown(),
     ),
     // A REAL refusal, produced at generate time by running the validator on a
@@ -1215,7 +1426,11 @@ function regions() {
     // changes, this page changes with it, and the day the validator stops refusing,
     // `brand.test.mjs` goes red first.
     "brand-refusal": codePanel(
-      `${rel(SOURCES.brandGenerator)} — what a failing palette is told`,
+      {
+        path: rel(SOURCES.brandGenerator),
+        key: "site.panel.brandRefusal",
+        text: "what a failing palette is told",
+      },
       sampleRefusal(),
     ),
     "region-table": table(

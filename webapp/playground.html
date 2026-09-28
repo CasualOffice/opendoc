@@ -903,60 +903,60 @@
               <li class="pg-choice">
                 <input type="radio" class="pg-check" name="role" id="pg-role-preview" value="preview" data-role />
                 <label class="pg-choice-name" for="pg-role-preview">preview</label>
-                <span class="pg-choice-what">A picture of the document — a thumbnail, an attachment preview, a print preview.</span>
+                <span class="pg-choice-what" data-i18n="site.role.preview.is">A picture of the document — a thumbnail, an attachment preview, a print preview.</span>
                 <span class="pg-choice-meta">
-                  <span class="pg-pill">0 of 9 capabilities</span>
-                  <span class="pg-pill">0 of 24 regions</span>
+                  <span class="pg-pill"><b class="pg-pill-n">0/9</b> <span data-i18n="site.pill.capabilities">capabilities</span></span>
+                  <span class="pg-pill"><b class="pg-pill-n">0/24</b> <span data-i18n="site.pill.regions">regions</span></span>
                   <span class="pg-pill pg-pill--mode">viewing</span>
                 </span>
               </li>
               <li class="pg-choice">
                 <input type="radio" class="pg-check" name="role" id="pg-role-readonly" value="readonly" data-role />
                 <label class="pg-choice-name" for="pg-role-readonly">readonly</label>
-                <span class="pg-choice-what">A published document, to read.</span>
+                <span class="pg-choice-what" data-i18n="site.role.readonly.is">A published document, to read.</span>
                 <span class="pg-choice-meta">
-                  <span class="pg-pill">1 of 9 capabilities</span>
-                  <span class="pg-pill">9 of 24 regions</span>
+                  <span class="pg-pill"><b class="pg-pill-n">1/9</b> <span data-i18n="site.pill.capabilities">capabilities</span></span>
+                  <span class="pg-pill"><b class="pg-pill-n">9/24</b> <span data-i18n="site.pill.regions">regions</span></span>
                   <span class="pg-pill pg-pill--mode">viewing</span>
                 </span>
               </li>
               <li class="pg-choice">
                 <input type="radio" class="pg-check" name="role" id="pg-role-commentor" value="commentor" data-role />
                 <label class="pg-choice-name" for="pg-role-commentor">commentor</label>
-                <span class="pg-choice-what">Google Docs' Commenter, Word's reviewer.</span>
+                <span class="pg-choice-what" data-i18n="site.role.commentor.is">Google Docs' Commenter, Word's reviewer.</span>
                 <span class="pg-choice-meta">
-                  <span class="pg-pill">3 of 9 capabilities</span>
-                  <span class="pg-pill">23 of 24 regions</span>
+                  <span class="pg-pill"><b class="pg-pill-n">3/9</b> <span data-i18n="site.pill.capabilities">capabilities</span></span>
+                  <span class="pg-pill"><b class="pg-pill-n">23/24</b> <span data-i18n="site.pill.regions">regions</span></span>
                   <span class="pg-pill pg-pill--mode">suggesting</span>
                 </span>
               </li>
               <li class="pg-choice">
                 <input type="radio" class="pg-check" name="role" id="pg-role-edit" value="edit" data-role checked />
                 <label class="pg-choice-name" for="pg-role-edit">edit</label>
-                <span class="pg-choice-what">The reason a host embeds an editor.</span>
+                <span class="pg-choice-what" data-i18n="site.role.edit.is">The reason a host embeds an editor.</span>
                 <span class="pg-choice-meta">
-                  <span class="pg-pill">6 of 9 capabilities</span>
-                  <span class="pg-pill">23 of 24 regions</span>
+                  <span class="pg-pill"><b class="pg-pill-n">6/9</b> <span data-i18n="site.pill.capabilities">capabilities</span></span>
+                  <span class="pg-pill"><b class="pg-pill-n">23/24</b> <span data-i18n="site.pill.regions">regions</span></span>
                   <span class="pg-pill pg-pill--mode">editing</span>
                 </span>
               </li>
               <li class="pg-choice">
                 <input type="radio" class="pg-check" name="role" id="pg-role-owner" value="owner" data-role />
                 <label class="pg-choice-name" for="pg-role-owner">owner</label>
-                <span class="pg-choice-what">The page is ours, or the host has said it may as well be.</span>
+                <span class="pg-choice-what" data-i18n="site.role.owner.is">The page is ours, or the host has said it may as well be.</span>
                 <span class="pg-choice-meta">
-                  <span class="pg-pill">9 of 9 capabilities</span>
-                  <span class="pg-pill">24 of 24 regions</span>
+                  <span class="pg-pill"><b class="pg-pill-n">9/9</b> <span data-i18n="site.pill.capabilities">capabilities</span></span>
+                  <span class="pg-pill"><b class="pg-pill-n">24/24</b> <span data-i18n="site.pill.regions">regions</span></span>
                   <span class="pg-pill pg-pill--mode">editing</span>
                 </span>
               </li>
             </ul>
             <div class="pg-role-notes" data-role-notes>
-              <p class="pg-role-note" data-role-note="preview" hidden>The runtime as a layout and rendering engine, and nearly replaceable by a static image. Grants nothing at all, and is offered 0 of 24 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="readonly" hidden>Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome. Grants <code>print</code>, and is offered 9 of 24 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="commentor" hidden>Annotates and suggests; every body change is a tracked revision somebody else accepts. Grants <code>print</code> <code>download</code> <code>comment</code>, and is offered 23 of 24 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="edit">Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours. Grants <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code>, and is offered 23 of 24 chrome regions.</p>
-              <p class="pg-role-note" data-role-note="owner" hidden>Grants <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code>, and is offered 24 of 24 chrome regions.</p>
+              <p class="pg-role-note" data-role-note="preview" hidden><span data-i18n="site.role.preview.why">The runtime as a layout and rendering engine, and nearly replaceable by a static image.</span> <span class="pg-role-fact"><span data-i18n="site.role.grantsLabel">Grants</span> <span data-i18n="site.role.grantsNothing">Nothing at all.</span></span> <span class="pg-role-fact"><span data-i18n="site.role.chromeLabel">Chrome regions offered</span> <b class="pg-pill-n">0/24</b></span></p>
+              <p class="pg-role-note" data-role-note="readonly" hidden><span data-i18n="site.role.readonly.why">Not preview-minus-print: a reader navigates, searches and gets to page 40, so this one keeps reading chrome.</span> <span class="pg-role-fact"><span data-i18n="site.role.grantsLabel">Grants</span> <code>print</code></span> <span class="pg-role-fact"><span data-i18n="site.role.chromeLabel">Chrome regions offered</span> <b class="pg-pill-n">9/24</b></span></p>
+              <p class="pg-role-note" data-role-note="commentor" hidden><span data-i18n="site.role.commentor.why">Annotates and suggests; every body change is a tracked revision somebody else accepts.</span> <span class="pg-role-fact"><span data-i18n="site.role.grantsLabel">Grants</span> <code>print</code> <code>download</code> <code>comment</code></span> <span class="pg-role-fact"><span data-i18n="site.role.chromeLabel">Chrome regions offered</span> <b class="pg-pill-n">23/24</b></span></p>
+              <p class="pg-role-note" data-role-note="edit"><span data-i18n="site.role.edit.why">Changes the document and keeps it; may not reach for a different one, and advertises nothing of ours.</span> <span class="pg-role-fact"><span data-i18n="site.role.grantsLabel">Grants</span> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code></span> <span class="pg-role-fact"><span data-i18n="site.role.chromeLabel">Chrome regions offered</span> <b class="pg-pill-n">23/24</b></span></p>
+              <p class="pg-role-note" data-role-note="owner" hidden><span class="pg-role-fact"><span data-i18n="site.role.grantsLabel">Grants</span> <code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code></span> <span class="pg-role-fact"><span data-i18n="site.role.chromeLabel">Chrome regions offered</span> <b class="pg-pill-n">24/24</b></span></p>
             </div>
             <!-- @end playground-role-controls -->
           </fieldset>
@@ -972,62 +972,62 @@
             </p>
             <!-- @generated playground-capability-controls -->
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Getting documents in and out</span><span class="pg-fold-count">5</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.inAndOut">Getting documents in and out</span><span class="pg-fold-count">5</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-open" value="open" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-open">open</label>
-                <span class="pg-toggle-what">Replace the loaded document from inside the editor.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.open">Replace the loaded document from inside the editor.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-new" value="new" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-new">new</label>
-                <span class="pg-toggle-what">Start a blank document.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.new">Start a blank document.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-save" value="save" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-save">save</label>
-                <span class="pg-toggle-what">Write the document back out.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.save">Write the document back out.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-download" value="download" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-download">download</label>
-                <span class="pg-toggle-what">Export to a file the visitor keeps.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.download">Export to a file the visitor keeps.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-print" value="print" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-print">print</label>
-                <span class="pg-toggle-what">Open the browser's print dialog.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.print">Open the browser's print dialog.</span>
               </li>
               </ul>
             </details>
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Changing the document</span><span class="pg-fold-count">2</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.changing">Changing the document</span><span class="pg-fold-count">2</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-edit" value="edit" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-edit">edit</label>
-                <span class="pg-toggle-what">Change the document at all.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.edit">Change the document at all.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-comment" value="comment" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-comment">comment</label>
-                <span class="pg-toggle-what">Annotate, and change the document as tracked suggestions.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.comment">Annotate, and change the document as tracked suggestions.</span>
               </li>
               </ul>
             </details>
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Inside the frame</span><span class="pg-fold-count">2</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.insideTheFrame">Inside the frame</span><span class="pg-fold-count">2</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-branding" value="branding" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-branding">branding</label>
-                <span class="pg-toggle-what">Show OpenDoc's own name and mark inside the frame.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.branding">Show OpenDoc's own name and mark inside the frame.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-cap-autosave" value="autosave" data-capability />
                 <label class="pg-toggle-name" for="pg-cap-autosave">autosave</label>
-                <span class="pg-toggle-what">Keep drafts of the visitor's typing on this origin.</span>
+                <span class="pg-toggle-what" data-i18n="site.capability.autosave">Keep drafts of the visitor's typing on this origin.</span>
               </li>
               </ul>
             </details>
@@ -1046,147 +1046,147 @@
             </p>
             <!-- @generated playground-region-controls -->
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Top bar</span><span class="pg-fold-count">5</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.topBar">Top bar</span><span class="pg-fold-count">5</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-brand" value="brand" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-brand">brand</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.brand">Our name and mark in the top bar.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.brand">Our name and mark in the top bar.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-title" value="title" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-title">title</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.title">The document name, and renaming it.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.title">The document name, and renaming it.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-state" value="state" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-state">state</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.state">The document-state chips and Document properties in the top bar.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.state">The document-state chips and Document properties in the top bar.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-menu" value="menu" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-menu">menu</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.menu">The application menu bar — one of the two navigation axes.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.menu">The application menu bar — one of the two navigation axes.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-ribbon" value="ribbon" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-ribbon">ribbon</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.ribbon">The whole tabbed ribbon, strip and bands together.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.ribbon">The whole tabbed ribbon, strip and bands together.</span>
               </li>
               </ul>
             </details>
             <details class="pg-fold">
-              <summary class="pg-fold-head"><span class="pg-fold-title">Ribbon bands</span><span class="pg-fold-count">8</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.ribbonBands">Ribbon bands</span><span class="pg-fold-count">8</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-file" value="band.file" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-file">band.file</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-file">The File page: open, save, export, print, properties, settings.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-file">The File page: open, save, export, print, properties, settings.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-home" value="band.home" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-home">band.home</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-home">Character and paragraph formatting, styles, clipboard, undo.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-home">Character and paragraph formatting, styles, clipboard, undo.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-insert" value="band.insert" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-insert">band.insert</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-insert">Tables, pictures, shapes, links, comments, headers, symbols.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-insert">Tables, pictures, shapes, links, comments, headers, symbols.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-layout" value="band.layout" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-layout">band.layout</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-layout">Page setup, margins, columns, spacing, watermark, arrange.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-layout">Page setup, margins, columns, spacing, watermark, arrange.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-references" value="band.references" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-references">band.references</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-references">Captions, cross-references, contents, footnotes, fields.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-references">Captions, cross-references, contents, footnotes, fields.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-review" value="band.review" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-review">band.review</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-review">Tracked changes, comments, proofing, the review mode control.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-review">Tracked changes, comments, proofing, the review mode control.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-view" value="band.view" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-view">band.view</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-view">Outline, zoom, page setup, showing changes.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-view">Outline, zoom, page setup, showing changes.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-band-table" value="band.table" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-band-table">band.table</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.band-table">The contextual table band, present when the caret is in a table.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.band-table">The contextual table band, present when the caret is in a table.</span>
               </li>
               </ul>
             </details>
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Beside the document</span><span class="pg-fold-count">6</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.besideTheDocument">Beside the document</span><span class="pg-fold-count">6</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-rail" value="rail" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-rail">rail</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.rail">The left navigation rail: outline and page thumbnails.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.rail">The left navigation rail: outline and page thumbnails.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-ruler" value="ruler" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-ruler">ruler</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.ruler">The ruler strip above the page: indents and tab stops.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.ruler">The ruler strip above the page: indents and tab stops.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-caret" value="caret" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-caret">caret</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.caret">The text caret and the selection highlight on the page.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.caret">The text caret and the selection highlight on the page.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-context" value="context" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-context">context</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.context">The right-click menu on the document.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.context">The right-click menu on the document.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-objects" value="objects" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-objects">objects</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.objects">Object selection: the outline, its handles and the object bar.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.objects">Object selection: the outline, its handles and the object bar.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-history" value="history" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-history">history</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.history">The version-history timeline, its ribbon entry and its preview bar.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.history">The version-history timeline, its ribbon entry and its preview bar.</span>
               </li>
               </ul>
             </details>
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Status bar</span><span class="pg-fold-count">2</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.statusBar">Status bar</span><span class="pg-fold-count">2</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-status" value="status" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-status">status</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.status">The status bar: counts, page number, language, mode.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.status">The status bar: counts, page number, language, mode.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-zoom" value="zoom" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-zoom">zoom</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.zoom">The zoom cluster in the status bar.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.zoom">The zoom cluster in the status bar.</span>
               </li>
               </ul>
             </details>
             <details class="pg-fold" open>
-              <summary class="pg-fold-head"><span class="pg-fold-title">Overlays</span><span class="pg-fold-count">3</span></summary>
+              <summary class="pg-fold-head"><span class="pg-fold-title" data-i18n="site.group.overlays">Overlays</span><span class="pg-fold-count">3</span></summary>
               <ul class="pg-toggles">
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-find" value="find" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-find">find</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.find">The find and replace card.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.find">The find and replace card.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-selection" value="selection" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-selection">selection</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.selection">The floating toolbar above a selection.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.selection">The floating toolbar above a selection.</span>
               </li>
               <li class="pg-toggle">
                 <input type="checkbox" class="pg-check" id="pg-chrome-settings" value="settings" data-region />
                 <label class="pg-toggle-name" for="pg-chrome-settings">settings</label>
-                <span class="pg-toggle-what"><span data-i18n="site.region.settings">The settings dialog and the gear that opens it.</span></span>
+                <span class="pg-toggle-what" data-i18n="site.region.settings">The settings dialog and the gear that opens it.</span>
               </li>
               </ul>
             </details>
@@ -1201,18 +1201,18 @@
             </p>
             <!-- @generated playground-brand-controls -->
             <p class="pg-field">
-              <label for="pg-brand-name">Product name</label>
+              <label for="pg-brand-name" data-i18n="site.brand.productName">Product name</label>
               <input type="text" id="pg-brand-name" data-brand-name placeholder="OpenDoc" autocomplete="off" spellcheck="false" />
             </p>
             <p class="pg-field">
-              <label for="pg-brand-accent-hex">Accent colour</label>
+              <label for="pg-brand-accent-hex" data-i18n="site.brand.accent">Accent colour</label>
               <span class="pg-colour-row">
-                <input type="color" id="pg-brand-accent" value="#3355c4" data-brand-accent aria-label="Accent colour, as a swatch" />
-                <input type="text" id="pg-brand-accent-hex" value="#3355c4" data-brand-accent-hex autocomplete="off" spellcheck="false" aria-label="Accent colour, as hex" />
+                <input type="color" id="pg-brand-accent" value="#3355c4" data-brand-accent data-i18n-label="site.brand.accentSwatch" aria-label="Accent colour, as a swatch" />
+                <input type="text" id="pg-brand-accent-hex" value="#3355c4" data-brand-accent-hex autocomplete="off" spellcheck="false" data-i18n-label="site.brand.accentHex" aria-label="Accent colour, as hex" />
               </span>
             </p>
             <p class="pg-field">
-              <label for="pg-brand-tab-title">The host browser tab says</label>
+              <label for="pg-brand-tab-title" data-i18n="site.brand.tabTitle">The host browser tab says</label>
               <select id="pg-brand-tab-title" data-brand-tab-title>
                 <option value="document+product">document+product</option>
                 <option value="document">document</option>

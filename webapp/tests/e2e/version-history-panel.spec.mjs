@@ -598,6 +598,11 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
     .evaluateAll((els) => els.map((el) => el.textContent.trim()));
   expect(labels).toEqual([
     "Restore this version",
+    // The two ways out of a version that are not "replace my document with it"
+    // (`docs/139` VH-007), in the order Google Docs offers them: after Restore,
+    // before the editing rows.
+    "Make a copy",
+    "Download this version",
     "Name this version…F2",
     "Keep this version",
     "Show changes",
@@ -615,7 +620,16 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   );
 
   // Light dismiss: a transient surface closes when you point somewhere else.
-  await page.mouse.click(400, 500);
+  //
+  // The point is DERIVED from the menu's own box rather than typed in. This line
+  // used to read `click(400, 500)`, and adding two rows to the menu (`docs/139`
+  // VH-007) made that point land INSIDE it — so the "dismiss" ran a command and
+  // put a confirmation on screen, and the failure showed up three assertions
+  // later as focus that had left the grid. A fixed coordinate is a guard pinned
+  // to a measured size; this one is pinned to the guarantee (a press OUTSIDE the
+  // menu closes it) and survives the menu changing shape.
+  const menuBox = await page.locator(rowMenu).boundingBox();
+  await page.mouse.click(Math.max(8, Math.round(menuBox.x) - 80), Math.round(menuBox.y) + 20);
   await expect(page.locator(rowMenu)).toBeHidden();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
 
@@ -629,6 +643,18 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   // is the gesture under test.
   await page.locator("#versionPanelClose").click();
   await openTimeline(page);
+  // ASSERTED, not assumed, and that is what makes the rest of this test
+  // trustworthy. The claim above — opening the panel puts the keyboard in the
+  // timeline — is an EVENTUAL one: `open()` awaits the store before it places
+  // focus, and the File page it was run from restores focus as it closes, so a
+  // key pressed on the next line sometimes went to the document instead. The
+  // test then failed three assertions later on a focus that had never arrived,
+  // and it failed 2 runs in 5 on `main` before this branch touched it. Waiting on
+  // the state change rather than sampling once is the fix this repository's own
+  // note about clock-bound tests asks for.
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest("#versionPanelBody"))))
+    .toBe(true);
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowRight");
   expect(await focusedCell(page)).toEqual({ row: ids[ids.length - 1], cell: "menu" });
@@ -667,6 +693,11 @@ test("naming a version pins it — from the row menu by keyboard, and from F2", 
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Enter");
+  // Three rows down, because "Make a copy" and "Download this version" now sit
+  // between Restore and the editing rows (`docs/139` VH-007). Walked rather than
+  // clicked, because what is under test is that the keyboard reaches every row.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(`${rowMenu} .menu-item.active`)).toHaveText(/Name this version/);
   await page.keyboard.press("Enter");

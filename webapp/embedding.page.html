@@ -172,7 +172,7 @@
         </p>
         <!-- @generated install-commands -->
         <div class="code-panel">
-          <div class="code-panel-head"><span>webapp/tests/embed_package.test.mjs — what the packaging guard really runs</span></div>
+          <div class="code-panel-head"><span>webapp/tests/embed_package.test.mjs</span> — <span data-i18n="site.panel.installCommands">what the packaging guard really runs</span></div>
           <pre><code># Nothing publishes @casualoffice/opendoc-embed to a registry yet, so a host
 # installs the tarball `npm pack` produces from the checkout.
 cd packages/opendoc-embed
@@ -188,39 +188,39 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         <!-- @generated package-files -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>File</div>
-            <div>Ships as</div>
-            <div>What it is</div>
+            <div data-i18n="site.column.file">File</div>
+            <div data-i18n="site.column.shipsAs">Ships as</div>
+            <div data-i18n="site.column.whatItIs">What it is</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/embed_element.mjs</code></div>
             <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed"</code></div>
-            <div class="disp-cell">The element class, the capability authority it re-exports, and <code>defineOpenDocEditor</code>.</div>
+            <div class="disp-cell"><span data-i18n="site.file.main">The element class, the capability authority it re-exports, and</span> <code>defineOpenDocEditor</code>.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/embed_define.js</code></div>
             <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />define"</code></div>
-            <div class="disp-cell">The side-effect entry: importing it registers the tag and nothing else.</div>
+            <div class="disp-cell" data-i18n="site.file.define">The side-effect entry: importing it registers the tag and nothing else.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/capabilities.mjs</code></div>
             <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />capabilities"</code></div>
-            <div class="disp-cell">Resolve a capability set without mounting anything — no DOM, so it answers in Node.</div>
+            <div class="disp-cell" data-i18n="site.file.capabilities">Resolve a capability set without mounting anything — no DOM, so it answers in Node.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/host_contract.mjs</code></div>
             <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />contract"</code></div>
-            <div class="disp-cell">The host contract: what each command requires, which events exist, what a refusal can say, and the envelope. No DOM.</div>
+            <div class="disp-cell" data-i18n="site.file.contract">The host contract: what each command requires, which events exist, what a refusal can say, and the envelope. No DOM.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./src/host_client.mjs</code></div>
             <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />client"</code></div>
-            <div class="disp-cell"><code>createHostClient</code> — the <code>postMessage</code> transport, for a host that cannot reach into the frame.</div>
+            <div class="disp-cell"><code>createHostClient</code> — <span data-i18n="site.file.client">the postMessage transport, for a host that cannot reach into the frame.</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./types/index.d.ts</code></div>
-            <div class="disp-cell">Types</div>
-            <div class="disp-cell">Generated from the authority's real values, so a role cannot exist in the types without existing in the code.</div>
+            <div class="disp-cell" data-i18n="site.file.typesColumn">Types</div>
+            <div class="disp-cell" data-i18n="site.file.types">Generated from the authority's real values, so a role cannot exist in the types without existing in the code.</div>
           </div>
         </div>
         <!-- @end package-files -->
@@ -244,7 +244,7 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         </p>
         <!-- @generated declarative-usage -->
         <div class="code-panel">
-          <div class="code-panel-head"><span>packages/opendoc-embed/README.md — the package's own usage, checked against the element</span></div>
+          <div class="code-panel-head"><span>packages/opendoc-embed/README.md</span> — <span data-i18n="site.panel.declarativeUsage">the package's own usage, checked against the element</span></div>
           <pre><code>&lt;script type="module"&gt;
   import "@casualoffice/opendoc-embed/define";
 &lt;/script&gt;
@@ -341,54 +341,54 @@ function resolveFor({ mode, can }</code></pre>
         <!-- @generated capability-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Capability</div>
-            <div>What it is</div>
-            <div>Enforced by</div>
+            <div data-i18n="site.column.capability">Capability</div>
+            <div data-i18n="site.column.whatItIs">What it is</div>
+            <div data-i18n="site.column.enforcedBy">Enforced by</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>open</code></div>
-            <div class="disp-cell">Replace the loaded document from inside the editor.</div>
-            <div class="disp-cell">chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.open">Replace the loaded document from inside the editor.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>new</code></div>
-            <div class="disp-cell">Start a blank document.</div>
-            <div class="disp-cell">chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.new">Start a blank document.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>save</code></div>
-            <div class="disp-cell">Write the document back out.</div>
-            <div class="disp-cell">browser (<code>allow-downloads</code>), chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.save">Write the document back out.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.browser">browser</span> (<code>allow-downloads</code>), <span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>download</code></div>
-            <div class="disp-cell">Export to a file the visitor keeps.</div>
-            <div class="disp-cell">browser (<code>allow-downloads</code>), chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.download">Export to a file the visitor keeps.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.browser">browser</span> (<code>allow-downloads</code>), <span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>print</code></div>
-            <div class="disp-cell">Open the browser's print dialog.</div>
-            <div class="disp-cell">browser (<code>allow-modals</code>), chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.print">Open the browser's print dialog.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.browser">browser</span> (<code>allow-modals</code>), <span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>edit</code></div>
-            <div class="disp-cell">Change the document at all.</div>
-            <div class="disp-cell">engine (review mode), chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.edit">Change the document at all.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.engine">engine (review mode)</span>, <span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>comment</code></div>
-            <div class="disp-cell">Annotate, and change the document as tracked suggestions.</div>
-            <div class="disp-cell">engine (review mode), chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.comment">Annotate, and change the document as tracked suggestions.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.engine">engine (review mode)</span>, <span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>branding</code></div>
-            <div class="disp-cell">Show OpenDoc's own name and mark inside the frame.</div>
-            <div class="disp-cell"><b>nothing yet</b></div>
+            <div class="disp-cell" data-i18n="site.capability.branding">Show OpenDoc's own name and mark inside the frame.</div>
+            <div class="disp-cell"><b data-i18n="site.layer.nothingYet">nothing yet</b></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>autosave</code></div>
-            <div class="disp-cell">Keep drafts of the visitor's typing on this origin.</div>
-            <div class="disp-cell">chrome</div>
+            <div class="disp-cell" data-i18n="site.capability.autosave">Keep drafts of the visitor's typing on this origin.</div>
+            <div class="disp-cell"><span data-i18n="site.layer.chrome">chrome</span></div>
           </div>
         </div>
         <!-- @end capability-table -->
@@ -402,34 +402,34 @@ function resolveFor({ mode, can }</code></pre>
         <!-- @generated role-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Role</div>
-            <div>Review mode</div>
-            <div>Grants</div>
+            <div data-i18n="site.column.role">Role</div>
+            <div data-i18n="site.column.reviewMode">Review mode</div>
+            <div data-i18n="site.column.grants">Grants</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>preview</code></div>
             <div class="disp-cell"><code>viewing</code></div>
-            <div class="disp-cell">Nothing at all.<br />Sandbox: no tokens beyond the unconditional two</div>
+            <div class="disp-cell"><span data-i18n="site.role.grantsNothing">Nothing at all.</span><br /><span data-i18n="site.role.sandboxNone">Sandbox: no tokens beyond the unconditional two</span></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>readonly</code></div>
             <div class="disp-cell"><code>viewing</code></div>
-            <div class="disp-cell"><code>print</code><br />Sandbox: adds <code>allow-modals</code></div>
+            <div class="disp-cell"><code>print</code><br /><span data-i18n="site.role.sandboxAdds">Sandbox adds</span> <code>allow-modals</code></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>commentor</code></div>
             <div class="disp-cell"><code>suggesting</code></div>
-            <div class="disp-cell"><code>print</code> <code>download</code> <code>comment</code><br />Sandbox: adds <code>allow-downloads</code> <code>allow-modals</code></div>
+            <div class="disp-cell"><code>print</code> <code>download</code> <code>comment</code><br /><span data-i18n="site.role.sandboxAdds">Sandbox adds</span> <code>allow-downloads</code> <code>allow-modals</code></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>edit</code></div>
             <div class="disp-cell"><code>editing</code></div>
-            <div class="disp-cell"><code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code><br />Sandbox: adds <code>allow-downloads</code> <code>allow-modals</code></div>
+            <div class="disp-cell"><code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>autosave</code><br /><span data-i18n="site.role.sandboxAdds">Sandbox adds</span> <code>allow-downloads</code> <code>allow-modals</code></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>owner</code></div>
             <div class="disp-cell"><code>editing</code></div>
-            <div class="disp-cell"><code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code><br />Sandbox: adds <code>allow-downloads</code> <code>allow-modals</code></div>
+            <div class="disp-cell"><code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code><br /><span data-i18n="site.role.sandboxAdds">Sandbox adds</span> <code>allow-downloads</code> <code>allow-modals</code></div>
           </div>
         </div>
         <!-- @end role-table -->
@@ -453,23 +453,23 @@ function resolveFor({ mode, can }</code></pre>
         <!-- @generated legacy-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Legacy name</div>
-            <div>Relationship</div>
-            <div>Grants</div>
+            <div data-i18n="site.column.legacyName">Legacy name</div>
+            <div data-i18n="site.column.relationship">Relationship</div>
+            <div data-i18n="site.column.grants">Grants</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>standalone</code></div>
-            <div class="disp-cell">Exactly <code>owner</code>.</div>
+            <div class="disp-cell"><span data-i18n="site.legacy.exactly">Exactly</span> <code>owner</code>.</div>
             <div class="disp-cell"><code>open</code> <code>new</code> <code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code> <code>branding</code> <code>autosave</code></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>viewer</code></div>
-            <div class="disp-cell">Exactly <code>readonly</code>.</div>
+            <div class="disp-cell"><span data-i18n="site.legacy.exactly">Exactly</span> <code>readonly</code>.</div>
             <div class="disp-cell"><code>print</code></div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>embedded</code></div>
-            <div class="disp-cell">Not an alias of any role.</div>
+            <div class="disp-cell" data-i18n="site.legacy.notAnAlias">Not an alias of any role.</div>
             <div class="disp-cell"><code>save</code> <code>download</code> <code>print</code> <code>edit</code> <code>comment</code></div>
           </div>
         </div>
@@ -590,49 +590,49 @@ function resolveFor({ mode, can }</code></pre>
         <!-- @generated chrome-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Capability</div>
-            <div>Command id</div>
-            <div>What it decides</div>
+            <div data-i18n="site.column.capability">Capability</div>
+            <div data-i18n="site.column.commandId">Command id</div>
+            <div data-i18n="site.column.whatItDecides">What it decides</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>autosave</code></div>
             <div class="disp-cell">—</div>
-            <div class="disp-cell">Decides whether this origin keeps drafts of the visitor's typing at all.</div>
+            <div class="disp-cell" data-i18n="site.chrome.autosave">Decides whether this origin keeps drafts of the visitor's typing at all.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>comment</code></div>
             <div class="disp-cell">—</div>
-            <div class="disp-cell">Decides whether Suggesting is offered as a mode, and whether a comment can be resolved or deleted.</div>
+            <div class="disp-cell" data-i18n="site.chrome.comment">Decides whether Suggesting is offered as a mode, and whether a comment can be resolved or deleted.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>download</code></div>
             <div class="disp-cell">—</div>
-            <div class="disp-cell">Every File ▸ Export row is present and disabled, with the reason as its title.</div>
+            <div class="disp-cell" data-i18n="site.chrome.download">Every File ▸ Export row is present and disabled, with the reason as its title.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>edit</code></div>
             <div class="disp-cell">—</div>
-            <div class="disp-cell">Decides the review mode the editor arrives in, and whether the Editing button is offered.</div>
+            <div class="disp-cell" data-i18n="site.chrome.edit">Decides the review mode the editor arrives in, and whether the Editing button is offered.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>new</code></div>
             <div class="disp-cell"><code>file.new</code></div>
-            <div class="disp-cell">File ▸ New is present and disabled, with the reason as its title.</div>
+            <div class="disp-cell" data-i18n="site.chrome.new">File ▸ New is present and disabled, with the reason as its title.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>open</code></div>
             <div class="disp-cell"><code>file.open</code></div>
-            <div class="disp-cell">File ▸ Open is present and disabled, with the reason as its title.</div>
+            <div class="disp-cell" data-i18n="site.chrome.open">File ▸ Open is present and disabled, with the reason as its title.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>print</code></div>
             <div class="disp-cell"><code>file.print</code></div>
-            <div class="disp-cell">File ▸ Print is present and disabled, with the reason as its title.</div>
+            <div class="disp-cell" data-i18n="site.chrome.print">File ▸ Print is present and disabled, with the reason as its title.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>save</code></div>
             <div class="disp-cell"><code>file.save</code></div>
-            <div class="disp-cell">File ▸ Save is present and disabled, with the reason as its title.</div>
+            <div class="disp-cell" data-i18n="site.chrome.save">File ▸ Save is present and disabled, with the reason as its title.</div>
           </div>
         </div>
         <!-- @end chrome-table -->
@@ -727,44 +727,44 @@ async function runCommand(panel, transport, id) {
         <!-- @generated event-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Event</div>
-            <div>Detail</div>
-            <div>When it fires</div>
+            <div data-i18n="site.column.event">Event</div>
+            <div data-i18n="site.column.detail">Detail</div>
+            <div data-i18n="site.column.whenItFires">When it fires</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>ready</code></div>
             <div class="disp-cell"><code>contract</code> <code>capabilities</code> <code>editingMode</code> <code>commands</code></div>
-            <div class="disp-cell">Once, when the document is open and on screen.</div>
+            <div class="disp-cell" data-i18n="site.event.ready">Once, when the document is open and on screen.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>change</code></div>
             <div class="disp-cell"><code>revision</code> <code>dirty</code></div>
-            <div class="disp-cell">After every applied edit, whoever made it.</div>
+            <div class="disp-cell" data-i18n="site.event.change">After every applied edit, whoever made it.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>selection</code></div>
             <div class="disp-cell"><code>anchor</code> <code>focus</code> <code>hasRange</code></div>
-            <div class="disp-cell">Whenever the caret or the selection moves.</div>
+            <div class="disp-cell" data-i18n="site.event.selection">Whenever the caret or the selection moves.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>save</code></div>
             <div class="disp-cell"><code>format</code> <code>name</code> <code>bytes</code></div>
-            <div class="disp-cell">After File ▸ Save writes the document out.</div>
+            <div class="disp-cell" data-i18n="site.event.save">After File ▸ Save writes the document out.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>export</code></div>
             <div class="disp-cell"><code>format</code> <code>name</code> <code>bytes</code></div>
-            <div class="disp-cell">After an export writes another format out.</div>
+            <div class="disp-cell" data-i18n="site.event.export">After an export writes another format out.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>error</code></div>
             <div class="disp-cell"><code>code</code> <code>message</code> <code>command</code></div>
-            <div class="disp-cell">When something failed that was not a command being refused.</div>
+            <div class="disp-cell" data-i18n="site.event.error">When something failed that was not a command being refused.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>refusal</code></div>
             <div class="disp-cell"><code>code</code> <code>command</code> <code>requires</code> <code>message</code></div>
-            <div class="disp-cell">Whenever a command is refused, including one nobody asked for over the API.</div>
+            <div class="disp-cell" data-i18n="site.event.refusal">Whenever a command is refused, including one nobody asked for over the API.</div>
           </div>
         </div>
         <!-- @end event-table -->
@@ -783,44 +783,44 @@ async function runCommand(panel, transport, id) {
         <!-- @generated refusal-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Refusal code</div>
-            <div>What it means</div>
-            <div>Decided by</div>
+            <div data-i18n="site.column.refusalCode">Refusal code</div>
+            <div data-i18n="site.column.whatItMeans">What it means</div>
+            <div data-i18n="site.column.decidedBy">Decided by</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>unknown-command</code></div>
-            <div class="disp-cell">No such command in this state.</div>
-            <div class="disp-cell">the contract</div>
+            <div class="disp-cell" data-i18n="site.refusal.unknown-command.meaning">No such command in this state.</div>
+            <div class="disp-cell" data-i18n="site.refusal.unknown-command.decidedBy">the contract</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>capability-withheld</code></div>
-            <div class="disp-cell">The host did not grant what this command requires. Decided before dispatch, so the engine is never asked.</div>
-            <div class="disp-cell">the API</div>
+            <div class="disp-cell" data-i18n="site.refusal.capability-withheld.meaning">The host did not grant what this command requires. Decided before dispatch, so the engine is never asked.</div>
+            <div class="disp-cell" data-i18n="site.refusal.capability-withheld.decidedBy">the API</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>unavailable</code></div>
-            <div class="disp-cell">The command exists and cannot run right now; the message is the chrome's own reason.</div>
-            <div class="disp-cell">the chrome</div>
+            <div class="disp-cell" data-i18n="site.refusal.unavailable.meaning">The command exists and cannot run right now; the message is the chrome's own reason.</div>
+            <div class="disp-cell" data-i18n="site.refusal.unavailable.decidedBy">the chrome</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>engine-refused</code></div>
-            <div class="disp-cell">It ran and the engine refused it — a read-only document, or Viewing mode.</div>
-            <div class="disp-cell">the engine</div>
+            <div class="disp-cell" data-i18n="site.refusal.engine-refused.meaning">It ran and the engine refused it — a read-only document, or Viewing mode.</div>
+            <div class="disp-cell" data-i18n="site.refusal.engine-refused.decidedBy">the engine</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>threw</code></div>
-            <div class="disp-cell">It raised; the message is the exception's.</div>
-            <div class="disp-cell">the command</div>
+            <div class="disp-cell" data-i18n="site.refusal.threw.meaning">It raised; the message is the exception's.</div>
+            <div class="disp-cell" data-i18n="site.refusal.threw.decidedBy">the command</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>bad-request</code></div>
-            <div class="disp-cell">The envelope or the arguments were not the contract's.</div>
-            <div class="disp-cell">the transport</div>
+            <div class="disp-cell" data-i18n="site.refusal.bad-request.meaning">The envelope or the arguments were not the contract's.</div>
+            <div class="disp-cell" data-i18n="site.refusal.bad-request.decidedBy">the transport</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>timeout</code></div>
-            <div class="disp-cell">The transport gave up waiting for an answer.</div>
-            <div class="disp-cell">the transport</div>
+            <div class="disp-cell" data-i18n="site.refusal.timeout.meaning">The transport gave up waiting for an answer.</div>
+            <div class="disp-cell" data-i18n="site.refusal.timeout.decidedBy">the transport</div>
           </div>
         </div>
         <!-- @end refusal-table -->
@@ -920,7 +920,7 @@ export function parseOriginAllowlist(raw, selfOrigin) {
         </p>
         <!-- @generated brand-config -->
         <div class="code-panel">
-          <div class="code-panel-head"><span>webapp/brand.example.json — a white-label, and the input to its own guard</span></div>
+          <div class="code-panel-head"><span>webapp/brand.example.json</span> — <span data-i18n="site.panel.brandConfig">a white-label, and the input to its own guard</span></div>
           <pre><code>{
   "version": 1,
   "name": "Northwind Docs",
@@ -992,7 +992,7 @@ export function parseOriginAllowlist(raw, selfOrigin) {
         </p>
         <!-- @generated brand-refusal -->
         <div class="code-panel">
-          <div class="code-panel-head"><span>webapp/tools/build-brand.mjs — what a failing palette is told</span></div>
+          <div class="code-panel-head"><span>webapp/tools/build-brand.mjs</span> — <span data-i18n="site.panel.brandRefusal">what a failing palette is told</span></div>
           <pre><code>$ node webapp/tools/build-brand.mjs
 brand.json was refused:
   - light: --muted (#9aa0a6) on --surface (#ffffff) measures 2.64:1 and must clear 4.5:1. You set --muted: #72777b there would pass, on the same hue.
@@ -1022,152 +1022,152 @@ brand.json was refused:
         <!-- @generated region-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Region</div>
-            <div>What it is</div>
+            <div data-i18n="site.column.region">Region</div>
+            <div data-i18n="site.column.whatItIs">What it is</div>
             <div>readonly</div>
             <div>preview</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>brand</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.brand">Our name and mark in the top bar.</span></div>
+            <div class="disp-cell" data-i18n="site.region.brand">Our name and mark in the top bar.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>title</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.title">The document name, and renaming it.</span></div>
+            <div class="disp-cell" data-i18n="site.region.title">The document name, and renaming it.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>state</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.state">The document-state chips and Document properties in the top bar.</span></div>
+            <div class="disp-cell" data-i18n="site.region.state">The document-state chips and Document properties in the top bar.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>menu</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.menu">The application menu bar — one of the two navigation axes.</span></div>
+            <div class="disp-cell" data-i18n="site.region.menu">The application menu bar — one of the two navigation axes.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>ribbon</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.ribbon">The whole tabbed ribbon, strip and bands together.</span></div>
+            <div class="disp-cell" data-i18n="site.region.ribbon">The whole tabbed ribbon, strip and bands together.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.file</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-file">The File page: open, save, export, print, properties, settings.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-file">The File page: open, save, export, print, properties, settings.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.home</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-home">Character and paragraph formatting, styles, clipboard, undo.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-home">Character and paragraph formatting, styles, clipboard, undo.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.insert</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-insert">Tables, pictures, shapes, links, comments, headers, symbols.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-insert">Tables, pictures, shapes, links, comments, headers, symbols.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.layout</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-layout">Page setup, margins, columns, spacing, watermark, arrange.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-layout">Page setup, margins, columns, spacing, watermark, arrange.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.references</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-references">Captions, cross-references, contents, footnotes, fields.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-references">Captions, cross-references, contents, footnotes, fields.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.review</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-review">Tracked changes, comments, proofing, the review mode control.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-review">Tracked changes, comments, proofing, the review mode control.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.view</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-view">Outline, zoom, page setup, showing changes.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-view">Outline, zoom, page setup, showing changes.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>band.table</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.band-table">The contextual table band, present when the caret is in a table.</span></div>
+            <div class="disp-cell" data-i18n="site.region.band-table">The contextual table band, present when the caret is in a table.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>rail</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.rail">The left navigation rail: outline and page thumbnails.</span></div>
+            <div class="disp-cell" data-i18n="site.region.rail">The left navigation rail: outline and page thumbnails.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>ruler</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.ruler">The ruler strip above the page: indents and tab stops.</span></div>
+            <div class="disp-cell" data-i18n="site.region.ruler">The ruler strip above the page: indents and tab stops.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>caret</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.caret">The text caret and the selection highlight on the page.</span></div>
+            <div class="disp-cell" data-i18n="site.region.caret">The text caret and the selection highlight on the page.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>context</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.context">The right-click menu on the document.</span></div>
+            <div class="disp-cell" data-i18n="site.region.context">The right-click menu on the document.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>objects</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.objects">Object selection: the outline, its handles and the object bar.</span></div>
+            <div class="disp-cell" data-i18n="site.region.objects">Object selection: the outline, its handles and the object bar.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>history</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.history">The version-history timeline, its ribbon entry and its preview bar.</span></div>
+            <div class="disp-cell" data-i18n="site.region.history">The version-history timeline, its ribbon entry and its preview bar.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>status</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.status">The status bar: counts, page number, language, mode.</span></div>
+            <div class="disp-cell" data-i18n="site.region.status">The status bar: counts, page number, language, mode.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>zoom</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.zoom">The zoom cluster in the status bar.</span></div>
+            <div class="disp-cell" data-i18n="site.region.zoom">The zoom cluster in the status bar.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>find</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.find">The find and replace card.</span></div>
+            <div class="disp-cell" data-i18n="site.region.find">The find and replace card.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>selection</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.selection">The floating toolbar above a selection.</span></div>
+            <div class="disp-cell" data-i18n="site.region.selection">The floating toolbar above a selection.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>settings</code></div>
-            <div class="disp-cell"><span data-i18n="site.region.settings">The settings dialog and the gear that opens it.</span></div>
+            <div class="disp-cell" data-i18n="site.region.settings">The settings dialog and the gear that opens it.</div>
             <div class="disp-cell">—</div>
             <div class="disp-cell">—</div>
           </div>
@@ -1240,9 +1240,9 @@ brand.json was refused:
         <!-- @generated evidence-table -->
         <div class="disp-table">
           <div class="disp-row head">
-            <div>File</div>
-            <div>Lane</div>
-            <div>The test</div>
+            <div data-i18n="site.column.file">File</div>
+            <div data-i18n="site.column.lane">Lane</div>
+            <div data-i18n="site.column.theTest">The test</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>webapp/<wbr />tests/<wbr />roles.test.mjs</code></div>

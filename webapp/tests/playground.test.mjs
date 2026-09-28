@@ -130,12 +130,17 @@ test("a role's card and its note say what it resolves to, and say it correctly",
       ),
     );
     assert.ok(card, `no control card for the ${role} role`);
+    // A RATIO AND A NOUN, not a sentence with numbers in it. The pill used to
+    // read "6 of 9 capabilities" as one string, which cannot go through the
+    // localisation seam without baking derived numbers into a catalogue — so the
+    // generator writes `6/9` and the noun beside it carries a key. The numbers
+    // are still derived here from the authority, which is the part that matters.
     assert.ok(
-      card[1].includes(`${capabilities.size} of ${CAPABILITIES.length} capabilities`),
+      card[1].includes(`>${capabilities.size}/${CAPABILITIES.length}<`),
       `the ${role} card does not say it grants ${capabilities.size} of ${CAPABILITIES.length}: ${card[1]}`,
     );
     assert.ok(
-      card[1].includes(`${shown.size} of ${REGIONS.length} regions`),
+      card[1].includes(`>${shown.size}/${REGIONS.length}<`),
       `the ${role} card does not say it gets ${shown.size} of ${REGIONS.length} regions: ${card[1]}`,
     );
     assert.ok(
@@ -174,9 +179,11 @@ test("the two reading roles are described as different, because they are", () =>
   assert.notDeepEqual([...preview].sort(), [...readonly].sort());
   assert.equal(preview.size, 0, "preview is supposed to be offered no region at all");
   assert.ok(readonly.size > 0, "readonly is supposed to keep reading chrome");
+  // Both ratios are on the page — on the cards as pills, and in each role's note
+  // — so a reader can see 0/19 beside 6/19 without selecting anything.
   assert.ok(
-    PAGE.includes(`${preview.size} of ${REGIONS.length} regions`) &&
-      PAGE.includes(`${readonly.size} of ${REGIONS.length} regions`),
+    PAGE.includes(`>${preview.size}/${REGIONS.length}<`) &&
+      PAGE.includes(`>${readonly.size}/${REGIONS.length}<`),
     "the page does not publish both region counts, so a reader cannot see the difference",
   );
 });

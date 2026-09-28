@@ -88,26 +88,42 @@ const CEILINGS = new Map([
   // would put OpenDoc in nineteen catalogues and invite nineteen translations of
   // a word that has none.
   //
-  // What is left on the two SDK pages is the GENERATED regions — everything
+  // What was left on the two SDK pages was the GENERATED regions — everything
   // between `<!-- @generated NAME -->` and `<!-- @end NAME -->`, written by
   // `tools/build-embed-docs.mjs` from `MEANINGS`, `REGION_MEANINGS`, `HOST_EVENTS`
-  // and `REFUSAL_CODES`. Routing those means giving the generator a key per
-  // capability, per region, per event and per refusal code and teaching it to emit
-  // `data-i18n`; it is real work, it belongs to whoever owns that generator, and
-  // it is deliberately NOT bundled here. Hand-editing the pages instead is not an
-  // option — `build-embed-docs --check` would fail the build, correctly. These two
-  // numbers are ceilings like every other row: they may fall, never rise.
+  // and `REFUSAL_CODES`. HF-198 left them out, correctly: hand-editing the pages
+  // is not an option, because `build-embed-docs --check` would fail the build for
+  // exactly the right reason. Routing them meant teaching the GENERATOR to emit
+  // `data-i18n`, with a key per capability, per region, per event and per refusal
+  // code, and that is what has now landed.
+  //
+  //   playground.page.html     65 -> 3
+  //   embedding.page.html     193 -> 88
+  //
+  // MEASURED from the regenerated pages, both of them, not calculated.
+  //
+  // WHAT THE REMAINING SITES ARE, so the numbers are not read as work left
+  // undone. On the playground: the product name as a placeholder (a proper noun,
+  // unrouted for the same reason the header's is) and two pieces of API
+  // vocabulary — a `TAB_TITLE_POLICIES` value and the four URL parameter names.
+  // On the embedding guide, all 88 are code or evidence: import specifiers and
+  // paths split by `<wbr />`, export names, `npm run test:unit`, a version
+  // number, a licence identifier, the fourteen TEST TITLES the evidence table
+  // cites (a translated title names no test a reader could grep for), and one
+  // scanner artefact on the `<meta name="description">` whose value spans lines.
+  // None of those can legitimately come down, which is what makes 88 a floor
+  // rather than a debt.
   ["docs.page.html", 0],
-  // 193 -> 174 and 65 -> 46: the region-description column of both generated
-  // tables now carries `data-i18n`, which is the work the note above defers to
-  // "whoever owns that generator" — done for the one column the two pages share,
-  // because five regions were being ADDED and a derived table that grows with the
-  // vocabulary would otherwise have had to raise a number that may only fall.
-  // MEASURED, both of them.
-  ["embedding.page.html", 174],
+  // The region-description column went first, with the five new regions
+  // (193 -> 174, 65 -> 46), and the rest of both generated regions followed
+  // here. RE-MEASURED from the merged, regenerated pages rather than carried
+  // forward: the two rounds overlapped on exactly one column, so neither
+  // branch's number describes this tree — which is the merge trap
+  // `module_seams.test.mjs` records three times.
+  ["embedding.page.html", 88],
   ["fidelity.page.html", 0],
   ["index.page.html", 0],
-  ["playground.page.html", 46],
+  ["playground.page.html", 3],
   ["_partials/site-footer.html", 0],
   ["_partials/site-header.html", 1],
   // ---- The editor's scripts -------------------------------------------------

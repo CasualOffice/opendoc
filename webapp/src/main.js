@@ -292,7 +292,6 @@ const selHighlightBar = document.getElementById("selHighlightBar");
 const clearFormattingBtn = document.getElementById("clearFormatting");
 const formatPainterBtn = document.getElementById("formatPainter");
 const spacingBtn = document.getElementById("spacingBtn");
-const spacingMenu = document.getElementById("spacingMenu");
 const paraOptsBtn = document.getElementById("paraOptsBtn");
 const paragraphPropertiesPanel = document.getElementById("paragraphPropertiesPanel");
 const paragraphPropertiesContext = document.getElementById("paragraphPropertiesContext");
@@ -665,12 +664,6 @@ function makeStyleOption(name) {
   });
   return option;
 }
-
-/** Whether a style can be applied right now. `updateToolbar` owns this; the trigger
- *  carries it, and the refusal REASON lives once on the trigger's title rather than
- *  on each option — a disabled option in an open menu is worse than a control that
- *  says it cannot open. */
-let styleCardsEnabled = false;
 
 /** What `listStyles()` last reported, and `RECOMMENDED_STYLES` ∩ that — both resolved
  *  once per registry change, not per caret move: `offeredStyles` is on the
@@ -8980,7 +8973,6 @@ function updateToolbar() {
   // Style cards are rebuilt as the offered set changes, so they cannot live in the
   // static `paraControls` list — but they must still refuse honestly rather than being
   // clickable buttons that do nothing (§10, "never a dead control").
-  styleCardsEnabled = hasSel;
   stylesTrigger.disabled = !hasSel;
   stylesTrigger.title = hasSel ? "Paragraph style" : "Place the caret in a paragraph to apply a style";
 
@@ -11282,7 +11274,6 @@ function currentReviewTimestamp() {
 }
 
 let reviewFilter = "open";
-let reviewReplyParent = null;
 
 function focusReviewComment(comment, expand = true) {
   const anchor = comment?.anchor;
@@ -11304,7 +11295,6 @@ function closeReviewPopover() {
   reviewPopover?.remove();
   reviewPopover = null;
   reviewComposerState = null;
-  reviewReplyParent = null;
   scheduleReviewMarginRender();
 }
 
@@ -11793,7 +11783,6 @@ function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
   reviewSidebarPreference = true;
   if (parent) {
-    reviewReplyParent = parent;
     activeReviewItemId = `comment:${parent}`;
     reviewComposerState = null;
     scheduleReviewMarginRender();
@@ -16141,6 +16130,7 @@ const versionHistory = createVersionHistory({
   }),
   settings: () => settings,
   hostAllows: () => AUTOSAVE_ALLOWED_HERE,
+  capabilities: () => HOST_CAPS,
   publish: (text, kind) => statusChannel.publish(text, kind),
   confirm: (options) => confirmModal(options),
   promptName: (current) => versionNamePrompt.prompt(current),
