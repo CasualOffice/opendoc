@@ -63,6 +63,17 @@ use crate::{to_js, viewer_limits, viewer_text_limits};
 /// its own budget; this is the value to start that convergence from.
 pub const DEFAULT_DIFF_SLICE: u32 = 4_000;
 
+/// [`DEFAULT_DIFF_SLICE`], for a host that would otherwise hardcode it.
+///
+/// A number typed into `version_panel.mjs` is a number with no committed
+/// artifact behind it, which is the `105` EV-002 shape. The engine owns the
+/// starting slice because the engine knows what a unit of its own work is.
+#[wasm_bindgen(js_name = defaultDiffSlice)]
+#[must_use]
+pub fn default_diff_slice() -> u32 {
+    DEFAULT_DIFF_SLICE
+}
+
 /// Which phase a job is in, as the string `step` returns.
 const PHASE_PARSING: &str = "parsing";
 const PHASE_WORKING: &str = "working";
@@ -566,7 +577,9 @@ mod tests {
         loop {
             states += 1;
             assert!(states < 100, "a small diff finishes in a few slices");
-            if job.step_inner(DEFAULT_DIFF_SLICE).unwrap() == PHASE_COMPLETE {
+            // Through the exported getter, not the constant, so the entry point a
+            // host actually reads is the one under test.
+            if job.step_inner(default_diff_slice()).unwrap() == PHASE_COMPLETE {
                 break;
             }
         }
