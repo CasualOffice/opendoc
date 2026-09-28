@@ -141,7 +141,7 @@ test("the File page is two columns, Back is the first row at the top left, and t
   expect(consoleErrors).toEqual([]);
 });
 
-test("the ribbon band draws no group captions, and the accessibility tree keeps every one", async ({
+test("the ribbon band draws its group captions, and they are the groups' accessible names", async ({
   page,
   consoleErrors,
 }) => {
@@ -161,13 +161,27 @@ test("the ribbon band draws no group captions, and the accessibility tree keeps 
     };
   });
 
-  // ONLYOFFICE's `.group` (toolbar.less:498) has no caption element at all.
+  // THE DECISION REVERSED, and this guard reversed with it.
+  //
+  // It used to assert the opposite — that no caption occupies the band —
+  // because `docs/123` §4 followed ONLYOFFICE, whose `.group` (toolbar.less:498)
+  // has no caption element at all. The chrome work changed that on purpose: with
+  // captions hidden, twenty-four groups of icons carried no stated structure and
+  // the only grouping cue was a hairline that is close to invisible in dark
+  // theme — neither Word's labelled groups nor Docs' single clean row. The rest
+  // of this chrome is Word's, so the captions came back, drawn and pinned under
+  // their group, and `--ribbon-band-h` grew 74 -> 90px, which is what Word
+  // spends on the same row.
+  //
+  // Asserting the old shape here would demand that regression back, so what this
+  // guard defends now is that the captions are REAL: drawn, and still carrying
+  // the groups' accessible names, which is what `docs/105` P3 asks for and what
+  // the overflow menu prints as its headings.
   expect(captions.count, "the captions must still be in the DOM").toBeGreaterThan(4);
-  expect(captions.drawn, "no group caption may occupy the band").toEqual([]);
-  // …and they are still the groups' accessible names, which is what doc 105 P3
-  // asks for and what the overflow menu prints as its headings.
+  expect(captions.drawn.length, "the group captions must occupy the band").toBeGreaterThan(4);
   expect(captions.text).toContain("Font");
   expect(captions.text).toContain("Paragraph");
+  expect(captions.drawn.map((t) => t.trim())).toContain("Font");
 
   expect(consoleErrors).toEqual([]);
 });
