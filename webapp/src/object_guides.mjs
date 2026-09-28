@@ -139,14 +139,23 @@ export function objectBarPosition(object, view, barHeight, gap = 8) {
  * document everywhere else, including over the same picture when it is not
  * selected.
  *
+ * It handles TOUCH ONLY, and is deliberately transparent to every other pointer
+ * type: a mouse press falls through to the page's own hit-test, which is what
+ * resolves a double-click into a group, a right-click into the context menu,
+ * and a click on a picture inside a text box into the right object. Taking mouse
+ * presses here broke four nested-object specs and three object-command ones,
+ * because "start moving whatever is selected" is a much blunter answer than the
+ * hit-test's. Touch has no such path to fall through to — the gesture is lost at
+ * touch-start — which is the whole reason the pad exists.
+ *
  * O(1).
  *
  * @param {Element} overlay the page overlay to paint into
  * @param {[number, number, number, number]} box the object's box in twips
  * @param {{sx: number, sy: number}} scale
- * @param {(event: PointerEvent) => void} onPointerDown
+ * @param {(event: PointerEvent) => void} onTouchDown
  */
-export function paintMovePad(overlay, box, scale, onPointerDown) {
+export function paintMovePad(overlay, box, scale, onTouchDown) {
   const [x, y, w, h] = box;
   const pad = document.createElement("div");
   pad.className = "object-move-pad";
@@ -154,7 +163,9 @@ export function paintMovePad(overlay, box, scale, onPointerDown) {
   pad.style.top = `${y * scale.sy}px`;
   pad.style.width = `${w * scale.sx}px`;
   pad.style.height = `${h * scale.sy}px`;
-  pad.addEventListener("pointerdown", onPointerDown);
+  pad.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") onTouchDown(event);
+  });
   overlay.appendChild(pad);
   return pad;
 }
