@@ -43,6 +43,12 @@ fontique = { version = "0.11", default-features = false, features = ["std"] }
 # `parley`/`fontique`, so no new version is introduced.
 skrifa = { version = "0.43", default-features = false }
 serde.workspace = true
+# Grapheme-cluster segmentation for coverage reporting: an emoji ZWJ sequence,
+# an emoji-presentation sequence and a regional-indicator pair are each ONE
+# user-perceived character, so a loss report that named only the first scalar
+# named the wrong thing. Already a workspace dependency (`casual-doc-model`
+# addresses text by grapheme cluster), pure Rust and WASM-clean.
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -95,8 +95,23 @@ test("pictographic emoji use the pinned color emoji face", () => {
     ]),
     ["emoji"],
   );
-  assert.deepEqual(SCRIPT_FALLBACK_FONTS.emoji.scripts, ["Zyyy", "Latn"]);
-  assert.match(SCRIPT_FALLBACK_FONTS.emoji.url, /NotoColorEmoji-emojicompat\.ttf$/);
+  assert.deepEqual(SCRIPT_FALLBACK_FONTS.emoji.scripts, ["Zyyy", "Latn", "Zinh"]);
+  // COLRv1, not CBDT: the same official Noto Color Emoji, 4.99 MB of vector
+  // paint graphs (2.47 MB brotli) instead of 10.87 MB of PNG strikes (9.24 MB
+  // brotli), and resolution-independent at every zoom. The engine renders
+  // either, so only this URL decides which one a reader downloads.
+  assert.match(SCRIPT_FALLBACK_FONTS.emoji.url, /Noto-COLRv1\.ttf$/);
+});
+
+// An emoji-presentation sequence asks for the COLOUR face, not the monochrome
+// symbols face. U+2764 alone is a dingbat by Unicode default and stays with
+// `symbols`; U+2764 U+FE0F is a red heart. Reading only the base scalar painted
+// the heart grey and never asked for a colour face at all — which is exactly
+// what was reported.
+test("a variation selector or ZWJ routes a sequence to the colour emoji face", () => {
+  assert.deepEqual(fallbackKeysFor([0x2764, 0xfe0f]).sort(), ["emoji", "symbols"]);
+  assert.deepEqual(fallbackKeysFor([0x1f469, 0x200d, 0x1f4bb]), ["emoji"]);
+  assert.deepEqual(fallbackKeysFor([0x2764]), ["symbols"]);
 });
 
 // The monochrome symbol blocks must keep resolving to Noto Sans Symbols 2 rather

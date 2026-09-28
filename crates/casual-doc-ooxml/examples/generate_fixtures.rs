@@ -74,6 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     fs::write(
+        output.join("emoji-containers.docx"),
+        package(&emoji_containers_entries())?,
+    )?;
+
+    fs::write(
         output.join("visual-containment.docx"),
         package(&visual_containment_entries())?,
     )?;
@@ -175,6 +180,118 @@ fn entries_with_document(document: &[u8]) -> Vec<(String, Vec<u8>, CompressionMe
         (
             "_rels/.rels".to_owned(),
             ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+    ]
+}
+
+/// `emoji-containers.docx` — the same five emoji in four different block
+/// containers: a body paragraph, a table cell, the running header, and a
+/// footnote body.
+///
+/// The uniform-flow rule says every block container shapes through the same
+/// pipeline as the body, so one coverage fix serves them all; this fixture is
+/// what makes that claim checkable rather than assumed. The table cell is here
+/// because that is where the defect was reported.
+///
+/// The five are deliberately the five hard shapes, not five pictures: a lone
+/// scalar, a ZWJ sequence, a scalar plus a skin-tone modifier, an
+/// emoji-presentation sequence (base + U+FE0F), and a regional-indicator pair.
+/// Each is ONE user-perceived character and must shape, measure and caret as
+/// one.
+const EMOJI_TEXT: &str = concat!(
+    "\u{1f600}",
+    "\u{1f469}\u{200d}\u{1f4bb}",
+    "\u{1f44d}\u{1f3fd}",
+    "\u{2764}\u{fe0f}",
+    "\u{1f1ec}\u{1f1e7}",
+);
+const EMOJI_CONTAINERS_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/></Types>"#;
+const EMOJI_CONTAINERS_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/></Relationships>"#;
+
+fn emoji_containers_document() -> Vec<u8> {
+    format!(
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"",
+            " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+            "<w:body>",
+            "<w:p><w:r><w:t xml:space=\"preserve\">Body {emoji}</w:t></w:r>",
+            "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>",
+            "<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>",
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr>",
+            "<w:p><w:r><w:t xml:space=\"preserve\">Cell {emoji}</w:t></w:r></w:p>",
+            "</w:tc></w:tr></w:tbl>",
+            "<w:p/>",
+            "<w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdHeader\"/>",
+            "<w:pgSz w:w=\"11906\" w:h=\"16838\"/>",
+            "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"",
+            " w:header=\"720\" w:footer=\"720\"/>",
+            "</w:sectPr></w:body></w:document>",
+        ),
+        emoji = EMOJI_TEXT,
+    )
+    .into_bytes()
+}
+
+fn emoji_containers_header() -> Vec<u8> {
+    format!(
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:p><w:r><w:t xml:space=\"preserve\">Header {emoji}</w:t></w:r></w:p></w:hdr>",
+        ),
+        emoji = EMOJI_TEXT,
+    )
+    .into_bytes()
+}
+
+fn emoji_containers_footnotes() -> Vec<u8> {
+    format!(
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:footnote w:id=\"-1\" w:type=\"separator\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>",
+            "<w:footnote w:id=\"0\" w:type=\"continuationSeparator\"><w:p><w:r>",
+            "<w:continuationSeparator/></w:r></w:p></w:footnote>",
+            "<w:footnote w:id=\"1\"><w:p><w:r><w:t xml:space=\"preserve\">Note {emoji}</w:t>",
+            "</w:r></w:p></w:footnote></w:footnotes>",
+        ),
+        emoji = EMOJI_TEXT,
+    )
+    .into_bytes()
+}
+
+fn emoji_containers_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            emoji_containers_document(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            EMOJI_CONTAINERS_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            EMOJI_CONTAINERS_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/header1.xml".to_owned(),
+            emoji_containers_header(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/footnotes.xml".to_owned(),
+            emoji_containers_footnotes(),
             CompressionMethod::Deflated,
         ),
     ]

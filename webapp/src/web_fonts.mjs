@@ -127,21 +127,33 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
     url: `${NOTO}/NotoSansSymbols2/hinted/ttf/NotoSansSymbols2-Regular.ttf`,
     scripts: Object.freeze(["Zyyy", "Latn"]),
   }),
-  // Pictographic emoji. Real documents carry them — a .docx written anywhere
-  // else can contain 😀 in a heading — and without a covering face every one of
-  // them painted as tofu, whatever produced it.
+  // Pictographic emoji, IN COLOUR. The engine now bundles the monochrome Noto
+  // Emoji base, so an emoji is never tofu and never waits on the network; this
+  // bucket is the colour upgrade on top of it.
   //
-  // This is the official Noto Color Emoji compatibility font. It carries
-  // embedded CBDT/CBLC color bitmaps, which the shared renderer paints before
-  // the monochrome outline fallback. Do not replace this with NotoEmoji.ttf:
-  // that Google Fonts asset is an outline-only face and makes emoji monochrome.
+  // It is the COLRv1 build, not the CBDT one. Both are official Noto Color
+  // Emoji and the renderer paints either (`render_colr_glyph` for COLR,
+  // `render_bitmap_glyph` for CBDT/sbix strikes), but they are not the same
+  // download: the CBDT file is 10.87 MB of PNG strikes that compress to 9.24 MB
+  // brotli, while the COLRv1 file is 4.99 MB of vector paint graphs that
+  // compress to 2.47 MB — a 6.8 MB saving on every document with an emoji in
+  // it, and resolution-independent instead of a 109 px bitmap scaled to body
+  // size. Do NOT substitute `ofl/notoemoji/NotoEmoji[wght].ttf` here: that is
+  // the monochrome face, which is the thing we already bundle.
+  //
+  // Registered through the same host seam as every other bucket. The engine
+  // puts a face carrying colour glyphs at the FRONT of the fallback chain, so
+  // this outranks both the bundled monochrome base and the monochrome symbols
+  // face — which is what stops an emoji-presentation heart painting as a
+  // dingbat because the symbols bucket happened to be fetched first.
   //
   // Like every bucket here it is coverage-driven: `missingCoverage()` only asks
-  // for it when the open document actually contains these scalars, so documents
-  // without emoji never pay the ~2 MB.
+  // for it when the open document actually contains these scalars (including
+  // ones the monochrome base is standing in for), so documents without emoji
+  // never pay for it.
   emoji: Object.freeze({
-    url: `${NOTO_EMOJI}/NotoColorEmoji-emojicompat.ttf`,
-    scripts: Object.freeze(["Zyyy", "Latn"]),
+    url: `${NOTO_EMOJI}/Noto-COLRv1.ttf`,
+    scripts: Object.freeze(["Zyyy", "Latn", "Zinh"]),
   }),
 });
 
@@ -174,6 +186,18 @@ export function fontKeyForCodePoint(cp) {
   if (cp >= 0x0d80 && cp <= 0x0dff) return "sinhala";
   if (cp >= 0x0590 && cp <= 0x05ff) return "hebrew";
   if (cp >= 0x0e00 && cp <= 0x0e7f) return "thai";
+  // The two joiners that turn other scalars into an emoji: U+FE0F asks for
+  // emoji presentation and U+200D joins a sequence. They are reported as part
+  // of the cluster they sit in, so seeing either means the document holds an
+  // emoji-presentation sequence or a ZWJ sequence and wants the colour face.
+  //
+  // Without this the emoji-presentation heart (U+2764 U+FE0F) fell to the
+  // `symbols` bucket below on its base scalar alone — Noto Sans Symbols 2
+  // covers U+2764 as a monochrome dingbat, so a heart painted grey, the colour
+  // face was never asked for, and nothing said why. U+2764 on its OWN is a
+  // dingbat by Unicode default and still belongs to `symbols`; it is the
+  // selector that changes the answer.
+  if (cp === 0xfe0f || cp === 0x200d) return "emoji";
   // Geometric Shapes / Miscellaneous Symbols / Dingbats. Noto Sans Symbols 2
   // covers these monochrome shapes, and they are what a checklist's ☐/☒ markers
   // and similar plain content use.
@@ -183,10 +207,10 @@ export function fontKeyForCodePoint(cp) {
     (cp >= 0x2700 && cp <= 0x27bf)
   )
     return "symbols";
-  // Pictographic emoji, in the astral plane. Every block here is covered by the
-  // monochrome Noto Emoji face registered above; before it existed these all
-  // resolved to no font at all and rendered as notdef boxes in any document
-  // that contained them.
+  // Pictographic emoji, in the astral plane, plus the two BMP blocks that only
+  // carry emoji in practice. Every block here is covered by the colour face
+  // registered above; before the bucket existed these all resolved to no font
+  // at all and rendered as notdef boxes in any document that contained them.
   if (
     (cp >= 0x1f300 && cp <= 0x1f5ff) || // Misc Symbols and Pictographs
     (cp >= 0x1f600 && cp <= 0x1f64f) || // Emoticons
@@ -195,7 +219,9 @@ export function fontKeyForCodePoint(cp) {
     (cp >= 0x1f780 && cp <= 0x1f7ff) || // Geometric Shapes Extended
     (cp >= 0x1f900 && cp <= 0x1f9ff) || // Supplemental Symbols and Pictographs
     (cp >= 0x1fa70 && cp <= 0x1faff) || // Symbols and Pictographs Extended-A
-    (cp >= 0x1f1e6 && cp <= 0x1f1ff) // Regional indicators (flag pairs)
+    (cp >= 0x1f1e6 && cp <= 0x1f1ff) || // Regional indicators (flag pairs)
+    (cp >= 0x1f000 && cp <= 0x1f0ff) || // Mahjong / dominoes / playing cards
+    (cp >= 0x1f200 && cp <= 0x1f2ff) // Enclosed ideographic supplement
   )
     return "emoji";
   return null;

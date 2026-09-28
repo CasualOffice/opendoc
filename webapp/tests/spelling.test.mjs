@@ -339,3 +339,74 @@ test("the dictionary files are the shape the parser and the ranking depend on", 
     );
   }
 });
+
+// ---- Emoji ------------------------------------------------------------------
+//
+// Spell check must neither FLAG an emoji nor MANGLE one, and the second is the
+// dangerous half: a flagged span that starts inside a grapheme cluster becomes a
+// destructive edit as soon as someone accepts the suggestion.
+//
+// U+FE0F is Unicode category Mn, so `\p{M}` in the word-body class matched it
+// and the tokenizer glued it onto the next word. `"see ❤️world"` produced the
+// token `"️world"` — a correctly spelled word reported as a misspelling,
+// spanning from the middle of the heart — and replacing it would have eaten the
+// variation selector and left a monochrome dingbat behind.
+
+test("emoji are never word tokens and never flagged", () => {
+  const dictionary = new Set(["hello", "world", "body", "cell"]);
+  const emoji = [
+    "\u{1F600}", // lone scalar
+    "\u{1F469}\u{200D}\u{1F4BB}", // ZWJ sequence
+    "\u{1F44D}\u{1F3FD}", // skin-tone modifier
+    "❤️", // emoji-presentation sequence
+    "\u{1F1EC}\u{1F1E7}", // regional-indicator pair
+  ];
+  for (const glyph of emoji) {
+    const text = `hello ${glyph} world`;
+    assert.deepEqual(
+      findMisspellings(text, dictionary),
+      [],
+      `${JSON.stringify(text)} should have no misspelling`,
+    );
+    for (const token of tokenizeWords(text)) {
+      for (const ch of glyph) {
+        assert.ok(
+          !token.word.includes(ch),
+          `token ${JSON.stringify(token.word)} swallowed part of ${JSON.stringify(glyph)}`,
+        );
+      }
+    }
+  }
+});
+
+test("a word touching an emoji keeps a boundary outside the cluster", () => {
+  const dictionary = new Set(["hello", "world"]);
+  // No separating space: the word runs straight into the emoji on both sides.
+  for (const text of ["hello❤️world", "hello\u{1F469}\u{200D}\u{1F4BB}world"]) {
+    assert.deepEqual(
+      findMisspellings(text, dictionary),
+      [],
+      `${JSON.stringify(text)} flagged a correctly spelled word`,
+    );
+    for (const token of tokenizeWords(text)) {
+      // The span a replacement would overwrite must be exactly the word.
+      assert.equal(
+        text.slice(token.start, token.end),
+        token.word,
+        "a token's span does not match its own text",
+      );
+      assert.ok(
+        ["hello", "world"].includes(token.word),
+        `unexpected token ${JSON.stringify(token.word)} — a boundary fell inside the emoji`,
+      );
+    }
+  }
+});
+
+test("a real misspelling beside an emoji is still found", () => {
+  // The positive case, so none of the above can pass by checking nothing.
+  const dictionary = new Set(["receive"]);
+  const found = findMisspellings("\u{1F600} recieve ❤️", dictionary);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].word, "recieve");
+});

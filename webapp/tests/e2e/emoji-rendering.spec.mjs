@@ -6,22 +6,25 @@
 // emoji resolved to NO font and rasterized as tofu — an import-fidelity bug that
 // had nothing to do with how the character got into the document.
 //
-// The fix is the coverage-driven `emoji` bucket using the official Noto Color
-// Emoji compatibility font (CBDT/CBLC bitmaps consumed by the engine).
-// This spec asserts the provisioning actually happens against real content,
-// because a unit test over `fontKeyForCodePoint` alone would still pass if the
-// fetch/register path never asked for the new bucket.
+// The engine now bundles a monochrome emoji base, so an emoji is never tofu;
+// this spec is about the COLOUR upgrade, which is the coverage-driven `emoji`
+// bucket fetching the official Noto Color Emoji COLRv1 build and registering it
+// through the host seam. It asserts the provisioning actually happens against
+// real content, because a unit test over `fontKeyForCodePoint` alone would still
+// pass if the fetch/register path never asked for the bucket.
 import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 
-// The asset is `googlefonts/noto-emoji@<sha>/fonts/NotoColorEmoji-emojicompat.ttf`.
-// This matcher used to be /notoemoji/i, which matched the OLD monochrome Google
-// Fonts path (`ofl/notoemoji/NotoEmoji[wght].ttf`). When the face was switched to
-// the real colour font the matcher was left behind, and it matches neither
-// "noto-emoji" (hyphenated) nor "NotoColorEmoji" — so the spec recorded zero
-// requests while the editor was fetching the font correctly all along. Match the
-// family, which is the thing under test, and which no other provisioned face
-// (NotoSans, NotoSerif) contains.
-const EMOJI_FONT = /NotoColorEmoji/i;
+// The asset is `googlefonts/noto-emoji@<sha>/fonts/Noto-COLRv1.ttf`.
+//
+// Match the REPOSITORY, not the filename. This matcher has now been left behind
+// by a filename twice: it was /notoemoji/i against the monochrome Google Fonts
+// path, then /NotoColorEmoji/i against the CBDT build, and each time the spec
+// recorded zero requests while the editor fetched the font correctly all along.
+// `googlefonts/noto-emoji` is where the colour emoji face comes from and where
+// nothing else does — the named faces are google/fonts and the script fallbacks
+// are notofonts — so it identifies the thing under test without pinning which
+// build of it we ship.
+const EMOJI_FONT = /googlefonts\/noto-emoji@/i;
 
 test("a document containing emoji provisions the emoji face", async ({ page, consoleErrors }) => {
   const fontRequests = [];
@@ -33,7 +36,7 @@ test("a document containing emoji provisions the emoji face", async ({ page, con
   await clickIntoFirstPage(page);
 
   // The demo fixture has no emoji, so nothing should have been fetched yet —
-  // the bucket is coverage-driven and must not cost every document ~2 MB.
+  // the bucket is coverage-driven and must not cost every document 4.99 MB.
   expect(fontRequests).toEqual([]);
 
   // Put emoji into the document through the picker, which routes through the
@@ -69,7 +72,7 @@ test("the emoji face is requested once, not per glyph", async ({ page, consoleEr
   await expect.poll(() => fontRequests.length, { timeout: 15_000 }).toBeGreaterThan(0);
 
   // More emoji from the same blocks must reuse the provisioned face rather than
-  // refetch ~2 MB per character.
+  // refetch several megabytes per character.
   const afterFirst = fontRequests.length;
   // More emoji, reached through the picker's search so they are found whatever
   // category they live in.
