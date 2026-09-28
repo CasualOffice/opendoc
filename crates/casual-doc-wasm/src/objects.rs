@@ -672,16 +672,6 @@ const fn group_child_extent(child: &GroupChild) -> Extent {
     }
 }
 
-/// A child's own top-left, in its parent group's child space.
-const fn group_child_offset(child: &GroupChild) -> PointEmu {
-    match child {
-        GroupChild::Picture(picture) => picture.offset,
-        GroupChild::TextBox(text_box) => text_box.offset,
-        GroupChild::Shape(shape) => shape.offset,
-        GroupChild::Group(group) => group.transform.offset,
-    }
-}
-
 /// Moves a child's top-left within its parent group's child space.
 fn set_group_child_offset(child: &mut GroupChild, offset: PointEmu) {
     match child {
@@ -692,22 +682,92 @@ fn set_group_child_offset(child: &mut GroupChild, offset: PointEmu) {
     }
 }
 
-/// Maps a child-space length onto the parent space through a group transform,
-/// per axis. A group whose child extent is degenerate maps 1:1, which is what
-/// layout already assumes for it.
-fn map_child_axis(child: i64, child_origin: i64, parent_origin: i64, scale: (i64, i64)) -> i64 {
-    let (parent_extent, child_extent) = scale;
-    if child_extent <= 0 || parent_extent <= 0 {
-        return parent_origin + (child - child_origin);
+/// Child space to parent space, per axis — `a:ext / a:chExt`, the factor layout
+/// maps a group's children by. `1.0` on a degenerate axis, which is the
+/// identity layout already assumes there.
+///
+/// The inverse of `casual_doc_wasm`'s page-to-child `child_space_scale`, and
+/// named for the direction it goes so the two cannot be confused at a call site.
+fn parent_space_scale(transform: &GroupTransform) -> (f64, f64) {
+    let axis = |parent: i64, child: i64| {
+        if child > 0 && parent > 0 {
+            #[allow(clippy::cast_precision_loss)] // EMU magnitudes are below 2^53
+            {
+                parent as f64 / child as f64
+            }
+        } else {
+            1.0
+        }
+    };
+    (
+        axis(transform.extent.width_emu, transform.child_extent.width_emu),
+        axis(
+            transform.extent.height_emu,
+            transform.child_extent.height_emu,
+        ),
+    )
+}
+
+/// The page-space top-left, in EMU, that layout painted `child` at.
+///
+/// A leaf child carries its own identity into the placed anchors, so it is a
+/// direct lookup. A NESTED group paints no anchor of its own, so its origin is
+/// the top-left of its own descendants — which is the same union layout would
+/// compute for it.
+///
+/// `placed` is the already-collected box list; this never re-reads the layout,
+/// so a group of *n* children costs one pass, not *n*.
+fn child_page_origin(child: &GroupChild, placed: &[(NodeId, i64, i64)]) -> Option<(i64, i64)> {
+    fn leaf(id: NodeId, placed: &[(NodeId, i64, i64)]) -> Option<(i64, i64)> {
+        placed
+            .iter()
+            .find(|(subject, _, _)| *subject == id)
+            .map(|(_, left, top)| (*left, *top))
     }
-    #[allow(clippy::cast_precision_loss)] // EMU magnitudes are far below 2^53
-    let mapped = (child - child_origin) as f64 * (parent_extent as f64 / child_extent as f64);
-    #[allow(clippy::cast_possible_truncation)] // clamped into the model's domain
-    {
-        parent_origin
-            .saturating_add(mapped.round() as i64)
-            .clamp(-MAX_EMU, MAX_EMU)
+    match child {
+        GroupChild::Picture(picture) => leaf(picture.id, placed),
+        GroupChild::TextBox(text_box) => leaf(text_box.id, placed),
+        GroupChild::Shape(shape) => leaf(shape.id, placed),
+        GroupChild::Group(nested) => {
+            let mut corner: Option<(i64, i64)> = None;
+            for inner in &nested.children {
+                let found = child_page_origin(inner, placed)?;
+                corner =
+                    Some(corner.map_or(found, |(left, top)| (left.min(found.0), top.min(found.1))));
+            }
+            corner
+        }
     }
+}
+
+/// `child` with its own geometry scaled out of its parent group's child space
+/// into the space that parent sat in.
+///
+/// Only the SIZE is rewritten: the offset is discarded by the caller, which
+/// anchors the child at the page position layout painted it at.
+fn scaled_group_child(mut child: GroupChild, (sx, sy): (f64, f64)) -> GroupChild {
+    if (sx - 1.0).abs() < f64::EPSILON && (sy - 1.0).abs() < f64::EPSILON {
+        return child;
+    }
+    let scale = |extent: Extent| Extent {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        width_emu: ((extent.width_emu as f64 * sx).round() as i64).clamp(0, MAX_EMU),
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        height_emu: ((extent.height_emu as f64 * sy).round() as i64).clamp(0, MAX_EMU),
+    };
+    match &mut child {
+        GroupChild::Picture(picture) => picture.extent = scale(picture.extent),
+        GroupChild::TextBox(text_box) => text_box.extent = scale(text_box.extent),
+        GroupChild::Shape(shape) => shape.extent = scale(shape.extent),
+        GroupChild::Group(nested) => {
+            // Scaling the nested group's PARENT-space box while leaving its own
+            // child space alone is what compounds the two scales, so its own
+            // children keep the size they were drawn at as well.
+            nested.transform.extent = scale(nested.transform.extent);
+            nested.extent = nested.transform.extent;
+        }
+    }
+    child
 }
 
 #[wasm_bindgen]
@@ -1170,13 +1230,24 @@ impl WasmDocument {
         let paragraph = self
             .paragraph_of_object(object)
             .ok_or_else(|| "not a group".to_owned())?;
-        let placed = self
-            .object_boxes()
+
+        // Positions come from where layout PAINTED each child, not from
+        // arithmetic on the group's own rect. A group root's placed rect is the
+        // union of its children, so a mapping written from it drifts as soon as
+        // the child transform is not the identity — which is what a resized
+        // group is. One pass over the boxes, indexed by subject.
+        let placed: Vec<(NodeId, i64, i64)> = self
+            .object_boxes_including_group_children()
             .into_iter()
-            .find(|candidate| candidate.root == object)
-            .ok_or_else(|| "the group is not currently placed on the page".to_owned())?;
-        let page_left = i64::from(placed.rect.origin.x.raw()) * EMU_PER_TWIP_I64;
-        let page_top = i64::from(placed.rect.origin.y.raw()) * EMU_PER_TWIP_I64;
+            .map(|entry| {
+                (
+                    entry.subject,
+                    i64::from(entry.rect.origin.x.raw()) * EMU_PER_TWIP_I64,
+                    i64::from(entry.rect.origin.y.raw()) * EMU_PER_TWIP_I64,
+                )
+            })
+            .collect();
+
         let source = find_paragraph_any(&self.document, paragraph)
             .ok_or_else(|| "not a group".to_owned())?;
         let mut inlines = source.inlines.clone();
@@ -1198,30 +1269,20 @@ impl WasmDocument {
         if group.children.is_empty() {
             return Err("the group has no children".to_owned());
         }
-        let transform = group.transform;
+        // The child space the group scaled its children by. Coming out of the
+        // group, each child's own extent is in THAT space, so it is scaled into
+        // page space — otherwise a child of a half-scale group comes back at
+        // twice the size it was being drawn at.
+        let scale = parent_space_scale(&group.transform);
         let relative_height = group.relative_height;
 
         let mut replacements = Vec::with_capacity(group.children.len());
         for child in group.children {
-            let offset = group_child_offset(&child);
-            let left = map_child_axis(
-                offset.x_emu,
-                transform.child_offset.x_emu,
-                page_left,
-                (transform.extent.width_emu, transform.child_extent.width_emu),
-            );
-            let top = map_child_axis(
-                offset.y_emu,
-                transform.child_offset.y_emu,
-                page_top,
-                (
-                    transform.extent.height_emu,
-                    transform.child_extent.height_emu,
-                ),
-            );
+            let (left, top) = child_page_origin(&child, &placed)
+                .ok_or_else(|| "the group is not fully placed on the page".to_owned())?;
             let ids = &mut self.edit_ids;
             replacements.push(out_of_group_child(
-                child,
+                scaled_group_child(child, scale),
                 anchor_at_page(anchor.clone(), left, top),
                 relative_height,
                 || ids.next_id().map_err(|_| "id space exhausted".to_owned()),
@@ -2497,6 +2558,53 @@ mod tests {
                 (dx, dy),
                 "the child moved with the group"
             );
+        }
+    }
+
+    /// A group that has been RESIZED has a child coordinate space that is not
+    /// the identity, and ungrouping has to apply it. The group root's placed
+    /// rect is the union of its CHILDREN, not its anchor origin, so a mapping
+    /// written from the root's rect drifts the moment the transform is not the
+    /// identity — which is exactly what a resized group is.
+    #[test]
+    fn ungrouping_a_resized_group_puts_its_children_where_they_were_drawn() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let (_, first, second) = two_boxes(&mut document);
+        document
+            .group_objects_inner(&format!("[\"{first}\",\"{second}\"]"))
+            .expect("group them");
+        let group = only_group(&document).expect("a group").id.to_string();
+
+        // Halve it. `resizeObject` scales the transform, so the child space is
+        // now twice the parent box — the non-identity case.
+        let rect = document.object_rect(&group);
+        let (left, top) = (f64::from(rect[1]) * 635.0, f64::from(rect[2]) * 635.0);
+        let (width, height) = (
+            f64::from(rect[3]) * 635.0 / 2.0,
+            f64::from(rect[4]) * 635.0 / 2.0,
+        );
+        document
+            .resize_object(&group, left, top, width, height)
+            .expect("halve the group");
+        let before = [document.object_rect(&first), document.object_rect(&second)];
+        assert!(
+            before.iter().all(|rect| rect.len() == 5),
+            "both children are still placed: {before:?}"
+        );
+
+        document.ungroup_object_inner(&group).expect("ungroup");
+        let after = [document.object_rect(&first), document.object_rect(&second)];
+        // Within a twip per edge: the positions come from the placed rects,
+        // which are twip-quantised.
+        for (before, after) in before.iter().zip(after.iter()) {
+            assert_eq!(after.len(), 5, "the child is still placed: {after:?}");
+            for axis in 1..5 {
+                assert!(
+                    (after[axis] - before[axis]).abs() <= 1,
+                    "ungrouping a half-scale group moved or resized a child: \
+                     {before:?} became {after:?}"
+                );
+            }
         }
     }
 
