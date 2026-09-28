@@ -29,6 +29,7 @@ web-host-fonts = ["casual-doc-layout/external-web-fonts"]
 wasm-opt = ['-O', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
 
 [dependencies]
+casual-doc-diff.workspace = true
 casual-doc-edit.workspace = true
 casual-doc-export.workspace = true
 casual-doc-import.workspace = true

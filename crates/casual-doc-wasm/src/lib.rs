@@ -117,6 +117,12 @@ mod window;
 // already 35k lines and is owned by other lanes.
 mod references;
 
+// Version diff (`docs/140` H3). Its own module for the same reason, and because
+// it touches nothing in the live session: it takes two checkpoints' bytes and
+// returns a sidecar, which is exactly what makes it movable into a Worker later
+// without an engine change.
+mod diff;
+
 use window::BodyLayout;
 use window::WindowedBody;
 

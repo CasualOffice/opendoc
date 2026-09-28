@@ -753,6 +753,62 @@ fn media_bytes_without_digests_are_reported_as_a_missing_resource() {
     );
 }
 
+/// Given digests, a replaced image under the SAME part name is detected and named
+/// as a byte change — the one thing the engine crate cannot see on its own,
+/// because a `Document` models a media reference and not its bytes.
+#[test]
+fn a_replaced_image_is_named_as_a_byte_change_when_digests_are_supplied() {
+    let build = || {
+        let mut document = base_document();
+        document.definitions_mut().media.insert(
+            casual_doc_model::v1::MediaId::new(NodeId::new(600).expect("non-zero")),
+            casual_doc_model::v1::MediaReference {
+                relationship_id: "rId4".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "/word/media/image1.png".to_owned(),
+            },
+        );
+        document
+    };
+    let left = build();
+    let right = build();
+    let mut left_digests = crate::MediaDigests::new();
+    left_digests.insert("/word/media/image1.png".to_owned(), 111);
+    let mut right_digests = crate::MediaDigests::new();
+    right_digests.insert("/word/media/image1.png".to_owned(), 222);
+    let diff = DiffJob::run(DiffSides {
+        left: &left,
+        right: &right,
+        left_digests: Some(&left_digests),
+        right_digests: Some(&right_digests),
+    })
+    .expect("the job completes");
+    let resources = of(&diff, DiffFamily::Resource, DiffKind::Property);
+    assert_eq!(
+        resources.len(),
+        1,
+        "the replaced part is one record, got {:?}",
+        diff.changes
+    );
+    assert_eq!(
+        resources[0].fields,
+        vec![
+            "media./word/media/image1.png".to_owned(),
+            "bytes".to_owned()
+        ],
+        "named by part and by what changed"
+    );
+    assert!(
+        !has_finding(&diff, FindingCode::MissingResource, "mediaBytes"),
+        "and no gap is reported, because the digests answered the question"
+    );
+    assert!(
+        diff.complete,
+        "so the diff is complete; got {:?}",
+        diff.findings
+    );
+}
+
 /// An identical pair produces no changes, no findings, and calls itself
 /// complete. The guard exists because "both inputs were identical" is the way a
 /// diff test passes while testing nothing — so it is asserted deliberately here
