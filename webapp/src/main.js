@@ -73,6 +73,14 @@ import {
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object_crop_chrome.mjs";
 import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles, paintSizeReadout } from "./object_guides.mjs";
+import { arrangeSurfaceRows, createObjectArrangeCommands } from "./object_arrange_commands.mjs";
+import { createObjectBar } from "./object_bar.mjs";
+import { createObjectInspector } from "./object_inspector.mjs";
+import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, positionPayload, readGroupability, readPosition, readTransform, rotationPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
+import { renderArrangeMenu, renderPositionGallery, renderRotateMenu } from "./object_arrange_chrome.mjs";
+import { SHAPE_PRESETS, shapeNameKey } from "./shape_catalogue.mjs";
+import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
+import { createShapeDrawMode } from "./shape_draw_mode.mjs";
 import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
 import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "./object_snap.mjs";
 import { t } from "./i18n.mjs";
@@ -353,6 +361,10 @@ const lineNumbersBtn = document.getElementById("lineNumbersBtn");
 const watermarkBtn = document.getElementById("watermarkBtn");
 const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertShapeBtn = document.getElementById("insertShapeBtn");
+const layoutSendBackwardBtn = document.getElementById("layoutSendBackwardBtn");
+const layoutGroupBtn = document.getElementById("layoutGroupBtn");
+const layoutUngroupBtn = document.getElementById("layoutUngroupBtn");
+const layoutRotateBtn = document.getElementById("layoutRotateBtn");
 const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
@@ -4199,6 +4211,14 @@ function paintObjectSelection() {
   }
   const rect = doc.objectRect(node); // [page, x, y, w, h] twips
   place(rect, "object-outline");
+  // The objects held alongside it (Ctrl/⌘+click), so a multi-object selection
+  // is visible before Group is pressed rather than being a state only the menu
+  // knows about. One rect per HELD member — a user-picked handful, on a repaint,
+  // never on a pointermove — which is why this is a loop and the object chip's
+  // arrange gather is not.
+  for (const member of objectArrange.multiSelect()) {
+    place(doc.objectRect(member), "object-outline is-co-selected");
+  }
   // A movable object's BODY needs `touch-action: none` the way its grips
   // already have it, or the browser starts scrolling at touch-start and the
   // move gesture is gone before any handler runs. Selected + movable only.
@@ -4533,315 +4553,86 @@ function reflectShapeFormatState() {
   reflectShapeFormat(pagesEl, objectSelection?.kind === "shape" ? selectedShapeFormat() : null);
 }
 
-/** The lazily-created placeholder object context bar (docs/85 §4.1). */
-let objectContextBarEl = null;
-let objectInspectorEl = null;
+/** The floating object chip. Its rendering is `object_bar.mjs`; what stays here
+ *  is the application state it renders and the verbs it calls. */
+const objectBar = createObjectBar({
+  doc: () => doc,
+  selection: () => objectSelection,
+  pages: () => pages,
+  scaleOf: (page) => scaleOf(page),
+  viewportRect: () => viewportEl.getBoundingClientRect(),
+  t,
+  croppingNode: () => objectCropSession?.node ?? null,
+  arrangeState: () => arrangeState(),
+  ensureInspector: () => objectInspector.ensure(),
+  toggleInspector: (open) => objectInspector.toggle(open),
+  inspectorOpen: () => objectInspector.isOpen(),
+  reflectInspector: () => objectInspector.reflect(),
+  setWrap: (mode) => setObjectWrap(mode),
+  openAltText: () => openAltTextDialog(),
+  enterCrop: () => enterCropMode(),
+  deleteObject: () => deleteSelectedObject(),
+  reflectShapeSwatches: () => reflectShapeSwatches(),
+  fillButton: () => shapeFillBtn,
+  outlineButton: () => shapeOutlineBtn,
+  positionButton: () => objectPositionBtn,
+  arrangeButton: () => objectArrangeBtn,
+  rotateButton: () => objectRotateBtn,
+});
+const updateObjectContextBar = () => objectBar.update();
+const positionObjectContextBar = () => objectBar.reposition();
 
-/** The object the inspector's fields currently describe. It is what tells a
- *  repaint of the SAME object (where a field the user is typing in must be left
- *  alone) apart from a move to a DIFFERENT one (where leaving the old numbers is
- *  the data-loss defect: Apply then wrote one object's geometry onto another). */
-let objectInspectorNode = null;
-
-/** Fills the inspector from the model's live geometry for the selected object.
+/** Every arrange fact about the selected object, gathered in ONE pass per
+ *  repaint: its anchor kind, its wrap, its stacking and its transform.
  *
- *  This runs on every repaint while the panel is open (docs/104 HF-057). It used
- *  to run only on the opening call, so a drag-resize left the panel showing the
- *  pre-drag numbers and the next Apply — or a nudge — put the object back where
- *  it had been; and selecting a second object left the first one's size, alt text
- *  and wrap in the fields, aimed at the new object.
- *
- *  A field the user is mid-edit in is not overwritten, because typing "3.2" and
- *  having the caret jump is its own defect — but that courtesy stops at the
- *  object boundary: when the panel switches objects every field is rewritten,
- *  focused or not, because a stale value there is a wrong write, not a nuisance. */
-function reflectObjectInspector() {
-  if (!objectInspectorEl || !doc || !objectSelection) return;
-  const rect = doc.objectRect(objectSelection.node);
-  if (rect.length < 5) return;
-  const sameObject = objectInspectorNode === objectSelection.node;
-  objectInspectorNode = objectSelection.node;
-  // `value` writes are skipped for the focused control only while the panel is
-  // still describing the same object.
-  const setValue = (element, value) => {
-    if (!element) return;
-    if (sameObject && element === document.activeElement) return;
-    element.value = value;
+ *  `objectPosition` and `objectTransform` are each O(document) with one walk.
+ *  Asking them here — once, when the selection or the layout changed — is what
+ *  keeps the wrap row, the Position gallery and the Rotate menu from each
+ *  asking again, which is the per-object-query-in-a-loop shape that has already
+ *  cost this repository a quadratic. Nothing on a pointermove path calls this. */
+function arrangeState() {
+  const selection = objectSelection;
+  if (!doc || !selection || selection.mode !== "selected") return null;
+  const root = selection.ref.root;
+  const read = readPosition(doc.objectPosition?.(root) ?? "");
+  if (!read.object) return null;
+  return {
+    root,
+    node: selection.node,
+    read,
+    wrap: read.floating ? doc.objectWrap(root) : "",
+    transform: readTransform(doc.objectTransform?.(selection.node) ?? ""),
   };
-  const inches = (twips) => String(Math.round(twips / TWIPS_PER_INCH * 100) / 100);
-  setValue(objectInspectorEl.querySelector("[data-object-prop=width]"), inches(rect[3]));
-  setValue(objectInspectorEl.querySelector("[data-object-prop=height]"), inches(rect[4]));
-  setValue(objectInspectorEl.querySelector("[data-object-prop=left]"), inches(rect[1]));
-  setValue(objectInspectorEl.querySelector("[data-object-prop=top]"), inches(rect[2]));
-  objectInspectorEl.querySelector("[data-object-inspector-kind]").textContent = OBJECT_LABELS[objectSelection.kind] ?? "Object";
-  const altField = objectInspectorEl.querySelector("[data-object-inspector-alt]");
-  altField.hidden = !objectSelection.canAltText;
-  if (objectSelection.canAltText) setValue(altField.querySelector("input"), doc.objectDescr(objectSelection.node) ?? "");
-  const wrapField = objectInspectorEl.querySelector("[data-object-inspector-wrap]");
-  wrapField.hidden = !objectSelection.canWrap;
-  if (objectSelection.canWrap) setValue(wrapField.querySelector("select"), doc.objectWrap(objectSelection.ref.root) || "square");
-  const appearance = objectInspectorEl.querySelector("[data-object-inspector-appearance]");
-  appearance.hidden = objectSelection.kind !== "shape" || (!objectSelection.canFill && !objectSelection.canStroke);
-  appearance.querySelector("[data-object-inspector-fill]").hidden = !objectSelection.canFill;
-  appearance.querySelector("[data-object-inspector-stroke]").hidden = !objectSelection.canStroke;
-  const bodyField = objectInspectorEl.querySelector("[data-object-inspector-textbox]");
-  bodyField.hidden = objectSelection.kind !== "textbox";
-  if (objectSelection.kind === "textbox" && typeof doc.textBoxBodyProperties === "function") {
-    try {
-      const raw = doc.textBoxBodyProperties(objectSelection.node);
-      const props = raw ? JSON.parse(raw) : null;
-      if (props) {
-        const insets = props.insets ?? {};
-        for (const side of ["left", "top", "right", "bottom"]) {
-          const input = bodyField.querySelector(`[data-object-textbox-inset=${side}]`);
-          if (input) setValue(input, String(Math.round(Number(insets[`${side}Emu`] ?? 0) / 914400 * 100) / 100));
-        }
-        setValue(bodyField.querySelector("[data-object-textbox-anchor]"), props.vertical_anchor ?? "top");
-        setValue(bodyField.querySelector("[data-object-textbox-h-overflow]"), props.horizontal_overflow ?? "overflow");
-        setValue(bodyField.querySelector("[data-object-textbox-v-overflow]"), props.vertical_overflow ?? "overflow");
-        setValue(bodyField.querySelector("[data-object-textbox-autofit]"), props.auto_fit?.mode ?? "none");
-      }
-    } catch {
-      // A malformed/unsupported payload fails closed; authored data is not overwritten.
-    }
-  }
 }
 
-function toggleObjectInspector(open) {
-  if (!objectInspectorEl) return;
-  const show = open ?? objectInspectorEl.hidden;
-  if (show) {
-    // Opening always re-reads the model, even for the object the fields already
-    // name: what the panel held may pre-date a drag, an undo or an engine edit.
-    objectInspectorNode = null;
-    reflectObjectInspector();
-  } else {
-    objectInspectorNode = null;
-  }
-  objectInspectorEl.hidden = !show;
-}
+/** The Arrange commands — position, stacking, grouping, rotation, text in a
+ *  shape. `object_arrange_commands.mjs`; what stays here is the state they read
+ *  and the gated edit path they write through. */
+const objectArrange = createObjectArrangeCommands({
+  doc: () => doc,
+  selection: () => objectSelection,
+  state: () => arrangeState(),
+  runEdit: (thunk, options) => runEdit(thunk, options),
+  setStatus: (text, kind) => setStatus(text, kind),
+  t,
+  // Ctrl on Windows/Linux, ⌘ on a Mac — derived, never spelled, because a spec
+  // that asserts a Mac glyph fails on the Linux runner (`105` UX-009).
+  modifier: formatShortcut("\u2318"),
+});
 
-/** Fail-closed precondition for every Apply button in the inspector: the numbers
- *  in the fields must belong to the object that is selected now. `reflectObject-
- *  Inspector` keeps that true on every repaint, so this only fires if some path
- *  changed the selection without one — in which case applying would write the
- *  previous object's geometry onto this one (docs/104 HF-057). It re-reads the
- *  model and refuses, rather than silently doing the wrong write or nothing. */
-function objectInspectorMatchesSelection() {
-  if (!objectSelection) return false;
-  if (objectInspectorNode === objectSelection.node) return true;
-  reflectObjectInspector();
-  setStatus("Object properties now show the selected object — check the values, then apply", "error");
-  return false;
-}
-
-function ensureObjectInspector() {
-  if (objectInspectorEl) return objectInspectorEl;
-  objectInspectorEl = document.createElement("aside");
-  objectInspectorEl.className = "object-inspector side-panel";
-  objectInspectorEl.hidden = true;
-  objectInspectorEl.setAttribute("aria-label", "Object properties");
-  objectInspectorEl.innerHTML = `
-    <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span class="ms properties-panel-icon" aria-hidden="true">tune</span><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
-    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-wrap hidden><legend>Text wrapping</legend><label class="dialog-field">Wrap<select data-object-inspector-wrap-select><option value="square">Square</option><option value="tight">Tight</option><option value="through">Through</option><option value="topAndBottom">Top &amp; bottom</option><option value="behind">Behind text</option><option value="front">In front of text</option></select></label><button type="button" class="dialog-button" data-object-inspector-wrap-apply>Apply wrap</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-textbox hidden><legend>Text box body</legend><div class="property-grid-2"><label class="dialog-field">Left inset<span class="number-control"><input data-object-textbox-inset="left" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Right inset<span class="number-control"><input data-object-textbox-inset="right" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top inset<span class="number-control"><input data-object-textbox-inset="top" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Bottom inset<span class="number-control"><input data-object-textbox-inset="bottom" type="number" min="0" step="0.01" /><span>in</span></span></label></div><label class="dialog-field">Vertical alignment<select data-object-textbox-anchor><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label><label class="dialog-field">Horizontal overflow<select data-object-textbox-h-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option></select></label><label class="dialog-field">Vertical overflow<select data-object-textbox-v-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option><option value="ellipsis">Ellipsis</option></select></label><label class="dialog-field">Autofit<select data-object-textbox-autofit><option value="none">Fixed shape</option><option value="shape">Grow shape to fit</option><option value="normal">Scale text</option></select></label><button type="button" class="dialog-button" data-object-inspector-textbox-apply>Apply text box body</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-alt hidden><legend>Accessibility</legend><label class="dialog-field">Description<input data-object-inspector-alt-input type="text" maxlength="255" placeholder="Describe this object" /></label><button type="button" class="dialog-button" data-object-inspector-alt-apply>Apply description</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-appearance hidden><legend>Appearance</legend><button type="button" class="dialog-button" data-object-inspector-fill>Shape fill</button><button type="button" class="dialog-button" data-object-inspector-stroke>Shape outline</button></fieldset></div>`;
-  objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
-  objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
-    if (!doc || !objectSelection?.canResize || !objectInspectorMatchesSelection()) return;
-    const rect = doc.objectRect(objectSelection.node);
-    const width = Number(objectInspectorEl.querySelector("[data-object-prop=width]").value);
-    const height = Number(objectInspectorEl.querySelector("[data-object-prop=height]").value);
-    const left = Number(objectInspectorEl.querySelector("[data-object-prop=left]").value);
-    const top = Number(objectInspectorEl.querySelector("[data-object-prop=top]").value);
-    if (rect.length < 5 || ![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return;
-    runEdit(() => doc.resizeObject(objectSelection.ref.root, left * TWIPS_PER_INCH * 635, top * TWIPS_PER_INCH * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
-  });
-  objectInspectorEl.querySelector("[data-object-inspector-wrap-apply]").addEventListener("click", () => {
-    if (!doc || !objectSelection?.canWrap || !objectInspectorMatchesSelection()) return;
-    const mode = objectInspectorEl.querySelector("[data-object-inspector-wrap-select]").value;
-    runEdit(() => doc.setObjectWrap(objectSelection.ref.root, mode), { gate: true });
-  });
-  objectInspectorEl.querySelector("[data-object-inspector-textbox-apply]").addEventListener("click", () => {
-    if (!doc || objectSelection?.kind !== "textbox" || typeof doc.textBoxBodyProperties !== "function" || typeof doc.setTextBoxBodyProperties !== "function") return;
-    if (!objectInspectorMatchesSelection()) return;
-    let props;
-    try { props = JSON.parse(doc.textBoxBodyProperties(objectSelection.node)); } catch { return; }
-    if (!props?.insets) return;
-    for (const side of ["left", "top", "right", "bottom"]) {
-      const inches = Number(objectInspectorEl.querySelector(`[data-object-textbox-inset=${side}]`).value);
-      if (!Number.isFinite(inches) || inches < 0) return;
-      props.insets[`${side}Emu`] = Math.round(inches * 914400);
-    }
-    props.vertical_anchor = objectInspectorEl.querySelector("[data-object-textbox-anchor]").value;
-    props.horizontal_overflow = objectInspectorEl.querySelector("[data-object-textbox-h-overflow]").value;
-    props.vertical_overflow = objectInspectorEl.querySelector("[data-object-textbox-v-overflow]").value;
-    const autofitMode = objectInspectorEl.querySelector("[data-object-textbox-autofit]").value;
-    // Keep the authored scale/reduction values for normal autofit. The compact
-    // inspector changes the mode only; it must never erase unsupported detail.
-    if (autofitMode === "normal") {
-      props.auto_fit = props.auto_fit?.mode === "normal"
-        ? props.auto_fit
-        : { mode: "normal", font_scale: 100000, line_spacing_reduction: 0 };
-    } else {
-      props.auto_fit = { mode: autofitMode };
-    }
-    runEdit(() => doc.setTextBoxBodyProperties(objectSelection.node, JSON.stringify(props)), { gate: true });
-  });
-  objectInspectorEl.querySelector("[data-object-inspector-alt-apply]").addEventListener("click", () => {
-    if (!doc || !objectSelection?.canAltText || !objectInspectorMatchesSelection()) return;
-    const value = objectInspectorEl.querySelector("[data-object-inspector-alt-input]").value.trim();
-    runEdit(() => doc.setObjectDescr(objectSelection.node, value || null), { gate: true });
-  });
-  objectInspectorEl.querySelector("[data-object-inspector-fill]").addEventListener("click", () => shapeFillBtn.click());
-  objectInspectorEl.querySelector("[data-object-inspector-stroke]").addEventListener("click", () => shapeOutlineBtn.click());
-  // Mount inside `.workarea`, not on `<body>`. As a body child it had to be
-  // `position: fixed`, which made it float OVER the canvas and over the footer
-  // instead of taking space in the row — so the page never shifted aside for it
-  // the way it does for the outline/pages/review panels, and the status bar was
-  // covered. `.workarea` is a flex row and `.side-panel` is already a flex item,
-  // so joining it gives the shift and the footer clearance for free.
-  (document.querySelector(".workarea") ?? document.body).appendChild(objectInspectorEl);
-  return objectInspectorEl;
-}
-
-/** Shows/positions a context bar above a selected object. It describes only
- *  interactions that work in the current build; deferred actions never appear
- *  as product placeholders. */
-function updateObjectContextBar() {
-  ensureObjectInspector();
-  if (!objectContextBarEl) {
-    objectContextBarEl = document.createElement("div");
-    objectContextBarEl.className = "object-context-bar";
-    objectContextBarEl.hidden = true;
-    document.body.appendChild(objectContextBarEl);
-  }
-  if (!objectSelection || objectSelection.mode !== "selected") {
-    objectContextBarEl.hidden = true;
-    toggleObjectInspector(false);
-    return;
-  }
-  const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
-  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  if (!page) {
-    objectContextBarEl.hidden = true;
-    return;
-  }
-  const label = OBJECT_LABELS[objectSelection.kind] ?? "Object";
-  objectContextBarEl.replaceChildren();
-  const strong = document.createElement("strong");
-  strong.textContent = label;
-  objectContextBarEl.appendChild(strong);
-  // While a crop is live the bar described the gesture it is NOT offering — it
-  // read "Drag handles to resize" over black crop grips. It says what they do.
-  const cropping = !!objectCropSession && objectCropSession.node === objectSelection.node;
-  if (cropping) {
-    const hint = document.createElement("small");
-    hint.textContent = t("object.cropHint");
-    objectContextBarEl.appendChild(hint);
-  } else if (objectSelection.canWrap) {
-    // A floating object exposes a live Wrap control; move + resize are drags.
-    const active = doc.objectWrap(objectSelection.ref.root);
-    const wrap = document.createElement("div");
-    wrap.className = "object-wrap-menu";
-    for (const [value, text] of WRAP_MODES) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "object-wrap-btn";
-      btn.dataset.wrap = value;
-      btn.textContent = text;
-      btn.setAttribute("aria-pressed", String(value === active));
-      btn.addEventListener("pointerdown", (event) => event.preventDefault()); // keep selection
-      btn.addEventListener("click", () => setObjectWrap(value));
-      wrap.appendChild(btn);
-    }
-    objectContextBarEl.appendChild(wrap);
-    const hint = document.createElement("small");
-    hint.textContent = objectSelection.canResize
-      ? "Drag to move · handles to resize"
-      : "Drag to move";
-    objectContextBarEl.appendChild(hint);
-  } else if (objectSelection.canResize) {
-    const hint = document.createElement("small");
-    hint.textContent = "Drag handles to resize";
-    objectContextBarEl.appendChild(hint);
-  }
-  // Object-editing actions (alt text / crop / delete). Each keeps the selection
-  // on pointerdown (like the wrap buttons) and opens its dialog / runs its op.
-  const divider = document.createElement("span");
-  divider.className = "object-bar-divider";
-  const actions = document.createElement("div");
-  actions.className = "object-bar-actions";
-  if (objectSelection.canAltText) {
-    actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
-  }
-  if (objectSelection.canResize) {
-    actions.appendChild(objectBarButton("tune", "Properties", "Open object properties", () => toggleObjectInspector(true)));
-  }
-  if (objectSelection.kind === "shape" && (objectSelection.canFill || objectSelection.canStroke)) {
-    // Word's Shape Format tab reduces to its two live controls: Shape Fill and
-    // Shape Outline. The buttons are module-level so their popovers stay
-    // registered across the bar's re-renders.
-    if (objectSelection.canFill) actions.appendChild(shapeFillBtn);
-    if (objectSelection.canStroke) actions.appendChild(shapeOutlineBtn);
-    reflectShapeSwatches();
-  }
-  if (objectSelection.canCrop) {
-    // Crop is a picture-only operation; a text box has no source rectangle.
-    // Direct-manipulation crop (drag handles) is the primary gesture; while a
-    // crop session is live the button becomes "Apply" and reads as active.
-    const cropBtn = objectBarButton(
-      "crop",
-      cropping ? "Apply" : "Crop",
-      cropping ? "Apply crop (Enter)" : "Crop image",
-      enterCropMode,
-    );
-    if (cropping) cropBtn.classList.add("is-active");
-    actions.appendChild(cropBtn);
-  }
-  if (objectSelection.canDelete) {
-    actions.appendChild(objectBarButton("delete", "Delete", "Delete object", deleteSelectedObject, true));
-  }
-  if (actions.childElementCount > 0) {
-    objectContextBarEl.appendChild(divider);
-    objectContextBarEl.appendChild(actions);
-  }
-  objectContextBarEl.hidden = false;
-  positionObjectContextBar();
-  // The panel is a live view of the selected object, so it is re-read here —
-  // this runs on every repaint, which is what makes a drag-resize, a nudge and a
-  // change of selection all show up in the fields (docs/104 HF-057).
-  if (objectInspectorEl && !objectInspectorEl.hidden) reflectObjectInspector();
-}
-
-/** Puts the object action bar just above the object it acts on, and takes it off
- *  screen when that object is not on screen.
+/** Insert ▸ Shapes arms the pointer; the next gesture on the page draws the
+ *  shape. Word's sequence, and every drawing tool's. `shape_draw_mode.mjs`
+ *  holds the state machine and the preview; the arithmetic is `shape_draw.mjs`.
  *
- *  The bar is body-level with fixed viewport coordinates, so nothing about a
- *  scroll moves it on its own (docs/104 HF-058). Separated from
- *  `updateObjectContextBar` so a scroll only re-measures; it never rebuilds the
- *  bar's contents. The placement rule itself is `objectBarPosition`. */
-function positionObjectContextBar() {
-  if (!objectContextBarEl || !doc) return;
-  const rect = objectSelection?.mode === "selected" ? doc.objectRect(objectSelection.node) : [];
-  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  if (!page) {
-    objectContextBarEl.hidden = true;
-    return;
-  }
-  const { rect: pageRect, sx, sy } = scaleOf(page);
-  const top = pageRect.top + rect[2] * sy;
-  objectContextBarEl.hidden = false; // must be visible to be measured
-  const at = objectBarPosition(
-    { left: pageRect.left + rect[1] * sx, top, bottom: top + rect[4] * sy },
-    viewportEl.getBoundingClientRect(),
-    objectContextBarEl.offsetHeight,
-  );
-  if (!at) {
-    objectContextBarEl.hidden = true; // the object is scrolled out of the page view
-    return;
-  }
-  objectContextBarEl.style.left = `${at.left}px`;
-  objectContextBarEl.style.top = `${at.top}px`;
-}
+ *  O(1) per pointermove: the gesture never touches the document while it runs. */
+const shapeDrawMode = createShapeDrawMode({
+  pointToTwip: (page, event) => pointToTwip(page, event),
+  scaleOf: (page) => scaleOf(page),
+  outlineFor: (token) => SHAPE_PRESETS.find((shape) => shape.token === token)?.outline ?? null,
+  insert: (token, rect) => void insertShapeObject(token, rect),
+  setStatus: (text, kind) => setStatus(text, kind),
+  t,
+});
 
 // The five viewport scroll listeners never touched the object bar, and the page
 // IntersectionObserver never calls drawSelection, so scrolling left it behind.
@@ -5496,36 +5287,25 @@ function editRunningContent(band, page = pageInView()) {
   void createRunningContent(band, page);
 }
 
-/** The wrap-mode choices offered for a floating object (docs/85 §5.3 / §10). */
-const WRAP_MODES = [
-  ["square", "Square"],
-  ["tight", "Tight"],
-  ["through", "Through"],
-  ["topAndBottom", "Top & bottom"],
-  ["behind", "Behind text"],
-  ["front", "In front"],
-];
-
 /** Changes a floating object's text-wrap mode (docs/85 §5.3), as one undoable op.
  *  Blocked fail-closed in Suggesting/Viewing mode by `runEdit`'s gate. */
 function setObjectWrap(mode) {
-  if (!objectSelection?.canWrap) return;
-  runEdit(() => doc.setObjectWrap(objectSelection.ref.root, mode), { gate: true });
-}
-
-/** Builds one object-context-bar action button (icon + label). Mirrors the wrap
- *  buttons: `pointerdown` is prevented so clicking it never deselects the object
- *  (the canvas pointerdown deselect is what the wrap buttons dodge too). */
-function objectBarButton(icon, label, title, onClick, danger = false) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = `object-bar-btn${danger ? " danger" : ""}`;
-  btn.title = title;
-  btn.setAttribute("aria-label", title);
-  btn.innerHTML = `<span class="ms" aria-hidden="true">${icon}</span><span>${label}</span>`;
-  btn.addEventListener("pointerdown", (event) => event.preventDefault()); // keep selection
-  btn.addEventListener("click", onClick);
-  return btn;
+  const state = arrangeState();
+  if (!state || !wrapAvailability(state.read).available) return;
+  const plan = wrapPlan(mode, state.read, state.wrap);
+  // An empty plan means the object is already in that mode: a chip that
+  // re-asserts the current choice must not fill the undo stack.
+  if (plan.length === 0) return;
+  runEdit(() => {
+    let result = null;
+    for (const step of plan) {
+      result =
+        step.op === "anchorKind"
+          ? doc.setObjectAnchorKind(state.root, step.kind)
+          : doc.setObjectWrap(state.root, step.mode);
+    }
+    return result;
+  }, { gate: true });
 }
 
 /** Deletes the selected object as one undoable action (docs/85 §4). Mirrors the
@@ -6244,7 +6024,12 @@ function onPointerDown(page, event) {
   if (event.button !== 0) return;
   // No caret region: a press neither places an insertion point nor starts a
   // drag-selection. Scrolling and zooming are not gestures on the document.
+  // This precedes the shape gate deliberately — a container offered no caret is
+  // the page and nothing else, so it must not begin drawing one either.
   if (!chromeShows("caret")) return;
+  // An armed shape owns the gesture: this press is the first corner of the
+  // rectangle being drawn, not a caret placement.
+  if (shapeDrawMode.tryBeginDraw(page, event)) return;
   // A pointerdown that reaches the page during a crop (a crop handle's own
   // pointerdown stops propagation) is a click-away → commit the crop, exactly as
   // Word/Docs do. This click is consumed by the commit; the next click interacts.
@@ -6303,6 +6088,20 @@ function onPointerDown(page, event) {
     // A caret at the nearest text slot is the object's surrounding-text anchor
     // (for the two-step Escape); fall back to the current caret.
     const anchor = anchorAt(page, event) || selection?.focus || null;
+    // Ctrl/⌘+click ADDS to the selection instead of replacing it — Word,
+    // PowerPoint and Docs all build a multi-object selection this way, and it is
+    // the only way to reach Group with more than one object. The primary
+    // selection stays the object clicked first; the modifier click keeps it and
+    // records the new one alongside.
+    if ((event.metaKey || event.ctrlKey) && objectSelection?.mode === "selected"
+        && objectSelection.ref.root !== descriptor.root) {
+      objectArrange.toggleMember(descriptor.root);
+      setStatus(t("object.addedToSelection"));
+      drawSelection();
+      event.preventDefault();
+      return;
+    }
+    objectArrange.clearMembers();
     selectObject(node, kind, anchor, anchored, descriptor);
     // A linked picture offers its target as linked text does (`linkAt` answers
     // for both), but AFTER selection, so the handles stay and the chip is an
@@ -6585,6 +6384,7 @@ function startSelectionAutoScroll() {
 
 function onPointerUp(event) {
   document.body.style.cursor = ""; // the gesture no longer owns the cursor
+  if (shapeDrawMode.finish()) return;
   if (finishObjectMove(event)) return;
   if (finishObjectResize(event)) return;
   if (tableChrome.finishDrag(event)) return;
@@ -6768,6 +6568,10 @@ window.addEventListener("pointermove", (e) => {
   // off the sheet it started on — so the router runs here too, not only over
   // `#pages`. It short-circuits on the drag kind and asks the engine nothing.
   if (pointerHover.dragKind()) pointerHover.schedule(null, e);
+  if (shapeDrawMode.dragging()) {
+    shapeDrawMode.update(e);
+    return;
+  }
   if (objectMoveDrag) {
     updateObjectMove(e);
     return;
@@ -6854,6 +6658,14 @@ pagesEl.addEventListener("dblclick", (e) => {
     if (objectSelection?.canCrop && !objectSelection.canEditText) {
       enterCropMode();
       e.preventDefault();
+      return;
+    }
+    // A shape with no text body yet: double-click GIVES it one and puts the
+    // caret inside, which is exactly what Word and Docs do. The engine keeps
+    // the preset, its guides, its fill and its outline — a star stays a star.
+    if (objectSelection?.kind === "shape" && !objectSelection.canEditText) {
+      e.preventDefault();
+      void objectArrange.addText();
       return;
     }
     let clicked = null;
@@ -7543,7 +7355,41 @@ function buildContextCommands(context) {
 const objectContextMenuHost = {
   reviewMode: () => reviewMode,
   readOnlyReason: () => readOnlyReason,
-  wrapModes: () => WRAP_MODES,
+  wrapModes: () => WRAP_CHOICES.map((choice) => [choice.value, t(choice.key)]),
+  positionPresets: () => POSITION_PRESETS.map((preset) => [preset.id, t(preset.key), preset]),
+  zOrderChoices: () => Z_ORDER_CHOICES.map((choice) => [choice.value, t(choice.key)]),
+  rotateChoices: () => ROTATE_CHOICES.map((choice) => [choice.value, t(choice.key)]),
+  text: (key) => t(key),
+  // ONE gather per menu build. `objectPosition` and `objectTransform` are each
+  // O(document) with a single walk, so asking them once here — rather than once
+  // per row, of which there are twenty-odd — is the difference between a menu
+  // that opens in constant work and one that does not.
+  arrangeState: () => {
+    const state = arrangeState();
+    if (!state) return null;
+    const wrappable = wrapAvailability(state.read);
+    const positionable = positionAvailability(state.read);
+    return {
+      wrappable: { available: wrappable.available, reason: wrappable.reasonKey ? t(wrappable.reasonKey) : "" },
+      positionable: {
+        available: positionable.available,
+        reason: positionable.reasonKey ? t(positionable.reasonKey) : "",
+      },
+      stackable: objectArrange.zOrderAvailability(state),
+      groupable: objectArrange.groupability(),
+      rotatable: !!state.transform,
+    };
+  },
+  activeWrap: () => {
+    const state = arrangeState();
+    return state ? activeWrapChoice(state.read, state.wrap) : null;
+  },
+  applyPosition: (preset) => objectArrange.applyPosition(preset),
+  setZOrder: (value) => objectArrange.setZOrder(value),
+  group: () => void objectArrange.group(),
+  ungroup: () => void objectArrange.ungroup(),
+  rotate: (value) => objectArrange.rotate(value),
+  addText: () => void objectArrange.addText(),
   shapeColors: () => SHAPE_MENU_COLORS,
   objectWrap: (root) => doc.objectWrap(root),
   documentRows: () => referenceObjectMenuRows(),
@@ -8063,16 +7909,14 @@ const LAYOUT_SURFACE = [
   { command: "layout.headerFooterSettings", buttons: () => [headerFooterSettingsBtn], requires: "doc", run: () => headerFooterSettings.open(true) },
   { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
   { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
-  {
-    command: "layout.arrange.bringForward",
-    label: "Bring object forward",
-    kw: "bring forward z order layer front back send backward arrange",
-    buttons: () => [layoutBringForwardBtn],
-    requires: "missing",
-    // `objectOrder()` READS paint order; nothing writes it, and there is no
-    // z-order op in the wasm facade. Adding one is engine work, not UI work.
-    reason: "Bring forward needs a z-order operation the engine does not expose yet",
-  },
+  ...arrangeSurfaceRows(objectArrange, {
+    bringForward: () => layoutBringForwardBtn,
+    sendBackward: () => layoutSendBackwardBtn,
+    group: () => layoutGroupBtn,
+    ungroup: () => layoutUngroupBtn,
+    rotate: () => layoutRotateBtn,
+    inLine: () => setObjectWrap("inline"),
+  }),
 ];
 
 const REFERENCE_SURFACE = [
@@ -8193,17 +8037,9 @@ function ribbonSurfaceReason(entry) {
   return "";
 }
 
-/** Opens the object inspector and focuses the control the caller asked for, so
- *  Layout ▸ Wrap text lands on the wrap select rather than on the panel's first
- *  field. A no-op without a selected object; the button is disabled then. */
-function openObjectInspectorAt(selector) {
-  if (!objectSelection || objectSelection.mode !== "selected") return;
-  // The panel is created lazily by the object context bar. Reaching it from the
-  // ribbon must not depend on that bar having been drawn first.
-  ensureObjectInspector();
-  toggleObjectInspector(true);
-  queueMicrotask(() => objectInspectorEl?.querySelector(selector)?.focus({ preventScroll: true }));
-}
+/** Opens the object inspector focused on one control — Layout ▸ Wrap text lands
+ *  on the wrap control, not on the panel's first field. `object_inspector.mjs`. */
+const openObjectInspectorAt = (selector) => objectInspector.openAt(selector);
 
 /** The one enablement rule for an Insert command, shared by its ribbon button,
  *  its app-menu row, and its palette entry. `context.hasRange` lets a surface
@@ -9606,7 +9442,17 @@ formatPainterBtn.addEventListener("click", (e) => {
 document.addEventListener(
   "keydown",
   (e) => {
-    if (formatPainter && e.key === "Escape") {
+    if (e.key !== "Escape") return;
+    // An armed shape is a MODE, and a mode you cannot leave is the worst kind.
+    // Ahead of the painter and of every selection handler, for the same reason
+    // the painter is ahead of them: a stray Escape should put the tool down.
+    if (shapeDrawMode.armedToken()) {
+      e.preventDefault();
+      e.stopPropagation();
+      shapeDrawMode.disarm(true);
+      return;
+    }
+    if (formatPainter) {
       e.preventDefault();
       e.stopPropagation();
       disarmFormatPainter("Format painter off");
@@ -10123,19 +9969,6 @@ selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, se
 
 /** What the context bar calls each kind of object. A shape used to read
  *  "Image", which also handed it a Crop button it has no source rectangle for. */
-/** The preset shapes Insert ▸ Shapes offers — every geometry the engine models
- *  and the renderer draws. Naming them here keeps the menu honest: a gallery of
- *  shapes that do not render would be worse than a short one that does. */
-const SHAPE_CHOICES = [
-  ["rectangle", "Rectangle"],
-  ["roundRectangle", "Rounded rectangle"],
-  ["ellipse", "Ellipse"],
-  ["triangle", "Triangle"],
-  ["rightTriangle", "Right triangle"],
-  ["diamond", "Diamond"],
-  ["line", "Line"],
-];
-const SHAPE_LABELS = Object.fromEntries(SHAPE_CHOICES);
 
 const EMU_PER_POINT = 12700;
 /** The short palette the right-click submenu offers; the bar's picker has the
@@ -10258,6 +10091,98 @@ const shapeFillPopover = registerPopover(shapeFillBtn, shapeFillMenu, () => rend
 const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, () =>
   renderShapeMenu("outline"),
 );
+
+// ---- The object chip's Arrange controls ------------------------------------
+// Three popovers on the chip a selected object carries: Word's Position gallery,
+// its Arrange menu (stacking + Group/Ungroup) and its Rotate menu. Registered
+// here rather than beside the commands because `registerPopover` and the
+// `popovers` list it appends to are declared further down the file.
+
+/** A chip button that OPENS a popover. Unlike the chip's action buttons it must
+ *  NOT cancel `pointerdown`: cancelling it suppresses the compatibility
+ *  `mousedown` the popover manager opens on, and the button would do nothing at
+ *  all — the same trap `makeShapeBarButton` documents. */
+function makeObjectMenuButton(icon, labelKey, menuId) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "object-bar-btn";
+  btn.setAttribute("aria-haspopup", "menu");
+  btn.setAttribute("aria-expanded", "false");
+  btn.setAttribute("aria-controls", menuId);
+  const glyph = document.createElement("span");
+  glyph.className = "ms";
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.textContent = icon;
+  btn.appendChild(glyph);
+  const label = t(labelKey);
+  const text = document.createElement("span");
+  text.textContent = label;
+  btn.appendChild(text);
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.dataset.objectMenu = menuId;
+  return btn;
+}
+
+const objectPositionMenu = document.getElementById("objectPositionMenu");
+const objectArrangeMenu = document.getElementById("objectArrangeMenu");
+const objectRotateMenu = document.getElementById("objectRotateMenu");
+const objectPositionBtn = makeObjectMenuButton("open_with", "object.position", "objectPositionMenu");
+const objectArrangeBtn = makeObjectMenuButton("layers", "object.arrange", "objectArrangeMenu");
+const objectRotateBtn = makeObjectMenuButton("rotate_right", "object.rotate", "objectRotateMenu");
+
+const objectPositionPopover = registerPopover(objectPositionBtn, objectPositionMenu, () => {
+  const state = arrangeState();
+  const availability = positionAvailability(state?.read ?? { object: false });
+  renderPositionGallery(objectPositionMenu, {
+    presets: POSITION_PRESETS,
+    t,
+    activeId: null,
+    reason: availability.available ? null : t(availability.reasonKey),
+    onPick: (preset) => {
+      closePopover(objectPositionPopover);
+      objectArrange.applyPosition(preset);
+    },
+  });
+});
+const objectArrangePopover = registerPopover(objectArrangeBtn, objectArrangeMenu, () => {
+  const verdict = objectArrange.groupability();
+  renderArrangeMenu(objectArrangeMenu, {
+    t,
+    zChoices: Z_ORDER_CHOICES,
+    zOrder: objectArrange.zOrderAvailability(arrangeState()),
+    group: { enabled: verdict.can, reason: verdict.reason },
+    ungroup: {
+      enabled: objectSelection?.kind === "group",
+      reason: t("object.ungroup.notAGroup"),
+    },
+    onZOrder: (order) => {
+      closePopover(objectArrangePopover);
+      objectArrange.setZOrder(order);
+    },
+    onGroup: () => {
+      closePopover(objectArrangePopover);
+      void objectArrange.group();
+    },
+    onUngroup: () => {
+      closePopover(objectArrangePopover);
+      void objectArrange.ungroup();
+    },
+  });
+});
+const objectRotatePopover = registerPopover(objectRotateBtn, objectRotateMenu, () => {
+  const state = arrangeState();
+  renderRotateMenu(objectRotateMenu, {
+    t,
+    choices: ROTATE_CHOICES,
+    enabled: !!state?.transform,
+    reason: t("object.rotate.unsupported"),
+    onPick: (value) => {
+      closePopover(objectRotatePopover);
+      objectArrange.rotate(value);
+    },
+  });
+});
 
 /** Applies a fill to the selected shape (`null` clears it). One undoable action,
  *  through the same gate every object edit uses. */
@@ -10491,40 +10416,51 @@ function reflectListGallery(menu) {
 // --- Insert ▸ Shapes gallery -------------------------------------------------
 const shapeGalleryMenu = document.getElementById("shapeGalleryMenu");
 
-/** Renders one row per preset the engine models AND the renderer draws, each
- *  previewing its own outline so the list reads as shapes, not words. */
-function renderShapeGallery() {
-  shapeGalleryMenu.replaceChildren();
-  for (const [geometry, label] of SHAPE_CHOICES) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "menu-item shape-choice";
-    row.setAttribute("role", "menuitem");
-    row.dataset.shapeGeometry = geometry;
-    const preview = document.createElement("span");
-    preview.className = `shape-choice-preview shape-preview-${geometry}`;
-    preview.setAttribute("aria-hidden", "true");
-    row.appendChild(preview);
-    const text = document.createElement("span");
-    text.textContent = label;
-    row.appendChild(text);
-    shapeGalleryMenu.appendChild(row);
-  }
+/** The gallery cells, in keyboard order, and where each visual row starts —
+ *  rebuilt on every open because the catalogue is fixed but the DOM is not. */
+let shapeGalleryCells = [];
+const SHAPE_GALLERY_COLUMNS = 6;
+
+/** Renders Word's grouped shape gallery: every preset the engine models, under
+ *  the headings Word files them under. `shape_gallery.mjs` owns the DOM. */
+function paintShapeGallery() {
+  shapeGalleryCells = renderShapeGallery(shapeGalleryMenu, {
+    t,
+    onPick: (token) => {
+      closePopover(shapeGalleryPopover);
+      // Word ARMS the pointer here rather than inserting: the next gesture on
+      // the page decides where the shape goes and how big it is. A click
+      // without a drag still places the default size, so the gallery works for
+      // someone who has never been told about the drag.
+      shapeDrawMode.arm(token);
+      focusEditorSurface();
+    },
+  });
+  shapeGalleryMenu.style.setProperty("--shape-gallery-columns", String(SHAPE_GALLERY_COLUMNS));
 }
 
-const shapeGalleryPopover = registerPopover(insertShapeBtn, shapeGalleryMenu, renderShapeGallery);
+const shapeGalleryPopover = registerPopover(insertShapeBtn, shapeGalleryMenu, paintShapeGallery);
 
 /** Opens the gallery, wherever the command came from (ribbon button or palette). */
 function openShapeGallery() {
   if (!doc) return;
   if (shapeGalleryMenu.hidden) openPopover(shapeGalleryPopover);
+  queueMicrotask(() => shapeGalleryCells[0]?.focus());
 }
 
-shapeGalleryMenu.addEventListener("click", (event) => {
-  const choice = event.target.closest("[data-shape-geometry]");
-  if (!choice) return;
-  closePopover(shapeGalleryPopover);
-  void insertShapeObject(choice.dataset.shapeGeometry);
+// Arrow keys walk the grid, which is what makes 22 icon cells operable without a
+// pointer. The rule is `nextGalleryIndex`; this is the focus half.
+shapeGalleryMenu.addEventListener("keydown", (event) => {
+  const index = shapeGalleryCells.indexOf(document.activeElement);
+  const next = nextGalleryIndex(
+    event.key,
+    index,
+    galleryRowStarts(SHAPE_GALLERY_COLUMNS),
+    shapeGalleryCells.length,
+  );
+  if (next < 0) return;
+  event.preventDefault();
+  shapeGalleryCells[next]?.focus();
 });
 
 const bulletGalleryPopover = registerPopover(bulletListMenuBtn, bulletGalleryMenu, () =>
@@ -12833,9 +12769,15 @@ function placedObjectIds() {
   }
 }
 
-/** Word's Insert ▸ Shapes. Inserts a floating preset shape at the caret and
- *  leaves it SELECTED (not entered) — a shape has no text to type. */
-async function insertShapeObject(geometry) {
+/** Word's Insert ▸ Shapes. Inserts a floating preset shape and leaves it
+ *  SELECTED (not entered) — a shape has no text until you ask for some.
+ *
+ *  `at` is the rectangle the user DREW, in page-local twips, or null for the
+ *  plain command. `insertShape` authors a fixed 2"x1" at the caret's paragraph,
+ *  so the drawn geometry is applied by the resize that follows — one more
+ *  undoable action, which is why the two are reported as one gesture in the
+ *  status line rather than as two. */
+async function insertShapeObject(geometry, at = null) {
   if (!doc || !selection) return;
   if (blockMutationInViewing()) return;
   if (reviewMode === "suggesting") {
@@ -12851,11 +12793,28 @@ async function insertShapeObject(geometry) {
     return;
   }
   await applyEditResult(result);
-  // Word leaves a new shape SELECTED, not entered — a shape has no text — which
-  // also puts Fill and Outline within reach straight away.
+  // Word leaves a new shape SELECTED, not entered — which also puts Fill and
+  // Outline within reach straight away.
   const shape = newestObject(before, "shape");
   if (shape) selectObject(shape.node, shape.kind, null, shape.anchored, shape);
-  setStatus(`${SHAPE_LABELS[geometry] ?? "Shape"} added`);
+  if (at && shape) {
+    try {
+      await applyEditResult(
+        doc.resizeObject(
+          shape.node,
+          at.left * EMU_PER_TWIP,
+          at.top * EMU_PER_TWIP,
+          at.width * EMU_PER_TWIP,
+          at.height * EMU_PER_TWIP,
+        ),
+      );
+    } catch (err) {
+      // The shape exists at its default size; saying so beats silence.
+      setStatus(editRefusalMessage(err), "error");
+    }
+  }
+  const key = shapeNameKey(geometry);
+  setStatus(t("shape.added", { shape: key ? t(key) : "Shape" }));
   focusEditorSurface();
 }
 

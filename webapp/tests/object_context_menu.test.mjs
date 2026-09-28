@@ -27,7 +27,21 @@ const CAPTION_ROW = {
 
 /** An `io` that records nothing and answers everything, with the review mode and
  *  the read-only reason as knobs. */
-function host({ reviewMode = "editing", readOnlyReason = "", documentRows = [CAPTION_ROW] } = {}) {
+const ARRANGE = {
+  wrappable: { available: true, reason: "" },
+  positionable: { available: true, reason: "" },
+  stackable: { enabled: true, reason: null },
+  groupable: { can: true, reason: null },
+  rotatable: true,
+};
+
+function host({
+  reviewMode = "editing",
+  readOnlyReason = "",
+  documentRows = [CAPTION_ROW],
+  arrange = ARRANGE,
+  activeWrap = "square",
+} = {}) {
   return {
     reviewMode: () => reviewMode,
     readOnlyReason: () => readOnlyReason,
@@ -35,6 +49,18 @@ function host({ reviewMode = "editing", readOnlyReason = "", documentRows = [CAP
       ["inline", "In line with text"],
       ["square", "Square"],
     ],
+    positionPresets: () => [["topLeft", "Top left", { h: "left", v: "top" }]],
+    zOrderChoices: () => [["front", "Bring to front"]],
+    rotateChoices: () => [["right90", "Rotate right 90\u00b0"]],
+    text: (key) => key,
+    arrangeState: () => arrange,
+    activeWrap: () => activeWrap,
+    applyPosition: () => {},
+    setZOrder: () => {},
+    group: () => {},
+    ungroup: () => {},
+    rotate: () => {},
+    addText: () => {},
     shapeColors: () => ["#000000", "#ffffff"],
     objectWrap: () => "square",
     documentRows: () => documentRows,
@@ -76,6 +102,9 @@ test("a picture offers caption, wrap, alt text, crop, properties and delete", ()
   assert.deepEqual(ids(picture), [
     "reference.caption",
     "object.wrap",
+    "object.position",
+    "object.arrange",
+    "object.rotate",
     "object.altText",
     "object.crop",
     "object.properties",
@@ -109,9 +138,78 @@ test("an object the engine says cannot be deleted has no Delete row", () => {
   assert.ok(!ids({ ...picture, canDelete: false }).includes("object.delete"));
 });
 
-test("an object that cannot be wrapped has no Wrap submenu", () => {
-  // An INLINE drawing is not anchored, so there is nothing to wrap text around.
-  assert.ok(!ids({ ...picture, canWrap: false }).includes("object.wrap"));
+test("an INLINE object STILL gets the wrap row, with In line as the ticked mode", () => {
+  // This is the defect the owner reported. `canWrap` is false for an inline
+  // object — correctly: it has no anchor to set a wrap on — and the menu used to
+  // be gated on that bit, so an inserted picture (which is inline) offered no
+  // wrap control at all and "In line" existed nowhere in the product. The
+  // control is now gated on whether the object's ANCHOR KIND can be rewritten,
+  // which `objectPosition` answers, and in-line is the first mode in the row.
+  const io = host({ activeWrap: "inline" });
+  const wrap = row({ ...picture, canWrap: false }, "object.wrap", io);
+  assert.ok(wrap, "an inline object must still be offered the wrap row");
+  assert.equal(wrap.submenu[0].id, "object.wrap.inline");
+  assert.equal(wrap.submenu[0].shortcut, "\u2713", "In line must read as the current mode");
+  assert.equal(wrap.submenu[1].shortcut, "");
+});
+
+test("a group CHILD gets the wrap row disabled with the reason, never hidden", () => {
+  // Its parent decides where it sits, and the engine says so. A control that
+  // vanishes cannot be told from a bug (SKILL §10: never a dead control, and
+  // never a silent one either).
+  const io = host({
+    arrange: {
+      ...ARRANGE,
+      wrappable: { available: false, reason: "A shape inside a group is positioned by its group" },
+      positionable: { available: false, reason: "A shape inside a group is positioned by its group" },
+    },
+  });
+  const wrap = row(shape, "object.wrap", io);
+  assert.ok(wrap);
+  for (const child of wrap.submenu) {
+    assert.equal(child.enabled, false);
+    assert.equal(child.disabledReason, "A shape inside a group is positioned by its group");
+  }
+});
+
+test("Group carries the ENGINE's refusal, not one this host invented", () => {
+  const io = host({
+    arrange: {
+      ...ARRANGE,
+      groupable: { can: false, reason: "every object must be on the same page" },
+    },
+  });
+  const arrange = row(picture, "object.arrange", io);
+  const group = arrange.submenu.find((child) => child.id === "object.group");
+  assert.equal(group.enabled, false);
+  assert.equal(group.disabledReason, "every object must be on the same page");
+});
+
+test("Ungroup is only live on a group, and Rotate only where the model carries one", () => {
+  const io = host({ arrange: { ...ARRANGE, rotatable: false } });
+  const ungroup = row(picture, "object.arrange", io).submenu.find((c) => c.id === "object.ungroup");
+  assert.equal(ungroup.enabled, false);
+  assert.equal(ungroup.disabledReason, "object.ungroup.notAGroup");
+  const rotate = row(picture, "object.rotate", io).submenu[0];
+  assert.equal(rotate.enabled, false);
+  assert.equal(rotate.disabledReason, "object.rotate.unsupported");
+});
+
+test("only a shape offers Add text", () => {
+  assert.ok(ids(shape).includes("object.addText"));
+  assert.ok(!ids(picture).includes("object.addText"));
+  assert.ok(!ids(textBox).includes("object.addText"));
+});
+
+test("an object the engine does not describe gets no arrange rows at all", () => {
+  // `objectPosition` answers "" for something that is not a top-level object.
+  // Offering Position for it would be inventing a claim the document does not
+  // make; the rows are absent rather than wrong.
+  const io = host({ arrange: null });
+  const offered = ids(picture, io);
+  for (const id of ["object.wrap", "object.position", "object.arrange", "object.rotate"]) {
+    assert.ok(!offered.includes(id), id);
+  }
 });
 
 // ---- The caption row is the ribbon's row, not a second copy of it -----------
@@ -139,6 +237,9 @@ test("a row the declaration says is unavailable stays unavailable and says why",
 test("no document row at all leaves the rest of the menu intact", () => {
   assert.deepEqual(ids(picture, host({ documentRows: [] })), [
     "object.wrap",
+    "object.position",
+    "object.arrange",
+    "object.rotate",
     "object.altText",
     "object.crop",
     "object.properties",
@@ -166,7 +267,13 @@ test("Viewing greys every mutating row, submenus included, and says why", () => 
   // is useful in Viewing and the panel's own Apply refuses the write. The Wrap
   // row stays openable because it is a container, not an action — a submenu
   // sealed shut is a refusal a keyboard user cannot read.
-  assert.deepEqual(enabledIds(picture, io), ["object.wrap", "object.properties"]);
+  assert.deepEqual(enabledIds(picture, io), [
+    "object.wrap",
+    "object.position",
+    "object.arrange",
+    "object.rotate",
+    "object.properties",
+  ]);
   for (const id of ["reference.caption", "object.altText", "object.crop", "object.delete"]) {
     assert.equal(row(picture, id, io).disabledReason, "Turn on Editing to change this object");
   }
@@ -184,6 +291,9 @@ test("Suggesting refuses for a different reason: the change cannot be tracked", 
   // Again: the three submenu PARENTS open, and everything inside them refuses.
   assert.deepEqual(enabledIds(shape, io), [
     "object.wrap",
+    "object.position",
+    "object.arrange",
+    "object.rotate",
     "object.fill",
     "object.outline",
     "object.properties",
@@ -212,6 +322,13 @@ test("Editing enables everything the object can do", () => {
     "object.wrap",
     "object.wrap.inline",
     "object.wrap.square",
+    "object.position",
+    "object.position.topLeft",
+    "object.arrange",
+    "object.z.front",
+    "object.group",
+    "object.rotate",
+    "object.rotate.right90",
     "object.altText",
     "object.crop",
     "object.properties",

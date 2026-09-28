@@ -6626,6 +6626,15 @@ body.is-format-painting .page-wrap * {
   pointer-events: none;
 }
 
+/* An object held ALONGSIDE the primary selection (Ctrl/⌘+click), so a
+   multi-object selection is visible before Group is pressed. Dashed rather than
+   solid: one object is the subject of the kind-specific commands, and the chip
+   is anchored to it. */
+.overlay .object-outline.is-co-selected {
+  border-style: dashed;
+  box-shadow: none;
+}
+
 .overlay .object-handle {
   position: absolute;
   width: 9px;
@@ -6833,7 +6842,14 @@ body.is-format-painting .page-wrap * {
 .object-context-bar[hidden] { display: none; }
 .object-context-bar strong { text-transform: capitalize; }
 .object-context-bar small { color: var(--muted); }
-.object-wrap-menu { display: flex; gap: 3px; }
+/* Seven chips now that "In line" is a mode: they must be able to wrap, or the
+   chip runs off a 390px screen. */
+.object-wrap-menu { display: flex; flex-wrap: wrap; gap: 3px; }
+.object-wrap-btn:disabled {
+  cursor: not-allowed;
+  color: var(--faint);
+  border-color: var(--line);
+}
 .object-wrap-btn {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -8705,52 +8721,158 @@ body:not(.doc-loaded) .drop-title {
 }
 
 /* ---- Insert ▸ Shapes gallery ----------------------------------------------
-   Each row previews its own geometry, so the list reads as shapes rather than
-   as a column of words. Drawn in CSS (no icon font has these seven). */
-.shape-choice {
-  grid-template-columns: 22px minmax(0, 1fr);
+   Word's gallery: icon cells in a grid under category headings, each cell an
+   SVG outline of the preset it inserts. Seven of them used to be drawn with
+   `clip-path`; twenty-two are drawn from the one catalogue table instead, so a
+   preset cannot be modeled, painted and unofferable (`shape_catalogue.mjs`). */
+#shapeGalleryMenu {
+  max-width: 260px;
+  padding-bottom: 6px;
 }
 
-.shape-choice-preview {
-  width: 18px;
-  height: 12px;
+.shape-group-heading {
+  padding-top: 6px;
+}
+
+.shape-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--shape-gallery-columns, 6), minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+
+.shape-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 24px is the WCAG 2.5.8 target minimum; the cell is 30 so a thumb has room
+     without the gallery needing a second, larger, touch-only layout. */
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.shape-cell:hover,
+.shape-cell:focus-visible {
+  border-color: var(--accent-text);
   background: var(--accent-soft);
-  border: 1px solid var(--accent-text);
-  justify-self: center;
+  outline: none;
 }
 
-.shape-preview-roundRectangle {
-  border-radius: 4px;
+.shape-cell-preview {
+  width: 20px;
+  height: 20px;
+  fill: var(--accent-soft);
+  stroke: var(--accent-text);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
 }
 
-.shape-preview-ellipse {
-  border-radius: 50%;
+.shape-cell-preview line {
+  stroke-width: 2;
 }
 
-.shape-preview-triangle {
+.shape-cell:hover .shape-cell-preview,
+.shape-cell:focus-visible .shape-cell-preview {
+  fill: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* The rubber band drawn while a shape is being dragged out. It shows the PRESET
+   being drawn, not a generic rectangle: the rectangle is what the user is
+   sizing, the outline is what they picked, and showing only the first is how a
+   direct-manipulation gesture turns back into a guess. */
+.shape-draw-preview {
+  position: absolute;
+  pointer-events: none;
+  outline: 1px dashed var(--accent);
+  outline-offset: 0;
+}
+
+.shape-draw-preview svg {
+  width: 100%;
+  height: 100%;
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The armed pointer. A mode with no visible cursor is a mode the user cannot
+   see the edge of, which is why Escape also announces leaving it. */
+body[data-shape-draw] .page-wrap,
+body[data-shape-draw] .page-wrap * {
+  cursor: crosshair;
+}
+
+/* ---- Object ▸ Position gallery (Word's nine cells) ------------------------ */
+.object-position-menu {
+  padding: 6px;
+}
+
+.object-position-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.object-position-cell {
+  display: block;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.object-position-cell:hover:not(:disabled),
+.object-position-cell:focus-visible {
+  border-color: var(--accent-text);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.object-position-cell:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.object-position-sheet {
+  position: relative;
+  display: block;
+  /* 34x44 keeps the whole cell above the 24px touch minimum with its padding. */
+  width: 34px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+.object-position-mark {
+  position: absolute;
+  width: 12px;
+  height: 10px;
   background: var(--accent);
-  border: none;
-  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  border-radius: 1px;
 }
 
-.shape-preview-rightTriangle {
-  background: var(--accent);
-  border: none;
-  clip-path: polygon(0 0, 100% 100%, 0 100%);
-}
+.object-position-mark.pos-top-left { top: 3px; left: 3px; }
+.object-position-mark.pos-top-center { top: 3px; left: 50%; transform: translateX(-50%); }
+.object-position-mark.pos-top-right { top: 3px; right: 3px; }
+.object-position-mark.pos-center-left { top: 50%; left: 3px; transform: translateY(-50%); }
+.object-position-mark.pos-center-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.object-position-mark.pos-center-right { top: 50%; right: 3px; transform: translateY(-50%); }
+.object-position-mark.pos-bottom-left { bottom: 3px; left: 3px; }
+.object-position-mark.pos-bottom-center { bottom: 3px; left: 50%; transform: translateX(-50%); }
+.object-position-mark.pos-bottom-right { bottom: 3px; right: 3px; }
 
-.shape-preview-diamond {
-  background: var(--accent);
-  border: none;
-  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-}
-
-.shape-preview-line {
-  height: 0;
-  background: none;
-  border: none;
-  border-top: 2px solid var(--accent-text);
-  align-self: center;
+/* The check on an Arrange/Rotate row that names the current state. */
+.menu-item-check {
+  justify-self: end;
+  color: var(--accent-strong);
 }
 
 /* ---- Shape Fill / Shape Outline (object context bar) ----------------------- */

@@ -19,7 +19,21 @@
 //
 //   `reviewMode()`         "editing" | "suggesting" | "viewing"
 //   `readOnlyReason()`     why the DOCUMENT itself refuses writes, or ""
-//   `wrapModes()`          `[[value, label]]`, the shared WRAP_MODES table
+//   `wrapModes()`          `[[value, label]]`, the shared wrap table (in-line first)
+//   `arrangeState()`       `{wrappable, positionable, stackable, groupable,
+//                           rotatable}` — what is offered and, when it is not,
+//                           WHY. Gathered ONCE per menu build by the caller,
+//                           never re-derived per row.
+//   `activeWrap()`         the wrap chip that reads as pressed ("inline" for an
+//                          object in the run flow)
+//   `positionPresets()`    `[[id, label, preset]]`, Word's nine cells
+//   `zOrderChoices()`      `[[value, label]]`
+//   `rotateChoices()`      `[[value, label]]`
+//   `text(key)`            one localised string. Deliberately not spelled with
+//                          the word the unrouted-string scanner treats as a
+//                          human sink, which would count the KEY as English.
+//   `applyPosition(preset)` / `setZOrder(v)` / `group()` / `ungroup()`
+//   `rotate(v)` / `addText()`
 //   `shapeColors()`        the shape fill/outline swatch hexes
 //   `objectWrap(root)`     the object's current wrap mode
 //   `documentRows()`       the References rows Word puts on an object menu
@@ -65,10 +79,15 @@ export function buildObjectContextCommands(context, io) {
     });
   }
 
-  // Wrap text — a submenu of wrap modes, only for a floating (anchored) object,
-  // exactly like the context bar. The active mode is checked on the right.
-  if (context.canWrap) {
-    const active = io.objectWrap(context.ref.root);
+  // Wrap text — a submenu of wrap modes, for EVERY top-level object, exactly
+  // like the object chip. Not gated on `canWrap`: the engine sets that bit only
+  // for an object that already floats, so gating on it is what hid the control
+  // in the one case a user meets first (an inserted picture is inline). "In
+  // line" is the first row, as it is in Word's Layout Options and in Docs' image
+  // chip, and choosing it rewrites the anchor rather than setting a wrap.
+  const arrange = io.arrangeState();
+  if (arrange) {
+    const active = io.activeWrap();
     commands.push({
       id: "object.wrap",
       label: "Wrap text",
@@ -79,10 +98,94 @@ export function buildObjectContextCommands(context, io) {
         label: text,
         group: "wrap",
         shortcut: value === active ? "✓" : "",
-        enabled: mutationEnabled,
-        disabledReason: mutationReason,
+        enabled: mutationEnabled && arrange.wrappable.available,
+        disabledReason: mutationEnabled ? arrange.wrappable.reason : mutationReason,
         run: () => io.setObjectWrap(value),
       })),
+    });
+
+    // Position — Word's nine-cell gallery, as a submenu here because a
+    // right-click menu is a list. Same nine cells, same commit.
+    commands.push({
+      id: "object.position",
+      label: io.text("object.position"),
+      group: "arrange",
+      icon: "position",
+      submenu: io.positionPresets().map(([id, text, preset]) => ({
+        id: `object.position.${id}`,
+        label: text,
+        group: "position",
+        enabled: mutationEnabled && arrange.positionable.available,
+        disabledReason: mutationEnabled ? arrange.positionable.reason : mutationReason,
+        run: () => io.applyPosition(preset),
+      })),
+    });
+
+    // Arrange — the four stacking commands, then Group and Ungroup. Every
+    // disabled row carries the ENGINE's own reason, which is the whole point of
+    // `canGroupObjects` answering `{can, reason}` rather than a bare boolean.
+    commands.push({
+      id: "object.arrange",
+      label: io.text("object.arrange"),
+      group: "arrange",
+      icon: "layers",
+      submenu: [
+        ...io.zOrderChoices().map(([value, text]) => ({
+          id: `object.z.${value}`,
+          label: text,
+          group: "stack",
+          enabled: mutationEnabled && arrange.stackable.enabled,
+          disabledReason: mutationEnabled ? arrange.stackable.reason : mutationReason,
+          run: () => io.setZOrder(value),
+        })),
+        {
+          id: "object.group",
+          label: io.text("object.group"),
+          group: "group",
+          enabled: mutationEnabled && arrange.groupable.can,
+          disabledReason: mutationEnabled ? arrange.groupable.reason : mutationReason,
+          run: () => io.group(),
+        },
+        {
+          id: "object.ungroup",
+          label: io.text("object.ungroup"),
+          group: "group",
+          enabled: mutationEnabled && context.kind === "group",
+          disabledReason: mutationEnabled ? io.text("object.ungroup.notAGroup") : mutationReason,
+          run: () => io.ungroup(),
+        },
+      ],
+    });
+
+    // Rotate — Word's four rows. A top-level text box models no rotation, and
+    // the refusal SAYS so rather than the row silently doing nothing.
+    commands.push({
+      id: "object.rotate",
+      label: io.text("object.rotate"),
+      group: "arrange",
+      icon: "rotate",
+      submenu: io.rotateChoices().map(([value, text]) => ({
+        id: `object.rotate.${value}`,
+        label: text,
+        group: "rotate",
+        enabled: mutationEnabled && arrange.rotatable,
+        disabledReason: mutationEnabled ? io.text("object.rotate.unsupported") : mutationReason,
+        run: () => io.rotate(value),
+      })),
+    });
+  }
+
+  // Add text — Word's and Docs' shape command. The double-click is the gesture;
+  // this is the surface that tells you the gesture exists.
+  if (context.kind === "shape") {
+    commands.push({
+      id: "object.addText",
+      label: io.text("object.addText"),
+      group: "arrange",
+      icon: "text",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => io.addText(),
     });
   }
 

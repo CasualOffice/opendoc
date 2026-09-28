@@ -77,7 +77,7 @@ export const EN_STRINGS = Object.freeze({
   // The two running-content variants. Their status lines and their palette rows
   // read as SWITCHES ("Different first page: on"), and a language that puts the
   // state before the name needs the whole sentence rather than a label with "on"
-  // glued to it \u2014 which is why each state is its own key and not one key plus a
+  // glued to it — which is why each state is its own key and not one key plus a
   // word. They moved out of `main.js` with `header_footer_settings.mjs`, which is
   // where the same two commands' checkbox faces live.
   "headerFooter.firstPageOn": "Different first page on",
@@ -425,4 +425,95 @@ export const EN_STRINGS = Object.freeze({
   "table.insertColumnHere": "Insert a column here",
   "table.rowInserted": "Row inserted",
   "table.columnInserted": "Column inserted",
+  // ---- Drawing: the shapes gallery, wrap, position, arrange, rotate --------
+  // The whole arrange surface, localised in one block because it ships as one
+  // capability: a shape you can draw, place, wrap text around, stack, group and
+  // rotate. The shape names are Word's own gallery names, which is what a person
+  // who has used Word will search for.
+  "shapes.group.lines": "Lines",
+  "shapes.group.rectangles": "Rectangles",
+  "shapes.group.basic": "Basic shapes",
+  "shapes.group.arrows": "Block arrows",
+  "shapes.group.stars": "Stars",
+  "shapes.line": "Line",
+  "shapes.rect": "Rectangle",
+  "shapes.roundRect": "Rounded rectangle",
+  "shapes.ellipse": "Oval",
+  "shapes.triangle": "Isosceles triangle",
+  "shapes.rtTriangle": "Right triangle",
+  "shapes.diamond": "Diamond",
+  "shapes.pentagon": "Regular pentagon",
+  "shapes.hexagon": "Hexagon",
+  "shapes.octagon": "Octagon",
+  "shapes.trapezoid": "Trapezoid",
+  "shapes.parallelogram": "Parallelogram",
+  "shapes.plus": "Cross",
+  "shapes.rightArrow": "Right arrow",
+  "shapes.leftArrow": "Left arrow",
+  "shapes.upArrow": "Up arrow",
+  "shapes.downArrow": "Down arrow",
+  "shapes.leftRightArrow": "Left-right arrow",
+  "shapes.chevron": "Chevron",
+  "shapes.homePlate": "Pentagon arrow",
+  "shapes.star5": "Five-point star",
+  "shapes.star4": "Four-point star",
+  // The drag-to-draw gesture (Word's, and every drawing tool's). Said when the
+  // gallery arms the pointer, and again when Escape disarms it, because a
+  // crosshair with no explanation is a mode the user cannot see the edge of.
+  "shape.drawHint": "Drag on the page to draw the shape · click for the default size · Esc to cancel",
+  "shape.drawCancelled": "Drawing cancelled",
+  "shape.added": "{shape} added",
+  // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
+  // row — Google Docs puts it first for the same reason.
+  "object.wrap.inline": "In line",
+  "object.wrap.square": "Square",
+  "object.wrap.tight": "Tight",
+  "object.wrap.through": "Through",
+  "object.wrap.topAndBottom": "Top & bottom",
+  "object.wrap.behind": "Behind text",
+  "object.wrap.front": "In front",
+  "object.wrap.label": "Text wrapping",
+  "object.wrap.notAnObject": "Select an image, shape or text box first",
+  "object.wrap.groupChild": "A shape inside a group is positioned by its group",
+  // Position — Word's nine-cell gallery, against the margin.
+  "object.position": "Position",
+  "object.position.topLeft": "Top left",
+  "object.position.topCenter": "Top centre",
+  "object.position.topRight": "Top right",
+  "object.position.middleLeft": "Middle left",
+  "object.position.middleCenter": "Middle centre",
+  "object.position.middleRight": "Middle right",
+  "object.position.bottomLeft": "Bottom left",
+  "object.position.bottomCenter": "Bottom centre",
+  "object.position.bottomRight": "Bottom right",
+  "object.position.groupChild": "A shape inside a group is positioned by its group",
+  // Stacking. One engine op behind four commands, because “forward” and “to
+  // front” are different intentions even when a document has two objects.
+  "object.arrange": "Arrange",
+  "object.z.front": "Bring to front",
+  "object.z.forward": "Bring forward",
+  "object.z.backward": "Send backward",
+  "object.z.back": "Send to back",
+  "object.z.notStackable": "Only a floating object or a shape in a group can be restacked",
+  // Grouping. The refusal the user sees is the ENGINE's sentence whenever it has
+  // one; this is the one case it has none, because nothing was asked of it.
+  "object.group": "Group",
+  "object.ungroup": "Ungroup",
+  "object.group.selectMore": "Hold {modifier} and click another object to group them",
+  "object.ungroup.notAGroup": "Select a group to ungroup it",
+  "object.grouped": "Objects grouped",
+  "object.ungrouped": "Group ungrouped",
+  "object.addedToSelection": "Added to the selection",
+  // Rotation and flips — Word's Rotate menu, the same four rows.
+  "object.rotate": "Rotate",
+  "object.rotate.right90": "Rotate right 90°",
+  "object.rotate.left90": "Rotate left 90°",
+  "object.rotate.flipVertical": "Flip vertical",
+  "object.rotate.flipHorizontal": "Flip horizontal",
+  "object.rotate.unsupported": "This object's model carries no rotation — group it first",
+  // Text inside a shape. Double-click is the gesture in Word and in Docs; the
+  // menu row is the second surface, because a gesture nobody told you about is
+  // not reachable.
+  "object.addText": "Add text",
+  "object.addText.notAShape": "Only a shape can hold text this way",
 });
