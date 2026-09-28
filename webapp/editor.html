@@ -123,30 +123,54 @@
           <button data-i18n-title="documentChrome.collapseRibbonCompactView.title" data-i18n-label="documentChrome.collapseRibbon.label" id="ribbonViewToggle" type="button" class="ribbon-view-toggle" title="Collapse the ribbon (compact view)" aria-label="Collapse the ribbon" aria-expanded="true"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
         </div>
       </div>
-      <div class="controls">
-        <!-- Document state reads as status, not as part of the title, so it
-             belongs with the other right-hand chrome rather than wedged between
-             the filename and the menus. -->
-        <span id="documentState" class="document-state" data-state="opened" aria-live="polite">
-          <span class="ms" aria-hidden="true">check_circle</span>
-          <span data-i18n="documentState.opened" id="documentStateText">Opened</span>
-        </span>
-        <div data-i18n-label="ui.toolbarMode.label" class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
-          <button data-i18n="ui.compact" type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
-                  data-chrome-mode="compact" aria-checked="false" tabindex="-1">Compact</button>
-          <button data-i18n="ui.ribbon" type="button" id="modeRibbon" class="chrome-mode-btn" role="radio"
-                  data-chrome-mode="ribbon" aria-checked="true" tabindex="0">Ribbon</button>
-        </div>
+      <!-- The header's right-hand chrome, split into the two bands Google Docs
+           splits it into. Docs' header row 1 carries the document's identity and
+           its state (title, star, move, "All changes saved in Drive"); row 2
+           carries the menu bar and, at its right, the controls that change how
+           the application looks and behaves. Word does the same with a title bar
+           over a ribbon and puts its Ribbon Display Options on the ribbon row.
+           Before this, every one of these controls was vertically centred over
+           the WHOLE 58px bar, so five unrelated things — a state chip, a
+           toolbar-mode toggle, an import-finding count and two icon buttons —
+           landed on one line that belonged to neither band and read as a jumble
+           (measured: `.controls` at y 14..44 straddling a title row of y 3..27
+           and a nav row of y 27..55).
 
-        <input id="file" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
-        <select data-i18n-title="ui.saveFormat.title" data-i18n-label="ui.saveFormat.label" id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled hidden></select>
-        <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
-        <button data-i18n-title="ui.documentProperties.title" data-i18n-label="ui.documentProperties.label" id="propertiesBtn" type="button" class="btn icon-only" title="Document properties" aria-label="Document properties" aria-haspopup="dialog" aria-expanded="false" disabled>
-          <span class="ms" aria-hidden="true">info</span>
-        </button>
-        <button data-i18n-title="ui.settings.title" data-i18n-label="ui.settings.label" id="settingsBtn" type="button" class="btn icon-only" title="Settings" aria-label="Settings" aria-expanded="false">
-          <span class="ms" aria-hidden="true">settings</span>
-        </button>
+           `.controls` is `display: contents` so these two clusters place
+           directly into `.bar`'s grid rows; it stays in the DOM because
+           `chrome_regions.mjs` and the embedding classes address it. -->
+      <div class="controls">
+        <!-- Row 1, with the title: what STATE this document is in. -->
+        <div class="controls-doc">
+          <span id="documentState" class="document-state" data-state="opened" aria-live="polite">
+            <span class="ms" aria-hidden="true">check_circle</span>
+            <span data-i18n="documentState.opened" id="documentStateText">Opened</span>
+          </span>
+          <!-- The import/export compatibility count. It was accent-BLUE body
+               text with no container, which made "185 import findings" the
+               loudest thing in the chrome and read as an unexplained error.
+               It is a neutral status chip now, beside the state chip it belongs
+               with — Word and Docs both report conversion findings as neutral
+               status, never as an alert. -->
+          <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
+        </div>
+        <!-- Row 2, with the tab strip: how the APPLICATION is presented. -->
+        <div class="controls-app">
+          <div data-i18n-label="ui.toolbarMode.label" class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
+            <button data-i18n="ui.compact" type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
+                    data-chrome-mode="compact" aria-checked="false" tabindex="-1">Compact</button>
+            <button data-i18n="ui.ribbon" type="button" id="modeRibbon" class="chrome-mode-btn" role="radio"
+                    data-chrome-mode="ribbon" aria-checked="true" tabindex="0">Ribbon</button>
+          </div>
+          <input id="file" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
+          <select data-i18n-title="ui.saveFormat.title" data-i18n-label="ui.saveFormat.label" id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled hidden></select>
+          <button data-i18n-title="ui.documentProperties.title" data-i18n-label="ui.documentProperties.label" id="propertiesBtn" type="button" class="btn icon-only" title="Document properties" aria-label="Document properties" aria-haspopup="dialog" aria-expanded="false" disabled>
+            <span class="ms" aria-hidden="true">info</span>
+          </button>
+          <button data-i18n-title="ui.settings.title" data-i18n-label="ui.settings.label" id="settingsBtn" type="button" class="btn icon-only" title="Settings" aria-label="Settings" aria-expanded="false">
+            <span class="ms" aria-hidden="true">settings</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -351,15 +375,17 @@
              that do not fit collapse into the "⋯" overflow menu, never a
              scrollbar. -->
         <div id="panelHome" class="ribbon-panel" data-panel="home" role="tabpanel" aria-labelledby="tabHome">
+          <!-- Four 28px icons in a 2x2 grid read as a jam of micro controls at
+               the band's left edge, which is where the eye lands first. Word
+               does not put four commands here at all: Undo/Redo are the Quick
+               Access Toolbar, Format Painter belongs to Clipboard, and Clear All
+               Formatting belongs to Font. Those two have moved to the groups
+               Word gives them, so this group is one two-button stack. -->
           <div class="rgroup" data-group="undo">
             <div class="rgroup-ctl undo-ctl">
               <div class="stackrows undo-stack">
                 <button data-i18n-title="panelHome.undoZ.title" data-i18n-label="panelHome.undo.label" id="undoBtn" type="button" class="fmt" title="Undo (⌘Z)" aria-label="Undo" disabled><span class="ms" aria-hidden="true">undo</span></button>
                 <button data-i18n-title="panelHome.redoZ.title" data-i18n-label="panelHome.redo.label" id="redoBtn" type="button" class="fmt" title="Redo (⌘⇧Z)" aria-label="Redo" disabled><span class="ms" aria-hidden="true">redo</span></button>
-              </div>
-              <div class="stackrows undo-stack">
-                <button data-i18n-title="panelHome.clearDirectFormatting.title" data-i18n-label="panelHome.clearDirectFormatting.label" id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
-                <button data-i18n-title="panelHome.formatPainterCopyFormatting.title" data-i18n-label="panelHome.formatPainter.label" id="formatPainter" type="button" class="fmt" title="Format painter — copy formatting, then paint it onto a selection (double-click to keep painting; Esc to stop)" aria-label="Format painter" aria-pressed="false"><span class="ms" aria-hidden="true">format_paint</span></button>
               </div>
             </div>
             <span data-i18n="panelHome.undo" class="rgroup-label">Undo</span>
@@ -381,6 +407,10 @@
                 <button data-i18n-title="panelHome.cutX.title" data-i18n-label="panelHome.cut.label" id="cutBtn" type="button" class="fmt" title="Cut (⌘X)" aria-label="Cut" disabled><span class="ms" aria-hidden="true">content_cut</span></button>
                 <button data-i18n-title="panelHome.copyC.title" data-i18n-label="panelHome.copy.label" id="copyBtn" type="button" class="fmt" title="Copy (⌘C)" aria-label="Copy" disabled><span class="ms" aria-hidden="true">content_copy</span></button>
               </div>
+              <!-- Format Painter's home in Word: it is a clipboard operation —
+                   copy formatting, paste formatting — and it sat in a
+                   nameless icon jam beside Undo. -->
+              <button data-i18n-title="panelHome.formatPainterCopyFormatting.title" data-i18n-label="panelHome.formatPainter.label" id="formatPainter" type="button" class="fmt" title="Format painter — copy formatting, then paint it onto a selection (double-click to keep painting; Esc to stop)" aria-label="Format painter" aria-pressed="false"><span class="ms" aria-hidden="true">format_paint</span></button>
             </div>
             <span data-i18n="panelHome.clipboard" class="rgroup-label">Clipboard</span>
           </div>
@@ -406,6 +436,10 @@
                   <button data-i18n-title="panelHome.decreaseFontSize.title" data-i18n-label="panelHome.decreaseFontSize.label" id="shrinkFont" type="button" class="fmt grow-shrink" title="Decrease font size" aria-label="Decrease font size"><span class="grow-glyph" aria-hidden="true">A<span class="grow-sign">−</span></span></button>
                   <button data-i18n-title="panelHome.increaseFontSize.title" data-i18n-label="panelHome.increaseFontSize.label" id="growFont" type="button" class="fmt grow-shrink" title="Increase font size" aria-label="Increase font size"><span class="grow-glyph grow-glyph-big" aria-hidden="true">A<span class="grow-sign">+</span></span></button>
                   <button data-i18n-title="panelHome.changeCase.title" data-i18n-label="panelHome.changeCase.label" id="changeCaseBtn" type="button" class="fmt" title="Change case" aria-label="Change case" aria-haspopup="menu" aria-expanded="false"><span data-i18n="changeCaseBtn.aa" class="format-glyph case-glyph" aria-hidden="true">Aa</span></button>
+                  <!-- Word ends the Font group's first row with Clear All
+                       Formatting, for the obvious reason: it is the undo of
+                       everything else on this row. -->
+                  <button data-i18n-title="panelHome.clearDirectFormatting.title" data-i18n-label="panelHome.clearDirectFormatting.label" id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
                 </div>
                 <div class="fmt-row-line">
                   <button data-i18n-title="panelHome.boldB.title" data-i18n-label="panelHome.bold.label" id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
@@ -2440,8 +2474,18 @@
         <span id="draftStatus" class="draft-status" data-status-priority="3" hidden></span>
       </span>
       <span class="foot-right">
+        <!-- The editing-mode switch. Word puts its view switcher at the right
+             end of the status bar, immediately before zoom, as a GROUP of
+             adjacent toggles with no caption of its own; this is that control,
+             in that place, beside zoom. Google Docs' is one button that always
+             names the current mode — the same guarantee, and the reason the
+             active segment is the one that is filled.
+             It used to read as three loose words: the track was `--bg-2` on a
+             `--bg-2` footer, so there was no container, only the selected pill,
+             and a "Mode" caption in front of it that neither reference has and
+             that made the run of text longer still. The track is drawn now, so
+             the three segments read as one control. -->
         <span class="footer-mode">
-          <span data-i18n="ui.mode" class="footer-mode-label" data-status-priority="2">Mode</span>
           <span data-i18n-label="ui.editingMode.label" id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
             <button data-i18n="reviewModeControl.editing" type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
             <button data-i18n="reviewModeControl.suggesting" type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>

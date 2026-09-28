@@ -98,7 +98,7 @@ import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
 import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
-import { createViewZoom } from "./view_zoom.mjs";
+import { createViewZoom, openingZoomMode } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
@@ -3155,8 +3155,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // thrown away, while export loss was reported. SKILL §1 names reporting as
     // the condition under which verbatim retention is an advantage at all.
     showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
-    railOutline.disabled = false;
-    railPages.disabled = false;
+    railOutline.disabled = railPages.disabled = false;
     versionHistory.reflect();
     populateStyles();
     populateTableStyles();
@@ -3180,6 +3179,8 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // caller await the network font fetch below (which would leave a demo sitting
     // on the plain editor for seconds).
     if (typeof onOpened === "function") onOpened();
+    // Fit a page too wide for its container (`view_zoom.mjs`); after `onOpened`, so a caller's zoom wins.
+    zoomMode = openingZoomMode(computeFitZoom("fit-width"), { mode: zoomMode, factor: zoomFactor });
     // Paint from the target-bundled metric-compatible faces FIRST. The named web
     // families are ~9.5 MB of variable fonts from a CDN, and awaiting them here
     // meant the document stayed invisible until every one of them had landed —
@@ -8052,7 +8053,7 @@ const REVIEW_SURFACE = [
   // Declared here rather than beside the new button for the reason the comment
   // above gives: a second wiring is free to drift in what it runs and in when it
   // is available.
-  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", run: () => openReviewComposer() },
+  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", reasonKey: "reviewMarginComment.addCommentOnSelectedText.label", run: () => openReviewComposer() },
   // `requires: "comment"` — the caret is inside a commented range. Word and
   // ONLYOFFICE both target that comment rather than a sidebar selection, so a
   // reviewer never has to open a panel to resolve what they are reading.
@@ -9054,6 +9055,8 @@ for (const entry of INSERT_SURFACE) {
     for (const button of entry.buttons()) {
       if (!button) continue;
       if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range) || (entry.requires === "comment" && !activeReviewCommentId);
+      // A disabled control has to SAY why; the margin "+" beside the page said nothing at all.
+      if (entry.reasonKey) button.title = button.disabled ? t(entry.reasonKey) : authoredTitle(button, EDITOR_KEYBOARD_PLATFORM);
       if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
     }
   }
@@ -9065,13 +9068,11 @@ for (const entry of INSERT_SURFACE) {
   // Through the seam: the boot sweep never sees these, so they stayed English.
   const undoName = undoLabel ? t("toolbar.undoNamed", { name: undoLabel }) : t("toolbar.undo");
   const redoName = redoLabel ? t("toolbar.redoNamed", { name: redoLabel }) : t("toolbar.redo");
-  undoBtn.setAttribute("aria-label", undoName);
-  redoBtn.setAttribute("aria-label", redoName);
+  for (const [button, name] of [[undoBtn, undoName], [redoBtn, redoName]]) button.setAttribute("aria-label", name);
   // Reassigned on every sync, so they outlive the boot sweep (HF-025).
   undoBtn.title = localizeShortcutText(`${undoName} (⌘Z)`, EDITOR_KEYBOARD_PLATFORM);
   redoBtn.title = localizeShortcutText(`${redoName} (⌘⇧Z)`, EDITOR_KEYBOARD_PLATFORM);
-  findBtn.disabled = !doc;
-  replaceBtn.disabled = !doc;
+  findBtn.disabled = replaceBtn.disabled = !doc;
   // Clipboard buttons mirror the clipboard actions' own preconditions: copy/cut
   // need a range; paste needs a caret. The actions still fail closed in Viewing
   // mode, but the buttons also disable there so the affordance matches.
@@ -15324,8 +15325,7 @@ zoomMenu.addEventListener("click", (e) => {
   else return;
   closePopover(zoomPopover);
 });
-zoomInBtn.addEventListener("click", () => stepZoom(1));
-zoomOutBtn.addEventListener("click", () => stepZoom(-1));
+for (const [button, dir] of [[zoomInBtn, 1], [zoomOutBtn, -1]]) button.addEventListener("click", () => stepZoom(dir));
 
 // Ctrl/⌘+scroll over the document zooms (a fixed % centered on the pointer's
 // intent), the desktop-editor convention. Passive:false so we can preventDefault

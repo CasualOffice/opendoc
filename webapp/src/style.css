@@ -195,9 +195,14 @@
      use for exactly this arrangement, against 32px for a tab strip on a row of
      its own. Ours was 34px on a row of its own; see docs/123 §3. */
   --h-tab: 28px;
-  --h-rail-control: 44px;
+  --h-rail-control: 50px;
   --h-footer: 30px;
-  --h-header: 58px;
+  /* The header is two bands now (see `.bar`): the document's title row over the
+     navigation row. 26 + 28 + 5 + 4 of padding = 63. It was 58 while the two
+     rows measured 24 + 28 + 9 = 61, so the chrome overflowed its own bar by 3px
+     and `align-items: center` hid the fact by splitting the difference. */
+  --h-header-title: 26px;
+  --h-header: 63px;
   /* The ribbon band. Content-sized in reality, so this number has to be kept
      honest by a test rather than by arithmetic; responsive-shell.spec.mjs
      asserts the panels below actually clear the ribbon's measured bottom edge.
@@ -205,7 +210,7 @@
      deleting that row (docs/123 §4 — ONLYOFFICE's groups have no captions at
      all) took the tallest band, Home, down to ~72px, which is within a couple
      of pixels of their own 66px `@toolbar-height-controls`. */
-  --h-ribbon-band: 74px;
+  --h-ribbon-band: 90px;
   /* The compact toolbar's height — the prototype's --toolbar-h. Declared here
      so `--chrome-bottom` and the bar itself read the same number. */
   --h-compact-bar: clamp(38px, 3.4vh, 46px);
@@ -224,7 +229,7 @@
      rather than a fixed height on purpose: if Home ever grows a taller control,
      the band grows with it and `ribbon-band-height.spec.mjs` fails until this
      token is re-measured, rather than Home silently clipping. */
-  --ribbon-band-h: 74px;
+  --ribbon-band-h: 90px;
   /* The card inset is CONTENT WIDTH the band no longer has. The Home band needs
      1254px of groups at 1280px, so the whole chrome overhead — this inset plus
      the panel's own padding — has to stay under 26px or the overflow pass
@@ -532,10 +537,24 @@ input {
 }
 
 /* ---- Header bar ------------------------------------------------------------ */
+/* TWO BANDS, Google Docs' arrangement: row 1 is the document (title + state),
+   row 2 is the application (navigation + how it is presented). Word splits the
+   same way — a title bar over the ribbon row, with Ribbon Display Options on
+   the ribbon row, not beside the filename.
+   It was one flex row, so `.controls` centred itself over BOTH bands at once
+   and the state chip, the toolbar-mode toggle, the finding count and the two
+   icon buttons all landed on a line that belonged to neither. The grid puts
+   each control in the band that owns it, and `.document-chrome` / `.controls`
+   are `display: contents` so their children place into these rows directly. */
 .bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: var(--h-header-title) var(--h-tab);
+  grid-template-areas:
+    "brand title docstate"
+    "brand nav   apptools";
   align-items: center;
-  gap: 12px;
+  column-gap: 12px;
   height: var(--h-header);
   padding: 5px 14px 4px;
   /* Same grey as the toolbar, status bar and desk — one field, separated from
@@ -595,6 +614,7 @@ input {
 }
 
 .brand {
+  grid-area: brand;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -625,33 +645,43 @@ input {
   background-size: contain;
 }
 
-.controls {
+/* Both wrappers dissolve into `.bar`'s grid: each child places itself into the
+   band that owns it. They stay in the DOM because scripts and the embedding
+   classes address them by class. */
+.controls,
+.document-chrome {
+  display: contents;
+}
+
+.controls-doc,
+.controls-app {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
-  flex: 0 0 auto;
-}
-
-.document-chrome {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  justify-content: center;
-  align-self: stretch;
+  justify-self: end;
   min-width: 0;
-  max-width: 500px;
 }
 
+.controls-doc {
+  grid-area: docstate;
+}
+
+.controls-app {
+  grid-area: apptools;
+}
+
+/* `[hidden]` has to beat `display: contents`, and it has to take the children
+   with it — which `display: none` on the contents box does. */
 .document-chrome[hidden] {
   display: none;
 }
 
 .document-title-row {
+  grid-area: title;
   display: flex;
   align-items: center;
   min-width: 0;
-  height: 27px;
+  height: var(--h-header-title);
   gap: 7px;
 }
 
@@ -695,6 +725,7 @@ input {
    overflow into a "⋯" button the way the ribbon does needs the measuring pass
    in main.js (`updateRibbonOverflow`), which is not a stylesheet change. */
 .app-menu-bar {
+  grid-area: nav;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -810,10 +841,23 @@ input {
   cursor: default;
 }
 
+/* A neutral status CHIP, the same object as `.document-state` beside it — not
+   accent-blue prose. As bare blue text with no container this was the loudest
+   thing in the chrome ("185 import findings") and read as an unexplained error;
+   Word's and Docs' conversion notices are neutral status, and the count is
+   reassurance that loss was DETECTED, not a failure. Same shape as its
+   neighbour so the two read as one cluster of document state. */
 .compatibility-status {
-  max-width: 150px;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  max-width: 170px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface-alt);
   overflow: hidden;
-  color: color-mix(in srgb, var(--accent-text) 82%, var(--ink));
+  color: var(--muted);
   font-size: var(--fs-small);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4146,6 +4190,7 @@ body.modal-open {
    have to come out of the strip's own height, and a name cut off with no cue is
    `109` HF-097. The chevron is a sibling, so it never scrolls away. */
 .ribbon-nav {
+  grid-area: nav;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -4313,9 +4358,10 @@ body.compact-mode {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Controls fill the band, caption pinned under them — Word's group box. */
+  justify-content: space-between;
   gap: 3px;
-  padding: 0 6px;
+  padding: 1px 8px 0;
   border-right: 1px solid var(--line-strong);
   flex: 0 0 auto;
 }
@@ -4325,8 +4371,10 @@ body.compact-mode {
 }
 
 .rgroup-ctl {
-  display: inline-flex;
+  display: flex;
+  flex: 1 1 auto;
   align-items: center;
+  justify-content: center;
   gap: 2px;
   min-height: 32px;
 }
@@ -4374,44 +4422,44 @@ body.compact-mode {
   text-align: left;
 }
 
-/* Ribbon-group captions are NOT drawn (docs/123 §4). ONLYOFFICE's band has no
-   caption element at all — `apps/common/main/resources/less/toolbar.less:498`
-   makes `.group` a bare `display: table-cell` with 6px (10px when `.small`) of
-   left padding, and `Toolbar.template` renders `<div class="group small">` with
-   nothing but control slots inside. Grouping is carried by the `.separator`
-   rules and the spacing, which is what `.rgroup`'s `border-right` already does
-   here. Word does caption its groups; the owner asked for ONLYOFFICE, and the
-   caption row cost a full 16.5px of a band that is 74px tall.
+/* Ribbon-group captions ARE drawn, which is Word's ribbon and is the standard
+   the rest of this chrome already commits to: the tab strip is Word's tab set
+   (File · Home · Insert · Layout · References · Review · View) with a
+   contextual Table tab appended Word's way.
 
-   The text STAYS in the DOM, visually hidden: it is the group's accessible name
-   (docs/105 P3 "name the 24 groups"), it is what the "⋯" overflow menu prints
-   as its section headings — where there IS room for it, and where Word shows
-   the same words — and `ribbon-home.spec.mjs` reads it there. */
+   docs/123 §4 removed them and followed ONLYOFFICE, whose band has no caption
+   element at all. Seen on screen that left a band with no stated structure —
+   the only grouping cue was a `--line-strong` hairline that is all but
+   invisible in dark theme — so the band read as one undifferentiated run of
+   icons. The owner looked at the result and rejected it: pick one standard.
+   Word's, then, whole: captions under centred groups, and a separator that can
+   actually be seen.
+
+   The caption is also the group's accessible name (docs/105 P3) and the "⋯"
+   overflow menu's section heading, so it was always in the DOM; this only stops
+   hiding it. It costs ~15px of band height, which is what Word spends. */
 .rgroup-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  border: 0;
-  clip-path: inset(50%);
+  max-width: 100%;
   overflow: hidden;
+  color: var(--faint);
+  font-size: var(--fs-ribbon-caption);
+  font-weight: 500;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* …except in the overflow menu, which is a menu, not a band: there the caption
    is the only thing that says which group a stack of icons came from. */
+/* …and in the overflow menu it is a SECTION HEADING rather than a caption under
+   a group, so it takes the heading treatment and sits above its controls. */
 #ribbonOverflowMenu .rgroup-label {
-  position: static;
-  width: auto;
-  height: auto;
-  margin: 0;
-  clip-path: none;
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--faint);
+  text-align: left;
 }
 
 .rgroup-note {
@@ -5007,9 +5055,9 @@ body.is-format-painting .page-wrap * {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 7px;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 6px;
   /* The rail is chrome, so it shares the one grey field rather than sitting on
      its own tint with an edge — the tint is what made it read as a separate bar
      glued to the header. */
@@ -5018,15 +5066,29 @@ body.is-format-painting .page-wrap * {
 }
 
 /* A text caption under the icon (doc 69 §1.2/§1.4.4): every rail destination
-   in the reference has a visible label; OpenDoc's had icon+tooltip only. */
+   in the reference has a visible label; OpenDoc's had icon+tooltip only.
+
+   The caption was `--fs-micro` (9px, semibold) inside a 40x44 tile, which is
+   below the size at which a word reads as a label rather than as texture — the
+   rail looked cramped and the four destinations ran together. Word's navigation
+   pane and Docs' outline pane both give a destination a full-size caption; this
+   is a rail, so it takes the caption size the rest of the chrome uses for a
+   caption (`--fs-caption`) in a tile wide enough to hold "Comments" without
+   ellipsis, with real air between tiles. */
 .rail-btn {
-  width: 40px;
+  /* Width comes from the longest caption, not from a number: "Comments" already
+     ellipsised to "Comme…" at 56px in English, and German's "Kommentare" is
+     longer still. `.rail` stretches its children, so every tile matches the
+     widest one and the column stays a column. */
+  width: auto;
+  min-width: 52px;
   height: var(--h-rail-control);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 4px;
+  padding: 0 7px;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -5036,11 +5098,21 @@ body.is-format-painting .page-wrap * {
 
 .rail-btn .ms {
   font-size: var(--icon-rail);
+  /* One optical weight across the four destinations. Material Symbols is a
+     variable font, so the glyphs differ in apparent weight unless `wght` is
+     pinned: `auto_stories` and `rate_review` painted noticeably heavier than
+     `toc` and `history` and the set did not read as one family. */
+  font-variation-settings: "wght" 400, "opsz" 24, "GRAD" 0, "FILL" 0;
 }
 
 .rail-btn > span:not(.ms) {
-  font-size: var(--fs-micro);
-  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--fs-caption);
+  font-weight: 550;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* `--surface`, not `--bg-2`: the rail's own background IS `--bg-2` (see `.rail`
@@ -5192,8 +5264,12 @@ body.is-format-painting .page-wrap * {
 .review-inline-bar button:hover { background: var(--review-insert-soft); border-color: var(--review-insert-line); color: var(--review-insert); }
 .review-inline-bar button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 .review-inline-bar button.danger:hover { background: var(--review-delete-soft); border-color: var(--review-delete-line); color: var(--review-delete); }
-.review-mode-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); }
-.review-mode-seg { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-ribbon-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
+/* A real segmented control: a drawn track holding three segments, so the two
+   that are not selected still read as parts of one switch rather than as loose
+   words in the status bar. The track was `--bg-2` — the footer's own colour, in
+   both themes — which is why only the selected pill was visible. */
+.review-mode-segmented { display: inline-flex; gap: 0; padding: 1px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); }
+.review-mode-seg { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 999px; padding: 4px 9px; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-ribbon-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .review-mode-seg .ms { font-size: var(--fs-medium); }
 .review-mode-seg[aria-pressed="true"] { color: var(--review-insert); border-color: var(--review-insert-line); background: var(--review-insert-soft); }
 .review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent-text); background: var(--accent-soft); }
@@ -5380,6 +5456,13 @@ body.is-format-painting .page-wrap * {
    whether the margin is wide enough to hold it; `review_layout.test.mjs` reads
    both so they cannot drift. No z-index, for the same reason `.review-sidebar`
    has none: it is a later sibling of the page stack and paints above it. */
+/* Google Docs' margin button, and Docs draws it ROUND. As a square with a
+   `--radius` corner, a hairline edge and an 18px glyph it read as an
+   unexplained "+" floating beside the page; round, edged and in the accent it
+   reads as the one affordance it is. Its `title` says what it does, and says
+   what is missing when it is disabled (REVIEW_SURFACE's `reasonKey` in main.js).
+   The BOX stays 32px: `review_layout.mjs` measures the margin against that
+   number and `review_layout.test.mjs` holds the two together. */
 .review-margin-add {
   position: absolute;
   width: 32px;
@@ -5387,10 +5470,10 @@ body.is-format-painting .page-wrap * {
   padding: 0;
   display: grid;
   place-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
   background: var(--surface);
-  color: var(--ink);
+  color: var(--accent-text);
   box-shadow: var(--shadow-sm);
   cursor: pointer;
 }
@@ -5401,7 +5484,7 @@ body.is-format-painting .page-wrap * {
 .review-margin-add:disabled { opacity: 0.4; cursor: default; }
 .review-margin-add:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-text); }
 .review-margin-add:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-.review-margin-add .ms { font-size: 18px; }
+.review-margin-add .ms { font-size: 20px; }
 .review-margin-card {
   position: absolute;
   left: 0;
@@ -7653,16 +7736,8 @@ body:not(.doc-loaded) .drop-title {
   white-space: nowrap;
 }
 
-.footer-mode-label {
-  color: var(--faint);
-}
-
-.footer .review-mode-segmented {
-  padding: 1px;
-}
-
 .footer .review-mode-seg {
-  padding: 2px 7px;
+  padding: 2px 8px;
   font-size: var(--fs-ribbon-caption);
 }
 
@@ -7991,7 +8066,8 @@ body:not(.doc-loaded) .drop-title {
     display: none;
   }
 
-  .controls {
+  .controls-doc,
+  .controls-app {
     gap: 4px;
   }
 
