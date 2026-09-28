@@ -145,8 +145,11 @@ grep -n 'js_name' crates/casual-doc-wasm/src/lib.rs | grep -iE 'table|cell|row|c
 This under-counts, because wasm-bindgen exports a `pub fn` with no `js_name` under its
 snake_case name verbatim and several `TableInfo` getters have none. The authoritative count,
 taken by brace-matching every `#[wasm_bindgen]` `impl` block and listing its `pub fn`s, is
-**425 exported methods in the crate, 66 of them table-related** — 41 on `WasmDocument`, 20
-`TableInfo` getters, 5 `CellTextRange` getters.
+**442 exported methods in the crate, 84 of them table-related** — `WasmDocument` 273 methods
+in total, plus 19 `TableInfo` getters, 11 `CellRangeInfo` getters and 5 `CellTextRange`
+getters. (It read 425/66 before D-3 landed: the cell range added eight `WasmDocument` methods
+and the `CellRangeInfo` getters, and `mergeTableCellRange` keeps a String-error inner beside
+the exported wrapper, which is not exported.)
 
 ### 0.6 The ribbon budget, and the figure not to quote
 
@@ -1621,6 +1624,22 @@ deliberately out of scope, and D-3 must not be called done on touch until it exi
 5. `Shift+Right` within one cell still extends a **text** selection. *Mutation:* make the cell
    switch unconditional and this must go red — the guard that stops D-3 from breaking ordinary
    typing.
+
+> **BUILT: the engine and facade halves of 2, 3 and 4 are proven; 1 and 5 are the UI lane's.**
+> Items 1 and 5 are pointer and keyboard gestures in `webapp/`, so they stay with D-1/the
+> gesture lane. The guards that landed with the engine, each driven red:
+>
+> | Guard | Mutation | Red output |
+> | --- | --- | --- |
+> | `expansion_iterates_to_a_fixed_point_across_a_vertical_and_a_horizontal_merge` (selection crate) | `break` after one round of growth | rectangle came out `(1, 2, 0, 3)` instead of `(0, 2, 0, 3)` — row 0 lost |
+> | the same, plus two horizontal guards | `let span = 1` (ignore `gridSpan`) | 3 guards red, including `a_horizontal_merge_at_the_edge_pulls_the_whole_merged_cell_in` |
+> | the same, plus two vertical guards | never join a `vMerge` continuation to the cell above | 3 guards red; a merged cell counted as 2 cells instead of 1 |
+> | `shading_a_two_cell_range_shades_both_cells_in_the_document` and `shading_a_selected_row_shades_every_cell_of_that_row` (facade) | `.take(1)` on the range's cells — literally HF-219 | `left: [Some(RgbColor …), None, None]` against three shaded cells |
+> | `merging_a_cell_rectangle_spans_it_and_undoes_as_one_action` | pass the row mode's rectangle (`c0 = 0`, `c1 = cols - 1`) | row 0 came out with 1 cell instead of 3 — the whole row merged, not the rectangle |
+>
+> Item 2's assertion is deliberately *"both cells are shaded in the document"*, read by walking
+> the table's cells for their `shading.fill` — not "the range reported two entries", and not
+> read back through the facade query under test.
 
 ---
 
