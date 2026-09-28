@@ -7035,24 +7035,9 @@ const TABLE_COMMAND_HOST = {
     tableBtn.click();
   },
   openTableProperties: () => toggleTableProperties(true),
-  stepTableBand,
+  stepTableBand: (axis, sign) => tableChrome.stepCaretBand(selection?.focus?.node, pages, axis, sign),
   moveTableBand: (axis, sign) => tableGutter.moveBand(selection?.focus?.node, axis, sign),
 };
-
-/** Sizes the caret's table row or column by one grid step — the keyboard twin of
- *  the boundary drag (`docs/141` D-1 §4.1.6), bound to Alt+Shift+Arrow. The page
- *  comes from the `cellRect` the chrome layer needs anyway, so this costs one
- *  page-scoped geometry call and no `tableInfo` walk. */
-function stepTableBand(axis, sign) {
-  if (!doc || !selection) return false;
-  const cell = doc.cellRect(selection.focus.node); // [page, x, y, w, h] or []
-  if (cell.length < 5) {
-    setStatus(t("table.reason.caretOutsideTable"), "warn");
-    return true;
-  }
-  const page = pages[cell[0] - 1];
-  return page ? tableChrome.stepFromCaret(page, selection.focus.node, cell, axis, sign) : false;
-}
 
 const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
 

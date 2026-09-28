@@ -120,7 +120,7 @@ test("dragging the selected third row above the first reorders the DOCUMENT, in 
   await insertTable(page, 3, 1);
   const cell = await firstCell(page);
   await fillCells(page, ["Alpha", "Beta", "Gamma"]);
-  expect(await orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
+  await expect.poll(() => orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
 
   // Docs' rule: the strip SELECTS on the first press, and only a band that is
   // already the selection is a handle. So a press-and-drag on an unselected
@@ -131,6 +131,10 @@ test("dragging the selected third row above the first reorders the DOCUMENT, in 
   await page.mouse.down();
   await page.mouse.move(third.x, third.y - cell.h * 2.5, { steps: 8 });
   await page.mouse.up();
+  // Waited on the SELECT drag's own observable first — three rows of one column
+  // selected — so "the order did not change" is read after the gesture has
+  // finished rather than before it could have.
+  await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(3);
   expect(
     await orderOf(page, ["Alpha", "Beta", "Gamma"]),
     "a drag on an UNSELECTED strip must select, not reorder",
@@ -215,7 +219,7 @@ test("a drop where the row started says so and pushes no undo step", async ({
   // rather than swallowed into "that edit isn't supported for this selection".
   await expect(page.locator("#status")).toContainText("already at that position");
   await expect(page.locator("#status")).not.toContainText("isn't supported");
-  expect(await orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
+  await expect.poll(() => orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
   // No undo step: a gesture that changed nothing must leave the history alone.
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", undoBefore ?? "");
 
@@ -254,7 +258,7 @@ test("a row inside a vertical merge refuses with the reason, naming the row", as
 
   await expect(page.locator("#status")).toContainText("vertically merged");
   await expect(page.locator("#status")).not.toContainText("isn't supported");
-  expect(await orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
+  await expect.poll(() => orderOf(page, ["Alpha", "Beta", "Gamma"])).toEqual(["Alpha", "Beta", "Gamma"]);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -301,7 +305,7 @@ test("a column move on a table with a horizontal merge is refused BEFORE it is o
 
   // …and the column strip is not painted on such a table either, so the gesture
   // cannot be started from the gutter: the document is unchanged either way.
-  expect(await orderOf(page, ["A1", "B1", "C1"])).toEqual(["A1", "B1", "C1"]);
+  await expect.poll(() => orderOf(page, ["A1", "B1", "C1"])).toEqual(["A1", "B1", "C1"]);
 
   expect(consoleErrors).toEqual([]);
 });

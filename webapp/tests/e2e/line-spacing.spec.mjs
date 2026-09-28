@@ -181,7 +181,7 @@ test("the spacing menu ticks 1.5 on a paragraph whose 1.5 comes only from its st
   // Create the condition: 1.5 on this paragraph, then written into its style.
   await openSpacingMenu(page);
   await page.locator('.spacing-line[data-percent="150"]').click();
-  await runPaletteCommand(page, "style.updateFromSelection", "update style");
+  await runPaletteCommand(page, "style.updateFromSelection", "match selection");
   await expect(page.locator("#status")).toContainText("match the selection");
 
   // A different paragraph, given that style and nothing else. Its 1.5 is
