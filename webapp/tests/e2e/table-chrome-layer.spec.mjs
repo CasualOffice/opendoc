@@ -172,31 +172,30 @@ test("a column boundary on a table the caret is not in moves the border, keeping
   expect(found, "no point across the first column's trailing border was armed").not.toBeNull();
   expect(await pageCursor(page)).toBe("col-resize");
 
-  // The table's own painted width, from the engine's table selection rects — an
-  // independent geometry path from the one the drag uses.
+  // The three columns' LAID-OUT widths, walked with Tab and read off the
+  // active-cell outline. Measuring the table's outer width would not do: the
+  // inserted table already fills the content width, so the width solver clamps it
+  // whatever the model asks for, and a total that cannot move cannot tell the two
+  // modes apart. (It was written that way first, and the "border"→"table" mutation
+  // passed. The invariant that DOES separate them is per-column.)
   //
-  // Every viewport coordinate below is taken from a FRESH sheet box, and that is
-  // not caution: selecting the contextual Table tab swaps the ribbon band, which
-  // is a different height, so the sheet moves under the pointer. Reusing one box
-  // across the tab switch put the drag 20-odd px off the border and the gesture
-  // never started — which looked exactly like a broken zone.
+  // Every viewport coordinate is taken from a FRESH sheet box, and that is not
+  // caution: selecting the contextual Table tab swaps the ribbon band, which is a
+  // different height, so the sheet moves under the pointer.
   const sheet = () => stableBox(page.locator(".page-wrap .page").first());
-  const tableWidth = async () => {
+  const columnWidths = async () => {
     const box = await sheet();
     await page.mouse.click(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h / 2);
     await expect(page.locator("#tabTable")).toBeEnabled();
-    await page.locator("#tabTable").click();
-    await page.locator('[data-table-select="table"]').click();
-    const rects = page.locator(".overlay .table-cell-selection");
-    await expect(rects.first()).toBeVisible();
-    return page.evaluate(() => {
-      const all = [...document.querySelectorAll(".overlay .table-cell-selection")];
-      const left = Math.min(...all.map((el) => el.getBoundingClientRect().x));
-      const right = Math.max(...all.map((el) => el.getBoundingClientRect().right));
-      return +(right - left).toFixed(1);
-    });
+    const widths = [];
+    for (let i = 0; i < 3; i++) {
+      await expect(page.locator(".overlay .cell-outline")).toHaveCount(1);
+      widths.push((await local(page, ".overlay .cell-outline")).w);
+      if (i < 2) await page.keyboard.press("Tab");
+    }
+    return widths;
   };
-  const widthBefore = await tableWidth();
+  const beforeWidths = await columnWidths();
   await leaveTable(page);
 
   const box = await sheet();
@@ -208,22 +207,26 @@ test("a column boundary on a table the caret is not in moves the border, keeping
   await page.mouse.move(box.x + found.x + 40, box.y + found.y, { steps: 6 });
   await expect(page.locator(".overlay .table-col-resize-preview")).toHaveCount(1);
   await page.mouse.up();
+  await expect(page.locator(".overlay .table-col-resize-preview")).toHaveCount(0);
 
-  // THE GUARANTEE: the first column grew and the table did NOT. `setTableColumnWidthAt`
-  // could not express this — it set one column's absolute width and let the
-  // solver decide the rest, so dragging column 1's right border widened the whole
-  // table (`docs/141` §1.1 cost 2).
-  await expect
-    .poll(async () => (await local(page, ".overlay .cell-outline"))?.w ?? 0, {
-      message: "the first column's laid-out width after the drag",
-    })
-    .toBeGreaterThan(cell.w + 15);
-  const widthAfter = await tableWidth();
+  // THE GUARANTEE, and it is three statements about the same one thing: moving a
+  // border moves a border. Column 1 grew, column 2 lost exactly what column 1
+  // gained, and column 3 — which the gesture never touched — did not move at all.
+  //
+  // `setTableColumnWidthAt` could express none of this: it set one column's
+  // absolute width and left the rest to the width solver, so dragging column 1's
+  // right border redistributed the whole table (`docs/141` §1.1 cost 2).
+  const afterWidths = await columnWidths();
+  const report = `before ${beforeWidths.join("/")} after ${afterWidths.join("/")}`;
+  expect(afterWidths[0], `column 1 must grow: ${report}`).toBeGreaterThan(beforeWidths[0] + 15);
   expect(
-    Math.abs(widthAfter - widthBefore),
-    `the table width moved from ${widthBefore} to ${widthAfter}: an internal ` +
-      'border drag must run in "border" mode, where the neighbour absorbs the delta',
-  ).toBeLessThan(6);
+    Math.abs(afterWidths[0] - beforeWidths[0] - (beforeWidths[1] - afterWidths[1])),
+    `column 2 must lose exactly what column 1 gained: ${report}`,
+  ).toBeLessThan(4);
+  expect(
+    Math.abs(afterWidths[2] - beforeWidths[2]),
+    `column 3 is not part of this gesture and must not move: ${report}`,
+  ).toBeLessThan(4);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -317,8 +320,14 @@ test("a touch tap arms 24px boundary pills", async ({ page, consoleErrors }) => 
   const cell = await local(page, ".overlay .cell-outline");
   const box = await stableBox(page.locator(".page-wrap .page").first());
 
-  // No pills from a mouse: hover is the mouse's affordance and pills would be
-  // resting chrome nobody asked for.
+  // No pills from a MOUSE click in the same cell: hover is the mouse's affordance
+  // and pills would be resting chrome nobody asked for. The click matters — the
+  // pills are armed from `onPointerDown`, so asserting a count of 0 before any
+  // page click at all passes whatever the code does, which is how the first
+  // version of this test survived a mutation that ignored `pointerType`
+  // altogether.
+  await page.mouse.click(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h / 2);
+  await expect(page.locator(".overlay .cell-outline")).toHaveCount(1);
   await expect(page.locator(".overlay .table-row-touch-pill")).toHaveCount(0);
 
   // A real touch pointer. Playwright's mouse cannot produce `pointerType:
