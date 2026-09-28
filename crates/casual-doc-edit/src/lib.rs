@@ -11754,6 +11754,11 @@ mod tests {
                             id: n(42),
                             offset: PointEmu { x_emu: 0, y_emu: 0 },
                             extent,
+                            // A plain rectangular box: this fixture is about
+                            // reaching the text inside a group, not geometry.
+                            geometry: casual_doc_model::v1::ShapeGeometry::Rectangle,
+                            preset: None,
+                            adjustments: Vec::new(),
                             blocks: vec![para(40, vec![run(43, "boxed in a group")])],
                             fill: None,
                             border: None,
@@ -11983,6 +11988,11 @@ mod tests {
                 width_emu: 1_000_000,
                 height_emu: 500_000,
             },
+            // A plain rectangular box: every caller of this helper edits the
+            // box's CONTENT, so its geometry is deliberately the default one.
+            geometry: casual_doc_model::v1::ShapeGeometry::Rectangle,
+            preset: None,
+            adjustments: Vec::new(),
             blocks,
             fill: None,
             border: None,

@@ -208,6 +208,18 @@ pub enum AnchorContent {
         border: Option<TextBoxStroke>,
         /// Resolved content offset and overflow clipping.
         content_layout: crate::text::TextBoxContentLayout,
+        /// The shape painted BEHIND the text when the text-bearing `wps:wsp`
+        /// carries a preset geometry that is not a plain rectangle — an
+        /// ellipse, a star, a block arrow. It is produced by the same
+        /// geometry → content mapping a text-free `GroupChild::Shape` uses, so
+        /// there is one description of what a preset looks like, and it carries
+        /// the box's own fill and outline (which are then left unset above, so
+        /// nothing paints twice).
+        ///
+        /// `None` is the plain rectangular text box: `fill`/`border` paint it,
+        /// exactly as before this field existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        backdrop: Option<Box<AnchorContent>>,
     },
     /// A **positioned (floating) table** — `w:tblPr/w:tblpPr` — lifted out of
     /// block flow and placed against a page/margin/text reference frame, with
