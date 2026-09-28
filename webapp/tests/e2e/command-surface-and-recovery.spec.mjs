@@ -186,6 +186,12 @@ test("the object inspector follows the selection instead of describing the last 
   await page.locator('[data-tab="insert"]').click();
   await page.locator("#insertShapeBtn").click();
   await page.locator('#shapeGalleryMenu [data-shape-geometry="ellipse"]').click();
+  // Picking a preset ARMS the pointer, as it does in Word; the gesture on the
+  // page is what places the shape. A bare click takes the default size.
+  {
+    const sheet = await page.locator(".page-wrap .page").first().boundingBox();
+    await page.mouse.click(sheet.x + sheet.width * 0.3, sheet.y + sheet.height * 0.3);
+  }
   await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "shape");
   await expect(panel.locator("[data-object-inspector-kind]")).toHaveText("Shape");
 
