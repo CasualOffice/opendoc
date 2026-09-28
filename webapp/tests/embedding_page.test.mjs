@@ -86,15 +86,24 @@ function region(name) {
   return built.slice(from + open.length, to);
 }
 
-/** Every generated code panel: its caption and its code, unescaped. */
+/** Every generated code panel: its caption and its code, unescaped.
+ *
+ *  A panel head is now the source PATH beside a routed clause — `<span>path</span>
+ *  — <span data-i18n="…">what it is</span>` — because the clause is prose and goes
+ *  through the localisation seam while the path is code and does not. So the head
+ *  is read as "everything inside it, tags stripped", which is what a reader sees
+ *  and what `captionedFile` has always taken the first field of. */
 function panels() {
   const found = [
     ...built.matchAll(
-      /<div class="code-panel-head"><span>([^<]*)<\/span><\/div>\s*<pre><code>([\s\S]*?)<\/code><\/pre>/g,
+      /<div class="code-panel-head">([\s\S]*?)<\/div>\s*<pre><code>([\s\S]*?)<\/code><\/pre>/g,
     ),
   ];
   assert.ok(found.length >= 5, "the page must carry the extracted code panels");
-  return found.map(([, caption, code]) => ({ caption, code: unescape(code) }));
+  return found.map(([, head, code]) => ({
+    caption: head.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim(),
+    code: unescape(code),
+  }));
 }
 
 /** The file a panel's caption names, as a repo-relative path. */
@@ -650,7 +659,14 @@ test("the region table states what the authority resolves, not what the page say
     const at = table.indexOf(`<code>${id}</code>`);
     assert.ok(at > 0, `${id} has no row`);
     const row = table.slice(at, table.indexOf('<div class="disp-row"', at + 1) >>> 0 || undefined);
-    const cells = [...row.matchAll(/<div class="disp-cell">([^<]*)</g)].map((m) => m[1].trim());
+    // `disp-cell` now optionally carries `data-i18n`: the middle cell is a
+    // sentence and goes through the seam, the two role cells are "yes"/"—" and
+    // do not. The attribute is therefore matched as optional rather than the
+    // cells being read some other way — what this test is about is the two role
+    // columns, and they are still the last two cells either way.
+    const cells = [...row.matchAll(/<div class="disp-cell"[^>]*>([^<]*)</g)].map((m) =>
+      m[1].trim(),
+    );
     assert.equal(cells.length, 3, `${id}'s row has ${cells.length} cells, not 3`);
     // The last two cells are the two reading roles, in that order.
     assert.equal(cells[1] === "yes", readonly.has(id), `${id}'s readonly cell disagrees`);
@@ -659,4 +675,59 @@ test("the region table states what the authority resolves, not what the page say
   // `readonly` has no ribbon and no band, on the page as in the authority.
   assert.equal(readonly.has("ribbon"), false);
   assert.ok(regions.filter((id) => id.startsWith("band.")).every((id) => !readonly.has(id)));
+});
+
+// ---- The localisation seam, inside the generated regions ---------------------
+
+test("every authored clause in a generated region carries the key of the thing it describes", () => {
+  // `109` HF-198 routed the site and deliberately left these two pages' generated
+  // regions out, because hand-editing them would be undone by the next run. They
+  // go through the seam now, and this is what stops the NEXT capability, region,
+  // event or refusal code shipping unrouted — the `no_unrouted_strings` ceiling
+  // would also catch it, as a number one higher than expected; this says which
+  // one and why.
+  //
+  // Read from the GENERATED pages, both of them, because the whole point is that
+  // the generator emits the attribute rather than a person remembering to.
+  const playground = read(join(WEBAPP, "playground.page.html"));
+  const missing = [];
+  const wants = (source, where, key, what) => {
+    if (!source.includes(`data-i18n="${key}"`)) missing.push(`${where}: ${what} (${key})`);
+  };
+
+  for (const capability of CAPABILITIES) {
+    const key = `site.capability.${capability}`;
+    // The SAME key on both pages: `MEANINGS` is the guide's "What it is" column
+    // and the playground's switch description, and two keys for one sentence is
+    // how a table and a control come to disagree about what `autosave` is.
+    wants(page, "embedding", key, `the ${capability} capability's clause`);
+    wants(playground, "playground", key, `the ${capability} switch's clause`);
+  }
+  for (const id of REGIONS) {
+    const key = `site.region.${id.replaceAll(".", "-")}`;
+    wants(page, "embedding", key, `the ${id} region's clause`);
+    wants(playground, "playground", key, `the ${id} switch's clause`);
+  }
+  for (const event of HOST_EVENTS) {
+    wants(page, "embedding", `site.event.${event.name}`, `when ${event.name} fires`);
+  }
+  for (const code of REFUSAL_CODES) {
+    wants(page, "embedding", `site.refusal.${code}.meaning`, `what ${code} means`);
+    wants(page, "embedding", `site.refusal.${code}.decidedBy`, `who decides ${code}`);
+  }
+  for (const role of ROLES) {
+    wants(playground, "playground", `site.role.${role}.is`, `what the ${role} role is`);
+  }
+  assert.deepEqual(missing, []);
+
+  // And the API's own vocabulary is NOT routed, which is the other half: a host
+  // types these into a URL, and a translated capability name names nothing.
+  for (const capability of CAPABILITIES) {
+    assert.ok(
+      playground.includes(
+        `<label class="pg-toggle-name" for="pg-cap-${capability}">${capability}</label>`,
+      ),
+      `the ${capability} switch's NAME should stay the API's own word`,
+    );
+  }
 });

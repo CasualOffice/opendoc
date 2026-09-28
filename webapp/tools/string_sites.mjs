@@ -190,7 +190,14 @@ export function scanMarkup(source, { exemptCode = true } = {}) {
     if (inCode(tag.index)) continue;
     const routed = /\bdata-i18n(-[a-z]+)?=/.test(attributes);
     for (const attribute of HUMAN_ATTRIBUTES) {
-      const match = attributes.match(new RegExp(`\\b${attribute}="([^"]*)"`));
+      // `(?<![-\w])` and not `\b`: `-` is a word boundary, so `\btitle="` also
+      // matches inside `data-frame-title="…"` — and `data-*` is machine-facing
+      // by this file's own rule at the top. The playground's stage carries the
+      // frame's title as `data-frame-title` for its script to apply, and it was
+      // being counted as an unrouted `title` attribute that no amount of routing
+      // could remove. `tools/build-locale.mjs` records the identical trap in its
+      // own extractor, which is where this fix comes from.
+      const match = attributes.match(new RegExp(`(?<![-\\w])${attribute}="([^"]*)"`));
       if (!match || !isProse(match[1])) continue;
       if (routed && new RegExp(`data-i18n-${attribute.replace("aria-", "")}=`).test(attributes)) {
         continue;
