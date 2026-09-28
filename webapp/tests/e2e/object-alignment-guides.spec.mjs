@@ -257,3 +257,59 @@ test("a crop drag says what size it is keeping", async ({ page, consoleErrors })
   await page.keyboard.press("Escape");
   expect(consoleErrors).toEqual([]);
 });
+
+test.describe("with a finger", () => {
+  // `hasTouch` makes Chromium report a coarse primary pointer, which is what
+  // puts the page on the touch path. Desktop width, because the question is the
+  // gesture and not the layout.
+  test.use({ hasTouch: true });
+
+  test("dragging a floating image with a touch pointer MOVES it, and does not scroll", async ({
+    page,
+    consoleErrors,
+  }) => {
+    await gotoFloat(page);
+    await selectAt(page, FLOAT_POS);
+
+    const before = await outline(page);
+    const scrollBefore = await page.evaluate(() => document.getElementById("viewport").scrollTop);
+
+    // Playwright's touchscreen has no drag primitive, so the pointer events a
+    // touch produces are driven directly — with `pointerType: "touch"`, which
+    // is the thing the fix has to survive. Before pointer capture, these left
+    // the gesture to the browser's own scroll and the image never moved.
+    await page.evaluate(
+      ([x, y, dx, dy]) => {
+        const target = document.elementFromPoint(x, y);
+        const fire = (type, cx, cy) =>
+          target.dispatchEvent(
+            new PointerEvent(type, {
+              pointerId: 1,
+              pointerType: "touch",
+              isPrimary: true,
+              clientX: cx,
+              clientY: cy,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        fire("pointerdown", x, y);
+        for (let step = 1; step <= 10; step += 1) {
+          fire("pointermove", x + (dx * step) / 10, y + (dy * step) / 10);
+        }
+        fire("pointerup", x + dx, y + dy);
+      },
+      [before.x + before.w / 2, before.y + before.h / 2, 130, 0],
+    );
+    await page.waitForTimeout(400);
+
+    // THE GUARANTEE: the image is further right in the laid-out document, and
+    // the view did not scroll in its place.
+    const after = await outline(page);
+    expect(after.x - before.x).toBeGreaterThan(60);
+    const scrollAfter = await page.evaluate(() => document.getElementById("viewport").scrollTop);
+    expect(scrollAfter).toBe(scrollBefore);
+
+    expect(consoleErrors).toEqual([]);
+  });
+});
