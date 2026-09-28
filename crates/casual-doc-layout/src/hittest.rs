@@ -193,6 +193,60 @@ impl<'a> LineBox<'a> {
     }
 }
 
+/// One boundary of a table's grid, in page-local twips — the geometry a
+/// pointer-driven resize gesture needs and nothing more.
+///
+/// `index` is the grid position **on the leading side** of the boundary: for a
+/// column edge it is the column whose trailing border this is, for a row edge the
+/// row whose bottom border this is. `outer` marks the table's own trailing edge
+/// (the right-most column, the bottom-most row painted on this page), which
+/// resizes the table rather than moving a border between two neighbours.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TableBoundary {
+    /// Grid position on the leading side of the boundary.
+    pub index: u32,
+    /// Page-local x of the boundary line.
+    pub x: Twip,
+    /// Page-local y of the boundary line.
+    pub y: Twip,
+    /// Extent of the boundary along its own axis — height for a column edge,
+    /// width for a row edge.
+    pub length: Twip,
+    /// Thickness of the band the boundary closes: the column's width for a
+    /// column edge, the row's painted height for a row edge. The row axis needs
+    /// it because setting a row height takes an absolute height, not a delta.
+    pub extent: Twip,
+    /// Whether this is the table's own trailing edge rather than an internal
+    /// border between two neighbours.
+    pub outer: bool,
+    /// A paragraph inside the band, on this page — the anchor every table facade
+    /// call takes. Reported here so a gesture needs no second query to name the
+    /// row or column it grabbed.
+    pub anchor: NodeId,
+}
+
+/// Every boundary of one table as painted on one page.
+///
+/// A table that crosses a page break appears once per page it occupies, carrying
+/// the boundaries visible there — the same per-page-per-column shape the existing
+/// column-handle query already produced, and the shape a hover router needs,
+/// because a hover is a question about one page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableChrome {
+    /// The table node.
+    pub table: NodeId,
+    /// The table's page-local bounding box on this page.
+    pub rect: Rect,
+    /// Physical columns in the widest row painted here.
+    pub columns: u32,
+    /// Rows of this table painted on this page.
+    pub rows: u32,
+    /// Column boundaries, leading to trailing; the last one is `outer`.
+    pub column_edges: Vec<TableBoundary>,
+    /// Row boundaries, top to bottom; the last one is `outer`.
+    pub row_edges: Vec<TableBoundary>,
+}
+
 /// A read-only view over a [`PaginatedLayout`] that maps between screen geometry
 /// and model positions.
 ///
@@ -464,6 +518,7 @@ impl<'a> LayoutSnapshot<'a> {
     pub fn cell_rect(&self, node: NodeId) -> Option<(u32, Rect)> {
         for page in &self.layout.pages {
             for placed in &page.placed {
+                note_fragment_visit();
                 if let Some(rect) = find_cell_rect(
                     &placed.fragment,
                     placed.rect.origin.x,
@@ -475,6 +530,48 @@ impl<'a> LayoutSnapshot<'a> {
             }
         }
         None
+    }
+
+    /// Every table painted on page `page_number` (1-based), with its column and
+    /// row boundaries in page-local twips — the geometry a pointer-driven table
+    /// chrome layer resolves a hover against.
+    ///
+    /// **Complexity: O(fragments on `page_number`).** One walk of that page's
+    /// placed-fragment tree yields every boundary of every table on it,
+    /// including nested tables, which is the whole point of the query: the
+    /// per-cell route it replaces asked [`Self::cell_rect`] once per
+    /// (row, column) pair and each of those calls scans every placed fragment on
+    /// every page, so painting an R×C table's boundaries cost `R × (C−1)` whole
+    /// layout scans — quadratic in the table's size, inside a repaint that runs
+    /// on every caret move. A hover fires far more often than a caret move, so
+    /// the quadratic had to go before any hover-driven chrome could be built on
+    /// it (`docs/141` §4.1.1, `109` HF-222).
+    ///
+    /// This reads the LAYOUT only and never the model, so nothing here is
+    /// O(document). Whether a table is *regular* — which decides whether a
+    /// column boundary may be dragged — is a model question and is answered by
+    /// the caller.
+    ///
+    /// Boundaries are emitted only where the geometry exists on this page: a
+    /// table continued from the previous page reports its rows here and its
+    /// columns spanning only the part painted here, and a row whose boundary is
+    /// the page break is still reported (as the table's `outer` bottom edge on
+    /// this page) because that is where the border is drawn.
+    #[must_use]
+    pub fn table_chrome_on_page(&self, page_number: u32) -> Vec<TableChrome> {
+        let Some(page) = self.layout.pages.iter().find(|p| p.number == page_number) else {
+            return Vec::new();
+        };
+        let mut rows: Vec<ChromeRow> = Vec::new();
+        for placed in &page.placed {
+            collect_chrome_rows(
+                &placed.fragment,
+                placed.rect.origin.x,
+                placed.rect.origin.y,
+                &mut rows,
+            );
+        }
+        chrome_from_rows(rows)
     }
 
     /// One rectangle per line-fragment the `range` covers, in page-local twips,
@@ -985,12 +1082,231 @@ impl<'a> LayoutSnapshot<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Table chrome geometry (docs/141 D-1)
+// ---------------------------------------------------------------------------
+
+/// Fragment visits made by the geometry walks in this module.
+///
+/// Compiled only for this crate's own tests, where it is the metric the
+/// complexity guard measures: `SKILL.md` §8 requires a *doubling* assertion
+/// rather than a millisecond threshold, and "how many fragments did the walk
+/// look at" is the quantity that doubles for a linear walk and quadruples for a
+/// per-cell one. Production builds get an empty function and pay nothing.
+#[cfg(test)]
+thread_local! {
+    static FRAGMENT_VISITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_fragment_visit() {
+    FRAGMENT_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_fragment_visit() {}
+
+/// Zeroes the test-only fragment-visit counter.
+#[cfg(test)]
+fn reset_fragment_visits() {
+    FRAGMENT_VISITS.with(|visits| visits.set(0));
+}
+
+/// Reads the test-only fragment-visit counter.
+#[cfg(test)]
+fn fragment_visits() -> u64 {
+    FRAGMENT_VISITS.with(core::cell::Cell::get)
+}
+
+/// One table row located on a page, flattened out of the fragment tree: the
+/// intermediate the chrome query groups into tables.
+struct ChromeRow {
+    table: NodeId,
+    left: Twip,
+    top: Twip,
+    height: Twip,
+    cells: Vec<ChromeCell>,
+}
+
+/// One cell's grid slot within a [`ChromeRow`], in page-local twips.
+struct ChromeCell {
+    x: Twip,
+    width: Twip,
+    anchor: Option<NodeId>,
+}
+
+/// The first paragraph node inside `blocks`, recursing into nested table cells —
+/// the anchor a table facade call takes to name the row or column it acts on.
+fn first_paragraph_in_blocks(blocks: &[BlockFragment]) -> Option<NodeId> {
+    for block in blocks {
+        match block {
+            BlockFragment::Paragraph { id, .. } => return Some(*id),
+            BlockFragment::TableRow { cells, .. } => {
+                for cell in cells {
+                    if let Some(id) = first_paragraph_in_blocks(&cell.blocks) {
+                        return Some(id);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Appends every table row in `fragment` (placed page-locally at `left`, `top`)
+/// to `out`, recursing into cells so a nested table is reported beside its host.
+///
+/// Mirrors `find_cell_rect`/`collect_fragment`'s cell geometry exactly — cell box
+/// = `left + cell.x` by `cell.width`, spanning the row or merge height — so the
+/// boundaries land on the borders the raster drew.
+fn collect_chrome_rows(fragment: &BlockFragment, left: Twip, top: Twip, out: &mut Vec<ChromeRow>) {
+    note_fragment_visit();
+    let BlockFragment::TableRow { table, cells, .. } = fragment else {
+        return;
+    };
+    let row_height = fragment.height();
+    let mut row = ChromeRow {
+        table: *table,
+        left,
+        top,
+        height: row_height,
+        cells: Vec::with_capacity(cells.len()),
+    };
+    for cell in cells {
+        let cell_x = left + cell.x;
+        row.cells.push(ChromeCell {
+            x: cell_x,
+            width: cell.width,
+            anchor: first_paragraph_in_blocks(&cell.blocks),
+        });
+        // A nested table's rows belong to their own table and are collected at
+        // the inner content origin, which is the same origin `find_cell_rect`
+        // recurses from.
+        let content_left = cell_x + cell.margins.start;
+        let cell_top = top + cell.cell_spacing.top;
+        let mut content_top = cell_top + cell.content_y_offset(cell.box_height(row_height));
+        for block in &cell.blocks {
+            collect_chrome_rows(block, content_left, content_top, out);
+            content_top = content_top + block.height();
+        }
+    }
+    out.push(row);
+}
+
+/// Groups flattened rows into one [`TableChrome`] per table, in the order the
+/// tables were first met on the page, and derives their boundaries.
+fn chrome_from_rows(rows: Vec<ChromeRow>) -> Vec<TableChrome> {
+    let mut order: Vec<NodeId> = Vec::new();
+    let mut grouped: Vec<Vec<ChromeRow>> = Vec::new();
+    for row in rows {
+        match order.iter().position(|t| *t == row.table) {
+            Some(i) => grouped[i].push(row),
+            None => {
+                order.push(row.table);
+                grouped.push(vec![row]);
+            }
+        }
+    }
+    order
+        .into_iter()
+        .zip(grouped)
+        .filter_map(|(table, rows)| chrome_for_table(table, &rows))
+        .collect()
+}
+
+/// The boundaries of one table from the rows of it painted on one page.
+fn chrome_for_table(table: NodeId, rows: &[ChromeRow]) -> Option<TableChrome> {
+    let first = rows.first()?;
+    let columns = rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
+    if columns == 0 {
+        return None;
+    }
+    let top = first.top;
+    let bottom = rows
+        .last()
+        .map_or(top, |last| last.top + last.height)
+        .max(top);
+    let left = rows
+        .iter()
+        .filter_map(|r| r.cells.first().map(|c| c.x))
+        .min()
+        .unwrap_or(first.left);
+    let right = rows
+        .iter()
+        .filter_map(|r| r.cells.last().map(|c| c.x + c.width))
+        .max()
+        .unwrap_or(left);
+    let height = Twip((bottom - top).raw().max(0));
+
+    // Row boundaries: one per painted row, at that row's bottom border. The last
+    // is the table's own bottom edge on this page.
+    let last_row = rows.len().saturating_sub(1);
+    let row_edges = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let anchor = row.cells.iter().find_map(|c| c.anchor)?;
+            Some(TableBoundary {
+                index: u32::try_from(i).unwrap_or(u32::MAX),
+                x: row.cells.first().map_or(row.left, |c| c.x),
+                y: row.top + row.height,
+                length: Twip(
+                    (row.cells.last().map_or(right, |c| c.x + c.width)
+                        - row.cells.first().map_or(left, |c| c.x))
+                    .raw()
+                    .max(0),
+                ),
+                extent: row.height,
+                outer: i == last_row,
+                anchor,
+            })
+        })
+        .collect();
+
+    // Column boundaries: one per grid column, at that column's trailing border,
+    // taken from the first painted row that reaches the column. The last is the
+    // table's own trailing edge, which resizes the table rather than a border.
+    let column_edges = (0..columns)
+        .filter_map(|col| {
+            let (cell, _) = rows
+                .iter()
+                .find_map(|row| row.cells.get(col).map(|cell| (cell, row)))?;
+            Some(TableBoundary {
+                index: u32::try_from(col).unwrap_or(u32::MAX),
+                x: cell.x + cell.width,
+                y: top,
+                length: height,
+                extent: cell.width,
+                outer: col + 1 == columns,
+                anchor: cell.anchor.or_else(|| {
+                    rows.iter()
+                        .find_map(|row| row.cells.get(col).and_then(|c| c.anchor))
+                })?,
+            })
+        })
+        .collect();
+
+    Some(TableChrome {
+        table,
+        rect: Rect::new(
+            Point::new(left, top),
+            Size::new(Twip((right - left).raw().max(0)), height),
+        ),
+        columns: u32::try_from(columns).unwrap_or(u32::MAX),
+        rows: u32::try_from(rows.len()).unwrap_or(u32::MAX),
+        column_edges,
+        row_edges,
+    })
+}
+
 /// The page-local border box of the innermost table cell containing paragraph
 /// `node`, if `fragment` (placed at `left`, `top`) is or holds the table row that
 /// owns it. Mirrors `collect_fragment`'s cell geometry (cell x-box = `cell.x` +
 /// `cell.width`, spanning the row/merge height); nested tables recurse first so the
 /// innermost cell wins.
 fn find_cell_rect(fragment: &BlockFragment, left: Twip, top: Twip, node: NodeId) -> Option<Rect> {
+    note_fragment_visit();
     let BlockFragment::TableRow { cells, .. } = fragment else {
         return None;
     };
