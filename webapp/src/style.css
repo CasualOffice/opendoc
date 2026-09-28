@@ -6895,6 +6895,10 @@ body.is-format-painting .page-wrap * {
 .object-wrap-btn {
   border: 1px solid var(--line);
   border-radius: 6px;
+  /* 24px is the WCAG 2.5.8 target minimum. These chips were 21 tall before "In
+     line" joined them as a seventh; a row that is the primary way to change how
+     an image sits has to be tappable. */
+  min-height: 24px;
   padding: 3px 8px;
   background: transparent;
   color: var(--ink);
