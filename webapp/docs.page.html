@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Documentation — OpenDoc</title>
+    <title data-i18n="site.docs.documentationOpendoc">Documentation — OpenDoc</title>
     <meta
       name="description"
       content="Documentation for OpenDoc, the open-source Rust DOCX engine and embeddable WebAssembly editor: embedding, import, dispositions, architecture, and the reference docs."
@@ -75,60 +75,60 @@
     <!-- @include site-header active=docs -->
 
     <main class="doc-reader">
-      <aside class="doc-rail" aria-label="Documentation sections">
+      <aside class="doc-rail" aria-label="Documentation sections" data-i18n-label="site.docs.documentationSections">
         <div class="doc-rail-inner">
-          <p class="doc-rail-title">Guides</p>
+          <p class="doc-rail-title" data-i18n="site.docs.guides">Guides</p>
           <ul class="doc-rail-list">
             <li>
-              <a class="is-active" href="./reference/architecture.html">Architecture</a>
+              <a class="is-active" href="./reference/architecture.html" data-i18n="site.docs.architecture">Architecture</a>
             </li>
-            <li><a href="./embedding.html">Embed the editor</a></li>
+            <li><a href="./embedding.html" data-i18n="site.docs.embedEditor">Embed the editor</a></li>
             <li>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md">Embedding the engine</a>
-            </li>
-            <li>
-              <a href="./reference/sdk-api-spec.html">SDK API specification</a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md" data-i18n="site.docs.embeddingEngine">Embedding the engine</a>
             </li>
             <li>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/40-FONT-MANAGEMENT-DESIGN.md">Fonts &amp; coverage</a>
+              <a href="./reference/sdk-api-spec.html" data-i18n="site.docs.sdkApiSpecification">SDK API specification</a>
             </li>
             <li>
-              <a href="./reference/docx-package-reader.html">Package limits</a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/40-FONT-MANAGEMENT-DESIGN.md" data-i18n="site.docs.fontsAmpCoverage">Fonts &amp; coverage</a>
+            </li>
+            <li>
+              <a href="./reference/docx-package-reader.html" data-i18n="site.docs.packageLimits">Package limits</a>
             </li>
           </ul>
 
-          <p class="doc-rail-title">Reference</p>
+          <p class="doc-rail-title" data-i18n="site.docs.reference">Reference</p>
           <ul class="doc-rail-list">
-            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/crates">Crates</a></li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/crates" data-i18n="site.docs.crates">Crates</a></li>
             <li>
-              <a href="./reference/command-registry.html">Command registry</a>
+              <a href="./reference/command-registry.html" data-i18n="site.docs.commandRegistry">Command registry</a>
             </li>
             <li>
-              <a href="./reference/error-code-registry.html">Error registry</a>
+              <a href="./reference/error-code-registry.html" data-i18n="site.docs.errorRegistry">Error registry</a>
             </li>
             <li>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix</a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md" data-i18n="site.docs.supportMatrix">Support matrix</a>
             </li>
             <li>
-              <a href="./reference/contributing.html">Contributing</a>
+              <a href="./reference/contributing.html" data-i18n="site.docs.contributing">Contributing</a>
             </li>
           </ul>
         </div>
       </aside>
 
       <article class="doc-article">
-        <p class="doc-eyebrow">Guides · Architecture</p>
-        <h1 id="import-a-document">Import a document</h1>
-        <p class="doc-lede">
+        <p class="doc-eyebrow" data-i18n="site.docs.guidesArchitecture">Guides · Architecture</p>
+        <h1 id="import-a-document" data-i18n="site.docs.importDocument">Import a document</h1>
+        <p class="doc-lede" data-i18n="site.docs.openingPackageAdmitsUnder">
           Opening a package admits it under explicit entry, path, size, and expansion
           limits, then produces a normalized model plus a compatibility report. Nothing is
           silently discarded.
         </p>
 
-        <div class="doc-langtabs" role="list" aria-label="Available targets">
-          <span class="tab is-active" role="listitem">Rust</span>
-          <span class="tab" role="listitem">WebAssembly</span>
-          <span class="tab" role="listitem">Headless</span>
+        <div class="doc-langtabs" role="list" aria-label="Available targets" data-i18n-label="site.docs.availableTargets">
+          <span class="tab is-active" role="listitem" data-i18n="site.docs.rust">Rust</span>
+          <span class="tab" role="listitem" data-i18n="site.docs.webassembly">WebAssembly</span>
+          <span class="tab" role="listitem" data-i18n="site.docs.headless">Headless</span>
         </div>
         <div class="code-panel">
           <div class="code-panel-head"><span>main.rs</span></div>
@@ -145,75 +145,75 @@
 <span class="cmt">// `outcome.document` is the normalized model.</span>
 <span class="cmt">// Anything unmodeled lands in the compatibility report, not the void.</span></code></pre>
         </div>
-        <p class="doc-body">
+        <p class="doc-body" data-i18n="site.docs.admissionLimitsPackageReader">
           The admission limits and the package reader they guard are specified in
-          <a href="./reference/docx-package-reader.html">docs/28 — the DOCX package reader</a>;
+          <a href="./reference/docx-package-reader.html" data-i18n="site.docs.docs28DocxPackage">docs/28 — the DOCX package reader</a>;
           the host-facing import and transaction surfaces live in
-          <a href="./reference/sdk-api-spec.html">docs/05 — the SDK API spec</a>.
+          <a href="./reference/sdk-api-spec.html" data-i18n="site.docs.docs05SdkApi">docs/05 — the SDK API spec</a>.
         </p>
 
-        <h2 id="dispositions" class="doc-h2">Dispositions</h2>
-        <p class="doc-body">
+        <h2 id="dispositions" class="doc-h2" data-i18n="site.docs.dispositions">Dispositions</h2>
+        <p class="doc-body" data-i18n="site.docs.everyConstructImporterMeets">
           Every construct the importer meets gets a disposition on two axes — whether the
           model represents it, and whether the original bytes are retained for write-back.
           The full rules are the
-          <a href="./reference/disposition-taxonomy.html">disposition taxonomy</a>.
+          <a href="./reference/disposition-taxonomy.html" data-i18n="site.docs.dispositionTaxonomy">disposition taxonomy</a>.
         </p>
         <div class="disp-table">
           <div class="disp-row head">
-            <div>Disposition</div>
-            <div>Retention</div>
-            <div>Meaning</div>
+            <div data-i18n="site.docs.disposition">Disposition</div>
+            <div data-i18n="site.docs.retention">Retention</div>
+            <div data-i18n="site.docs.meaning">Meaning</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name">Modeled</div>
-            <div class="disp-cell">Semantic</div>
-            <div class="disp-cell">Represented as a typed model value and re-emitted by the semantic writer.</div>
+            <div class="disp-name" data-i18n="site.docs.modeled">Modeled</div>
+            <div class="disp-cell" data-i18n="site.docs.semantic">Semantic</div>
+            <div class="disp-cell" data-i18n="site.docs.representedTypedModelValue">Represented as a typed model value and re-emitted by the semantic writer.</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name">Preserved</div>
-            <div class="disp-cell">Verbatim bytes</div>
-            <div class="disp-cell">Not yet modeled, but round-tripped unchanged so nothing is lost on save.</div>
+            <div class="disp-name" data-i18n="site.docs.preserved">Preserved</div>
+            <div class="disp-cell" data-i18n="site.docs.verbatimBytes">Verbatim bytes</div>
+            <div class="disp-cell" data-i18n="site.docs.notYetModeledBut">Not yet modeled, but round-tripped unchanged so nothing is lost on save.</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name">Reported</div>
-            <div class="disp-cell">Diagnostic</div>
-            <div class="disp-cell">Recognized and surfaced in the compatibility report for the host to act on.</div>
+            <div class="disp-name" data-i18n="site.docs.reported">Reported</div>
+            <div class="disp-cell" data-i18n="site.docs.diagnostic">Diagnostic</div>
+            <div class="disp-cell" data-i18n="site.docs.recognizedSurfacedCompatibilityRep">Recognized and surfaced in the compatibility report for the host to act on.</div>
           </div>
           <div class="disp-row">
-            <div class="disp-name">Rejected</div>
+            <div class="disp-name" data-i18n="site.docs.rejected">Rejected</div>
             <div class="disp-cell">None</div>
-            <div class="disp-cell">Refused at admission — exceeds an explicit entry, size, or expansion limit.</div>
+            <div class="disp-cell" data-i18n="site.docs.refusedAdmissionExceedsExplicit">Refused at admission — exceeds an explicit entry, size, or expansion limit.</div>
           </div>
         </div>
 
         <div id="determinism" class="doc-callout">
-          <p class="doc-callout-label">Determinism</p>
-          <p>
+          <p class="doc-callout-label" data-i18n="site.docs.determinism">Determinism</p>
+          <p data-i18n="site.docs.sameInputFontsEngine">
             The same input, fonts, and engine version produce the same model, layout, and
             bytes — which is what makes rendering regression-testable.
           </p>
         </div>
 
-        <nav class="doc-pager" aria-label="Related guides">
+        <nav class="doc-pager" aria-label="Related guides" data-i18n-label="site.docs.relatedGuides">
           <a class="prev" href="./reference/docx-package-reader.html">
-            <div class="doc-pager-dir">← Previous</div>
-            <div class="doc-pager-title">Package limits</div>
+            <div class="doc-pager-dir" data-i18n="site.docs.previous">← Previous</div>
+            <div class="doc-pager-title" data-i18n="site.docs.packageLimits">Package limits</div>
           </a>
           <a class="next" href="./reference/sdk-api-spec.html">
-            <div class="doc-pager-dir">Next →</div>
-            <div class="doc-pager-title">SDK API specification</div>
+            <div class="doc-pager-dir" data-i18n="site.docs.next">Next →</div>
+            <div class="doc-pager-title" data-i18n="site.docs.sdkApiSpecification">SDK API specification</div>
           </a>
         </nav>
       </article>
 
-      <aside class="doc-toc" aria-label="On this page">
+      <aside class="doc-toc" aria-label="On this page" data-i18n-label="site.docs.page">
         <div class="doc-toc-inner">
-          <p class="doc-toc-title">On this page</p>
+          <p class="doc-toc-title" data-i18n="site.docs.page">On this page</p>
           <ul class="doc-toc-list">
-            <li><a href="#import-a-document" aria-current="true">Import a document</a></li>
-            <li><a href="#dispositions">Dispositions</a></li>
-            <li><a href="#determinism">Determinism</a></li>
+            <li><a href="#import-a-document" aria-current="true" data-i18n="site.docs.importDocument">Import a document</a></li>
+            <li><a href="#dispositions" data-i18n="site.docs.dispositions">Dispositions</a></li>
+            <li><a href="#determinism" data-i18n="site.docs.determinism">Determinism</a></li>
           </ul>
         </div>
       </aside>

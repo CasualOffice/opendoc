@@ -1,21 +1,35 @@
 <header class="site-header">
   <div class="site-header-inner">
-    <a class="brand" href="./" aria-label="OpenDoc home">
+    <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
-      <span class="brand-badge">Pre-release</span>
+      <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
     </a>
-    <nav class="site-nav" aria-label="Primary navigation">
-      <a href="./" data-nav="overview">Overview</a>
-      <a href="./editor.html" data-nav="editor">Editor</a>
-      <a href="./playground.html" data-nav="playground">Playground</a>
-      <a href="./embedding.html" data-nav="embedding">Embedding</a>
-      <a href="./docs.html" data-nav="docs">Docs</a>
-      <a href="./fidelity.html" data-nav="fidelity">Fidelity</a>
+    <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+      <a href="./" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+      <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+      <a href="./playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
+      <a href="./embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+      <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
+      <a href="./fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
     </nav>
     <div class="site-header-actions">
-      <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
-      <a class="header-cta" href="./editor.html">Open the editor</a>
+      <!-- The language control. The markup carries only the automatic entry —
+           the one option with words in it, so the one that goes through the seam
+           like every other label here. The nineteen languages are appended by
+           `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+           noun that must never be translated and so does not belong in a
+           catalogue at all. The control stays `hidden` until that script has
+           run: a picker offering one choice is a dead control (docs/99 §10), and
+           a site whose scripts did not run is English with nothing to choose. -->
+      <label class="site-lang" hidden>
+        <span class="site-lang-icon ms" aria-hidden="true">language</span>
+        <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+          <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+        </select>
+      </label>
+      <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+      <a class="header-cta" href="./editor.html" data-i18n="site.header.openEditor">Open the editor</a>
     </div>
   </div>
 </header>

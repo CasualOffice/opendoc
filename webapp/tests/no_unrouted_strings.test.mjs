@@ -12,39 +12,34 @@
 // Lowering a ceiling is the point of the exercise. Raising one is refused here
 // rather than in review.
 //
-// WITH ONE EXCEPTION, ADDED DELIBERATELY AND BOUNDED BY A GUARD. A ratchet only
-// means "route the string" where a seam exists to route it through. The editor
-// has one: `t()` and `data-i18n`, nineteen catalogues behind them. The SITE
-// templates have none — zero `data-i18n` attributes across all four, no
-// per-language pages, no `hreflang` — so the only way to lower one of their
-// numbers is to DELETE English. Every site ceiling sat exactly at its
-// measurement, which made the rule "the site may never gain a sentence", and
-// `docs/126` asks for site documentation as part of every SDK phase. Those two
-// cannot both hold.
+// THE EXCEPTION THAT USED TO LIVE HERE HAS EVAPORATED, WHICH IS THE POINT.
 //
-// So the table below is read two ways. A file with a seam is a RATCHET: its
-// count may never rise, and routing a string is how it falls. A file with NO
-// seam carries a DECLARED MEASUREMENT: it must equal the number here exactly, so
-// a page that gains English says so in the same commit and a page that loses it
-// must come down. `SEAMLESS` is not an assertion of convenience either — a test
-// below proves each of those files really has no seam, with `editor.html` as the
-// control, so the day site localisation lands the pages fall back under the
-// ratchet automatically and this exception evaporates.
+// For as long as the site had no seam, this file carried a deliberate exception:
+// a ratchet only means "route the string" where there is something to route it
+// through, and the `*.page.html` templates and the shared partials had zero
+// `data-i18n` attributes, no per-language pages and no `hreflang`. Their numbers
+// were therefore DECLARED MEASUREMENTS rather than ceilings — equality in both
+// directions — because the only way to lower one was to delete English, and
+// `docs/126` asks for site documentation as part of every SDK phase. A `SEAMLESS`
+// set held those files, a test proved each one really had no seam with
+// `editor.html` as the control, and the note said that the day site localisation
+// landed those assertions would fail and the exception would disappear without
+// anybody having to remember it.
 //
-// What the exception costs is visibility, not silence: the site's debt is a
-// published number that moves in a diff. What it buys is that documenting a
-// shipped capability is no longer refused by a translation gate. The work that
-// would let these numbers fall is per-language pages and `hreflang`, which is its
-// own piece of work and is filed as its own row. It is deliberately NOT cited by
-// id here: this comment first named HF-190, an id that had been claimed by an
-// unrelated defect hours earlier (accept/reject at the caret) while several lanes
-// were proposing ids in parallel. A comment pointing at the wrong row is worse
-// than one pointing at none, because the reader finds a real row and believes it.
-// Search the queue for the site localisation seam instead.
+// That day is `109` HF-198. The site now goes through the SAME seam the editor
+// does — `data-i18n` in the markup with the English beside the key,
+// `tools/build-locale.mjs` extracting it into the same `locales/en.json`,
+// `i18n.mjs` resolving it and `localize.mjs` applying it, driven on the site by
+// `src/site_locale.mjs`. So every file below is a RATCHET again, `SEAMLESS` is
+// gone, and the test that bounded it has been turned around: it now asserts that
+// every site template and partial HAS the seam, which is what stops the next page
+// shipping without one.
+//
+// The numbers that moved, and why, are in the table.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const { exemptedSites, scanMarkup, scanScript, scanTree, totalSites, unroutableStrings } =
@@ -61,108 +56,54 @@ const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
  *  `en_strings.mjs` one surface at a time. */
 const CEILINGS = new Map([
   ["editor.html", 16],
-  // ---- The SITE (`109` HF-190) --------------------------------------------
-  // These are not new debt. They are debt that was invisible: `scanTree` read
-  // `editor.html` and `src/*.{js,mjs}` and nothing else, so every `*.page.html`
-  // and every shared partial sat outside the gate entirely — about five hundred
-  // unrouted strings, against an `editor.html` ceiling of sixteen, with no number
-  // anywhere that would have said so.
+  // ---- The SITE (`109` HF-190, then HF-198) -------------------------------
+  // HF-190 made the site's debt visible: `scanTree` read `editor.html` and
+  // `src/*.{js,mjs}` and nothing else, so every `*.page.html` and every shared
+  // partial sat outside the gate entirely — about five hundred unrouted strings,
+  // against an `editor.html` ceiling of sixteen, with no number anywhere that
+  // would have said so. They were measured, declared, and left, because there was
+  // no seam to route them through.
   //
-  // MEASURED, each one, by running this scanner over the file. Nothing here is
-  // arithmetic: a report handed over approximate figures (embedding ~202, index
-  // ~159, fidelity ~84, docs ~56, ~501 site-wide) and every one of them is off by
-  // a little, which is exactly why the rule in this file is that a ceiling is a
-  // measurement and never a calculation. The real numbers are below; part of the
-  // gap is the `<pre><code>` exemption landing with them.
+  // HF-198 built the seam, and these are what the same scanner measures now.
+  // MEASURED, every one, by running it over the routed file — nothing here is
+  // arithmetic, which is the rule that caught a report's approximate figures the
+  // first time round.
   //
-  // No translation work ships with these. The point is that the debt is a number
-  // in a diff. Note that the site is not localised in any other sense either — no
-  // per-language pages, no `hreflang` — which is why these six are DECLARED
-  // MEASUREMENTS rather than ceilings: see `SEAMLESS` and the header note.
-  ["docs.page.html", 54],
-  // 204 -> 297 with the host contract (`docs/126` phase 2). The page said "No
-  // command or event API", which is now false, and an understating page is false
-  // the same way an overstating one is (`docs/99` §9.6). What replaced it is a
-  // generated section: the two-transport call extracted from `embed_host_demo.js`,
-  // the origin policy from `parseOriginAllowlist`, the event table from
-  // `HOST_EVENTS`, the refusal table from `REFUSAL_CODES`, five more evidence rows
-  // and a honest new "does not do yet" list. MEASURED, not calculated, and the 93
-  // it adds are prose and generated table cells on a page with no seam to route
-  // them through — the exception the header note argues for. 49 of the 93 are file
-  // paths, flags and shell commands (`webapp/`, `--check`, `npm run test:unit`)
-  // that the scanner reads as prose; exempting that class the way `<pre><code>` is
-  // exempted would be a real improvement and is deliberately NOT bundled here,
-  // because it moves every number in this table and belongs to whoever owns the
-  // scanner next.
+  //   docs.page.html       54 -> 0
+  //   fidelity.page.html   84 -> 0
+  //   index.page.html     157 -> 0
+  //   _partials/site-footer.html  4 -> 0
+  //   _partials/site-header.html 12 -> 1
+  //   playground.page.html    109 -> 65
+  //   embedding.page.html     353 -> 193
   //
-  // 297 -> 310 when the Rust facade joined the contract: three evidence rows for
-  // `crates/casual-doc-sdk/src/host_parity.rs` (the only guard on that page a
-  // browser cannot run) and one more "does not do yet" item saying plainly that the
-  // crate declares this vocabulary and does not run the editor. Measured.
+  // Three pages and the footer are at ZERO: every sentence, heading, label,
+  // `title` and `aria-label` on them now carries a `data-i18n*` key whose English
+  // sits beside it in the markup, exactly as `editor.html` does.
   //
-  // 310 -> 349 with `docs/126` phase 3's white-labelling section: how a host renames
-  // the product, supplies a palette, chooses the chrome and reads what they
-  // installed, plus an eighteen-row region table and two generated code panels (the
-  // worked configuration, and a real refusal produced by running the validator).
-  // Two stale sections came DOWN with it — the "today's limit" callout that said a
-  // per-capability list was not accepted, and the one that said both reading roles
-  // got the editing chrome dimmed — because both had become false, and a page that
-  // understates is as wrong as one that overstates (`docs/99` §9.6). Measured.
-  // 349 -> 350: one row, generated. The region table on this page is built from
-  // `REGIONS` by `tools/build-embed-docs.mjs`, so adding the `history` region —
-  // the version-history timeline a host can withhold (`docs/139`, `docs/140`) —
-  // adds its one-line description here. Measured, and it is the generator's row
-  // rather than hand-written prose, which is why it is a single site.
-  // 350 -> 353 with the three-sentence "Try it first" callout that points at the
-  // configuration playground. Measured. A page nobody can get to is the
-  // reachability defect one level up (`docs/99` §9.4), so the two SDK pages link
-  // to each other and the guard in `playground.spec.mjs` asserts both directions.
-  // 353 -> 352 when the "No host capability list" gap bullet came out. It had
-  // stopped being true — `?can=` and `resolveCapabilities({ withhold })` already
-  // shipped, and `<opendoc-editor>` now takes `can` and `chrome` as attributes —
-  // and understating is as false as overstating (`docs/99` §9.6). Measured.
-  ["embedding.page.html", 352],
-  // The configuration playground (`docs/126`). MEASURED at 85, and it is worth
-  // saying what they are, because this is the largest single site addition since
-  // the table landed: about thirty of them are the GENERATED control rows — one
-  // clause per role, per capability and per region, written by
-  // `tools/build-embed-docs.mjs` from the same `MEANINGS` and `REGION_MEANINGS`
-  // tables the embedding guide's columns already use — and the rest is the page's
-  // own prose, its field labels and its two "does not do yet" lists. Adding a
-  // tenth capability moves this number by one with nobody editing the page, which
-  // is the point of generating the controls rather than typing them.
+  // The header's remaining ONE is the product name, split across `brand-name` /
+  // `brand-d` so the D can be styled. It is a proper noun, it is not translated in
+  // any language, and a host renames it through `brand.json` and `BRAND_STRINGS`
+  // (the override layer in `i18n.mjs`) rather than through a locale. Routing it
+  // would put OpenDoc in nineteen catalogues and invite nineteen translations of
+  // a word that has none.
   //
-  // The SCRIPT beside it, `src/playground.js`, carries ZERO and has no entry at
-  // all: every word it puts on screen comes out of the markup as a `data-`
-  // attribute, the same contract `embed_host_demo.js` holds, and
-  // `playground.test.mjs` asserts it with `scanScript`. That is the direction this
-  // table is for.
-  //
-  // 85 -> 109 when the page was rebuilt as a configurator (the owner's verdict on
-  // the first version: "configuration is seriously bad… UX is seriously bad").
-  // MEASURED, and the twenty-four are almost all facts rather than prose: fifteen
-  // are the derived pills on the five role cards ("6 of 9 capabilities", "18 of 19
-  // regions", the review mode), four are the numbers in the page head, and eight
-  // are the titles and counts of the groups the capability and region switches are
-  // folded into. Five 4-to-8-line essays came OUT of the control panel in the same
-  // pass — they are now one note for the selected role and four cards below the
-  // fold, which is why a page that reads shorter counts higher: a pill is one site
-  // and a paragraph is one site.
-  ["playground.page.html", 109],
-  ["fidelity.page.html", 84],
-  ["index.page.html", 157],
-  // The shared header and footer, counted where they are AUTHORED. The generated
-  // `*.html` pages inline them, so counting those would charge the same sixteen
-  // strings once per page and make one edit to a partial move four ceilings.
-  //
-  // The header measured 10 until Playground and Embedding joined the primary nav.
-  // Both pages had shipped with no nav entry of their own and borrowed `Docs` for
-  // their active state, so they answered 200 and could not be found from the site;
-  // `site_nav_reach.test.mjs` is the guard that fails the build when a page ships
-  // that way again. Two destinations are two more words here — the cheapest part
-  // of the fix.
-  ["_partials/site-footer.html", 4],
-  ["_partials/site-header.html", 12],
+  // What is left on the two SDK pages is the GENERATED regions — everything
+  // between `<!-- @generated NAME -->` and `<!-- @end NAME -->`, written by
+  // `tools/build-embed-docs.mjs` from `MEANINGS`, `REGION_MEANINGS`, `HOST_EVENTS`
+  // and `REFUSAL_CODES`. Routing those means giving the generator a key per
+  // capability, per region, per event and per refusal code and teaching it to emit
+  // `data-i18n`; it is real work, it belongs to whoever owns that generator, and
+  // it is deliberately NOT bundled here. Hand-editing the pages instead is not an
+  // option — `build-embed-docs --check` would fail the build, correctly. These two
+  // numbers are ceilings like every other row: they may fall, never rise.
+  ["docs.page.html", 0],
+  ["embedding.page.html", 193],
+  ["fidelity.page.html", 0],
+  ["index.page.html", 0],
+  ["playground.page.html", 65],
+  ["_partials/site-footer.html", 0],
+  ["_partials/site-header.html", 1],
   // ---- The editor's scripts -------------------------------------------------
   ["src/a11y_mirror.mjs", 1],
   ["src/blank_document.mjs", 8],
@@ -257,10 +198,10 @@ const CEILINGS = new Map([
   ["src/spell_check.mjs", 6],
 ]);
 
-/** The files with NO routing seam, whose numbers above are declared measurements
- *  rather than ceilings. The header note argues the exception; the test
- *  "a file the table calls seamless really has no seam" is what bounds it. */
-const SEAMLESS = new Set([
+/** Every hand-authored site source, which must all carry the seam now (HF-198).
+ *  The set that used to live here was the opposite list — the files with NO seam,
+ *  whose numbers were measurements rather than ceilings. */
+const SITE_SOURCES = [
   "docs.page.html",
   "embedding.page.html",
   "fidelity.page.html",
@@ -268,7 +209,7 @@ const SEAMLESS = new Set([
   "playground.page.html",
   "_partials/site-footer.html",
   "_partials/site-header.html",
-]);
+];
 
 /** How far under its ceiling a file may sit before this test asks for the
  *  ceiling to be re-measured. Same reasoning as the `main.js` ratchet: a
@@ -283,21 +224,6 @@ test("no file carries more unrouted strings than its ceiling", () => {
     if (ceiling === undefined) {
       over.push(`${file} is not in the table at all (${sites.length} sites) — add it at its
         measured count, or route its strings through the seam`);
-      continue;
-    }
-    // A seamless file's number is a measurement, so BOTH directions are a
-    // failure: gaining English without declaring it, and losing English without
-    // the number coming down. "Route it through t()" is not the advice here —
-    // there is nothing to route through — so it does not get that message.
-    if (SEAMLESS.has(file)) {
-      if (sites.length !== ceiling) {
-        over.push(
-          `${file} has ${sites.length} unrouted strings and the table declares ${ceiling}. ` +
-            `This file has no localisation seam, so its number is a MEASUREMENT: set it to ` +
-            `${sites.length} in the same commit, and say in the comment what the change added ` +
-            `or removed.`,
-        );
-      }
       continue;
     }
     if (sites.length > ceiling) {
@@ -315,51 +241,57 @@ test("no file carries more unrouted strings than its ceiling", () => {
   assert.deepEqual(over, []);
 });
 
-test("a file the table calls seamless really has no seam", () => {
-  // THE BOUND ON THE EXCEPTION. "This file has no way to route a string" is a
-  // claim about the file, so it is checked against the file rather than trusted:
-  // a seamless file must carry no `data-i18n` attribute and no `t(` call, because
-  // either one would be a seam, and a string next to a seam is a string somebody
-  // chose not to route. The day site localisation lands — HF-190's second half —
-  // these assertions fail, the pages go back under the ratchet, and the exception
-  // disappears without anybody having to remember it.
-  for (const file of SEAMLESS) {
+test("every site template and partial carries the localisation seam", () => {
+  // THE TURNED-AROUND GUARD. This test used to prove the opposite — that each
+  // file the table called `SEAMLESS` really had no way to route a string, so the
+  // exception could not be claimed for convenience. HF-198 built the seam, so
+  // what is worth holding now is that it is still there: a new site page, or a
+  // rewrite of an old one, must not ship with English that no catalogue can
+  // reach. The failure mode it prevents is the one that created the exception in
+  // the first place.
+  for (const file of SITE_SOURCES) {
     const source = readFileSync(join(WEBAPP, file), "utf8");
-    assert.equal(
+    assert.ok(
       /\bdata-i18n(-[a-z]+)?=/.test(source),
-      false,
-      `${file} carries a data-i18n attribute, so it HAS a seam: take it out of SEAMLESS ` +
-        `and ratchet it — its unrouted strings can now be routed.`,
+      `${file} carries no data-i18n attribute at all, so its English cannot be translated. ` +
+        `Route it — every other site source does — rather than declaring a measurement.`,
     );
-    assert.equal(
-      /\bt\(["'`]/.test(source),
-      false,
-      `${file} calls t(), so it HAS a seam: take it out of SEAMLESS and ratchet it.`,
-    );
+    assert.ok(CEILINGS.has(file), `${file} carries no declared number`);
   }
-  // The control, without which the two assertions above would pass on any file at
-  // all — including a file that is nothing but routed strings. `editor.html` is
-  // the chrome that WAS routed (853 sites down to 16), so if the seam is not
-  // detectable there, the detection is broken rather than the pages seamless.
+  // The CONTROL, without which the assertion above could pass on a detection that
+  // is simply broken. `editor.html` is the chrome that was routed first (853 sites
+  // down to 16); if the seam is not detectable there, it is the detection that is
+  // wrong rather than the site that is routed.
   const editor = readFileSync(join(WEBAPP, "editor.html"), "utf8");
   assert.ok(
     /\bdata-i18n(-[a-z]+)?=/.test(editor),
     "editor.html has no data-i18n at all, so this test cannot tell a seam from its absence",
   );
-  assert.equal(SEAMLESS.has("editor.html"), false, "the editor has a seam and is ratcheted");
-  // And every seamless file is in the table, or its number is declared nowhere.
-  for (const file of SEAMLESS) {
-    assert.ok(CEILINGS.has(file), `${file} is called seamless but carries no declared number`);
-  }
+  // And the NEGATIVE control: a source with no seam must fail the same check, or
+  // the assertion above says nothing. `tools/string_sites.mjs` is the scanner
+  // itself — prose in comments, not a single routed string.
+  assert.equal(
+    /\bdata-i18n(-[a-z]+)?=/.test(readFileSync(join(WEBAPP, "tools/palette_source.mjs"), "utf8")),
+    false,
+    "the negative control carries a data-i18n attribute, so this test cannot fail",
+  );
+  // Every site source is a page template or a shared partial, and every page
+  // template and shared partial is a site source. A file added to the site and
+  // forgotten here would otherwise be exempt by omission.
+  const onDisk = [
+    ...readdirSync(WEBAPP).filter((name) => name.endsWith(".page.html")),
+    ...readdirSync(join(WEBAPP, "_partials"))
+      .filter((name) => name.endsWith(".html"))
+      .map((name) => `_partials/${name}`),
+  ].sort();
+  assert.deepEqual([...SITE_SOURCES].sort(), onDisk);
 });
+
 
 test("a ceiling nobody lowered is a ceiling to re-measure", () => {
   const counts = scanTree(WEBAPP);
   const stale = [];
   for (const [file, ceiling] of CEILINGS) {
-    // Seamless files are held to equality by the test above, which is stricter
-    // than this slack — checking them here too would only report it twice.
-    if (SEAMLESS.has(file)) continue;
     const actual = counts.get(file)?.length ?? 0;
     if (ceiling - actual > SLACK) {
       stale.push(`${file}: ceiling ${ceiling}, actually ${actual} — lower it to ${actual}`);

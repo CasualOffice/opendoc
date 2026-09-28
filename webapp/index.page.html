@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenDoc — build documents on an engine you control</title>
+    <title data-i18n="site.index.opendocBuildDocumentsEngine">OpenDoc — build documents on an engine you control</title>
     <meta
       name="description"
       content="OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework."
@@ -116,19 +116,19 @@
         <div class="wrap">
           <div class="home-hero-copy">
             <p class="home-eyebrow"><span class="home-dot" aria-hidden="true"></span> Open-source DOCX infrastructure</p>
-            <h1>Build documents on an engine <em class="home-serif">you control.</em></h1>
-            <p class="home-lede">
+            <h1 data-i18n="site.index.buildDocumentsEngine">Build documents on an engine <em class="home-serif" data-i18n="site.index.youControl">you control.</em></h1>
+            <p class="home-lede" data-i18n="site.index.opendocDeterministicLossAware">
               OpenDoc is a deterministic, loss-aware document engine written in Rust. Import,
               edit, lay out, render, and write <code>.docx</code> across browser, desktop, and
               headless environments — with one authoritative model.
             </p>
             <div class="home-cta-row">
-              <a class="btn btn--accent" href="./editor.html?demo=1">
-                Try the live editor <span aria-hidden="true">→</span>
+              <a class="btn btn--accent" href="./editor.html?demo=1" data-i18n="site.index.tryLiveEditor">
+                Try the live editor <span class="site-arrow" aria-hidden="true">→</span>
               </a>
-              <a class="btn btn--outline" href="#developers">See how it works</a>
+              <a class="btn btn--outline" href="#developers" data-i18n="site.index.seeHowWorks">See how it works</a>
             </div>
-            <ul class="home-checks" aria-label="Project facts">
+            <ul class="home-checks" aria-label="Project facts" data-i18n-label="site.index.projectFacts">
               <li><span class="home-check" aria-hidden="true">✓</span> Apache-2.0</li>
               <li><span class="home-check" aria-hidden="true">✓</span> Rust → WebAssembly</li>
               <li><span class="home-check" aria-hidden="true">✓</span> No required server</li>
@@ -140,11 +140,11 @@
                asked for it (tests/e2e/memory-budget.spec.mjs). The poster is drawn in
                the real editor's chrome so it reads as the product, and it says it is a
                preview rather than claiming to be the live application. -->
-          <div class="home-embed" id="homeEmbed" aria-label="OpenDoc editor preview">
+          <div class="home-embed" id="homeEmbed" aria-label="OpenDoc editor preview" data-i18n-label="site.index.opendocEditorPreview">
             <div class="home-embed-chrome">
               <span class="home-embed-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-              <span class="home-embed-url"><span>editor.html?demo=1</span></span>
-              <a class="home-embed-full" href="./editor.html?demo=1">Open full screen <span aria-hidden="true">↗</span></a>
+              <span class="home-embed-url"><span data-i18n="site.index.editorHtmlDemo1">editor.html?demo=1</span></span>
+              <a class="home-embed-full" href="./editor.html?demo=1" data-i18n="site.index.openFullScreen">Open full screen <span class="site-arrow" aria-hidden="true">↗</span></a>
             </div>
 
             <div class="home-embed-stage">
@@ -152,35 +152,35 @@
                 <div class="od-topbar">
                   <span class="od-logo"></span>
                   <div class="od-doc-chrome">
-                    <div class="od-doc-title">Quarterly engineering report.docx</div>
-                    <div class="od-menus"><span>File</span><span>Edit</span><span>View</span><span>Insert</span><span>Format</span><span>Table</span><span>Review</span><span>Tools</span><span>Help</span></div>
+                    <div class="od-doc-title" data-i18n="site.index.quarterlyEngineeringReportDocx">Quarterly engineering report.docx</div>
+                    <div class="od-menus"><span data-i18n="site.index.file">File</span><span data-i18n="site.index.edit">Edit</span><span data-i18n="site.index.view">View</span><span data-i18n="site.index.insert">Insert</span><span data-i18n="site.index.format">Format</span><span data-i18n="site.index.table">Table</span><span data-i18n="site.index.review">Review</span><span data-i18n="site.index.tools">Tools</span><span data-i18n="site.index.help">Help</span></div>
                   </div>
                   <span class="od-state"><i>●</i> Saved locally</span>
                 </div>
                 <div class="od-tabs">
-                  <span class="is-active">Home</span><span>Insert</span><span>Layout</span><span>References</span><span>Table</span><span>View</span><span>Review</span>
+                  <span class="is-active" data-i18n="site.index.home">Home</span><span data-i18n="site.index.insert">Insert</span><span data-i18n="site.index.layout">Layout</span><span data-i18n="site.index.references">References</span><span data-i18n="site.index.table">Table</span><span data-i18n="site.index.view">View</span><span data-i18n="site.index.review">Review</span>
                 </div>
                 <div class="od-band">
-                  <div class="od-group"><div class="od-stack"><b>↶</b><b>↷</b></div><span>Undo</span></div>
-                  <div class="od-group"><div class="od-font"><div class="od-row"><span class="od-field od-family">Instrument Sans</span><span class="od-field od-size">11</span></div><div class="od-row"><b>B</b><b><i>I</i></b><b><u>U</u></b><b><s>S</s></b></div></div><span>Font</span></div>
-                  <div class="od-group"><div class="od-font"><div class="od-row"><b>≡</b><b>≣</b><b>☰</b></div><div class="od-row"><b>⇤</b><b>⇥</b><b>¶</b></div></div><span>Paragraph</span></div>
-                  <div class="od-group od-hide-narrow"><div class="od-styles"><span class="od-style"><em>Aa</em>Normal</span><span class="od-style"><em>Aa</em>Heading 1</span><span class="od-style"><em>Aa</em>Title</span></div><span>Styles</span></div>
+                  <div class="od-group"><div class="od-stack"><b>↶</b><b>↷</b></div><span data-i18n="site.index.undo">Undo</span></div>
+                  <div class="od-group"><div class="od-font"><div class="od-row"><span class="od-field od-family" data-i18n="site.index.instrumentSans">Instrument Sans</span><span class="od-field od-size">11</span></div><div class="od-row"><b>B</b><b><i>I</i></b><b><u>U</u></b><b><s>S</s></b></div></div><span data-i18n="site.index.font">Font</span></div>
+                  <div class="od-group"><div class="od-font"><div class="od-row"><b>≡</b><b>≣</b><b>☰</b></div><div class="od-row"><b>⇤</b><b>⇥</b><b>¶</b></div></div><span data-i18n="site.index.paragraph">Paragraph</span></div>
+                  <div class="od-group od-hide-narrow"><div class="od-styles"><span class="od-style"><em data-i18n="site.index.aa">Aa</em>Normal</span><span class="od-style"><em data-i18n="site.index.aa">Aa</em>Heading 1</span><span class="od-style"><em data-i18n="site.index.aa">Aa</em>Title</span></div><span data-i18n="site.index.styles">Styles</span></div>
                 </div>
                 <div class="od-work">
                   <div class="od-rail"><b class="is-active">▤</b><b>☷</b><b>✎</b></div>
                   <div class="od-stage">
                     <div class="od-page">
-                      <div class="od-meta">Engine working group</div>
-                      <div class="od-h">Quarterly engineering report</div>
-                      <p>
+                      <div class="od-meta" data-i18n="site.index.engineWorkingGroup">Engine working group</div>
+                      <div class="od-h" data-i18n="site.index.quarterlyEngineeringReport">Quarterly engineering report</div>
+                      <p data-i18n="site.index.pageStaticPreviewRun">
                         This page is a static preview. Run the live editor and the same
                         paragraph becomes editable: the caret, selection, and glyph positions
                         are drawn from the engine's own geometry, not the browser's.<span class="home-caret"></span>
                       </p>
                       <div class="od-table">
-                        <div class="od-tr od-th"><span>Construct family</span><span>Rendered</span><span>Editable</span></div>
-                        <div class="od-tr"><span>Paragraphs &amp; text</span><span>Full</span><span>Full</span></div>
-                        <div class="od-tr"><span>Tables</span><span>Partial</span><span>Full</span></div>
+                        <div class="od-tr od-th"><span data-i18n="site.index.constructFamily">Construct family</span><span data-i18n="site.index.rendered">Rendered</span><span data-i18n="site.index.editable">Editable</span></div>
+                        <div class="od-tr"><span data-i18n="site.index.paragraphsAmpText">Paragraphs &amp; text</span><span data-i18n="site.index.full">Full</span><span data-i18n="site.index.full">Full</span></div>
+                        <div class="od-tr"><span data-i18n="site.index.tables">Tables</span><span data-i18n="site.index.partial">Partial</span><span data-i18n="site.index.full">Full</span></div>
                       </div>
                     </div>
                   </div>
@@ -196,13 +196,13 @@
       </section>
 
       <!-- Rail -->
-      <section class="home-rail" aria-label="Where the engine runs">
+      <section class="home-rail" aria-label="Where the engine runs" data-i18n-label="site.index.whereEngineRuns">
         <div class="wrap home-rail-grid">
-          <div><b>Rust core</b><span>One document model</span></div>
-          <div><b>WebAssembly</b><span>Runs in the browser</span></div>
-          <div><b>Native</b><span>macOS and Windows in CI</span></div>
-          <div><b>Headless</b><span>Automation and rendering</span></div>
-          <div><b>Loss-aware</b><span>Preserved or reported</span></div>
+          <div><b data-i18n="site.index.rustCore">Rust core</b><span data-i18n="site.index.oneDocumentModel">One document model</span></div>
+          <div><b data-i18n="site.index.webassembly">WebAssembly</b><span data-i18n="site.index.runsBrowser">Runs in the browser</span></div>
+          <div><b data-i18n="site.index.native">Native</b><span data-i18n="site.index.macosWindowsCi">macOS and Windows in CI</span></div>
+          <div><b data-i18n="site.index.headless">Headless</b><span data-i18n="site.index.automationRendering">Automation and rendering</span></div>
+          <div><b data-i18n="site.index.lossAware">Loss-aware</b><span data-i18n="site.index.preservedReported">Preserved or reported</span></div>
         </div>
       </section>
 
@@ -210,10 +210,10 @@
       <section class="home-section home-section--alt" id="why">
         <div class="wrap">
           <div class="home-head">
-            <span class="home-kicker">Why OpenDoc</span>
+            <span class="home-kicker" data-i18n="site.index.whyOpendoc">Why OpenDoc</span>
             <div>
-              <h2>A document runtime, not a web-editor wrapper.</h2>
-              <p>
+              <h2 data-i18n="site.index.documentRuntimeNotWeb">A document runtime, not a web-editor wrapper.</h2>
+              <p data-i18n="site.index.documentItselfSourceTruth">
                 The document itself is the source of truth. The canvas is a rendering
                 surface; UI, storage, authentication, and network policy stay yours.
               </p>
@@ -222,32 +222,32 @@
           <div class="home-cards">
             <article class="home-card">
               <div class="home-card-num">01</div>
-              <h3>Own the document model</h3>
-              <p>DOCX parses into a typed, editable model instead of being flattened into browser markup.</p>
+              <h3 data-i18n="site.index.ownDocumentModel">Own the document model</h3>
+              <p data-i18n="site.index.docxParsesIntoTyped">DOCX parses into a typed, editable model instead of being flattened into browser markup.</p>
               <ul>
-                <li>Semantic import and export</li>
-                <li>Byte-identical save of unedited packages</li>
-                <li>Unsupported data retained or reported</li>
+                <li data-i18n="site.index.semanticImportExport">Semantic import and export</li>
+                <li data-i18n="site.index.byteIdenticalSaveUnedited">Byte-identical save of unedited packages</li>
+                <li data-i18n="site.index.unsupportedDataRetainedReported">Unsupported data retained or reported</li>
               </ul>
             </article>
             <article class="home-card">
               <div class="home-card-num">02</div>
-              <h3>Deterministic layout</h3>
-              <p>One Rust pipeline shapes, paginates, hit-tests, and renders across every host.</p>
+              <h3 data-i18n="site.index.deterministicLayout">Deterministic layout</h3>
+              <p data-i18n="site.index.oneRustPipelineShapes">One Rust pipeline shapes, paginates, hit-tests, and renders across every host.</p>
               <ul>
-                <li>Engine-owned caret and selection geometry</li>
-                <li>Tables, sections, columns, floats, math</li>
-                <li>Backend-neutral display list</li>
+                <li data-i18n="site.index.engineOwnedCaretSelection">Engine-owned caret and selection geometry</li>
+                <li data-i18n="site.index.tablesSectionsColumnsFloats">Tables, sections, columns, floats, math</li>
+                <li data-i18n="site.index.backendNeutralDisplayList">Backend-neutral display list</li>
               </ul>
             </article>
             <article class="home-card">
               <div class="home-card-num">03</div>
-              <h3>Bring your own product</h3>
-              <p>Every edit routes through a closed command set with undo. Everything around it is yours.</p>
+              <h3 data-i18n="site.index.bringYourOwnProduct">Bring your own product</h3>
+              <p data-i18n="site.index.everyEditRoutesThrough">Every edit routes through a closed command set with undo. Everything around it is yours.</p>
               <ul>
-                <li>No mandatory UI framework</li>
-                <li>No required cloud service</li>
-                <li>Browser, native, and headless targets</li>
+                <li data-i18n="site.index.noMandatoryUiFramework">No mandatory UI framework</li>
+                <li data-i18n="site.index.noRequiredCloudService">No required cloud service</li>
+                <li data-i18n="site.index.browserNativeHeadlessTargets">Browser, native, and headless targets</li>
               </ul>
             </article>
           </div>
@@ -258,36 +258,36 @@
       <section class="home-arch" id="architecture">
         <div class="wrap">
           <div class="home-head home-head--dark">
-            <span class="home-kicker">Architecture</span>
+            <span class="home-kicker" data-i18n="site.index.architecture">Architecture</span>
             <div>
-              <h2>One engine. Clear boundaries.</h2>
-              <p>
+              <h2 data-i18n="site.index.oneEngineClearBoundaries">One engine. Clear boundaries.</h2>
+              <p data-i18n="site.index.documentSemanticsLiveInside">
                 Document semantics live inside OpenDoc. Product policy lives inside your
                 host. That line is the whole design, so it is drawn rather than described.
               </p>
             </div>
           </div>
-          <div class="home-pipeline" role="img" aria-label="DOCX flows into the typed model, through layout, to pixels. OpenDoc owns document state, transactions, selection, layout and serialization; the host owns files, fonts, network, authentication, telemetry and product UI.">
+          <div class="home-pipeline" role="img" aria-label="DOCX flows into the typed model, through layout, to pixels. OpenDoc owns document state, transactions, selection, layout and serialization; the host owns files, fonts, network, authentication, telemetry and product UI." data-i18n-label="site.index.docxFlowsIntoTyped">
             <div class="home-pipeline-top">
-              <b>OpenDoc core</b>
-              <div class="home-hosts"><span>WebAssembly</span><span>Native</span><span>Headless</span></div>
+              <b data-i18n="site.index.opendocCore">OpenDoc core</b>
+              <div class="home-hosts"><span data-i18n="site.index.webassembly">WebAssembly</span><span data-i18n="site.index.native">Native</span><span data-i18n="site.index.headless">Headless</span></div>
             </div>
             <div class="home-flow">
-              <div class="home-node"><strong>DOCX</strong><span>package + OOXML</span></div>
+              <div class="home-node"><strong data-i18n="site.index.docx">DOCX</strong><span data-i18n="site.index.packageOoxml">package + OOXML</span></div>
               <div class="home-arrow" aria-hidden="true">→</div>
-              <div class="home-node"><strong>Model</strong><span>typed document state</span></div>
+              <div class="home-node"><strong data-i18n="site.index.model">Model</strong><span data-i18n="site.index.typedDocumentState">typed document state</span></div>
               <div class="home-arrow" aria-hidden="true">→</div>
-              <div class="home-node"><strong>Layout</strong><span>paginate + hit-test</span></div>
+              <div class="home-node"><strong data-i18n="site.index.layout">Layout</strong><span data-i18n="site.index.paginateHitTest">paginate + hit-test</span></div>
               <div class="home-arrow" aria-hidden="true">→</div>
-              <div class="home-node home-node--accent"><strong>Pixels</strong><span>display list</span></div>
+              <div class="home-node home-node--accent"><strong data-i18n="site.index.pixels">Pixels</strong><span data-i18n="site.index.displayList">display list</span></div>
             </div>
             <div class="home-boundary">
-              <div><b>OpenDoc owns</b>Document state · transactions · selection · layout · serialization</div>
-              <div><b>Your host owns</b>Files · fonts · network · auth · telemetry · product UI</div>
+              <div><b data-i18n="site.index.opendocOwns">OpenDoc owns</b>Document state · transactions · selection · layout · serialization</div>
+              <div><b data-i18n="site.index.yourHostOwns">Your host owns</b>Files · fonts · network · auth · telemetry · product UI</div>
             </div>
           </div>
-          <a class="home-arch-link" href="./reference/architecture.html">
-            Read the architecture <span aria-hidden="true">→</span>
+          <a class="home-arch-link" href="./reference/architecture.html" data-i18n="site.index.readArchitecture">
+            Read the architecture <span class="site-arrow" aria-hidden="true">→</span>
           </a>
         </div>
       </section>
@@ -297,10 +297,10 @@
       <section class="home-section" id="fidelity">
         <div class="wrap">
           <div class="home-head">
-            <span class="home-kicker">Evidence, not promises</span>
+            <span class="home-kicker" data-i18n="site.index.evidenceNotPromises">Evidence, not promises</span>
             <div>
-              <h2>Fidelity you can check.</h2>
-              <p>
+              <h2 data-i18n="site.index.fidelityYouCanCheck">Fidelity you can check.</h2>
+              <p data-i18n="site.index.whatSupportedHowWas">
                 What is supported, how it was measured, and where the gaps still are —
                 including the ones we have not closed.
               </p>
@@ -309,44 +309,44 @@
           <div class="home-proof">
             <div class="home-proof-card">
               <div class="home-proof-top">
-                <span class="home-tag">Page-count parity</span>
-                <span class="home-proof-when">Measured 2026-07-27</span>
+                <span class="home-tag" data-i18n="site.index.pageCountParity">Page-count parity</span>
+                <span class="home-proof-when" data-i18n="site.index.measured20260727">Measured 2026-07-27</span>
               </div>
               <div class="home-metric" data-claim="page-parity">4 / 5</div>
-              <p class="home-metric-label">
+              <p class="home-metric-label" data-i18n="site.index.corpusDocumentsMatchingLibreoffice">
                 corpus documents matching LibreOffice's page count exactly; worst delta
                 <span data-claim="page-delta">+2</span>. A manual measurement, not yet a CI gate.
               </p>
-              <div class="home-matrix" role="table" aria-label="Sample of the per-family grades">
+              <div class="home-matrix" role="table" aria-label="Sample of the per-family grades" data-i18n-label="site.index.samplePerFamilyGrades">
                 <div class="home-matrix-row home-matrix-head" role="row">
-                  <span role="columnheader">Construct family</span><span role="columnheader">Rendered</span><span role="columnheader">Editable</span>
+                  <span role="columnheader" data-i18n="site.index.constructFamily">Construct family</span><span role="columnheader" data-i18n="site.index.rendered">Rendered</span><span role="columnheader" data-i18n="site.index.editable">Editable</span>
                 </div>
                 <div class="home-matrix-row" role="row" data-family="Paragraphs &amp; text">
-                  <span role="cell">Paragraphs &amp; text</span><span role="cell" class="is-full">Full</span><span role="cell" class="is-full">Full</span>
+                  <span role="cell" data-i18n="site.index.paragraphsAmpText">Paragraphs &amp; text</span><span role="cell" class="is-full" data-i18n="site.index.full">Full</span><span role="cell" class="is-full" data-i18n="site.index.full">Full</span>
                 </div>
                 <div class="home-matrix-row" role="row" data-family="Tables">
-                  <span role="cell">Tables</span><span role="cell" class="is-partial">Partial</span><span role="cell" class="is-full">Full</span>
+                  <span role="cell" data-i18n="site.index.tables">Tables</span><span role="cell" class="is-partial" data-i18n="site.index.partial">Partial</span><span role="cell" class="is-full" data-i18n="site.index.full">Full</span>
                 </div>
                 <div class="home-matrix-row" role="row" data-family="Tracked changes">
-                  <span role="cell">Tracked changes</span><span role="cell" class="is-partial">Partial</span><span role="cell" class="is-partial">Partial</span>
+                  <span role="cell" data-i18n="site.index.trackedChanges">Tracked changes</span><span role="cell" class="is-partial" data-i18n="site.index.partial">Partial</span><span role="cell" class="is-partial" data-i18n="site.index.partial">Partial</span>
                 </div>
                 <div class="home-matrix-row" role="row" data-family="Vertical &amp; rotated text">
-                  <span role="cell">Vertical &amp; rotated text</span><span role="cell" class="is-none">None</span><span role="cell" class="is-none">None</span>
+                  <span role="cell" data-i18n="site.index.verticalAmpRotatedText">Vertical &amp; rotated text</span><span role="cell" class="is-none">None</span><span role="cell" class="is-none">None</span>
                 </div>
               </div>
-              <a class="home-proof-link" href="./fidelity.html">
-                All <span data-claim="families">27</span> construct families <span aria-hidden="true">→</span>
+              <a class="home-proof-link" href="./fidelity.html" data-i18n="site.index.all">
+                All <span data-claim="families">27</span> construct families <span class="site-arrow" aria-hidden="true">→</span>
               </a>
             </div>
             <div class="home-proof-card home-proof-card--dark">
               <div class="home-proof-top">
-                <span class="home-tag home-tag--dark">Design principle</span>
-                <span class="home-proof-when">Loss-aware</span>
+                <span class="home-tag home-tag--dark" data-i18n="site.index.designPrinciple">Design principle</span>
+                <span class="home-proof-when" data-i18n="site.index.lossAware">Loss-aware</span>
               </div>
-              <blockquote class="home-quote">
+              <blockquote class="home-quote" data-i18n="site.index.preservedReportedNeverSilently">
                 “Preserved or reported — never silently dropped.”
               </blockquote>
-              <p class="home-quote-note">
+              <p class="home-quote-note" data-i18n="site.index.contentEngineDoesNot">
                 Content the engine does not understand is carried through untouched or named
                 in a compatibility report. Of <span data-claim="families">27</span> graded
                 families, <span data-claim="roundtrip-full">23</span> round-trip in full.
@@ -354,7 +354,7 @@
               <!-- How the same 27 families render today, straight from src/fidelity.js.
                    The gaps are drawn at the same weight as the wins on purpose. -->
               <div class="home-dist">
-                <div class="home-dist-label">How they render today</div>
+                <div class="home-dist-label" data-i18n="site.index.howTheyRenderToday">How they render today</div>
                 <div class="home-dist-bar" aria-hidden="true">
                   <span class="is-full" style="--n: 7"></span><span class="is-partial" style="--n: 15"></span><span class="is-preserved" style="--n: 2"></span><span class="is-none" style="--n: 3"></span>
                 </div>
@@ -374,20 +374,20 @@
       <section class="home-section home-section--alt" id="developers">
         <div class="wrap home-dev">
           <div class="home-dev-copy">
-            <span class="home-kicker">Developer first</span>
-            <h2>Clone it. Run it. Inspect the engine.</h2>
-            <p>No account, no hosted backend. Every pull request runs the same gates you can run locally.</p>
-            <p>Putting the editor in your own page has its own guide: <a class="text-link" href="./embedding.html">Embed the editor</a>.</p>
+            <span class="home-kicker" data-i18n="site.index.developerFirst">Developer first</span>
+            <h2 data-i18n="site.index.cloneRunInspectEngine">Clone it. Run it. Inspect the engine.</h2>
+            <p data-i18n="site.index.noAccountNoHosted">No account, no hosted backend. Every pull request runs the same gates you can run locally.</p>
+            <p data-i18n="site.index.puttingEditorYourOwn">Putting the editor in your own page has its own guide: <a class="text-link" href="./embedding.html" data-i18n="site.index.embedEditor">Embed the editor</a>.</p>
             <ol class="home-steps">
-              <li><b>Clone the repository</b><span>Apache-2.0 and source-first.</span></li>
-              <li><b>Run the quality gates</b><span>Build, test, lint, docs, and WebAssembly.</span></li>
-              <li><b>Open a real DOCX</b><span>In the browser editor, or embed the runtime.</span></li>
+              <li><b data-i18n="site.index.cloneRepository">Clone the repository</b><span data-i18n="site.index.apache20Source">Apache-2.0 and source-first.</span></li>
+              <li><b data-i18n="site.index.runQualityGates">Run the quality gates</b><span data-i18n="site.index.buildTestLintDocs">Build, test, lint, docs, and WebAssembly.</span></li>
+              <li><b data-i18n="site.index.openRealDocx">Open a real DOCX</b><span data-i18n="site.index.browserEditorEmbedRuntime">In the browser editor, or embed the runtime.</span></li>
             </ol>
           </div>
           <div class="home-terminal">
             <div class="home-terminal-head">
               <span>quickstart</span>
-              <div class="home-terminal-tabs" role="tablist" aria-label="Quickstart examples">
+              <div class="home-terminal-tabs" role="tablist" aria-label="Quickstart examples" data-i18n-label="site.index.quickstartExamples">
                 <button type="button" role="tab" id="qsTabShell" aria-controls="qsShell" aria-selected="true">shell</button>
                 <button type="button" role="tab" id="qsTabEmbed" aria-controls="qsEmbed" aria-selected="false" tabindex="-1">embed</button>
               </div>
@@ -420,43 +420,43 @@ doc.insertText(at.node, at.offset, <span class="str">"Hello from OpenDoc"</span>
       <section class="home-section" id="roadmap">
         <div class="wrap">
           <div class="home-head">
-            <span class="home-kicker">Delivery</span>
+            <span class="home-kicker" data-i18n="site.index.delivery">Delivery</span>
             <div>
-              <h2>Where it is, and where it is going.</h2>
-              <p>Shipped, active, and planned are kept separate, so a pre-release reads as a status rather than a promise.</p>
+              <h2 data-i18n="site.index.whereWhereGoing">Where it is, and where it is going.</h2>
+              <p data-i18n="site.index.shippedActivePlannedKept">Shipped, active, and planned are kept separate, so a pre-release reads as a status rather than a promise.</p>
             </div>
           </div>
           <div class="home-roadmap">
             <div class="home-phase is-done">
-              <span class="home-state">Shipped</span>
-              <h3>Loss-aware DOCX</h3>
-              <p>Semantic import and export, and byte-identical save of unedited packages.</p>
+              <span class="home-state" data-i18n="site.index.shipped">Shipped</span>
+              <h3 data-i18n="site.index.lossAwareDocx">Loss-aware DOCX</h3>
+              <p data-i18n="site.index.semanticImportExportByte">Semantic import and export, and byte-identical save of unedited packages.</p>
             </div>
             <div class="home-phase is-done">
-              <span class="home-state">Shipped</span>
-              <h3>Deterministic layout</h3>
-              <p>Paragraphs, tables, sections and columns, floats with text wrap, and math.</p>
+              <span class="home-state" data-i18n="site.index.shipped">Shipped</span>
+              <h3 data-i18n="site.index.deterministicLayout">Deterministic layout</h3>
+              <p data-i18n="site.index.paragraphsTablesSectionsColumns">Paragraphs, tables, sections and columns, floats with text wrap, and math.</p>
             </div>
             <div class="home-phase is-now">
-              <span class="home-state">In progress</span>
-              <h3>Editing to Word parity</h3>
-              <p>Comments, tracked changes, and every editing surface held to the Word and Docs standard.</p>
+              <span class="home-state" data-i18n="site.index.progress">In progress</span>
+              <h3 data-i18n="site.index.editingWordParity">Editing to Word parity</h3>
+              <p data-i18n="site.index.commentsTrackedChangesEvery">Comments, tracked changes, and every editing surface held to the Word and Docs standard.</p>
             </div>
             <div class="home-phase">
-              <span class="home-state">Planned</span>
-              <h3>Real-time collaboration</h3>
-              <p>Operational transformation over the same transactions, with snapshot and replay versioning.</p>
+              <span class="home-state" data-i18n="site.index.planned">Planned</span>
+              <h3 data-i18n="site.index.realTimeCollaboration">Real-time collaboration</h3>
+              <p data-i18n="site.index.operationalTransformationOverSame">Operational transformation over the same transactions, with snapshot and replay versioning.</p>
             </div>
           </div>
           <!-- Each gap names its source: a fidelity.js family graded "none", or a
                docs/105 row that is still open. site_claims.test.mjs checks both. -->
           <p class="home-gaps">
-            <b>Not yet:</b>
+            <b data-i18n="site.index.notYet">Not yet:</b>
             <span data-gap-family="Hyphenation">hyphenation</span> ·
-            <span data-gap-family="Vertical &amp; rotated text">vertical and rotated text</span> ·
-            <span data-gap-row="FID-L-04">custom shape paths</span> ·
-            <span data-gap-row="FID-L-07">floating tables</span>.
-            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md">Full roadmap <span aria-hidden="true">→</span></a>
+            <span data-gap-family="Vertical &amp; rotated text" data-i18n="site.index.verticalRotatedText">vertical and rotated text</span> ·
+            <span data-gap-row="FID-L-04" data-i18n="site.index.customShapePaths">custom shape paths</span> ·
+            <span data-gap-row="FID-L-07" data-i18n="site.index.floatingTables">floating tables</span>.
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md" data-i18n="site.index.fullRoadmap">Full roadmap <span class="site-arrow" aria-hidden="true">→</span></a>
           </p>
         </div>
       </section>
@@ -466,12 +466,12 @@ doc.insertText(at.node, at.offset, <span class="str">"Hello from OpenDoc"</span>
         <div class="wrap">
           <div class="home-cta-box">
             <div>
-              <h2>Open a document. Inspect the engine.</h2>
-              <p>No account required for the demo. No opaque hosted backend.</p>
+              <h2 data-i18n="site.index.openDocumentInspectEngine">Open a document. Inspect the engine.</h2>
+              <p data-i18n="site.index.noAccountRequiredDemo">No account required for the demo. No opaque hosted backend.</p>
             </div>
             <div class="home-cta-actions">
-              <a class="btn btn--light" href="./editor.html?demo=1">Load the sample <span aria-hidden="true">→</span></a>
-              <a class="btn btn--outline-dark" href="https://github.com/CasualOffice/opendoc">Read the source</a>
+              <a class="btn btn--light" href="./editor.html?demo=1" data-i18n="site.index.loadSample">Load the sample <span class="site-arrow" aria-hidden="true">→</span></a>
+              <a class="btn btn--outline-dark" href="https://github.com/CasualOffice/opendoc" data-i18n="site.index.readSource">Read the source</a>
             </div>
           </div>
         </div>

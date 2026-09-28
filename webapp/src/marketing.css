@@ -219,7 +219,7 @@ main.home {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin-right: 4px;
+  margin-inline-end: 4px;
   color: var(--ink);
   text-decoration: none;
 }
@@ -320,6 +320,41 @@ main.home {
 .header-cta:hover {
   background: #2c2f35;
   color: var(--on-ink);
+}
+
+/* The site language control (`109` HF-198).
+   Deliberately a NATIVE `<select>`. It is one control, it is keyboard- and
+   screen-reader-operable in every browser without a line of JavaScript beyond
+   filling it, and on a phone it opens the platform's own picker — a better list
+   of nineteen languages than anything this page would draw. It borrows the type
+   and colour `.header-link` already uses, so it reads as part of the header
+   rather than as a form; no token is introduced and none is changed. */
+.site-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted-2);
+}
+
+.site-lang:hover,
+.site-lang:focus-within {
+  color: var(--ink);
+}
+
+.site-lang-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.site-lang select {
+  max-width: 140px;
+  padding: 3px 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .site-footer {
@@ -726,11 +761,11 @@ main.home {
   align-items: center;
   gap: 4px;
   padding: 0 10px;
-  border-right: 1px solid #e3e8f1;
+  border-inline-end: 1px solid #e3e8f1;
 }
 
 .od-group:last-child {
-  border-right: 0;
+  border-inline-end: 0;
 }
 
 .od-group > span {
@@ -900,7 +935,7 @@ main.home {
   display: inline-block;
   width: 1.5px;
   height: 1em;
-  margin-left: 1px;
+  margin-inline-start: 1px;
   background: #3355c4;
   vertical-align: -0.15em;
   animation: homeCaretBlink 1s steps(1) infinite;
@@ -1059,11 +1094,11 @@ main.home {
 
 .home-rail-grid > div {
   padding: 22px 18px;
-  border-left: 1px solid var(--line-2);
+  border-inline-start: 1px solid var(--line-2);
 }
 
 .home-rail-grid > div:first-child {
-  border-left: 0;
+  border-inline-start: 0;
 }
 
 .home-rail-grid b {
@@ -1686,7 +1721,7 @@ main.home {
 }
 
 .home-gaps a {
-  margin-left: 6px;
+  margin-inline-start: 6px;
   color: var(--accent);
   font-weight: 600;
   text-decoration: none;
@@ -1778,7 +1813,7 @@ main.home {
   }
 
   .home-rail-grid > div:nth-child(odd) {
-    border-left: 0;
+    border-inline-start: 0;
   }
 
   .home-rail-grid > div {
@@ -2192,7 +2227,7 @@ main.home {
 .doc-callout {
   margin-top: 32px;
   padding: 14px 18px;
-  border-left: 2px solid var(--accent);
+  border-inline-start: 2px solid var(--accent);
   background: var(--bg);
   scroll-margin-top: 80px;
 }
@@ -2235,7 +2270,7 @@ main.home {
 }
 
 .doc-pager a.next {
-  text-align: right;
+  text-align: end;
 }
 
 .doc-pager-dir {
@@ -2255,7 +2290,7 @@ main.home {
   flex-direction: column;
   gap: 9px;
   margin: 0;
-  padding-left: 14px;
+  padding-inline-start: 14px;
   border-left: 1px solid var(--line-2);
   list-style: none;
 }
@@ -2376,7 +2411,7 @@ main.home {
    so a three-level design note keeps its structure. */
 .doc-list {
   margin: 12px 0 0;
-  padding-left: 22px;
+  padding-inline-start: 22px;
   color: var(--muted);
   font-size: 16px;
   line-height: 1.65;
@@ -2422,7 +2457,7 @@ main.home {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  text-align: left;
+  text-align: start;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -2444,7 +2479,7 @@ main.home {
 .doc-quote {
   margin: 26px 0 0;
   padding: 2px 18px 14px;
-  border-left: 2px solid var(--line-strong);
+  border-inline-start: 2px solid var(--line-strong);
   background: var(--surface-3);
 }
 
@@ -3098,7 +3133,7 @@ main.home {
   min-width: 720px;
 }
 .fidelity-table caption {
-  text-align: left;
+  text-align: start;
   padding: 16px 18px 0;
   color: var(--muted);
   font-size: 0.9rem;
@@ -3106,7 +3141,7 @@ main.home {
 .fidelity-table th,
 .fidelity-table td {
   padding: 12px 14px;
-  text-align: left;
+  text-align: start;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
@@ -3187,7 +3222,7 @@ main.home {
 }
 .fidelity-notes ul {
   margin: 0;
-  padding-left: 20px;
+  padding-inline-start: 20px;
   color: var(--muted);
   line-height: 1.6;
   font-size: 0.94rem;
@@ -3276,7 +3311,7 @@ main.home {
   }
 
   .site-header-actions {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
 
   .home-metrics-grid {
@@ -3431,4 +3466,35 @@ main.home {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* ---- Right to left (`109` HF-198) ---------------------------------------
+   The chrome mirrors for a right-to-left locale, and a DOCUMENT never does on
+   its account — that distinction is `localize.mjs`'s and is structural rather
+   than left to a stylesheet (docs/124 §3.5). `applyDocumentLocale` puts `dir`
+   on `<html>` from the catalogue's own `@@direction`, so this needs no script.
+
+   Almost all of the mirroring is already done by the rules above: every
+   direction-sensitive declaration in this file is written with a LOGICAL
+   property (`margin-inline-start`, `border-inline-start`, `text-align: start`),
+   which renders identically in a left-to-right page and correctly in a
+   right-to-left one. That conversion is why this block is four rules and not
+   forty.
+
+   What logical properties cannot fix is a GLYPH. An arrow is a picture of a
+   direction, and `→` still points right in an Arabic page — so the decorative
+   arrows, the ones marked `aria-hidden` because they carry no words, are
+   mirrored here. Arrows that sit INSIDE a sentence are not: they went through
+   the seam with the sentence, and which way an arrow points in Arabic is the
+   translator's decision rather than this file's. */
+[dir="rtl"] .site-arrow {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+
+/* The call-to-action box's decorative blob is positioned from the right edge;
+   mirrored, it sits where the design puts it rather than over the copy. */
+[dir="rtl"] .home-cta-box::after {
+  right: auto;
+  left: -120px;
 }

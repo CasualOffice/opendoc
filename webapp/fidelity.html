@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DOCX fidelity support matrix — OpenDoc</title>
+    <title data-i18n="site.fidelity.docxFidelitySupportMatrix">DOCX fidelity support matrix — OpenDoc</title>
     <meta
       name="description"
       content="OpenDoc fidelity, measured against a LibreOffice oracle rather than a feature list: page-count parity, round-trip disposition, and honest per-construct support. The oracle geometry gate is manual (workflow_dispatch) and currently inert — no reference is committed — so these grades are hand-checked, not CI-enforced."
@@ -78,31 +78,45 @@
   <body>
     <header class="site-header">
       <div class="site-header-inner">
-        <a class="brand" href="./" aria-label="OpenDoc home">
+        <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
-          <span class="brand-badge">Pre-release</span>
+          <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
         </a>
-        <nav class="site-nav" aria-label="Primary navigation">
-          <a href="./" data-nav="overview">Overview</a>
-          <a href="./editor.html" data-nav="editor">Editor</a>
-          <a href="./playground.html" data-nav="playground">Playground</a>
-          <a href="./embedding.html" data-nav="embedding">Embedding</a>
-          <a href="./docs.html" data-nav="docs">Docs</a>
-          <a href="./fidelity.html" data-nav="fidelity" aria-current="page">Fidelity</a>
+        <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+          <a href="./" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+          <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+          <a href="./playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
+          <a href="./embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+          <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity" aria-current="page" data-i18n="site.header.fidelity">Fidelity</a>
         </nav>
         <div class="site-header-actions">
-          <a class="header-link" href="https://github.com/CasualOffice/opendoc">GitHub</a>
-          <a class="header-cta" href="./editor.html">Open the editor</a>
+          <!-- The language control. The markup carries only the automatic entry —
+               the one option with words in it, so the one that goes through the seam
+               like every other label here. The nineteen languages are appended by
+               `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+               noun that must never be translated and so does not belong in a
+               catalogue at all. The control stays `hidden` until that script has
+               run: a picker offering one choice is a dead control (docs/99 §10), and
+               a site whose scripts did not run is English with nothing to choose. -->
+          <label class="site-lang" hidden>
+            <span class="site-lang-icon ms" aria-hidden="true">language</span>
+            <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+              <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+            </select>
+          </label>
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+          <a class="header-cta" href="./editor.html" data-i18n="site.header.openEditor">Open the editor</a>
         </div>
       </div>
     </header>
 
     <main class="fid-report">
-      <section class="fid-intro" aria-label="Fidelity overview">
-        <span class="fid-kicker">Fidelity</span>
-        <h1>Graded by construct, not by feature list.</h1>
-        <p>
+      <section class="fid-intro" aria-label="Fidelity overview" data-i18n-label="site.fidelity.fidelityOverview">
+        <span class="fid-kicker" data-i18n="site.fidelity.fidelity">Fidelity</span>
+        <h1 data-i18n="site.fidelity.gradedConstructNotFeature">Graded by construct, not by feature list.</h1>
+        <p data-i18n="site.fidelity.tableBelowGradesEvery">
           The table below grades every construct family at the level the code actually
           reaches. The page counts are a <b>manual</b> LibreOffice-oracle measurement
           recorded in
@@ -114,98 +128,98 @@
         </p>
       </section>
 
-      <section class="fid-stats" aria-label="Headline metrics">
+      <section class="fid-stats" aria-label="Headline metrics" data-i18n-label="site.fidelity.headlineMetrics">
         <div class="fid-stat">
           <div class="fid-stat-num">4/5</div>
-          <div class="fid-stat-label">Exact page-count parity (docs/60, 2026-07-27)</div>
+          <div class="fid-stat-label" data-i18n="site.fidelity.exactPageCountParity">Exact page-count parity (docs/60, 2026-07-27)</div>
         </div>
         <div class="fid-stat">
           <div class="fid-stat-num">+2</div>
-          <div class="fid-stat-label">Worst-case page delta (Chinese SDS)</div>
+          <div class="fid-stat-label" data-i18n="site.fidelity.worstCasePageDelta">Worst-case page delta (Chinese SDS)</div>
         </div>
         <div class="fid-stat">
           <div class="fid-stat-num">27</div>
-          <div class="fid-stat-label">Construct families graded below</div>
+          <div class="fid-stat-label" data-i18n="site.fidelity.constructFamiliesGradedBelow">Construct families graded below</div>
         </div>
         <div class="fid-stat">
           <div class="fid-stat-num">0</div>
-          <div class="fid-stat-label">Pixel-diff or page-count gates in CI</div>
+          <div class="fid-stat-label" data-i18n="site.fidelity.pixelDiffPageCount">Pixel-diff or page-count gates in CI</div>
         </div>
       </section>
 
-      <section class="fid-panels" aria-label="Render versus oracle">
+      <section class="fid-panels" aria-label="Render versus oracle" data-i18n-label="site.fidelity.renderVersusOracle">
         <figure class="fid-panel">
           <div class="fid-panel-head">
-            <span class="title">OpenDoc render</span>
+            <span class="title" data-i18n="site.fidelity.opendocRender">OpenDoc render</span>
             <span class="spacer"></span>
-            <span class="meta">CPU raster · 150 dpi</span>
+            <span class="meta" data-i18n="site.fidelity.cpuRaster150Dpi">CPU raster · 150 dpi</span>
           </div>
           <div class="fid-panel-figure">
-            <span>No comparison image ships: there is no image-diff harness yet</span>
+            <span data-i18n="site.fidelity.noComparisonImageShips">No comparison image ships: there is no image-diff harness yet</span>
           </div>
-          <figcaption class="visually-hidden">A page rasterized by the OpenDoc CPU backend.</figcaption>
+          <figcaption class="visually-hidden" data-i18n="site.fidelity.pageRasterizedOpendocCpu">A page rasterized by the OpenDoc CPU backend.</figcaption>
         </figure>
         <figure class="fid-panel">
           <div class="fid-panel-head">
-            <span class="title">Oracle diff</span>
+            <span class="title" data-i18n="site.fidelity.oracleDiff">Oracle diff</span>
             <span class="spacer"></span>
-            <span class="meta">LibreOffice, same page</span>
+            <span class="meta" data-i18n="site.fidelity.libreofficeSamePage">LibreOffice, same page</span>
           </div>
           <div class="fid-panel-figure">
-            <span>The corpus documents are not redistributable, so no image ships here</span>
+            <span data-i18n="site.fidelity.corpusDocumentsNotRedistributable">The corpus documents are not redistributable, so no image ships here</span>
           </div>
-          <figcaption class="visually-hidden">Pixel difference against the LibreOffice-rendered oracle page.</figcaption>
+          <figcaption class="visually-hidden" data-i18n="site.fidelity.pixelDifferenceAgainstLibreoffice">Pixel difference against the LibreOffice-rendered oracle page.</figcaption>
         </figure>
       </section>
 
-      <section aria-label="Corpus fixtures">
+      <section aria-label="Corpus fixtures" data-i18n-label="site.fidelity.corpusFixtures">
         <div class="fid-fixtures">
           <div class="fid-fixtures-scroll">
             <div class="fid-frow head">
-              <div>Document</div>
-              <div>Pages</div>
-              <div>Δ oracle</div>
-              <div>Round-trip</div>
-              <div>Known gap</div>
+              <div data-i18n="site.fidelity.document">Document</div>
+              <div data-i18n="site.fidelity.pages">Pages</div>
+              <div data-i18n="site.fidelity.oracle">Δ oracle</div>
+              <div data-i18n="site.fidelity.roundTrip">Round-trip</div>
+              <div data-i18n="site.fidelity.knownGap">Known gap</div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">Sample Document</div>
+              <div class="fx-name" data-i18n="site.fidelity.sampleDocument">Sample Document</div>
               <div class="fx-cell mono">26</div>
               <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
+              <div class="fx-cell"><span class="fx-chip semantic" data-i18n="site.fidelity.semantic">Semantic</span></div>
               <div class="fx-cell">—</div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">Class notes</div>
+              <div class="fx-name" data-i18n="site.fidelity.classNotes">Class notes</div>
               <div class="fx-cell mono">1</div>
               <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
+              <div class="fx-cell"><span class="fx-chip semantic" data-i18n="site.fidelity.semantic">Semantic</span></div>
               <div class="fx-cell">—</div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">Rich producer demo</div>
+              <div class="fx-name" data-i18n="site.fidelity.richProducerDemo">Rich producer demo</div>
               <div class="fx-cell mono">8</div>
               <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip byte">Byte-identical</span></div>
+              <div class="fx-cell"><span class="fx-chip byte" data-i18n="site.fidelity.byteIdentical">Byte-identical</span></div>
               <div class="fx-cell">—</div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">Chinese SDS</div>
+              <div class="fx-name" data-i18n="site.fidelity.chineseSds">Chinese SDS</div>
               <div class="fx-cell mono">18</div>
               <div class="fx-cell mono">+2</div>
-              <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
-              <div class="fx-cell"><span class="fx-chip gap">Final-page column balancing</span></div>
+              <div class="fx-cell"><span class="fx-chip semantic" data-i18n="site.fidelity.semantic">Semantic</span></div>
+              <div class="fx-cell"><span class="fx-chip gap" data-i18n="site.fidelity.finalPageColumnBalancing">Final-page column balancing</span></div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">Medical form</div>
+              <div class="fx-name" data-i18n="site.fidelity.medicalForm">Medical form</div>
               <div class="fx-cell mono">4</div>
               <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
+              <div class="fx-cell"><span class="fx-chip semantic" data-i18n="site.fidelity.semantic">Semantic</span></div>
               <div class="fx-cell">—</div>
             </div>
           </div>
         </div>
-        <p class="fid-foot">
+        <p class="fid-foot" data-i18n="site.fidelity.pageCountsEngineS">
           Page counts are this engine's output against a LibreOffice oracle on the
           five-document review corpus, measured by hand and recorded in
           <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/60-FIDELITY-CORPUS-RENDERING-AUDIT.md">docs/60</a>
@@ -217,83 +231,83 @@
         </p>
       </section>
 
-      <section class="fid-matrix" aria-label="Per-construct support">
+      <section class="fid-matrix" aria-label="Per-construct support" data-i18n-label="site.fidelity.perConstructSupport">
         <div class="fid-matrix-intro">
-          <span class="fid-kicker">Per-construct support</span>
-          <h2>Support by construct family</h2>
-          <p>
+          <span class="fid-kicker" data-i18n="site.fidelity.perConstructSupport">Per-construct support</span>
+          <h2 data-i18n="site.fidelity.supportConstructFamily">Support by construct family</h2>
+          <p data-i18n="site.fidelity.oracleNumbersAboveSummarize">
             The oracle numbers above summarize whole documents; this is the granular
             breakdown behind them. Support is tracked per DOCX construct family across four
             stages — <b>modeled</b>, <b>rendered</b>, <b>editable</b>, and
-            <b>round-trips on export</b>. A construct can be fully modeled and round-tripped
+            <b data-i18n="site.fidelity.roundTripsExport">round-trips on export</b>. A construct can be fully modeled and round-tripped
             while still not being editable or fully painted yet, and this table never claims
             support a stage does not actually have.
           </p>
           <div class="fidelity-meta">
-            <span>Last reviewed: <b>2026&#8209;08&#8209;09</b></span>
-            <span>Source of truth:
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">docs/18 support matrix</a>,
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">execution tracker</a>,
-              <a href="./reference/disposition-taxonomy.html">disposition taxonomy</a>
+            <span data-i18n="site.fidelity.lastReviewed">Last reviewed: <b>2026&#8209;08&#8209;09</b></span>
+            <span data-i18n="site.fidelity.sourceTruth">Source of truth:
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md" data-i18n="site.fidelity.docs18SupportMatrix">docs/18 support matrix</a>,
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md" data-i18n="site.fidelity.executionTracker">execution tracker</a>,
+              <a href="./reference/disposition-taxonomy.html" data-i18n="site.fidelity.dispositionTaxonomy">disposition taxonomy</a>
             </span>
           </div>
         </div>
 
-        <ul class="fidelity-legend" aria-label="Legend">
-          <li><h2>How to read a cell</h2></li>
-          <li><span class="mark" aria-hidden="true">●</span><span><b>Full</b> — implemented and exercised by tests.</span></li>
-          <li><span class="mark" aria-hidden="true">◐</span><span><b>Partial</b> — common cases work; documented gaps remain.</span></li>
-          <li><span class="mark" aria-hidden="true">▢</span><span><b>Placeholder</b> — a visible stand-in, not the real content (e.g. undecodable images, EMF/WMF, math, <code>w:altChunk</code>).</span></li>
-          <li><span class="mark" aria-hidden="true">⊟</span><span><b>Preserved, not rendered</b> — kept losslessly for export (the retention floor) but not painted.</span></li>
-          <li><span class="mark" aria-hidden="true">○</span><span><b>Not yet</b> — not implemented.</span></li>
+        <ul class="fidelity-legend" aria-label="Legend" data-i18n-label="site.fidelity.legend">
+          <li><h2 data-i18n="site.fidelity.howReadCell">How to read a cell</h2></li>
+          <li><span class="mark" aria-hidden="true">●</span><span><b data-i18n="site.fidelity.full">Full</b> — implemented and exercised by tests.</span></li>
+          <li><span class="mark" aria-hidden="true">◐</span><span><b data-i18n="site.fidelity.partial">Partial</b> — common cases work; documented gaps remain.</span></li>
+          <li><span class="mark" aria-hidden="true">▢</span><span><b data-i18n="site.fidelity.placeholder">Placeholder</b> — a visible stand-in, not the real content (e.g. undecodable images, EMF/WMF, math, <code data-i18n="site.fidelity.wAltchunk">w:altChunk</code>).</span></li>
+          <li><span class="mark" aria-hidden="true">⊟</span><span><b data-i18n="site.fidelity.preservedNotRendered">Preserved, not rendered</b> — kept losslessly for export (the retention floor) but not painted.</span></li>
+          <li><span class="mark" aria-hidden="true">○</span><span><b data-i18n="site.fidelity.notYet">Not yet</b> — not implemented.</span></li>
         </ul>
 
         <div class="fidelity-table-wrap">
           <table class="fidelity-table">
-            <caption>
+            <caption data-i18n="site.fidelity.supportConstructFamilyStage">
               Support by construct family and stage. “Round-trips” means
               import&nbsp;→&nbsp;edit&nbsp;→&nbsp;export&nbsp;→&nbsp;reopen preserves the construct.
             </caption>
             <thead>
               <tr>
-                <th scope="col">Construct family</th>
-                <th scope="col" class="stage">Modeled</th>
-                <th scope="col" class="stage">Rendered</th>
-                <th scope="col" class="stage">Editable</th>
-                <th scope="col" class="stage">Round-trips</th>
+                <th scope="col" data-i18n="site.fidelity.constructFamily">Construct family</th>
+                <th scope="col" class="stage" data-i18n="site.fidelity.modeled">Modeled</th>
+                <th scope="col" class="stage" data-i18n="site.fidelity.rendered">Rendered</th>
+                <th scope="col" class="stage" data-i18n="site.fidelity.editable">Editable</th>
+                <th scope="col" class="stage" data-i18n="site.fidelity.roundTrips">Round-trips</th>
               </tr>
             </thead>
             <tbody id="fidelity-body">
               <!-- Rows are rendered from the FIDELITY data array in src/fidelity.js so
-                   the data stays in one easily-updatable place. A <noscript> static
+                   the data stays in one easily-updatable place. A <noscript data-i18n="site.fidelity.staticFallbackFollowsNo"> static
                    fallback follows for no-JS readers. -->
             </tbody>
           </table>
         </div>
 
         <noscript>
-          <p class="fidelity-owner-note">
+          <p class="fidelity-owner-note" data-i18n="site.fidelity.matrixRendersSmallData">
             This matrix renders from a small data table. With JavaScript disabled,
             read the authoritative source directly:
-            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">docs/18 support matrix</a>.
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md" data-i18n="site.fidelity.docs18SupportMatrix">docs/18 support matrix</a>.
           </p>
         </noscript>
 
-        <section class="fidelity-notes" aria-label="Notes and explicit non-support">
-          <h2>Notes, placeholders, and explicit non-support</h2>
+        <section class="fidelity-notes" aria-label="Notes and explicit non-support" data-i18n-label="site.fidelity.notesExplicitNonSupport">
+          <h2 data-i18n="site.fidelity.notesPlaceholdersExplicitNon">Notes, placeholders, and explicit non-support</h2>
           <ul>
-            <li><b>Editing is a developer test harness, not a product.</b> The <b>Editable</b> column reflects what the current in-browser editor can actually change today, not a supported product surface.</li>
-            <li><b>Every editable surface takes every editing operation.</b> Body, header, footer, footnote/endnote body, text box, and a box inside a shape group each accept typing, selection, character and paragraph formatting, cut/copy/paste, find and replace, comments, and tracked changes. This is pinned by an operation&nbsp;×&nbsp;surface matrix in CI, not by sampling.</li>
-            <li><b>Not authorable yet:</b> shape rotation and flip (they render and round-trip, but there is no handle or control to set them), custom shape geometry, replacing an existing picture's bytes in place, text-box body properties (internal margins, vertical anchor, autofit), inserting or splitting a section, and creating or updating a named style.</li>
-            <li><b>Math (OMML)</b> is fully typed and round-trips; the common constructs typeset inline. Box/border-box rules and full Word-parity math typesetting are partial, and math is not editable — there is no equation editor.</li>
-            <li><b>Charts and SmartArt</b> are modeled as first-class references and preserved byte-for-byte on export, but are not painted as live charts/diagrams — an embedded preview image shows if the file provides one, otherwise a text placeholder (⊟).</li>
-            <li><b>Non-PNG/JPEG images (EMF/WMF, SVG on the browser build), undecodable images, and <code>w:altChunk</code></b> paint a visible placeholder that reserves layout space, so nothing silently vanishes (▢).</li>
-            <li><b>Color fonts and color emoji render.</b> The CPU rasterizer tries bitmap strikes (<code>sbix</code>, <code>CBDT</code>) and then <code>COLR</code> v0/v1 paint graphs with the default <code>CPAL</code> palette before falling back to monochrome outlines. Gradient and clip-heavy COLRv1 graphs are approximated; a face the bundled set does not cover still needs a host-registered font.</li>
-            <li><b>Real-text PDF export is available.</b> File → Export as PDF produces a deterministic vector PDF with selectable/searchable text and embedded TrueType subset fonts. Hyperlink annotations, outlines, tagged PDF/PDF-A, page ranges, and live host-font parity remain incomplete; physical printing still uses browser-rendered raster pages. See <a href="./reference/pdf-export-and-print.html">docs/98</a>.</li>
-            <li><b>Text wrap around floats</b> reserves shared flow for top-and-bottom and square wrapping, including inside table cells, headers and footers. Tight and through contour wrapping, and page-coupled reflow, remain partial.</li>
+            <li><b data-i18n="site.fidelity.editingDeveloperTestHarness">Editing is a developer test harness, not a product.</b> The <b data-i18n="site.fidelity.editable">Editable</b> column reflects what the current in-browser editor can actually change today, not a supported product surface.</li>
+            <li><b data-i18n="site.fidelity.everyEditableSurfaceTakes">Every editable surface takes every editing operation.</b> Body, header, footer, footnote/endnote body, text box, and a box inside a shape group each accept typing, selection, character and paragraph formatting, cut/copy/paste, find and replace, comments, and tracked changes. This is pinned by an operation&nbsp;×&nbsp;surface matrix in CI, not by sampling.</li>
+            <li><b data-i18n="site.fidelity.notAuthorableYet">Not authorable yet:</b> shape rotation and flip (they render and round-trip, but there is no handle or control to set them), custom shape geometry, replacing an existing picture's bytes in place, text-box body properties (internal margins, vertical anchor, autofit), inserting or splitting a section, and creating or updating a named style.</li>
+            <li><b data-i18n="site.fidelity.mathOmml">Math (OMML)</b> is fully typed and round-trips; the common constructs typeset inline. Box/border-box rules and full Word-parity math typesetting are partial, and math is not editable — there is no equation editor.</li>
+            <li><b data-i18n="site.fidelity.chartsSmartart">Charts and SmartArt</b> are modeled as first-class references and preserved byte-for-byte on export, but are not painted as live charts/diagrams — an embedded preview image shows if the file provides one, otherwise a text placeholder (⊟).</li>
+            <li><b data-i18n="site.fidelity.nonPngJpegImages">Non-PNG/JPEG images (EMF/WMF, SVG on the browser build), undecodable images, and <code data-i18n="site.fidelity.wAltchunk">w:altChunk</code></b> paint a visible placeholder that reserves layout space, so nothing silently vanishes (▢).</li>
+            <li><b data-i18n="site.fidelity.colorFontsColorEmoji">Color fonts and color emoji render.</b> The CPU rasterizer tries bitmap strikes (<code>sbix</code>, <code data-i18n="site.fidelity.cbdt">CBDT</code>) and then <code data-i18n="site.fidelity.colr">COLR</code> v0/v1 paint graphs with the default <code data-i18n="site.fidelity.cpal">CPAL</code> palette before falling back to monochrome outlines. Gradient and clip-heavy COLRv1 graphs are approximated; a face the bundled set does not cover still needs a host-registered font.</li>
+            <li><b data-i18n="site.fidelity.realTextPdfExport">Real-text PDF export is available.</b> File → Export as PDF produces a deterministic vector PDF with selectable/searchable text and embedded TrueType subset fonts. Hyperlink annotations, outlines, tagged PDF/PDF-A, page ranges, and live host-font parity remain incomplete; physical printing still uses browser-rendered raster pages. See <a href="./reference/pdf-export-and-print.html">docs/98</a>.</li>
+            <li><b data-i18n="site.fidelity.textWrapAroundFloats">Text wrap around floats</b> reserves shared flow for top-and-bottom and square wrapping, including inside table cells, headers and footers. Tight and through contour wrapping, and page-coupled reflow, remain partial.</li>
             <li><b><code>.docm</code> macro-enabled files are rejected at open.</b> Strip-and-open versus explicit non-support is an undecided policy question, not an oversight.</li>
-            <li><b>Round-trips means a semantic fixed point</b> (import&nbsp;→&nbsp;export&nbsp;→&nbsp;reopen yields an equal model), not a byte-identical file. Byte-exact preservation applies to the retention/no-edit floor.</li>
-            <li><b>Data-loss reporting is partial, not total.</b> The <a href="./reference/disposition-taxonomy.html">disposition taxonomy</a> is the intended contract and whole unmodeled <i>parts</i> are preserved verbatim. But the DOCX exporter has no reporting path yet, unknown <i>attributes</i> (notably <code>w:rsid*</code>) are outside the report vocabulary, and the theme, font-table and comment-extension parsers regenerate their parts without reporting. Tracked in <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/105-AUDIT-2026-09-TRACKER.md">docs/105</a>.</li>
+            <li><b data-i18n="site.fidelity.roundTripsMeansSemantic">Round-trips means a semantic fixed point</b> (import&nbsp;→&nbsp;export&nbsp;→&nbsp;reopen yields an equal model), not a byte-identical file. Byte-exact preservation applies to the retention/no-edit floor.</li>
+            <li><b data-i18n="site.fidelity.dataLossReportingPartial">Data-loss reporting is partial, not total.</b> The <a href="./reference/disposition-taxonomy.html" data-i18n="site.fidelity.dispositionTaxonomy">disposition taxonomy</a> is the intended contract and whole unmodeled <i>parts</i> are preserved verbatim. But the DOCX exporter has no reporting path yet, unknown <i>attributes</i> (notably <code data-i18n="site.fidelity.wRsid">w:rsid*</code>) are outside the report vocabulary, and the theme, font-table and comment-extension parsers regenerate their parts without reporting. Tracked in <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/105-AUDIT-2026-09-TRACKER.md">docs/105</a>.</li>
           </ul>
         </section>
       </section>
@@ -301,11 +315,11 @@
 
     <footer class="site-footer">
       <div class="site-footer-inner">
-        <span class="site-footer-copy">OpenDoc — developed by CasualOffice · Apache-2.0</span>
+        <span class="site-footer-copy" data-i18n="site.footer.copyright">OpenDoc — developed by CasualOffice · Apache-2.0</span>
         <span class="site-footer-spacer" aria-hidden="true"></span>
-        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
-        <a href="./reference/security.html">Security</a>
-        <a href="./reference/contributing.html">Contributing</a>
+        <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+        <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
+        <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
       </div>
     </footer>
     <script>
@@ -338,6 +352,7 @@
         }
       })();
     </script>
+    <script type="module" src="./src/site_locale.mjs"></script>
 
     <script src="./src/fidelity.js"></script>
   </body>
