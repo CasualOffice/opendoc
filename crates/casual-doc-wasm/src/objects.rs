@@ -216,6 +216,11 @@ struct DistancesJson {
 struct PositionRead {
     /// `false` for an object in the run flow ("In line with text").
     floating: bool,
+    /// `true` when the object is a CHILD of a group, whose position its parent
+    /// decides. A host disables the position dialog on this rather than on an
+    /// empty answer, which it could not tell apart from "not an object".
+    #[serde(skip_serializing_if = "core::ops::Not::not")]
+    group_child: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     horizontal: Option<AxisRead>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -733,7 +738,24 @@ impl WasmDocument {
             return String::new();
         };
         let Some(paragraph) = self.paragraph_of_object(object) else {
-            return String::new();
+            // Not a top-level object. A group CHILD is positioned by its
+            // parent, so say that rather than answering nothing — a host
+            // cannot tell an empty string from "no such object".
+            return if self.paragraph_containing_inline_deep(object).is_some() {
+                serde_json::to_string(&PositionRead {
+                    floating: false,
+                    group_child: true,
+                    horizontal: None,
+                    vertical: None,
+                    wrap: None,
+                    behind_doc: None,
+                    wrap_distances: None,
+                    z_order: None,
+                })
+                .unwrap_or_default()
+            } else {
+                String::new()
+            };
         };
         let Some(source) = find_paragraph_any(&self.document, paragraph) else {
             return String::new();
@@ -744,6 +766,7 @@ impl WasmDocument {
         let read = match anchor {
             None => PositionRead {
                 floating: false,
+                group_child: false,
                 horizontal: None,
                 vertical: None,
                 wrap: None,
@@ -754,6 +777,7 @@ impl WasmDocument {
             #[allow(clippy::cast_precision_loss)] // EMU distances are far below 2^53
             Some(anchor) => PositionRead {
                 floating: true,
+                group_child: false,
                 horizontal: Some(read_horizontal(anchor.horizontal)),
                 vertical: Some(read_vertical(anchor.vertical)),
                 wrap: Some(wrap_token(anchor.wrap)),
@@ -2637,6 +2661,32 @@ mod tests {
             ellipses, 1,
             "the ellipse came back as a shape, not as a box"
         );
+    }
+
+    /// A shape inside a group is positioned by its parent. Saying so is what
+    /// lets a host disable the position dialog WITH A REASON rather than on an
+    /// empty answer it cannot tell apart from "no such object".
+    #[test]
+    fn a_group_child_reports_that_its_parent_positions_it() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "rectangle")
+            .expect("insert a shape");
+        let group = only_group(&document).expect("a group of one");
+        let shape = match group.children.first().expect("one child") {
+            GroupChild::Shape(shape) => shape.id.to_string(),
+            other => panic!("expected a shape, got {other:?}"),
+        };
+
+        let read: serde_json::Value =
+            serde_json::from_str(&document.object_position(&shape)).expect("JSON");
+        assert_eq!(read["groupChild"], serde_json::json!(true));
+        assert_eq!(read["floating"], serde_json::json!(false));
+
+        // And a node that is not an object at all still answers nothing, so
+        // the two cases stay distinguishable.
+        assert_eq!(document.object_position(&paragraph), "");
     }
 
     /// Bring to front / send to back must be exact even when the incoming keys
