@@ -344,7 +344,7 @@ test("the canvas keeps its pre-router baseline and loses the class it replaced",
 test("the known gaps are the ones we think they are", () => {
   assert.deepEqual(
     CURSOR_TARGETS.filter((row) => row.owner === "unprobed").map((row) => row.id),
-    ["object-rotate-handle", "table-select-strip"],
+    ["object-rotate-handle"],
     "an `unprobed` row is a target the engine cannot yet report. Wiring one up " +
       "means changing its owner here; adding one means the surface grew a target " +
       "we cannot see. Either way this list is meant to be edited deliberately.",

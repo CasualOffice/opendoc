@@ -589,20 +589,37 @@ export const CURSOR_TARGETS = [
       "resize grips will turn correctly on the same day.",
   },
   {
-    id: "table-select-strip",
+    id: "table-row-strip",
     cursor: "cell",
-    owner: "unprobed",
-    selector: null,
-    gesture: "Selecting a row or column from the strip beside the table",
+    owner: "css",
+    selector: ".overlay .table-row-strip",
+    gesture: "Selecting a row — or dragging along the strip to select several",
     why:
-      "The EDGE STRIPS are still missing (`docs/141` D-2): clicking left of a row " +
-      "to select it, above a column to select it, and dragging along either. " +
-      "`tableChromeOnPage` reports the table's own bounding box, so the strip " +
-      "rectangles are derivable from it, but nothing paints or hit-tests them yet. " +
-      "ONLYOFFICE carries all three zones (`private_CheckHitInBorder`'s " +
-      "`RowSelection` / `ColumnSelection` / `CellSelection`) with custom image " +
-      "cursors, so they are ahead of us here. Recorded rather than omitted: an " +
-      "`unprobed` row stays visible in `pointer_cursor.test.mjs`.",
+      "`cell` is the CSS keyword whose meaning is 'select a table cell', and it is " +
+      "what `docs/141` §4.2.1 chose. Docs uses a custom arrow bitmap here and " +
+      "ONLYOFFICE a custom image too (`private_CheckHitInBorder`'s `RowSelection`), " +
+      "but a data-URI cursor would be a visual change for the owner to approve " +
+      "(`docs/63`); `cell` is honest today and it is the keyword both products are " +
+      "approximating. This row was `unprobed` until D-2 painted the strip.",
+  },
+  {
+    id: "table-column-strip",
+    cursor: "cell",
+    owner: "css",
+    selector: ".overlay .table-column-strip",
+    gesture: "Selecting a column — or dragging across to select several",
+    why: "The column twin of the row strip above; same keyword, same reason.",
+  },
+  {
+    id: "table-insert-target",
+    cursor: "pointer",
+    owner: "css",
+    selector: ".overlay .table-insert-target",
+    gesture: "Inserting a row or column at the boundary the disc sits on",
+    why:
+      "A control, not text — the same answer the checklist checkbox and the comment " +
+      "anchor get. It is a `+` disc you press, and `pointer` is what every product " +
+      "puts under a press-me affordance.",
   },
 ];
 

@@ -183,6 +183,9 @@ import { followExternalTarget } from "./link_targets.mjs";
 import { pasteLossMessage } from "./paste_loss.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createTableChrome } from "./table_chrome.mjs";
+import { createTableGutter } from "./table_gutter.mjs";
+import { createTableRange } from "./table_range.mjs";
+import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
@@ -2598,7 +2601,18 @@ let objectCropSession = null;
  * outline and commits ONE `SetAnchor` (position) on release. `null` when idle. */
 let objectMoveDrag = null;
 /** Current table-cell selection overlay, separate from text ranges. */
-let tableSelection = null; // { node, mode: "row" | "column" | "table" }
+// The table CELL SELECTION (`docs/141` D-3). One rectangle, `{ anchorNode,
+// focusNode }`, for every shape of table selection there is — a drag, a row, a
+// column, the whole table — because three degenerate rectangles and a real one
+// are one type, not two (`table_range.mjs`).
+const tableRange = createTableRange({
+  doc: () => doc,
+  pages: () => pages,
+  scaleOf,
+  runEdit: (fn, options) => runEdit(fn, options),
+  status: (text, kind) => setStatus(text, kind),
+  t,
+});
 let dragging = false;
 /** Primary-pointer gesture retained until pointerup so link activation is
  * suppressed after a drag/Shift extension. */
@@ -3106,7 +3120,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
       ? null
       : { node: startPosition.node, offset: startPosition.offset };
     startPosition.free();
-    tableSelection = null;
+    tableRange.clear();
     objectCropSession = null; // a new document invalidates any in-progress crop
     // Ask the engine, before anything is offered, whether this document can be
     // edited at all: the mode buttons, the banner, the chrome and every refusal
@@ -4080,6 +4094,9 @@ function paintOverlayLayer() {
   // pointer-move a lookup rather than an engine query. AFTER `clearOverlays`,
   // because the same call puts an in-flight drag's guide back (`docs/141` D-1).
   tableChrome.invalidate();
+  // The cell range's memo has the same lifetime and the same reason: a repaint
+  // is the only thing that can change which cells a pair of endpoints covers.
+  tableRange.invalidate();
   paintReviewMarkers();
   paintChecklistMarkers();
   spellChecker.paint();
@@ -4098,6 +4115,9 @@ function paintOverlayLayer() {
     tableChrome.paintCaretColumnHandles(pages, cellRect);
     tableChrome.paintTouchPills(pages);
   }
+  // The gutter is painted outside the `selection` branch: a strip is armed by
+  // the POINTER, and hovering a table is not a reason to require a caret.
+  tableGutter.paint(pages);
 }
 
 function drawSelection() {
@@ -4109,14 +4129,14 @@ function drawSelection() {
   updateReviewControls();
   scheduleReviewMarginRender();
   updatePageNumber();
+  if (tableRange.mirrorChanged()) scheduleChromeRefresh({ a11y: true });
   rulerView.syncToCaret();
   positionSelToolbar();
   hostSession?.noteSelection();
 }
 
 function paintTableSelection() {
-  if (!tableSelection) return;
-  const rects = doc.tableSelectionRects(tableSelection.node, tableSelection.mode);
+  const rects = tableRange.rects();
   for (let i = 0; i + 4 < rects.length; i += 5) place(rects.slice(i, i + 5), "table-cell-selection");
 }
 
@@ -4845,7 +4865,7 @@ function selectObject(node, kind, anchor, anchored = false, descriptor = null) {
     ...objectCapabilities(descriptor),
   };
   pendingFormat = null;
-  tableSelection = null;
+  tableRange.clear();
   drawSelection();
 }
 
@@ -5247,7 +5267,7 @@ function probeRunningBand(page, band) {
 function enterRunningEdit(band, node, offset, page) {
   setRunningContext(band, page);
   objectSelection = null;
-  tableSelection = null;
+  tableRange.clear();
   selection = { anchor: { node, offset }, focus: { node, offset } };
   pagesEl.dataset.runningEdit = band;
   document.body.classList.add("running-edit");
@@ -6033,6 +6053,26 @@ const tableChrome = createTableChrome({
   repaint: () => drawSelection(),
 });
 
+// The table GUTTER (`docs/141` D-2). It owns the strips beside the table, the
+// hover insert discs and the drag that selects several rows or columns; it reads
+// the SAME memoised page chrome the boundary layer does, so a hover still makes
+// no engine call.
+const tableGutter = createTableGutter({
+  doc: () => doc,
+  chromeOf: (page) => tableChrome.chromeOf(page),
+  pointToTwip,
+  scaleOf,
+  pageFromClientPoint,
+  pages: () => pages,
+  state: pointerModeState,
+  range: tableRange,
+  runEdit: (fn, options) => runEdit(fn, options),
+  status: (text, kind) => setStatus(text, kind),
+  t,
+  repaint: () => drawSelection(),
+  repaintOverlay: () => paintOverlayLayer(),
+});
+
 const pointerHover = createPointerHover({
   doc: () => doc,
   pages: () => pages,
@@ -6042,6 +6082,7 @@ const pointerHover = createPointerHover({
   pointInsideObject,
   objectCapabilities,
   tableBoundaryAt: (page, event) => tableChrome.targetKind(page, event),
+  tableGutterAt: (page, event) => tableGutter.targetKind(page, event),
   state: () => ({
     formatPainting: !!formatPainter,
     ...pointerModeState(),
@@ -6051,6 +6092,7 @@ const pointerHover = createPointerHover({
     cropDrag: objectCropSession?.handleDrag ?? null,
     moveDrag: objectMoveDrag,
     tableDrag: tableChrome.dragKind(),
+    tableStripDrag: tableGutter.dragging(),
     textDrag: dragging,
   }),
 });
@@ -6225,6 +6267,13 @@ function onPointerDown(page, event) {
   // table is still the thing under the pointer (the same order
   // `pointer_cursor.mjs` records), and before the caret path because the caret is
   // what this gesture replaces.
+  // A press in the GUTTER beside the table selects a row or a column, or inserts
+  // one at the `+` disc's boundary. BEFORE the boundary layer, because the two
+  // zones overlap in a thin band and the gutter is the one the point is really
+  // inside: a boundary zone reaches ±5px OUTSIDE the table's box, so without
+  // this the disc on the table's bottom edge was stolen by a row resize unless
+  // you aimed past the first 5px of the strip.
+  if (tableGutter.tryBeginDrag(page, event)) return;
   if (tableChrome.tryBeginDrag(page, event)) return;
   // A TOUCH tap inside a table arms 24px boundary pills, because hover — the
   // affordance every branch above depends on — does not exist on touch. The first
@@ -6267,10 +6316,10 @@ function onPointerDown(page, event) {
   // OUTSIDE it or start typing; the `contextmenu` handler already asks this exact
   // question through the same helper.
   //
-  // O(1) when there is no table selection — `tableSelectionContainsClientPoint`
-  // returns on `!tableSelection` before it queries the engine — so the ordinary
-  // click path gains no document walk (`docs/107` §4).
-  if (!tableSelectionContainsClientPoint(event.clientX, event.clientY)) tableSelection = null;
+  // O(1) when there is no table selection — the store returns on `!selection`
+  // before it queries the engine — so the ordinary click path gains no document
+  // walk (`docs/107` §4).
+  if (!tableRange.containsClientPoint(event.clientX, event.clientY)) tableRange.clear();
   dragging = true;
   pointerGesture = {
     page,
@@ -6285,6 +6334,13 @@ function onPointerDown(page, event) {
     // instead of reusing click-away behavior and silently entering the body.
     runningBand: runningEditBand,
     objectNode: editingHere ? objectSelection.node : null,
+    // The cell the press landed in, so a drag that leaves it can become a CELL
+    // range instead of a text range (`docs/141` D-3). One `inTable` per press —
+    // the press already pays for several document questions — and the drag
+    // itself re-asks only when the paragraph under the pointer changes.
+    cellAnchor: doc.inTable(anchor.node) ? anchor.node : "",
+    lastCellProbe: "",
+    cellRange: false,
   };
   // Shift+Click extends the current selection to the click (keeps the anchor) —
   // but only WITHIN one story. A range cannot span WordprocessingML stories, and
@@ -6334,11 +6390,20 @@ function onPointerMove(page, event) {
     tableChrome.moveDrag(event);
     return;
   }
+  if (tableGutter.dragging()) {
+    tableGutter.moveDrag(event);
+    return;
+  }
   if (dragging && event.buttons === 0) {
     resetPointerGesture();
     return;
   }
   if (!dragging) {
+    // The gutter is asked FIRST and unthrottled: it is a few dozen comparisons
+    // over the memoised page chrome with no engine call, and it repaints only
+    // when the armed band actually changes. Throttling it to a frame would make
+    // the strip lag the pointer that is aiming at it.
+    tableGutter.hover(page, event);
     pointerHover.schedule(page, event);
     return;
   }
@@ -6357,10 +6422,6 @@ function updateDragSelection(event) {
     ) > 4
   ) {
     pointerGesture.moved = true;
-    // A drag builds a TEXT range, which supersedes a row/column/table selection.
-    // Pointer-down inside the fill keeps the selection (`docs/141` TBL-05); the
-    // moment the gesture turns into a drag it is no longer a confirming click.
-    tableSelection = null;
   }
   const page = pageFromClientPoint(event.clientX, event.clientY);
   if (!page) return;
@@ -6387,7 +6448,28 @@ function updateDragSelection(event) {
   }
   const focus = anchorAt(page, event);
   if (!focus) return;
+  // A drag that crosses a CELL boundary selects the rectangle, the way Docs and
+  // Word both do; one that stays inside a cell is ordinary text selection. Every
+  // other drag supersedes a row/column/table selection, which is why the clear
+  // lives here rather than in the "has moved" branch above: pointer-down inside
+  // the fill keeps the selection (`docs/141` TBL-05), and the moment the gesture
+  // turns into a drag it is no longer a confirming click.
+  if (tableRange.dragTo(pointerGesture.cellAnchor, focus.node, pointerGesture)) return syncSelectionToCellRange();
+  tableRange.clear();
   selection = { anchor: selection.anchor, focus };
+  drawSelection();
+}
+
+/** Follows the caret/selection to the cell rectangle the store now holds — the
+ *  one line both the drag and Shift+Arrow need afterwards, so Copy and the
+ *  toolbar see a range inside the selected cells rather than a stale caret. */
+function syncSelectionToCellRange() {
+  const range = tableRange.get();
+  if (!range) return;
+  selection = {
+    anchor: { node: range.anchorNode, offset: 0 },
+    focus: { node: range.focusNode, offset: 0 },
+  };
   drawSelection();
 }
 
@@ -6444,6 +6526,7 @@ function onPointerUp(event) {
   if (finishObjectMove(event)) return;
   if (finishObjectResize(event)) return;
   if (tableChrome.finishDrag(event)) return;
+  if (tableGutter.finishDrag(event)) return;
   const gesture = pointerGesture;
   resetPointerGesture();
   // Format painter: this pointer gesture landed on the document, so consume it as
@@ -6631,12 +6714,21 @@ window.addEventListener("pointermove", (e) => {
     tableChrome.moveDrag(e);
     return;
   }
+  if (tableGutter.dragging()) {
+    tableGutter.moveDrag(e);
+    return;
+  }
   if (dragging) {
     if (e.buttons === 0) resetPointerGesture();
     else updateDragSelection(e);
   }
 });
-pagesEl.addEventListener("pointerleave", () => pointerHover.clear());
+pagesEl.addEventListener("pointerleave", () => {
+  pointerHover.clear();
+  // The strips are hover chrome: leaving the sheet takes them down, or they
+  // would sit beside a table the pointer is nowhere near.
+  if (tableGutter.clear()) paintOverlayLayer();
+});
 pagesEl.addEventListener("dblclick", (e) => {
   const page = pageFromEvent(e);
   if (!page) return;
@@ -6745,18 +6837,21 @@ window.addEventListener("pointercancel", () => {
   cancelObjectMove();
   cancelObjectResize();
   tableChrome.cancelDrag();
+  tableGutter.cancelDrag();
   resetPointerGesture();
 });
 window.addEventListener("lostpointercapture", () => {
   cancelObjectMove();
   cancelObjectResize();
   tableChrome.cancelDrag();
+  tableGutter.cancelDrag();
   resetPointerGesture();
 });
 window.addEventListener("blur", () => {
   cancelObjectMove();
   cancelObjectResize();
   tableChrome.cancelDrag();
+  tableGutter.cancelDrag();
   resetPointerGesture();
 });
 document.addEventListener("visibilitychange", () => {
@@ -6764,6 +6859,7 @@ document.addEventListener("visibilitychange", () => {
     cancelObjectMove();
     cancelObjectResize();
     tableChrome.cancelDrag();
+    tableGutter.cancelDrag();
     resetPointerGesture();
   }
 });
@@ -6860,28 +6956,6 @@ function selectionContainsClientPoint(clientX, clientY) {
   return false;
 }
 
-function tableSelectionContainsClientPoint(clientX, clientY) {
-  if (!doc || !tableSelection) return false;
-  const rects = doc.tableSelectionRects(
-    tableSelection.node,
-    tableSelection.mode,
-  );
-  for (let i = 0; i + 4 < rects.length; i += 5) {
-    const [pageNumber, x, y, width, height] = rects.slice(i, i + 5);
-    const page = pages[pageNumber - 1];
-    if (!page) continue;
-    const { rect, sx, sy } = scaleOf(page);
-    if (
-      clientX >= rect.left + x * sx &&
-      clientX <= rect.left + (x + width) * sx &&
-      clientY >= rect.top + y * sy &&
-      clientY <= rect.top + (y + height) * sy
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
 
 function anchorInsideRange(anchor, range) {
   return (
@@ -6973,20 +7047,16 @@ function decideContextRevision(revision, accept) {
   );
 }
 
-/** One catalogue key per selection mode. `Selected table ${mode}` was the single
- *  table status line with no catalogue entry at all (`docs/141` §4.0), and
- *  glueing a translated noun onto a fixed English verb is what a key per mode
- *  avoids: a language that puts the state first needs the whole sentence. */
-const TABLE_SELECTION_STATUS = Object.freeze({
-  row: "table.selectedRow",
-  column: "table.selectedColumn",
-  table: "table.selectedTable",
-});
-
+/** Selects a whole row, column or table around `node` — the command twin of a
+ *  click on the gutter strip. The endpoints come from the engine's own anchor
+ *  list, so the menu route and the pointer route build the same rectangle
+ *  (`table_range.mjs`). A mode the table cannot express — a column of a merged
+ *  table — refuses with the catalogue's sentence instead of painting nothing. */
 function selectTableContext(node, mode) {
-  tableSelection = { node, mode };
+  const refusal = tableRange.selectMode(node, mode);
   drawSelection();
-  setStatus(t(TABLE_SELECTION_STATUS[mode] ?? "table.selectedTable"));
+  if (refusal) setStatus(t(refusal), "warn");
+  else tableRange.announce();
   focusEditorSurface();
 }
 
@@ -7047,9 +7117,9 @@ function openContextLink(link) {
 // the tree reflects the state the menu is opening over rather than boot state.
 const TABLE_COMMAND_HOST = {
   doc: () => doc,
-  tableSelection: () => tableSelection,
+  tableSelection: () => tableRange.descriptor(),
   clearTableSelection: () => {
-    tableSelection = null;
+    tableRange.clear();
   },
   plainTableInfo,
   runEdit: (thunk, options) => runEdit(thunk, options),
@@ -7626,10 +7696,10 @@ pagesEl.addEventListener("contextmenu", (event) => {
   const preserveSelection = selectionContainsClientPoint(
     event.clientX,
     event.clientY,
-  ) || tableSelectionContainsClientPoint(event.clientX, event.clientY);
+  ) || tableRange.containsClientPoint(event.clientX, event.clientY);
   if (!preserveSelection) {
     selection = { anchor, focus: anchor };
-    tableSelection = null;
+    tableRange.clear();
     drawSelection();
   }
   showContextMenu(
@@ -8411,7 +8481,7 @@ async function applyEditResult(res, { keepView = false } = {}) {
   // typing, deleting, undo and arrow keys, so the editor claims a whole table is
   // selected while the real selection is a collapsed caret in one cell — Copy
   // returns "" and Backspace removes a single character.
-  tableSelection = null;
+  tableRange.clear();
   // The paste-options chip only ever means "redo the paste you just made,
   // differently" — it acts by undoing it. Once any other edit has landed, an
   // undo removes that edit instead, so the offer has expired. Retiring it here,
@@ -8567,7 +8637,7 @@ function navCaret(dir, extend) {
   // ...and so does it leave a row/column/table selection. These two were written
   // as one rule and only one of them was applied here, which is how arrowing out
   // of a table left the whole table still painted as selected.
-  tableSelection = null;
+  tableRange.clear();
   clearObjectStatus();
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
@@ -8990,7 +9060,7 @@ function updateToolbar() {
     inTable,
     regular: tableInfo?.regular,
     rowHeightRule: tableInfo?.rowHeightRule,
-    hasCellSelection: !!tableSelection,
+    hasCellSelection: tableRange.mergeable(),
   })) {
     control.disabled = !enabled;
     control.title = enabled ? authoredTitle(control, EDITOR_KEYBOARD_PLATFORM) : t(reasonKey);
@@ -10730,52 +10800,27 @@ function runNodeEdit(thunk) {
   return true;
 }
 
-/** The CELL-scoped half of the cell-format popover — shading, vertical alignment
- *  and the four cell-border presets.
- *
- *  INTERIM, and deliberately a refusal (`docs/141` TBL-08). Each of these commits
- *  through `runNodeEdit`, which passes `selection.focus.node` — the CARET's
- *  paragraph, one cell — and nothing in the product iterates a row/column/table
- *  selection's cells. So *Select row → shade* shaded one cell while the accent
- *  fill still claimed the whole row, and nothing refused, which reads as a broken
- *  feature rather than an unsupported one. Formatting one cell and implying
- *  success is worse than saying no, so this says no with the reason.
- *
- *  CLOSED BY TBL-08's real fix: a facade `tableSelectionAnchorNodes(node, mode)`
- *  returning `fn table_selection_anchors`' existing node-id list, after which
- *  this loops it. Re-deriving those anchors in JS would be a second
- *  implementation of one rule and is explicitly not the route.
- *
- *  Table-scoped commands (`setTableBorder`, the formula, the properties panel)
- *  stay on `runNodeEdit`: a cell selection does not change what they mean.
- *
- *  Complexity: O(1) — one boolean read, no document walk. */
-function runCellEdit(thunk) {
-  if (tableSelection) {
-    setStatus(t("table.cellFormatOneCell"), "error");
-    focusEditorSurface();
-    return false;
-  }
-  return runNodeEdit(thunk);
-}
-
-function reflectTableMenu() {
-  if (!doc || !selection) return;
-  const node = selection.focus.node;
-  const rgb = doc.cellShadingAt(node);
-  if (rgb >= 0 && document.activeElement !== cellShade) {
-    cellShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
-  }
-  cellVAlignGroup.reflect(doc.cellVerticalAlignAt(node) || "top");
-  const edges = doc.cellBorderEdges(node);
-  const bit = { top: 1, bottom: 2, left: 4, right: 8 };
-  for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
-    const k = b.dataset.cellborder;
-    const on = k === "box" ? edges === 0b1111 : k === "none" ? edges === 0 : (edges & bit[k]) !== 0;
-    b.setAttribute("aria-pressed", String(on));
-  }
-}
-const tablePopover = registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
+// The cell-format popover and the split-cell dialog are `table_cell_chrome.mjs`;
+// what stays here is the editor state they need. `formatRange` is the one line
+// that removed the old *"put the caret in the cell to format it"* refusal: the
+// caret's own node passed twice is a one-cell range, so one path serves both.
+const cellFormatMenu = bindCellFormatMenu({
+  menu: tableFmtMenu,
+  shade: cellShade,
+  shadeNone: cellShadeNone,
+  vAlign: cellVAlign,
+  cellBorderColor,
+  tableBorderColor,
+  doc: () => doc,
+  caretNode: () => (selection && doc ? selection.focus.node : ""),
+  formatRange: (apply) =>
+    selection && doc ? tableRange.formatRange(apply, selection.focus.node) : false,
+  runNodeEdit,
+  onButton,
+  bindRadioGroup,
+  hexToRgb,
+});
+const tablePopover = registerPopover(tableBtn, tableFmtMenu, () => cellFormatMenu.reflect());
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -10786,7 +10831,7 @@ bindTableBand({
   getSelection: () => selection,
   runEdit,
   clearTableSelection: () => {
-    tableSelection = null;
+    tableRange.clear();
   },
   selectTableContext,
   caretTableColumn,
@@ -10794,93 +10839,40 @@ bindTableBand({
 
 onButton(mergeCellsBtn, async () => {
   // The "select something first" branch that used to be here was UNREACHABLE —
-  // the button is disabled whenever `tableSelection` is null — and it carried a
-  // second, divergent copy of the menu's own sentence ("Select a table row,
-  // column, or table first" against "Select a row, column, or table before
-  // merging"). The band's disabled reason is now that one sentence, from the
-  // catalogue (`docs/141` TBL-03, TBL-05).
-  if (!selection || !doc || !tableSelection) return;
-  await runEdit(() => doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
-  tableSelection = null;
+  // the button is disabled whenever fewer than two cells are selected — and it
+  // carried a second, divergent copy of the menu's own sentence. The band's
+  // disabled reason is now that one sentence, from the catalogue (`docs/141`
+  // TBL-03, TBL-05).
+  //
+  // `mergeTableCellRange` takes the RECTANGLE, not one of the three degenerate
+  // shapes a mode string could name, so an arbitrary drag merges (TBL-17).
+  const range = tableRange.get();
+  if (!selection || !doc || !range) return;
+  await runEdit(() => doc.mergeTableCellRange(range.anchorNode, range.focusNode), { gate: true });
+  tableRange.clear();
   updateToolbar();
 });
 
-// Split cell had no keydown listener, no backdrop handler, no focus trap and no
-// Enter-to-confirm, and it closed onto `splitCellBtn` — a button inside a hidden
-// contextual ribbon panel, so `.focus()` was a no-op and the keyboard fell to
-// <body>, which is why the editor appeared frozen afterwards (HF-062). The
-// primitive supplies all of it; `fallbackFocus` is what catches the hidden
-// button, since the controller only restores focus to a control still on screen.
-const splitCellModal = registerModal(splitCellDialog, {
-  initialFocus: () => splitCellColumns,
+const splitCellDialogView = bindSplitCellDialog({
+  dialog: splitCellDialog,
+  rows: splitCellRows,
+  columns: splitCellColumns,
+  open: splitCellBtn,
+  close: splitCellClose,
+  cancel: splitCellCancel,
+  confirm: splitCellConfirm,
   fallbackFocus: () => pagesEl,
-  defaultAction: () => void applySplitCell(),
-});
-
-function toggleSplitCellDialog(open) {
-  if (open) {
-    splitCellRows.value = "1";
-    splitCellColumns.value = "2";
-    splitCellColumns.setCustomValidity("");
-    splitCellModal.open();
-  } else {
-    splitCellModal.close();
-  }
-}
-
-/** Splits the caret's merged cell into rows x columns. Refuses out-of-range
- *  input inline and keeps the dialog open with the typed values intact, rather
- *  than closing on a number the engine will not accept. */
-async function applySplitCell() {
-  if (!selection || !doc) return;
-  const rows = Number.parseInt(splitCellRows.value, 10);
-  const columns = Number.parseInt(splitCellColumns.value, 10);
-  if (!Number.isInteger(rows) || !Number.isInteger(columns) || rows < 1 || columns < 1 || rows > 20 || columns > 20) {
-    splitCellColumns.setCustomValidity("Enter whole numbers from 1 to 20.");
-    splitCellColumns.reportValidity();
-    return;
-  }
-  splitCellColumns.setCustomValidity("");
-  await runEdit(() => doc.splitMergedCell(selection.focus.node, rows, columns), { gate: true });
-  toggleSplitCellDialog(false);
-  tableSelection = null;
-  updateToolbar();
-}
-
-onButton(splitCellBtn, () => {
-  if (!selection || !doc) return;
-  toggleSplitCellDialog(true);
-});
-
-onButton(splitCellClose, () => toggleSplitCellDialog(false));
-onButton(splitCellCancel, () => toggleSplitCellDialog(false));
-onButton(splitCellConfirm, () => void applySplitCell());
-
-cellShade.addEventListener("change", () => {
-  const [r, g, b] = hexToRgb(cellShade.value);
-  runCellEdit((n) => doc.setCellShading(n, r, g, b, false));
-});
-onButton(cellShadeNone, () => runCellEdit((n) => doc.setCellShading(n, 0, 0, 0, true)));
-const cellVAlignGroup = bindRadioGroup(cellVAlign, {
-  attr: "data-valign",
-  onSelect: (valign) => {
-    runCellEdit((n) => doc.setCellVerticalAlign(n, valign));
-    reflectTableMenu();
+  registerModal,
+  onButton,
+  runEdit: (fn, options) => runEdit(fn, options),
+  doc: () => doc,
+  caretNode: () => (selection && doc ? selection.focus.node : ""),
+  afterSplit: () => {
+    tableRange.clear();
+    updateToolbar();
   },
 });
-for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
-  onButton(b, () => {
-    const [r, g, bl] = hexToRgb(cellBorderColor.value);
-    runCellEdit((n) => doc.setCellBorder(n, b.dataset.cellborder, r, g, bl, 8));
-    reflectTableMenu();
-  });
-}
-for (const b of tableFmtMenu.querySelectorAll("[data-tableborder]")) {
-  onButton(b, () => {
-    const [r, g, bl] = hexToRgb(tableBorderColor.value);
-    runNodeEdit((n) => doc.setTableBorder(n, b.dataset.tableborder, r, g, bl, 8));
-  });
-}
+const toggleSplitCellDialog = (open) => splitCellDialogView.toggle(open);
 
 // -- Table properties inspector ----------------------------------------------
 let tablePropertiesCurrent = null;
@@ -11186,7 +11178,7 @@ const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () =
  *  document. The projection itself lives in `a11y_mirror.mjs`; what stays here
  *  is the two pieces of editor state it needs. */
 function buildAccessibilityTree() {
-  renderAccessibilityMirror(doc, selection?.focus?.node ?? "");
+  renderAccessibilityMirror(doc, selection?.focus?.node ?? "", tableRange.gridRect());
 }
 
 // ---- Outline panel (heading tree → scroll-to) -------------------------------
@@ -13979,7 +13971,7 @@ function selectAll() {
       const start = { node: range.startNode, offset: range.startOffset };
       const end = { node: range.endNode, offset: range.endOffset };
       if (!selectionMatchesRange(selection, start, end)) {
-        tableSelection = null;
+        tableRange.clear();
         selection = { anchor: start, focus: end };
         drawSelection();
         focusEditorSurface();
@@ -13993,7 +13985,7 @@ function selectAll() {
 
   const a = doc.firstPosition();
   const b = doc.lastPosition();
-  tableSelection = null;
+  tableRange.clear();
   selection = {
     anchor: { node: a.node, offset: a.offset },
     focus: { node: b.node, offset: b.offset },
@@ -14770,6 +14762,15 @@ document.addEventListener("keydown", async (e) => {
   // generic modifier guard so the supported Ctrl/Command/Option combinations
   // reach semantic engine moves. Shift extends every navigation intent.
   const navDir = navigationDirection(e, EDITOR_KEYBOARD_PLATFORM);
+  // Shift+Arrow EXTENDS a cell selection once one exists — the Docs and Word
+  // behaviour — instead of collapsing it into a text range one character long.
+  // With no cell selection this is not reached and Shift+Arrow is text as ever.
+  if (navDir && e.shiftKey && tableRange.get() && tableRange.extendByStep(navDir)) {
+    e.preventDefault();
+    syncSelectionToCellRange();
+    tableRange.announce();
+    return;
+  }
   if (navDir === "docStart" || navDir === "docEnd") {
     e.preventDefault();
     navToPosition(navDir === "docStart" ? doc.firstPosition() : doc.lastPosition(), e.shiftKey);
@@ -16085,7 +16086,7 @@ async function showVersionPreview(previewDoc) {
   // and the background measure ticker (which captures `doc`, so a late tick from
   // the old one is already a no-op).
   objectPresence.forget();
-  tableSelection = null;
+  tableRange.clear();
   reviewLayout = [];
   reviewCardCache.clear();
   if (previewDoc) {

@@ -25,7 +25,9 @@ import { t } from "./i18n.mjs";
  *        suggesting}`, where `table` is `plainTableInfo`'s five fields.
  * @param {object} host the editor bindings, all read at BUILD time so the tree
  *        reflects the state the menu is opening over:
- *        `doc()`, `tableSelection()`, `clearTableSelection()`,
+ *        `doc()`, `tableSelection()` (the CELL RANGE descriptor:
+ *        `{anchorNode, focusNode, mode, table, cells, expanded}` or `null`),
+ *        `clearTableSelection()`,
  *        `plainTableInfo(node)`, `runEdit(thunk, options)`,
  *        `selectTableContext(node, mode)`, `openSplitCellDialog()`,
  *        `openCellFormat()`, `openTableProperties()`.
@@ -45,11 +47,12 @@ export function tableToolCommands(context, host) {
     ? ""
     : "This structural change cannot be tracked in Suggesting mode";
   const regular = context.table.regular;
-  const selectedTable = tableSelection
-    ? host.plainTableInfo(tableSelection.node)?.table
-    : "";
+  // The RANGE already names its own table, so this costs no `tableInfo` walk.
+  // Merge needs two cells: a one-cell rectangle is a caret with a fill, and
+  // "select two or more cells before merging" is the sentence that says so.
   const hasTableSelection =
-    !!selectedTable && selectedTable === context.table.table;
+    !!tableSelection?.table && tableSelection.table === context.table.table;
+  const mergeReady = hasTableSelection && (tableSelection?.cells ?? 0) > 1;
   // The same sentence the BAND now shows for the same precondition, from the one
   // catalogue entry (`table_band.mjs` `TABLE_BAND_REASON_KEYS`, `docs/141` TBL-03).
   const columnsReason = regular ? structuralReason : t("table.reason.merged");
@@ -177,15 +180,21 @@ export function tableToolCommands(context, host) {
       icon: "tableDelete",
       submenu: deleteSubmenu,
     },
+    // MERGE OVER A RECTANGLE (`docs/141` TBL-17). `mergeTableCellRange` takes the
+    // two endpoints and merges whatever rectangle they describe, so a drag across
+    // four cells merges those four — where `mergeTableSelection` could only be
+    // handed one of three degenerate shapes and therefore could never express a
+    // drag at all.
     tableMutation("table.merge", "Merge cells",
       async () => {
         await runEdit(() =>
-          doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
+          doc.mergeTableCellRange(tableSelection.anchorNode, tableSelection.focusNode),
+        { gate: true });
         host.clearTableSelection();
       },
       {
         group: "table",
-        enabled: hasTableSelection,
+        enabled: mergeReady,
         disabledReason: t("table.reason.mergeSelection"),
       }),
     // UNMERGE (`docs/141` TBL-02). `splitMergedCell(node)` with NO counts is what

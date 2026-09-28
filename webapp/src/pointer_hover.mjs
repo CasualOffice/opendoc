@@ -105,6 +105,12 @@ export function createPointerHover(host) {
     // layer answers from a per-page cache the repaint filled, so a pointer-move
     // makes no engine call at all. Only an ARMED boundary reports, so the cursor
     // never promises a gesture the review mode refuses.
+    // The GUTTER outranks the boundary, for the reason `onPointerDown` resolves
+    // them in that order: the two zones overlap in a thin band outside the
+    // table's box, and the strip is the one the point is really inside. Its
+    // cursor comes from the strip ELEMENT's own CSS rather than from here, so
+    // the right answer is to stop claiming a boundary the press will not honour.
+    if (host.tableGutterAt?.(page, event)) return probe;
     probe.tableBoundary = host.tableBoundaryAt?.(page, event) || "";
     if (probe.tableBoundary) return probe;
     const hit = doc.hitTest(page.pageNumber, x, y);

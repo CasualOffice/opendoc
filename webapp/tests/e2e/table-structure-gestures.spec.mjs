@@ -12,7 +12,7 @@
 // inert-control assertion cannot fail (`109` HF-186 — eight unrelated `.overlay`
 // and `#statusToast` mutations arrive within 3s of idle), and it was proven unable
 // to notice the Table band's sort control being made a complete no-op.
-import { test, expect, gotoEditor, clickIntoFirstPage, stableBox } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, stableBox, MOD } from "./fixtures.mjs";
 
 /** Typed into the first cell so the assertions can find OUR table in the mirror.
  *  The `rich` fixture already contains a nested table, and reading
@@ -190,38 +190,40 @@ test("Shift+Tab in the first cell refuses out loud instead of silently", async (
   expect(await modelRows(page), "and it must not add anything").toEqual([2, 2]);
 });
 
-test("formatting with a row selected refuses with a reason rather than formatting one cell", async ({
+test("formatting with a row selected applies to the WHOLE row, in one undo entry", async ({
   page,
 }) => {
+  // REPLACES an interim refusal. This test used to assert the sentence
+  // "Shading, alignment and cell borders apply to one cell — put the caret in the
+  // cell to format it": honest while every write went through the caret's own
+  // paragraph, but a refusal standing in for a missing type (`docs/141` TBL-08).
+  // The cell RANGE now exists, so the guarantee is the opposite one and the old
+  // sentence is gone from the catalogue entirely.
   await insertTable(page, 2, 2);
   await page.locator('[data-table-select="row"]').click();
   await expect(page.locator(".table-cell-selection")).toHaveCount(2);
   // Measured while the fill is on screen, because the second half of this test needs
   // to click OUTSIDE it after the selection is gone.
   const fill = await selectionFillBox(page);
-  // What the last undoable action is, before the gesture. A refused edit must not
-  // move this — which is how "nothing was applied" is asserted about the DOCUMENT
-  // rather than about the absence of a repaint.
+  // What the last undoable action is, before the gesture — so "one action, not
+  // two" is asserted about the DOCUMENT's history rather than about a repaint.
   const undoBefore = await page.locator("#undoBtn").getAttribute("title");
 
   await page.locator("#tableBtn").click();
   await expect(page.locator("#tableMenu")).toBeVisible();
   await page.locator('#cellVAlign [data-valign="center"]').click();
 
-  expect(await statusText(page)).toBe(
-    "Shading, alignment and cell borders apply to one cell — put the caret in the cell to format it",
-  );
-  await expect(page.locator("#status")).toHaveClass(/error/);
-  expect(
-    await page.locator("#undoBtn").getAttribute("title"),
-    "an interim refusal must leave the document exactly as it was",
-  ).toBe(undoBefore);
+  expect(await statusText(page)).not.toContain("put the caret in the cell");
+  await expect(page.locator("#status")).not.toHaveClass(/error/);
+  const undoAfter = await page.locator("#undoBtn").getAttribute("title");
+  expect(undoAfter, "the row's cells were formatted, so history moved").not.toBe(undoBefore);
+  // ONE entry for two cells: a single undo returns history to where it was.
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(page.locator("#undoBtn")).toHaveAttribute("title", undoBefore ?? "");
 
-  // With no row selection the same gesture still WORKS — the refusal is about the
-  // selection, not about the command, and a guard that only proved the refusal
-  // would be satisfied by breaking cell formatting outright.
-  // One click in the row below: it closes the popover AND leaves the selection, which
-  // is the state the same gesture has to succeed in.
+  // …and with no selection the same gesture still applies to the caret's own
+  // cell, which is the one-cell range. A guard that only proved the range path
+  // would be satisfied by breaking the caret path.
   await clickBelow(page, fill);
   await expect(page.locator(".table-cell-selection")).toHaveCount(0);
   await page.locator("#tableBtn").click();
@@ -304,7 +306,7 @@ test("a disabled Table-band control states its reason and looks disabled", async
     "Place the caret in a table",
     "Unavailable for merged or spanned tables",
     "Rows need a fixed or minimum height before distribution",
-    "Select a row, column, or table before merging",
+    "Select two or more cells before merging",
   ]);
   expect(
     band.filter((control) => !REASONS.has(control.title)).map((c) => `${c.id}: ${c.title}`),
@@ -321,7 +323,7 @@ test("a disabled Table-band control states its reason and looks disabled", async
   // exactly the controls a reader had hovered to find out why.
   const merge = band.find((control) => control.id === "mergeCellsBtn");
   expect(merge, "Merge must be disabled once the merge has consumed the selection").toBeTruthy();
-  expect(merge.title).toBe("Select a row, column, or table before merging");
+  expect(merge.title).toBe("Select two or more cells before merging");
 
   // …and the authored tooltip comes BACK rather than the reason sticking, on that same
   // hovered control. Unmerging restores the grid, then reselecting a row restores the
