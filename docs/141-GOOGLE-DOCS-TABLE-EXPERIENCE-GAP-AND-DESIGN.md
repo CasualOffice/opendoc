@@ -263,6 +263,57 @@ child that `drawSelection` destroys and rebuilds, so `boundingBox()` must go thr
 
 ---
 
+### 0.10 What the D-1 build changed, and what it falsified here
+
+The table chrome layer (§4.1) shipped: TBL-09, TBL-10, TBL-11, TBL-35 and TBL-37 closed,
+TBL-15 closed for the half that mattered, TBL-18 partial. New files:
+`webapp/src/table_chrome.mjs` (the layer), `webapp/src/table_chrome_zones.mjs` (the DOM-free
+zone decision), `webapp/tests/e2e/table-chrome-layer.spec.mjs` (five guards).
+`LayoutSnapshot::table_chrome_on_page` and the facade's `tableChromeOnPage` /
+`moveTableColumnBoundary` are the two additions below the UI. **No engine operation was
+added** (ADR-030 I2 holds: still 53 variants).
+
+**The perf number, measured rather than projected.** §4.1.1 predicted "`R×(C−1)` walks become
+one page walk". Measured in fragment visits on a 4-column table at 8 rows and 16 rows: the
+per-cell route goes **600 → 2352** (ratio 3.92, quadratic); the page walk goes **40 → 80**
+(ratio 2.00, linear), and is **29× cheaper** at 16 rows. The guard is
+`chrome_cost_doubles_with_the_table_where_the_per_cell_route_squared` in
+`crates/casual-doc-layout/src/hittest.rs`, which measures *both* routes so the comparison
+cannot rot into a number with nothing to compare against.
+
+**Four things this document got wrong, all found by building it.**
+
+1. **§4.1.1 asked for the chrome to be memoised in Rust on `(page, revision)`. It is memoised
+   in JS instead, and that is not a shortcut.** `WasmDocument.revision` is a *model* revision,
+   and the painted layout also changes without one — a markup-view toggle, a window move, a
+   re-pagination. There is no single choke point that bumps on all of those, so a Rust cache
+   keyed on `revision` would have served stale geometry. The webapp already has the exact
+   invalidation signal: the overlay repaint, which is the only thing that can move a boundary.
+   The cache lives there and is dropped in `paintOverlayLayer`.
+2. **§4.1.7's 24px touch zone is wider than a table row is tall.** Half a pill is ~180 twips at
+   100% zoom; a default row is 288 twips, so 144 either side of its middle. Applied to every
+   touch, tapping anywhere in a small row started a resize instead of placing a caret — and the
+   pills could then never arm, because the arming tap was swallowed by the gesture it started.
+   The enlarged zone is live only *after* a tap has armed the pills: first tap places the caret
+   and arms, second tap on a pill resizes.
+3. **§4.1.6 said `alt+shift+arrow` is free and it is — but a chord here cannot be bound
+   without a command.** `keymap.mjs` binds command IDs and `keymap.test.mjs` fails on an id the
+   registry does not return, so the four chords required four real commands
+   (`table.column.grow` / `.shrink`, `table.row.grow` / `.shrink`), which then get the menu and
+   palette for free. `keyboard.mjs` also needed arrow glyphs (`→ ← ↑ ↓`) in both its render and
+   parse tables, or `⌥⇧→` would have parsed to a key no keyboard produces.
+4. **A guide is destroyed by any repaint that arrives mid-drag**, and one does: the press moves
+   focus back to the editing surface from a ribbon control. The overlay repaint now puts an
+   in-flight guide back rather than the drag running invisibly.
+
+**Not built from D-1, deliberately:** §4.1.3's *outer bottom* row boundary resizes the last row
+rather than the table (there is no table-height property to resize), and §4.1.1's `cells`,
+`rowStrip` and `colStrip` payload fields are absent — they are D-2's gutter geometry and no
+D-1 zone reads them. The strips are recorded as a new `unprobed` row, `table-select-strip`, in
+`pointer_cursor.mjs`.
+
+---
+
 ## 1. The interactions, audited one at a time
 
 ### 1.1 Direct resize
@@ -933,16 +984,16 @@ guard drives it; `INTERIM` means it refuses honestly and the row stays open (§0
 | 6 | **TBL-06** | `w:cantSplit` ("allow row to break across pages") is honoured by layout and written by nothing (1.15) | Word/Docs both have it `[K]` | facade+UI | XS | open | — |
 | 7 | **TBL-07** | Tab moves the caret to offset 0 instead of selecting the destination cell's contents (1.7) | `[K]` | UI-only | XS | open | — |
 | 8 | **TBL-08** | Cell shading, vertical align and borders apply to **one cell** even with a row selected (1.16) | `[K]` | facade+UI | S | **INTERIM** (refuses) | — |
-| 9 | **TBL-09** | Column/row handles exist only for the table the **caret** is in — you must click into a table before it is manipulable (1.1) | `[S]` ONLYOFFICE hit-tests by point; `[K]` Docs too | facade+UI | M | open | TBL-10, TBL-11, TBL-12 |
-| 10 | **TBL-10** | The column drag **widens the table** instead of moving the border; the neighbour absorbs nothing (1.1) | `[K]` | facade+UI | S | open | — |
-| 11 | **TBL-11** | No row-boundary hit zone at all; row height is menu-only (1.1) | `[S]` `[K]` | facade+UI | M | open | — |
+| 9 | **TBL-09** | Column/row handles exist only for the table the **caret** is in — you must click into a table before it is manipulable (1.1) | `[S]` ONLYOFFICE hit-tests by point; `[K]` Docs too | facade+UI | M | **SHIPPED** | TBL-10, TBL-11, TBL-12 |
+| 10 | **TBL-10** | The column drag **widens the table** instead of moving the border; the neighbour absorbs nothing (1.1) | `[K]` | facade+UI | S | **SHIPPED** | — |
+| 11 | **TBL-11** | No row-boundary hit zone at all; row height is menu-only (1.1) | `[S]` `[K]` | facade+UI | M | **SHIPPED** | — |
 | 12 | **TBL-12** | No edge strips, so `table.select.row` / `.column` have no pointer path (1.3) | `[S]` `[K]` | facade+UI | M | open | TBL-13, TBL-14 |
 | 13 | **TBL-13** | No hover `+` insert affordance between rows or columns (1.2) | `[K]` Docs only | UI-only *after* TBL-12 | S | open | — |
 | 14 | **TBL-14** | No drag-to-reorder for a row or column (1.4) | `[K]` | facade+UI | M | open | — |
-| 15 | **TBL-15** | Table facade calls are O(document) ×3 and handle painting is `R×(C−1)×O(pages)` per redraw (1.13) | `docs/107` §4 | facade | M | open | blocks TBL-09 |
+| 15 | **TBL-15** | Table facade calls are O(document) ×3 and handle painting is `R×(C−1)×O(pages)` per redraw (1.13) | `docs/107` §4 | facade | M | **SHIPPED** (handle painting; the 3 `tableInfo` walks stay) | blocks TBL-09 |
 | 16 | **TBL-16** | No rectangular cell-range selection anywhere in the stack (1.5) | `[K]` | **engine** + facade + UI | L | open | TBL-17 |
 | 17 | **TBL-17** | Merge is limited to row/column/table although `merge_regular_table_selection` already takes `(r0,r1,c0,c1)` (1.5, 1.8) | `[K]` | facade+UI | S *after* TBL-16 | open | — |
-| 18 | **TBL-18** | Touch: the only table gesture is a 10px handle; `pointerType` has zero occurrences in `webapp/src`; the compact toolbar has no table commands (1.14) | WCAG 2.5.5/2.5.8 | UI-only | M | open | — |
+| 18 | **TBL-18** | Touch: the only table gesture is a 10px handle; `pointerType` has zero occurrences in `webapp/src`; the compact toolbar has no table commands (1.14) | WCAG 2.5.5/2.5.8 | UI-only | M | **PARTIAL** (boundary pills; compact toolbar open) | — |
 | 19 | **TBL-19** | The merged-table cliff: one merge removes nine capabilities (1.12) | `[K]` neither Docs nor Word does this | **engine** (column ops) + facade+UI (resize/sort/select) | L | open | — |
 | 20 | **TBL-20** | `tableInfo` reports no per-cell merge state, so no UI can correctly offer Unmerge for the pointed-at cell (1.8) | — | facade | XS | open | TBL-02 quality |
 | 21 | **TBL-21** | `w:tblLook` — Header Row / Total Row / First Column / Banded Rows toggles — honoured by the cascade, written by nothing (1.15) | `[K]` Docs has header-row + banding | facade+UI | M | open | — |
@@ -959,9 +1010,9 @@ guard drives it; `INTERIM` means it refuses honestly and the row stays open (§0
 | 32 | **TBL-32** | No double-click-on-border autofit (Word and Docs both size a column to its content this way) | `[K]` | facade+UI | S | open | needs TBL-09 |
 | 33 | **TBL-33** | No table move/drag handle at the top-left (Word has one; **Docs does not**, so this is not a Docs-parity row) | `[S]` ONLYOFFICE has `TableOutlineDr` | facade+UI | M | open | — |
 | 34 | **TBL-34** | Column resize has no width readout during the drag, although object resize does (`object-resize-readout`) | `[K]` Docs shows none either; Word does | UI-only | XS | open | — |
-| 35 | **TBL-35** | Handles are painted and draggable in Viewing and Suggesting; the refusal arrives only on pointer-up (1.1) | §10 rule | UI-only | XS | open | — |
+| 35 | **TBL-35** | Handles are painted and draggable in Viewing and Suggesting; the refusal arrives only on pointer-up (1.1) | §10 rule | UI-only | XS | **SHIPPED** | — |
 | 36 | **TBL-36** | `plainTableInfo` keeps 5 of `tableInfo`'s 20 fields, so the context menu cannot disable "Delete row" on a one-row table before the engine refuses (1.9) | §10 rule | UI-only | XS | open | — |
-| 37 | **TBL-37** | Column resize is never actually **dragged** by any test; only the handle's position is asserted, in `painted-layout-consistency.spec.mjs` | test gap | UI-only | S | open | — |
+| 37 | **TBL-37** | Column resize is never actually **dragged** by any test; only the handle's position is asserted, in `painted-layout-consistency.spec.mjs` | test gap | UI-only | S | **SHIPPED** | — |
 | 38 | **TBL-38** | Table formula UI (`#tableFormula`, `#tableFormulaApply`) has **zero** test coverage: `grep -rn 'tableFormula' webapp/tests/` returns nothing | test gap | UI-only | S | open | — |
 
 ### 2.1 The shape of the table
@@ -1826,10 +1877,10 @@ UI is unexercised in the webapp suite).
 | 425 facade exports / 66 table-related | brace-match every `#[wasm_bindgen]` `impl` block in `crates/casual-doc-wasm/src/lib.rs` and list its `pub fn`s with any `js_name` override. A plain `grep js_name` under-counts: wasm-bindgen exports a `pub fn` without `js_name` under its snake_case name, and several `TableInfo` getters have none |
 | 19 Table-band buttons | `awk '/id="panelTable"/,/id="panelView"/' webapp/editor.html \| grep -c '<button'`; cross-check `TABLE_FACES` in `webapp/src/ribbon_faces.mjs` (18 `face` + 1 `chooser`) |
 | 6 labelled Table-band groups | `sed -n '/id="panelTable"/,/id="panelView"/p' webapp/editor.html \| grep -c rgroup-label` |
-| 32 pointer targets, 4 of them table | `CURSOR_TARGETS` in `webapp/src/pointer_cursor.mjs`; `pointer_cursor.test.mjs` lists the `unprobed` rows back |
+| 37 pointer targets, 9 of them table | `CURSOR_TARGETS` in `webapp/src/pointer_cursor.mjs`; `pointer_cursor.test.mjs` lists the `unprobed` rows back. Was 32/4 before D-1 |
 | 64 `drawSelection()` call sites | `grep -c 'drawSelection()' webapp/src/main.js` |
 | 14 `tableSelection = null` sites | `grep -c 'tableSelection = null' webapp/src/main.js` |
-| 0 `pointerType` reads in the webapp | `grep -rn 'pointerType' webapp/src/ \| wc -l` |
+| `pointerType` reads in the webapp | `grep -rn 'pointerType' webapp/src/ \| wc -l` — was 0 before D-1 |
 | 0 table commands in the compact toolbar | `grep -c 'table\.' webapp/src/compact_toolbar.mjs` |
 | 0 `fit_text` layout consumers | `grep -rn fit_text crates/casual-doc-layout crates/casual-doc-render \| wc -l` |
 | `cant_split` has no authoring writer | `grep -rn cant_split crates/ \| grep '\.rs:'` → 11 lines: import ×3, export, RTF, model ×2, one `flow.rs` read, one `paginate.rs` test |
