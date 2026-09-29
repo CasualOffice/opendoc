@@ -442,7 +442,14 @@ pub fn section_break_ops(
     // `w:pageBreakBefore` belongs to where the original paragraph STARTED. Copying
     // it onto the trailing half would force a second page break one paragraph
     // later, which is not what splitting a paragraph means.
-    trailing.page_break_before = false;
+    // Cancelled EXPLICITLY, not merely unset: the toggle is tri-state, and
+    // clearing it to "absent" would let a style-level `w:pageBreakBefore`
+    // re-supply the break we are removing. Left alone when the original never
+    // stated one, so a style that breaks before every paragraph of its kind
+    // still breaks before both halves, as Word does.
+    if trailing.page_break_before == Some(true) {
+        trailing.page_break_before = Some(false);
+    }
 
     let mut ops = Vec::with_capacity(3);
     ops.push(Operation::SpliceSectionBoundary {

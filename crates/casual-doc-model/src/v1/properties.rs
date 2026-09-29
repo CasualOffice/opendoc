@@ -1008,14 +1008,20 @@ pub struct ParagraphProperties {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop_cap_frame: Option<DropCapFrame>,
     /// Keep this paragraph on the same page as the next (`w:keepNext`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub keep_next: bool,
-    /// Keep all lines of this paragraph on one page (`w:keepLines`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub keep_lines: bool,
+    ///
+    /// Tri-state, for the reason spelled out on [`Self::contextual_spacing`]:
+    /// `None` is "absent, inherit", `Some(false)` is an explicit `w:val="0"`
+    /// that CANCELS an inherited value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_next: Option<bool>,
+    /// Keep all lines of this paragraph on one page (`w:keepLines`). Tri-state —
+    /// see [`Self::contextual_spacing`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_lines: Option<bool>,
     /// Force a page break before this paragraph (`w:pageBreakBefore`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub page_break_before: bool,
+    /// Tri-state — see [`Self::contextual_spacing`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_break_before: Option<bool>,
     /// First/last-line widow/orphan control (`w:widowControl`). Tri-state: the
     /// OOXML default is ON, so `None` means "unset, control is on" and `Some(false)`
     /// is an explicit off that must survive the cascade (a plain `bool` defaulting
@@ -1025,11 +1031,27 @@ pub struct ParagraphProperties {
     pub widow_control: Option<bool>,
     /// Do not add spacing between paragraphs of the same style
     /// (`w:contextualSpacing`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub contextual_spacing: bool,
+    ///
+    /// Tri-state, and this field is the reason the whole `CT_OnOff` family is.
+    /// ECMA-376 §17.17.4 makes `w:val="0"`/`"false"`/`"off"` an explicit OFF,
+    /// which is a different statement from the element being absent: absent
+    /// means "inherit whatever the style chain said", off means "cancel it
+    /// here". A plain `bool` collapses the two, so the cascade can only ever OR
+    /// the flag on and a cancellation is unrepresentable.
+    ///
+    /// This is not theoretical. Word's built-in `ListParagraph` style sets
+    /// `w:contextualSpacing` ON, and a document that wants real gaps between
+    /// list items cancels it per paragraph — the owner's NDA does exactly that
+    /// **51 times**, each beside a `w:spacing w:after="160"` that our OR-ing
+    /// cascade then suppressed. The paint lost 8pt of space in 51 places while
+    /// every model-level test passed, which is the same shape as the
+    /// [`Self::numbering_none`] bug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contextual_spacing: Option<bool>,
     /// Suppress line numbers for this paragraph (`w:suppressLineNumbers`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub suppress_line_numbers: bool,
+    /// Tri-state — see [`Self::contextual_spacing`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppress_line_numbers: Option<bool>,
     /// Outline (heading) level, `0..=9` (`w:outlineLvl`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_level: Option<u8>,

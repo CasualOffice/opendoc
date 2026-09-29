@@ -8339,7 +8339,12 @@ impl WasmDocument {
         NodeId::from_str(node)
             .ok()
             .and_then(|nid| paragraph_properties(&self.document, nid))
-            .is_some_and(|direct| cascade.resolve_paragraph(&direct).suppress_line_numbers)
+            .is_some_and(|direct| {
+                cascade
+                    .resolve_paragraph(&direct)
+                    .suppress_line_numbers
+                    .unwrap_or(false)
+            })
     }
 
     /// The line numbering (`w:lnNumType`) of the section holding `node`, plus
@@ -8775,12 +8780,12 @@ impl WasmDocument {
         leading.drop_cap_frame = Some(drop_cap_frame(mode, lines));
         // `w:keepNext` is not decoration: the initial and the text it wraps must
         // not be split across a page, and Word writes it on every drop cap.
-        leading.keep_next = true;
+        leading.keep_next = Some(true);
         // The frame is the whole of the leading half's identity. A section break or
         // a page break inherited onto a one-character paragraph would fire between
         // the initial and its own body.
         leading.section_break = None;
-        leading.page_break_before = false;
+        leading.page_break_before = Some(false);
 
         let caret = Pos::new(new_id, 0);
         self.apply_action_caret(
@@ -8823,7 +8828,7 @@ impl WasmDocument {
         let mut properties = paragraph_properties(&self.document, cap)
             .ok_or_else(|| to_js("no such paragraph".to_string()))?;
         properties.drop_cap_frame = Some(drop_cap_frame(mode, lines));
-        properties.keep_next = true;
+        properties.keep_next = Some(true);
         let letter = self
             .document
             .body()
@@ -9012,7 +9017,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.suppress_line_numbers = on;
+            p.suppress_line_numbers = Some(on);
         })
     }
 
@@ -9138,9 +9143,10 @@ impl WasmDocument {
             },
             0,
         );
-        let keep_next = bool_selection_state(&properties, |p| p.keep_next);
-        let keep_lines = bool_selection_state(&properties, |p| p.keep_lines);
-        let page_break_before = bool_selection_state(&properties, |p| p.page_break_before);
+        let keep_next = bool_selection_state(&properties, |p| p.keep_next.unwrap_or(false));
+        let keep_lines = bool_selection_state(&properties, |p| p.keep_lines.unwrap_or(false));
+        let page_break_before =
+            bool_selection_state(&properties, |p| p.page_break_before.unwrap_or(false));
         let shading = uniform_slice(
             &properties
                 .iter()
@@ -11242,7 +11248,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.keep_next = on;
+            p.keep_next = Some(on);
         })
     }
 
@@ -11257,7 +11263,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.keep_lines = on;
+            p.keep_lines = Some(on);
         })
     }
 
@@ -11272,7 +11278,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.page_break_before = on;
+            p.page_break_before = Some(on);
         })
     }
 
@@ -11285,9 +11291,9 @@ impl WasmDocument {
             .ok()
             .and_then(|nid| paragraph_properties(&self.document, nid))
             .map_or(ParagraphFlags::default(), |p| ParagraphFlags {
-                keep_next: p.keep_next,
-                keep_lines: p.keep_lines,
-                page_break_before: p.page_break_before,
+                keep_next: p.keep_next.unwrap_or(false),
+                keep_lines: p.keep_lines.unwrap_or(false),
+                page_break_before: p.page_break_before.unwrap_or(false),
             })
     }
 
@@ -26407,7 +26413,7 @@ mod tests {
             "`flow.rs` lays out only Around/Auto/absent, so anything else draws nothing"
         );
         assert!(
-            paragraph_properties(&doc.document, cap_id).is_some_and(|p| p.keep_next),
+            paragraph_properties(&doc.document, cap_id).is_some_and(|p| p.keep_next == Some(true)),
             "`w:keepNext` keeps the initial on the same page as the text it wraps"
         );
 
@@ -26956,7 +26962,7 @@ mod tests {
                 q_format: true,
                 locked: false,
                 paragraph: Some(ParagraphProperties {
-                    suppress_line_numbers: true,
+                    suppress_line_numbers: Some(true),
                     ..ParagraphProperties::default()
                 }),
                 run: None,
@@ -38470,7 +38476,7 @@ mod tests {
         BlockNode::Paragraph(Paragraph {
             id: sections_id(id),
             properties: ParagraphProperties {
-                page_break_before: page_break,
+                page_break_before: Some(page_break),
                 ..ParagraphProperties::default()
             }
             .into(),
@@ -38486,7 +38492,7 @@ mod tests {
         BlockNode::Paragraph(Paragraph {
             id: sections_id(id),
             properties: ParagraphProperties {
-                page_break_before: true,
+                page_break_before: Some(true),
                 section_break: Some(SectionId::new(sections_id(section))),
                 ..ParagraphProperties::default()
             }

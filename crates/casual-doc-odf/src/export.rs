@@ -283,9 +283,9 @@ struct OdtParagraphStyle {
     margin_top_twips: Option<i32>,
     margin_bottom_twips: Option<i32>,
     line_percent: Option<u16>,
-    keep_next: bool,
-    keep_together: bool,
-    break_before: bool,
+    keep_next: Option<bool>,
+    keep_together: Option<bool>,
+    break_before: Option<bool>,
 }
 
 impl OdtParagraphStyle {
@@ -406,14 +406,32 @@ fn push_paragraph_properties(
         push_bounded(xml, &percent.to_string(), max_content_bytes)?;
         push_bounded(xml, "%\"", max_content_bytes)?;
     }
-    if style.keep_next {
-        push_bounded(xml, " fo:keep-with-next=\"always\"", max_content_bytes)?;
+    // Tri-state, like the OOXML `CT_OnOff` toggles they come from: ODF spells
+    // the explicit off `auto`/`none`, which is a different statement from the
+    // attribute being absent (absent inherits the parent style).
+    if let Some(on) = style.keep_next {
+        let value = if on {
+            " fo:keep-with-next=\"always\""
+        } else {
+            " fo:keep-with-next=\"auto\""
+        };
+        push_bounded(xml, value, max_content_bytes)?;
     }
-    if style.keep_together {
-        push_bounded(xml, " fo:keep-together=\"always\"", max_content_bytes)?;
+    if let Some(on) = style.keep_together {
+        let value = if on {
+            " fo:keep-together=\"always\""
+        } else {
+            " fo:keep-together=\"auto\""
+        };
+        push_bounded(xml, value, max_content_bytes)?;
     }
-    if style.break_before {
-        push_bounded(xml, " fo:break-before=\"page\"", max_content_bytes)?;
+    if let Some(on) = style.break_before {
+        let value = if on {
+            " fo:break-before=\"page\""
+        } else {
+            " fo:break-before=\"auto\""
+        };
+        push_bounded(xml, value, max_content_bytes)?;
     }
     Ok(())
 }
@@ -6558,9 +6576,9 @@ mod tests {
             line_percent: Some(150),
             ..Spacing::default()
         });
-        paragraph.properties.keep_next = true;
-        paragraph.properties.keep_lines = true;
-        paragraph.properties.page_break_before = true;
+        paragraph.properties.keep_next = Some(true);
+        paragraph.properties.keep_lines = Some(true);
+        paragraph.properties.page_break_before = Some(true);
 
         let first = write_odt(&document, OdfExportLimits::default()).unwrap();
         let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
@@ -6612,9 +6630,9 @@ mod tests {
                 ..Spacing::default()
             })
         );
-        assert!(paragraph.properties.keep_next);
-        assert!(paragraph.properties.keep_lines);
-        assert!(paragraph.properties.page_break_before);
+        assert_eq!(paragraph.properties.keep_next, Some(true));
+        assert_eq!(paragraph.properties.keep_lines, Some(true));
+        assert_eq!(paragraph.properties.page_break_before, Some(true));
 
         let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
         assert_eq!(first.bytes, second.bytes);

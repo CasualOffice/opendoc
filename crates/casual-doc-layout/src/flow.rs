@@ -1577,10 +1577,15 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
                 // Effective style + resolved contextualSpacing flag drive the
                 // same-style adjacency collapse below.
                 let style = ctx.cascade.paragraph_style(&paragraph.properties);
+                // The model's toggle is tri-state (absent / on / explicitly
+                // off); the collapse only cares whether it is ON, so the
+                // resolution to a plain bool happens here, at the layout
+                // boundary, as it does for `widow_control`.
                 let contextual = ctx
                     .cascade
                     .resolve_paragraph(&paragraph.properties)
-                    .contextual_spacing;
+                    .contextual_spacing
+                    .unwrap_or(false);
                 let galley_index = GalleySink::len(galley);
                 if let Some(clearance) = paragraph_wrap_carries(paragraph, width)
                     .iter()
@@ -6826,9 +6831,11 @@ fn alignment(properties: &ParagraphProperties) -> TextAlignment {
 /// Maps paragraph break properties to the fragment's break control.
 fn break_control(properties: &ParagraphProperties) -> BreakControl {
     BreakControl {
-        page_break_before: properties.page_break_before,
-        keep_next: properties.keep_next,
-        keep_lines: properties.keep_lines,
+        // Tri-state in the model, plain flags here: absent and "explicitly
+        // cancelled" both mean off once the cascade has run.
+        page_break_before: properties.page_break_before.unwrap_or(false),
+        keep_next: properties.keep_next.unwrap_or(false),
+        keep_lines: properties.keep_lines.unwrap_or(false),
         // OOXML default is ON: an unset `w:widowControl` still protects widows.
         widow_control: properties.widow_control.unwrap_or(true),
     }
@@ -7559,7 +7566,7 @@ mod tests {
                         after_twips: Some(240),
                         ..Spacing::default()
                     }),
-                    contextual_spacing: true,
+                    contextual_spacing: Some(true),
                     ..ParagraphProperties::default()
                 }
                 .into(),
@@ -7671,7 +7678,7 @@ mod tests {
                         after_twips: Some(200),
                         ..Spacing::default()
                     }),
-                    contextual_spacing: contextual,
+                    contextual_spacing: Some(contextual),
                     ..ParagraphProperties::default()
                 }
                 .into(),
@@ -14579,7 +14586,7 @@ mod tests {
         let drop_cap = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(70, 1).unwrap(),
             properties: ParagraphProperties {
-                keep_next: true,
+                keep_next: Some(true),
                 spacing: Some(Spacing {
                     line_rule: Some(LineRule::Exact),
                     line_twips: Some(700),
