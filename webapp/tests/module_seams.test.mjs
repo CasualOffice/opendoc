@@ -324,8 +324,17 @@ const SRC = new URL("../src/", import.meta.url);
  *  had meanwhile lowered this to 16,446 under the branch. Neither that number
  *  nor the branch's own 16,355 describes the merge — the two rounds took
  *  different code out and both deletions applied — which is the trap the notes
- *  above record five times. */
-const MAIN_JS_LINE_CEILING = 16342;
+ *  above record five times.
+ *
+ *  RE-MEASURED AGAIN on the phone-chrome branch (docs/148). The responsive
+ *  ladder — `REVIEW_SHEET_MAX_WIDTH`, its media query and its change handler —
+ *  moved into `phone_chrome.mjs`, which paid for the phone tier's own wiring.
+ *  The eight-grip work landed underneath it and had already extracted the
+ *  modifier rules and the commit origin into `object_snap.mjs`, so neither
+ *  branch's number is this tree's: 16341 is what the merged file counts.
+ *  Carrying either side forward would publish a ceiling the file never had,
+ *  which is the merge trap this block records five times over. */
+const MAIN_JS_LINE_CEILING = 16341;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -335,6 +344,10 @@ const PURE_MODULES = [
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",
   "command_taxonomy.mjs",
+  // The responsive ladder and the soft-keyboard inset (docs/148). Its window,
+  // body and root are injected rather than reached for, which is the only
+  // reason a keyboard-inset calculation can be driven from Node at all.
+  "phone_chrome.mjs",
   // The Symbol / Emoji sets: literal data with no behaviour, so nothing in it
   // has any business reaching a global.
   "glyph_sets.mjs",

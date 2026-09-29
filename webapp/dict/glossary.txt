@@ -50,6 +50,7 @@ DOM
 DOTX
 DPI
 DTD
+Dialogs
 Diff
 DocumentServer
 DrawingML
@@ -153,6 +154,7 @@ PRs
 PTS
 PUA
 PaddleOCR
+Pageless
 Plass
 Pre
 ProseMirror
@@ -163,6 +165,7 @@ RSS
 RTF
 RTL
 Reachability
+Reflow
 Roadmap
 Roboto
 RunProperties
@@ -462,6 +465,7 @@ recurse
 recurses
 recursing
 reflow
+reflows
 relayout
 rels
 renderer
@@ -479,6 +483,7 @@ roadmap
 rtf
 rustdoc
 sandboxed
+scalable
 schemas
 scrollable
 scrollbar
@@ -549,6 +554,7 @@ val
 validator
 vertAlign
 viewport
+virtualised
 virtualized
 vml
 wasm

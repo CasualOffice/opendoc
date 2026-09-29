@@ -8559,6 +8559,268 @@ body:not(.doc-loaded) .drop-title {
 }
 
 /* =========================================================================
+   The phone chrome (docs/148, ADR-044)
+   -------------------------------------------------------------------------
+   `body.phone-mode` is set by `phone_chrome.mjs` at or below 620px — the SAME
+   rung the block above uses, deliberately, because a fourth breakpoint that
+   only the phone knows about is the mistake that block already argues against.
+   A class rather than only a media query, for HF-088's reason: the SHAPE
+   changes in script too (the ribbon stops being the navigation axis), and a
+   media query cannot tell main.js which shape it picked.
+
+   THE RULE THIS EXISTS TO KEEP: no horizontal scroll, at any phone width, on
+   any chrome surface. Measured on `main` at 390x844 before this block, with a
+   document open:
+
+     .ribbon-tabs   scrollWidth 550  clientWidth 109   ← 5 of 8 tabs behind a
+                                                         sideways gesture
+     #viewport      scrollWidth 794  clientWidth 326   ← the document itself
+     .app-menu-bar  clips under a mask at 360px (responsive-shell.spec.mjs)
+
+   The first two are two different problems and only the first is solved here.
+   The tab strip is chrome and chrome must fit; the third is solved by letting
+   the bar wrap. `#viewport` is the DOCUMENT, and it is the named exception in
+   `docs/148` §8: a 6.5in text column cannot be both readable and 390px wide,
+   which is why every reference ships a reflow view (Google's Pageless,
+   ONLYOFFICE's `api.ChangeReaderMode()` / `CReaderTouchManager`) and why
+   `view_zoom.mjs`'s `FIT_ON_OPEN_FLOOR` deliberately refuses to shrink a page
+   to the 31% that would make it fit. Reflow is engine work and is not in this
+   change.
+
+   WHAT MOVES, and why each:
+     header   two rows, brand mark dropped; the menu bar WRAPS instead of
+              scrolling under a mask
+     ribbon   gone — `body.compact-mode` already hides it, and `setChromeMode`
+              forces compact at this rung
+     rail     turns its axis: a horizontal strip above the document instead of
+              a column beside it, so it costs height rather than width. Kept
+              rather than hidden because its Pages tile is `#pagesPanel`'s only
+              surface (see `phone_chrome.mjs`'s `phoneRegions`)
+     toolbar  the compact bar docks to the BOTTOM, above the status bar and
+              above the soft keyboard. All three references put the phone's
+              command surface at the bottom: Google Docs' keyboard-attached
+              row, Word for mobile's bottom ribbon sheet, ONLYOFFICE's Edit
+              sheet (`apps/documenteditor/mobile/src/view/edit/Edit.jsx`)
+     panels   bottom sheets, the shape `.review-sheet` already established here
+     dialogs  bottom sheets; a card can then never be wider than the window
+     menus    a dropdown hung off a bottom bar opens upward, as a sheet
+
+   Touch targets are 24px minimum (WCAG 2.5.8 Target Size (Minimum), Level AA),
+   following this file's existing habit of drawing small and hitting big rather
+   than making everything visually bigger. `phone_chrome.mjs` exports the same
+   number as `MIN_TOUCH_TARGET_PX` and `phone_chrome.test.mjs` fails if the two
+   drift.
+   ========================================================================= */
+
+body.phone-mode {
+  /* One number for everything pinned to the bottom edge. The keyboard inset is
+     published by `phone_chrome.mjs` from `visualViewport`; on a browser that
+     honours `interactive-widget=resizes-content` (the meta tag in editor.html)
+     the layout viewport has already shrunk and this reads 0, which is correct. */
+  --phone-bottom-inset: calc(var(--phone-keyboard-inset, 0px) + env(safe-area-inset-bottom, 0px));
+  --phone-bottom-chrome: calc(var(--h-footer) + var(--h-compact-bar) + var(--phone-bottom-inset));
+}
+
+/* ---- Header: two rows, no brand, a menu bar that wraps ------------------ */
+
+/* The brand mark is the first thing a phone gives up — it names the product to
+   someone already inside it, and it is the only header cell that can be spent
+   without taking a capability with it. Its grid column goes with it. */
+body.phone-mode .brand {
+  display: none;
+}
+
+/* The Compact/Ribbon toggle goes too, and it is the one removal that is about
+   honesty rather than width: at this rung `setChromeMode` forces compact
+   whatever the radio says, so leaving the pair on screen would be a live
+   control that cannot do the thing it names — "never a dead control"
+   (SKILL.md §10). The preference itself is untouched and the toggle comes
+   straight back when the window does. */
+body.phone-mode .chrome-mode {
+  display: none;
+}
+
+body.phone-mode .bar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: var(--h-header-title) auto;
+  grid-template-areas:
+    "title docstate"
+    "nav   apptools";
+  align-items: center;
+  height: auto;
+  /* Paint under a notch, then pay for it (`viewport-fit=cover`). */
+  padding: calc(4px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-right, 0px)) 4px
+    calc(8px + env(safe-area-inset-left, 0px));
+}
+
+/* The menu bar is the compact chrome's one navigation axis (docs/122), so on a
+   phone it is the one thing in the header that may not be abbreviated. It was
+   a 21px strip with `overflow-x: auto` and a fade mask — at 360px
+   `responsive-shell.spec.mjs` measures it genuinely clipping, and reaching the
+   last menu needs a sideways drag on a bar most people will not think to drag.
+   Seven short names wrap into two rows at 320px and one at 390px, which costs
+   the header ~24px and costs the reader nothing. */
+body.phone-mode .app-menu-bar {
+  height: auto;
+  min-height: var(--h-tab);
+  flex-wrap: wrap;
+  overflow: visible;
+  row-gap: 3px;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+/* The coarse-pointer block above explicitly defers this row — "a 44px floor
+   there needs the header redesigned, not restyled". This block IS that
+   redesign, for this rung: the header is no longer a committed 58px band, so
+   the row can take the WCAG 2.5.8 floor without pushing anything out. 24, not
+   44, because these sit in a dense navigation bar rather than floating over
+   the document, which is the same line the rest of this file draws. */
+body.phone-mode .app-menu-button {
+  min-height: 24px;
+  padding-inline: 9px;
+}
+
+/* ---- The work area: the rail turns its axis ---------------------------- */
+
+body.phone-mode .workarea {
+  flex-direction: column;
+  min-width: 0;
+}
+
+body.phone-mode .rail {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  border-right: 0;
+}
+
+/* Four icon-only tiles (the captions went at 620px, above). A tile is free to
+   be wider; it may not be narrower than the target floor. */
+body.phone-mode .rail-btn {
+  min-width: 24px;
+  min-height: 24px;
+  height: 36px;
+  flex: 0 0 auto;
+}
+
+/* ---- The command surface docks to the bottom --------------------------- */
+
+/* Google Docs, Word for mobile and ONLYOFFICE mobile all put the phone's
+   formatting controls at the bottom of the screen, because that is where the
+   thumb is and because the keyboard owns the bottom half anyway. This bar
+   already folds what does not fit into its "⋯" menu rather than scrolling
+   sideways (`compact_toolbar.mjs`), so docking it needs no second mechanism —
+   which is the whole reason the phone chrome is this bar moved rather than a
+   new bar written. */
+body.phone-mode .compact-toolbar {
+  position: fixed;
+  right: 0;
+  bottom: calc(var(--h-footer) + var(--phone-bottom-inset));
+  left: 0;
+  z-index: var(--z-bar);
+  margin: 0;
+  padding-inline: calc(8px + env(safe-area-inset-left, 0px)) calc(8px + env(safe-area-inset-right, 0px));
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+
+/* Both bottom bars leave the flow, so the document has to be told not to end
+   underneath them. */
+body.phone-mode .viewport {
+  padding-bottom: calc(var(--phone-bottom-chrome) + 24px);
+}
+
+body.phone-mode .footer {
+  position: fixed;
+  right: 0;
+  bottom: var(--phone-keyboard-inset, 0px);
+  left: 0;
+  z-index: var(--z-bar);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid var(--line);
+}
+
+/* ---- Panels, dialogs and menus are bottom sheets ----------------------- */
+
+/* The shape `.review-sheet` already introduced at this rung (HF-088), applied
+   to the panels that were still trying to be a column: at 390px a 340px drawer
+   leaves the document 50px, which is a panel with a document-shaped sliver
+   beside it rather than a document with a panel over it. */
+body.phone-mode .side-panel {
+  position: fixed;
+  right: 0;
+  bottom: calc(var(--h-footer) + var(--phone-bottom-inset));
+  left: 0;
+  z-index: var(--z-drawer);
+  width: auto;
+  max-width: none;
+  max-height: 55vh;
+  margin: 0;
+  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+  box-shadow: var(--shadow-popover);
+  flex: none;
+}
+
+/* A dialog centred in a 320px window with 24px of overlay padding on each side
+   is a 272px card holding controls sized for a laptop. As a bottom sheet it
+   takes the width it needs and can never be the thing that overflows — which
+   is what this rung is for. Material 3 calls this a modal bottom sheet and
+   caps it at half the screen; ours goes higher because a document-properties
+   form is taller than a chooser and its own body already scrolls. */
+body.phone-mode .dialog-overlay {
+  padding: 0;
+  place-items: end stretch;
+}
+
+body.phone-mode .dialog-card {
+  width: 100%;
+  max-width: 100%;
+  max-height: 86vh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+}
+
+/* `popoverPosition` clamps a menu's LEFT edge to the window and then lets a
+   menu wider than the window run off the right — `Math.max(gutter, width -
+   menu.width - gutter)` cannot do anything else. A ceiling on the menu is the
+   half it cannot compute, and it belongs here rather than in the arithmetic,
+   because it is a property of the window and not of the anchor. */
+body.phone-mode .context-menu,
+body.phone-mode .app-menu-popover,
+body.phone-mode .ribbon-overflow-menu,
+body.phone-mode .cmd-palette {
+  max-width: calc(100vw - 16px);
+}
+
+/* A dropdown hung off a bar at the BOTTOM of the screen has nowhere below to
+   open into, so it opens as a sheet instead. `!important` is not decoration:
+   `popover_position.mjs` writes `left`/`top` as inline style, and an inline
+   declaration outranks every selector that is not marked. The alternative is
+   teaching that module about a breakpoint, which would put the rung in a third
+   place. */
+body.phone-mode .app-menu-popover,
+body.phone-mode .compact-overflow-menu {
+  position: fixed !important;
+  top: auto !important;
+  right: 0 !important;
+  bottom: calc(var(--h-footer) + var(--h-compact-bar) + var(--phone-bottom-inset)) !important;
+  left: 0 !important;
+  width: auto !important;
+  max-width: none;
+  max-height: 60vh;
+  overflow-y: auto;
+  /* A sheet that chains its overscroll drags the shell behind it (`style.css`'s
+     root `overscroll-behavior: none` and `style_tokens.test.mjs`'s guard, which
+     caught this rule the first time it was written without it). */
+  overscroll-behavior: contain;
+  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+}
+
+/* =========================================================================
    Coarse pointers — touch and pen (HF-060)
    -------------------------------------------------------------------------
    Keyed on the pointing MODALITY, not on window width, because the question

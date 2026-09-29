@@ -2,7 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- `viewport-fit=cover` lets the chrome paint under a notch and a home
+         indicator; every fixed region then pays its own `env(safe-area-inset-*)`
+         (docs/148 §6). `interactive-widget=resizes-content` asks the browser to
+         shrink the LAYOUT viewport when the soft keyboard opens, so a bar fixed
+         to `bottom: 0` lands above the keyboard with no script at all — this is
+         what ONLYOFFICE's mobile entry point does
+         (`apps/documenteditor/mobile/src/index_dev.html:6`), and they use no
+         `visualViewport` anywhere. Browsers that ignore it shrink only the
+         visual viewport, which `phone_chrome.mjs` reads back into
+         `--phone-keyboard-inset`; both mechanisms feed the same variable.
+         Deliberately NOT `user-scalable=no` / `maximum-scale=1`, which
+         ONLYOFFICE does set: suppressing pinch-zoom is a documented
+         accessibility failure for anyone who needs to magnify text, and we have
+         no canvas-level pinch of our own to put in its place (`105` UX-018). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <title data-i18n="ui.opendocEditorLocalDocument">OpenDoc Editor — local document editing in WebAssembly</title>
     <meta
       name="description"
