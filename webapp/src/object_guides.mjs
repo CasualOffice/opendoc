@@ -113,12 +113,30 @@ export function paintResizeHandles(pageOf, handles, onGripDown) {
  * @param {number} [gap] the clearance in pixels
  * @returns {{left: number, top: number} | null}
  */
-export function objectBarPosition(object, view, barHeight, gap = 8) {
+/** How far a resize grip's target reaches beyond the object, in pixels.
+ *
+ *  5px of centring margin plus `--grip-grow` (15px) in `style.css`. Kept beside
+ *  the arithmetic that has to clear it; if the grip's target changes there, this
+ *  moves with it and `object_guides.test.mjs` is what notices.
+ */
+export const GRIP_REACH = 20;
+
+export function objectBarPosition(object, view, barHeight, gap = 8, gripReach = GRIP_REACH) {
   if (object.bottom <= view.top || object.top >= view.bottom) return null;
+  // The bar must clear the GRIP's target, not the object's edge. A north-facing
+  // grip is centred on the corner with a -5px margin and grows `--grip-grow`
+  // (15px) upward to make the 24px WCAG 2.5.8 target, so its hit zone starts
+  // 20px above the object — and an 8px gap put the bar squarely inside it. The
+  // top-left corner of a selected picture could then not be grabbed at all,
+  // because `elementFromPoint` answered with the bar.
+  const clearance = Math.max(gap, gripReach);
   return {
     left: Math.max(gap, object.left),
     top: Math.round(
-      Math.max(view.top + gap, Math.min(object.top - barHeight - gap, view.bottom - barHeight - gap)),
+      Math.max(
+        view.top + gap,
+        Math.min(object.top - barHeight - clearance, view.bottom - barHeight - gap),
+      ),
     ),
   };
 }

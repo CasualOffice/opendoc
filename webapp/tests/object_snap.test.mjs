@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { objectBarPosition } from "../src/object_guides.mjs";
+import { objectBarPosition, GRIP_REACH } from "../src/object_guides.mjs";
 import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "../src/object_snap.mjs";
 
 // US Letter with 1in margins, in twips.
@@ -130,10 +130,22 @@ test("no drag can collapse an object below the minimum edge", () => {
 // Delete button left aimed at an object the user can no longer see. In
 // `main.js` this was four `style.top` assignments in a repaint and unaskable.
 
-test("the bar sits just above its object when there is room", () => {
+test("the bar sits above its object, clear of the resize grips", () => {
+  // 500 - 40 (the bar) - 20 (`GRIP_REACH`) = 440. It used to be 452, an 8px gap
+  // that put the bar INSIDE the north-west grip's 24px target, so the top-left
+  // corner of a selected picture could not be grabbed: `elementFromPoint` there
+  // answered with the bar. The number is derived, not chosen — 5px of centring
+  // margin plus `--grip-grow`.
   assert.deepEqual(
     objectBarPosition({ left: 200, top: 500, bottom: 620 }, { top: 100, bottom: 900 }, 40),
-    { left: 200, top: 452 },
+    { left: 200, top: 440 },
+  );
+  // And the guarantee behind the number: whatever the clearance is, the bar's
+  // bottom edge never reaches into the grip's target.
+  const placed = objectBarPosition({ left: 200, top: 500, bottom: 620 }, { top: 100, bottom: 900 }, 40);
+  assert.ok(
+    placed.top + 40 <= 500 - GRIP_REACH,
+    `the bar's bottom (${placed.top + 40}) must clear the grip target's top (${500 - GRIP_REACH})`,
   );
 });
 
