@@ -513,7 +513,16 @@ pub struct WasmDocument {
     /// ids remain untouched; allocated values are never reused within a session,
     /// including after Undo.
     revision_ids: RevisionIdAllocator,
-    /// Monotonic model revision, bumped on every applied edit.
+    /// The host-visible **view epoch**, bumped by every `finish_edit*` — which
+    /// includes the paths that changed the layout without committing a
+    /// transaction. It is what the frontend compares to decide whether to
+    /// re-raster, and `revision == 0` is how export knows the retained source is
+    /// still byte-identical.
+    ///
+    /// Deliberately NOT the same number as `log.head()`, which is the DOCUMENT
+    /// revision: one transaction advances both, but a re-layout advances only
+    /// this. Collapsing them would make a repaint look like an edit to anything
+    /// replaying the chain (doc 147 §3.3).
     revision: u32,
     /// Shaped-paragraph cache for the incremental edit path: an edit re-shapes only
     /// the paragraph(s) it touched (hash-based invalidation) and reuses the rest, so
