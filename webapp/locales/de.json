@@ -1223,6 +1223,8 @@
   "toolbar.redoNamed": "{name} wiederholen",
   "toolbar.undo": "Rückgängig",
   "toolbar.undoNamed": "{name} rückgängig machen",
+  "touchSelection.endHandle": "Auswahlende",
+  "touchSelection.startHandle": "Auswahlanfang",
   "ui.applicationMenu.label": "Anwendungsmenü",
   "ui.bulletStyle.label": "Aufzählungszeichen",
   "ui.cellBorderFormatting.label": "Zellen- und Rahmenformatierung",

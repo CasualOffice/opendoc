@@ -1219,6 +1219,8 @@
   "toolbar.redoNamed": "{name} をやり直す",
   "toolbar.undo": "元に戻す",
   "toolbar.undoNamed": "{name} を元に戻す",
+  "touchSelection.endHandle": "選択の終了位置",
+  "touchSelection.startHandle": "選択の開始位置",
   "ui.applicationMenu.label": "アプリケーション メニュー",
   "ui.bulletStyle.label": "箇条書きの種類",
   "ui.cellBorderFormatting.label": "セルと罫線の書式設定",

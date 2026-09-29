@@ -1223,6 +1223,8 @@
   "toolbar.redoNamed": "{name} फिर से करें",
   "toolbar.undo": "पूर्ववत करें",
   "toolbar.undoNamed": "{name} पूर्ववत करें",
+  "touchSelection.endHandle": "चयन का अंत",
+  "touchSelection.startHandle": "चयन का आरंभ",
   "ui.applicationMenu.label": "एप्लिकेशन मेनू",
   "ui.bulletStyle.label": "बुलेट शैली",
   "ui.cellBorderFormatting.label": "सेल और बॉर्डर स्वरूपण",

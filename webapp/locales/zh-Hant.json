@@ -1219,6 +1219,8 @@
   "toolbar.redoNamed": "取消復原{name}",
   "toolbar.undo": "復原",
   "toolbar.undoNamed": "復原{name}",
+  "touchSelection.endHandle": "選取範圍結束",
+  "touchSelection.startHandle": "選取範圍開始",
   "ui.applicationMenu.label": "應用程式功能表",
   "ui.bulletStyle.label": "項目符號樣式",
   "ui.cellBorderFormatting.label": "儲存格與框線格式",

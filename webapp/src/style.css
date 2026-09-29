@@ -142,6 +142,11 @@
   --z-review-popover: 66;
   --z-review-card: 67;
   --z-palette: 90;
+  /* The touch loupe. Above the floating selection bar and the link chip, which
+     it is meant to be read over, and below the modal layer: a dialog is the
+     only thing in front of the document and the magnifier is not an exception
+     to that (`105` UX-018). */
+  --z-magnifier: 95;
   --z-modal: 100;
   /* Above the modal, for the same reason the tooltip below is: the toast is a
      `pointer-events: none` card that never receives input, so it cannot let a
@@ -7258,6 +7263,64 @@ body.is-format-painting .page-wrap * {
 
 .overlay .table-col-touch-pill {
   cursor: col-resize;
+}
+
+/* Touch SELECTION handles and the loupe (`105` UX-018, `148` §9 item 2).
+
+   Draw small, hit big — the fifth surface in this file to make that separation
+   and the same one ONLYOFFICE make (`MOBILE_SELECT_TRACK_ROUND = 14` drawn
+   inside a `TrackTargetEps = 20` reach). The BOX is the target and carries
+   `touch-action: none`, because the browser latches its pan decision from the
+   hit element at touch-start and nothing a handler does afterwards can take it
+   back — the same trap the object move pad records. The DOT is a 14px circle
+   drawn by `::after`, ringed in the paper colour so it reads at 3:1 against
+   both the page and dark text (WCAG 1.4.11) in either theme.
+
+   Nothing here is direction-aware: `touch_selection.mjs` orders the two
+   endpoints by DOCUMENT position and places each handle on its caret rect, so
+   in a right-to-left paragraph the start handle is on the right, where it
+   belongs, without a rule in this file knowing about it. */
+.overlay .touch-handle {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+
+.overlay .touch-handle::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* The loupe. Fixed to the window rather than to a page, because staying inside
+   the WINDOW is its whole placement rule (`magnifierPlacement` flips it below
+   the finger at the top of the screen rather than letting it paint off-window).
+   `pointer-events: none` so it never eats the drag it is describing. */
+.touch-magnifier {
+  position: fixed;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: var(--z-magnifier);
+  pointer-events: none;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.touch-magnifier > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* The table GUTTER (docs/141 D-2): the row and column grab zones, the highlight

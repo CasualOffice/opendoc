@@ -1227,6 +1227,8 @@
   "toolbar.redoNamed": "Rehacer {name}",
   "toolbar.undo": "Deshacer",
   "toolbar.undoNamed": "Deshacer {name}",
+  "touchSelection.endHandle": "Fin de la selección",
+  "touchSelection.startHandle": "Inicio de la selección",
   "ui.applicationMenu.label": "Menú de la aplicación",
   "ui.bulletStyle.label": "Estilo de viñeta",
   "ui.cellBorderFormatting.label": "Formato de celdas y bordes",

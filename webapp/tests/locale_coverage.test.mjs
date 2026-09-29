@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1389],
-  ["de", 1389],
-  ["es", 1389],
-  ["fr", 1389],
-  ["hi", 1389],
-  ["id", 1389],
-  ["it", 1389],
-  ["ja", 1389],
-  ["ko", 1389],
-  ["nl", 1389],
-  ["pl", 1389],
-  ["pt-BR", 1389],
-  ["ru", 1389],
-  ["tr", 1389],
-  ["uk", 1389],
-  ["vi", 1389],
-  ["zh-Hans", 1389],
-  ["zh-Hant", 1389],
+  ["ar", 1391],
+  ["de", 1391],
+  ["es", 1391],
+  ["fr", 1391],
+  ["hi", 1391],
+  ["id", 1391],
+  ["it", 1391],
+  ["ja", 1391],
+  ["ko", 1391],
+  ["nl", 1391],
+  ["pl", 1391],
+  ["pt-BR", 1391],
+  ["ru", 1391],
+  ["tr", 1391],
+  ["uk", 1391],
+  ["vi", 1391],
+  ["zh-Hans", 1391],
+  ["zh-Hant", 1391],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -231,7 +231,15 @@ const COVERAGE = new Map([
  *  already gives that key (`panelHome.clipboard`, `panelReview.proofing`, and
  *  so on). One vocabulary across the ribbon, the menus and the File page; two
  *  words for one band is how a surface starts reading as a different product.
- *  MEASURED from the merged catalogues, not incremented by forty-six. */
+ *  MEASURED from the merged catalogues, not incremented by forty-six.
+ *
+ *  1,389 -> 1,391 is the two TOUCH SELECTION handle labels (`105` UX-018). They
+ *  are script-side with no English in the markup to fall back on, and they are
+ *  the only names a screen reader has for the two circles a finger drags, so
+ *  both landed translated into all eighteen languages in the commit that routed
+ *  them. Logical names in every locale — "start" is the start in reading order,
+ *  which in Arabic is the handle on the right — so none of the eighteen says
+ *  "left" or "right". MEASURED from the merged catalogues. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

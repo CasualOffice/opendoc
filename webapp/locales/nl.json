@@ -1223,6 +1223,8 @@
   "toolbar.redoNamed": "{name} opnieuw uitvoeren",
   "toolbar.undo": "Ongedaan maken",
   "toolbar.undoNamed": "{name} ongedaan maken",
+  "touchSelection.endHandle": "Einde van selectie",
+  "touchSelection.startHandle": "Begin van selectie",
   "ui.applicationMenu.label": "Toepassingsmenu",
   "ui.bulletStyle.label": "Opsommingstekenstijl",
   "ui.cellBorderFormatting.label": "Cel- en randopmaak",
