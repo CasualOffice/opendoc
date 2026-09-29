@@ -313,6 +313,22 @@ const MODALS = [
     },
   },
   {
+    // Tab stops (`docs/148` §9 item 7). The ruler held the only calls to
+    // `setTabStop` in the product, so this dialog is what lets the ruler be
+    // withheld on a phone — and what makes tab stops a two-surface capability
+    // at every other width, which they had never been.
+    id: "tabStopsDialog",
+    name: "Tab stops",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#tabStopsPosition",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await runFromPalette(page, "tab stops", "Tab stops");
+    },
+  },
+  {
     id: "styleNameDialog",
     name: "Create a style",
     opener: null,
@@ -765,4 +781,51 @@ test("a modal paints above the review chrome, and takes it off screen", async ({
   expect(ladder.palette).toBeGreaterThan(ladder.reviewCard);
   expect(ladder.reviewCard).toBeGreaterThan(ladder.reviewPopover);
   expect(ladder.reviewPopover).toBeGreaterThan(ladder.inspector);
+});
+
+test("a primary dialog button keeps its text legible while the pointer is on it", async ({
+  page,
+}) => {
+  // Found by hovering one and looking, and it was in EVERY dialog in the
+  // product. `.dialog-button:hover:not(:disabled)` is (0,3,0) and
+  // `.dialog-button-primary:hover` was (0,2,0), so the generic hover won on a
+  // primary button: it repainted the background to `--bg-2` and left the white
+  // primary text on it — measured rgb(251,250,248) on rgb(244,246,251), about
+  // 1.03:1, against `docs/63`'s AA floor of 4.5:1 for text.
+  //
+  // No existing guard could see it. The contrast sweep reads RESTING state, and
+  // every behavioural test passed because the button still worked — the text
+  // was simply not there any more. So this one hovers, and measures.
+  await gotoEditor(page);
+  await page.locator("#propertiesBtn").click();
+  const button = page.locator(".dialog-card:not([hidden]) .dialog-button-primary").first();
+  await expect(button).toBeVisible();
+  await button.hover();
+
+  const { ratio, color, background } = await button.evaluate(async (el) => {
+    const mod = await import("/src/contrast.mjs");
+    const parse = (value) => {
+      const [r, g, b] = value.match(/[\d.]+/g).map(Number);
+      return { r, g, b };
+    };
+    const style = getComputedStyle(el);
+    // Walk out for the painted background, exactly as a reader's eye does: a
+    // transparent button shows whatever is behind it.
+    let node = el;
+    let painted = parse(style.backgroundColor);
+    while (node && getComputedStyle(node).backgroundColor.startsWith("rgba(0, 0, 0, 0)")) {
+      node = node.parentElement;
+      if (node) painted = parse(getComputedStyle(node).backgroundColor);
+    }
+    return {
+      ratio: mod.contrastRatio(parse(style.color), painted),
+      color: style.color,
+      background: `rgb(${painted.r}, ${painted.g}, ${painted.b})`,
+    };
+  });
+
+  expect(
+    ratio,
+    `a hovered primary dialog button reads ${color} on ${background} — AA needs 4.5:1`,
+  ).toBeGreaterThanOrEqual(4.5);
 });

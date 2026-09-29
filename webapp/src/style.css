@@ -1817,7 +1817,16 @@ body.modal-open {
   color: var(--primary-ink);
 }
 
-.dialog-button-primary:hover {
+/* `:not(:disabled)` is load-bearing, not symmetry with the rule above.
+   Without it this selector is (0,2,0) and `.dialog-button:hover:not(:disabled)`
+   is (0,3,0), so the GENERIC hover won on a primary button and repainted it
+   `--bg-2` while leaving the white primary text in place: measured
+   rgb(251,250,248) on rgb(244,246,251), about 1.03:1, in every dialog in the
+   product. It was invisible to the contrast sweep because the sweep reads
+   resting state, and invisible to every behavioural test because the button
+   still worked — it was found by hovering one and looking. `docs/63`'s AA floor
+   is 4.5:1 for text. */
+.dialog-button-primary:hover:not(:disabled) {
   border-color: var(--primary-bg-hover);
   background: var(--primary-bg-hover);
 }
@@ -9030,12 +9039,27 @@ body.phone-mode .toast {
 
    The dialog overlay is in the list because at this rung a dialog IS a bottom
    sheet (see `.dialog-overlay` above), so it has exactly the same collision. */
+/* The list is exactly the surfaces capped at `max-height: 60vh`, and that bound
+   is what makes the rule safe rather than a preference: 60vh of 844 leaves the
+   sheet's top edge at ~266px, and a toast under a two-row header sits at
+   ~105-141. The other two candidates are deliberately NOT here, and both were
+   tried and measured:
+
+     `.side-panel`  — at this rung `.version-panel` is a top-anchored DRAWER,
+                      not a bottom sheet: measured 123→587 at 390px. There is no
+                      band above it, and moving the toast up put it across the
+                      drawer's head. That collision is already solved the other
+                      way — `109` HF-233 reserves `--h-toast-band` at the
+                      drawer's foot — and `editor-narrow-chrome.spec.mjs`
+                      measures it.
+     `.dialog-overlay` — a phone dialog is a bottom sheet but capped at 86vh,
+                      which leaves ~118px of screen above it: the toast would
+                      not fit under the header. Out of scope here and recorded
+                      rather than papered over. */
 body.phone-mode:has(.app-menu-popover:not([hidden])) .toast,
 body.phone-mode:has(.compact-command-menu:not([hidden])) .toast,
 body.phone-mode:has(.compact-align-menu:not([hidden])) .toast,
-body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast,
-body.phone-mode:has(.side-panel:not([hidden])) .toast,
-body.phone-mode:has(.dialog-overlay:not([hidden])) .toast {
+body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast {
   /* `--phone-header-height` and NOT `--h-header`: the token says 63px and this
      rung's header is two rows at 390px and three at 320px, because the menu bar
      wraps rather than scrolling (§5.3) and how many rows that takes depends on

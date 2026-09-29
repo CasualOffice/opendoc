@@ -214,6 +214,7 @@ import { createTableGutter } from "./table_gutter.mjs";
 import { createTableRange } from "./table_range.mjs";
 import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
+import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
@@ -7765,6 +7766,24 @@ const rulerView = createRuler({
   },
 });
 
+/** The ruler's second surface. `setTabStop`, `moveTabStop` and `removeTabStop`
+ *  had exactly two call sites in the product, both inside `ruler.mjs`, so tab
+ *  stops were a one-surface capability at every width (`docs/105` UX-004) — the
+ *  phone rung is only where that became visible, because a ruler showing 0-3in
+ *  of an 8.5in page is 24px of a 844px screen spent on a control nobody drags
+ *  with a finger. Word has had this dialog for thirty years; `docs/148` §9
+ *  item 7 is the row that asked for it. */
+const tabStopsDialog = createTabStopsDialog({
+  getDoc: () => doc,
+  getSelection: () => selection,
+  runToolbarEdit,
+  registerModal,
+  setStatus,
+  fallbackFocus: () => pagesEl,
+  twipsPerInch: TWIPS_PER_INCH,
+  formatInches: twipsToDialogInches,
+});
+
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
 /** Device DPI the pages are rastered at (HiDPI-crisp, DPR-capped for memory). */
@@ -11941,6 +11960,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => toggleSettings(true) },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => pageSetup.open(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
+    { id: "layout.tabStops", label: t("tabStops.command"), group: "Layout", kw: "tab tabs stop stops ruler decimal bar align position", enabled: !!selection && reviewMode !== "viewing", disabledReason: selection ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : t("paragraph.caretRequired"), run: () => tabStopsDialog.open() },
     // The Layout and References tabs' own rows, generated from the SAME tables
     // their buttons are built from, so a tab button and its palette row can
     // never disagree about whether the command is available or why it is not.

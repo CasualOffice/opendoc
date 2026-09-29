@@ -341,8 +341,19 @@ const SRC = new URL("../src/", import.meta.url);
  *  now serving the finger's long press and the mouse's double click, which is
  *  how ONLYOFFICE route the same pair — and the four identical copies of the
  *  "drop every pointer gesture" list, which are now one `abortPointerGestures`.
- *  RE-MEASURE from the merged file, as every note above says. */
-const MAIN_JS_LINE_CEILING = 16340;
+ *  RE-MEASURE from the merged file, as every note above says.
+ *
+ *  16,340 -> 16,336, and this one is the note's own lesson applied. Three
+ *  lanes met here: touch selection (-1), the tab-stops dialog (+2 for an import
+ *  and a registry row, +19 for a factory literal), and the phone roster work,
+ *  which paid for all of it by moving the Pages navigator's CONTROLLER into
+ *  `pages_panel.mjs` (-49) — six closures and a piece of module state that were
+ *  the only description of what `view.pages` does, in a file nobody reads to
+ *  find out what a command does. NEITHER branch's number is this tree's:
+ *  16,341 - 1 = 16,340 was true of the touch branch alone, and arithmetic on
+ *  two branches' numbers is always wrong. 16,336 is what the merged file
+ *  counts. */
+const MAIN_JS_LINE_CEILING = 16336;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
