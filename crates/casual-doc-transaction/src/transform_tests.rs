@@ -517,7 +517,16 @@ fn the_refusal_surface_is_exactly_these_cases() {
     // constant and every constant is in `REFUSAL_REASONS`, so a new one cannot reach a
     // caller without appearing in the list doc 150 §6 documents. CRLF-normalised, because
     // two Windows-only CI failures came from literals not matching a CRLF checkout.
-    let source = include_str!("transform.rs").replace("\r\n", "\n");
+    // All three files, because the classification and effect submodules refuse too and a
+    // guard that scans only the parent would have gone blind the moment the module was
+    // split — which is exactly what happened to it.
+    let source = [
+        include_str!("transform.rs"),
+        include_str!("transform/classify.rs"),
+        include_str!("transform/effect.rs"),
+    ]
+    .join("\n")
+    .replace("\r\n", "\n");
     let bare = source.matches("Err(refuse(\"").count()
         + source.matches("return Err(\"").count()
         + source.matches(".ok_or(\"").count();
