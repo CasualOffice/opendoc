@@ -938,7 +938,8 @@ input {
   display: none;
 }
 
-.app-menu-item {
+.app-menu-item,
+.app-menu-item-parent {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -953,11 +954,92 @@ input {
   cursor: pointer;
 }
 
-.app-menu-item:hover:not(:disabled) {
+/* A band folded behind one row. The flyout is positioned against the wrapper,
+   which is why the wrapper is the positioned box and not the popover: a flyout
+   anchored to the popover would have to know the row's offset, and the row
+   already knows it. */
+.app-menu-item-submenu {
+  position: relative;
+}
+
+/* The chevron sits in the row's trailing column — the same slot a shortcut
+   occupies, so a menu of mixed rows keeps one right edge. */
+.app-menu-item-chevron {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: 1;
+}
+
+.app-menu-item-parent[aria-expanded="true"] {
+  background: var(--surface-alt);
+}
+
+/* FIXED, not absolute. The popover scrolls (`overflow-y: auto`), and an
+   overflow container clips on BOTH axes — so an absolutely positioned flyout at
+   `left: 100%` was cut off at the popover's right edge. Measured: the popover
+   ended at x=562 and the flyout ran 555..735, so 173px of it simply was not
+   painted, while `hidden` was correctly false the whole time. Fixed positioning
+   takes it out of that context; `command_menu.mjs` places it against its
+   parent row. */
+.app-menu-item-flyout {
+  position: fixed;
+  z-index: var(--z-menu);
+  width: max-content;
+  min-width: 180px;
+  max-width: min(286px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - var(--h-header) - 16px));
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+  overscroll-behavior: contain;
+}
+
+.app-menu-item-flyout[hidden] {
+  display: none;
+}
+
+/* ON A PHONE A SUBMENU DRILLS, IT DOES NOT FLY OUT.
+   The menus are bottom sheets at this width (`docs/148`), and a sideways
+   flyout in a sheet is either off-screen or a horizontal scroller — and no
+   horizontal scrolling is the property that layout is guarded on. So the
+   flyout opens INLINE beneath its parent, indented, which is the same shape a
+   phone settings screen uses. */
+@media (max-width: 620px) {
+  .app-menu-item-flyout {
+    position: static;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: none;
+    margin: 2px 0 2px 12px;
+    padding: 2px 0 2px 8px;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .app-menu-item-parent[aria-expanded="true"] .app-menu-item-chevron {
+    transform: rotate(90deg);
+  }
+
+  .app-menu-item-chevron {
+    display: inline-block;
+    transition: transform 0.12s ease;
+  }
+}
+
+.app-menu-item:hover:not(:disabled),
+.app-menu-item-parent:hover {
   background: var(--bg-2);
 }
 
-.app-menu-item:focus-visible {
+.app-menu-item:focus-visible,
+.app-menu-item-parent:focus-visible {
   background: var(--accent-soft);
   outline: 2px solid var(--accent-text);
   outline-offset: -2px;

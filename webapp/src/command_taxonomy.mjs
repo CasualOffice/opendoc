@@ -66,10 +66,18 @@
 // ribbon group called something else would read as two products.
 export const FILE_SURFACE = [
   { nameKey: "menuGroup.newAndOpen", ids: ["file.new", "file.open", "file.recoverDrafts"] },
+  { nameKey: "menuGroup.save", ids: ["file.save"] },
+  // The six export formats behind one row. Google Docs files exactly these
+  // under Download; Word's backstage gives Export its own page. Seven rows of
+  // which six say "export as" is the shape that made this menu long, and Save
+  // is not one of them — it belongs beside New and Open, not behind a flyout.
+  //
+  // The File PAGE renders a submenu flat, so its Export category keeps the
+  // heading-over-rows treatment it already had; only the dropdown folds.
   {
-    nameKey: "menuGroup.save",
+    nameKey: "filePane.export.label",
+    submenu: true,
     ids: [
-      "file.save",
       "file.export.pdf",
       "file.export.docx",
       "file.export.odt",
@@ -144,6 +152,25 @@ export function fileSurfaceCommandIds() {
  *  `string[][]` shape survived so long — the bands existed, they just could not
  *  say what they were. */
 const band = (nameKey, ...ids) => ({ nameKey, ids });
+
+/** One band rendered as a SUBMENU: the band's name becomes a row, and its
+ *  commands live in a flyout behind it.
+ *
+ *  A named band with a hairline over it still leaves every row on screen, and
+ *  the owner's report was about length, not about grouping: Format listed 31
+ *  rows, Table 28. Google Docs' Format menu is about ten rows of which most
+ *  open a submenu (Text, Align & indent, Line & paragraph spacing, Bullets &
+ *  numbering); Word and ONLYOFFICE decompose Table the same way (Insert,
+ *  Delete, Select, Merge, Cell size). So the long bands become submenus and the
+ *  short ones stay inline under their heading — a one- or two-row band behind a
+ *  flyout is a click spent to save nothing.
+ *
+ *  Same declaration, one more field: every surface that reads `APP_MENU_SECTIONS`
+ *  — the menu bar, the compact toolbar's Table dropdown, the File page — reads
+ *  this too, so a submenu cannot exist in one and not the other. The File page
+ *  deliberately renders them FLAT: a full window has the room to show a group,
+ *  which is the same reason it uses headings where the dropdown uses names. */
+const sub = (nameKey, ...ids) => ({ nameKey, ids, submenu: true });
 
 // The COMPACT chrome's menu bar. One command has ONE menu home: eight ids used
 // to sit in two menus each (the three review modes, `review.toggle`,
@@ -225,7 +252,7 @@ export const APP_MENU_SECTIONS = {
     band("menuGroup.illustrations", "insert.image", "insert.shape"),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),
-    band(
+    sub(
       "menuGroup.headerFooter",
       "insert.header",
       "insert.footer",
@@ -234,8 +261,8 @@ export const APP_MENU_SECTIONS = {
       "layout.headerFooterSettings",
     ),
     band("menuGroup.text", "insert.textbox", "insert.dropCap"),
-    band("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),
-    band("menuGroup.symbols", "insert.symbol", "insert.emoji"),
+    sub("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),
+    sub("menuGroup.symbols", "insert.symbol", "insert.emoji"),
   ],
   // The References menu, which the compact chrome did not have at all.
   //
@@ -276,7 +303,7 @@ export const APP_MENU_SECTIONS = {
   // ten controls in one group because they are a grid of icons; a menu renders
   // them as ten stacked rows, which is the shape this change exists to stop.
   format: [
-    band(
+    sub(
       "menuGroup.font",
       "format.bold",
       "format.italic",
@@ -287,8 +314,8 @@ export const APP_MENU_SECTIONS = {
       "format.grow",
       "format.shrink",
     ),
-    band("menuGroup.textColor", "format.color", "format.highlight"),
-    band(
+    sub("menuGroup.textColor", "format.color", "format.highlight"),
+    sub(
       "menuGroup.changeCase",
       "format.case.upper",
       "format.case.lower",
@@ -296,7 +323,7 @@ export const APP_MENU_SECTIONS = {
       "format.case.sentence",
       "format.case.toggle",
     ),
-    band(
+    sub(
       "menuGroup.alignment",
       "paragraph.align.start",
       "paragraph.align.center",
@@ -306,7 +333,7 @@ export const APP_MENU_SECTIONS = {
     // Checklist, restart and continue existed on the ribbon and in the palette
     // but in no menu, so browsing Format said the editor had no checklists at
     // all (docs/104 HF-076).
-    band(
+    sub(
       "menuGroup.lists",
       "paragraph.list.bullet",
       "paragraph.list.numbered",
@@ -314,7 +341,7 @@ export const APP_MENU_SECTIONS = {
       "paragraph.list.restart",
       "paragraph.list.continue",
     ),
-    band(
+    sub(
       "menuGroup.paragraph",
       "paragraph.indent.decrease",
       "paragraph.indent.increase",
@@ -324,7 +351,7 @@ export const APP_MENU_SECTIONS = {
     // to cut/paste, where it reads as clipboard behaviour — and it belongs with
     // the two style-from-selection rows, because all three are "take the
     // formatting this selection already has and reuse it".
-    band(
+    sub(
       "menuGroup.styles",
       "format.painter",
       "style.updateFromSelection",
@@ -343,36 +370,36 @@ export const APP_MENU_SECTIONS = {
   // the safety rule above: "Delete table" must not sit one row under "Insert
   // column right".
   table: [
-    band(
+    sub(
       "menuGroup.rowsAndColumns",
       "table.insert.rowAbove",
       "table.insert.rowBelow",
       "table.insert.columnLeft",
       "table.insert.columnRight",
     ),
-    band("menuGroup.delete", "table.delete.row", "table.delete.column", "table.delete.table"),
+    sub("menuGroup.delete", "table.delete.row", "table.delete.column", "table.delete.table"),
     // Reordering. The gutter's drag is the pointer half (`docs/141` §4.2.3) and
     // these are the half a keyboard, a menu and the palette can reach — the rule
     // every other gesture in that layer already follows.
-    band(
+    sub(
       "menuGroup.move",
       "table.move.rowUp",
       "table.move.rowDown",
       "table.move.columnLeft",
       "table.move.columnRight",
     ),
-    band("menuGroup.select", "table.select.row", "table.select.column", "table.select.table"),
+    sub("menuGroup.select", "table.select.row", "table.select.column", "table.select.table"),
     // Merge, then the two ways out of one. `table.unmerge` is the gesture Word
     // and Google Docs both put on the right-click menu of a merged cell, and it
     // had no reachable path at all: the split dialog's smallest legal value is
     // 1x2, so no number a person could type unmerged a cell (`docs/141` TBL-02).
-    band("menuGroup.merge", "table.merge", "table.unmerge", "table.split"),
+    sub("menuGroup.merge", "table.merge", "table.unmerge", "table.split"),
     // Sizing the caret's band from the keyboard. These are the ONLY table
     // commands with a chord (Alt+Shift+Arrow), and they are on the menu as well
     // because a chord is not a surface a user browses. Distributing rows and
     // columns is the same question — how big is this band — so Word's Cell Size
     // group holds both, and so does this one.
-    band(
+    sub(
       "menuGroup.cellSize",
       "table.column.grow",
       "table.column.shrink",
@@ -401,10 +428,10 @@ export const APP_MENU_SECTIONS = {
     // Proofing. Word's Review tab opens with a Proofing group, and these three
     // are the only proofing switches this editor has. They were the content of
     // a `Tools` menu that existed for them alone.
-    band("menuGroup.proofing", "tools.spellCheck", "tools.grammarCheck", "tools.smartQuotes"),
+    sub("menuGroup.proofing", "tools.spellCheck", "tools.grammarCheck", "tools.smartQuotes"),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),
-    band(
+    sub(
       "menuGroup.changes",
       "review.previous",
       "review.next",
