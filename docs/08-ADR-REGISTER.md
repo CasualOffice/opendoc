@@ -1403,6 +1403,67 @@ mechanism, not a new one.
   pinch to put in its place and we do not (`105` UX-018), and removing magnification with
   nothing behind it is an accessibility failure rather than a decision.
 
+## ADR-045 — `transform` is a pure function of an operation and the inverse recorded for it, and refusing is a first-class answer
+
+**Status:** Accepted (2026-09-30). Designed in
+[`150`](150-OPERATIONAL-TRANSFORM-OVER-THE-CLOSED-OP-SET.md). Implements ADR-033 and `107`
+§3/§6.3; builds on ADR-043 / `147`.
+
+**Decision.** Concurrent operations are reconciled by operational transform over the closed
+op set, with a server imposing the total order — ADR-033, unchanged. `transform` rebases one
+operation over one concurrent **`Change`**: the operation *and* the inverse
+`casual_doc_edit::apply` returned for it. It is pure — no document, no lookup — and it lives
+in `casual-doc-transaction` with **zero call sites in the engine**, because OT is dormant at
+one editor and a source guard fails the build if that stops being true.
+
+**Why the inverse, and not the operation alone.** A spreadsheet delete names its victims by
+address, so the operation describes itself. A document delete names them by **identity**, and
+the identities are only in the inverse: `DeleteBlocks { container, index, count }` does not
+say which nodes died, and `JoinParagraphs { first, second }` does not say where the join
+boundary fell. Invariant I2 (every operation returns its inverse) was built for undo; it turns
+out to be what makes a *pure* transform possible at all. The sibling spreadsheet engine
+solved the same problem by passing side tables in; here the side table is already on every
+commit.
+
+**Four decisions this takes explicitly:**
+
+1. **Two outcomes for "nothing survived", not one.** `Satisfied` (the intention is already
+   achieved; nothing lost) and `Tombstoned` (the anchor was destroyed; **must** be reported
+   through the disposition taxonomy, `35`). A single no-op return — which is what the sibling
+   uses, because a cell is emptied and never destroyed — would have made every tombstone
+   silent, against the no-silent-loss rule.
+2. **A rebase may produce several operations, and that needs no new operation.** A concurrent
+   split divides a same-paragraph range; a concurrent formatting write leaves the earlier one
+   holding up to three pieces. `Transaction` already carries a sequence, so the multiplicity
+   lives in the envelope. ADR-030 I2 is not touched.
+3. **Refusal is an answer.** Nine enumerated pairs return `Unsupported` rather than a guess,
+   because an untransformed operation applied to a state it was not written against diverges
+   the replicas *quietly*. The surface is a constant the build checks two ways. A caller must
+   treat a refusal, and equally an `apply` rejection of a rebased operation, as "these two
+   cannot be merged".
+4. **TP1 only.** Proven over 3,153 generated concurrent pairs with every guard driven red.
+   TP2 is not provided and is not needed while a server orders everything; **if peer-to-peer
+   or merge-after-long-divergence is ever required, this ADR is void and needs a successor**,
+   not an extension.
+
+**Consequences:**
+
+- `casual-doc-transaction` gains `transform`, `BlockPlacement`/`BlockIndex`, and
+  `Commit::changes()`; `casual-doc-edit` exposes `field_text_len` so transform and `apply`
+  compute a field insertion's width from one rule rather than two.
+- **One seam is added, deliberately.** `BlockPlacement` hands the transform the one fact two
+  operations cannot tell each other: where a paragraph sits among its container's blocks. It
+  must be resolved against the *base* state, which neither replica holds while transforming —
+  a session that cannot guarantee that passes `NoPlacement` and takes the refusal.
+- Three findings are recorded rather than acted on, because each would need an op-set change
+  (I2): block operations are index-addressed rather than node-addressed; `Pos` carries no
+  affinity, so an insertion at a run boundary cannot say which side it meant; and operations
+  do not carry the run identities they cause `apply` to mint, so two replicas' deterministic
+  snapshots are not byte-identical.
+- `107` §3.1, §3.3, §8 Q1 and §8 Q4 are corrected in place. §8 Q4's guess that table geometry
+  was "the most likely place TP1 fails" was half right: the index arithmetic converges and the
+  *carried payload* does not.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
