@@ -13,6 +13,8 @@ measurable budget (§4), not an aspiration.
 
 **Relates to:** ADR-004 (no DOM as source of truth), ADR-005 (mutation through commands and
 transactions), **ADR-043 / `147`** (the §2.1 unification, as built — read it with §2 below),
+**ADR-045 / `150`** (the transform itself, as built — read it with §3 below; it corrects §3.1,
+§3.3, §8 Q1 and §8 Q4 in place),
 ADR-006 (collaboration is adapter-based), ADR-030 / `45` (extensibility
 invariants I1–I4), `24-TRANSACTION-SEMANTICS.md`, `25-NORMALIZED-SNAPSHOT-IO.md`,
 `26-SELECTION-FOUNDATION.md`, `59-V1-EDITING-OP-SET.md`, `82-REVIEW-IDENTITY-AND-HISTORY-DESIGN.md`,
@@ -148,6 +150,19 @@ work.
 T1 is where correctness is hard and where nearly all traffic is. T2 is where nearly all
 *operations* are, and it needs no offset math. That asymmetry is the design.
 
+> **Corrected 2026-09-30 by `150` (ADR-045), which builds this section.** The asymmetry holds
+> and was the right bet. Three details were wrong:
+>
+> 1. **T1 is 11 operations over 55, not 9 over 47.** `InsertField`, `InsertNote` and
+>    `CreateBookmark` belong to it as well.
+> 2. **`InsertInlineObject`, `InsertNote` and `CreateBookmark` insert ZERO bytes.** A drawing,
+>    a note reference and a bookmark marker are all zero-width in a paragraph's projected
+>    text, by the edit crate's own length rule. They are T1 for anchoring and inert for
+>    offsets, which makes T1's *offset* work smaller still.
+> 3. **The classification lives in one exhaustive `match` in `transform.rs`, not in 55 doc
+>    comments** (§9 exit gate 2). A doc comment in another crate is not checkable; an
+>    exhaustive match makes a 56th variant a compile error.
+
 **Tombstoning is a document-safety decision, not a convenience.** When a T2 operation's
 anchor has been deleted concurrently, the operation is dropped and the loss is **reported
 through the disposition taxonomy** (`35`), not silently discarded. This reuses the reporting
@@ -171,10 +186,19 @@ deletes the node your caret sits in currently has no defined behaviour.
 
 ### 3.3 Convergence
 
-- **Tie-break:** concurrent T1 inserts at the same position order by `(revision, site_id)`,
-  with `site_id` a stable per-session identity. `Affinity` already decides caret behaviour at
-  that boundary; the same rule must decide *content* order, and the two must agree — a
-  caret that lands on the wrong side of your own insertion is the classic OT bug.
+- **Tie-break:** concurrent T1 inserts at the same position order by the **total order the
+  relay settled on** — `Side::Later` moves off the contested boundary, `Side::Earlier` holds
+  it. No `site_id` is needed: the settled order is already the shared fact, which is the whole
+  reason a server-ordered design is cheaper than a peer-to-peer one.
+
+  > **Corrected 2026-09-30 by `150` §5.1.** This paragraph said "`Affinity` already decides
+  > caret behaviour at that boundary; the same rule must decide *content* order". They are
+  > **two different questions**: `Affinity` decides where your *caret* lands, `Side` decides
+  > where *content* lands. They agree in the case that matters — your own insertion uses
+  > `Affinity::After`, so your caret ends up after your own text — but conflating them is what
+  > `150` §5.4 had to unpick. Worse, the operation carries no affinity at all
+  > (`casual_doc_edit::Pos` has only a node and an offset), which is refusal U5 and finding
+  > `150` §9.2.
 - **TP1 must be proven**, not asserted: for concurrent `a`, `b`,
   `apply(apply(s, a), transform(b, a)) == apply(apply(s, b), transform(a, b))`. This is a
   property test over generated concurrent operation pairs on generated documents, plus the
@@ -290,8 +314,8 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 | **6.0** | §2.1 P-1…P-4: unify the op set, route mutation through transactions, commit-log undo, mapping steps for structural ops. Plus the B1 prerequisite fix (`HF-111`) | **Yes** — closes ADR-005 and the `HF-111` perf defect. **P-1…P-3 landed 2026-09-29** (`147`, ADR-043); P-4 and the v0-stack retirement remain |
 | **6.1** | Durable log + snapshot + compaction; crash recovery and autosave | **Yes** — closes `HF-011`, the oldest P1 data-safety row |
 | **6.2** | Version history: list, restore, per-author colouring | **Yes** — closes OO-004 |
-| **6.3** | T1 transform + tie-break + TP1 property tests + the §4 benchmarks. **No network yet** | Yes — offline compare/combine becomes possible |
-| **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set |
+| **6.3** | T1 transform + tie-break + TP1 property tests + the §4 benchmarks. **No network yet** | Yes — offline compare/combine becomes possible. **Transform and TP1 landed 2026-09-30** (`150`, ADR-045); the §4 benchmarks remain |
+| **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set. **The rebase and the `Tombstoned` outcome landed with 6.3**; what remains is the *reporting* — routing a tombstone into the disposition taxonomy (`35`), which has no caller until 6.6 |
 | **6.5** | Compare and combine documents | **Yes** — closes OO-007 |
 | **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships |
 | **6.7** | Roles and permission enforcement, against the Phase 4 permissions object | Closes OO-018 |
@@ -309,9 +333,13 @@ owed anyway.
 
 Recorded rather than hidden, per AGENTS.md.
 
-1. **Formatting-vs-text transform.** `FormatText` over a range concurrent with `DeleteText`
-   inside that range: does the format apply to the survivor, or drop? Word's own answer is
-   inconsistent. Needs a stated rule plus tests.
+1. ~~**Formatting-vs-text transform.**~~ **Answered by `150` §5.5.** The format applies to the
+   **survivor**: the range is rebased through the delete, and when nothing survives the result
+   is `Satisfied` rather than a tombstone, because the text the user meant to format was
+   removed by the other operation and nothing was lost by this one. The converse needs no
+   rule — formatting changes no byte offsets. `150` §5.8 adds the case this question did not
+   reach: two concurrent *formatting* writes over overlapping text resolve **per field over
+   the overlap**, not per operation.
 2. **Tombstone visibility.** When a T2 operation is dropped because its anchor died, does the
    author see a notice, a silent no-op, or an undo-able marker? A silent drop violates the
    no-silent-loss rule; a modal per race is unusable. Proposal: a non-blocking toast plus a
@@ -319,9 +347,16 @@ Recorded rather than hidden, per AGENTS.md.
 3. **Interaction with tracked changes.** Suggesting mode already wraps edits in revision
    markup. Are collaborative operations transformed *before* or *after* revision wrapping?
    Wrong order corrupts authorship. `83`/`86` must be reconciled with this.
-4. **Table-geometry races.** Two users inserting a column in the same table at the same index
-   is T2 by classification, but the *grid* is shared positional state. This may need a fourth
-   tier or an advisory lock; it is the most likely place TP1 fails.
+4. ~~**Table-geometry races** … "the most likely place TP1 fails".~~ **Half right, corrected by
+   `150` §5.9.** The *index arithmetic* converges: `InsertColumn`/`DeleteColumn` are refused on
+   irregular tables by `apply` itself, so the grid is regular wherever they apply, and
+   regular-grid arithmetic converges under the tie-break. What does not converge is the
+   **carried payload** — `InsertRow` carries one cell per column and `InsertColumn` one cell
+   per row, so a concurrent change to the other axis leaves it the wrong shape. A concurrent
+   removal drops the matching cell exactly; a concurrent insertion would need a cell with fresh
+   identities, which a pure transform may not mint, and is refused (U9). No fourth tier and no
+   advisory lock. The place TP1 actually failed most often while this was being built was the
+   paragraph split dividing a range, and the run a concurrent insertion attaches to.
 5. **Log format stability.** The operation log becomes persisted, versioned data — so the
    operation enum becomes a compatibility surface. Needs a schema-version policy like
    `22-NORMALIZED-SCHEMA-V0.md`'s, and a decision on whether old logs must replay on new
@@ -338,10 +373,14 @@ Phase 6 is not `Done` until all hold:
 
 1. One operation vocabulary in the workspace; every WASM mutation goes through a
    `Transaction` and allocates a `RevisionId` (ADR-005 provably honoured).
-2. Every operation is tier-classified in its own doc comment, and CI fails on an operation
-   added without a classification and transform rules.
+2. Every operation is tier-classified, and the build fails on an operation added without a
+   classification and transform rules. **Met** (`150` §3.2) — but *not* as worded: the
+   classification is an exhaustive `match` in `transform.rs`, not a doc comment per operation,
+   because a doc comment in another crate is not checkable and an exhaustive match is a
+   compile error.
 3. TP1 property tests pass over generated concurrent pairs; the fuzz harness covers the
-   transform.
+   transform. **Half met:** TP1 holds over 3,153 generated pairs (`150` §8) and every guard
+   is proven red. The fuzz harness does not yet reach `transform`.
 4. Budgets B1–B7 are benchmarked, with baselines committed — including the layout/render/
    repaint cases the current baseline lacks.
 5. A dropped (tombstoned) operation always produces a disposition entry; no silent loss.
