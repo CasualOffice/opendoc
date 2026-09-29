@@ -83,16 +83,26 @@ test("an empty stack reserves nothing", () => {
   assert.equal(reviewStackHeight([], []), 0);
 });
 
-test("the stylesheet and main.js change shape at the same width", () => {
-  const main = read("main.js");
-  const declared = main.match(/const REVIEW_SHEET_MAX_WIDTH = (\d+);/);
-  assert.ok(declared, "main.js must declare REVIEW_SHEET_MAX_WIDTH");
+// The constant moved to `phone_chrome.mjs` (docs/148) when the phone rung was
+// added, so that both rungs of the responsive ladder are declared next to each
+// other rather than one in main.js and one in a stylesheet. The guard follows
+// the constant; what it asserts is unchanged, and it now also pins that the
+// query really is built from the constant rather than from a second literal.
+test("the stylesheet and the script change shape at the same width", () => {
+  const ladder = read("phone_chrome.mjs");
+  const declared = ladder.match(/export const REVIEW_SHEET_MAX_WIDTH = (\d+);/);
+  assert.ok(declared, "phone_chrome.mjs must declare REVIEW_SHEET_MAX_WIDTH");
   const width = Number(declared[1]);
 
   assert.match(
-    main,
-    new RegExp(`matchMedia\\?\\.\\(\`\\(max-width: \\$\\{REVIEW_SHEET_MAX_WIDTH\\}px\\)\``),
-    "the media query main.js listens to must be built from the constant",
+    ladder,
+    /const sheetQuery = media\(REVIEW_SHEET_MAX_WIDTH\);/,
+    "the media query the shell listens to must be built from the constant",
+  );
+  assert.match(
+    read("main.js"),
+    /phoneChrome\.reviewSheet\(\)/,
+    "main.js must read the rung through the ladder, not re-derive it",
   );
 
   const css = read("style.css");

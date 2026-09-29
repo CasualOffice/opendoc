@@ -168,14 +168,37 @@ test("the object properties panel starts below the ribbon, expanded and collapse
 // what HF-097 asked for. The affordance still has to work where it DOES clip, so
 // the width moved down with the bar rather than the test being deleted: a guard
 // pinned to a width it has outgrown passes without checking anything.
+//
+// IT MOVED AGAIN, and this time up rather than down, and into another language.
+// The phone tier (docs/148) makes the bar WRAP at or below 620px, because at a
+// phone width the bar is the only navigation axis there is and reaching its
+// last menu must not need a sideways drag. So English no longer clips at any
+// width at all. Measured across en, pt-BR, ru and vi at 360/500/620/640/700/
+// 780/860, the bar still genuinely clips in exactly two places — Brazilian
+// Portuguese and Russian, between the phone rung and ~780px, where the names
+// are long and the header is still one row:
+//
+//   ru    640: scrollWidth 461, clientWidth 334   <- measured here
+//   ru    700: scrollWidth 461, clientWidth 394
+//   pt-BR 640: scrollWidth 397, clientWidth 303
+//   pt-BR 700: scrollWidth 397, clientWidth 363
+//
+// So the guard follows its subject rather than being deleted or weakened, and it
+// is now testing the case the fade mask was always really for: a locale whose
+// menu names do not fit a narrow laptop. The precondition below fails loudly if
+// that stops being true, rather than the test quietly passing on a bar that
+// cannot clip.
 test("the menu bar shows that it has clipped a menu rather than cutting it dead", async ({
   page,
   consoleErrors,
 }) => {
-  await page.setViewportSize({ width: 360, height: 900 });
-  await gotoEditor(page);
+  await page.goto("/editor.html?lang=ru");
+  await page.waitForSelector("#railOutline");
+  await page.setViewportSize({ width: 640, height: 900 });
   // The bar is the compact chrome's navigation axis; ribbon mode hides it.
   await useCompactChrome(page);
+  // Above the phone rung, so the bar is still a single row that CAN clip.
+  await expect(page.locator("body")).not.toHaveClass(/phone-mode/);
 
   const bar = page.locator("#appMenuBar");
   await expect(bar).toBeVisible();

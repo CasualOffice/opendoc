@@ -1354,6 +1354,55 @@ joined, and a flat `Vec<HistoryEntry>` had grown in the gap.
 - `transform` is still absent, and this ADR does not add it. It makes it possible: an ordered
   log of transformable operations with per-commit position maps now exists on the live path.
 
+## ADR-044 — A phone is a region preset of one shell, not a second application
+
+**Status:** Accepted, 2026-09-30. Designed in
+`148-PHONE-LAYOUT-COMPETITIVE-ANALYSIS-AND-DESIGN.md`. Upholds rather than reopens
+`137`'s cancellation and `122` §6's "one responsive shell, no second build".
+
+**Decision:** The phone experience is a third **region preset** of the existing shell —
+`body.phone-mode`, set by `phone_chrome.mjs` at or below 620px — beside the ribbon and
+compact chromes. One bundle, one `command_taxonomy.mjs`, one command registry, one set of
+surfaces and one set of guards; the phone paints fewer regions of them and arranges the
+rest for a thumb. It is **not** a second front end, a second build target, or a second
+place where a command's home is decided.
+
+**Context.** The owner asked for "completely separate controls and layout", explicitly not
+"web view on mobile", with "no horizontal scroll". Every reference agrees that a phone
+needs a different *experience*; they disagree about what that costs. ONLYOFFICE ships a
+whole second front end per editor — `web-apps/apps/documenteditor/mobile` is a
+Framework7-React application beside the ExtJS desktop one, with its own toolbar, router and
+view tree, and there are four of them — while sharing exactly one thing with the desktop
+app: the compiled engine, switched by a runtime flag (`sdkjs/common/apiBase.js:66`,
+`isMobileVersion` from `config['mobile']`). Google steers phone users off the web surface
+and onto native apps entirely. Word for the web narrows its ribbon to one line and stops
+there.
+
+**Why one shell.** Embeddability is the product (`SKILL.md` §1): the wedge is a permissive
+licence plus a runtime a host can embed, and a host that must choose between two bundles
+with two registries and two gating paths does not have an embeddable library. The sibling
+editor that built two selectable chromes **deleted them** and replaced the idea with
+per-region visibility flags resolved in one file (`137`), which `chrome_regions.mjs`
+already implements here for capability withholding. A device class is a preset of that
+mechanism, not a new one.
+
+**Consequences.**
+
+- Surface parity survives by construction: the phone tier hides regions in CSS and removes
+  nothing from the DOM, so `one-axis-navigation.spec.mjs`'s palette-orphan guard reads the
+  same surfaces at every width and no command can lose a home on one device class.
+- The ribbon is not a navigation axis a phone can hold (measured: 550px of tab strip in a
+  109px box at 390px), so the phone runs the compact chrome. The stored preference is
+  untouched, so a window that widens past the rung gets back the chrome its owner chose.
+- **The document surface is a named exception to "no horizontal scroll", not a solved
+  problem.** A 6.5in text column cannot be both 390px wide and readable; the answer is
+  reflow, which both references ship (Google's Pageless, ONLYOFFICE's
+  `api.ChangeReaderMode()`), and which is layout-engine work. `148` §6 and §9 carry it.
+  The chrome is guarded; the paper is declared.
+- Pinch-zoom is **not** suppressed, though ONLYOFFICE suppress it. They have a canvas-level
+  pinch to put in its place and we do not (`105` UX-018), and removing magnification with
+  nothing behind it is an accessibility failure rather than a decision.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

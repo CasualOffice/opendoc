@@ -123,6 +123,7 @@ import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./po
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, openingZoomMode } from "./view_zoom.mjs";
+import { createPhoneChrome } from "./phone_chrome.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
@@ -1440,20 +1441,13 @@ let reviewWindowFrame = 0;
 // Pixels above and below the viewport to keep mounted, so a scroll reveals an
 // already-present card instead of a blank gap before the next frame mounts it.
 const REVIEW_WINDOW_OVERSCAN = 800;
-// HF-088. The width below which the comment column stops being a margin and
-// becomes a bottom sheet. Declared here rather than only in a media query
-// because the CARD LAYOUT changes shape too, not just the container's box, and
-// `style.css` cannot tell main.js which shape it picked. `review_narrow.test`
-// asserts the stylesheet and this constant still name the same width.
-const REVIEW_SHEET_MAX_WIDTH = 700;
-const reviewSheetQuery = window.matchMedia?.(`(max-width: ${REVIEW_SHEET_MAX_WIDTH}px)`) ?? null;
-/** True while the review surface should render as a bottom sheet. */
-function reviewSheetMode() {
-  return !!reviewSheetQuery?.matches;
-}
-// Crossing the rung swaps the layout shape, so it needs a re-render, not just
-// a repaint: the cards' tops mean different things on either side of it.
-reviewSheetQuery?.addEventListener?.("change", () => scheduleReviewMarginRender());
+// The responsive ladder — both rungs, the `phone-mode` class and the soft
+// keyboard's inset — is `phone_chrome.mjs` (docs/148). Crossing a rung swaps
+// the layout SHAPE, so it needs a re-render, not a repaint.
+const phoneChrome = createPhoneChrome({ view: window, body: document.body, root: document.documentElement });
+/** True while the review surface should render as a bottom sheet (HF-088). */
+const reviewSheetMode = () => phoneChrome.reviewSheet();
+phoneChrome.onReviewSheetChange(() => scheduleReviewMarginRender());
 
 /** Reads the typed comment/revision review data (docs/81 REVIEW-GAP-022's
  *  `listComments`/`listRevisions`), shaped like the legacy combined
@@ -16292,9 +16286,11 @@ compactToolbarUi = createCompactToolbar({
 /** Switches chrome. Mutually exclusive by construction — `body` carries exactly
  *  one mode class — and the caret is never disturbed, because neither chrome
  *  owns the editing surface. */
-function setChromeMode(mode, { persist = true } = {}) {
+function setChromeMode(mode, { persist = true, announce = true } = {}) {
   chromeMode = mode === "compact" ? "compact" : "ribbon";
-  const compact = chromeMode === "compact";
+  // A phone has room for one navigation axis and the ribbon is not it (docs/148
+  // §5). The preference is untouched, so growing back past the rung restores it.
+  const compact = chromeMode === "compact" || phoneChrome.isPhone();
   // The File PAGE is ribbon chrome: compact mode hides the whole ribbon, so
   // switching modes with it open would leave `.file-page-open` set over a page
   // nobody can see or leave. Compact mode answers File with a dropdown instead.
@@ -16313,7 +16309,7 @@ function setChromeMode(mode, { persist = true } = {}) {
   if (compact) compactToolbarUi.render();
   else compactToolbarUi.release();
   if (persist) writePref(CHROME_MODE_PREF, chromeMode);
-  setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
+  if (announce) setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
 }
 
 const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
@@ -16321,6 +16317,9 @@ const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
   onSelect: (mode) => setChromeMode(mode),
 });
 setChromeMode(chromeMode, { persist: false });
+// Silently: nobody asked to cross the rung, so a toast on every rotation would
+// be a notification about the window rather than about the document.
+phoneChrome.onPhoneChange(() => setChromeMode(chromeMode, { persist: false, announce: false }));
 
 // ---- The host contract: one session, two transports (`docs/126` phase 2) ----
 // `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT

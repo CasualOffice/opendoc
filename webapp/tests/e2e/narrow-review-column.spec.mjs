@@ -235,7 +235,20 @@ test("the sheet is dismissable and gives the screen back", async ({
 
   // Every sampled point over the page is document again, including the bottom
   // half the sheet had.
-  const hits = await hitTestPage(page);
+  //
+  // Sampled down to the top of the phone tier's PERMANENT bottom chrome, not to
+  // the foot of the window (docs/148). The command bar is docked there at this
+  // width and was never the sheet's to give back — before it existed this read
+  // `hitTestPage(page)` and measured the same thing, because nothing was in the
+  // way. Asserting to the foot of the window would charge the sheet for chrome
+  // it does not own, which is the shape of guard that reddens `main` for a
+  // change that removed nothing.
+  const bottomChrome = await page.evaluate(() => {
+    const bar = document.getElementById("compactToolbar");
+    if (!bar || bar.hidden || getComputedStyle(bar).position !== "fixed") return window.innerHeight;
+    return Math.round(bar.getBoundingClientRect().top);
+  });
+  const hits = await hitTestPage(page, bottomChrome);
   expect(hits.review).toBe(0);
   expect(hits.document).toBe(hits.samples);
 
