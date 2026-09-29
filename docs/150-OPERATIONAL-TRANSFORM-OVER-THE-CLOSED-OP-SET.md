@@ -141,12 +141,20 @@ would otherwise read as an ordinary tombstone and diverge quietly instead of ref
 
 ### 3.2 Exhaustiveness
 
-Five functions match on `Operation` with **no wildcard arm**: `variant_name`, `tier`,
-`coordinates`, `footprint` and `anchor_key`, plus `anchors` and `effect_of`. Adding a 56th
-variant is a compile error in each, and each is a decision someone has to take. That is `107`
-exit gate 2, enforced by the type system rather than by a CI grep, and it is why the
-per-operation tier classification lives in one table in `transform.rs` rather than being
-spread across 55 doc comments in another crate where nothing would check it.
+**Seven** functions match on `Operation` with **no wildcard arm** — `tier`, `variant_name`,
+`coordinates`, `anchors`, `anchor_key`, `footprint` and `effect_of` — plus `set_coordinates`,
+the mirror that writes rebased coordinates back. Adding a 56th variant is a compile error in
+each, and each is a decision someone has to take. That is `107` exit gate 2, enforced by the
+type system rather than by a CI grep, and it is why the per-operation tier classification is a
+table in the code rather than being spread across 55 doc comments in another crate where
+nothing would check it.
+
+The code is three files, following the sibling's own `transform/` factoring: `transform.rs`
+holds the algorithm and its steps, `transform/classify.rs` the four matches that say what an
+operation *is*, and `transform/effect.rs` what a committed change *did* — the module the
+design turns on, because it is where the inverse is read. Each is under the ~2,000-line rule
+(SKILL §10), and the source-scanning refusal guard reads all three, because a guard that
+scanned only the parent went blind the moment the module was split.
 
 ---
 
@@ -374,10 +382,11 @@ the anchor is a node id, so it is rebased by liveness alone.
 ## 6. The refusal surface, in full
 
 Refusing is a first-class answer. These are the pairs `transform` will not answer, each with
-the reason no answer exists. They are `transform::REFUSAL_REASONS`, and
-`the_refusal_surface_is_exactly_these_cases` fails the build two ways: if a refusal is written
-as a bare string literal instead of a listed constant, and if a refusal outside the list
-reaches a caller.
+the reason no answer exists. `transform::REFUSAL_REASONS` holds the sentences — fourteen of
+them for these ten causes, because U2, U3 and U4 each say something different depending on
+which side of the pair asked. `the_refusal_surface_is_exactly_these_cases` fails the build two
+ways: if a refusal is written as a bare string literal instead of a listed constant, and if a
+refusal outside the list reaches a caller.
 
 | # | Pair | Why there is no answer |
 | --- | --- | --- |
