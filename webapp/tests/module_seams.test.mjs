@@ -335,6 +335,10 @@ const SRC = new URL("../src/", import.meta.url);
  *  Carrying either side forward would publish a ceiling the file never had,
  *  which is the merge trap this block records five times over.
  *
+ *  RE-MEASURED AGAIN on the rotation branch. The phone work lowered it to
+ *  16,336 underneath, and rotation extracted its own gesture controller, so
+ *  the merged file counts 16,208 — lower than either side, because both
+ *  extractions landed together. Measured, not carried. */
 const MAIN_JS_LINE_CEILING = 16208;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
