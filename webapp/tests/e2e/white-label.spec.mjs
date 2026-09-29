@@ -18,7 +18,7 @@
 // below runs against a palette that is demonstrably not ours, and there is a
 // positive control asserting so before the sweeps run.
 import { readFileSync } from "node:fs";
-import { expect, test, gotoEditor } from "./fixtures.mjs";
+import { expect, test, gotoEditor, runPaletteCommand } from "./fixtures.mjs";
 import { auditRegion } from "./contrast-audit.mjs";
 
 const { normalize, brandCss, brandModule, deriveStrings, markPaths, readCatalogues, PRODUCT } =
@@ -168,6 +168,45 @@ test("renaming the product renames it everywhere it was routed, and nowhere else
   await gotoEditor(plain);
   const ours = await plain.evaluate(() => document.getElementById("aboutTitle")?.textContent?.trim() ?? "");
   expect(ours).toContain(PRODUCT.name);
+  await plain.close();
+});
+
+test("a deployment can say who runs it, and where to ask for help", async ({ page }) => {
+  // ONLYOFFICE `customization.customer` and `customization.feedback`, which they
+  // gate with everything else in that block. About is the one surface in an editor
+  // whose job is saying who made and who runs this thing, and a white-label whose
+  // deployment cannot say "this is Northwind, here is how to reach them" is a
+  // white-label in name only.
+  await whiteLabel(page);
+  await gotoEditor(page);
+  await runPaletteCommand(page, "help.about", "about");
+
+  const block = page.locator("#aboutCustomer");
+  await expect(block, "the host's identity never reached About").toBeVisible();
+  await expect(block).toContainText("Northwind Trading Co.");
+  await expect(block).toContainText("14 Harbour Road");
+  // The LABEL is the host's too, which is the one place this improves on theirs:
+  // their feedback button shows their own English, and a white-label cannot
+  // afford a word it did not choose.
+  const feedback = block.locator('a[href="https://example.invalid/northwind/support"]');
+  await expect(feedback).toHaveText("Tell us what broke");
+  await expect(feedback).toHaveAttribute("rel", /noopener/);
+  await expect(block.locator('a[href="https://example.invalid/northwind/help"]')).toHaveText(
+    "Northwind help centre",
+  );
+
+  // THE POSITIVE CONTROL. The shipped `brand.json` is all-null on purpose — the
+  // default build is the product — so this block must not exist at all without a
+  // host, and an empty bordered section on every deployment would be chrome
+  // nobody asked for.
+  const plain = await page.context().newPage();
+  await gotoEditor(plain);
+  await runPaletteCommand(plain, "help.about", "about");
+  await expect(plain.locator("#aboutDialog")).toBeVisible();
+  await expect(
+    plain.locator("#aboutCustomer"),
+    "the default build grew a customer block with nothing in it",
+  ).toHaveCount(0);
   await plain.close();
 });
 
