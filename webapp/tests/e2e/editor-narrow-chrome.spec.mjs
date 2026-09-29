@@ -30,6 +30,19 @@ function railMetrics(page) {
     return {
       railWidth: Math.round(rail.getBoundingClientRect().width),
       viewport: window.innerWidth,
+      // What the DOCUMENT is left with. The rail's own width stopped being the
+      // way to measure that when the phone tier turned the rail on its side
+      // (docs/148 §5.2): a horizontal strip is as wide as the window and costs
+      // the document nothing, so `railWidth` now answers a different question
+      // from the one this guard asks.
+      documentWidth: Math.round(document.getElementById("viewport").clientWidth),
+      // Language-invariant iff the tiles are glyphs. Captions are what made a
+      // tile wider in Brazilian Portuguese than in English, and the SUM of the
+      // tiles is the same number whichever axis they are laid out on.
+      tileWidthTotal: [...document.querySelectorAll(".rail-btn")].reduce(
+        (sum, tile) => sum + Math.round(tile.getBoundingClientRect().width),
+        0,
+      ),
       tiles: [...document.querySelectorAll(".rail-btn")].map((tile) => {
         const caption = tile.querySelector("span:not(.ms)");
         const box = tile.getBoundingClientRect();
@@ -78,14 +91,28 @@ test("the rail costs the same on a narrow window in every language, and still sa
       expect(tile.width, `${tag} ${tile.id} width`).toBeGreaterThanOrEqual(24);
       expect(tile.height, `${tag} ${tile.id} height`).toBeGreaterThanOrEqual(24);
     }
-    // The document gets the window. A sixth of a 390px screen is the bound; the
-    // measured value is ~52px (13%), and the pre-fix pt-BR value was 111px (28%).
-    expect(narrow.railWidth).toBeLessThanOrEqual(Math.round(narrow.viewport / 6));
+    // THE GUARANTEE: the document gets the window. This used to be written as
+    // "the rail is at most a sixth of the screen", which was the same statement
+    // while the rail was a column beside the page — 52px of 390 (13%), against
+    // a pre-fix pt-BR 111px (28%). The phone tier turns the rail into a strip
+    // above the document (docs/148 §5.2), where it is as wide as the window and
+    // costs the page nothing, so the old form would fail a change that gave the
+    // document MORE room than the bound it was policing. Stated about the
+    // document, it holds under either axis and still catches a rail made of
+    // words: at 390 the measured document width is 326 with a column and 390
+    // with a strip, against a floor of 325.
+    expect(
+      narrow.documentWidth,
+      `${tag}: the rail must leave the document at least five sixths of the window`,
+    ).toBeGreaterThanOrEqual(Math.round((narrow.viewport * 5) / 6));
   }
   // The point of the fix, stated as the guarantee rather than as a number: a
   // narrow rail is the same size whatever language it is in, because it has
-  // stopped being made of words.
-  expect(measured["pt-BR"].railWidth).toBe(measured.en.railWidth);
+  // stopped being made of words. Measured as the SUM OF THE TILES rather than
+  // as the rail's box, for the same reason as above — a full-width strip is
+  // 390px in every language whether or not it carries captions, so the rail's
+  // own width could no longer tell the two apart.
+  expect(measured["pt-BR"].tileWidthTotal).toBe(measured.en.tileWidthTotal);
   // And it really did cost something at a desktop width — otherwise this whole
   // test would be asserting that a caption nobody has is still missing.
   expect(RAIL).toHaveLength(4);

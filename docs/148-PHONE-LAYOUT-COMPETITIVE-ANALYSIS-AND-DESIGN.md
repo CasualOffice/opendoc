@@ -236,6 +236,14 @@ is the "never a dead control" rule seen from the other side. What changes is the
 rail's **axis**, not its presence. Giving Pages a command id is §9's first item,
 and `phone_chrome.test.mjs` fails once that happens, so the exemption cannot rot.
 
+**The ruler survives, for the same reason and it is the weaker case.** A ruler
+showing 0–3in of an 8.5in page on a 390px screen is not much of a ruler, and
+neither reference shows one. It stays because `ruler.mjs` is the only place a
+**tab stop** can be set or a positional indent dragged — `setTabStop` has no
+other call site and no command id — so hiding it would orphan a capability
+exactly as hiding the rail would. Unlike the rail this one is worth revisiting:
+a tab-stop command would free 24px of a phone's height, and §9 carries it.
+
 **The menu bar survives, and grows.** It is the compact chrome's single
 navigation axis (doc 122), and it was a 21px strip with `overflow-x: auto` and a
 fade mask. `responsive-shell.spec.mjs` already measures it genuinely clipping at
@@ -367,8 +375,31 @@ always did and no command loses a home.
 | 4 | **Aa / + as their own sheets** | `compact_toolbar.mjs` data | §8.4 |
 | 5 | **A phone Playwright project** | `playwright.config.mjs` | Today five specs set a viewport by hand and one enables touch. A `Pixel 7`-shaped project would run the suite as a phone; that is a CI-time decision, not a layout one |
 | 6 | **The keyboard-attached row on a real device** | — | `interactive-widget` and `visualViewport` are both implemented and both unit-tested, but Playwright's desktop Chromium has no soft keyboard, so the *integration* is reasoned rather than measured. Stated plainly rather than claimed |
+| 7 | **A command id for tab stops** | `command_taxonomy.mjs` + `ruler.mjs` | Would let the ruler be withheld on a phone, which is 24px of height for a control nobody drags with a finger. §5.3 |
+| 8 | **The toast over an open bottom sheet** | `style.css` | The toast now clears the docked command bar (found by looking; guarded). It still paints over an open sheet, because `--z-toast` is above the modal on purpose and a sheet occupies the same bottom-start corner. Pre-existing for dialogs, more visible here. Reserving a band above whatever sheet is open needs the sheet's height, which is content-dependent; not half-built |
+| 9 | **The comment sheet covers the command bar** | `style.css` | Pre-existing at the 700px rung and *reference behaviour* — Google's comments panel and ONLYOFFICE's Collaboration sheet both take over the screen. Nothing is orphaned (the menu bar and the rail stay visible, and the sheet has its own close), and raising it would collide with `narrow-review-column.spec.mjs`'s "the unoccluded band is >35% of the window" guard. Recorded rather than changed under another lane's guard |
 
-## 10. Evidence
+## 10. What looking at it changed
+
+`SKILL.md` §9.4 and the brief both say a passing spec is not evidence that a
+layout is usable, so the rung was screenshotted at 390 and 320, in both themes,
+with a menu, a dialog, a selection, the overflow sheet and a simulated keyboard.
+Two things came out of that and neither would have failed any assertion written
+first:
+
+- **The toast lay across the command bar** in every single frame — "Rendering
+  1 page at 100%…" over the style picker. The toast is `pointer-events: none`,
+  so nothing about clicking the bar could ever have gone red. It is `109`
+  HF-233 one surface later, fixed the same way that was (arbitrate by reserving
+  the band, not by arguing about z-index), and now guarded by measurement.
+- **The bar's own fold is the phone's formatting sheet**, which the design had
+  reasoned about but not seen. At 390px it keeps undo/redo/print/painter and the
+  style picker inline and folds the rest into `⋯`; at 320px the style picker
+  folds too. The `⋯` sheet holds zoom, font, size, B/I/U, colour, highlight,
+  link, comment, image, alignment, lists, indent and clear-formatting — which is
+  Google's "Aa" sheet, arrived at without writing one.
+
+## 11. Evidence
 
 Every guard added here was driven red before it was trusted (`SKILL.md` §4); the
 mutations and their failure output are recorded in the pull request.

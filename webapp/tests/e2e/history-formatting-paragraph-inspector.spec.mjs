@@ -4,6 +4,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  runAppMenuCommand,
 } from "./fixtures.mjs";
 
 test("history labels and mixed run formatting reflect engine state", async ({
@@ -122,20 +123,32 @@ test("paragraph inspector stays viewport-bounded on a narrow editor", async ({
   await page.setViewportSize({ width: 390, height: 700 });
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  // At this narrow width the Paragraph group collapses into the ribbon's "⋯"
-  // overflow menu (docs/64 — no horizontal scrollbar); open it to reach ¶.
-  const paraOpts = page.locator("#paraOptsBtn");
-  if (!(await paraOpts.isVisible())) await page.locator("#ribbonOverflowBtn").click();
-  await paraOpts.click();
+  // Through the Format menu. This used to reach ¶ through the ribbon's "⋯"
+  // overflow, which at 390px no longer exists: the phone tier (docs/148) runs
+  // the compact chrome and there is no ribbon to overflow. `layout.paragraph`
+  // has a Format menu row in either chrome, so the route is one the width
+  // cannot take away — and the subject here is the PANEL, not the button.
+  await runAppMenuCommand(page, "format", "layout.paragraph");
 
   const panel = page.locator("#paragraphPropertiesPanel");
   await expect(panel).toBeVisible();
+
+  // THE GUARANTEE: the inspector is entirely on screen. It was written as four
+  // pinned numbers — x >= 34 (a rail column that is now a strip above the
+  // document), right <= 382, bottom <= 692 — which described a right-hand
+  // drawer beside a 34px rail. At the phone rung the same panel is a bottom
+  // sheet spanning the window, which satisfies "viewport-bounded" better than
+  // the numbers did and fails every one of them. The defect those numbers were
+  // written for is a panel hanging off an edge, so that is what is asserted.
   const bounds = await panel.boundingBox();
-  expect(bounds.x).toBeGreaterThanOrEqual(34);
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(382);
-  expect(bounds.y).toBeGreaterThanOrEqual(0);
-  expect(bounds.y + bounds.height).toBeLessThanOrEqual(692);
-  await expect(panel).toHaveCSS("border-radius", "10px");
+  const window = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
+  expect(bounds.x, "the panel starts inside the window").toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width, "the panel ends inside the window").toBeLessThanOrEqual(window.w + 1);
+  expect(bounds.y, "the panel starts below the top edge").toBeGreaterThanOrEqual(0);
+  expect(bounds.y + bounds.height, "the panel ends above the bottom edge").toBeLessThanOrEqual(window.h + 1);
+  // And it is a panel over the document, not a takeover: the document is still
+  // there to inspect. That is what the old `x >= 34` was really protecting.
+  expect(bounds.height, "the panel leaves the document some screen").toBeLessThan(window.h * 0.8);
   await expect(page.locator("#viewport")).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });

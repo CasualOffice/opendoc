@@ -54,7 +54,15 @@ test.describe("with a coarse pointer", () => {
 
     expect(await fontSize(page.locator("#docTitle"))).toBeGreaterThanOrEqual(IOS_NO_ZOOM_PX);
 
-    const numberField = page.locator('.ctl > input[type="number"]').first();
+    // The font-size box, by id rather than by `.ctl > input[type="number"]`.
+    // At this viewport the phone tier is in force (docs/148), which runs the
+    // compact chrome — and that chrome ADOPTS this control out of the ribbon's
+    // `.ctl` into `.compact-toolbar #fontSize.cadopted`, so the old selector
+    // matched nothing here and the assertion silently stopped covering the
+    // field it was written for. The id follows the control into whichever
+    // chrome holds it, and at a phone width that is the rule a phone actually
+    // uses — which is more than the `.ctl` form was testing.
+    const numberField = page.locator("#fontSize");
     await expect(numberField).toHaveCount(1);
     expect(await fontSize(numberField)).toBeGreaterThanOrEqual(IOS_NO_ZOOM_PX);
 
@@ -98,13 +106,19 @@ test.describe("with a coarse pointer", () => {
     expect(nav.height).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);
 
     // ...and the growth is spent on floating chrome only: the document canvas
-    // must not have lost height to it. Back in the ribbon chrome to measure it:
-    // the menu bar is the compact chrome's axis now (docs/122), so opening a menu
-    // above put this page in the chrome whose band is hidden — and a hidden band
-    // has no height to be too tall.
-    await page.locator("#modeRibbon").click();
-    const ribbonHeight = (await stableBox(page.locator(".ribbon"))).height;
-    expect(ribbonHeight).toBeLessThan(180);
+    // must not have lost height to it.
+    //
+    // Measured on the COMMAND BAND, whichever band this width has. At 390px the
+    // phone tier is in force (docs/148) and the ribbon is not merely collapsed
+    // but absent — `#modeRibbon` is hidden, because a toggle offering a chrome
+    // the rung does not allow is a dead control — so clicking it to get a
+    // ribbon to measure could only ever time out. The band a phone has is the
+    // docked compact bar, and the thing being guarded is the same: the touch
+    // floor is spent on menus and palettes, never on the strip of chrome the
+    // document has to live under.
+    await expect(page.locator(".ribbon")).toBeHidden();
+    const bandHeight = (await stableBox(page.locator("#compactToolbar"))).height;
+    expect(bandHeight).toBeLessThan(180);
 
     expect(consoleErrors).toEqual([]);
   });

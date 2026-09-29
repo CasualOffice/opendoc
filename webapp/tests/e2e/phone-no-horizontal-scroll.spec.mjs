@@ -224,6 +224,37 @@ test("the phone chrome replaces the desktop chrome rather than shrinking it", as
   expect(consoleErrors).toEqual([]);
 });
 
+test("the status toast does not land on the docked command bar", async ({ page, consoleErrors }) => {
+  // `109` HF-233, one surface later. The toast owns the bottom-start corner and
+  // the command bar has just moved into it; the toast is `pointer-events: none`
+  // so nothing about clicking the bar can fail, and the overlap is therefore
+  // invisible to every other kind of assertion. It was found by screenshotting
+  // this rung and looking — "Rendering 1 page at 100%…" lay across the style
+  // picker — which is why this measures geometry rather than behaviour.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoEditor(page);
+
+  // A toast that is genuinely up. `file.print` refuses without a print target
+  // in a headless run either way, and any status line will do: what matters is
+  // that the card is on screen when it is measured.
+  await page.evaluate(() => {
+    const toast = document.querySelector(".toast");
+    toast.textContent = "A status message long enough to be a real card";
+    toast.classList.add("is-shown");
+    toast.hidden = false;
+  });
+
+  const toast = await page.locator(".toast").boundingBox();
+  const bar = await page.locator("#compactToolbar").boundingBox();
+  expect(toast, "the toast is on screen to be measured").not.toBeNull();
+  expect(
+    toast.y + toast.height,
+    "the toast must sit clear above the command bar, not across it",
+  ).toBeLessThanOrEqual(bar.y + 1);
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the document surface is still the only exemption, and still needs to be", async ({
   page,
   consoleErrors,

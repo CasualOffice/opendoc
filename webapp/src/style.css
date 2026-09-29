@@ -8744,6 +8744,21 @@ body.phone-mode .footer {
   border-top: 1px solid var(--line);
 }
 
+/* The toast is pinned to the viewport's bottom-start corner, one footer's
+   height up — which is precisely where the command bar now is. `109` HF-233 is
+   the same defect one surface earlier: the toast landing on a narrow-screen
+   drawer's footer action, arbitrated by reserving `--h-toast-band` rather than
+   by an argument about z-index. The bar is a second thing sharing the bottom
+   edge, so it gets the same arbitration.
+
+   FOUND BY LOOKING, not by a spec: the toast is `pointer-events: none`, so no
+   assertion about clicking the bar would ever have failed, and "Rendering 1
+   page at 100%…" sat across the style picker in every screenshot taken of this
+   rung. The guard added with the fix measures the overlap instead. */
+body.phone-mode .toast {
+  bottom: calc(var(--phone-bottom-chrome) + var(--space-3));
+}
+
 /* ---- Panels, dialogs and menus are bottom sheets ----------------------- */
 
 /* The shape `.review-sheet` already introduced at this rung (HF-088), applied
