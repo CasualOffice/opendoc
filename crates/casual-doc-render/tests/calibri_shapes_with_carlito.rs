@@ -27,11 +27,12 @@
 //! - when it does land on a bundled face, it is the documented metric partner.
 //!
 //! A host-resolved face is reported as a dynamic id (`>= DYNAMIC_FONT_BASE`),
-//! which is distinguishable from Roboto — `fonts::family_name` is not, since it
-//! answers "Roboto" for every id it does not recognise, including every host
-//! face. That fallback is why a naive reading of the painted family name looks
-//! like a substitution bug when it is not, and it is worth knowing before the
-//! next investigation starts from the same signal.
+//! which is distinguishable from Roboto. `fonts::family_name` used NOT to be: it
+//! answered "Roboto" for every id it did not recognise, including every host
+//! face, which is why a naive reading of the painted family name looked like a
+//! substitution bug when it was not. It now returns `None` for a face it cannot
+//! name, so that reading is no longer available to mislead the next
+//! investigation.
 
 use casual_doc_import::ImportConfig;
 use casual_doc_import::ImportMode;
@@ -93,8 +94,11 @@ fn package(document: &str) -> Vec<u8> {
 /// How the faces painted on page 1 are named, one entry per distinct face.
 ///
 /// A bundled face is named by its family; a face the HOST supplied (the shaper
-/// kept a genuinely installed family) is named `"<host face>"`, because
-/// `fonts::family_name` cannot name one and answers "Roboto" for it.
+/// kept a genuinely installed family) is named `"<host face>"`, which is what
+/// `fonts::family_name` returning `None` means. It used to answer "Roboto" for a
+/// host face, which is why the header above warns about that reading; it is
+/// honest now, so the dynamic-id test below is a second, independent check rather
+/// than the only way to tell the two apart.
 ///
 /// Complexity: linear in the page's paint items, over a one-run document.
 fn painted_faces(family: &str) -> BTreeSet<&'static str> {
@@ -116,7 +120,7 @@ fn painted_faces(family: &str) -> BTreeSet<&'static str> {
         .iter()
         .filter_map(|item| match item {
             PaintItem::Glyphs { run } if run.font.0 >= DYNAMIC_FONT_BASE => Some("<host face>"),
-            PaintItem::Glyphs { run } => Some(family_name(run.font)),
+            PaintItem::Glyphs { run } => Some(family_name(run.font).unwrap_or("<host face>")),
             _ => None,
         })
         .collect()

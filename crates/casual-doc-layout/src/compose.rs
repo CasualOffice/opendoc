@@ -1281,6 +1281,7 @@ mod tests {
             &[StyledRun {
                 text: "Hi".into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(11),
                 character_scale_percent: 100,
@@ -1321,6 +1322,7 @@ mod tests {
             &[StyledRun {
                 text: "Oversized".into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
                 character_scale_percent: 100,
@@ -2655,6 +2657,7 @@ mod tests {
             &[StyledRun {
                 text: text.into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(11),
                 character_scale_percent: 100,

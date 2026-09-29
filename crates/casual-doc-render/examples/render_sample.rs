@@ -13,6 +13,7 @@ fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_>
     StyledRun {
         text: text.into(),
         requested_family: None,
+        requested_family_kind: None,
         font: face_id(bold, italic),
         size: Twip::from_points(26),
         character_scale_percent: 100,

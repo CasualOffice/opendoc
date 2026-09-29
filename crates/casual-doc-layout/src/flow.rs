@@ -56,6 +56,8 @@ use crate::cascade::{
 };
 use crate::incremental::{DirtySet, GalleyCache};
 // Separate `use` lines (anti-conflict): the galley sink seam, `docs/113` step 4.
+use crate::font_substitution::DeclaredFamilies;
+use crate::font_substitution::GenericFamily;
 use crate::measure::FragmentMeasure;
 use crate::measure::GalleySink;
 use crate::measure::MeasureSink;
@@ -170,6 +172,14 @@ struct FlowCtx<'a> {
     review_view: ReviewView,
     resolver: &'a FontResolver,
     scheme: Option<&'a FontScheme>,
+    /// The generic class the document declared for each face in
+    /// `word/fontTable.xml` (`<w:family w:val="roman|swiss|modern"/>`), indexed
+    /// once per layout. A run whose family is neither bundled nor a known metric
+    /// partner is classified by this rather than by a substring of its name, and
+    /// the SAME class is handed to the resolver (which picks the outlined face)
+    /// and to the shaper (which picks the shaped family), so the two cannot
+    /// diverge.
+    declared_fonts: &'a DeclaredFamilies,
     report: &'a mut FontResolutionReport,
     /// The document's default tab-stop interval (`w:defaultTabStop`), already
     /// resolved to twips (falling back to the 720-twip standard).
@@ -358,10 +368,12 @@ pub fn build_galley_with_report_view(
         .color_scheme
         .as_ref()
         .map(resolve_palette);
+    let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
+        declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
@@ -718,10 +730,12 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         .color_scheme
         .as_ref()
         .map(resolve_palette);
+    let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
+        declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
@@ -824,10 +838,12 @@ fn flow_running_blocks(
         .color_scheme
         .as_ref()
         .map(resolve_palette);
+    let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view: ReviewView::Editing,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
+        declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
@@ -934,10 +950,12 @@ pub(crate) fn build_galley_cached_labeled(
         .color_scheme
         .as_ref()
         .map(resolve_palette);
+    let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
     let mut ctx = FlowCtx {
         review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
+        declared_fonts: &declared_fonts,
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
@@ -2872,6 +2890,7 @@ fn block_intrinsic(
         review_view: ReviewView::Editing,
         resolver: ctx.resolver,
         scheme: ctx.scheme,
+        declared_fonts: ctx.declared_fonts,
         report: &mut scratch,
         default_tab: ctx.default_tab,
         media: ctx.media,
@@ -5636,6 +5655,7 @@ pub(crate) fn shape_field_run(
         // A field style carries only a resolved face id, not the declared family,
         // so field glyphs shape with the bundled face (no system-face preference).
         requested_family: None,
+        requested_family_kind: None,
         font: style.font,
         size: style.size,
         character_scale_percent: style.character_scale_percent,
@@ -6197,9 +6217,12 @@ fn styled_owned_run(
     let text = case_transform(&text, &effective).into_owned();
     let bold = effective.bold.unwrap_or(false);
     let italic = effective.italic.unwrap_or(false);
+    let family = requested_family(&effective, ctx.scheme);
+    let kind = declared_kind(family.as_deref(), ctx);
     StyledRun {
         font: resolve_font(&text, &effective, bold, italic, ctx),
-        requested_family: requested_family(&effective, ctx.scheme).map(Cow::Owned),
+        requested_family: family.map(Cow::Owned),
+        requested_family_kind: kind,
         text: Cow::Owned(text),
         size,
         character_scale_percent: effective.character_scale_percent.unwrap_or(100),
@@ -6230,13 +6253,18 @@ fn build_styled_run<'a>(
     let text = case_transform(text, properties);
     let bold = properties.bold.unwrap_or(false);
     let italic = properties.italic.unwrap_or(false);
+    let family = requested_family(properties, ctx.scheme);
+    let kind = declared_kind(family.as_deref(), ctx);
     StyledRun {
         // Resolve the declared family to a concrete face so the renderer outlines
         // the same face `parley` shapes with (measured against the shaped text).
         font: resolve_font(text.as_ref(), properties, bold, italic, ctx),
         // The declared family name, kept so the shaper can prefer a real installed
         // face of that name over the bundled fallback (`system-fonts`/host faces).
-        requested_family: requested_family(properties, ctx.scheme).map(Cow::Owned),
+        requested_family: family.map(Cow::Owned),
+        // …and the class the font table declared for it, so a face the shaper
+        // must substitute is classified the same way the resolver classified it.
+        requested_family_kind: kind,
         text,
         size,
         character_scale_percent: properties.character_scale_percent.unwrap_or(100),
@@ -6309,9 +6337,12 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
     let italic = effective.italic.unwrap_or(false);
     let text = glyph.to_string();
     let font = resolve_font(&text, &effective, bold, italic, ctx);
+    let family = requested_family(&effective, ctx.scheme);
+    let kind = declared_kind(family.as_deref(), ctx);
     StyledRun {
         font,
-        requested_family: requested_family(&effective, ctx.scheme).map(Cow::Owned),
+        requested_family: family.map(Cow::Owned),
+        requested_family_kind: kind,
         text: Cow::Owned(text),
         size,
         character_scale_percent: effective.character_scale_percent.unwrap_or(100),
@@ -6529,9 +6560,11 @@ fn build_script_run<'a>(
     };
     let text = case_transform(text, properties);
     let family = requested_font_family_for(properties, ctx.scheme, slot);
+    let kind = declared_kind(family.as_deref(), ctx);
     StyledRun {
         font: resolve_font_family(text.as_ref(), family.clone(), bold, italic, ctx),
         requested_family: family.map(Cow::Owned),
+        requested_family_kind: kind,
         text,
         size,
         character_scale_percent: properties.character_scale_percent.unwrap_or(100),
@@ -6570,6 +6603,7 @@ fn push_small_caps_runs<'a>(
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading, ctx.palette);
     let family = requested_family(properties, ctx.scheme);
+    let kind = declared_kind(family.as_deref(), ctx);
     for (span, was_lower) in small_caps_spans(text) {
         let size = if was_lower {
             Twip(base.raw() * 3 / 4)
@@ -6581,6 +6615,7 @@ fn push_small_caps_runs<'a>(
         out.push(StyledRun {
             text: Cow::Owned(upper),
             requested_family: family.clone().map(Cow::Owned),
+            requested_family_kind: kind,
             font,
             size,
             character_scale_percent: properties.character_scale_percent.unwrap_or(100),
@@ -6821,6 +6856,7 @@ fn resolve_font_family(
                 family: &family,
                 bold,
                 italic,
+                declared: ctx.declared_fonts.kind_of(&family),
             });
             ctx.report.note_resolution(&family, &outcome);
             outcome.face
@@ -6836,6 +6872,21 @@ fn resolve_font_family(
 /// run declares no family (it inherits the default).
 fn requested_family(properties: &RunProperties, scheme: Option<&FontScheme>) -> Option<String> {
     requested_font_family(properties, scheme)
+}
+
+/// The generic class the document declared for `family` in `word/fontTable.xml`.
+///
+/// Every [`StyledRun`] built here carries this alongside the requested name, so
+/// the shaper classifies a missing face the same way the resolver did — the
+/// resolver reads it through [`FaceRequest::declared`] in
+/// [`resolve_font_family`], the shaper through
+/// [`StyledRun::requested_family_kind`]. Handing it to only one of them would let
+/// the shaped family and the outlined face disagree.
+///
+/// Complexity: O(log |font table|) per run — a binary search over a few tens of
+/// entries, no allocation, nothing per glyph.
+fn declared_kind(family: Option<&str>, ctx: &FlowCtx<'_>) -> Option<GenericFamily> {
+    ctx.declared_fonts.kind_of(family?)
 }
 
 /// Maps model paragraph alignment to the layout alignment.
@@ -7787,6 +7838,7 @@ mod tests {
             review_view,
             resolver: &resolver,
             scheme: definitions.font_scheme.as_ref(),
+            declared_fonts: &DeclaredFamilies::default(),
             report: &mut report,
             default_tab: crate::tabs::DEFAULT_TAB_STOP,
             media: &definitions.media,
@@ -7845,6 +7897,7 @@ mod tests {
             review_view: ReviewView::Editing,
             resolver: &resolver,
             scheme: definitions.font_scheme.as_ref(),
+            declared_fonts: &DeclaredFamilies::default(),
             report: &mut report,
             default_tab: crate::tabs::DEFAULT_TAB_STOP,
             media: &definitions.media,
@@ -7873,6 +7926,7 @@ mod tests {
             .map(|r| StyledRun {
                 text: Cow::Owned(r.text.into_owned()),
                 requested_family: r.requested_family.map(|f| Cow::Owned(f.into_owned())),
+                requested_family_kind: r.requested_family_kind,
                 ..r
             })
             .collect()
@@ -11669,6 +11723,7 @@ mod tests {
                 review_view: ReviewView::Editing,
                 resolver: &resolver,
                 scheme: definitions.font_scheme.as_ref(),
+                declared_fonts: &DeclaredFamilies::default(),
                 report: &mut report,
                 default_tab: crate::tabs::DEFAULT_TAB_STOP,
                 media: &definitions.media,
@@ -14821,6 +14876,7 @@ mod tests {
         let label = StyledRun {
             text: "Name: ".into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,
@@ -14912,6 +14968,7 @@ mod tests {
         let styled = |text: &'static str| StyledRun {
             text: text.into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,

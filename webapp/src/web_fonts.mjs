@@ -116,9 +116,12 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
   // blocks. These scalars have the Unicode Common script (`Zyyy`), but Parley
   // resolves Common characters beside Latin text into a Latin shaping run.
   // Register both keys so standalone symbols and symbols embedded in labels
-  // can select the covering face. Noto Sans (the Calibri/system-font
-  // substitute) doesn't cover these at all, so plain content like a "☐"/"□"
-  // checklist placeholder
+  // can select the covering face. Noto Sans, the network-fetched face this
+  // table registers for Latin COVERAGE (it is not a metric substitute for
+  // anything — Calibri's metric partner is the bundled Carlito, chosen in
+  // `font_substitution.rs`; calling it "the Calibri substitute" here cost one
+  // investigation an afternoon), doesn't cover these at all, so plain content
+  // like a "☐"/"□" checklist placeholder
   // (as in the sample fixture's acceptance-checklist and Result-column
   // cells) tofu'd. Noto Sans Symbols 2 is the intended monochrome fallback
   // for exactly this range (full pictographic/color emoji are a separate,

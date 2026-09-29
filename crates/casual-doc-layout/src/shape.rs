@@ -365,9 +365,12 @@ impl ParleyShaper {
             // Requested family is missing: shape with the bundled
             // metric-compatible substitute (Liberation Sans/Serif/Mono, Carlito,
             // Caladea) so line breaking matches LibreOffice instead of the
-            // wrong-metric default. Falls through to `family_for` if the
-            // substitute is somehow not registered.
-            if let Some(sub) = crate::font_substitution::substitute(name)
+            // wrong-metric default. The run carries the class the document
+            // declared for the face, and it is the same class the resolver was
+            // given when it picked `run.font`, so the family shaped here and the
+            // face outlined later cannot disagree. Falls through to `family_for`
+            // if the substitute is somehow not registered.
+            if let Some(sub) = crate::font_substitution::substitute(name, run.requested_family_kind)
                 && let Some(registered) = self.registered_name(sub.family.base)
             {
                 return registered;
@@ -1523,6 +1526,7 @@ mod tests {
         StyledRun {
             text: text.into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,
@@ -2041,6 +2045,7 @@ mod tests {
         let styled = StyledRun {
             text: "x".into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,
@@ -2554,6 +2559,7 @@ mod tests {
             &[StyledRun {
                 size,
                 requested_family: Some("Arial".into()),
+                requested_family_kind: None,
                 ..run("2025/01/23")
             }],
             constraints(500),

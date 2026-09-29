@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 use skrifa::{FontRef, MetadataProvider};
 
+use crate::font_substitution::GenericFamily;
 use crate::fonts::{self, BundledFamily, DEFAULT_FAMILY};
 use crate::text::FontId;
 
@@ -39,6 +40,16 @@ pub struct FaceRequest<'a> {
     pub bold: bool,
     /// Italic style (`w:i`).
     pub italic: bool,
+    /// The generic class the *document* declared for this family in
+    /// `word/fontTable.xml` (`<w:family w:val="roman|swiss|modern"/>`), looked up
+    /// through [`crate::font_substitution::DeclaredFamilies::kind_of`]. `None`
+    /// when the document declared nothing usable, or when no font table is in
+    /// scope.
+    ///
+    /// This is one half of a pair: the same class must also reach the shaper
+    /// through [`crate::text::StyledRun::requested_family_kind`], or the face a
+    /// run is *shaped* with and the face it is *outlined* with diverge.
+    pub declared: Option<GenericFamily>,
 }
 
 /// How faithfully a resolved face matches the requested family.
@@ -96,7 +107,7 @@ impl FontResolver {
     /// whole-face substitution). Total: always returns a face.
     #[must_use]
     pub fn resolve(&self, request: &FaceRequest<'_>) -> FaceMatch {
-        let (family, disposition) = substitute(request.family);
+        let (family, disposition) = substitute(request.family, request.declared);
         FaceMatch {
             face: family.face_id(request.bold, request.italic),
             family: family.name,
@@ -158,10 +169,14 @@ pub fn cover_fallback(primary: FontId, ch: char) -> Option<FontId> {
 /// *shaped* with equals the face it is *rasterized* with (the [`FontId`] chosen
 /// here rides the run to the renderer). Arial/Helvetica → Liberation Sans, Times
 /// → Liberation Serif, Courier → Liberation Mono, Calibri → Carlito, Cambria →
-/// Caladea (all metric-compatible); an unknown family is classified by generic
-/// family. A blank name keeps the default family.
-fn substitute(family: &str) -> (&'static BundledFamily, Disposition) {
-    match crate::font_substitution::substitute(family) {
+/// Caladea (all metric-compatible); an unknown family is classified by the class
+/// the document `declared` for it, else by generic family. A blank name keeps the
+/// default family.
+fn substitute(
+    family: &str,
+    declared: Option<GenericFamily>,
+) -> (&'static BundledFamily, Disposition) {
+    match crate::font_substitution::substitute(family, declared) {
         Some(sub) => (sub.family, disposition(sub.kind)),
         None => (DEFAULT_FAMILY, Disposition::Fallback),
     }
@@ -293,6 +308,7 @@ mod tests {
             family: "Cambria",
             bold: false,
             italic: false,
+            declared: None,
         });
         assert_eq!(m.family, "Caladea");
         assert_eq!(m.face, CALADEA.face_id(false, false));
@@ -306,6 +322,7 @@ mod tests {
             family: "cambria",
             bold: true,
             italic: true,
+            declared: None,
         });
         assert_eq!(m.face, CALADEA.face_id(true, true));
     }
@@ -318,6 +335,7 @@ mod tests {
             family: "Calibri",
             bold: false,
             italic: false,
+            declared: None,
         });
         // Carlito is Calibri's metric-compatible partner (matching advances), so
         // line breaking and pagination are preserved.
@@ -339,6 +357,7 @@ mod tests {
             family: "calibri",
             bold: true,
             italic: true,
+            declared: None,
         });
         assert_eq!(m.face, CARLITO.face_id(true, true));
     }
@@ -351,6 +370,7 @@ mod tests {
             family: "Totally Made Up Font",
             bold: false,
             italic: false,
+            declared: None,
         });
         // An unknown family is classified by generic family, defaulting to sans:
         // Liberation Sans (not Roboto) so its Latin metrics are plausible. The
@@ -381,6 +401,7 @@ mod tests {
                 family,
                 bold: true,
                 italic: false,
+                declared: None,
             });
             assert_eq!(m.family, expected, "{family}");
             assert_eq!(m.disposition, Disposition::MetricCompatible, "{family}");
@@ -397,6 +418,7 @@ mod tests {
             family: "Roboto",
             bold: false,
             italic: false,
+            declared: None,
         });
         assert_eq!(m.disposition, Disposition::Exact);
         report.note_resolution("Roboto", &m);
@@ -410,6 +432,7 @@ mod tests {
             family: "  CAMBRIA  ",
             bold: false,
             italic: false,
+            declared: None,
         });
         assert_eq!(a.family, "Caladea");
         assert_eq!(a.disposition, Disposition::MetricCompatible);
