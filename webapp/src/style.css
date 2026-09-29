@@ -655,6 +655,22 @@ input {
    fallback so a deployment WITHOUT `brand.css` still shows a mark rather than an
    empty box, and so `style.css` does not read a token it never defines
    (`tests/style_tokens.test.mjs`). */
+/* The mark as a link back to the host's product (ONLYOFFICE
+   `customization.logo.url`). Generated only when `brand.json` names a `markHref`,
+   and it carries the product name in `.sr-only` text rather than on an
+   `aria-hidden` wrapper — a focusable node inside `aria-hidden` is the axe
+   violation the repository forbids outright. */
+.brand-logo-link {
+  display: block;
+  line-height: 0;
+  border-radius: var(--radius);
+}
+
+.brand-logo-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .brand-logo {
   display: block;
   width: 26px;
@@ -1576,6 +1592,55 @@ body.modal-open {
 
 .about-links a {
   color: var(--accent-text);
+}
+
+/* The deployment's own identity (ONLYOFFICE `customization.customer`), rendered
+   by `about_dialog.mjs` only when `brand.json` configures one — so the shipped
+   build pays nothing for it. Separated from the product's own facts by a rule,
+   because "who wrote this editor" and "who runs this deployment" are two
+   different answers and running them together would read as one. */
+.about-customer {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+/* One element in both themes, painted from a token the renderer sets inline.
+   The dark rule falls back to the light value, so a host who named only `logo`
+   is correct everywhere and a host who named both is correct in all three theme
+   entry points — the third being a reader who chose Dark on a light OS, which is
+   the one `docs/104` HF-092 was shipped without. */
+.about-customer-mark {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin-bottom: var(--space-2);
+  background: var(--about-customer-mark, none) center / contain no-repeat;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .about-customer-mark {
+    background-image: var(--about-customer-mark-dark, var(--about-customer-mark, none));
+  }
+}
+
+:root[data-theme="dark"] .about-customer-mark {
+  background-image: var(--about-customer-mark-dark, var(--about-customer-mark, none));
+}
+
+.about-customer-name {
+  margin: 0;
+  font-weight: 600;
+}
+
+.about-customer-info,
+.about-customer-line {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+}
+
+.about-customer .about-links {
+  margin-top: var(--space-4);
 }
 
 .shortcuts-body {
@@ -10407,6 +10472,11 @@ body.chrome-no-history #versionPanel,
 body.chrome-no-history #viewVersionsBtn,
 body.chrome-no-history #railVersions,
 body.chrome-no-history #versionPreviewBanner,
+/* The review-mode switcher (ONLYOFFICE `customization.review.hideReviewDisplay`).
+   A host whose own product decides who is reviewing does not want a switch
+   offered; the GRANT still decides what the editor does, so taking the control
+   away neither widens nor narrows anything. */
+body.chrome-no-review #reviewModeControl,
 body.chrome-no-status .footer,
 /* The toast is the status line's OTHER channel — body-level, so it survives the
    footer being taken away below 620px. A container that withheld `status`

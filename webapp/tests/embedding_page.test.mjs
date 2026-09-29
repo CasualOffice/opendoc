@@ -392,7 +392,13 @@ test("everything under 'does not do yet' is still not done", () => {
       .match(/const MOUNT_ATTRIBUTES = Object\.freeze\(\[([^\]]*)\]\)/)[1]
       .matchAll(/"([\w-]+)"/g),
   ].map((m) => m[1]);
-  assert.deepEqual(attributes, ["mode", "can", "chrome", "editor-src", "frame-title"]);
+  // The ROSTER is not the guarantee and must not be pinned here: this claim is
+  // "no host-supplied document", and an attribute added for something else —
+  // `prefs`, `config`, `editor-lang` — is not that claim becoming false. What is
+  // asserted is that the list the element OBSERVES is the list it declares, so a
+  // mount input cannot arrive without passing the property check below, and then
+  // the property itself, per name.
+  assert.deepEqual(attributes, [...OpenDocEditorElement.observedAttributes]);
   for (const name of attributes) {
     assert.ok(
       !/(doc|file|src-doc|content|bytes)/.test(name) || name === "editor-src",

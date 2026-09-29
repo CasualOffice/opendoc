@@ -210,6 +210,95 @@ function refuseRemote(field, value, reasons) {
   return true;
 }
 
+/** A LINK a host may point at, as opposed to an asset they ship.
+ *
+ *  The distinction matters and is the reason this is not `refuseRemote`. An
+ *  asset is fetched to PAINT the chrome, so it must be local or the editor stops
+ *  working with the network off — which is what `tests/chrome_fonts.test.mjs`
+ *  exists to keep true. A link is only ever followed when somebody clicks it, so
+ *  it is allowed to leave: a support desk, a help centre and a company website
+ *  are all somewhere else by definition, and a white-label that could not name
+ *  them would not be one.
+ *
+ *  What is refused is the scheme that executes rather than navigates.
+ *  `javascript:` in a host's `brand.json` would be script injected into the
+ *  editor's own origin by configuration — the shape of every white-label XSS —
+ *  and `data:` is the same hole spelled differently. So the allowlist is
+ *  positive: http, https, mailto, tel. */
+const LINK_SCHEMES = Object.freeze(["http:", "https:", "mailto:", "tel:"]);
+
+function refuseUnsafeLink(field, value, reasons) {
+  let scheme = "";
+  try {
+    scheme = new URL(value, "https://opendoc.invalid/").protocol;
+  } catch {
+    reasons.push(`${field} "${value}" is not a URL.`);
+    return false;
+  }
+  if (!LINK_SCHEMES.includes(scheme)) {
+    reasons.push(
+      `${field} "${value}" uses the "${scheme}" scheme. Links may be ${LINK_SCHEMES.join(", ")} ` +
+        "only: a scheme that executes rather than navigates would be script injected into the " +
+        "editor's own origin by configuration.",
+    );
+    return false;
+  }
+  return true;
+}
+
+/** A host-supplied block of optional strings, each validated by kind.
+ *
+ *  `text` is free prose in the HOST's language and is never translated — the
+ *  same rule `frame-title` follows on the embed element, and the reason there is
+ *  no nineteenth catalogue entry for "Support": the host owns their own name,
+ *  address and the words on their own link. */
+function readBlock(field, raw, shape, reasons) {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    reasons.push(`${field} must be an object, or null.`);
+    return null;
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (isNote(key)) continue;
+    const kind = shape[key];
+    if (!kind) {
+      reasons.push(`${field}.${key} is not a field. Known: ${Object.keys(shape).join(", ")}.`);
+      continue;
+    }
+    if (typeof value !== "string" || !value.trim()) {
+      reasons.push(`${field}.${key} must be a non-empty string.`);
+      continue;
+    }
+    if (kind === "link" && !refuseUnsafeLink(`${field}.${key}`, value, reasons)) continue;
+    if (kind === "asset" && !refuseRemote(`${field}.${key}`, value, reasons)) continue;
+    out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** ONLYOFFICE's `customization.customer`, field for field
+ *  (`reference/web-apps/apps/api/documents/api.js:151-160`). Theirs appears in
+ *  the About box; so does ours, for the same reason — it is the one surface in
+ *  an editor whose whole job is saying who made and who runs this thing. */
+const CUSTOMER_SHAPE = Object.freeze({
+  name: "text",
+  address: "text",
+  mail: "link",
+  www: "link",
+  phone: "link",
+  info: "text",
+  logo: "asset",
+  logoDark: "asset",
+});
+
+/** A labelled destination: their `customization.feedback` and `customization.help`.
+ *
+ *  `text` is the host's own label, which is what makes this expressible without a
+ *  twentieth translation — ONLYOFFICE's `goback.text` and `close.text` are host
+ *  strings for exactly the same reason. */
+const LINK_SHAPE = Object.freeze({ text: "text", url: "link" });
+
 /**
  * Validates a host's configuration and returns it normalized, or throws.
  *
@@ -239,6 +328,36 @@ export function normalize(raw, themes) {
       reasons.push("mark must be a relative path, false for no mark, or null to keep ours.");
     } else refuseRemote("mark", mark, reasons);
   }
+  // ONLYOFFICE's `logo.imageDark`. Ours is a SECOND FILE rather than a second
+  // theme block because the mark is a `url()` token, and a token cannot carry two
+  // values; the stylesheet redeclares it in the dark entry points, which is the
+  // same three-entry-point shape the palette already uses.
+  const markDark = raw?.markDark ?? null;
+  if (markDark !== null) {
+    if (typeof markDark !== "string" || !markDark.trim()) {
+      reasons.push("markDark must be a relative path, or null to use the one mark in both themes.");
+    } else if (refuseRemote("markDark", markDark, reasons) && mark === false) {
+      reasons.push('markDark is meaningless with "mark": false — there is no mark to vary.');
+    }
+  }
+  // ONLYOFFICE's `logo.url`: the mark becomes a link back to the host's product.
+  const markHref = raw?.markHref ?? null;
+  if (markHref !== null) {
+    if (typeof markHref !== "string" || !markHref.trim()) {
+      reasons.push("markHref must be a URL, or null for a mark that is not a link.");
+    } else refuseUnsafeLink("markHref", markHref, reasons);
+  }
+  const customer = readBlock("customer", raw?.customer ?? null, CUSTOMER_SHAPE, reasons);
+  const feedback = readBlock("feedback", raw?.feedback ?? null, LINK_SHAPE, reasons);
+  const help = readBlock("help", raw?.help ?? null, LINK_SHAPE, reasons);
+  for (const [field, block] of [
+    ["feedback", feedback],
+    ["help", help],
+  ]) {
+    // A label with nowhere to go is a dead control in configuration form.
+    if (block && !block.url) reasons.push(`${field}.url is required when ${field} is set.`);
+  }
+
   const tabTitle = raw?.tabTitle ?? null;
   if (tabTitle !== null && !TAB_TITLE_POLICIES.includes(tabTitle)) {
     reasons.push(`tabTitle must be one of ${TAB_TITLE_POLICIES.join(", ")}, or null.`);
@@ -307,6 +426,11 @@ export function normalize(raw, themes) {
     version: 1,
     name,
     mark,
+    markDark,
+    markHref,
+    customer,
+    feedback,
+    help,
     tabTitle,
     theme: { tokens: clean(groups.tokens), light: clean(groups.light), dark: clean(groups.dark) },
     font,
@@ -421,6 +545,23 @@ export function brandCss(config, marks) {
     lines.push(`  --brand-font: "${config.font.family}";`);
     lines.push("}");
   }
+  if (marks.markDark) {
+    // All three dark entry points, like the palette below: a reader who chose
+    // Dark on a light OS only ever sees the explicit one, and a host who got a
+    // dark mark in system-dark and their light one in chosen-dark would file it
+    // as our bug (`docs/104` HF-092).
+    lines.push("");
+    lines.push("/* The dark-theme mark (ONLYOFFICE `customization.logo.imageDark`). */");
+    lines.push("@media (prefers-color-scheme: dark) {");
+    lines.push("  :root:not([data-theme]) {");
+    lines.push(`    --brand-mark: url("${marks.markDark}");`);
+    lines.push("  }");
+    lines.push("}");
+    lines.push("");
+    lines.push(':root[data-theme="dark"] {');
+    lines.push(`  --brand-mark: url("${marks.markDark}");`);
+    lines.push("}");
+  }
   const light = block(config.theme.light);
   const dark = block(config.theme.dark);
   if (light) {
@@ -451,12 +592,21 @@ export function brandCss(config, marks) {
 export function markPaths(config) {
   const showMark = config.mark !== false;
   const pageMark = showMark ? (config.mark ?? PRODUCT.mark) : null;
+  const pageMarkDark = showMark ? (config.markDark ?? null) : null;
+  const sheetPath = (path) => (path === null ? "data:," : path.replace(/^\.\//, "../"));
   return {
     showMark,
     pageMark,
+    pageMarkDark,
     // `url()` in a stylesheet resolves against the STYLESHEET, and this one lives
     // in `src/`, so a path the host wrote relative to the page needs one level up.
-    mark: pageMark === null ? "data:," : pageMark.replace(/^\.\//, "../"),
+    mark: sheetPath(pageMark),
+    // Null rather than `data:,` when a host named no dark variant: the generator
+    // then emits no dark block at all, so the one mark is used in both themes.
+    // Emitting an empty image for dark would erase the mark a host DID supply,
+    // which is the failure `docs/104` HF-092 records — a fix shipped in one theme
+    // entry point and not the other.
+    markDark: pageMarkDark === null ? null : sheetPath(pageMarkDark),
     font: config.font ? config.font.src.replace(/^\.\//, "../") : null,
     fontFormat: config.font?.src.endsWith(".woff") ? "woff" : "woff2",
   };

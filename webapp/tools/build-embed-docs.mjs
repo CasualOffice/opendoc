@@ -829,6 +829,7 @@ const REGION_MEANINGS = Object.freeze({
   context: "The right-click menu on the document.",
   objects: "Object selection: the outline, its handles and the object bar.",
   history: "The version-history timeline, its ribbon entry and its preview bar.",
+  review: "The Editing / Suggesting / Read-only switcher in the top bar.",
   status: "The status bar: counts, page number, language, mode.",
   zoom: "The zoom cluster in the status bar.",
   find: "The find and replace card.",
@@ -994,7 +995,7 @@ const CAPABILITY_GROUPS = Object.freeze([
 const REGION_GROUPS = Object.freeze([
   Object.freeze({
     title: say("site.group.topBar", "Top bar"),
-    ids: ["brand", "title", "state", "menu", "ribbon"],
+    ids: ["brand", "title", "state", "review", "menu", "ribbon"],
   }),
   Object.freeze({
     title: say("site.group.ribbonBands", "Ribbon bands"),

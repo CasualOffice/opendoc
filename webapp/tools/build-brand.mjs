@@ -112,6 +112,18 @@ export function brandModule(config, strings) {
     named: config.name !== null,
     tabTitle: config.tabTitle ?? PRODUCT.tabTitle,
     mark: markPaths(config).pageMark,
+    // ONLYOFFICE `customization.logo.url`: the product mark links back to the
+    // host's own product. `null` — the default — is a mark that is not a link,
+    // which is what it has always been.
+    markHref: config.markHref,
+    // Their `customization.customer` and `customization.feedback`, and the
+    // destination half of their `customization.help`. All three are host DATA in
+    // the host's own language, which is why they are values here rather than
+    // catalogue keys: the editor renders what it is given and translates none of
+    // it (`docs/124` — a string the host wrote is not a string we route).
+    customer: config.customer,
+    feedback: config.feedback,
+    help: config.help,
     themed:
       Object.keys(config.theme.tokens).length +
         Object.keys(config.theme.light).length +
@@ -135,6 +147,20 @@ export const BRAND_STRINGS = Object.freeze(${JSON.stringify(strings, null, 2)});
 `;
 }
 
+/** Host text going into generated MARKUP. Every value here came out of a
+ *  `brand.json` somebody else wrote, so it is untrusted input like any other:
+ *  `normalize` refuses an executable scheme in a link, and this refuses the
+ *  characters that would end an attribute or open a tag. Two layers, because a
+ *  white-label seam that could inject markup into the editor's own origin would
+ *  be a hole opened by configuration. */
+const escapeHtml = (text) =>
+  String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
 /** The generated regions in `editor.html`, by marker name.
  *
  *  Two of them, and both are head-or-brand markup a host cannot otherwise reach
@@ -157,9 +183,25 @@ export function editorRegions(config, marks) {
   } else {
     icons = [`    <link rel="icon" href="${marks.pageMark}" />`];
   }
-  const brand = marks.showMark
-    ? ['      <span class="brand-logo" aria-hidden="true"></span>']
-    : ['      <!-- No product mark: brand.json set "mark": false. -->'];
+  let brand;
+  if (!marks.showMark) {
+    brand = ['      <!-- No product mark: brand.json set "mark": false. -->'];
+  } else if (config.markHref) {
+    // ONLYOFFICE `customization.logo.url`. The mark itself stays `aria-hidden` —
+    // it is decoration painted from a CSS token — so the anchor carries the name
+    // in text: an `aria-hidden` wrapper around a focusable link is the axe
+    // `aria-hidden-focus` violation `SKILL` §10 forbids outright, and a link
+    // announced as "link" with no destination is the same failure by hand.
+    const name = escapeHtml(config.name ?? PRODUCT.name);
+    brand = [
+      `      <a class="brand-logo-link" href="${escapeHtml(config.markHref)}" rel="noreferrer noopener" target="_blank">`,
+      '        <span class="brand-logo" aria-hidden="true"></span>',
+      `        <span class="sr-only">${name}</span>`,
+      "      </a>",
+    ];
+  } else {
+    brand = ['      <span class="brand-logo" aria-hidden="true"></span>'];
+  }
   return new Map([
     ["brand-icons", icons.join("\n")],
     ["brand-mark", brand.join("\n")],
