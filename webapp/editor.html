@@ -1767,6 +1767,104 @@
         </footer>
       </section>
     </div>
+    <!-- Format ▸ Paragraph ▸ Tab stops (`docs/148` §5.3 and §9 item 7,
+         `docs/105` UX-004).
+
+         THE DEFECT. `ruler.mjs` was the ONLY surface in the product from which a
+         tab stop could be set, moved, retyped or removed — `setTabStop` had two
+         call sites and both were in that file, and there was no menu row, no
+         palette row and no command id. That is a one-surface capability at every
+         width, not only on a phone, and it is also why the ruler could not be
+         withheld at 390px: hiding 24px of a 844px screen would have taken tab
+         stops off the device entirely.
+
+         THE STANDARD. Word's Tabs dialog (Home ▸ Paragraph launcher ▸ Tabs…, or
+         Layout ▸ Paragraph ▸ Tabs…), which LibreOffice ships unchanged and which
+         has been the reference for thirty years: the paragraph's stops in a list,
+         a position field, an alignment choice, and Set / Clear / Clear all.
+         Google Docs has no dialog at all — its only surface is the ruler too — so
+         Docs does not outvote Word here.
+
+         WHAT WORD OFFERS THAT THIS DOES NOT. Each is ABSENT rather than present
+         and dead (`docs/63`, SKILL §10):
+
+           * "Default tab stops". `w:defaultTabStop` is modelled and the layout
+             engine honours it (`casual-doc-layout/src/tabs.rs`), but
+             `casual-doc-wasm` exposes neither a reader nor a writer, so a stepper
+             here would show a number it invented and write nowhere.
+           * "Leader" (none / dots / dashes / underline). `TabLeader` is modelled
+             and drawn, but `setTabStop` takes no leader argument — it only
+             PRESERVES a leader already on the stop — and `paragraphTabs` reports
+             position and alignment only. There is nothing to show and no way to
+             set one.
+           * "Tab stops to be cleared". Word keeps that read-out because Word
+             defers every change to OK. Each action here applies immediately as
+             its own undoable step, so nothing is ever pending.
+
+         BAR IS OFFERED. The engine takes alignment code 4 and the layout engine
+         draws the rule (`flow.rs`, `tabs.rs`), so it is a capability the product
+         has and had no way to reach. -->
+    <div id="tabStopsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tabStopsTitle" aria-describedby="tabStopsDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tabStopsDialog.title" id="tabStopsTitle">Tab stops</h2>
+              <p data-i18n="tabStopsDialog.description" id="tabStopsDescription">Set where the Tab key lands in the selected paragraphs.</p>
+            </div>
+          </div>
+          <button data-i18n-title="fieldDialog.close.title" data-i18n-label="tabStopsDialog.closeTabStops.label" id="tabStopsClose" type="button" class="dialog-close" title="Close" aria-label="Close tab stops">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <form id="tabStopsForm" class="dialog-body bookmark-body">
+          <div>
+            <span data-i18n="tabStopsDialog.inTheseParagraphs" id="tabStopsListLabel" class="bookmark-list-head">In these paragraphs</span>
+            <ul id="tabStopsList" class="bookmark-list" role="listbox" aria-labelledby="tabStopsListLabel"></ul>
+            <p data-i18n="tabStopsDialog.noneYet" id="tabStopsEmpty" class="bookmark-empty" hidden>No tab stops yet. Type a position and choose Set.</p>
+          </div>
+          <!-- A TEXT box, not `type="number"`, and Word's is a text box too. A
+               number input hands its own validation to the browser: it empties
+               `.value` for anything unparseable, so "abc" and an empty field
+               become the same thing and the dialog can no longer tell the user
+               which mistake they made, and `min`/`max` raise a browser bubble on
+               submit instead of the sentence this dialog wrote. `parsePosition`
+               owns all three answers. -->
+          <!-- The refusal sits UNDER THE FIELD IT IS ABOUT, bound to it by
+               `.bookmark-add`'s `--dlg-bind` the way the link and bookmark
+               dialogs bind theirs. It was first written after the alignment
+               group, next to the buttons — which is where looking at the dark
+               1280 frame found it: the reader types in Position, presses Set,
+               and the sentence explaining the refusal appears two controls
+               further down, beside a control it says nothing about. -->
+          <div class="bookmark-add">
+            <label data-i18n="layoutPositionBtn.position" class="dialog-field">Position<span class="number-control"><input id="tabStopsPosition" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="tabStopsNote" /><span>in</span></span></label>
+            <p id="tabStopsNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+          </div>
+          <fieldset class="dialog-group">
+            <legend data-i18n="paragraphPropertiesPanel.alignment">Alignment</legend>
+            <div data-i18n-label="paragraphPropertiesPanel.alignment" class="segmented" id="tabStopsAlign" role="radiogroup" aria-label="Alignment">
+              <button type="button" data-tabalign="start" data-i18n="tableAlign.left">Left</button>
+              <button type="button" data-tabalign="center" data-i18n="tableAlign.center">Center</button>
+              <button type="button" data-tabalign="end" data-i18n="tableAlign.right">Right</button>
+              <button type="button" data-tabalign="decimal" data-i18n="tabStopsDialog.decimal">Decimal</button>
+              <button type="button" data-tabalign="bar" data-i18n="tabStopsDialog.bar">Bar</button>
+            </div>
+          </fieldset>
+          <div class="bookmark-add-row">
+            <button data-i18n="tabStopsDialog.set" id="tabStopsSet" type="submit" class="dialog-button dialog-button-primary">Set</button>
+            <button data-i18n="tabStopsDialog.clear" id="tabStopsClear" type="button" class="dialog-button">Clear</button>
+            <button data-i18n="tabStopsDialog.clearAll" id="tabStopsClearAll" type="button" class="dialog-button">Clear all</button>
+          </div>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="bookmarkDialog.eachChangeOneUndoable" class="dialog-note">Each change is one undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="bookmarkDialog.done" id="tabStopsDone" type="button" class="dialog-button">Done</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <!-- References ▸ Table of contents. Word's Insert dialog reduced to the one
          control it actually asks for: "Show levels", 1..9, defaulting to 3.
          Word's other two switches — "Show page numbers" and "Right align page
