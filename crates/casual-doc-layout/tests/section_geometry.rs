@@ -71,7 +71,7 @@ fn section_break_on_new_page(id: u64, text: &str, section: SectionId) -> BlockNo
         text,
         ParagraphProperties {
             section_break: Some(section),
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         },
     )
@@ -84,7 +84,7 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         id,
         text,
         ParagraphProperties {
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         },
     )

@@ -337,13 +337,13 @@ impl Importer<'_> {
                 self.line_spacing_multiple = parameter.unwrap_or(0) != 0;
                 self.apply_line_spacing();
             }
-            "keep" => self.state_mut().paragraph.keep_lines = true,
-            "keepn" => self.state_mut().paragraph.keep_next = true,
-            "pagebb" => self.state_mut().paragraph.page_break_before = true,
+            "keep" => self.state_mut().paragraph.keep_lines = Some(true),
+            "keepn" => self.state_mut().paragraph.keep_next = Some(true),
+            "pagebb" => self.state_mut().paragraph.page_break_before = Some(true),
             "widctlpar" => self.state_mut().paragraph.widow_control = Some(true),
             "nowidctlpar" => self.state_mut().paragraph.widow_control = Some(false),
-            "noline" => self.state_mut().paragraph.suppress_line_numbers = true,
-            "contextualspace" => self.state_mut().paragraph.contextual_spacing = true,
+            "noline" => self.state_mut().paragraph.suppress_line_numbers = Some(true),
+            "contextualspace" => self.state_mut().paragraph.contextual_spacing = Some(true),
             "outlinelevel" => {
                 let level = u8::try_from(parameter.unwrap_or(0).clamp(0, 9)).unwrap_or(0);
                 self.state_mut().paragraph.outline_level = Some(level);

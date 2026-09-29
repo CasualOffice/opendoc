@@ -93,7 +93,7 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         id,
         text,
         ParagraphProperties {
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         },
     )

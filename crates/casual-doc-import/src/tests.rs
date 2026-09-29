@@ -1011,16 +1011,16 @@ fn paragraph_flag_and_outline_properties_are_mapped() {
     </w:body></w:document>"#;
     let import = import(xml);
     let props = &paragraph(&import, 0).properties;
-    assert!(props.keep_next);
-    assert!(props.keep_lines);
-    assert!(props.page_break_before);
+    assert_eq!(props.keep_next, Some(true));
+    assert_eq!(props.keep_lines, Some(true));
+    assert_eq!(props.page_break_before, Some(true));
     assert_eq!(
         props.widow_control,
         Some(false),
         "explicit val=0 records an off that survives (default is ON)"
     );
-    assert!(props.contextual_spacing);
-    assert!(props.suppress_line_numbers);
+    assert_eq!(props.contextual_spacing, Some(true));
+    assert_eq!(props.suppress_line_numbers, Some(true));
     assert_eq!(props.outline_level, Some(2));
 }
 

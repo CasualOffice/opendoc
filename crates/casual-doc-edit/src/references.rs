@@ -517,7 +517,7 @@ pub fn caption_paragraph(
         // A caption above its item must stay with it; Word's own Caption style
         // carries `keepNext` for exactly this reason, and a document whose
         // Caption style predates us may not.
-        keep_next: spec.position == CaptionPosition::Above,
+        keep_next: Some(spec.position == CaptionPosition::Above),
         ..ParagraphProperties::default()
     };
     Ok(Paragraph {
@@ -576,7 +576,7 @@ pub fn caption_style(based_on: Option<StyleId>) -> Style {
         ..RunProperties::default()
     };
     let paragraph = ParagraphProperties {
-        keep_next: true,
+        keep_next: Some(true),
         ..ParagraphProperties::default()
     };
     Style {
@@ -933,6 +933,6 @@ mod tests {
             &mut next,
         )
         .expect("paragraph");
-        assert!(paragraph.properties.get().keep_next);
+        assert_eq!(paragraph.properties.get().keep_next, Some(true));
     }
 }

@@ -30,7 +30,7 @@ fn paragraph(id: u64, text: &str, break_before: bool) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
         properties: ParagraphProperties {
-            page_break_before: break_before,
+            page_break_before: Some(break_before),
             ..ParagraphProperties::default()
         }
         .into(),

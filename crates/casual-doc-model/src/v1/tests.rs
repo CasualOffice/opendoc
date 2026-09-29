@@ -1686,10 +1686,10 @@ fn default_paragraph_properties_still_serialize_to_empty_object() {
 #[test]
 fn paragraph_long_tail_properties_round_trip() {
     let properties = ParagraphProperties {
-        keep_next: true,
-        page_break_before: true,
-        contextual_spacing: true,
-        suppress_line_numbers: true,
+        keep_next: Some(true),
+        page_break_before: Some(true),
+        contextual_spacing: Some(true),
+        suppress_line_numbers: Some(true),
         outline_level: Some(3),
         ..ParagraphProperties::default()
     };

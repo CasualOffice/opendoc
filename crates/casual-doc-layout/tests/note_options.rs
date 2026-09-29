@@ -89,7 +89,7 @@ fn reference_on_a_new_page(id: u64, note: NoteId, kind: NoteKind) -> BlockNode {
             }),
         ],
         ParagraphProperties {
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         },
     )

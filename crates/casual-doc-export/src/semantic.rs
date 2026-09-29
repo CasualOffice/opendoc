@@ -4895,6 +4895,11 @@ fn write_shading(
     if let Some(fill) = &shading.fill {
         fill_str = rgb_hex(fill);
         el.push_attribute(("w:fill", fill_str.as_str()));
+    } else if shading.fill_none {
+        // The explicit cancellation, written back as Word writes **No Color**.
+        // Emitting nothing here would drop it and let the style's, table
+        // style's or table's fill return the next time the file is opened.
+        el.push_attribute(("w:fill", "auto"));
     }
     w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
@@ -5018,15 +5023,24 @@ fn write_paragraph_properties(
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
-    for (flag, name) in [
+    // Tri-state `CT_OnOff` toggles: a bare element is on, `w:val="0"` is an
+    // explicit off that cancels an inherited value, and nothing at all is
+    // absence. Writing only the "on" case would drop every cancellation the
+    // document made and let the style's value return when the file is opened
+    // again — the silent content change `numbering_none` above exists to stop.
+    for (value, name) in [
         (properties.keep_next, "w:keepNext"),
         (properties.keep_lines, "w:keepLines"),
         (properties.page_break_before, "w:pageBreakBefore"),
         (properties.contextual_spacing, "w:contextualSpacing"),
         (properties.suppress_line_numbers, "w:suppressLineNumbers"),
     ] {
-        if flag {
-            w.write_event(Event::Empty(start(name))).map_err(pkg)?;
+        if let Some(on) = value {
+            let mut el = start(name);
+            if !on {
+                el.push_attribute(("w:val", "0"));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
     }
     if let Some(frame) = &properties.drop_cap_frame {

@@ -51,7 +51,7 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         id,
         text,
         ParagraphProperties {
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         },
     )
@@ -64,7 +64,7 @@ fn section_break(id: u64, text: &str, section: SectionId) -> BlockNode {
         text,
         ParagraphProperties {
             section_break: Some(section),
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         },
     )
@@ -370,7 +370,7 @@ fn restart_new_section_starts_over_at_a_section_boundary_but_not_at_a_page_bound
 #[test]
 fn a_suppressed_paragraph_is_neither_numbered_nor_counted() {
     let suppressed = ParagraphProperties {
-        suppress_line_numbers: true,
+        suppress_line_numbers: Some(true),
         ..ParagraphProperties::default()
     };
     let layout = paginate(&document(
@@ -422,7 +422,7 @@ fn suppress_line_numbers_is_honoured_when_it_comes_from_a_style() {
             q_format: false,
             locked: false,
             paragraph: Some(ParagraphProperties {
-                suppress_line_numbers: true,
+                suppress_line_numbers: Some(true),
                 ..ParagraphProperties::default()
             }),
             run: None,

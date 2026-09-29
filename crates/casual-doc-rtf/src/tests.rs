@@ -317,7 +317,7 @@ fn paragraph_formatting_maps() {
     assert_eq!(spacing.after_twips, Some(240));
     assert_eq!(spacing.line_rule, Some(LineRule::Auto));
     assert_eq!(spacing.line_percent, Some(150));
-    assert!(properties.keep_next);
+    assert_eq!(properties.keep_next, Some(true));
 }
 
 #[test]

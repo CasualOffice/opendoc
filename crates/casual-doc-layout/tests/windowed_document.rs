@@ -236,7 +236,7 @@ fn contextual(count: u64) -> Document {
                             after_twips: Some(240),
                             ..Spacing::default()
                         }),
-                        contextual_spacing: true,
+                        contextual_spacing: Some(true),
                         ..ParagraphProperties::default()
                     },
                     "The quick brown fox jumps over the lazy dog while the editor \

@@ -429,22 +429,31 @@ pub(crate) fn apply_paragraph_property(
             Some(frame) => properties.drop_cap_frame = Some(frame),
             None => return false,
         },
-        // Toggle flags (`CT_OnOff`): present means on unless `val` is 0/false/off.
-        b"keepNext" => properties.keep_next = is_true(attribute_value(element, b"val").as_deref()),
+        // Toggle flags (`CT_OnOff`), all tri-state: present means on unless `val`
+        // is `0`/`false`/`off`, and an explicit off is NOT the same as absence —
+        // it cancels whatever the style chain contributed (ECMA-376 §17.17.4).
+        // Storing these as plain booleans made a cancellation indistinguishable
+        // from silence, exactly as `w:numId="0"` once was.
+        b"keepNext" => {
+            properties.keep_next = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
         b"keepLines" => {
-            properties.keep_lines = is_true(attribute_value(element, b"val").as_deref())
+            properties.keep_lines = Some(is_true(attribute_value(element, b"val").as_deref()))
         }
         b"pageBreakBefore" => {
-            properties.page_break_before = is_true(attribute_value(element, b"val").as_deref())
+            properties.page_break_before =
+                Some(is_true(attribute_value(element, b"val").as_deref()))
         }
         b"widowControl" => {
             properties.widow_control = Some(is_true(attribute_value(element, b"val").as_deref()))
         }
         b"contextualSpacing" => {
-            properties.contextual_spacing = is_true(attribute_value(element, b"val").as_deref())
+            properties.contextual_spacing =
+                Some(is_true(attribute_value(element, b"val").as_deref()))
         }
         b"suppressLineNumbers" => {
-            properties.suppress_line_numbers = is_true(attribute_value(element, b"val").as_deref())
+            properties.suppress_line_numbers =
+                Some(is_true(attribute_value(element, b"val").as_deref()))
         }
         // Tri-state toggles: several default ON in OOXML, so an explicit off
         // (`w:val="0"`) is preserved as `Some(false)`.
@@ -841,7 +850,26 @@ pub(crate) fn parse_shading(element: &BytesStart<'_>) -> (Shading, bool) {
             .as_deref()
             .is_some_and(|value| value != "none");
     let degraded = !pattern_modeled || theme_fill_unmapped;
-    (Shading { fill, theme_fill }, degraded)
+    // An explicit "no background" — `w:fill="auto"` (how Word writes **No
+    // Color**) or a `nil` pattern — is a CANCELLATION of whatever the style
+    // chain, the table style or the table contributed, not silence. Recorded as
+    // a flag because `fill: None` alone cannot tell the two apart, which is the
+    // `w:numId="0"` mistake in another property. An unmapped `themeFill` is not
+    // a cancellation: it names a fill we failed to resolve, and it is already
+    // reported above.
+    let fill_none = fill.is_none()
+        && theme_fill.is_none()
+        && !theme_fill_unmapped
+        && (attribute_value(element, b"fill").as_deref() == Some("auto")
+            || attribute_value(element, b"val").as_deref() == Some("nil"));
+    (
+        Shading {
+            fill,
+            theme_fill,
+            fill_none,
+        },
+        degraded,
+    )
 }
 
 #[cfg(test)]

@@ -138,7 +138,7 @@ fn fixtures() -> Vec<(&'static str, Document)> {
     let contextual = {
         let props = || ParagraphProperties {
             spacing: Some(spacing(240, 240)),
-            contextual_spacing: true,
+            contextual_spacing: Some(true),
             ..ParagraphProperties::default()
         };
         document(
@@ -200,7 +200,7 @@ fn fixtures() -> Vec<(&'static str, Document)> {
             paragraph(
                 510,
                 ParagraphProperties {
-                    page_break_before: true,
+                    page_break_before: Some(true),
                     ..ParagraphProperties::default()
                 },
                 "Page two",
@@ -208,7 +208,7 @@ fn fixtures() -> Vec<(&'static str, Document)> {
             paragraph(
                 520,
                 ParagraphProperties {
-                    page_break_before: true,
+                    page_break_before: Some(true),
                     ..ParagraphProperties::default()
                 },
                 "Page three",

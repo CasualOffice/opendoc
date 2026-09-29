@@ -8339,7 +8339,12 @@ impl WasmDocument {
         NodeId::from_str(node)
             .ok()
             .and_then(|nid| paragraph_properties(&self.document, nid))
-            .is_some_and(|direct| cascade.resolve_paragraph(&direct).suppress_line_numbers)
+            .is_some_and(|direct| {
+                cascade
+                    .resolve_paragraph(&direct)
+                    .suppress_line_numbers
+                    .unwrap_or(false)
+            })
     }
 
     /// The line numbering (`w:lnNumType`) of the section holding `node`, plus
@@ -8775,12 +8780,12 @@ impl WasmDocument {
         leading.drop_cap_frame = Some(drop_cap_frame(mode, lines));
         // `w:keepNext` is not decoration: the initial and the text it wraps must
         // not be split across a page, and Word writes it on every drop cap.
-        leading.keep_next = true;
+        leading.keep_next = Some(true);
         // The frame is the whole of the leading half's identity. A section break or
         // a page break inherited onto a one-character paragraph would fire between
         // the initial and its own body.
         leading.section_break = None;
-        leading.page_break_before = false;
+        leading.page_break_before = Some(false);
 
         let caret = Pos::new(new_id, 0);
         self.apply_action_caret(
@@ -8823,7 +8828,7 @@ impl WasmDocument {
         let mut properties = paragraph_properties(&self.document, cap)
             .ok_or_else(|| to_js("no such paragraph".to_string()))?;
         properties.drop_cap_frame = Some(drop_cap_frame(mode, lines));
-        properties.keep_next = true;
+        properties.keep_next = Some(true);
         let letter = self
             .document
             .body()
@@ -9012,7 +9017,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.suppress_line_numbers = on;
+            toggle_paragraph_flag(&mut p.suppress_line_numbers, on);
         })
     }
 
@@ -9138,9 +9143,10 @@ impl WasmDocument {
             },
             0,
         );
-        let keep_next = bool_selection_state(&properties, |p| p.keep_next);
-        let keep_lines = bool_selection_state(&properties, |p| p.keep_lines);
-        let page_break_before = bool_selection_state(&properties, |p| p.page_break_before);
+        let keep_next = bool_selection_state(&properties, |p| p.keep_next.unwrap_or(false));
+        let keep_lines = bool_selection_state(&properties, |p| p.keep_lines.unwrap_or(false));
+        let page_break_before =
+            bool_selection_state(&properties, |p| p.page_break_before.unwrap_or(false));
         let shading = uniform_slice(
             &properties
                 .iter()
@@ -11242,7 +11248,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.keep_next = on;
+            toggle_paragraph_flag(&mut p.keep_next, on);
         })
     }
 
@@ -11257,7 +11263,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.keep_lines = on;
+            toggle_paragraph_flag(&mut p.keep_lines, on);
         })
     }
 
@@ -11272,7 +11278,7 @@ impl WasmDocument {
         on: bool,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.page_break_before = on;
+            toggle_paragraph_flag(&mut p.page_break_before, on);
         })
     }
 
@@ -11285,9 +11291,9 @@ impl WasmDocument {
             .ok()
             .and_then(|nid| paragraph_properties(&self.document, nid))
             .map_or(ParagraphFlags::default(), |p| ParagraphFlags {
-                keep_next: p.keep_next,
-                keep_lines: p.keep_lines,
-                page_break_before: p.page_break_before,
+                keep_next: p.keep_next.unwrap_or(false),
+                keep_lines: p.keep_lines.unwrap_or(false),
+                page_break_before: p.page_break_before.unwrap_or(false),
             })
     }
 
@@ -21058,6 +21064,29 @@ fn uniform_slice<T: Clone + PartialEq>(values: &[T]) -> Option<T> {
         .then_some(first)
 }
 
+/// Applies a UI checkbox to a tri-state `CT_OnOff` paragraph property.
+///
+/// The property has three states — absent (inherit the style chain), on, and an
+/// explicit off (`w:val="0"`) that CANCELS an inherited on — while the checkbox
+/// has two, so the mapping has to be stated rather than assumed:
+///
+/// - checking it always states the flag;
+/// - unchecking it **removes** a direct on, returning the paragraph to whatever
+///   its style says. That is the exact inverse of checking it, so check-then-
+///   uncheck is a true round trip and leaves no spurious tracked change;
+/// - unchecking it when the paragraph asserts nothing directly writes the
+///   explicit off. The checkbox was showing checked, so the on came from the
+///   style chain, and a cancellation is the only way to switch it off there.
+///
+/// Complexity: O(1).
+fn toggle_paragraph_flag(field: &mut Option<bool>, on: bool) {
+    *field = match (on, *field) {
+        (true, _) => Some(true),
+        (false, Some(true)) => None,
+        (false, _) => Some(false),
+    };
+}
+
 /// A boolean value over the selected paragraphs: 0=off, 1=on, 2=mixed.
 fn bool_selection_state(
     properties: &[ParagraphProperties],
@@ -26407,7 +26436,7 @@ mod tests {
             "`flow.rs` lays out only Around/Auto/absent, so anything else draws nothing"
         );
         assert!(
-            paragraph_properties(&doc.document, cap_id).is_some_and(|p| p.keep_next),
+            paragraph_properties(&doc.document, cap_id).is_some_and(|p| p.keep_next == Some(true)),
             "`w:keepNext` keeps the initial on the same page as the text it wraps"
         );
 
@@ -26956,7 +26985,7 @@ mod tests {
                 q_format: true,
                 locked: false,
                 paragraph: Some(ParagraphProperties {
-                    suppress_line_numbers: true,
+                    suppress_line_numbers: Some(true),
                     ..ParagraphProperties::default()
                 }),
                 run: None,
@@ -29403,6 +29432,34 @@ mod tests {
         assert!(!rejected[0].3);
     }
 
+    /// The three states of a `CT_OnOff` paragraph toggle, as the checkbox drives
+    /// them. The middle row is the one the tri-state exists for: a paragraph that
+    /// says nothing directly is showing checked because its STYLE says so, and
+    /// the only way to switch that off is the explicit `w:val="0"` cancellation —
+    /// which is what the paint guards in `casual-doc-render` assert reaches the
+    /// page.
+    #[test]
+    fn unchecking_a_toggle_removes_a_direct_on_but_cancels_an_inherited_one() {
+        let mut direct_on = Some(true);
+        toggle_paragraph_flag(&mut direct_on, false);
+        assert_eq!(
+            direct_on, None,
+            "unchecking must undo a direct on exactly, or check-then-uncheck              leaves a spurious tracked change"
+        );
+
+        let mut inherited = None;
+        toggle_paragraph_flag(&mut inherited, false);
+        assert_eq!(
+            inherited,
+            Some(false),
+            "unchecking a flag the paragraph never asserted has to write the              cancellation; clearing to None would be a dead control"
+        );
+
+        let mut cancelled = Some(false);
+        toggle_paragraph_flag(&mut cancelled, true);
+        assert_eq!(cancelled, Some(true), "checking always states the flag");
+    }
+
     /// Formatting back to the prior leaves no suggestion at all, and tracking is
     /// scoped to the command the host wraps: with it off, the same command applies
     /// untracked.
@@ -29410,8 +29467,11 @@ mod tests {
     /// "Back to the prior" means the properties genuinely match again. Setting
     /// alignment to Start after Center does NOT qualify: the prior had no `w:jc` at
     /// all, and explicitly-left differs from inherited, which is why Word records
-    /// that as a change too. `keep_next` is a plain boolean, so toggling it on and
-    /// off is a real round trip.
+    /// that as a change too. `keep_next` is tri-state for the same reason, and
+    /// `toggle_paragraph_flag` is what makes unchecking the box the exact inverse
+    /// of checking it: it REMOVES a direct on rather than writing an explicit
+    /// off, so toggling on and off is a real round trip and this guard still has
+    /// something to guard.
     #[test]
     fn formatting_back_to_the_prior_clears_the_suggestion_and_tracking_is_scoped() {
         use casual_doc_model::v1::Alignment;
@@ -38470,7 +38530,7 @@ mod tests {
         BlockNode::Paragraph(Paragraph {
             id: sections_id(id),
             properties: ParagraphProperties {
-                page_break_before: page_break,
+                page_break_before: Some(page_break),
                 ..ParagraphProperties::default()
             }
             .into(),
@@ -38486,7 +38546,7 @@ mod tests {
         BlockNode::Paragraph(Paragraph {
             id: sections_id(id),
             properties: ParagraphProperties {
-                page_break_before: true,
+                page_break_before: Some(true),
                 section_break: Some(SectionId::new(sections_id(section))),
                 ..ParagraphProperties::default()
             }

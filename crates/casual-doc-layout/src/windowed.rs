@@ -609,7 +609,7 @@ fn classify_resume(blocks: &[BlockNode]) -> FlowResume {
     let carries_state = blocks.iter().any(|block| match block {
         BlockNode::Paragraph(paragraph) => {
             paragraph.properties.numbering.is_some()
-                || paragraph.properties.contextual_spacing
+                || paragraph.properties.contextual_spacing.is_some()
                 || paragraph.properties.drop_cap_frame.is_some()
                 || paragraph.properties.style_ref.is_some()
         }

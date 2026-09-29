@@ -712,7 +712,7 @@ fn top_and_bottom_reflow_repeats_in_both_headers_and_footers() {
         BlockNode::Paragraph(Paragraph {
             id: node(82),
             properties: ParagraphProperties {
-                page_break_before: true,
+                page_break_before: Some(true),
                 ..ParagraphProperties::default()
             }
             .into(),
@@ -773,7 +773,7 @@ fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
     let page_two = BlockNode::Paragraph(Paragraph {
         id: node(20),
         properties: ParagraphProperties {
-            page_break_before: true,
+            page_break_before: Some(true),
             ..ParagraphProperties::default()
         }
         .into(),
@@ -985,7 +985,7 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
         BlockNode::Paragraph(Paragraph {
             id: node(20),
             properties: ParagraphProperties {
-                page_break_before: true,
+                page_break_before: Some(true),
                 ..ParagraphProperties::default()
             }
             .into(),
@@ -1123,7 +1123,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
         BlockNode::Paragraph(Paragraph {
             id: node(442),
             properties: ParagraphProperties {
-                page_break_before: true,
+                page_break_before: Some(true),
                 ..ParagraphProperties::default()
             }
             .into(),
@@ -2138,7 +2138,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
         BlockNode::Paragraph(Paragraph {
             id: node(20),
             properties: ParagraphProperties {
-                page_break_before: true,
+                page_break_before: Some(true),
                 ..ParagraphProperties::default()
             }
             .into(),

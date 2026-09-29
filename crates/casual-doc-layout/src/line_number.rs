@@ -200,6 +200,7 @@ fn suppressed_paragraphs(document: &Document) -> BTreeSet<NodeId> {
             BlockNode::Paragraph(paragraph) => cascade
                 .resolve_paragraph(&paragraph.properties)
                 .suppress_line_numbers
+                .unwrap_or(false)
                 .then_some(paragraph.id),
             _ => None,
         })

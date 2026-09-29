@@ -246,15 +246,18 @@ fn apply_style_properties(
     if let Some(run) = run {
         overlay_run(&mut layer.run, run);
     }
+    // Shading is tri-state here too: `w:fill="auto"` in a conditional region
+    // (a banded row that clears the header fill, say) CANCELS what the base
+    // `wholeTable` layer contributed, where an absent `w:shd` inherits it.
     if let Some(table) = table {
         overlay_table_borders(&mut layer.table_borders, &table.borders);
-        if table.shading.fill.is_some() {
+        if !table.shading.is_empty() {
             layer.shading = table.shading.fill;
         }
     }
     if let Some(cell) = cell {
         overlay_table_borders(&mut layer.cell_borders, &cell.borders);
-        if cell.shading.fill.is_some() {
+        if !cell.shading.is_empty() {
             layer.shading = cell.shading.fill;
         }
     }
@@ -487,10 +490,13 @@ fn overlay_run(base: &mut RunProperties, over: &RunProperties) {
 
 /// Overlays `over`'s set fields onto `base` (a higher-precedence paragraph layer).
 /// `spacing` and `indentation` are **deep-merged** field by field so a paragraph
-/// that sets only `w:before` directly still inherits the style's line rule; the
-/// `Option` scalars replace when set, and the toggle booleans OR (a style that
-/// enables `w:contextualSpacing` keeps it enabled — the model cannot represent an
-/// explicit re-disable, so the enabling layer wins).
+/// that sets only `w:before` directly still inherits the style's line rule; every
+/// other property, toggles included, **replaces when set** — which is what makes
+/// an explicit `w:val="0"` able to cancel an inherited value instead of merely
+/// failing to add one.
+///
+/// Complexity: O(1) in document size — a fixed number of field moves per layer,
+/// no lookup and no document walk.
 fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties) {
     if over.style_ref.is_some() {
         base.style_ref = over.style_ref;
@@ -515,19 +521,40 @@ fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties)
     if over.drop_cap_frame.is_some() {
         base.drop_cap_frame = over.drop_cap_frame;
     }
-    base.keep_next |= over.keep_next;
-    base.keep_lines |= over.keep_lines;
-    base.page_break_before |= over.page_break_before;
+    // `CT_OnOff` paragraph toggles. These used to OR (`base |= over`), on the
+    // stated grounds that "the model cannot represent an explicit re-disable" —
+    // which was true of the model and false of OOXML. ECMA-376 §17.17.4 gives
+    // every one of them an explicit off (`w:val="0"/"false"/"off"`) that is a
+    // different statement from absence, so OR-ing made a higher-precedence
+    // layer's CANCELLATION unreachable: whatever a style switched on could never
+    // be switched back off. `ListParagraph` sets `w:contextualSpacing`, and the
+    // 51 list paragraphs in the owner's NDA that cancel it beside a
+    // `w:spacing w:after="160"` each lost 8pt of space to that OR.
+    //
+    // They are now the same replace-when-set idiom as every tri-state below —
+    // O(1) per property, no lookup, no walk.
+    if over.keep_next.is_some() {
+        base.keep_next = over.keep_next;
+    }
+    if over.keep_lines.is_some() {
+        base.keep_lines = over.keep_lines;
+    }
+    if over.page_break_before.is_some() {
+        base.page_break_before = over.page_break_before;
+    }
     if over.widow_control.is_some() {
         base.widow_control = over.widow_control;
     }
-    base.contextual_spacing |= over.contextual_spacing;
-    // `w:suppressLineNumbers` had no arm here, so a *style* that suppressed line
-    // numbers lost the flag the moment `resolve_paragraph` ran — and a pleading
-    // template puts it on the style, not on every quotation paragraph. Same
-    // enabling-layer-wins rule as the toggles above: the model cannot represent
-    // an explicit re-enable (`docs/105` FID-L-09).
-    base.suppress_line_numbers |= over.suppress_line_numbers;
+    if over.contextual_spacing.is_some() {
+        base.contextual_spacing = over.contextual_spacing;
+    }
+    // `w:suppressLineNumbers` had no arm here at all, so a *style* that
+    // suppressed line numbers lost the flag the moment `resolve_paragraph` ran —
+    // and a pleading template puts it on the style, not on every quotation
+    // paragraph (`docs/105` FID-L-09).
+    if over.suppress_line_numbers.is_some() {
+        base.suppress_line_numbers = over.suppress_line_numbers;
+    }
     if over.outline_level.is_some() {
         base.outline_level = over.outline_level;
     }

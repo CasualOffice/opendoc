@@ -1577,10 +1577,15 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
                 // Effective style + resolved contextualSpacing flag drive the
                 // same-style adjacency collapse below.
                 let style = ctx.cascade.paragraph_style(&paragraph.properties);
+                // The model's toggle is tri-state (absent / on / explicitly
+                // off); the collapse only cares whether it is ON, so the
+                // resolution to a plain bool happens here, at the layout
+                // boundary, as it does for `widow_control`.
                 let contextual = ctx
                     .cascade
                     .resolve_paragraph(&paragraph.properties)
-                    .contextual_spacing;
+                    .contextual_spacing
+                    .unwrap_or(false);
                 let galley_index = GalleySink::len(galley);
                 if let Some(clearance) = paragraph_wrap_carries(paragraph, width)
                     .iter()
@@ -1927,9 +1932,22 @@ fn flow_table<S: GalleySink + ?Sized>(
             // Each level resolves its own `w:shd` (concrete sRGB *or* a `w:themeFill`
             // slot against the palette); the cell wins, then the table-style layer
             // (concrete only), then the table's own direct shading.
-            let shading = shading_rgba(&cell.properties.shading, ctx.palette)
-                .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
-                .or_else(|| shading_rgba(&table.properties.shading, ctx.palette));
+            // A cell whose own `w:shd` says `w:fill="auto"` has CANCELLED the
+            // fill, so the fallback chain stops there instead of reaching past
+            // the cancellation to the table style or the table. Word writes
+            // that attribute for **No Color**, so without this a cell cleared by
+            // hand keeps painting the banded/header fill of its table style.
+            let shading = if cell.properties.shading.fill_none {
+                None
+            } else {
+                shading_rgba(&cell.properties.shading, ctx.palette)
+                    .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
+                    .or_else(|| {
+                        (!table.properties.shading.fill_none)
+                            .then(|| shading_rgba(&table.properties.shading, ctx.palette))
+                            .flatten()
+                    })
+            };
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
@@ -6826,9 +6844,11 @@ fn alignment(properties: &ParagraphProperties) -> TextAlignment {
 /// Maps paragraph break properties to the fragment's break control.
 fn break_control(properties: &ParagraphProperties) -> BreakControl {
     BreakControl {
-        page_break_before: properties.page_break_before,
-        keep_next: properties.keep_next,
-        keep_lines: properties.keep_lines,
+        // Tri-state in the model, plain flags here: absent and "explicitly
+        // cancelled" both mean off once the cascade has run.
+        page_break_before: properties.page_break_before.unwrap_or(false),
+        keep_next: properties.keep_next.unwrap_or(false),
+        keep_lines: properties.keep_lines.unwrap_or(false),
         // OOXML default is ON: an unset `w:widowControl` still protects widows.
         widow_control: properties.widow_control.unwrap_or(true),
     }
@@ -7559,7 +7579,7 @@ mod tests {
                         after_twips: Some(240),
                         ..Spacing::default()
                     }),
-                    contextual_spacing: true,
+                    contextual_spacing: Some(true),
                     ..ParagraphProperties::default()
                 }
                 .into(),
@@ -7671,7 +7691,7 @@ mod tests {
                         after_twips: Some(200),
                         ..Spacing::default()
                     }),
-                    contextual_spacing: contextual,
+                    contextual_spacing: Some(contextual),
                     ..ParagraphProperties::default()
                 }
                 .into(),
@@ -9406,6 +9426,7 @@ mod tests {
                 theme_tint: None,
                 theme_shade: None,
             }),
+            fill_none: false,
         };
         assert_eq!(
             shading_rgba(&shading, Some(&palette)),
@@ -14579,7 +14600,7 @@ mod tests {
         let drop_cap = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(70, 1).unwrap(),
             properties: ParagraphProperties {
-                keep_next: true,
+                keep_next: Some(true),
                 spacing: Some(Spacing {
                     line_rule: Some(LineRule::Exact),
                     line_twips: Some(700),

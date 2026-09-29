@@ -2475,17 +2475,24 @@ fn read_paragraph_style_properties(
                 },
                 None => false,
             },
+            // Tri-state. ODF's explicit off (`auto` for keep-with-next and
+            // keep-together, `auto`/`none` for break-before) is a CANCELLATION of
+            // the parent style's value, not silence — the same distinction
+            // `w:val="0"` makes in OOXML. It used to map only `always`/`page`,
+            // so an explicit `auto` both lost its meaning and was reported as an
+            // unmapped attribute, which is an over-report of a value we now
+            // carry.
             (NamespaceKind::Fo, b"keep-with-next") => {
-                paragraph.keep_next = value.trim() == "always";
-                paragraph.keep_next
+                paragraph.keep_next = keep_flag(&value, "always");
+                paragraph.keep_next.is_some()
             }
             (NamespaceKind::Fo, b"keep-together") => {
-                paragraph.keep_lines = value.trim() == "always";
-                paragraph.keep_lines
+                paragraph.keep_lines = keep_flag(&value, "always");
+                paragraph.keep_lines.is_some()
             }
             (NamespaceKind::Fo, b"break-before") => {
-                paragraph.page_break_before = value.trim() == "page";
-                paragraph.page_break_before
+                paragraph.page_break_before = keep_flag(&value, "page");
+                paragraph.page_break_before.is_some()
             }
             _ => false,
         };
@@ -9337,17 +9344,31 @@ fn merge_paragraph_properties(target: &mut ParagraphProperties, overlay: &Paragr
             spacing.line_percent = overlay_spacing.line_percent;
         }
     }
-    // The keep/break flags are booleans in the model: a child can add but cannot
-    // clear an inherited flag (distinguishing an explicit `auto` from "unset"
-    // would need presence tracking). A rare inheritance edge, not a data loss.
-    if overlay.keep_next {
-        target.keep_next = true;
+    // The keep/break flags are tri-state, so a child style that says `auto`
+    // now CLEARS the inherited flag instead of failing to add one. They used to
+    // be plain booleans that could only ever be OR-ed on.
+    if overlay.keep_next.is_some() {
+        target.keep_next = overlay.keep_next;
     }
-    if overlay.keep_lines {
-        target.keep_lines = true;
+    if overlay.keep_lines.is_some() {
+        target.keep_lines = overlay.keep_lines;
     }
-    if overlay.page_break_before {
-        target.page_break_before = true;
+    if overlay.page_break_before.is_some() {
+        target.page_break_before = overlay.page_break_before;
+    }
+}
+
+/// Maps one ODF keep/break attribute value to the model's tri-state.
+///
+/// `on` is the token that means the flag is set (`always`, or `page` for
+/// `fo:break-before`); `auto` and `none` are ODF's explicit OFF and map to
+/// `Some(false)` so they can cancel an inherited value; anything else is
+/// unrecognised and maps to `None`, leaving the caller to report it.
+fn keep_flag(value: &str, on: &str) -> Option<bool> {
+    match value.trim() {
+        token if token == on => Some(true),
+        "auto" | "none" => Some(false),
+        _ => None,
     }
 }
 

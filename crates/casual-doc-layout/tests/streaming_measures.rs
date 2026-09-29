@@ -256,7 +256,7 @@ fn drop_cap_pair(id: u64) -> Vec<BlockNode> {
         BlockNode::Paragraph(Paragraph {
             id: node(id),
             properties: ParagraphProperties {
-                keep_next: true,
+                keep_next: Some(true),
                 spacing: Some(Spacing {
                     line_rule: Some(LineRule::Exact),
                     line_twips: Some(700),
@@ -315,7 +315,7 @@ fn alt_chunk(id: u64) -> BlockNode {
 fn corpus() -> Vec<(&'static str, Document)> {
     let contextual_props = || ParagraphProperties {
         spacing: Some(spacing(240, 240)),
-        contextual_spacing: true,
+        contextual_spacing: Some(true),
         ..ParagraphProperties::default()
     };
     vec![
