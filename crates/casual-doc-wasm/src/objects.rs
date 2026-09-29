@@ -3510,4 +3510,124 @@ mod tests {
         assert!(shape.flip_h, "and so did the flip");
         assert!(!shape.flip_v);
     }
+
+    /// The blocker this whole change exists to remove. A rotated object used to
+    /// advertise ZERO resize handles, so `can_resize` went false and every grip
+    /// and the size chrome vanished the moment anything turned — including on a
+    /// document that merely IMPORTED a rotated picture, with no way back but
+    /// undo. Word, Google Docs and ONLYOFFICE all resize a rotated object.
+    ///
+    /// Asserts the GUARANTEE and the DOCUMENT: eight grips plus the rotation
+    /// grip are offered at 30 degrees, and a resize at that angle actually
+    /// changes the stored extent.
+    #[test]
+    fn a_rotated_object_keeps_its_eight_grips_and_can_still_be_resized() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "rectangle")
+            .expect("insert a shape");
+        let group = only_group(&document).expect("a group of one");
+        let root = group.id.to_string();
+        let shape = match group.children.first().expect("one child") {
+            GroupChild::Shape(shape) => shape.id.to_string(),
+            other => panic!("expected a shape, got {other:?}"),
+        };
+
+        let upright = document.object_rect(&shape);
+        assert_eq!(upright.len(), 5, "the shape reached layout");
+        assert_eq!(
+            document.object_handles(&shape).len(),
+            9 * 4,
+            "an upright shape offers eight grips and the rotation grip"
+        );
+
+        document
+            .set_object_rotation_inner(&shape, Some(30.0))
+            .expect("rotate it 30 degrees");
+
+        let handles = document.object_handles(&shape);
+        assert_eq!(
+            handles.len(),
+            9 * 4,
+            "a ROTATED shape still offers all nine grips — this is the assertion \
+             the old `rotation.is_none()` gate failed, answering zero"
+        );
+        let frame = document.object_frame(&shape);
+        assert_eq!(frame.len(), 6, "objectFrame is [page,x,y,w,h,milliDegrees]");
+        assert_eq!(
+            &frame[..5],
+            &upright[..],
+            "the published frame is the object's own UNROTATED box, unchanged by \
+             the rotation — the rotation is about its centre"
+        );
+        assert_eq!(
+            frame[5], 30_000,
+            "and the angle is published in milli-degrees"
+        );
+
+        // The grips are drawn where the object IS. A 30-degree turn moves the
+        // north-west grip off the frame's corner by a computable amount.
+        let (cx, cy) = (upright[1] + upright[3] / 2, upright[2] + upright[4] / 2);
+        let radians = 30.0_f64.to_radians();
+        let (dx, dy) = (f64::from(upright[1] - cx), f64::from(upright[2] - cy));
+        #[allow(clippy::cast_possible_truncation)]
+        let expected = (
+            (f64::from(cx) + dx * radians.cos() - dy * radians.sin()).round() as i32,
+            (f64::from(cy) + dx * radians.sin() + dy * radians.cos()).round() as i32,
+        );
+        assert_eq!(
+            (handles[1], handles[2]),
+            expected,
+            "the NW grip is drawn at the rotated corner, not at the unrotated one"
+        );
+
+        // And a resize at that angle reaches the document.
+        let before = document.object_extent(&shape);
+        document
+            .resize_object(
+                &root,
+                f64::from(upright[1]) * 635.0,
+                f64::from(upright[2]) * 635.0,
+                f64::from(upright[3] + 720) * 635.0,
+                f64::from(upright[4]) * 635.0,
+            )
+            .expect("a rotated object resizes");
+        let after = document.object_extent(&shape);
+        assert_ne!(after, before, "the rotated shape's extent actually changed");
+        assert!(
+            !document.object_transform(&shape).is_empty(),
+            "and it is still rotated afterwards"
+        );
+        let read: serde_json::Value =
+            serde_json::from_str(&document.object_transform(&shape)).expect("JSON");
+        assert_eq!(read["rotationDegrees"], serde_json::json!(30.0));
+    }
+
+    /// A rotation handle must not appear on an object whose rotation nothing
+    /// would paint — `SKILL` §10, never a dead control. A top-level text box
+    /// models no `a:xfrm` at all (so `setObjectRotation` refuses it), and a
+    /// group ROOT models one no layout pass applies.
+    #[test]
+    fn an_object_whose_rotation_is_not_painted_is_offered_no_rotation_grip() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        let inserted = document
+            .insert_text_box(&paragraph, 0)
+            .expect("insert a text box")
+            .node;
+        let text_box = owner_box(&document, &inserted);
+
+        assert_eq!(
+            document.object_handles(&text_box).len(),
+            8 * 4,
+            "a top-level text box gets its eight resize grips and NO rotation grip"
+        );
+        assert!(
+            document
+                .set_object_rotation_inner(&text_box, Some(30.0))
+                .is_err(),
+            "and the facade refuses to rotate it, which is what the missing grip says"
+        );
+    }
 }

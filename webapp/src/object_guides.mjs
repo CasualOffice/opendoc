@@ -8,6 +8,8 @@
 // Cost: a gesture creates at most TWO elements, once, and afterwards only moves
 // and hides them. A drag fires on every pointer move, so the chrome may not be
 // rebuilt per sample — `docs/107` §4.
+import { ROTATE_HANDLE_KIND, ROTATE_HANDLE_REACH } from "./object_rotate.mjs";
+import { resizeCursorForHandle } from "./pointer_cursor.mjs";
 
 /** The elements a live gesture keeps, so a pointer move moves a line instead of
  *  building one. Create with `null` and hand the same object back each time. */
@@ -79,19 +81,83 @@ export function clearGuides(state) {
  * @param {ArrayLike<number>} handles flat `[page, cx, cy, kind]` quads
  * @param {(event: PointerEvent, pageNumber: number, kind: number) => void} onGripDown
  */
-export function paintResizeHandles(pageOf, handles, onGripDown) {
+export function paintResizeHandles(pageOf, handles, onGripDown, options = {}) {
+  const rotation = Number(options.rotationDegrees) || 0;
   for (let i = 0; i + 3 < handles.length; i += 4) {
     const [pageNumber, cx, cy, kind] = Array.prototype.slice.call(handles, i, i + 4);
     const target = pageOf(pageNumber);
     if (!target) continue;
+    const [px, py] = [cx * target.scale.sx, cy * target.scale.sy];
+    if (kind === ROTATE_HANDLE_KIND) {
+      if (options.onRotateDown) {
+        paintRotationHandle(target.overlay, px, py, rotation, options, (event) =>
+          options.onRotateDown(event, pageNumber));
+      }
+      continue;
+    }
     const el = document.createElement("div");
     el.className = "object-handle";
     el.dataset.handle = String(kind);
-    el.style.left = `${cx * target.scale.sx}px`;
-    el.style.top = `${cy * target.scale.sy}px`;
+    el.style.left = `${px}px`;
+    el.style.top = `${py}px`;
+    // The CSS rules key a directional cursor off `data-handle` alone, which is
+    // right only while the object is upright: the grip drawn at the top-left of
+    // a shape turned 90 degrees drags that shape's WIDTH. An inline style wins
+    // over the rule, so a turned object gets the truthful cursor and an upright
+    // one keeps exactly the CSS the cursor contract already pins.
+    if (rotation) el.style.cursor = resizeCursorForHandle(kind, rotation);
     el.addEventListener("pointerdown", (event) => onGripDown(event, pageNumber, kind));
     target.overlay.appendChild(el);
   }
+}
+
+/**
+ * Paints the rotation grip and its tether.
+ *
+ * The engine anchors the grip ON the object's (rotated) top edge and this pushes
+ * it out along the object's own axis by a fixed SCREEN distance, so the grip
+ * stays the same distance from the object at every zoom. ONLYOFFICE does the
+ * same thing from the other end — their `TRACK_DISTANCE_ROTATE` is 25 screen
+ * pixels converted into document units against the live zoom.
+ *
+ * The tether is not decoration: a lone dot floating above a shape says nothing
+ * about which object it belongs to, and at 24px away from a corner grip it reads
+ * as a stray. Word, Docs and ONLYOFFICE all draw the line.
+ *
+ * O(1) — two elements.
+ */
+function paintRotationHandle(overlay, px, py, rotation, options, onDown) {
+  const radians = (rotation - 90) * (Math.PI / 180);
+  const [gx, gy] = [
+    px + Math.cos(radians) * ROTATE_HANDLE_REACH,
+    py + Math.sin(radians) * ROTATE_HANDLE_REACH,
+  ];
+  const tether = document.createElement("div");
+  tether.className = "object-rotate-tether";
+  tether.style.left = `${px}px`;
+  tether.style.top = `${py}px`;
+  tether.style.height = `${ROTATE_HANDLE_REACH}px`;
+  tether.style.transform = `rotate(${rotation}deg)`;
+  overlay.appendChild(tether);
+
+  const el = document.createElement("div");
+  el.className = "object-handle object-rotate-handle";
+  el.dataset.handle = String(ROTATE_HANDLE_KIND);
+  el.style.left = `${gx}px`;
+  el.style.top = `${gy}px`;
+  // A grip is a control, so it says what it is and what it currently reads.
+  // `slider` rather than `button`: it has a value, a range, and arrow keys that
+  // change it, which is exactly what a screen reader should announce.
+  el.setAttribute("role", "slider");
+  el.setAttribute("tabindex", "0");
+  el.setAttribute("aria-valuemin", "0");
+  el.setAttribute("aria-valuemax", "360");
+  el.setAttribute("aria-valuenow", String(Math.round(rotation)));
+  if (options.rotateLabel) el.setAttribute("aria-label", options.rotateLabel);
+  if (options.rotateValueText) el.setAttribute("aria-valuetext", options.rotateValueText);
+  el.addEventListener("pointerdown", onDown);
+  if (options.onRotateKey) el.addEventListener("keydown", options.onRotateKey);
+  overlay.appendChild(el);
 }
 
 /**

@@ -267,7 +267,14 @@ test("a multi-child group selects as a unit and Enter descends with a stable ref
     "data-object-capabilities",
     "canResize,canMove,canWrap,canDelete",
   );
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+  await expect(page.locator(".overlay .object-handle:not(.object-rotate-handle)")).toHaveCount(8);
+  // NO rotation grip here, and that is the deliberate answer: the selection is
+  // the GROUP root, and a `wp:group` transform is modelled but painted by
+  // nothing — the anchor pass carries each CHILD's `a:xfrm` and never the
+  // group's. A grip that changed the document and nothing on screen is the dead
+  // control `SKILL` §10 forbids, so the group root is not offered one until the
+  // layout honours its transform.
+  await expect(page.locator(".overlay .object-rotate-handle")).toHaveCount(0);
 
   const before = await page.locator(".overlay .object-outline").evaluate((element) => {
     const rect = element.getBoundingClientRect();

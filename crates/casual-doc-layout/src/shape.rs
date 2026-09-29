@@ -1179,6 +1179,7 @@ impl ParleyShaper {
                                 ),
                                 crop: image.crop,
                                 opacity: image.opacity,
+                                transform: image.transform,
                             });
                         } else if let Some(math_index) =
                             (inline_box.id as usize).checked_sub(objects.images.len())

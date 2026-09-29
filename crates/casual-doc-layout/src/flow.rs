@@ -72,6 +72,8 @@ use crate::text::{
     LineBreak, LineConstraints, LineLayout, LineShaper, NoteMarker, StyledRun, TextAlignment,
     TextBoxContentLayout, TextBoxStroke,
 };
+// Own line (anti-conflict): the inline picture's `a:xfrm` carrier.
+use crate::text::InlineTransform;
 use crate::units::{Point, Size, Twip};
 
 /// One page-derived edge exclusion applied at the start of a body paragraph.
@@ -1275,8 +1277,12 @@ fn paragraph_hash(
                 size,
                 crop,
                 opacity,
+                transform,
             } => {
                 3u8.hash(&mut hasher);
+                transform.rotation.hash(&mut hasher);
+                transform.flip_h.hash(&mut hasher);
+                transform.flip_v.hash(&mut hasher);
                 media.hash(&mut hasher);
                 size.width.0.hash(&mut hasher);
                 size.height.0.hash(&mut hasher);
@@ -3697,6 +3703,8 @@ fn embedded_object_items<'a>(
                 // An embedded object's preview is its own picture, with no
                 // `a:blip` of its own to carry an alpha.
                 opacity: None,
+                // …and no `a:xfrm` of its own to carry a rotation.
+                transform: InlineTransform::default(),
             });
             return;
         }
@@ -4361,6 +4369,11 @@ fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
         size,
         crop: drawing.crop,
         opacity: drawing.opacity,
+        transform: InlineTransform {
+            rotation: drawing.rotation.unwrap_or(0),
+            flip_h: drawing.flip_h,
+            flip_v: drawing.flip_v,
+        },
     })
 }
 
@@ -4591,12 +4604,14 @@ fn shape_text_with_objects(
                 size,
                 crop,
                 opacity,
+                transform,
             } => images.push(InlineImageSpec {
                 media: media.clone(),
                 index: byte,
                 size: *size,
                 crop: *crop,
                 opacity: *opacity,
+                transform: *transform,
             }),
             FlowItem::Math { size, runs, rules } => maths.push(InlineMathSpec {
                 index: byte,
@@ -4679,7 +4694,8 @@ fn shape_complex_inline_with_objects(
                 size,
                 crop,
                 opacity,
-            } => image_line(media.clone(), *size, *crop, *opacity, range),
+                transform,
+            } => image_line(media.clone(), *size, *crop, *opacity, *transform, range),
             FlowItem::Math { size, runs, rules } => {
                 math_line(*size, runs.clone(), rules.clone(), range)
             }
@@ -4743,6 +4759,7 @@ fn image_line(
     size: Size,
     crop: Option<casual_doc_model::v1::CropRect>,
     opacity: Option<u32>,
+    transform: InlineTransform,
     range: ModelRange,
 ) -> Line {
     Line {
@@ -4761,6 +4778,7 @@ fn image_line(
             size,
             crop,
             opacity,
+            transform,
         }],
         fields: Vec::new(),
         notes: Vec::new(),

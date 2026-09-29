@@ -1830,12 +1830,23 @@ impl WasmDocument {
     /// exist: a float updates anchor and extent together, an inline updates its
     /// extent and keeps the flow origin the paragraph gave it (so a north or
     /// west drag previews with the opposite edge pinned and lands as a pure
-    /// size change). The set is empty for an object whose placed rect is not its
-    /// own box — rotated, flipped, or a group whose members cannot be scaled
-    /// exactly. The frontend paints a fixed screen-size grip
+    /// size change). A ROTATED object gets its eight too, turned with it: the
+    /// centers below are computed on the object's own unrotated frame and then
+    /// rotated about that frame's centre, so a grip is drawn on the corner the
+    /// user sees. The set is empty only for a group whose members cannot be
+    /// scaled exactly.
+    ///
+    /// An object that can be rotated also gets a NINTH entry, `kind` 8 — the
+    /// rotation grip, anchored on the (rotated) midpoint of its top edge. It is
+    /// offered independently of resize, so an object that can be turned but not
+    /// resized still gets it. `objectFrame` publishes the angle the host needs to
+    /// push it out along the object's own axis and to turn the grip cursors.
+    ///
+    /// The frontend paints a fixed screen-size grip
     /// centered at each — engine-drawn chrome from the object's placed rect, so
     /// it matches the raster with zero drift (docs/58). Empty if `node` is not
-    /// placed or its reference has no compatible exact-inverse resize command.
+    /// placed or its reference has neither a compatible exact-inverse resize
+    /// command nor a painted rotation.
     #[wasm_bindgen(js_name = objectHandles)]
     #[must_use]
     pub fn object_handles(&self, node: &str) -> Vec<i32> {
@@ -1845,7 +1856,7 @@ impl WasmDocument {
         let Some(obj) = self.object_box_for_subject(nid) else {
             return Vec::new();
         };
-        if !obj.capabilities.can_resize {
+        if !obj.capabilities.can_resize && !obj.capabilities.can_rotate {
             return Vec::new();
         }
         let r = obj.rect;
@@ -1853,7 +1864,10 @@ impl WasmDocument {
         let (w, h) = (r.size.width.raw(), r.size.height.raw());
         let (cx, cy) = (l + w / 2, t + h / 2);
         let (right, bottom) = (l + w, t + h);
-        // NW, N, NE, E, SE, S, SW, W.
+        // NW, N, NE, E, SE, S, SW, W — on the object's own UNROTATED frame,
+        // then turned with it below so the grip is drawn on the corner the user
+        // sees rather than on the corner of an axis-aligned box that is not
+        // painted anywhere.
         let centers = [
             (l, t),
             (cx, t),
@@ -1864,14 +1878,59 @@ impl WasmDocument {
             (l, bottom),
             (l, cy),
         ];
-        let mut out = Vec::with_capacity(centers.len() * 4);
+        let mut out = Vec::with_capacity((centers.len() + 1) * 4);
         for (i, (hx, hy)) in centers.into_iter().enumerate() {
             if obj.capabilities.resize_handles & (1 << i) == 0 {
                 continue;
             }
-            out.extend_from_slice(&[obj.page as i32, hx, hy, i as i32]);
+            let (rx, ry) = rotate_about(hx, hy, cx, cy, obj.rotation_60k);
+            out.extend_from_slice(&[obj.page as i32, rx, ry, i as i32]);
+        }
+        // Handle 8 is the ROTATION grip, and it is ONLYOFFICE's: their
+        // `hitToHandles` returns 8 for a point near `(extX/2, -TRACK_DISTANCE_ROTATE)`
+        // in the object's own space (`common/Drawings/Format/Shape.js:307`) — the
+        // top edge's midpoint, pushed out along the object's own -Y axis. The
+        // push-out is 25 SCREEN pixels there and is a screen distance here too,
+        // so this publishes the anchor ON the edge and the host offsets it by a
+        // fixed pixel amount along the same axis; a twip offset would grow and
+        // shrink with the zoom, which no product does.
+        if obj.capabilities.can_rotate {
+            let (rx, ry) = rotate_about(cx, t, cx, cy, obj.rotation_60k);
+            out.extend_from_slice(&[obj.page as i32, rx, ry, ROTATE_HANDLE_KIND]);
         }
         out
+    }
+
+    /// The object `node`'s own UNROTATED frame plus the angle painted about its
+    /// centre: `[page, xTwip, yTwip, wTwip, hTwip, rotationMilliDegrees]`.
+    /// Empty if `node` is not a currently placed selectable object.
+    ///
+    /// This is [`object_rect`](Self::object_rect) plus the one fact a host
+    /// cannot derive from a rectangle. It exists because chrome for a rotated
+    /// object needs BOTH: the frame says how big the object is in its own space
+    /// (which is what a resize drag computes in, exactly as ONLYOFFICE's
+    /// `hitToHandles` inverts the transform before hit-testing), and the angle
+    /// says where that space sits on the page.
+    ///
+    /// The angle is in THOUSANDTHS of a degree rather than OOXML's 60000ths
+    /// because the vector is `i32` — the same flat-integer shape as every other
+    /// geometry getter here — and a thousandth of a degree moves a grip on a
+    /// 10-inch object by about 0.0001 inch, well under a device pixel.
+    ///
+    /// **O(objects) over the placed layout**, one pass, same as `objectRect`.
+    #[wasm_bindgen(js_name = objectFrame)]
+    #[must_use]
+    pub fn object_frame(&self, node: &str) -> Vec<i32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        self.object_box_for_subject(nid)
+            .map(|obj| {
+                let mut out = flat_rect(obj.page, obj.rect).to_vec();
+                out.push(obj.rotation_60k / 60);
+                out
+            })
+            .unwrap_or_default()
     }
 
     /// Resizes an inline drawing / text box to `width_emu` × `height_emu`
@@ -1979,7 +2038,9 @@ impl WasmDocument {
                 anchor: Box::new(anchor),
             });
         } else if let Some(anchor) = object_anchor_any_surface(&self.document, object) {
-            if object_resize_handles_any_surface(&self.document, object) != FLOAT_RESIZE_HANDLES {
+            if object_resize_handles_any_surface(&self.document, object).handles
+                != FLOAT_RESIZE_HANDLES
+            {
                 return Err(to_js(
                     "floating object geometry cannot be resized exactly".into(),
                 ));
@@ -1996,7 +2057,9 @@ impl WasmDocument {
                 anchor: Box::new(page_anchor_at(anchor, left, top)),
             });
         } else {
-            if object_resize_handles_any_surface(&self.document, object) != INLINE_RESIZE_HANDLES {
+            if object_resize_handles_any_surface(&self.document, object).handles
+                != INLINE_RESIZE_HANDLES
+            {
                 return Err(to_js(
                     "inline object geometry cannot be resized exactly".into(),
                 ));
@@ -14171,6 +14234,7 @@ impl WasmDocument {
                             .or_else(|| entry.0.iter().position(|used| !used));
                         if let Some(i) = pick {
                             entry.0[i] = true;
+                            let frame = object_resize_handles(self.document.body(), img_nodes[i].0);
                             out.push(ObjectBox {
                                 root: img_nodes[i].0,
                                 subject: img_nodes[i].0,
@@ -14178,10 +14242,9 @@ impl WasmDocument {
                                 kind: "image",
                                 page: page.number,
                                 rect,
+                                rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_image(
-                                    object_resize_handles(self.document.body(), img_nodes[i].0),
-                                ),
+                                capabilities: ObjectCapabilities::inline_image(frame),
                             });
                         }
                     }
@@ -14195,6 +14258,7 @@ impl WasmDocument {
                         );
                         if let Some(i) = entry.1.iter().position(|used| !used) {
                             entry.1[i] = true;
+                            let frame = object_resize_handles(self.document.body(), tb_nodes[i]);
                             out.push(ObjectBox {
                                 root: tb_nodes[i],
                                 subject: tb_nodes[i],
@@ -14202,10 +14266,9 @@ impl WasmDocument {
                                 kind: "textbox",
                                 page: page.number,
                                 rect,
+                                rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_text_box(
-                                    object_resize_handles(self.document.body(), tb_nodes[i]),
-                                ),
+                                capabilities: ObjectCapabilities::inline_text_box(frame),
                             });
                         }
                     }
@@ -14247,8 +14310,11 @@ impl WasmDocument {
                     AnchorContent::Table { .. } => continue,
                 };
                 if let Some(reference) = group_ref {
-                    let resize_handles =
-                        object_resize_handles(self.document.body(), reference.root);
+                    let frame = object_resize_handles(self.document.body(), reference.root);
+                    // A group CHILD paints its own `a:xfrm`, and the child is the
+                    // subject the host rotates — the group root's transform is not
+                    // painted at all (see `object_resize_handles_in_inlines`).
+                    let subject_frame = object_resize_handles(self.document.body(), node);
                     if reference.leaf_count == 1 || include_group_children {
                         out.push(ObjectBox {
                             root: reference.root,
@@ -14257,8 +14323,15 @@ impl WasmDocument {
                             kind,
                             page: page.number,
                             rect: placed.rect,
+                            rotation_60k: subject_frame.rotation_60k,
                             anchored: true,
-                            capabilities: ObjectCapabilities::group_child(kind, resize_handles),
+                            capabilities: ObjectCapabilities::group_child(
+                                kind,
+                                ObjectFrame {
+                                    handles: frame.handles,
+                                    ..subject_frame
+                                },
+                            ),
                         });
                     } else if let Some(index) = grouped.get(&reference.root).copied() {
                         out[index].rect = union_rect(out[index].rect, placed.rect);
@@ -14271,11 +14344,13 @@ impl WasmDocument {
                             kind: "group",
                             page: page.number,
                             rect: placed.rect,
+                            rotation_60k: frame.rotation_60k,
                             anchored: true,
-                            capabilities: ObjectCapabilities::group_root(resize_handles),
+                            capabilities: ObjectCapabilities::group_root(frame),
                         });
                     }
                 } else {
+                    let float_frame = object_resize_handles(self.document.body(), node);
                     out.push(ObjectBox {
                         root: node,
                         subject: node,
@@ -14283,11 +14358,9 @@ impl WasmDocument {
                         kind,
                         page: page.number,
                         rect: placed.rect,
+                        rotation_60k: float_frame.rotation_60k,
                         anchored: true,
-                        capabilities: ObjectCapabilities::floating(
-                            kind,
-                            object_resize_handles(self.document.body(), node),
-                        ),
+                        capabilities: ObjectCapabilities::floating(kind, float_frame),
                     });
                 }
             }
@@ -17085,6 +17158,7 @@ struct ObjectOrderEntryJson {
     page: u32,
     anchored: bool,
     can_resize: bool,
+    can_rotate: bool,
     can_move: bool,
     can_wrap: bool,
     can_delete: bool,
@@ -21159,6 +21233,7 @@ fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
         page: object.page,
         anchored: object.anchored,
         can_resize: object.capabilities.can_resize,
+        can_rotate: object.capabilities.can_rotate,
         can_move: object.capabilities.can_move,
         can_wrap: object.capabilities.can_wrap,
         can_delete: object.capabilities.can_delete,
@@ -21727,7 +21802,13 @@ struct ObjectBox {
     path: Vec<u32>,
     kind: &'static str,
     page: u32,
+    /// The object's own UNROTATED frame in page-local twips — the box the model
+    /// stores, not the axis-aligned bounding box of the turned object. A rotation
+    /// is `rotation_60k` about this rectangle's centre, which is how
+    /// `casual-doc-layout` paints one.
     rect: Rect,
+    /// The `a:xfrm@rot` painted about `rect`'s centre, in 60000ths of a degree.
+    rotation_60k: i32,
     /// Whether this reference's root is floating/anchored.
     anchored: bool,
     /// Structural mutations supported by this root/subject pairing.
@@ -21742,6 +21823,12 @@ struct ObjectBox {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ObjectCapabilities {
     can_resize: bool,
+    /// Whether this carrier models an `a:xfrm` rotation that the layout PAINTS.
+    /// Both halves matter: a top-level text box models none (so `setObjectRotation`
+    /// refuses), and a group root models one that no pass applies, so a handle on
+    /// either would be a control that changes the document and nothing the user
+    /// can see (`SKILL` §10, never a dead control).
+    can_rotate: bool,
     /// One bit per handle in NW,N,NE,E,SE,S,SW,W order. `can_resize` is the
     /// compatibility summary; this mask is the exact carrier contract consumed
     /// by `objectHandles`.
@@ -21757,10 +21844,11 @@ struct ObjectCapabilities {
 }
 
 impl ObjectCapabilities {
-    const fn inline_image(resize_handles: u8) -> Self {
+    const fn inline_image(frame: ObjectFrame) -> Self {
         Self {
-            can_resize: resize_handles != 0,
-            resize_handles,
+            can_resize: frame.handles != 0,
+            resize_handles: frame.handles,
+            can_rotate: frame.can_rotate,
             can_delete: true,
             can_alt_text: true,
             can_crop: true,
@@ -21768,20 +21856,22 @@ impl ObjectCapabilities {
         }
     }
 
-    const fn inline_text_box(resize_handles: u8) -> Self {
+    const fn inline_text_box(frame: ObjectFrame) -> Self {
         Self {
-            can_resize: resize_handles != 0,
-            resize_handles,
+            can_resize: frame.handles != 0,
+            resize_handles: frame.handles,
+            can_rotate: frame.can_rotate,
             can_delete: true,
             can_edit_text: true,
             ..Self::empty()
         }
     }
 
-    fn floating(kind: &str, resize_handles: u8) -> Self {
+    fn floating(kind: &str, frame: ObjectFrame) -> Self {
         Self {
-            can_resize: resize_handles != 0,
-            resize_handles,
+            can_resize: frame.handles != 0,
+            resize_handles: frame.handles,
+            can_rotate: frame.can_rotate,
             can_move: true,
             can_wrap: true,
             can_delete: true,
@@ -21792,12 +21882,13 @@ impl ObjectCapabilities {
         }
     }
 
-    fn group_child(kind: &str, resize_handles: u8) -> Self {
+    fn group_child(kind: &str, frame: ObjectFrame) -> Self {
         // A single-child group's root owns geometry while its leaf remains the
         // appearance/text subject.
         Self {
-            can_resize: resize_handles != 0,
-            resize_handles,
+            can_resize: frame.handles != 0,
+            resize_handles: frame.handles,
+            can_rotate: frame.can_rotate,
             can_move: true,
             can_wrap: true,
             can_delete: true,
@@ -21808,10 +21899,11 @@ impl ObjectCapabilities {
         }
     }
 
-    const fn group_root(resize_handles: u8) -> Self {
+    const fn group_root(frame: ObjectFrame) -> Self {
         Self {
-            can_resize: resize_handles != 0,
-            resize_handles,
+            can_resize: frame.handles != 0,
+            resize_handles: frame.handles,
+            can_rotate: frame.can_rotate,
             can_move: true,
             can_wrap: true,
             can_delete: true,
@@ -21823,6 +21915,7 @@ impl ObjectCapabilities {
         Self {
             can_resize: false,
             resize_handles: 0,
+            can_rotate: false,
             can_move: false,
             can_wrap: false,
             can_delete: false,
@@ -21860,11 +21953,54 @@ const MIN_OBJECT_EMU: i64 = 144 * EMU_PER_TWIP_I64;
 // distinction here at all: `AscFormat.hitToHandles`
 // (`common/Drawings/Format/Shape.js`) returns 0..7 for every object.
 //
-// What a rotated or flipped object gets is still nothing (see
-// `object_resize_handles_in_inlines`), because the placed rect is the rotated
-// bounding box and dragging its corner is not a resize of the object.
+// A ROTATED or FLIPPED object gets the complete set too, and the reasoning that
+// used to withhold it — "the placed rect is the rotated bounding box, and
+// dragging its corner is not a resize of the object" — was simply false about
+// this engine. `PlacedAnchor.rect` is the object's own UNROTATED frame and
+// `PlacedAnchor.transform` is the rotation painted about that frame's centre
+// (`casual-doc-layout`'s `shape_transform` takes the already-resolved rect and
+// rotates about its middle). So the frame a grip drags is exactly the box the
+// model stores, and a flip about the centre leaves that box identical.
+//
+// The cost of the false premise was not a missing rotation handle but a
+// DISAPPEARING one: the moment an object was rotated, `can_resize` went false
+// and all eight grips plus the size chrome vanished until undo — on a document
+// that merely IMPORTED a rotated picture, with no way back. Word, Google Docs
+// and ONLYOFFICE all resize a rotated object; ONLYOFFICE's `hitToHandles`
+// (`common/Drawings/Format/Shape.js:193`) inverts the object's transform and
+// hit-tests the same 0..7 handles in the object's own space, which is what the
+// host now does with the angle this file publishes.
 const INLINE_RESIZE_HANDLES: u8 = u8::MAX;
 const FLOAT_RESIZE_HANDLES: u8 = u8::MAX;
+
+/// The handle kind of the ROTATION grip, past the eight resize kinds. Named
+/// after ONLYOFFICE's own numbering, where `hitToHandles` returns 0..7 for the
+/// resize markers and 8 for the rotation one.
+const ROTATE_HANDLE_KIND: i32 = 8;
+
+/// Rotates the page-local point `(x, y)` clockwise about `(cx, cy)` by
+/// `rotation_60k` 60000ths of a degree, rounding to the nearest twip.
+///
+/// Clockwise is what `a:xfrm@rot` means and what this comes out as on screen:
+/// page coordinates run y-DOWNWARD, so the ordinary rotation matrix turns a
+/// point clockwise without a sign flip.
+///
+/// O(1).
+fn rotate_about(x: i32, y: i32, cx: i32, cy: i32, rotation_60k: i32) -> (i32, i32) {
+    if rotation_60k == 0 {
+        return (x, y);
+    }
+    let radians = f64::from(rotation_60k) / 60_000.0 * core::f64::consts::PI / 180.0;
+    let (sin, cos) = radians.sin_cos();
+    let (dx, dy) = (f64::from(x - cx), f64::from(y - cy));
+    #[allow(clippy::cast_possible_truncation)] // page-local twips, bounded by MAX_EMU
+    let turned = (
+        f64::from(cx) + dx * cos - dy * sin,
+        f64::from(cy) + dx * sin + dy * cos,
+    );
+    #[allow(clippy::cast_possible_truncation)]
+    (turned.0.round() as i32, turned.1.round() as i32)
+}
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
     match checked_emu(value, min, max) {
@@ -22021,108 +22157,190 @@ fn group_content_bounds_with_mapper(
     bounds
 }
 
-/// Exact handle support for one model carrier. This deliberately rejects
-/// rotated/flipped paint bounds and flow-dependent group text boxes: their
-/// axis-aligned selection rectangles do not yet have an exact model inverse.
-fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> u8 {
+/// Everything one model carrier can say about an object's own FRAME, gathered in
+/// the single walk `resolve_object_boxes` already pays per object box.
+///
+/// Three facts travel together because they are read together and because a
+/// second walk for the angle would turn an existing O(objects x document) into
+/// two of them (`SKILL` §8, never a lookup-by-id inside a loop over ids).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ObjectFrame {
+    /// One bit per handle in NW,N,NE,E,SE,S,SW,W order; `0` = not resizable.
+    handles: u8,
+    /// The `a:xfrm@rot` painted about the frame's centre, in 60000ths of a
+    /// degree. `0` for an upright object — and for one whose rotation the layout
+    /// does not paint, so the host never draws grips at an angle nothing is
+    /// drawn at.
+    rotation_60k: i32,
+    /// Whether a rotation set here would be both accepted and painted.
+    can_rotate: bool,
+}
+
+/// Exact handle support, rotation, and rotatability for one model carrier. This
+/// deliberately rejects flow-dependent group text boxes: their axis-aligned
+/// selection rectangles do not yet have an exact model inverse.
+fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> ObjectFrame {
+    object_frame_in_blocks(blocks, object).unwrap_or_default()
+}
+
+/// The frame of `object` if it sits anywhere in `blocks`, or `None` if it does
+/// not.
+///
+/// `Option` rather than a zero sentinel: an object CAN legitimately answer
+/// "found, and no resize grips" — a group whose members cannot be scaled
+/// exactly, and every group CHILD, whose grips belong to its root. Reading that
+/// as "not here" made the search walk on past the node it had already found,
+/// which is harmless at the top level and wrong for one inside a table cell.
+fn object_frame_in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<ObjectFrame> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                if let Some(handles) = object_resize_handles_in_inlines(&paragraph.inlines, object)
-                {
-                    return handles;
+                if let Some(frame) = object_resize_handles_in_inlines(&paragraph.inlines, object) {
+                    return Some(frame);
                 }
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        let handles = object_resize_handles(&cell.blocks, object);
-                        if handles != 0 {
-                            return handles;
+                        if let Some(frame) = object_frame_in_blocks(&cell.blocks, object) {
+                            return Some(frame);
                         }
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                let handles = object_resize_handles(&sdt.blocks, object);
-                if handles != 0 {
-                    return handles;
+                if let Some(frame) = object_frame_in_blocks(&sdt.blocks, object) {
+                    return Some(frame);
                 }
             }
             BlockNode::AltChunk(_) => {}
         }
     }
-    0
+    None
 }
 
-fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> u8 {
+fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> ObjectFrame {
     surface_block_lists(document)
         .into_iter()
-        .map(|blocks| object_resize_handles(blocks, object))
-        .find(|handles| *handles != 0)
-        .unwrap_or(0)
+        .find_map(|blocks| object_frame_in_blocks(blocks, object))
+        .unwrap_or_default()
 }
 
-fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<u8> {
+/// The frame of `object` when it is a CHILD of `group` (at any nesting depth).
+///
+/// A child's grips belong to its root — `resolve_object_boxes` takes the mask
+/// from the group and only the angle from here — so `handles` is `0` and that is
+/// a real answer, not a miss. Every leaf kind carries its own `a:xfrm`, and
+/// `casual-doc-layout`'s anchor pass paints each child's rotation onto its own
+/// paint item, which is why these are the objects a rotation handle is offered
+/// on while the group ROOT's own transform (painted by nothing) is not.
+fn object_frame_in_group(group: &WordprocessingGroup, object: NodeId) -> Option<ObjectFrame> {
+    for child in &group.children {
+        let rotation = match child {
+            GroupChild::Picture(picture) if picture.id == object => picture.rotation,
+            GroupChild::Shape(shape) if shape.id == object => shape.rotation,
+            GroupChild::TextBox(text_box) if text_box.id == object => text_box.rotation,
+            GroupChild::TextBox(text_box) => {
+                if let Some(frame) = object_frame_in_blocks(&text_box.blocks, object) {
+                    return Some(frame);
+                }
+                continue;
+            }
+            GroupChild::Group(nested) => {
+                if nested.id == object {
+                    // A nested group is a group: its transform is modelled and
+                    // unpainted, exactly like a top-level one.
+                    return Some(ObjectFrame::default());
+                }
+                if let Some(frame) = object_frame_in_group(nested, object) {
+                    return Some(frame);
+                }
+                continue;
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => continue,
+        };
+        return Some(ObjectFrame {
+            handles: 0,
+            rotation_60k: rotation.unwrap_or(0),
+            can_rotate: true,
+        });
+    }
+    None
+}
+
+fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<ObjectFrame> {
     for inline in inlines {
         match inline {
             InlineNode::Drawing(drawing) if drawing.id == object => {
-                return Some(
-                    if drawing.rotation.is_none() && !drawing.flip_h && !drawing.flip_v {
-                        INLINE_RESIZE_HANDLES
-                    } else {
-                        0
-                    },
-                );
+                return Some(ObjectFrame {
+                    handles: INLINE_RESIZE_HANDLES,
+                    rotation_60k: drawing.rotation.unwrap_or(0),
+                    can_rotate: true,
+                });
             }
             InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(
-                    if drawing.rotation.is_none() && !drawing.flip_h && !drawing.flip_v {
-                        FLOAT_RESIZE_HANDLES
-                    } else {
-                        0
-                    },
-                );
+                return Some(ObjectFrame {
+                    handles: FLOAT_RESIZE_HANDLES,
+                    rotation_60k: drawing.rotation.unwrap_or(0),
+                    can_rotate: true,
+                });
             }
             InlineNode::TextBox(text_box) => {
                 if text_box.id == object {
-                    return Some(if text_box.anchor.is_some() {
-                        FLOAT_RESIZE_HANDLES
-                    } else {
-                        INLINE_RESIZE_HANDLES
+                    // A TOP-LEVEL text box models no `a:xfrm` at all — see
+                    // `TextBox` in `casual-doc-model` — so `setObjectRotation`
+                    // refuses it and no handle is offered. A text box inside a
+                    // group is a `GroupChild::TextBox`, which does carry one.
+                    return Some(ObjectFrame {
+                        handles: if text_box.anchor.is_some() {
+                            FLOAT_RESIZE_HANDLES
+                        } else {
+                            INLINE_RESIZE_HANDLES
+                        },
+                        rotation_60k: 0,
+                        can_rotate: false,
                     });
                 }
-                if let Some(handles) = object_resize_handles_nested(&text_box.blocks, object) {
-                    return Some(handles);
+                if let Some(frame) = object_frame_in_blocks(&text_box.blocks, object) {
+                    return Some(frame);
                 }
             }
-            InlineNode::Group(group) if group.id == object => {
-                return Some(if group_resize_supported(group) {
-                    FLOAT_RESIZE_HANDLES
-                } else {
-                    0
+            InlineNode::Group(group) => {
+                if group.id != object {
+                    if let Some(frame) = object_frame_in_group(group, object) {
+                        return Some(frame);
+                    }
+                    continue;
+                }
+                return Some(ObjectFrame {
+                    handles: if group_resize_supported(group) {
+                        FLOAT_RESIZE_HANDLES
+                    } else {
+                        0
+                    },
+                    // A group's `wp:group` transform models a rotation, but no
+                    // layout pass applies it — `anchor.rs` carries each CHILD's
+                    // `a:xfrm` onto its paint item and never the group's — so a
+                    // rotation set here would change the document and nothing on
+                    // screen. Recorded as a gap rather than offered as a handle.
+                    rotation_60k: 0,
+                    can_rotate: false,
                 });
             }
             InlineNode::Hyperlink(hyperlink) => {
-                if let Some(handles) = object_resize_handles_in_inlines(&hyperlink.inlines, object)
-                {
-                    return Some(handles);
+                if let Some(frame) = object_resize_handles_in_inlines(&hyperlink.inlines, object) {
+                    return Some(frame);
                 }
             }
             InlineNode::Revision(revision) => {
-                if let Some(handles) = object_resize_handles_in_inlines(&revision.inlines, object) {
-                    return Some(handles);
+                if let Some(frame) = object_resize_handles_in_inlines(&revision.inlines, object) {
+                    return Some(frame);
                 }
             }
             _ => {}
         }
     }
     None
-}
-
-fn object_resize_handles_nested(blocks: &[BlockNode], object: NodeId) -> Option<u8> {
-    let handles = object_resize_handles(blocks, object);
-    (handles != 0).then_some(handles)
 }
 
 fn positive_extent(extent: Extent) -> bool {
@@ -22134,65 +22352,47 @@ fn group_resize_supported(group: &WordprocessingGroup) -> bool {
         && positive_extent(group.extent)
         && positive_extent(group.transform.extent)
         && positive_extent(group.transform.child_extent)
+        // A GROUP's own transform keeps its rotation/flip rejection, and the
+        // reason is the opposite of the leaves' (see
+        // `group_child_resize_supported`): nothing paints it TODAY, so the
+        // placed rect is the unrotated union of the children and a resize is
+        // exact — but the day the anchor pass honours it, that union becomes
+        // the turned bounding box and this arithmetic silently stops being an
+        // inverse. Failing closed on a case no renderer draws costs a user
+        // nothing; getting it wrong later costs them their geometry.
         && !group.transform.flip_h
         && !group.transform.flip_v
         && group.transform.rotation.is_none()
         && !group.children.is_empty()
-        && group.children.iter().all(|child| match child {
-            GroupChild::Picture(picture) => {
-                positive_extent(picture.extent)
-                    && !picture.flip_h
-                    && !picture.flip_v
-                    && picture.rotation.is_none()
-            }
-            GroupChild::TextBox(text_box) => {
-                positive_extent(text_box.extent)
-                    && text_box.body_properties.auto_fit != TextBoxAutoFit::Shape
-                    && !text_box.flip_h
-                    && !text_box.flip_v
-                    && text_box.rotation.is_none()
-            }
-            GroupChild::Shape(shape) => {
-                positive_extent(shape.extent)
-                    && !shape.flip_h
-                    && !shape.flip_v
-                    && shape.rotation.is_none()
-            }
-            GroupChild::Group(nested) => {
-                nested.anchor.is_none()
-                    && positive_extent(nested.extent)
-                    && positive_extent(nested.transform.extent)
-                    && positive_extent(nested.transform.child_extent)
-                    && !nested.transform.flip_h
-                    && !nested.transform.flip_v
-                    && nested.transform.rotation.is_none()
-                    && !nested.children.is_empty()
-                    && nested.children.iter().all(group_child_resize_supported)
-            }
-        })
+        && group.children.iter().all(group_child_resize_supported)
 }
 
+/// Whether one group member's geometry can be scaled with an exact inverse.
+///
+/// **A LEAF's rotation and flips are deliberately no longer conditions.** They
+/// used to be, and this was the SECOND gate — after
+/// `object_resize_handles_in_inlines` — that made a rotated object's grips
+/// disappear. It was the one that caught every floating SHAPE, since a shape is
+/// modelled as a group of one, so rotating a shape took its eight grips away.
+///
+/// The arithmetic a group resize does — scale the outer `wp:extent` and the
+/// `a:xfrm` offsets/extents, then re-anchor from `group_content_bounds` — reads
+/// offsets and extents and never an angle, and a leaf's `a:xfrm` rotation or
+/// flip is applied about that leaf's OWN centre, which the scaling has already
+/// moved with it. So the inverse stays exact and the rejection bought nothing.
+///
+/// A nested GROUP's transform keeps the rejection, for the reason
+/// `group_resize_supported` gives: it is unpainted today, and the arithmetic
+/// that is exact against an unrotated union would stop being exact the day it
+/// is painted.
 fn group_child_resize_supported(child: &GroupChild) -> bool {
     match child {
-        GroupChild::Picture(picture) => {
-            positive_extent(picture.extent)
-                && !picture.flip_h
-                && !picture.flip_v
-                && picture.rotation.is_none()
-        }
+        GroupChild::Picture(picture) => positive_extent(picture.extent),
         GroupChild::TextBox(text_box) => {
             positive_extent(text_box.extent)
                 && text_box.body_properties.auto_fit != TextBoxAutoFit::Shape
-                && !text_box.flip_h
-                && !text_box.flip_v
-                && text_box.rotation.is_none()
         }
-        GroupChild::Shape(shape) => {
-            positive_extent(shape.extent)
-                && !shape.flip_h
-                && !shape.flip_v
-                && shape.rotation.is_none()
-        }
+        GroupChild::Shape(shape) => positive_extent(shape.extent),
         GroupChild::Group(nested) => {
             nested.anchor.is_none()
                 && positive_extent(nested.extent)
@@ -22620,6 +22820,14 @@ impl ObjectHitPayload {
     #[must_use]
     pub fn can_resize(&self) -> bool {
         self.capabilities.can_resize
+    }
+
+    /// Whether this reference models an `a:xfrm` rotation that the layout paints,
+    /// so a rotation handle on it would change something the user can see.
+    #[wasm_bindgen(getter, js_name = canRotate)]
+    #[must_use]
+    pub fn can_rotate(&self) -> bool {
+        self.capabilities.can_rotate
     }
 
     /// Whether this reference's root owns a movable anchor position.
@@ -36125,6 +36333,10 @@ mod tests {
             ObjectCapabilities {
                 can_resize: true,
                 resize_handles: FLOAT_RESIZE_HANDLES,
+                // The shape leaf carries its own `a:xfrm` and the anchor pass
+                // paints it, so the SUBJECT is rotatable even though the group
+                // root that owns its grips is not.
+                can_rotate: true,
                 can_move: true,
                 can_wrap: true,
                 can_delete: true,
@@ -36133,7 +36345,7 @@ mod tests {
                 ..ObjectCapabilities::empty()
             }
         );
-        assert_eq!(d.object_handles(&subject.to_string()).len(), 8 * 4);
+        assert_eq!(d.object_handles(&subject.to_string()).len(), 9 * 4);
 
         let cx = shape.rect.origin.x.raw() + shape.rect.size.width.raw() / 2;
         let cy = shape.rect.origin.y.raw() + shape.rect.size.height.raw() / 2;
@@ -36286,7 +36498,11 @@ mod tests {
         assert!(selected.anchored);
         assert_eq!(
             selected.capabilities,
-            ObjectCapabilities::group_root(FLOAT_RESIZE_HANDLES)
+            ObjectCapabilities::group_root(ObjectFrame {
+                handles: FLOAT_RESIZE_HANDLES,
+                rotation_60k: 0,
+                can_rotate: false,
+            })
         );
         assert!(selected.rect.size.width.raw() > 1_440);
 
@@ -36354,7 +36570,22 @@ mod tests {
             .find(|object| object.root == root)
             .expect("rotated group remains selectable");
         assert!(!selected.capabilities.can_resize);
-        assert!(d.object_handles(&selected.subject.to_string()).is_empty());
+        // No RESIZE grips: the group's own `wp:group` transform is rotated, and
+        // the arithmetic that re-anchors a scaled group reads an unrotated union
+        // of its children — exact today, because nothing paints that transform,
+        // and not exact the day something does. Failing closed is the deliberate
+        // answer.
+        //
+        // The shape LEAF is still rotatable, though, and its `a:xfrm` IS
+        // painted, so the one grip that remains is the rotation grip — offered
+        // independently of resize, because "you may not scale this" and "you may
+        // not turn this" are different refusals and only one of them applies.
+        let handles = d.object_handles(&selected.subject.to_string());
+        assert_eq!(
+            handles.chunks_exact(4).map(|h| h[3]).collect::<Vec<_>>(),
+            vec![ROTATE_HANDLE_KIND],
+            "an unresizable group leaves only the rotation grip, not eight dead ones"
+        );
     }
 
     #[test]
@@ -36525,13 +36756,27 @@ mod tests {
         assert_eq!(rect.len(), 5, "objectRect is [page,x,y,w,h]");
         assert_eq!(rect[3], image.rect.size.width.raw());
         let handles = d.object_handles(&image.subject.to_string());
-        assert_eq!(handles.len(), 8 * 4, "eight inline resize handles");
+        assert_eq!(
+            handles.len(),
+            9 * 4,
+            "eight inline resize handles and the rotation grip"
+        );
         assert_eq!(
             handles
                 .chunks_exact(4)
                 .map(|handle| handle[3])
                 .collect::<Vec<_>>(),
-            vec![0, 1, 2, 3, 4, 5, 6, 7]
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        // An inline picture models `a:xfrm` and the layout now paints it, so the
+        // rotation grip is offered — ONLYOFFICE's `canRotate` has no inline
+        // exception either (`ParaDrawing.canRotate` just forwards to the shape).
+        let rotate_grip = &handles[8 * 4..];
+        assert_eq!(rotate_grip[0], rect[0], "the grip is on the object's page");
+        assert_eq!(
+            (rotate_grip[1], rotate_grip[2]),
+            (rect[1] + rect[3] / 2, rect[2]),
+            "an upright object anchors its rotation grip on its top edge's midpoint"
         );
         // And the grips are not decoration. This pins the half of the contract
         // the host depends on when it drops the origin delta of a west or north

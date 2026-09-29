@@ -21,6 +21,8 @@
 //
 // Cost: O(controls) per render — a fixed ~20 nodes for ONE object.
 import { objectBarPosition } from "./object_guides.mjs";
+// Own line (anti-conflict): the rotation grip's reach and the turned bounds.
+import { ROTATE_GRIP_REACH, rotatedBounds } from "./object_rotate.mjs";
 import { OBJECT_LABELS } from "./object_traversal.mjs";
 import { WRAP_CHOICES, activeWrapChoice, wrapAvailability } from "./object_arrange.mjs";
 
@@ -188,19 +190,38 @@ export function createObjectBar(io) {
   function reposition() {
     if (!barEl || !io.doc()) return;
     const selection = io.selection();
-    const rect = selection?.mode === "selected" ? io.doc().objectRect(selection.node) : [];
+    // `objectFrame`, not `objectRect`: the same page-local rectangle plus the
+    // angle, in the SAME one call. The angle must not be bought with
+    // `arrangeState()` here — that is O(document) with two walks, and this runs
+    // on every scroll and every window resize, which would put a document-length
+    // walk on a passive scroll listener (`docs/107` §4).
+    const frame = selection?.mode === "selected" ? io.doc().objectFrame?.(selection.node) ?? [] : [];
+    const rect = frame.slice(0, 5);
     const page = rect.length >= 5 ? io.pages()[rect[0] - 1] : null;
     if (!page) {
       barEl.hidden = true;
       return;
     }
     const { rect: pageRect, sx, sy } = io.scaleOf(page);
-    const top = pageRect.top + rect[2] * sy;
+    // The bar clears the object's TURNED outline, not its frame: a rotated
+    // picture's corners stick out past the box the model stores, and a bar
+    // placed against the frame sits on top of them.
+    const turned = rotatedBounds(
+      { x: rect[1], y: rect[2], w: rect[3], h: rect[4] },
+      (frame[5] ?? 0) / 1000,
+    );
+    const top = pageRect.top + turned.y * sy;
     barEl.hidden = false; // must be visible to be measured
     const at = objectBarPosition(
-      { left: pageRect.left + rect[1] * sx, top, bottom: top + rect[4] * sy },
+      { left: pageRect.left + turned.x * sx, top, bottom: top + turned.h * sy },
       io.viewportRect(),
       barEl.offsetHeight,
+      undefined,
+      // A rotatable object carries a grip ABOVE it, further out than any resize
+      // grip reaches, and the bar has to clear that one instead. The same defect
+      // the resize reach already fixed: a bar inside a grip's target means
+      // `elementFromPoint` answers with the bar and the grip cannot be grabbed.
+      selection.canRotate ? ROTATE_GRIP_REACH : undefined,
     );
     if (!at) {
       barEl.hidden = true; // the object is scrolled out of the page view

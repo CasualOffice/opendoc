@@ -184,6 +184,52 @@ pub enum LineBreak {
     ParagraphEnd,
 }
 
+/// The `a:xfrm` rotation and flips of an inline picture, carried WITHOUT a
+/// centre because the centre is the placed box's and only composition knows it.
+///
+/// A float's rotation is already a [`ShapeTransform`](crate::display::ShapeTransform)
+/// on its `PlacedAnchor`, resolved against the anchor rect. The inline case had
+/// no carrier at all — `compose_paragraph` emitted `transform: None` with the
+/// comment "inline images are not rotated (a:xfrm applies to floats)", which is
+/// not what OOXML says and not what Word or ONLYOFFICE do: `a:xfrm@rot` sits in
+/// `pic:spPr` and is authored on inline pictures just as often as on floating
+/// ones. So an imported rotated inline picture painted upright, and
+/// `setObjectRotation` on one wrote a model change nothing drew.
+///
+/// **The line box is NOT grown to the rotated bounding box.** Word reflows the
+/// line around a rotated inline picture's turned extents; this paints the
+/// rotation inside the authored box, so a rotated inline picture can overpaint
+/// its neighbours. That is a deliberate, recorded divergence — growing the line
+/// is a flow change with a geometry-golden cost, and painting nothing at all was
+/// strictly worse.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct InlineTransform {
+    /// Clockwise rotation in 60000ths of a degree (`a:xfrm@rot`).
+    #[serde(default, skip_serializing_if = "is_zero_rotation")]
+    pub rotation: i32,
+    /// Horizontal flip about the box centre (`a:xfrm@flipH`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip about the box centre (`a:xfrm@flipV`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+}
+
+fn is_zero_rotation(rotation: &i32) -> bool {
+    *rotation == 0
+}
+
+impl InlineTransform {
+    /// Whether this is the identity — no rotation and no flip, the common case,
+    /// which composition paints through the untransformed blit path.
+    ///
+    /// O(1).
+    #[must_use]
+    pub const fn is_identity(&self) -> bool {
+        self.rotation == 0 && !self.flip_h && !self.flip_v
+    }
+}
+
 /// An inline image (embedded picture) placed within a paragraph, positioned like
 /// a glyph run: `origin` is the box's top-left relative to the paragraph content
 /// box, in twips. The renderer resolves `media` to bytes (a [`MediaSource`]) and
@@ -208,6 +254,10 @@ pub struct InlineImage {
     /// `None` is fully opaque. Carried through to `PaintItem::Image`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<u32>,
+    /// The `a:xfrm` rotation/flip painted about this box's centre. The identity
+    /// is skipped by serde, so an unrotated galley stays byte-identical.
+    #[serde(default, skip_serializing_if = "InlineTransform::is_identity")]
+    pub transform: InlineTransform,
 }
 
 /// An inline image handed to the line shaper as an in-flow box. `index` is the
@@ -227,6 +277,8 @@ pub struct InlineImageSpec {
     /// The picture's opacity (`a:alphaModFix`), copied into the positioned
     /// [`InlineImage`].
     pub opacity: Option<u32>,
+    /// The `a:xfrm` rotation/flip, copied into the positioned [`InlineImage`].
+    pub transform: InlineTransform,
 }
 
 /// A pre-laid-out equation handed to the paragraph shaper as one atomic in-flow
@@ -686,6 +738,7 @@ pub trait LineShaper {
                     size: image.size,
                     crop: image.crop,
                     opacity: image.opacity,
+                    transform: image.transform,
                 }],
                 fields: Vec::new(),
                 notes: Vec::new(),

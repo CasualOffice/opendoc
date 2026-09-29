@@ -133,13 +133,19 @@ test("an inserted group-child shape routes root commands and subject formatting"
   expect(root).not.toBe(subject);
   await expect(pages).toHaveAttribute(
     "data-object-capabilities",
-    "canResize,canMove,canWrap,canDelete,canFill,canStroke",
+    // `canRotate` joins them: a shape leaf carries its own `a:xfrm` and the
+    // anchor pass paints it, so the subject is rotatable even though the group
+    // root that owns its resize grips is not.
+    "canResize,canRotate,canMove,canWrap,canDelete,canFill,canStroke",
   );
 
   // The subject owns Fill/Stroke while the stable reference's root owns resize,
   // move, wrap, and delete. Every group handle commits root extent + transform +
   // anchor through one exact-inverse engine transaction.
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+  await expect(page.locator(".overlay .object-handle:not(.object-rotate-handle)")).toHaveCount(8);
+  // The rotation grip rides alongside the eight, so the resize count is taken
+  // on the resize grips rather than on every `.object-handle`.
+  await expect(page.locator(".overlay .object-rotate-handle")).toHaveCount(1);
   const bar = page.locator(".object-context-bar");
   await expect(bar).toContainText("handles to resize");
   await expect(bar.getByRole("button", { name: "Shape fill" })).toBeVisible();

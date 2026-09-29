@@ -2035,6 +2035,7 @@ mod tests {
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size: Size::new(Twip(1_000), Twip(height)),
             crop: None,
+            transform: crate::text::InlineTransform::default(),
         }];
         line.ascent = Twip(height);
         line.height = Twip(height);

@@ -666,6 +666,15 @@ export const EN_STRINGS = Object.freeze({
   "object.rotate.flipVertical": "Flip vertical",
   "object.rotate.flipHorizontal": "Flip horizontal",
   "object.rotate.unsupported": "This object's model carries no rotation — group it first",
+  // The rotation HANDLE: the direct-manipulation half of the same capability.
+  // It is a slider, not a button — it has a value and arrow keys that change
+  // it — so it needs a name and a spoken value, and the value text is what a
+  // screen reader reads while the object turns.
+  "object.rotate.handle": "Rotate object",
+  "object.rotate.degrees": "{degrees}°",
+  "object.rotate.applied": "Rotated to {degrees}°",
+  "object.rotate.notTracked": "Rotating an object is not tracked; switch to Editing to rotate it",
+  "object.resize.notTracked": "Resizing an object is not tracked; switch to Editing to resize it",
   // Text inside a shape. Double-click is the gesture in Word and in Docs; the
   // menu row is the second surface, because a gesture nobody told you about is
   // not reachable.

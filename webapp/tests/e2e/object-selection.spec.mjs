@@ -52,6 +52,10 @@ test("an inline image exposes only handles its flow anchor can honor", async ({
     "5",
     "6",
     "7",
+    // 8 is the ROTATION grip — ONLYOFFICE's own numbering, where `hitToHandles`
+    // returns 0..7 for the resize markers and 8 for the rotation one. An inline
+    // picture models `a:xfrm` and the layout paints it, so it is offered here.
+    "8",
   ]);
   await expect(page.locator(".object-context-bar")).toBeVisible();
   await expect(page.locator(".object-context-bar")).toContainText("Drag handles to resize");
