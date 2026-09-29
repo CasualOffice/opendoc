@@ -151,7 +151,7 @@ test("every Review ribbon command is reachable from the menu bar", async ({
   // the tab strip. So the menu homes are read in the chrome that has menus, and
   // the ribbon roster in the chrome that has a ribbon — which is the honest
   // reading of the rule, since a user in either chrome can reach both.
-  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
+  const MENUS = ["file", "edit", "view", "insert", "format", "table", "references", "review"];
   const home = new Map();
   await useCompactChrome(page);
   for (const menu of MENUS) {

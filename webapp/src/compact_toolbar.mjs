@@ -77,7 +77,7 @@
 // `⋯` menu at the default viewport. Outside a table the capability is not gone —
 // the compact chrome's Table MENU carries every row, disabled with its reason,
 // which is where "never a dead control" is met.
-import { APP_MENU_SECTIONS, TABLE_MENU_LABELS } from "./command_taxonomy.mjs";
+import { APP_MENU_SECTIONS, TABLE_MENU_LABELS, sectionCommandIds } from "./command_taxonomy.mjs";
 import { t } from "./i18n.mjs";
 
 /** The ribbon-owned controls this bar borrows, by row `control` key.
@@ -268,7 +268,7 @@ export function compactCommandIds(table = COMPACT_TOOLBAR) {
   for (const group of table) {
     for (const item of group.items) {
       if (item.kind === "menu") {
-        ids.push(...item.sections.flat());
+        ids.push(...sectionCommandIds(item.sections));
         continue; // its own `id` names the TRIGGER, not a command
       }
       if (item.id) ids.push(item.id);
@@ -455,16 +455,23 @@ export function createCompactToolbar({
     const commands = registry();
     surface.replaceChildren();
     for (const section of entry.sections) {
-      let wrote = false;
-      for (const id of section) {
+      // The SAME named band the Table menu renders, from the same declaration:
+      // `role="group"` with the band's translated name, and the rule between
+      // bands drawn on the group's own top edge. A dropdown that showed the
+      // taxonomy's bands as anonymous hairlines while the menu bar announced
+      // them by name would be two answers to one question.
+      let group = null;
+      for (const id of section.ids) {
         const command = commands.get(id);
         if (!command) continue;
-        if (surface.childElementCount && !wrote) {
-          const rule = document.createElement("div");
-          rule.className = "menu-divider";
-          surface.appendChild(rule);
+        if (!group) {
+          group = document.createElement("div");
+          group.className = "menu-group";
+          group.setAttribute("role", "group");
+          group.setAttribute("aria-label", t(section.nameKey));
+          group.dataset.group = section.nameKey;
+          surface.appendChild(group);
         }
-        wrote = true;
         const item = document.createElement("button");
         item.type = "button";
         item.className = "menu-item";
@@ -482,7 +489,7 @@ export function createCompactToolbar({
         } else {
           onButton(item, () => runCommand(id, item));
         }
-        surface.appendChild(item);
+        group.appendChild(item);
       }
     }
   }

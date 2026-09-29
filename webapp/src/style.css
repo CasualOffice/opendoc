@@ -986,10 +986,26 @@ input {
   color: var(--faint);
 }
 
-.app-menu-separator {
-  height: 1px;
-  margin: 5px 7px;
-  background: var(--line);
+/* A band of related rows. It was a `.app-menu-separator` div between runs of
+ * rows; it is now the rows' own container, so the band has a name a screen
+ * reader can announce and the rule is the container's top edge rather than an
+ * element that exists only to be a line (`command_menu.mjs` says why the group
+ * won over the separator). Same 1px in the same token — no visual change to
+ * the hairline itself, only to what it is drawn ON. */
+.app-menu-item-group + .app-menu-item-group {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+}
+
+/* The compact bar's Table dropdown renders the SAME bands from the SAME
+ * declaration, so it gets the same rule. `.menu-group` rather than a
+ * table-specific class: the next dropdown built out of `APP_MENU_SECTIONS`
+ * inherits it without a second stylesheet block. */
+.menu-group + .menu-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
 }
 
 /* ---- Settings dialog ------------------------------------------------------ */
@@ -7557,7 +7573,10 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   color: var(--muted);
 }
 
-.file-page-item-heading:first-child {
+/* The FIRST band's heading, not every band's. A heading is now the first child
+ * of its own `role="group"` wrapper, so `:first-child` alone matched all of
+ * them and collapsed the space between every band on the File page. */
+.file-page-item-group:first-child .file-page-item-heading {
   margin-top: 0;
 }
 

@@ -65,6 +65,15 @@
                both use. Its rows are the same commands the right-click menu and
                the palette run (docs/105 UX-012). -->
           <button data-i18n="appMenuBar.table" type="button" class="app-menu-button" data-menu="table" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Table</button>
+          <!-- References, in the slot Word's ribbon gives it (after the table
+               tools, before Review). It was missing from this bar entirely,
+               which in COMPACT mode — where there is no ribbon behind the bar —
+               left the table of contents, captions and cross-references
+               reachable only by typing their names into the palette. It reuses
+               `documentChrome.references`, the key the ribbon tab already
+               declares, so the tab and the menu cannot be translated into two
+               different words for one surface. -->
+          <button data-i18n="documentChrome.references" type="button" class="app-menu-button" data-menu="references" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">References</button>
           <!-- Review absorbs the two proofing switches; Tools and Help are gone.
                Settings and Help are File-page items in ONLYOFFICE
                (`DE.Views.FileMenu.btnSettingsCaption`/`btnHelpCaption`), and

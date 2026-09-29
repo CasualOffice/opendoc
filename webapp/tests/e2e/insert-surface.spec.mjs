@@ -462,17 +462,32 @@ test("the load-time insertion point exists but paints no caret until the editor 
 // Pinned to one panel, this guard would have forced the notes to stay on the
 // Insert tab to keep itself green — a test dictating the information
 // architecture instead of protecting reachability.
+//
+// The MENU side had the identical flaw, one level up, and it took a second
+// change to find it: scoped to the Insert MENU, this guard forced every
+// `insert.*` command to stay in that one menu. When the notes moved to a
+// References menu — where Word and ONLYOFFICE keep them, and where this
+// editor's own References BAND already had them — the guard went red over a
+// command that had gained a surface and lost none. So both sides are now
+// whole-surface: every menu of the bar against every tab of the ribbon. What
+// it protects is "an `insert.*` command is on BOTH navigation axes", which is
+// the reachability rule; where on each axis is the taxonomy's business.
 test("every Insert command has a ribbon face on some tab", async ({ page, consoleErrors }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
 
-  await openAppMenu(page, "insert");
-  const menuCommands = await page
-    .locator("#appMenuPopover .app-menu-item[data-command]")
-    .evaluateAll((items) =>
-      items.map((item) => item.dataset.command).filter((id) => id.startsWith("insert.")),
+  const menuCommands = [];
+  for (const menu of ["file", "edit", "view", "insert", "format", "table", "references", "review"]) {
+    await openAppMenu(page, menu);
+    menuCommands.push(
+      ...(await page
+        .locator("#appMenuPopover .app-menu-item[data-command]")
+        .evaluateAll((items) =>
+          items.map((item) => item.dataset.command).filter((id) => id.startsWith("insert.")),
+        )),
     );
-  await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+  }
 
   // Hidden panels still hold their buttons, so no tab switching is needed — and
   // reading them all at once is what makes this ribbon-wide rather than
