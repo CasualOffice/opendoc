@@ -1210,6 +1210,8 @@
   "toolbar.redoNamed": "Ripeti {name}",
   "toolbar.undo": "Annulla",
   "toolbar.undoNamed": "Annulla {name}",
+  "touchSelection.endHandle": "Fine della selezione",
+  "touchSelection.startHandle": "Inizio della selezione",
   "ui.applicationMenu.label": "Menu dell’applicazione",
   "ui.bulletStyle.label": "Stile punto elenco",
   "ui.cellBorderFormatting.label": "Formattazione di celle e bordi",

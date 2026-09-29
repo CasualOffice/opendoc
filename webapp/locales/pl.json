@@ -1214,6 +1214,8 @@
   "toolbar.redoNamed": "Ponów: {name}",
   "toolbar.undo": "Cofnij",
   "toolbar.undoNamed": "Cofnij: {name}",
+  "touchSelection.endHandle": "Koniec zaznaczenia",
+  "touchSelection.startHandle": "Początek zaznaczenia",
   "ui.applicationMenu.label": "Menu aplikacji",
   "ui.bulletStyle.label": "Styl punktora",
   "ui.cellBorderFormatting.label": "Formatowanie komórek i krawędzi",

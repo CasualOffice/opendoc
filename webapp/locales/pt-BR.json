@@ -1210,6 +1210,8 @@
   "toolbar.redoNamed": "Refazer {name}",
   "toolbar.undo": "Desfazer",
   "toolbar.undoNamed": "Desfazer {name}",
+  "touchSelection.endHandle": "Fim da seleção",
+  "touchSelection.startHandle": "Início da seleção",
   "ui.applicationMenu.label": "Menu do aplicativo",
   "ui.bulletStyle.label": "Estilo de marcador",
   "ui.cellBorderFormatting.label": "Formatação de células e bordas",

@@ -1214,6 +1214,8 @@
   "toolbar.redoNamed": "Повторити: {name}",
   "toolbar.undo": "Скасувати",
   "toolbar.undoNamed": "Скасувати: {name}",
+  "touchSelection.endHandle": "Кінець виділення",
+  "touchSelection.startHandle": "Початок виділення",
   "ui.applicationMenu.label": "Меню програми",
   "ui.bulletStyle.label": "Стиль маркера",
   "ui.cellBorderFormatting.label": "Форматування клітинок і меж",

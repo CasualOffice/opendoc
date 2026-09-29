@@ -1202,6 +1202,8 @@
   "toolbar.redoNamed": "恢复{name}",
   "toolbar.undo": "撤消",
   "toolbar.undoNamed": "撤消{name}",
+  "touchSelection.endHandle": "选区结束",
+  "touchSelection.startHandle": "选区开始",
   "ui.applicationMenu.label": "应用程序菜单",
   "ui.bulletStyle.label": "项目符号样式",
   "ui.cellBorderFormatting.label": "单元格和边框格式",

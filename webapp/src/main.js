@@ -124,6 +124,7 @@ import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_ma
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, openingZoomMode } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
+import { createTouchSelection } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
@@ -4170,6 +4171,7 @@ function paintOverlayLayer() {
     paintSelection(selection);
     tableChrome.paintCaretColumnHandles(pages, cellRect);
     tableChrome.paintTouchPills(pages);
+    touchSelection.paint(pages); // the finger's handles, same layer, same reason
   }
   // Outside the `selection` branch: a strip is armed by the POINTER, and being
   // over a table is not a reason to require a caret.
@@ -6029,6 +6031,27 @@ function activateLink(link) {
   return true;
 }
 
+/** Touch selection — the long press, the two handles, the loupe and the caret
+ *  drag (`105` UX-018, `148` §9 item 2). Every tunable and the whole gesture
+ *  live in the module; this is all the shell owes it. */
+const touchSelection = createTouchSelection({
+  view: window,
+  surface: pagesEl,
+  mount: document.body,
+  makeEl: (tag) => document.createElement(tag),
+  enabled: () => !!doc && chromeShows("caret"),
+  pageAt: (x, y) => pageFromClientPoint(x, y),
+  scaleOf,
+  anchorAt,
+  caretRect: (at) => doc.caretRect(at.node, at.offset),
+  wordAt: (node, offset) => doc.wordAt(node, offset),
+  selection: () => selection,
+  setSelection: (next) => void (selection = next),
+  draw: drawSelection,
+  focus: focusEditorSurface,
+  cancelGesture: resetPointerGesture,
+});
+
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
   // No caret region: a press neither places an insertion point nor starts a
@@ -6426,21 +6449,6 @@ function onPointerUp(event) {
   }
 }
 
-/** Double-click selects the word under the pointer. */
-function selectWord(page, event) {
-  const a = anchorAt(page, event);
-  if (!a) return;
-  focusEditorSurface();
-  const bounds = doc.wordAt(a.node, a.offset); // [start, end] or []
-  if (bounds.length === 2) {
-    selection = {
-      anchor: { node: a.node, offset: bounds[0] },
-      focus: { node: a.node, offset: bounds[1] },
-    };
-    drawSelection();
-  }
-}
-
 function selectionText() {
   if (!selection) return;
   const { anchor, focus } = selection;
@@ -6710,7 +6718,7 @@ pagesEl.addEventListener("dblclick", (e) => {
     void editRunningContent(bandAtPoint, page);
     return;
   }
-  selectWord(page, e);
+  touchSelection.selectWord(page, e); // the SAME routine the long press uses
 });
 // Triple-click selects the paragraph (the click's `detail` is the click count).
 pagesEl.addEventListener("click", (e) => {
@@ -6727,36 +6735,22 @@ pagesEl.addEventListener("click", (e) => {
   drawSelection();
 });
 window.addEventListener("pointerup", onPointerUp);
-window.addEventListener("pointercancel", () => {
+/** Every pointer gesture the document owns, dropped. The four events below mean
+ *  one thing — the pointer is gone and nothing will finish it — and were four
+ *  copies of one list, so the touch machine would have been added to three of
+ *  them and forgotten in the fourth. One list, named once. */
+function abortPointerGestures() {
   cancelObjectMove();
   cancelObjectResize();
   tableChrome.cancelDrag();
   tableGutter.cancelDrag();
+  touchSelection.cancel();
   resetPointerGesture();
-});
-window.addEventListener("lostpointercapture", () => {
-  cancelObjectMove();
-  cancelObjectResize();
-  tableChrome.cancelDrag();
-  tableGutter.cancelDrag();
-  resetPointerGesture();
-});
-window.addEventListener("blur", () => {
-  cancelObjectMove();
-  cancelObjectResize();
-  tableChrome.cancelDrag();
-  tableGutter.cancelDrag();
-  resetPointerGesture();
-});
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    cancelObjectMove();
-    cancelObjectResize();
-    tableChrome.cancelDrag();
-    tableGutter.cancelDrag();
-    resetPointerGesture();
-  }
-});
+}
+window.addEventListener("pointercancel", abortPointerGestures);
+window.addEventListener("lostpointercapture", abortPointerGestures);
+window.addEventListener("blur", abortPointerGestures);
+document.addEventListener("visibilitychange", () => document.hidden && abortPointerGestures());
 
 linkChip.addEventListener("mousedown", (event) => {
   // Keep the model selection visible while the host control receives the click.
@@ -9430,7 +9424,7 @@ function disarmFormatPainter(reason) {
 async function paintFormatFromGesture(gesture, event) {
   if (!hasRange()) {
     const page = gesture?.page || pageFromClientPoint(event.clientX, event.clientY);
-    if (page) selectWord(page, event);
+    if (page) touchSelection.selectWord(page, event);
   }
   const painted = hasRange() ? await applyPaintedFormat() : false;
   if (!formatPainter?.sticky) disarmFormatPainter();
@@ -13697,8 +13691,13 @@ function positionSelToolbar() {
   const topBound = Math.max(8, viewport.top + 8);
   const bottomBound = Math.min(window.innerHeight - 8, viewport.bottom - 8);
   let x = (left + right) / 2 - tw / 2;
-  let y = top - th - 8;
-  if (y < topBound) y = bottom + 8; // no room above → drop below the selection
+  // …plus whatever the touch handles need. They hang above the selection's top
+  // and below its bottom, and this bar is a FIXED element over the page: eight
+  // pixels of gap put it through the middle of the start handle's dot and took
+  // every touch aimed at it (`touch_selection.mjs`'s `clearance`).
+  const gap = 8 + touchSelection.clearance();
+  let y = top - th - gap;
+  if (y < topBound) y = bottom + gap; // no room above → drop below the selection
   if (y + th > bottomBound) {
     // A selection at the viewport bottom may have no full-height slot below it;
     // keep the bar visible and out of the browser chrome rather than allowing a

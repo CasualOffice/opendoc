@@ -1210,6 +1210,8 @@
   "toolbar.redoNamed": "Rétablir {name}",
   "toolbar.undo": "Annuler",
   "toolbar.undoNamed": "Annuler {name}",
+  "touchSelection.endHandle": "Fin de la sélection",
+  "touchSelection.startHandle": "Début de la sélection",
   "ui.applicationMenu.label": "Menu de l’application",
   "ui.bulletStyle.label": "Style de puce",
   "ui.cellBorderFormatting.label": "Mise en forme des cellules et des bordures",

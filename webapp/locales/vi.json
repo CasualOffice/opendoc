@@ -1202,6 +1202,8 @@
   "toolbar.redoNamed": "Làm lại {name}",
   "toolbar.undo": "Hoàn tác",
   "toolbar.undoNamed": "Hoàn tác {name}",
+  "touchSelection.endHandle": "Cuối vùng chọn",
+  "touchSelection.startHandle": "Đầu vùng chọn",
   "ui.applicationMenu.label": "Menu ứng dụng",
   "ui.bulletStyle.label": "Kiểu dấu đầu dòng",
   "ui.cellBorderFormatting.label": "Định dạng ô và đường viền",

@@ -1202,6 +1202,8 @@
   "toolbar.redoNamed": "{name} 다시 실행",
   "toolbar.undo": "실행 취소",
   "toolbar.undoNamed": "{name} 실행 취소",
+  "touchSelection.endHandle": "선택 끝",
+  "touchSelection.startHandle": "선택 시작",
   "ui.applicationMenu.label": "응용 프로그램 메뉴",
   "ui.bulletStyle.label": "글머리 기호 스타일",
   "ui.cellBorderFormatting.label": "셀 및 테두리 서식",

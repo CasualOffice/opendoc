@@ -1206,6 +1206,8 @@
   "toolbar.redoNamed": "{name} işlemini yinele",
   "toolbar.undo": "Geri al",
   "toolbar.undoNamed": "{name} işlemini geri al",
+  "touchSelection.endHandle": "Seçim sonu",
+  "touchSelection.startHandle": "Seçim başlangıcı",
   "ui.applicationMenu.label": "Uygulama menüsü",
   "ui.bulletStyle.label": "Madde işareti stili",
   "ui.cellBorderFormatting.label": "Hücre ve kenarlık biçimlendirme",

@@ -469,6 +469,17 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.clear.done.one": "Deleted {count} version and freed {size}.",
   "versionHistory.clear.done.other": "Deleted {count} versions and freed {size}.",
 
+  // ---- Touch selection (docs/105 UX-018, docs/148 §9) -----------------------
+  // The two drag handles a finger uses to make and adjust a selection. They are
+  // the only visible selection affordance on a touch device, so they are named
+  // rather than decorative: a screen reader explores a touchscreen by touch and
+  // an unlabelled circle over a word says nothing. LOGICAL names — "start" is
+  // the start of the selection in reading order, which in a right-to-left
+  // paragraph is the handle on the right — so a translation must not turn them
+  // into "left" and "right".
+  "touchSelection.startHandle": "Selection start",
+  "touchSelection.endHandle": "Selection end",
+
   // ---- Tables (docs/141) ---------------------------------------------------
   // The four reasons a Table-band control can be unavailable. They were already
   // the MENU's sentences, written as literals in `tableToolCommands`, while the

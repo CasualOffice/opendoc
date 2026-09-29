@@ -1222,6 +1222,8 @@
   "toolbar.redoNamed": "إعادة {name}",
   "toolbar.undo": "تراجع",
   "toolbar.undoNamed": "تراجع عن {name}",
+  "touchSelection.endHandle": "نهاية التحديد",
+  "touchSelection.startHandle": "بداية التحديد",
   "ui.applicationMenu.label": "قائمة التطبيق",
   "ui.bulletStyle.label": "نمط التعداد النقطي",
   "ui.cellBorderFormatting.label": "تنسيق الخلايا والحدود",

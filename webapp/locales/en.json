@@ -1779,6 +1779,8 @@
   "toolbar.redoNamed": "Redo {name}",
   "toolbar.undo": "Undo",
   "toolbar.undoNamed": "Undo {name}",
+  "touchSelection.endHandle": "Selection end",
+  "touchSelection.startHandle": "Selection start",
   "ui.applicationMenu.label": "Application menu",
   "ui.bulletStyle.label": "Bullet style",
   "ui.cellBorderFormatting.label": "Cell and border formatting",
