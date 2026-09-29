@@ -23,6 +23,33 @@
 //    for one cell rect per (row, column) and each scanned every fragment on
 //    every page.
 //
+// ## What is painted: the table's OWN border, not a bar beside it
+//
+// The owner, on the first cut: *"instead of adding new header on left and top..
+// why not highlighting the existing border.. and using that.. i think that what
+// even google docs does"*. He is right about the model, and ONLYOFFICE's source
+// is where it can be checked — `private_CheckHitInBorder` cancels the border
+// resize (`Border = -1`) on the leading edges and reports `RowSelection` /
+// `ColumnSelection` instead, so the border IS the affordance there.
+// `table_gutter_zones.mjs` carries the quotation and the line numbers.
+//
+// So nothing is drawn outside the table any more. The three states are painted
+// as a 3px highlight **centred on the table's own leading border**, at that
+// border's geometry:
+//
+//   * **rest** — the pointer is in the table: a soft neutral wash the whole
+//     length of both leading borders, translucent so a table that has a painted
+//     border still shows it through, and visible on a table whose border is
+//     `none`, which is the case where there would otherwise be nothing to aim at;
+//   * **hover** — the band under the pointer: the same line, clearly darker;
+//   * **selected** — that band: `--accent`, opaque.
+//
+// The GRAB ZONE is unchanged in size and still reaches `STRIP_PX` (14) /
+// `TOUCH_STRIP_PX` (24) outside the table; it now also reaches `INSIDE_PX` past
+// the border so that the border itself is inside the target rather than one
+// pixel outside it. Drawn 3px, targeted 14–24px: the same split the resize grips
+// make at 9px drawn inside 24px hit.
+//
 // ## What is painted, and when — and why the table has to be ENTERED first
 //
 // Only the ONE table the pointer is over, only while it is over it, and only
@@ -79,6 +106,7 @@
 import {
   STRIP_PX,
   TOUCH_STRIP_PX,
+  INSIDE_PX,
   INSERT_TARGET_PX,
   armTableGutter,
   dropBoundaryAt,
@@ -86,6 +114,14 @@ import {
   stripRect,
   tableBands,
 } from "./table_gutter_zones.mjs";
+
+/** The highlight's thickness in CSS px, centred on the table's own border.
+ *
+ *  DRAWN, not targeted: the grab zone stays 14px (24 under a finger) and this is
+ *  the visible half, the same separation the resize grips make between a 9px
+ *  grip and its 24px WCAG 2.5.8 hit area. Three pixels reads as "this border is
+ *  lit" against a hairline table border without becoming a rule of its own. */
+const EDGE_PX = 3;
 
 /** The two strip classes and the selection mode each one selects. */
 const AXIS = Object.freeze({
@@ -142,6 +178,8 @@ export function createTableGutter(host) {
     return {
       stripX: strip / (sx || 1),
       stripY: strip / (sy || 1),
+      insideX: INSIDE_PX / (sx || 1),
+      insideY: INSIDE_PX / (sy || 1),
       insertX: insert / (sx || 1),
       insertY: insert / (sy || 1),
     };
@@ -170,6 +208,39 @@ export function createTableGutter(host) {
     if (!tableNode) return "";
     return [pageNumber, tableNode, target?.axis ?? "", target?.kind ?? "", target?.index ?? ""].join(
       "/",
+    );
+  }
+
+  /** The whole leading border of a table, as a span on the gesture's axis. */
+  function leadingSpan(table, axis) {
+    return axis === "row"
+      ? { lo: table.y, hi: table.y + table.h }
+      : { lo: table.x, hi: table.x + table.w };
+  }
+
+  /**
+   * Paints one segment of the table's own LEADING border — a 3px line centred on
+   * the border itself, not beside it.
+   *
+   * Centred rather than flush so the highlight covers the painted border rather
+   * than sitting a pixel off it: the engine strokes the cell edge at the box
+   * coordinate `tableChromeOnPage` reports, so a line drawn from that coordinate
+   * outward would leave the border showing on one side and read as a second,
+   * parallel rule. `EDGE_PX / 2` on each side is what makes it a highlight of
+   * that border instead.
+   *
+   * Complexity: O(1).
+   */
+  function edge(page, table, axis, className, span, sx, sy) {
+    const rowAxis = axis === "row";
+    const half = EDGE_PX / 2;
+    return child(
+      page,
+      className,
+      rowAxis ? table.x * sx - half : span.lo * sx,
+      rowAxis ? span.lo * sy : table.y * sy - half,
+      rowAxis ? EDGE_PX : (span.hi - span.lo) * sx,
+      rowAxis ? (span.hi - span.lo) * sy : EDGE_PX,
     );
   }
 
@@ -258,7 +329,15 @@ export function createTableGutter(host) {
      */
     hover(page, event) {
       const inside = tableUnder(page, event);
-      const target = inside ? null : armedTargetAt(page, event);
+      const found = armedTargetAt(page, event);
+      // Being inside the table's box no longer means being off the gutter: the
+      // zone reaches a clamped hair PAST the leading border, because the border
+      // is the affordance. This line used to read `inside ? null : …`, which
+      // cancelled exactly the new part of the zone and left the border lighting
+      // up only from the outside. A target belonging to a DIFFERENT table from
+      // the one the pointer is in is still dropped, or a nested table would arm
+      // one table and paint another's band.
+      const target = !inside || inside.node === found?.table.node ? found : null;
       const tableNode = inside?.node ?? target?.table.node ?? "";
       const touch = event?.pointerType === "touch";
       const key = `${keyOf(page?.pageNumber, tableNode, target)}${touch ? "/t" : ""}`;
@@ -277,22 +356,34 @@ export function createTableGutter(host) {
      * gesture that is deliberately absent rather than broken.
      */
     tryBeginDrag(page, event) {
-      // Only a strip of the ARMED table takes a press. Without that condition a
+      // A TOUCH tap inside a table ARMS the gutter, because hover — the thing
+      // every branch here depends on — does not exist on touch. The arming tap
+      // still places the caret: it is the arming tap, not the gesture, which is
+      // the rule the boundary pills already follow (`docs/141` TBL-18). Without
+      // it the whole gutter is unreachable from a finger.
+      const arm = () => {
+        if (event.pointerType === "touch") this.hover(page, event);
+        return false;
+      };
+      // Only the ARMED table's own gutter takes a press. Without that condition a
       // press in the 14px band above any table would select a column instead of
       // placing the caret in the paragraph that lives there.
-      if (!armed?.tableNode || tableUnder(page, event)) {
-        // A TOUCH tap inside the table ARMS the gutter, because hover — the thing
-        // every branch above depends on — does not exist on touch. The tap still
-        // places the caret: it is the arming tap, not the gesture, which is the
-        // rule the boundary pills already follow (`docs/141` TBL-18). Without it
-        // the whole gutter is unreachable from a finger.
-        if (event.pointerType === "touch" && tableUnder(page, event)) this.hover(page, event);
-        return false;
-      }
+      //
+      // This used to bail on `tableUnder(page, event)` outright — anything inside
+      // a table's box was a caret placement by definition, because the zone was
+      // strictly outside. The zone now reaches a clamped hair PAST the leading
+      // border, so that test would have left the hover lighting a border the
+      // press then refused: a cursor promising a gesture that does not happen,
+      // which is the exact failure `docs/141` TBL-35 exists to prevent. What is
+      // still refused is a press inside a table that is not the armed one.
+      const inside = tableUnder(page, event);
+      if (!armed?.tableNode || (inside && inside.node !== armed.tableNode)) return arm();
       const { target, refusal } = probe(page, event);
       if (!target || target.table.node !== armed.tableNode) {
         if (refusal) host.status(host.t(refusal), "warn");
-        return false;
+        // Inside the armed table but off its gutter: an ordinary caret
+        // placement, and on touch also the arming tap.
+        return inside ? arm() : false;
       }
       event.preventDefault();
       event.stopPropagation();
@@ -390,7 +481,8 @@ export function createTableGutter(host) {
     },
 
     /**
-     * Draws the armed strip, its hot band and its `+` disc.
+     * Draws the armed grab zones, the border highlight in its three states, and
+     * the `+` disc.
      *
      * Called from the one overlay repaint, which destroys and rebuilds every
      * overlay child — so this is where the chrome comes back, not where it is
@@ -414,69 +506,87 @@ export function createTableGutter(host) {
       // The column strip is omitted on a merged table, where a column selection
       // refuses — a painted strip that refuses on click is a dead control.
       const thickness = defaultThickness(page);
+      /** The zone rect for one axis at the resting reach, or `null`. */
+      const zoneOf = (axis) =>
+        stripRect(
+          table,
+          axis,
+          axis === "row" ? thickness.x : thickness.y,
+          axis === "row" ? thickness.insideX : thickness.insideY,
+        );
       for (const axis of ["row", "column"]) {
         if (axis === "column" && !table.regular) continue;
-        const rect = stripRect(table, axis, axis === "row" ? thickness.x : thickness.y);
+        const rect = zoneOf(axis);
         if (!rect) continue;
+        // The hit zone. It paints nothing itself: everything visible below is a
+        // line on the table's own border, which is the point of this layer.
         child(page, AXIS[axis].strip, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy);
-        // The selected rows or columns keep an ACCENT bar whether or not the
-        // pointer is on them. That is what makes colour mean SELECTION here: a
-        // strip is grey because it exists and accent because it is chosen, which
-        // is Docs' rule and the reason the resting strip could go neutral.
-        // ONE box over the whole selected span rather than one per band — a row
-        // or column selection is contiguous, so the union is exact and the
+        // Rest: the whole leading border of the armed table, softly.
+        edge(page, table, axis, "table-gutter-edge", leadingSpan(table, axis), sx, sy);
+        // The selected rows or columns keep an ACCENT border whether or not the
+        // pointer is on them. That is what makes colour mean SELECTION here: the
+        // border is grey because it can be grabbed and accent because its band is
+        // chosen. ONE box over the whole selected span rather than one per band —
+        // a row or column selection is contiguous, so the union is exact and the
         // element count does not grow with the table.
         const span = selectedSpan(page, table, axis);
-        if (!span) continue;
-        const alongY = axis === "row";
-        const bar = child(
-          page,
-          "table-gutter-selection",
-          alongY ? rect.x * sx : span.lo * sx,
-          alongY ? span.lo * sy : rect.y * sy,
-          alongY ? rect.w * sx : (span.hi - span.lo) * sx,
-          alongY ? (span.hi - span.lo) * sy : rect.h * sy,
-        );
-        bar.dataset.axis = axis;
+        if (span) edge(page, table, axis, "table-gutter-selection", span, sx, sy);
       }
       paintDropIndicator(page, table, sx, sy);
       if (!target) return;
       const rowAxis = target.axis === "row";
-      const strip = stripRect(table, target.axis, rowAxis ? target.strip.w : target.strip.h);
+      const strip = zoneOf(target.axis);
       if (!strip) return;
       const bands = tableBands(table, target.axis);
       if (target.kind === "strip") {
         const band = bands.find((b) => b.i === target.index);
         if (!band) return;
-        const el = child(
+        const lit = edge(
           page,
-          "table-gutter-band",
-          rowAxis ? strip.x * sx : band.start * sx,
-          rowAxis ? band.start * sy : strip.y * sy,
-          rowAxis ? strip.w * sx : band.extent * sx,
-          rowAxis ? band.extent * sy : strip.h * sy,
+          table,
+          target.axis,
+          "table-gutter-hover",
+          { lo: band.start, hi: band.end },
+          sx,
+          sy,
         );
-        // The bar is drawn by CSS against the leading edge of the strip, so it
-        // has to know which edge that is; and a hovered band that is ALSO the
-        // selection stays accent rather than reverting to the hover grey.
-        el.dataset.axis = target.axis;
-        if (inSpan(selectedSpan(page, table, target.axis), band)) el.dataset.selected = "1";
+        // A hovered band that is ALSO the selection stays accent rather than
+        // reverting to the hover grey.
+        if (inSpan(selectedSpan(page, table, target.axis), band)) lit.dataset.selected = "1";
         // A band that IS the selection is a handle, and says so with `grab`.
         // Not while a reorder is in flight: the band being carried keeps the
         // `grabbing` the router holds for the whole drag.
+        //
+        // The cursor goes on a TRANSPARENT slab the width of the grab zone, not
+        // on the 3px line: a `grab` that only appears over three pixels of border
+        // would advertise the reorder on a target no one can find. Drawn 3px,
+        // grabbable at 14 (24 under a finger) — the same split as everything else
+        // in this layer, and it keeps `pointer_cursor.mjs`' `table-gutter-band`
+        // row pointing at the element that actually takes the press.
         if (!drag && !host.state().editsBlocked && movableBand(page, table, target.axis, target)) {
-          el.dataset.move = "ready";
-          el.title = host.t(rowAxis ? "table.dragToMoveRow" : "table.dragToMoveColumn");
+          const slab = child(
+            page,
+            "table-gutter-band",
+            rowAxis ? strip.x * sx : band.start * sx,
+            rowAxis ? band.start * sy : strip.y * sy,
+            rowAxis ? strip.w * sx : band.extent * sx,
+            rowAxis ? band.extent * sy : strip.h * sy,
+          );
+          slab.dataset.move = "ready";
+          slab.title = host.t(rowAxis ? "table.dragToMoveRow" : "table.dragToMoveColumn");
         }
         return;
       }
       const at = target.at;
       const size = discSize();
+      // Centred on the OUTSIDE half of the zone, so the disc stays off the first
+      // cell's text the way it did when the whole zone was outside.
+      const outsideW = rowAxis ? table.x * sx - strip.x * sx : table.y * sy - strip.y * sy;
       const disc = child(
         page,
         "table-insert-target",
-        rowAxis ? strip.x * sx + (strip.w * sx - size) / 2 : at * sx - size / 2,
-        rowAxis ? at * sy - size / 2 : strip.y * sy + (strip.h * sy - size) / 2,
+        rowAxis ? strip.x * sx + (outsideW - size) / 2 : at * sx - size / 2,
+        rowAxis ? at * sy - size / 2 : strip.y * sy + (outsideW - size) / 2,
         size,
         size,
       );
@@ -710,7 +820,12 @@ export function createTableGutter(host) {
   function defaultThickness(page) {
     const { sx, sy } = host.scaleOf(page);
     const px = armed?.touch ? TOUCH_STRIP_PX : STRIP_PX;
-    return { x: px / (sx || 1), y: px / (sy || 1) };
+    return {
+      x: px / (sx || 1),
+      y: px / (sy || 1),
+      insideX: INSIDE_PX / (sx || 1),
+      insideY: INSIDE_PX / (sy || 1),
+    };
   }
 
   /** The insert disc's diameter in CSS px — 24 under a finger, for the same

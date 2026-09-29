@@ -3,9 +3,11 @@
 // Every assertion here is on a GUARANTEE the design makes, not on a shape it
 // happens to have:
 //
-//   * a strip never takes any part of a cell, so clicking in a cell still places
-//     the caret at every strip width (the defect the boundary zones had to be
-//     clamped for);
+//   * the zone reaches the table's own leading BORDER and a clamped hair past
+//     it — the border is the affordance — while the rest of every cell still
+//     places the caret at every band height;
+//   * the leading borders carry no resize boundary, so the selection gesture and
+//     the resize gesture never contest a pixel;
 //   * the strip resolves the band a user is pointing BESIDE;
 //   * the `+` insert zone cannot eat the strip segment that selects the band,
 //     however short the band is;
@@ -15,6 +17,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  INSIDE_PX,
   STRIP_PX,
   armTableGutter,
   dropBoundaryAt,
@@ -23,6 +26,7 @@ import {
   stripRect,
   tableBands,
 } from "../src/table_gutter_zones.mjs";
+import { boundaryAt } from "../src/table_chrome_zones.mjs";
 
 /** A `tableChromeOnPage`-shaped table: `rows` rows of `rowH` twips and `cols`
  *  columns of `colW`, with its top-left corner at (x, y). */
@@ -62,33 +66,131 @@ function chromeTable({ rows = 3, cols = 2, rowH = 288, colW = 1440, x = 1440, y 
 }
 
 /** The tolerances a 100%-zoom page gives: twips per CSS px is 15. */
-const OPTS = { stripX: STRIP_PX * 15, stripY: STRIP_PX * 15, insertX: 8 * 15, insertY: 8 * 15 };
+const OPTS = {
+  stripX: STRIP_PX * 15,
+  stripY: STRIP_PX * 15,
+  insideX: INSIDE_PX * 15,
+  insideY: INSIDE_PX * 15,
+  insertX: 8 * 15,
+  insertY: 8 * 15,
+};
 
-test("a strip lies entirely outside the table, so no cell loses a pixel to it", () => {
+test("the zone reaches the table's own leading border, and stops a hair past it", () => {
+  // The owner's correction: the BORDER is the affordance, not a bar beside it.
+  // ONLYOFFICE's `private_CheckHitInBorder` reports `RowSelection` for
+  // `X <= X_cell_start` and `ColumnSelection` for `Y <= Y_cell_start + nRadius`,
+  // so the border line itself belongs to the selection there. This is that.
   const table = chromeTable();
-  for (const axis of ["row", "column"]) {
-    const strip = stripRect(table, axis, STRIP_PX * 15);
-    assert.ok(strip, `${axis} strip should exist with room beside the table`);
-    if (axis === "row") assert.equal(strip.x + strip.w, table.x);
-    else assert.equal(strip.y + strip.h, table.y);
-  }
-  // The load-bearing half: every point INSIDE the table's own box resolves to no
-  // gutter target at all. This is the property that makes the strip free where a
-  // boundary zone had to be clamped to a fifth of its band.
-  for (let x = table.x; x < table.x + table.w; x += 120) {
-    for (let y = table.y; y < table.y + table.h; y += 60) {
+  const middleRow = table.y + 144;
+  const middleCol = table.x + 720;
+
+  // ON the border, to the twip.
+  assert.equal(gutterAt([table], table.x, middleRow, OPTS)?.axis, "row");
+  assert.equal(gutterAt([table], middleCol, table.y, OPTS)?.axis, "column");
+  // And a hair past it, which is what makes a 1px-wide painted border aimable.
+  assert.equal(gutterAt([table], table.x + INSIDE_PX * 15 - 1, middleRow, OPTS)?.axis, "row");
+
+  // The load-bearing half is unchanged: the REST of every cell still places a
+  // caret. Sampled from beyond the inside reach to the table's far side.
+  for (let x = table.x + INSIDE_PX * 15; x < table.x + table.w; x += 120) {
+    for (let y = table.y + INSIDE_PX * 15; y < table.y + table.h; y += 60) {
       assert.equal(gutterAt([table], x, y, OPTS), null, `(${x}, ${y}) is inside a cell`);
     }
   }
 });
 
-test("a table with no room beside it reports no strip rather than one off the page", () => {
-  // A table indented to the sheet's own edge. Drawing at a negative coordinate
-  // would paint a strip nothing could ever hit; the row stays reachable from the
-  // menu, the context menu and the palette.
+test("no leading border is a resize boundary, and a resize is reachable the moment the zone ends", () => {
+  // The tension the border-as-affordance design has to answer. It is answered
+  // structurally rather than by tuning: `tableChromeOnPage` reports one boundary
+  // per band at its CLOSING edge (`hittest.rs` — row edges at
+  // `row.top + row.height`), so the table's top and left borders are not
+  // boundaries at all and no resize can ever begin ON one.
+  const table = chromeTable();
+  const tol = 5 * 15;
+  // Along each leading border, at the middle of every band it passes — the
+  // whole of it except where a perpendicular inner boundary crosses, which is
+  // the next paragraph. Nothing arms a resize on any of it.
+  for (const y of [table.y + 144, table.y + 432, table.y + 720]) {
+    assert.equal(
+      boundaryAt([table], table.x, y, tol, tol),
+      null,
+      `the left border at y=${y} must not arm a resize`,
+    );
+    assert.equal(gutterAt([table], table.x, y, OPTS)?.axis, "row");
+  }
+  for (const x of [table.x + 720, table.x + 2160]) {
+    assert.equal(
+      boundaryAt([table], x, table.y, tol, tol),
+      null,
+      `the top border at x=${x} must not arm a resize`,
+    );
+    assert.equal(gutterAt([table], x, table.y, OPTS)?.axis, "column");
+  }
+
+  // The two DO overlap where an inner row boundary crosses the left border —
+  // every row's leading edge except the first is the previous row's trailing
+  // edge, which is a legitimate resize — and there the gutter wins: it is
+  // consulted first in the press path (`main.js`, before `tableChrome`) and its
+  // strip element sits over the page and carries the `cell` cursor. That
+  // precedence is not new; the boundary zone already reached 5px outside the
+  // table and the gutter already went first. What must survive is that the
+  // resize stays reachable, and it does: one twip past the zone the same
+  // boundary arms.
+  const crossing = table.y + 288;
+  assert.equal(boundaryAt([table], table.x, crossing, tol, tol)?.kind, "row");
+  assert.equal(gutterAt([table], table.x, crossing, OPTS)?.axis, "row");
+  const zone = stripRect(table, "row", STRIP_PX * 15, INSIDE_PX * 15);
+  assert.equal(gutterAt([table], zone.x + zone.w, crossing, OPTS), null);
+  assert.equal(boundaryAt([table], zone.x + zone.w, crossing, tol, tol)?.kind, "row");
+  // The same on the other axis: a column boundary crossing the top border.
+  const colCross = table.x + 1440;
+  assert.equal(gutterAt([table], colCross, table.y, OPTS)?.axis, "column");
+  const colZone = stripRect(table, "column", STRIP_PX * 15, INSIDE_PX * 15);
+  assert.equal(boundaryAt([table], colCross, colZone.y + colZone.h, tol, tol)?.kind, "column");
+
+  // …and the TRAILING outer edges still belong to the resize, as they do in
+  // ONLYOFFICE. Without this the guard above would pass on a payload that had
+  // simply lost its boundaries.
+  assert.equal(boundaryAt([table], table.x + 720, table.y + table.h, tol, tol)?.kind, "row");
+  assert.equal(boundaryAt([table], table.x + table.w, table.y + 144, tol, tol)?.kind, "column");
+});
+
+test("the inside reach is clamped against the band it reaches INTO, not its own", () => {
+  // The same rule, and the same number, as the boundary clamp next door: a PIXEL
+  // distance measured into a band that is not measured in pixels. The band a
+  // COLUMN zone eats into is the first ROW, so a short row is what has to clamp
+  // it — clamping it against the first column's width would measure the wrong
+  // dimension and let a 3px reach swallow a 10-twip row whole.
+  const shortRows = chromeTable({ rows: 3, rowH: 10 });
+  const colZone = stripRect(shortRows, "column", STRIP_PX * 15, INSIDE_PX * 15);
+  assert.ok(
+    colZone.y + colZone.h <= shortRows.y + 10 * 0.2 + 0.001,
+    "the column zone must not reach past a fifth of the first row",
+  );
+
+  // And the row zone's own clamp, against a narrow first column.
+  const narrowCols = chromeTable({ cols: 2, colW: 100 });
+  const rowZone = stripRect(narrowCols, "row", STRIP_PX * 15, INSIDE_PX * 15);
+  assert.ok(
+    rowZone.x + rowZone.w <= narrowCols.x + 100 * 0.2 + 0.001,
+    "the row zone must not reach past a fifth of the first column",
+  );
+  // …and the rest of that narrow column still places a caret.
+  assert.equal(gutterAt([narrowCols], narrowCols.x + 50, narrowCols.y + 144, OPTS), null);
+});
+
+test("a table flush against the sheet's edge keeps a target, on its own border", () => {
+  // The case the outside-only strip could not serve: a table indented to the
+  // margin had no room beside it, so `stripRect` returned null and the only way
+  // to select a row was the menu. The border is still there, so the zone is too.
   const flush = chromeTable({ x: 0, y: 0 });
-  assert.equal(stripRect(flush, "row", STRIP_PX * 15, 60), null);
-  assert.equal(stripRect(flush, "column", STRIP_PX * 15, 60), null);
+  for (const axis of ["row", "column"]) {
+    assert.ok(stripRect(flush, axis, STRIP_PX * 15, INSIDE_PX * 15, 0), `${axis} zone`);
+  }
+  assert.equal(gutterAt([flush], 0, 144, OPTS)?.axis, "row");
+  assert.equal(gutterAt([flush], 720, 0, OPTS)?.axis, "column");
+  // Nothing is drawn off the sheet: the zone starts at the page's own edge.
+  assert.equal(stripRect(flush, "row", STRIP_PX * 15, INSIDE_PX * 15).x, 0);
 });
 
 test("the row strip resolves the band the pointer is beside", () => {
