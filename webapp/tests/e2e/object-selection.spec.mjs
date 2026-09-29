@@ -36,15 +36,22 @@ test("an inline image exposes only handles its flow anchor can honor", async ({
   const node = await pages.getAttribute("data-object-selected");
   expect(node).toBeTruthy();
 
-  // Inline objects cannot move their character anchor, so N/W handles are
-  // deliberately absent. E, SE, and S preserve the fixed top-left.
+  // An inline object offers all EIGHT grips, the same set Word, Google Docs and
+  // ONLYOFFICE offer (`AscFormat.hitToHandles` has no inline/floating branch).
+  // It used to offer three — E, SE, S — on the reasoning that the flow anchor
+  // cannot move; the anchor still cannot move, but that constrains what the
+  // COMMIT writes, not which grips exist.
   await expect(page.locator(".overlay .object-outline")).toHaveCount(1);
   const handles = page.locator(".overlay .object-handle");
-  await expect(handles).toHaveCount(3);
   expect(await handles.evaluateAll((nodes) => nodes.map((node) => node.dataset.handle))).toEqual([
+    "0",
+    "1",
+    "2",
     "3",
     "4",
     "5",
+    "6",
+    "7",
   ]);
   await expect(page.locator(".object-context-bar")).toBeVisible();
   await expect(page.locator(".object-context-bar")).toContainText("Drag handles to resize");

@@ -97,11 +97,15 @@ const BEARING_CURSORS = [
  * real angle into eight 45 degree sectors, as here, is strictly closer and no
  * harder; that is the deliberate divergence.
  *
- * **This engine does not model object rotation yet** — nothing in `ObjectBox`
- * carries an angle and `objectHandles` emits kinds 0..7 only — so every call
- * site passes 0 today. The parameter is written now rather than later because
- * the mapping is the part that is easy to get wrong, and this way it is stated
- * and tested once instead of rediscovered.
+ * **Every call site passes 0 today**, and the reason is narrower than it used to
+ * read here. The MODEL does carry rotation — `setObjectRotation` takes arbitrary
+ * degrees — but `object_resize_handles_in_inlines` answers `0` for any object
+ * whose `rotation.is_some()`, so a rotated object advertises no handles at all
+ * and there is nothing for this function to turn. `ObjectBox` also does not
+ * publish the angle, so even once handles are advertised the host would have
+ * nothing to pass. The parameter is written now rather than later because the
+ * mapping is the part that is easy to get wrong, and this way it is stated and
+ * tested once instead of rediscovered.
  *
  * O(1).
  *
@@ -621,9 +625,14 @@ export const CURSOR_TARGETS = [
     selector: null,
     gesture: "Rotating the object",
     why:
-      "There is no rotation handle because there is no rotation operation: " +
-      "`objectHandles` emits kinds 0..7 (the eight resize grips) and `ObjectBox` " +
-      "carries no angle. `crosshair` is what ONLYOFFICE uses " +
+      "There is no rotation handle, and the blocker is NOT the rotation operation " +
+      "— `setObjectRotation` already takes arbitrary degrees. It is that " +
+      "`object_resize_handles_in_inlines` returns 0 for any object with a " +
+      "rotation, so the moment one is rotated `can_resize` goes false and all " +
+      "eight grips and the size chrome disappear until undo; a rotate handle on " +
+      "top of that would be a half-feature. Two engine changes unblock it: " +
+      "advertise resize handles for a rotated object, and publish the unrotated " +
+      "frame plus the angle on `ObjectBox`. `crosshair` is what ONLYOFFICE uses " +
       "(`CommonController.js:1531`) and is recorded as the fallback; Word and Docs " +
       "both use a dedicated rotate glyph, which is the better answer when the " +
       "feature lands. `resizeCursorForHandle` already takes the angle, so the " +

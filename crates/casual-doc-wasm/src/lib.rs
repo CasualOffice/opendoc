@@ -1824,9 +1824,15 @@ impl WasmDocument {
     /// The supported resize-handle centers of the selected object `node`, as a
     /// flat `[page, cxTwip, cyTwip, kind]` per handle (docs/85 §3.3
     /// `objectHandles`), in the order NW, N, NE, E, SE, S, SW, W (`kind` = that
-    /// index). A carrier-specific mask may omit entries: inline objects expose
-    /// E/SE/S only because their flow anchor cannot move, while eligible floats
-    /// and groups expose all eight. The frontend paints a fixed screen-size grip
+    /// index). Every resizable object — inline or floating — offers all eight,
+    /// which is what Word, Google Docs and ONLYOFFICE offer and what a user
+    /// reaches for. The carrier decides what the COMMIT writes, not which grips
+    /// exist: a float updates anchor and extent together, an inline updates its
+    /// extent and keeps the flow origin the paragraph gave it (so a north or
+    /// west drag previews with the opposite edge pinned and lands as a pure
+    /// size change). The set is empty for an object whose placed rect is not its
+    /// own box — rotated, flipped, or a group whose members cannot be scaled
+    /// exactly. The frontend paints a fixed screen-size grip
     /// centered at each — engine-drawn chrome from the object's placed rect, so
     /// it matches the raster with zero drift (docs/58). Empty if `node` is not
     /// placed or its reference has no compatible exact-inverse resize command.
@@ -21810,11 +21816,25 @@ const EMU_PER_TWIP: f64 = 635.0;
 const EMU_PER_TWIP_I64: i64 = 635;
 const MIN_OBJECT_EMU: i64 = 144 * EMU_PER_TWIP_I64;
 
-// Handle bits in the public NW,N,NE,E,SE,S,SW,W order. Inline objects cannot
-// move their character anchor, so only handles whose opposite top/left edge is
-// already fixed are truthful. Eligible floats/groups can update anchor + size
-// atomically and therefore expose the complete set.
-const INLINE_RESIZE_HANDLES: u8 = (1 << 3) | (1 << 4) | (1 << 5);
+// Handle bits in the public NW,N,NE,E,SE,S,SW,W order.
+//
+// Both carriers expose the COMPLETE set, and the two names are kept because the
+// guards in `resize_object` name the carrier they are defending, not because the
+// masks differ. Inline used to be E/SE/S only, on the reasoning that a handle
+// whose opposite edge is the flow origin "would lie about preserving it". That
+// reasoning did not survive reading the rest of this file: the inline branch of
+// `resize_object` rejects a rect whose top-left MOVED, and an eight-grip inline
+// drag commits as a pure `SetExtent` with the flow origin left where the
+// paragraph put it. So a north-west drag on an inline picture is representable —
+// the host previews it with the south-east corner pinned, exactly as Word and
+// ONLYOFFICE draw it, and commits size alone. ONLYOFFICE has no inline/floating
+// distinction here at all: `AscFormat.hitToHandles`
+// (`common/Drawings/Format/Shape.js`) returns 0..7 for every object.
+//
+// What a rotated or flipped object gets is still nothing (see
+// `object_resize_handles_in_inlines`), because the placed rect is the rotated
+// bounding box and dragging its corner is not a resize of the object.
+const INLINE_RESIZE_HANDLES: u8 = u8::MAX;
 const FLOAT_RESIZE_HANDLES: u8 = u8::MAX;
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
@@ -36420,7 +36440,7 @@ mod tests {
 
     #[test]
     fn object_selection_resolves_an_inline_image_body_and_its_handles() {
-        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
         let boxes = d.object_boxes();
         // The rich producer fixture has an inline picture in a body paragraph.
         let image = boxes
@@ -36438,21 +36458,46 @@ mod tests {
         assert_eq!(hit.kind, "image");
         assert_eq!(hit.rect[0], image.page as i32);
 
-        // objectRect round-trips the placed rect. An inline object's flow anchor
-        // cannot move, so only E/SE/S are offered; north/west handles would lie
-        // about preserving their opposite edge.
+        // objectRect round-trips the placed rect. An inline object offers all
+        // EIGHT grips, like every other product: the flow origin is not a
+        // constraint on which grips exist, only on what the commit writes.
         let rect = d.object_rect(&image.subject.to_string());
         assert_eq!(rect.len(), 5, "objectRect is [page,x,y,w,h]");
         assert_eq!(rect[3], image.rect.size.width.raw());
         let handles = d.object_handles(&image.subject.to_string());
-        assert_eq!(handles.len(), 3 * 4, "three exact inline resize handles");
+        assert_eq!(handles.len(), 8 * 4, "eight inline resize handles");
         assert_eq!(
             handles
                 .chunks_exact(4)
                 .map(|handle| handle[3])
                 .collect::<Vec<_>>(),
-            vec![3, 4, 5]
+            vec![0, 1, 2, 3, 4, 5, 6, 7]
         );
+        // And the grips are not decoration. This pins the half of the contract
+        // the host depends on when it drops the origin delta of a west or north
+        // drag: a rect that WIDENS while its top-left stays put is accepted and
+        // changes the document. It was always accepted — that is the finding —
+        // so the grip mask above is the assertion the old code failed, and this
+        // one is what stops the acceptance being narrowed later without the
+        // host's west and north grips going quiet.
+        let before_width = rect[3];
+        d.resize_object(
+            &image.subject.to_string(),
+            f64::from(rect[1]) * EMU_PER_TWIP,
+            f64::from(rect[2]) * EMU_PER_TWIP,
+            f64::from(before_width + 720) * EMU_PER_TWIP,
+            f64::from(rect[4]) * EMU_PER_TWIP,
+        )
+        .expect("an inline west-midpoint drag commits as a pure widening");
+        let widened = d.object_rect(&image.subject.to_string());
+        assert!(
+            (widened[3] - before_width - 720).abs() <= 1,
+            "the west drag widened the picture ({} -> {})",
+            before_width,
+            widened[3],
+        );
+        assert_eq!(widened[4], rect[4], "and left its height alone");
+        d.undo().expect("undo the inline west resize");
 
         // A point in the far top-left margin hits no object.
         assert!(d.object_at(image.page, 1, 1).is_none());

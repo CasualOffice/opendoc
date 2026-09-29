@@ -39,6 +39,13 @@ async function outline(page) {
   });
 }
 
+/** Double-clicks the middle of the selected object, clear of every grip. */
+async function dblclickCentre(page) {
+  const box = await outline(page);
+  await page.mouse.dblclick(box.x + box.w / 2, box.y + box.h / 2);
+  await page.waitForTimeout(300);
+}
+
 /** The sheet's own rect, so a page-relative expectation can be stated. */
 async function sheet(page) {
   return page.locator(".page-wrap .page").first().evaluate((el) => {
@@ -210,12 +217,12 @@ test("double-clicking a picture enters crop, the way Docs does", async ({
   // Apply — so a pass cannot come from a session that was already open.
   await expect(page.locator(".overlay .object-crop-handle")).toHaveCount(0);
 
-  const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
-  await canvas.dblclick({
-    position: { x: box.width * IMAGE_POS.fx, y: box.height * IMAGE_POS.fy },
-  });
-  await page.waitForTimeout(300);
+  // Aim at the picture's own CENTRE, read back from the chrome it just drew,
+  // rather than at the page fraction that happened to select it. A selected
+  // object is ringed by eight grips whose targets overhang its edge by a few
+  // pixels, and a grip owns its pointer sequence — so a fixed fraction that
+  // lands on the perimeter is testing the grip, not the doorway.
+  await dblclickCentre(page);
 
   // THE GUARANTEE: a live crop session — eight crop grips and the dimmed chrome.
   await expect(page.locator(".overlay .object-crop-handle")).toHaveCount(8);
@@ -231,12 +238,12 @@ test("double-clicking a picture enters crop, the way Docs does", async ({
 test("a crop drag says what size it is keeping", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
   await selectAt(page, IMAGE_POS);
-  const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
-  await canvas.dblclick({
-    position: { x: box.width * IMAGE_POS.fx, y: box.height * IMAGE_POS.fy },
-  });
-  await page.waitForTimeout(300);
+  // Aim at the picture's own CENTRE, read back from the chrome it just drew,
+  // rather than at the page fraction that happened to select it. A selected
+  // object is ringed by eight grips whose targets overhang its edge by a few
+  // pixels, and a grip owns its pointer sequence — so a fixed fraction that
+  // lands on the perimeter is testing the grip, not the doorway.
+  await dblclickCentre(page);
 
   const readout = page.locator(".overlay .object-crop-rect .object-resize-readout");
   const before = await readout.textContent();

@@ -88,7 +88,14 @@ import { SHAPE_PRESETS, shapeNameKey } from "./shape_catalogue.mjs";
 import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
 import { createShapeDrawMode } from "./shape_draw_mode.mjs";
 import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
-import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "./object_snap.mjs";
+import {
+  pageSnapTargets,
+  resizeCommitOrigin,
+  resizeFromDrag,
+  resizeRulesFor,
+  snapBox,
+  snapResizedBox,
+} from "./object_snap.mjs";
 import { t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator } from "./status_counts.mjs";
@@ -4374,6 +4381,12 @@ function startObjectResize(event, page, node, handleKind) {
     objectSelection.node !== node ||
     !objectSelection.canResize
   ) return;
+  // `preventDefault` suppresses the compatibility mouse events for the whole
+  // interaction, so a double-click that BEGINS on a grip opens no crop and
+  // descends into no group — a handle is a handle, as it is in Word, Docs and
+  // ONLYOFFICE. It matters more with eight grips ringing the object than with
+  // three, but only the few pixels each grip overhangs by are affected, and
+  // crop keeps its button.
   event.preventDefault();
   event.stopPropagation(); // do not let the page pointerdown re-hit-test
   if (reviewMode === "viewing") {
@@ -4409,6 +4422,8 @@ function startObjectResize(event, page, node, handleKind) {
     startY: y,
     startW: w,
     startH: h,
+    anchored: objectSelection.anchored === true,
+    kind: objectSelection.kind,
     lastX: x,
     lastY: y,
     lastW: w,
@@ -4425,62 +4440,33 @@ function startObjectResize(event, page, node, handleKind) {
 const MIN_OBJECT_TWIP = 144;
 
 /** Updates the resize preview from the pointer delta. Per-handle signs decide
- *  which edges grow (corners = both axes, N/S = height, E/W = width). Shift on a
- *  corner constrains to the original aspect ratio (docs/85 §10.3). */
+ *  which edges grow (corners = both axes, N/S = height, E/W = width); Shift
+ *  constrains a corner to the original aspect and Ctrl/Cmd resizes about the
+ *  centre. Both rules, and which kinds constrain by default, are
+ *  `resizeRulesFor` (docs/85 §10.3). */
 function updateObjectResize(event) {
   if (!objectResizeDrag) return;
   const drag = objectResizeDrag;
   const { sx, sy } = scaleOf(drag.page);
   const dxTwip = Math.round((event.clientX - drag.startClientX) / sx);
   const dyTwip = Math.round((event.clientY - drag.startClientY) / sy);
-  // A PICTURE aspect-locks on a corner by default and Shift frees it; a text box
-  // is the other way round. The rule itself is `resizeFromDrag`.
-  const isImage = objectSelection?.kind === "image";
+  const { shiftKey, ctrlKey, metaKey } = event;
+  const modifiers = { kind: drag.kind, shiftKey, ctrlKey, metaKey };
   const box = resizeFromDrag(
     { x: drag.startX, y: drag.startY, w: drag.startW, h: drag.startH, aspect: drag.aspect },
     drag.handleKind,
     dxTwip,
     dyTwip,
-    { lockAspect: isImage ? !event.shiftKey : event.shiftKey, minEdge: MIN_OBJECT_TWIP },
+    resizeRulesFor(modifiers, MIN_OBJECT_TWIP),
   );
-  let { x: newX, y: newY, w: newW, h: newH } = box;
-  // Pull the edge under the pointer onto the page's alignment lines, so
-  // "make this image reach the right margin" is a drag and not an arithmetic
-  // problem. A corner drag that is aspect-locked is deliberately NOT snapped:
-  // correcting one axis onto a line would have to drive the other off the
-  // ratio, and a proportional resize that quietly stops being proportional is
-  // worse than one that does not snap. Alt suppresses the pull, as on a move.
-  const guides = [];
-  if (drag.snap && !event.altKey && !box.lockedAspect) {
-    if (box.changesWidth) {
-      const moving = box.movesWest ? newX : newX + newW;
-      const { edge, guide } = snapEdge(moving, drag.snap.targets.vertical, "vertical", drag.snap.tolerance);
-      if (guide) {
-        const pinnedRight = newX + newW; // whichever edge is NOT under the pointer stays
-        if (box.movesWest) {
-          newW = Math.max(MIN_OBJECT_TWIP, pinnedRight - edge);
-          newX = pinnedRight - newW;
-        } else {
-          newW = Math.max(MIN_OBJECT_TWIP, edge - newX);
-        }
-        guides.push(guide);
-      }
-    }
-    if (box.changesHeight) {
-      const moving = box.movesNorth ? newY : newY + newH;
-      const { edge, guide } = snapEdge(moving, drag.snap.targets.horizontal, "horizontal", drag.snap.tolerance);
-      if (guide) {
-        const pinnedBottom = newY + newH;
-        if (box.movesNorth) {
-          newH = Math.max(MIN_OBJECT_TWIP, pinnedBottom - edge);
-          newY = pinnedBottom - newH;
-        } else {
-          newH = Math.max(MIN_OBJECT_TWIP, edge - newY);
-        }
-        guides.push(guide);
-      }
-    }
-  }
+  // Alt suppresses the pull, as it does on a move. The rest of the rule — and
+  // which drags are deliberately left unsnapped — is `snapResizedBox`.
+  const { box: snapped, guides } = snapResizedBox(
+    box,
+    event.altKey ? null : drag.snap,
+    MIN_OBJECT_TWIP,
+  );
+  const { x: newX, y: newY, w: newW, h: newH } = snapped;
   paintSnapGuides(drag, guides);
   drag.lastX = newX;
   drag.lastY = newY;
@@ -4530,12 +4516,20 @@ function finishObjectResize(event) {
     Math.abs(drag.lastW - drag.startW) >= 8 ||
     Math.abs(drag.lastH - drag.startH) >= 8;
   if (changed) {
+    // An inline object commits its SIZE at the origin the paragraph gave it;
+    // only a float commits the origin it was dragged to. `resizeCommitOrigin`
+    // carries why the preview still pins the opposite edge.
+    const origin = resizeCommitOrigin(
+      { x: drag.lastX, y: drag.lastY },
+      { x: drag.startX, y: drag.startY },
+      drag.anchored,
+    );
     runEdit(
       () =>
         doc.resizeObject(
           drag.root,
-          drag.lastX * EMU_PER_TWIP,
-          drag.lastY * EMU_PER_TWIP,
+          origin.x * EMU_PER_TWIP,
+          origin.y * EMU_PER_TWIP,
           drag.lastW * EMU_PER_TWIP,
           drag.lastH * EMU_PER_TWIP,
         ),

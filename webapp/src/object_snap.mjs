@@ -43,14 +43,47 @@ const RESIZE_FACTORS = [
 ];
 
 /**
+ * What the modifiers held during a grip drag mean, for every object kind.
+ *
+ * This used to be an expression at the call site, and it had invented a
+ * convention no product uses: `lockAspect: isImage ? !shift : shift`, so Shift
+ * FREED a picture and LOCKED a text box. Word, Google Docs and ONLYOFFICE all
+ * agree that Shift CONSTRAINS and never frees — ONLYOFFICE's
+ * `ResizeTracks.js` reads `ShiftKey === true || getNoChangeAspect()`, an OR, so
+ * holding Shift can only add the constraint. A picture's proportions are its
+ * default (`getNoChangeAspect()` is true for images), which is the part we had
+ * right. Distorting a picture stays reachable — through the inspector's width
+ * and height fields, which is where Word and ONLYOFFICE put it too.
+ *
+ * Ctrl (or Cmd) resizes about the object's CENTRE, both edges moving together;
+ * ONLYOFFICE routes the same modifier to `resizeRelativeCenter`.
+ *
+ * O(1).
+ *
+ * @param {{kind: string|null|undefined, shiftKey: boolean, ctrlKey: boolean, metaKey: boolean}} at
+ * @param {number} minEdge the smallest edge a drag may leave, in twips
+ * @returns {{lockAspect: boolean, fromCentre: boolean, minEdge: number}}
+ */
+export function resizeRulesFor(at, minEdge) {
+  return {
+    lockAspect: at.kind === "image" || at.shiftKey === true,
+    fromCentre: at.ctrlKey === true || at.metaKey === true,
+    minEdge,
+  };
+}
+
+/**
  * The box a resize-grip drag produces, before any snapping.
  *
- * The aspect-lock rule is kind-aware, to match the platform norm rather than a
- * single modifier convention: a PICTURE keeps its proportions by DEFAULT on a
- * corner drag (Word and Docs both lock aspect for images) and Shift frees it; a
- * TEXT BOX resizes freely by default and Shift locks. Either way the constraint
- * drives both edges from the axis that moved MORE, so the object keeps its
- * proportions no matter which way the pointer went.
+ * The aspect constraint drives both edges from the axis that moved MORE, so the
+ * object keeps its proportions no matter which way the pointer went, and it
+ * applies to CORNERS only — an edge midpoint changes one axis by definition, and
+ * ONLYOFFICE gates the same rule on its `bAspect`, which is
+ * `numberHandle % 2 === 0`, i.e. the four corners in our own index order.
+ *
+ * With `fromCentre`, the object grows about its centre: the pointer delta counts
+ * twice and BOTH edges on the axis move, which is why the origin is recomputed
+ * from the centre rather than from a pinned edge.
  *
  * O(1).
  *
@@ -58,32 +91,64 @@ const RESIZE_FACTORS = [
  * @param {number} handleKind 0..7, clockwise from NW
  * @param {number} dx pointer dx in twips
  * @param {number} dy pointer dy in twips
- * @param {{lockAspect: boolean, minEdge: number}} rules
+ * @param {{lockAspect: boolean, fromCentre?: boolean, minEdge: number}} rules
  * @returns {{x: number, y: number, w: number, h: number, isCorner: boolean, lockedAspect: boolean}}
  */
 export function resizeFromDrag(start, handleKind, dx, dy, rules) {
   const [fw, fh] = RESIZE_FACTORS[handleKind] ?? [0, 0];
   const min = rules.minEdge;
-  let w = Math.max(min, start.w + fw * dx);
-  let h = Math.max(min, start.h + fh * dy);
+  const fromCentre = rules.fromCentre === true;
+  const reach = fromCentre ? 2 : 1;
+  let w = Math.max(min, start.w + reach * fw * dx);
+  let h = Math.max(min, start.h + reach * fh * dy);
   const isCorner = fw !== 0 && fh !== 0;
   const lockedAspect = isCorner && rules.lockAspect;
   if (lockedAspect) {
     if (Math.abs(w - start.w) >= Math.abs(h - start.h)) h = Math.max(min, Math.round(w / start.aspect));
     else w = Math.max(min, Math.round(h * start.aspect));
   }
+  const x = fromCentre
+    ? Math.round(start.x + (start.w - w) / 2)
+    : (fw < 0 ? start.x + start.w - w : start.x);
+  const y = fromCentre
+    ? Math.round(start.y + (start.h - h) / 2)
+    : (fh < 0 ? start.y + start.h - h : start.y);
   return {
-    x: fw < 0 ? start.x + start.w - w : start.x,
-    y: fh < 0 ? start.y + start.h - h : start.y,
+    x,
+    y,
     w,
     h,
     isCorner,
     lockedAspect,
+    fromCentre,
     movesWest: fw < 0,
     movesNorth: fh < 0,
     changesWidth: fw !== 0,
     changesHeight: fh !== 0,
   };
+}
+
+/**
+ * Where a finished grip drag actually commits its origin.
+ *
+ * A FLOATING object commits the rectangle it was dragged to, origin and all. An
+ * INLINE one has no anchor to move — the paragraph owns its origin — so it
+ * commits its new SIZE at the origin it started from. That is not a smaller
+ * feature: it is the whole reason all eight grips are truthful for an inline
+ * object. The PREVIEW still shows the opposite edge pinned, because that is what
+ * Word and ONLYOFFICE draw and what the eye is tracking; only the commit drops
+ * the origin delta, which the engine would otherwise refuse outright with
+ * "inline resize cannot move its flow anchor".
+ *
+ * O(1).
+ *
+ * @param {{x: number, y: number}} box the previewed rectangle at release
+ * @param {{x: number, y: number}} start the rectangle at pointer-down
+ * @param {boolean} anchored whether the object carries its own anchor (floating)
+ * @returns {{x: number, y: number}}
+ */
+export function resizeCommitOrigin(box, start, anchored) {
+  return anchored === true ? { x: box.x, y: box.y } : { x: start.x, y: start.y };
 }
 
 /** A reference line an object can align to, in page-local twips.
@@ -208,6 +273,64 @@ export function snapBox(box, targets, tolerance) {
  * @param {number} tolerance the snap radius in twips
  * @returns {{edge: number, guide: SnapGuide | null}}
  */
+/** Pulls a RESIZED box's moving edges onto the page's alignment lines.
+ *
+ * The whole point of snapping a resize is that "make this image reach the right
+ * margin" is a drag and not an arithmetic problem. Each axis resolves
+ * independently, and on each axis the edge NOT under the pointer is pinned.
+ *
+ * Two kinds of drag are deliberately left alone, and it is the same reason both
+ * times — a constraint the user asked for must not be broken to buy a snap:
+ *
+ *   * an aspect-LOCKED corner, because correcting one axis onto a line has to
+ *     drive the other off the ratio;
+ *   * a CENTRE resize, because both edges on an axis are moving, so pulling one
+ *     onto a line shoves the other off by the same amount.
+ *
+ * Pass `snap` as null to suppress the pull entirely (that is what Alt does).
+ *
+ * O(1) — `snapEdge` is O(targets) with targets fixed at 4 and 2.
+ *
+ * @param {ReturnType<typeof resizeFromDrag>} box
+ * @param {{targets: {vertical: SnapTarget[], horizontal: SnapTarget[]}, tolerance: number} | null} snap
+ * @param {number} minEdge
+ * @returns {{box: {x: number, y: number, w: number, h: number}, guides: SnapGuide[]}}
+ */
+export function snapResizedBox(box, snap, minEdge) {
+  let { x, y, w, h } = box;
+  const guides = [];
+  if (!snap || box.lockedAspect || box.fromCentre) return { box: { x, y, w, h }, guides };
+  if (box.changesWidth) {
+    const moving = box.movesWest ? x : x + w;
+    const hit = snapEdge(moving, snap.targets.vertical, "vertical", snap.tolerance);
+    if (hit.guide) {
+      const pinnedRight = x + w; // whichever edge is NOT under the pointer stays
+      if (box.movesWest) {
+        w = Math.max(minEdge, pinnedRight - hit.edge);
+        x = pinnedRight - w;
+      } else {
+        w = Math.max(minEdge, hit.edge - x);
+      }
+      guides.push(hit.guide);
+    }
+  }
+  if (box.changesHeight) {
+    const moving = box.movesNorth ? y : y + h;
+    const hit = snapEdge(moving, snap.targets.horizontal, "horizontal", snap.tolerance);
+    if (hit.guide) {
+      const pinnedBottom = y + h;
+      if (box.movesNorth) {
+        h = Math.max(minEdge, pinnedBottom - hit.edge);
+        y = pinnedBottom - h;
+      } else {
+        h = Math.max(minEdge, hit.edge - y);
+      }
+      guides.push(hit.guide);
+    }
+  }
+  return { box: { x, y, w, h }, guides };
+}
+
 export function snapEdge(edge, targets, axis, tolerance) {
   const best = bestCorrection([{ at: edge, id: "edge" }], targets ?? [], tolerance);
   if (!best) return { edge, guide: null };
