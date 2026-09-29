@@ -211,6 +211,7 @@ dependencies = [
  "serde_json",
  "skrifa",
  "tiny-skia",
+ "zip",
 ]
 
 [[package]]

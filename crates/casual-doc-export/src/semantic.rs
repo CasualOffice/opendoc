@@ -4985,6 +4985,17 @@ fn write_paragraph_properties(
         w.write_event(Event::Empty(num_id)).map_err(pkg)?;
         w.write_event(Event::End(BytesEnd::new("w:numPr")))
             .map_err(pkg)?;
+    } else if properties.numbering_none {
+        // Round-trip the cancellation, not just its effect: `w:numId="0"`
+        // (ECMA-376 §17.9.18) is what keeps a style-inherited list off this
+        // paragraph in Word. Emitting nothing would drop the instruction and let
+        // the inherited marker return on reopen — a silent change of content.
+        w.write_event(Event::Start(start("w:numPr"))).map_err(pkg)?;
+        let mut num_id = start("w:numId");
+        num_id.push_attribute(("w:val", "0"));
+        w.write_event(Event::Empty(num_id)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w:numPr")))
+            .map_err(pkg)?;
     }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");

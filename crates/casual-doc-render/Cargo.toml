@@ -65,6 +65,10 @@ resvg = { version = "0.45", default-features = false }
 casual-doc-import.workspace = true
 casual-doc-ooxml.workspace = true
 serde_json.workspace = true
+# Builds the few-hundred-byte `.docx` fixtures some tests zip in memory, so the
+# XML under test is readable in the test rather than committed as a binary.
+# Already a workspace dependency (`casual-doc-ooxml` reads packages with it).
+zip.workspace = true
 
 [lints]
 workspace = true

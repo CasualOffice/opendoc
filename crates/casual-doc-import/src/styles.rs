@@ -681,11 +681,22 @@ fn read_style(
             skip_subtree(reader, buffer, ctx)?;
         }
     }
+    // `w:numId="0"` cancels an inherited list (ECMA-376 §17.9.18) rather than
+    // naming one, so it is settled here instead of being deferred to the
+    // numbering pass, where it could only ever miss. Word's `TOC Heading` is the
+    // canonical case: based on `Heading 1` (`numId="1"`) and cancelled this way.
+    // This runs BEFORE `raw.paragraph` is taken from the accumulator, so the
+    // flag reaches the style definition.
+    match acc.pending_num_id.take() {
+        Some(num_id) if num_id == "0" => {
+            acc.has_paragraph = true;
+            acc.paragraph.numbering = None;
+            acc.paragraph.numbering_none = true;
+        }
+        Some(num_id) => raw.pending_numbering = Some((num_id, acc.pending_ilvl)),
+        None => {}
+    }
     raw.paragraph = acc.has_paragraph.then_some(acc.paragraph);
-    raw.pending_numbering = acc
-        .pending_num_id
-        .take()
-        .map(|num_id| (num_id, acc.pending_ilvl));
     raw.run = acc.has_run.then_some(acc.run);
     raw.table = acc.has_table.then_some(acc.table);
     raw.table_row = acc.has_table_row.then_some(acc.table_row);

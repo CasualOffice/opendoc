@@ -495,8 +495,17 @@ fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties)
     if over.style_ref.is_some() {
         base.style_ref = over.style_ref;
     }
-    if over.numbering.is_some() {
+    // Numbering is tri-state, so the order here matters: an explicit
+    // `w:numId="0"` (ECMA-376 §17.9.18) CLEARS what the lower layer contributed,
+    // where a merely-unset `numbering` inherits it. Word's `TOC Heading` is based
+    // on `Heading 1` and cancels its list this way; treating the cancellation as
+    // silence paints `Heading 1`'s marker on a heading Word leaves unnumbered.
+    if over.numbering_none {
+        base.numbering = None;
+        base.numbering_none = true;
+    } else if over.numbering.is_some() {
         base.numbering = over.numbering;
+        base.numbering_none = false;
     }
     if over.alignment.is_some() {
         base.alignment = over.alignment;
