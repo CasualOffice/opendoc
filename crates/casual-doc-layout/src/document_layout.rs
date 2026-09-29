@@ -59,6 +59,10 @@ use casual_doc_model::v1::{
 
 use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
 use crate::block::{BlockFragment, CellFragment, CellVerticalMerge};
+// Separate `use` line (kept out of the sorted block) so a parallel branch adding
+// its own import does not collide here: `BreakControl` is read only by
+// `suspend_page_break_constraints`.
+use crate::block::BreakControl;
 use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_start_parity,
     section_starts_new_page,
@@ -92,6 +96,413 @@ const ONE_INCH: Twip = Twip(1_440);
 /// Word's default header/footer band distance from the page edge (`w:pgMar`
 /// `@w:header`/`@w:footer`), used when the attribute is absent.
 const DEFAULT_BAND_DISTANCE: Twip = Twip(720);
+
+/// The default height each [`LayoutView::Reflow`] tile is cut at — 11in, one
+/// Letter page tall.
+///
+/// A tile is an artefact of rasterisation and should be invisible to the reader,
+/// so the height is picked to be **large relative to a viewport** (a scroll
+/// rarely crosses one) and **small relative to a canvas limit**
+/// ([`crate::compose::compose_page`] rasterises one page into one surface, and a
+/// browser canvas maxes out near 32,767px in either axis — which is why "one tall
+/// page" was rejected). ONLYOFFICE's reader mode instead keeps the *original*
+/// page height, so their reflow still breaks where the paper chose; ours is
+/// chosen for the reader. `docs/151` §4.4 and §8 item 3 record this as a decision
+/// with a stated basis rather than a constant with no source.
+pub const DEFAULT_TILE_HEIGHT: Twip = Twip(15_840);
+
+/// The narrowest reflow column that is still a reading column — 1in. Below this
+/// line breaking degenerates (an ordinary word exceeds the measure on every line)
+/// and the result is unreadable at any zoom, so it is refused rather than laid
+/// out.
+const MIN_REFLOW_COLUMN: Twip = Twip(1_440);
+/// The widest reflow column — 22in, wider than any paper this engine supports. A
+/// caller asking for more has converted units wrongly.
+const MAX_REFLOW_COLUMN: Twip = Twip(31_680);
+/// The shortest tile — 2in. Tile count is `document height / tile_height`, so a
+/// shorter tile multiplies the per-tile raster and the post-pagination constant
+/// by the same factor for no reader benefit.
+const MIN_TILE_HEIGHT: Twip = Twip(2_880);
+/// The tallest tile — 33in. At 33in a tile is 3,168px at 96dpi and 12,672px at a
+/// 4x device ratio, both comfortably inside the ~32,767px canvas limit that
+/// rejected "one tall page" in the first place (`docs/151` §4.4).
+const MAX_TILE_HEIGHT: Twip = Twip(47_520);
+
+/// What a `PAGE` or `NUMPAGES` field prints in a [`LayoutView::Reflow`] layout.
+///
+/// A reflow tile index is **not** a page number, and printing one as though it
+/// were is the dishonest-number class this repository forbids outright: a reader
+/// looking at "Page 7 of 34" in a reflowed document is being told something false
+/// about a document that has no pages in this view. The engine has no paginated
+/// value to substitute — it is not laying the document out on paper — so it
+/// refuses with a token that cannot be mistaken for a count. `docs/151` §6.5
+/// makes the host responsible for the better answer (carrying over the value from
+/// the last `Paged` layout when it has one); this is the floor beneath it, and it
+/// is here rather than left to the host because the host cannot un-print a number
+/// the engine already shaped into a glyph run.
+const REFLOW_FIELD_REFUSAL: &str = "—";
+
+/// Which geometry a layout pass lays a document out in: the document's own paper,
+/// or a reflowed column of the caller's width (ADR-046, `docs/151`).
+///
+/// This is a **view parameter and never a document edit.** Nothing here is
+/// written back to a [`SectionBoundary`], no operation is issued, and the export
+/// path cannot observe it. `casual-doc-wasm`'s `setPageSetup` would produce a
+/// similar visual result today by issuing a section-geometry mutation, and must
+/// not be used for this: it would pollute undo, dirty autosave, and persist a
+/// 390px-wide "page" into the user's DOCX. That is the silent-data-loss class the
+/// engineering priority order forbids, and it is the whole of ADR-046.
+///
+/// [`LayoutView::Paged`] is the [`Default`], and every entry point that does not
+/// name a view delegates with it, so paged output is byte-for-byte what it was
+/// before this type existed. Two guards hold that: `tests/reflow.rs`'s inertness
+/// case (`paginate_document` and `paginate_document_in(.., Paged)` agree
+/// page-for-page) and `geometry_snapshot.golden` not moving.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LayoutView {
+    /// The document's own paper: every page's geometry comes from its own
+    /// section's `w:pgSz`/`w:pgMar`.
+    #[default]
+    Paged,
+    /// Lay the body out at `content_width` and cut the result into fixed-height
+    /// tiles — Google's Pageless, ONLYOFFICE's reader mode, but still editable.
+    ///
+    /// Construct one with [`LayoutView::reflow`], which refuses geometry that is
+    /// not a reading column instead of laying out something unusable.
+    Reflow {
+        /// The measure lines are broken at — the reader's column width. This is
+        /// the number the whole design turns on: the flow engine is already
+        /// width-parametric, so reflow is a question of where the width comes
+        /// from and of nothing else.
+        content_width: Twip,
+        /// The height each tile is cut at. See [`DEFAULT_TILE_HEIGHT`]. It is an
+        /// **upper** bound: the final pass trims every tile to its own content
+        /// so the tiles drawn edge to edge read as one continuous column.
+        tile_height: Twip,
+        /// Padding on each side of the column, inside the tile, so the text does
+        /// not run to the raster's edge.
+        gutter: Twip,
+    },
+}
+
+/// Why a [`LayoutView::reflow`] was refused. Every variant carries the offending
+/// value and a sentence; none of them silently substitutes a bound, because a
+/// substituted width lays the document out at a measure the caller did not ask
+/// for and cannot see.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ReflowRefused {
+    /// The column is narrower than one inch.
+    ColumnTooNarrow(Twip),
+    /// The column is wider than 22 inches.
+    ColumnTooWide(Twip),
+    /// The tile is shorter than two inches.
+    TileTooShort(Twip),
+    /// The tile is taller than 33 inches (a canvas limit).
+    TileTooTall(Twip),
+    /// The gutter is negative, or wider than the column it pads.
+    GutterOutOfRange(Twip),
+}
+
+impl ReflowRefused {
+    /// A sentence naming the value that was refused and the bound it missed, for
+    /// a host to show a reader. Never a trap name.
+    #[must_use]
+    pub fn reason(self) -> String {
+        match self {
+            Self::ColumnTooNarrow(w) => format!(
+                "a reflow column of {} twips is narrower than the {} twip (1in) minimum, which is \
+                 the narrowest measure text still breaks into lines at",
+                w.raw(),
+                MIN_REFLOW_COLUMN.raw()
+            ),
+            Self::ColumnTooWide(w) => format!(
+                "a reflow column of {} twips is wider than the {} twip (22in) maximum, which is \
+                 wider than any paper this engine lays out",
+                w.raw(),
+                MAX_REFLOW_COLUMN.raw()
+            ),
+            Self::TileTooShort(h) => format!(
+                "a reflow tile of {} twips is shorter than the {} twip (2in) minimum; a shorter \
+                 tile multiplies the number of rasters for no reader benefit",
+                h.raw(),
+                MIN_TILE_HEIGHT.raw()
+            ),
+            Self::TileTooTall(h) => format!(
+                "a reflow tile of {} twips is taller than the {} twip (33in) maximum, which is the \
+                 tallest raster a browser canvas accepts",
+                h.raw(),
+                MAX_TILE_HEIGHT.raw()
+            ),
+            Self::GutterOutOfRange(g) => format!(
+                "a reflow gutter of {} twips is out of range; it must be zero or more and no wider \
+                 than the column it pads",
+                g.raw()
+            ),
+        }
+    }
+}
+
+impl core::fmt::Display for ReflowRefused {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.reason())
+    }
+}
+
+impl std::error::Error for ReflowRefused {}
+
+impl LayoutView {
+    /// A validated [`LayoutView::Reflow`].
+    ///
+    /// # Errors
+    ///
+    /// [`ReflowRefused`] when the geometry is not a reading column. The bounds
+    /// exist so an unconverted pixel value (390 twips is a quarter of an inch)
+    /// or an inverted argument order is refused **at the seam**, rather than
+    /// producing a layout nobody can read and no test would notice.
+    ///
+    /// Complexity: `O(1)`.
+    pub fn reflow(
+        content_width: Twip,
+        tile_height: Twip,
+        gutter: Twip,
+    ) -> Result<Self, ReflowRefused> {
+        if content_width < MIN_REFLOW_COLUMN {
+            return Err(ReflowRefused::ColumnTooNarrow(content_width));
+        }
+        if content_width > MAX_REFLOW_COLUMN {
+            return Err(ReflowRefused::ColumnTooWide(content_width));
+        }
+        if tile_height < MIN_TILE_HEIGHT {
+            return Err(ReflowRefused::TileTooShort(tile_height));
+        }
+        if tile_height > MAX_TILE_HEIGHT {
+            return Err(ReflowRefused::TileTooTall(tile_height));
+        }
+        if gutter < Twip::ZERO || gutter > content_width {
+            return Err(ReflowRefused::GutterOutOfRange(gutter));
+        }
+        Ok(Self::Reflow {
+            content_width,
+            tile_height,
+            gutter,
+        })
+    }
+
+    /// Whether this view reflows — i.e. whether the page-shaped constraints are
+    /// suspended, the page-shaped furniture suppressed, and the tiles trimmed.
+    #[must_use]
+    pub const fn is_reflow(self) -> bool {
+        matches!(self, Self::Reflow { .. })
+    }
+
+    /// The approximations a [`LayoutView::Reflow`] pass knowingly makes, as
+    /// sentences, so a host reports them instead of a reader discovering them.
+    /// Empty for [`LayoutView::Paged`].
+    ///
+    /// These are recorded rather than hidden because each is visible to a reader
+    /// and none is fixed by this increment (`docs/151` §8 item 1 stays open on
+    /// the first of them).
+    ///
+    /// Complexity: `O(1)` — a fixed list, allocating only its strings.
+    #[must_use]
+    pub fn approximations(self) -> Vec<String> {
+        if !self.is_reflow() {
+            return Vec::new();
+        }
+        vec![
+            "A drawing anchored to the page or to the margin keeps its paper-relative position, \
+             because a reflow tile has no page edges for it to be relative to; it can therefore \
+             sit away from the text it belongs with (docs/151 section 8 item 1, still open)."
+                .to_owned(),
+            "A footnote is placed at the bottom of the tile its reference lands in, which is a \
+             raster boundary rather than a page bottom, so it can fall mid-thought rather than \
+             under the page that cites it."
+                .to_owned(),
+            "A PAGE or NUMPAGES field prints a refusal token rather than a number, because a tile \
+             index is not a page number (docs/151 section 6.5)."
+                .to_owned(),
+        ]
+    }
+}
+
+/// The synthetic [`PageConfig`] every tile of a [`LayoutView::Reflow`] pass is
+/// laid out in — the reflow counterpart of [`section_page_config`], and the
+/// *only* place reflow geometry is invented. `None` under [`LayoutView::Paged`],
+/// so a caller reads "the section's own geometry stands" from the type.
+///
+/// This is ONLYOFFICE's mechanism (`CDocumentReadView::Set` builds a synthetic
+/// section with a substituted page size and tiny margins and hands it to the
+/// existing paginator), and it is deliberately not a second layout path.
+///
+/// `section` is the caller's own section id, so `Page::section` still resolves to
+/// a real boundary for every consumer that looks one up, and the per-section plan
+/// lookup keeps working. The **vertical** metrics are NOT the section's, which is
+/// where this deviates from what `docs/151` §4.5 row 1 originally specified — and
+/// the deviation is the point: a tile's top and bottom edges are not page edges,
+/// so a section top margin would paint a one-inch white band across the middle of
+/// a paragraph every 11 inches of scroll. A tile is exactly `tile_height` tall
+/// with zero vertical margin and no bands; the reader's breathing room at the top
+/// and bottom of the *document* belongs to the host's scroller, not to every tile.
+///
+/// Complexity: `O(1)` — it reads nothing but the view and allocates nothing.
+#[must_use]
+fn reflow_page_config(section: SectionId, view: LayoutView) -> Option<PageConfig> {
+    let LayoutView::Reflow {
+        content_width,
+        tile_height,
+        gutter,
+    } = view
+    else {
+        return None;
+    };
+    Some(PageConfig {
+        section,
+        page_size: Size::new(content_width + gutter + gutter, tile_height),
+        margin_top: Twip::ZERO,
+        margin_bottom: Twip::ZERO,
+        margin_start: gutter,
+        margin_end: gutter,
+        // There is no band to nest, so there is no distance to nest it at.
+        // `PageConfig::content_area` only consults a distance when the matching
+        // height is non-zero, so these are zero for the same reason the heights
+        // are: a tile has no header and no footer (`docs/151` §3.3).
+        header_distance: Twip::ZERO,
+        footer_distance: Twip::ZERO,
+        header_height: Twip::ZERO,
+        footer_height: Twip::ZERO,
+    })
+}
+
+/// Clears the page-shaped break **constraints** from a flowed galley, which is
+/// how [`LayoutView::Reflow`] suspends them (`docs/151` §3.3).
+///
+/// Doing it here — once, on the galley, before any paginator sees it — rather
+/// than by teaching each paginator about the view is what keeps this **one
+/// mechanism**: three paginators read a fragment's break control (the
+/// single-column one, the column one, and the footnote one) and all three are
+/// covered without a line changing in any of them. `docs/151` §4.5 row 2 asked
+/// for edits to `columns.rs` and `paginate.rs`; they are not needed, and the
+/// driver-side version is strictly more "one mechanism" than the specified one.
+///
+/// What is suspended is the paper-shaped set, and it is suspended at both tiers
+/// the galley expresses it in:
+///
+/// - a paragraph's `w:pageBreakBefore`, `w:keepNext`, `w:keepLines` and
+///   `w:widowControl`, which live on its break control;
+/// - a **line's forced page break**, which is where two different paper-shaped
+///   instructions both end up: an explicit `<w:br w:type="page"/>`, and a section
+///   break whose successor starts on a new page (`crate::flow`'s
+///   `apply_section_break` stamps the section break onto the last line using the
+///   same flag, so the two are indistinguishable by the time a paginator sees
+///   them). Both are cleared. The line still *ends* there — `LineBreak::Page` is
+///   left alone — so a page break becomes a line break, which is exactly what
+///   Google's Pageless does with one, and a `nextPage` section break stops
+///   opening a tile of its own.
+///
+/// What is deliberately NOT suspended is a table row's `w:cantSplit` and its
+/// vertical-merge keep group, which are about the table's own correctness rather
+/// than about paper: splitting a vertically merged row would paint a merged cell
+/// twice.
+///
+/// The walk descends into table cells and inline text boxes, because those carry
+/// block content flowed through the same pipeline as the body and a paragraph in
+/// a cell can carry every one of these flags.
+///
+/// **This mutates the galley in place, and the incremental path RETAINS that
+/// galley in the cache.** A cleared break control is therefore carried into the
+/// next pass, which is harmless while the view stays the same (clearing an
+/// already-cleared flag is a no-op) and *wrong* the moment it does not: a paged
+/// rebuild served a reflow-suspended fragment would silently lose the author's
+/// `w:pageBreakBefore`. So a host changing the view must discard its
+/// [`GalleyCache`] and rebuild whole through [`paginate_document_in`] — which is
+/// what `casual-doc-wasm`'s `setLayoutView` does, and why it does it.
+///
+/// Complexity: `O(galley content)` — one visit per fragment, line and nested
+/// block, once per layout pass, and only under reflow.
+fn suspend_page_break_constraints(galley: &mut [BlockFragment]) {
+    for fragment in galley {
+        suspend_breaks_in_fragment(fragment);
+    }
+}
+
+/// [`suspend_page_break_constraints`] for one fragment, recursing the way
+/// `crate::paginate`'s field pass does.
+fn suspend_breaks_in_fragment(fragment: &mut BlockFragment) {
+    match fragment {
+        BlockFragment::Paragraph {
+            lines,
+            break_control,
+            ..
+        } => {
+            *break_control = BreakControl::default();
+            for line in &mut lines.lines {
+                line.page_break_after = false;
+                for text_box in &mut line.text_boxes {
+                    for block in &mut text_box.blocks {
+                        suspend_breaks_in_fragment(block);
+                    }
+                }
+            }
+        }
+        BlockFragment::TableRow { cells, .. } => {
+            for cell in cells {
+                for block in &mut cell.blocks {
+                    suspend_breaks_in_fragment(block);
+                }
+            }
+        }
+    }
+}
+
+/// Trims every tile of a [`LayoutView::Reflow`] layout to its own content, so
+/// tiles drawn edge to edge read as one continuous column.
+///
+/// **Why a zero gap is not enough on its own.** The paginator fills a tile with
+/// whole chunks: the chunk that does not fit is carried to the next tile, and the
+/// space it would have occupied stays empty at the bottom of this one. That slack
+/// is up to one line high (or one table row), so a reader scrolling a zero-gap
+/// tile band still sees a blank band at every cut — the very artefact reflow
+/// exists to remove. Trimming each tile's page box and content area to the extent
+/// of what is actually on it makes the cut invisible **wherever it falls**, which
+/// is also what makes the painted column independent of `tile_height`.
+///
+/// The extent is the lowest bottom edge of anything the tile paints: placed body
+/// content, floats resolved onto it, and footnotes. Header, footer, page border,
+/// line numbers and watermark are suppressed under reflow and contribute nothing.
+/// A float that the page-anchored approximation left *below* the text therefore
+/// holds the tile open rather than being clipped — a tile is only ever made
+/// shorter than `tile_height`, never taller.
+///
+/// **Idempotent**, which is what lets it live in the shared post-pagination pass
+/// and survive the incremental resume path: a second run over an already-trimmed
+/// tile measures the same extent and writes the same height. A tile with nothing
+/// on it is left at full height rather than trimmed to zero, because a
+/// zero-height raster cannot be allocated.
+///
+/// Complexity: `O(content on the layout)` — one walk of each tile's three placed
+/// lists, no lookup by id, nothing quadratic.
+fn trim_reflow_tiles(layout: &mut crate::page::PaginatedLayout) {
+    for page in &mut layout.pages {
+        let flowed = page
+            .placed
+            .iter()
+            .chain(page.footnotes.iter())
+            .map(|placed| placed.rect.bottom());
+        let floats = page.anchored.iter().map(|anchor| anchor.rect.bottom());
+        let Some(extent) = flowed.chain(floats).max() else {
+            continue;
+        };
+        if extent <= page.content_area.origin.y || extent >= page.page_size.height {
+            continue;
+        }
+        // The content area starts at y = 0 under reflow (`reflow_page_config`
+        // gives a tile no vertical margin), so a tile's height and its content
+        // area's height are trimmed to the same value.
+        page.page_size.height = extent;
+        page.content_area.size.height = extent - page.content_area.origin.y;
+    }
+}
 
 /// Derives the page geometry ([`PageConfig`]) for a document from its first
 /// section, with **zero** header/footer bands — the pure page box and margins.
@@ -263,16 +674,34 @@ pub(crate) struct SectionPlan {
 /// Geometry is resolved here too, per section: each plan's [`PageConfig`] comes
 /// from its *own* `w:pgSz`/`w:pgMar`/`w:headerDistance`, and the running content
 /// is flowed at that section's content width.
+///
+/// Under [`LayoutView::Reflow`] the whole of that is replaced by the synthetic
+/// tile geometry and an **empty** plan: no header, no footer, no page border.
+/// Suppressing the page-shaped furniture by emptying the plan — rather than by
+/// teaching each post-pagination pass about the view — is what keeps it one
+/// mechanism: `place_running_content_on_page` and the page-border resolver find
+/// nothing to place and are already correct for a section that declares none
+/// (`docs/151` §3.3, §4.5 row 4). It also skips flowing the bands at all, which
+/// is work a reflow pass would throw away.
 pub(crate) fn build_section_plans(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> Vec<SectionPlan> {
     let mut plans = Vec::new();
     let mut effective_headers: Vec<HeaderFooterRef> = Vec::new();
     let mut effective_footers: Vec<HeaderFooterRef> = Vec::new();
 
     for section in &document.definitions().sections {
+        if let Some(config) = reflow_page_config(section.id, view) {
+            plans.push(SectionPlan {
+                config,
+                running: RunningContent::default(),
+                page_borders: PageBorders::default(),
+            });
+            continue;
+        }
         merge_running_refs(&mut effective_headers, &section.headers);
         merge_running_refs(&mut effective_footers, &section.footers);
 
@@ -299,14 +728,22 @@ pub(crate) fn build_section_plans(
     // A sectionless model is malformed for imported DOCX but remains a supported
     // deterministic fallback for programmatic callers.
     if plans.is_empty() {
-        plans.push(SectionPlan {
-            config: document_page_config(document),
-            running: RunningContent {
-                even_and_odd: document.definitions().settings.even_and_odd_headers,
-                ..RunningContent::default()
-            },
-            page_borders: PageBorders::default(),
-        });
+        let fallback = document_page_config(document);
+        match reflow_page_config(fallback.section, view) {
+            Some(config) => plans.push(SectionPlan {
+                config,
+                running: RunningContent::default(),
+                page_borders: PageBorders::default(),
+            }),
+            None => plans.push(SectionPlan {
+                config: fallback,
+                running: RunningContent {
+                    even_and_odd: document.definitions().settings.even_and_odd_headers,
+                    ..RunningContent::default()
+                },
+                page_borders: PageBorders::default(),
+            }),
+        }
     }
     plans
 }
@@ -340,10 +777,12 @@ fn build_section_runs(
     plans: &[SectionPlan],
     review_view: ReviewView,
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> Vec<SectionRun> {
-    build_section_runs_inner(document, shaper, plans, None, review_view, labels)
+    build_section_runs_inner(document, shaper, plans, None, review_view, labels, view)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_section_runs_with_exclusions(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -351,6 +790,7 @@ fn build_section_runs_with_exclusions(
     exclusions: &ParagraphFloatExclusions,
     review_view: ReviewView,
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> Vec<SectionRun> {
     build_section_runs_inner(
         document,
@@ -359,9 +799,11 @@ fn build_section_runs_with_exclusions(
         Some(exclusions),
         review_view,
         labels,
+        view,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_section_runs_inner(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -369,6 +811,7 @@ fn build_section_runs_inner(
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> Vec<SectionRun> {
     let sections = &document.definitions().sections;
     let body = document.body();
@@ -377,7 +820,7 @@ fn build_section_runs_inner(
         let content = config.content_area();
         let layout = ColumnLayout::single(content);
         let blocks = blocks_with_endnotes(document, body, &referenced_endnotes(body));
-        let galley = build_body_galley(
+        let mut galley = build_body_galley(
             document,
             shaper,
             &blocks,
@@ -387,6 +830,9 @@ fn build_section_runs_inner(
             None,
             labels,
         );
+        if view.is_reflow() {
+            suspend_page_break_constraints(&mut galley);
+        }
         return vec![SectionRun {
             config,
             layout,
@@ -394,7 +840,8 @@ fn build_section_runs_inner(
             column_galleys: Vec::new(),
             starts_new_page: true,
             start_parity: None,
-            mirror_margins: document.definitions().settings.mirror_margins,
+            // See `push_section_run`: a tile has no recto and no verso.
+            mirror_margins: !view.is_reflow() && document.definitions().settings.mirror_margins,
         }];
     }
 
@@ -423,6 +870,7 @@ fn build_section_runs_inner(
             exclusions,
             review_view,
             labels,
+            view,
             &mut runs,
         );
         start = end_excl;
@@ -440,6 +888,7 @@ fn build_section_runs_inner(
             exclusions,
             review_view,
             labels,
+            view,
             &mut runs,
         );
     }
@@ -546,6 +995,22 @@ fn section_break_points<'a>(
 /// Flows one section's block slice at its column width and appends its
 /// [`SectionRun`]. An empty slice (a section that carries no body block of its own)
 /// is skipped so it never emits a stray band.
+///
+/// This is where three of reflow's four suspensions happen, and they happen here
+/// — in the **driver**, as it builds the runs — rather than inside the paginators
+/// (`docs/151` §4.5 row 2 asked for `columns.rs` and `paginate.rs` edits; none is
+/// needed):
+///
+/// - `w:cols` is forced to one column, by constructing the single-column layout
+///   the section-less body already uses. A phone cannot show two newspaper
+///   columns of a reflowed measure, and ONLYOFFICE's reader view zeroes the
+///   column spacing for the same reason;
+/// - the section's start type stops forcing a page: `starts_new_page: false` and
+///   `start_parity: None` make every section after the first continue in the same
+///   tile band, so a `nextPage`/`oddPage` section break does not leave a visible
+///   blank stripe in a continuous column;
+/// - the paragraph break constraints are cleared once on the flowed galley by
+///   [`suspend_page_break_constraints`], which covers all three paginators.
 #[allow(clippy::too_many_arguments)]
 fn push_section_run(
     document: &Document,
@@ -556,6 +1021,7 @@ fn push_section_run(
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
     labels: &NoteLabels,
+    view: LayoutView,
     runs: &mut Vec<SectionRun>,
 ) {
     if blocks.is_empty() {
@@ -563,8 +1029,12 @@ fn push_section_run(
     }
     let config = plan.config;
 
-    let layout = column_layout(&boundary.columns, config.content_area());
-    let galley = build_body_galley(
+    let layout = if view.is_reflow() {
+        ColumnLayout::single(config.content_area())
+    } else {
+        column_layout(&boundary.columns, config.content_area())
+    };
+    let mut galley = build_body_galley(
         document,
         shaper,
         blocks,
@@ -577,6 +1047,9 @@ fn push_section_run(
         ),
         labels,
     );
+    if view.is_reflow() {
+        suspend_page_break_constraints(&mut galley);
+    }
     let column_galleys = if layout.has_unequal_widths() {
         layout
             .flow_widths()
@@ -605,9 +1078,18 @@ fn push_section_run(
         layout,
         galley,
         column_galleys,
-        starts_new_page: section_starts_new_page(boundary),
-        start_parity: section_start_parity(boundary),
-        mirror_margins: document.definitions().settings.mirror_margins,
+        starts_new_page: !view.is_reflow() && section_starts_new_page(boundary),
+        start_parity: if view.is_reflow() {
+            None
+        } else {
+            section_start_parity(boundary)
+        },
+        // `w:mirrorMargins` swaps the inside and outside margins on a verso
+        // page. A tile has no recto and no verso, and its two side margins are
+        // the same gutter anyway, so the swap is geometrically inert here; it is
+        // switched off rather than left inert so nothing downstream reads a
+        // two-sided document out of a continuous column.
+        mirror_margins: !view.is_reflow() && document.definitions().settings.mirror_margins,
     });
 }
 
@@ -688,11 +1170,45 @@ pub fn paginate_document_view(
     shaper: &dyn crate::text::LineShaper,
     review_view: ReviewView,
 ) -> crate::page::PaginatedLayout {
+    paginate_document_in(document, shaper, review_view, LayoutView::Paged)
+}
+
+/// [`paginate_document_view`] under an explicit [`LayoutView`] — the one entry
+/// point that can produce a **reflow** layout (ADR-046, `docs/151`).
+///
+/// This is the seam the whole reflow design turns on, and it is deliberately the
+/// only one: the flow engine is already width-parametric end to end
+/// ([`crate::flow::build_galley`] and its siblings take `content_width` as an
+/// argument), so reflow is a question of *where the width comes from* and of
+/// nothing else. Under [`LayoutView::Reflow`] the driver substitutes a synthetic
+/// [`PageConfig`] ([`reflow_page_config`]) for the section's own, forces one
+/// column, suspends the page-shaped break constraints, suppresses the page-shaped
+/// furniture, refuses to print a tile index as a page number, and trims each tile
+/// to its content. Not one line of [`crate::flow`], [`crate::columns`] or
+/// [`crate::paginate`] changes.
+///
+/// [`LayoutView::Paged`] produces **byte-for-byte** what
+/// [`paginate_document_view`] produced before this parameter existed, which is
+/// what `tests/reflow.rs`'s inertness case and the unmoved
+/// `tests/geometry_snapshot.golden` assert.
+///
+/// Complexity: the same `O(document)` as [`paginate_document`] — entering or
+/// leaving reflow is a full re-shape (the galley cache is width-scoped), so it is
+/// a **mode change**, not an interaction, and a host must run it the way it runs
+/// an open: off the main thread, cancellable, never straight off a resize event
+/// (`docs/151` §5).
+#[must_use]
+pub fn paginate_document_in(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    review_view: ReviewView,
+    view: LayoutView,
+) -> crate::page::PaginatedLayout {
     // Note numbering first: the reference marker's *text* (`w:numFmt`/`w:numStart`/
     // `w:numRestart`, `docs/105` FID-L-05) is an input to line breaking, so it has
     // to be resolved before anything is flowed.
     let mut labels = resolve_note_labels(document, None);
-    let mut layout = paginate_with_note_labels(document, shaper, review_view, &labels);
+    let mut layout = paginate_with_note_labels(document, shaper, review_view, &labels, view);
     if !labels.restarts_each_page() {
         return layout;
     }
@@ -709,7 +1225,7 @@ pub fn paginate_document_view(
             return layout;
         }
         labels = next;
-        layout = paginate_with_note_labels(document, shaper, review_view, &labels);
+        layout = paginate_with_note_labels(document, shaper, review_view, &labels, view);
     }
     layout
 }
@@ -724,13 +1240,14 @@ fn paginate_with_note_labels(
     shaper: &dyn crate::text::LineShaper,
     review_view: ReviewView,
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> crate::page::PaginatedLayout {
-    let plans = build_section_plans(document, shaper, labels);
+    let plans = build_section_plans(document, shaper, labels, view);
     // Build one paginated run per section, each flowed at its own column width,
     // then paginate them into shared pages (column-aware, section boundaries
     // carried across pages).
-    let runs = build_section_runs(document, shaper, &plans, review_view, labels);
-    finish_pagination(document, shaper, &plans, &runs, review_view, labels)
+    let runs = build_section_runs(document, shaper, &plans, review_view, labels, view);
+    finish_pagination(document, shaper, &plans, &runs, review_view, labels, view)
 }
 
 /// The incremental counterpart to [`paginate_document`]: identical output, but the
@@ -847,6 +1364,48 @@ pub fn paginate_document_view_after_edit(
     review_view: ReviewView,
     previous: Option<crate::page::PaginatedLayout>,
 ) -> LayoutUpdate {
+    paginate_document_after_edit_in(
+        document,
+        shaper,
+        cache,
+        dirty,
+        review_view,
+        previous,
+        LayoutView::Paged,
+    )
+}
+
+/// [`paginate_document_view_after_edit`] under an explicit [`LayoutView`], so a
+/// keystroke in a **reflow** layout stays incremental instead of silently
+/// reverting the reader to paper.
+///
+/// A keystroke in reflow is `O(edit)` in *shaping*, exactly as in
+/// [`LayoutView::Paged`] — the galley cache is keyed on the flow items, and the
+/// width it was built at is the reflow width, so nothing about where the width
+/// came from reaches it. Pagination itself is not resumed: a reflow tile's height
+/// is trimmed to its own content, so it no longer matches the tile height the
+/// config declares, and [`crate::paginate::repaginate_at`]'s existing geometry
+/// check — which exists precisely to stop a page with a stale content area being
+/// reused — declines the resume and re-tiles the galley from the top. That is an
+/// `O(pages)` walk with no re-shaping, and it is stated here rather than left to
+/// be discovered.
+///
+/// **The caller must never carry a layout across a view change.** A layout built
+/// in the other view has different page geometry and different break decisions in
+/// every page; passing it as `previous` would offer the resume a baseline from a
+/// document that was laid out to different rules. A host changing the view drops
+/// its galley cache and rebuilds whole through [`paginate_document_in`].
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn paginate_document_after_edit_in(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+    review_view: ReviewView,
+    previous: Option<crate::page::PaginatedLayout>,
+    view: LayoutView,
+) -> LayoutUpdate {
     let labels = resolve_note_labels(document, None);
     if labels.restarts_each_page() {
         // `eachPage` note numbering needs the pagination fixed point in
@@ -855,16 +1414,24 @@ pub fn paginate_document_view_after_edit(
         // incrementality, on a rare path.
         cache.discard_retention();
         return LayoutUpdate {
-            layout: paginate_document_view(document, shaper, review_view),
+            layout: paginate_document_in(document, shaper, review_view, view),
             previous,
             changed_pages: None,
         };
     }
-    let plans = build_section_plans(document, shaper, &labels);
-    let mut runs =
-        build_section_runs_cached(document, shaper, &plans, cache, dirty, &labels, review_view);
+    let plans = build_section_plans(document, shaper, &labels, view);
+    let mut runs = build_section_runs_cached(
+        document,
+        shaper,
+        &plans,
+        cache,
+        dirty,
+        &labels,
+        review_view,
+        view,
+    );
     let resumed = match previous {
-        Some(previous) => resume_pagination(document, shaper, &plans, &runs, cache, previous),
+        Some(previous) => resume_pagination(document, shaper, &plans, &runs, cache, previous, view),
         None => Resume::NotOffered,
     };
     let (layout, returned, changed_pages) = match resumed {
@@ -877,14 +1444,16 @@ pub fn paginate_document_view_after_edit(
             (layout, None, Some(changed_pages))
         }
         Resume::Refused(previous) => {
-            let layout = finish_pagination(document, shaper, &plans, &runs, review_view, &labels);
+            let layout =
+                finish_pagination(document, shaper, &plans, &runs, review_view, &labels, view);
             // A full build re-flowed every page it produced. Charging it keeps the
             // number a complexity guard reads honest whichever path ran.
             cache.note_reflowed_pages(layout.pages.len(), false);
             (layout, Some(previous), None)
         }
         Resume::NotOffered => {
-            let layout = finish_pagination(document, shaper, &plans, &runs, review_view, &labels);
+            let layout =
+                finish_pagination(document, shaper, &plans, &runs, review_view, &labels, view);
             cache.note_reflowed_pages(layout.pages.len(), false);
             (layout, None, None)
         }
@@ -945,6 +1514,7 @@ enum Resume {
 ///   writing to a field of its own, so it is not idempotent over a reused page;
 /// - no paragraph-anchored float, because those drive a pagination fixed point
 ///   that re-flows the whole body anyway.
+#[allow(clippy::too_many_arguments)]
 fn resume_pagination(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -952,6 +1522,7 @@ fn resume_pagination(
     runs: &[SectionRun],
     cache: &GalleyCache,
     previous: crate::page::PaginatedLayout,
+    view: LayoutView,
 ) -> Resume {
     let [run] = runs else {
         return Resume::Refused(previous);
@@ -997,7 +1568,7 @@ fn resume_pagination(
     for page in &mut layout.pages {
         page.clear_post_pagination();
     }
-    post_pagination_passes(document, shaper, plans, &mut layout);
+    post_pagination_passes(document, shaper, plans, &mut layout, view);
     // A paragraph-anchored float drives the exclusion fixed point in
     // `finish_pagination`, which re-flows the body at a narrowed width; there is
     // nothing incremental about it, so hand the whole job back.
@@ -1028,6 +1599,7 @@ fn resume_pagination(
 /// post-pagination passes in the required order. Both [`paginate_document`] and
 /// [`paginate_document_cached`] funnel through here so the only difference between
 /// them is how the section-run galleys were built.
+#[allow(clippy::too_many_arguments)]
 fn finish_pagination(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -1035,8 +1607,9 @@ fn finish_pagination(
     runs: &[SectionRun],
     review_view: ReviewView,
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> crate::page::PaginatedLayout {
-    let mut layout = finish_pagination_pass(document, shaper, plans, runs, labels);
+    let mut layout = finish_pagination_pass(document, shaper, plans, runs, labels, view);
     let mut exclusions = paragraph_float_exclusions(document, shaper, plans, &layout);
     if exclusions.is_empty() {
         return layout;
@@ -1055,8 +1628,9 @@ fn finish_pagination(
             &exclusions,
             review_view,
             labels,
+            view,
         );
-        let next = finish_pagination_pass(document, shaper, plans, &runs, labels);
+        let next = finish_pagination_pass(document, shaper, plans, &runs, labels, view);
         let next_exclusions = paragraph_float_exclusions(document, shaper, plans, &next);
         if next_exclusions == exclusions {
             return next;
@@ -1080,8 +1654,9 @@ fn finish_pagination(
         &conservative,
         review_view,
         labels,
+        view,
     );
-    finish_pagination_pass(document, shaper, plans, &runs, labels)
+    finish_pagination_pass(document, shaper, plans, &runs, labels, view)
 }
 
 fn finish_pagination_pass(
@@ -1090,13 +1665,14 @@ fn finish_pagination_pass(
     plans: &[SectionPlan],
     runs: &[SectionRun],
     labels: &NoteLabels,
+    view: LayoutView,
 ) -> crate::page::PaginatedLayout {
     let mut layout = if runs.iter().any(run_has_body_footnotes) {
         paginate_section_footnotes(document, shaper, runs, labels)
     } else {
         paginate_columns(runs)
     };
-    post_pagination_passes(document, shaper, plans, &mut layout);
+    post_pagination_passes(document, shaper, plans, &mut layout, view);
     layout
 }
 
@@ -1114,18 +1690,38 @@ fn finish_pagination_pass(
 ///
 /// `O(pages)`, at a small constant — measured at 13 us for 67 pages, against
 /// 1.5 ms for the galley rebuild it sits beside.
+///
+/// Under [`LayoutView::Reflow`] four of these passes do not run, and the reason is
+/// the same in each case: they answer a question about a **page** that a tile
+/// cannot be asked (`docs/151` §3.3, §4.5 rows 3 and 4).
+///
+/// - `w:vAlign` centres or bottom-aligns content *within a page*. On a tile whose
+///   height is about to be trimmed to its own content there is no slack to
+///   distribute, and distributing it before the trim would move every line of a
+///   continuous column by an arbitrary amount.
+/// - margin line numbers (`w:lnNumType`) and the section watermark are page
+///   furniture by definition.
+/// - `PAGE` and `NUMPAGES` resolve against tiles, so they are refused rather than
+///   printed (see [`REFLOW_FIELD_REFUSAL`]).
+///
+/// The header, the footer and the page border need no arm here: the plan
+/// [`build_section_plans`] built for a reflow pass is empty, so the passes that
+/// place them find nothing — one mechanism instead of a second set of conditions.
 fn post_pagination_passes(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     layout: &mut crate::page::PaginatedLayout,
+    view: LayoutView,
 ) {
     let fallback_config = plans[0].config;
     // Section `w:vAlign` (center/both/bottom): shift each page's placed body
     // content within its content area. Runs first, before any pass reads body
     // positions (float exclusions, anchored placement, the display list), since
     // every glyph/image/text-box origin is relative to its fragment's rect.
-    apply_page_vertical_alignment(layout, &document.definitions().sections);
+    if !view.is_reflow() {
+        apply_page_vertical_alignment(layout, &document.definitions().sections);
+    }
 
     // Post-pagination passes, in the required order: running content is placed
     // first so its fields exist to stamp, then the field pass resolves every
@@ -1152,9 +1748,21 @@ fn post_pagination_passes(
     }
     // Per-page `PAGE` labels honoring each section's `w:pgNumType` (@fmt format +
     // @start restart); the same labels feed the anchored-field pass below so a
-    // floating page-number box matches the body/footer.
-    let page_labels = page_number_labels(layout, &document.definitions().sections);
-    resolve_fields_labeled(layout, &page_labels, shaper);
+    // floating page-number box matches the body/footer. Under reflow both the
+    // per-page label and the total are refusals: a tile index is not a page
+    // number, and neither is a tile count.
+    let (page_labels, total_label) = if view.is_reflow() {
+        (
+            vec![REFLOW_FIELD_REFUSAL.to_owned(); layout.pages.len()],
+            REFLOW_FIELD_REFUSAL.to_owned(),
+        )
+    } else {
+        (
+            page_number_labels(layout, &document.definitions().sections),
+            layout.pages.len().to_string(),
+        )
+    };
+    resolve_fields_labeled(layout, &page_labels, &total_label, shaper);
     // Floating objects last: anchored pictures, floating text boxes, and DrawingML
     // groups, over body AND header/footer bands, each resolved to a rect + z-key
     // for the float layer to paint in order.
@@ -1165,13 +1773,23 @@ fn post_pagination_passes(
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.
-    resolve_anchored_fields_labeled(layout, &page_labels, shaper);
+    resolve_anchored_fields_labeled(layout, &page_labels, &total_label, shaper);
     // Margin line numbers (`w:lnNumType`) last: they stamp each numbered line's
     // FINAL baseline, so they must follow the vertical-alignment shift above and
     // cannot precede it. Inert unless a section declares line numbering
     // (`docs/105` FID-L-09).
-    crate::line_number::place_line_numbers(layout, document, shaper);
-    crate::watermark::place_watermarks(layout, document, shaper);
+    if !view.is_reflow() {
+        crate::line_number::place_line_numbers(layout, document, shaper);
+        crate::watermark::place_watermarks(layout, document, shaper);
+    }
+    // Absolutely last, and only under reflow: every tile is cut down to what is
+    // actually on it, so the tiles drawn edge to edge read as one column. It has
+    // to follow every pass that can put content on a page — the floats above
+    // included — or a tile would be trimmed above a float that had not been
+    // placed yet.
+    if view.is_reflow() {
+        trim_reflow_tiles(layout);
+    }
 }
 
 /// The physical page geometry of page `number` under `w:mirrorMargins`: on a
@@ -1457,6 +2075,7 @@ fn emu_to_twip(emu: i64) -> Twip {
 /// Documents that carry explicit section breaks or referenced endnotes re-shape
 /// fully (each section slice or synthetic endnote appendix would need its own
 /// cache, and these are rarer than plain body edits).
+#[allow(clippy::too_many_arguments)]
 fn build_section_runs_cached(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -1465,6 +2084,7 @@ fn build_section_runs_cached(
     dirty: &DirtySet,
     labels: &NoteLabels,
     review_view: ReviewView,
+    view: LayoutView,
 ) -> Vec<SectionRun> {
     // The incremental cache used to be switched off whenever the document
     // declared ANY section — and every Word-produced file ends `w:body` with a
@@ -1492,7 +2112,7 @@ fn build_section_runs_cached(
         // too, or it would be reused across a body this one changed without
         // reporting.
         cache.discard_retention();
-        return build_section_runs(document, shaper, plans, review_view, labels);
+        return build_section_runs(document, shaper, plans, review_view, labels, view);
     }
     // One full-width run over the whole body, built incrementally. Mirrors the
     // `sections.is_empty()` arm of `build_section_runs`, swapping
@@ -1525,6 +2145,13 @@ fn build_section_runs_cached(
         cache.refuse_retention();
     }
     crate::table_float::lift_floating_rows(&mut galley, document);
+    // The same suspension the uncached builder applies, for the same reason and in
+    // the same place: on the galley, once, before any paginator sees it. Applying
+    // it AFTER the lift keeps the two builders fragment-for-fragment identical,
+    // which is the invariant the incremental path rests on.
+    if view.is_reflow() {
+        suspend_page_break_constraints(&mut galley);
+    }
     vec![SectionRun {
         config,
         layout,
@@ -1535,7 +2162,8 @@ fn build_section_runs_cached(
         // document's *first* section: it opens page 1 and can never need a
         // parity pad (there is no page before it to pad after).
         start_parity: None,
-        mirror_margins: document.definitions().settings.mirror_margins,
+        // See `push_section_run`: a tile has no recto and no verso.
+        mirror_margins: !view.is_reflow() && document.definitions().settings.mirror_margins,
     }]
 }
 
