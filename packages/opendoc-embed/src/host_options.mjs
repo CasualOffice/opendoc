@@ -481,6 +481,7 @@ export const OPTIONS = Object.freeze([
     ours: "chrome=-review",
     code: "mapped",
     via: region("review"),
+    invert: true,
     note: "The review-mode switcher is its own region, so a host can take the control without taking the band.",
   }),
   Object.freeze({
