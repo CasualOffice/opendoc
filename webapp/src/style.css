@@ -5165,6 +5165,20 @@ body.is-format-painting .page-wrap * {
    so the rail did not read as a set of buttons the way the rest of the shell's
    icon controls do (HF-096). `--surface` is the one token guaranteed to sit a
    step off `--bg-2` in both palettes. */
+/* The rail sheds its captions when the review column takes the margin, for the
+   same reason it sheds them on a phone: the room the document gets is whatever
+   the rail and the column leave it.
+
+   A caption-sized tile is 78px in English and wider in Russian or Brazilian
+   Portuguese, and at 860px with the column in the margin those pixels come
+   straight off the page — measured, the sheet starts at x=78 instead of x=40
+   and the column then covers a third of it rather than a quarter. The icons
+   keep their `aria-label`, which is what `editor-narrow-chrome.spec.mjs` asserts
+   for the phone rung, so nothing becomes unreachable or unnameable. */
+:root:has(#viewport.has-review-sidebar:not(.review-sheet)) .rail-btn > span:not(.ms) {
+  display: none;
+}
+
 .rail-btn:hover:not(:disabled) {
   background: var(--surface);
   color: var(--ink);

@@ -24,15 +24,43 @@ async function open(page) {
   return box;
 }
 
+/** Selects whatever object is at a point, descending into a GROUP when that is
+ *  what a click lands on.
+ *
+ *  A click selects the object; a group is selected as a unit, and a second
+ *  click on the child descends — which is Docs' and ONLYOFFICE's rule. What a
+ *  double-click no longer means is "descend": on a shape it now opens the
+ *  shape's text, as it does in Word, Docs and ONLYOFFICE, so double-clicking to
+ *  reach a grouped child lands in a text box instead. Measured: single click
+ *  gives `shape`, double gives `textbox`.
+ *
+ *  Returns the selected kind, or null when nothing is there. */
+async function selectAt(page, x, y) {
+  await page.mouse.click(x, y);
+  let kind = await page.locator("#pages").getAttribute("data-object-kind");
+  if (kind === "group") {
+    await page.mouse.click(x, y);
+    kind = await page.locator("#pages").getAttribute("data-object-kind");
+  }
+  return kind;
+}
+
 /** Clicks around until a shape is selected, so the point is found rather than
- *  assumed. Returns the point that worked. */
+ *  assumed. Returns the point that worked.
+ *
+ *  SINGLE click, not double. This used to double-click, because a double-click
+ *  was only ever "descend into a group". It now also means "type in this
+ *  shape" — Word, Docs and ONLYOFFICE all open a shape's text that way — so a
+ *  double-click here selected the shape and immediately descended into its text
+ *  box, and `data-object-kind` came back `textbox`. Measured: single click on
+ *  the same point gives `shape`, double gives `textbox`.
+ *
+ *  A single click is also what the spec means: these cases format a SHAPE. */
 async function selectShape(page, box) {
   for (let fy = 0.04; fy < 0.5; fy += 0.02) {
     for (let fx = 0.08; fx < 0.85; fx += 0.04) {
       const p = { x: box.x + box.width * fx, y: box.y + box.height * fy };
-      // A true multi-child group is selected as a unit on first click;
-      // double-click explicitly descends to the painted child.
-      await page.mouse.dblclick(p.x, p.y);
+      await page.mouse.click(p.x, p.y);
       if ((await page.locator("#pages").getAttribute("data-object-kind")) === "shape") return p;
     }
   }
@@ -171,8 +199,7 @@ test("the picker reflects the shape it is on, not the last color used", async ({
     for (let fx = 0.08; fx < 0.85; fx += 0.04) {
       const p = { x: box.x + box.width * fx, y: box.y + box.height * fy };
       if (Math.abs(p.x - first.x) < 20 && Math.abs(p.y - first.y) < 20) continue;
-      await page.mouse.dblclick(p.x, p.y);
-      const kind = await page.locator("#pages").getAttribute("data-object-kind");
+      const kind = await selectAt(page, p.x, p.y);
       const node = await page.locator("#pages").getAttribute("data-object-selected");
       if (kind === "shape" && node && node !== firstNode) {
         secondNode = node;
@@ -199,8 +226,8 @@ test("a shape inside a group can be filled", async ({ page, consoleErrors }) => 
   let filled = false;
   for (let fy = 0.04; fy < 0.6 && !filled; fy += 0.02) {
     for (let fx = 0.08; fx < 0.85; fx += 0.04) {
-      await page.mouse.dblclick(box.x + box.width * fx, box.y + box.height * fy);
-      if ((await page.locator("#pages").getAttribute("data-object-kind")) !== "shape") continue;
+      const kind = await selectAt(page, box.x + box.width * fx, box.y + box.height * fy);
+      if (kind !== "shape") continue;
       const node = await page.locator("#pages").getAttribute("data-object-selected");
       if (seen.has(node)) continue;
       seen.add(node);
