@@ -16,19 +16,22 @@ import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
 import { tocDocx, TOC_HEADINGS } from "./toc-docx.mjs";
 
 /** Opens a generated TOC document and waits for it to be laid out. */
-async function openToc(page, { hyperlinked, numbered = false }) {
+async function openToc(page, { hyperlinked, numbered = false, fieldInEntry = false }) {
   await gotoEditor(page);
   await page
     .locator("#file")
-    .setInputFiles(tocDocx("toc.docx", 900, false, hyperlinked, numbered));
+    .setInputFiles(tocDocx("toc.docx", 900, false, hyperlinked, numbered, fieldInEntry));
   await page.waitForFunction(
     () => /of\s+\d\d/.test(document.getElementById("statPages")?.textContent ?? ""),
     null,
     { timeout: 45_000 },
   );
-  // The entries sit on page 1, one line apart, under the "Contents" line.
+  // The entries sit on page 1, one line apart, under the "Contents" line. With
+  // the field's own runs moved INTO the first entry there is one paragraph less
+  // above the table, so every row sits exactly one line — 16px here — higher.
   const box = await stableBox(page.locator('.page-wrap[data-page-number="1"]'));
-  return { box, entryY: [132, 148, 164] };
+  const top = fieldInEntry ? 116 : 132;
+  return { box, entryY: [top, top + 16, top + 32] };
 }
 
 /** How far down the document the viewport is, and which heading the caret is on
@@ -84,16 +87,14 @@ for (const [hyperlinked, numbered] of [
       await page.mouse.click(box.x + 140, box.y + dy);
       await expect.poll(async () => (await viewState(page)).scrollTop).toBeGreaterThan(400);
       landed.push((await viewState(page)).scrollTop);
-      // The status bar names where it went, so the jump is reported and not
-      // just performed. Either spelling of THIS entry's destination counts —
-      // its bookmark or its heading text — because which of the two mechanisms
-      // answers depends on where in the entry the pointer landed (over a
-      // numbered entry's leading number, the contents-entry path answers rather
-      // than the authored hyperlink, and both arrive at the same heading). The
-      // per-entry index keeps that from degrading into "said something".
-      expect((await viewState(page)).status).toMatch(
-        new RegExp(`_Toc10${index + 1}|${TOC_HEADINGS[index]}`),
-      );
+      // The status bar names where it went by its HEADING, whichever of the two
+      // mechanisms answered — the authored hyperlink or the contents path. They
+      // used to disagree: the link path reported the bookmark id verbatim
+      // ("Jumped to _Toc130812265"), an implementation detail no reader can
+      // place, while the same gesture one line down named the heading.
+      const { status } = await viewState(page);
+      expect(status).toMatch(new RegExp(TOC_HEADINGS[index]));
+      expect(status).not.toMatch(/_Toc\d/);
     }
 
     // Three entries, three DIFFERENT places, in document order — the assertion
@@ -130,6 +131,56 @@ test("a numbered contents entry arms the contents-entry pointer target", async (
   await expect
     .poll(() => canvas.evaluate((el) => el.dataset.pointerTarget ?? "(none)"))
     .not.toBe("contents-entry");
+});
+
+// The owner's exact shape, and the reason the FIRST entry behaves unlike the
+// rest: Word writes the field's `begin`/`instrText`/`separate` at the head of
+// the first entry paragraph, so that one entry's `w:hyperlink` opens while the
+// TOC field is still open — and no other entry's does. The importer refused a
+// hyperlink in that position, so entry 1 alone lost its anchor, which reads as
+// "on TOC first point is not clickable" while every other point behaves.
+test("the FIRST entry navigates when the field opens inside it", async ({
+  page,
+  consoleErrors,
+}) => {
+  const { box, entryY } = await openToc(page, {
+    hyperlinked: true,
+    numbered: true,
+    fieldInEntry: true,
+  });
+
+  // Found the way a reader finds them — by sweeping down until the pointer says
+  // "this is a contents entry" — rather than from hard-coded line positions,
+  // which move with the shape: dropping the field's own paragraph shifts every
+  // row up by a line, and a guard pinned to those numbers clicks the wrong entry
+  // and reports the wrong thing.
+  const landed = [];
+  for (const [index, dy] of entryY.entries()) {
+    await page.evaluate(() => {
+      document.getElementById("viewport").scrollTop = 0;
+    });
+    await page.waitForTimeout(250);
+    await page.mouse.move(box.x + 200, box.y + dy);
+    await expect
+      .poll(() =>
+        page
+          .locator('.page-wrap[data-page-number="1"] canvas.page')
+          .evaluate((el) => getComputedStyle(el).cursor),
+      )
+      .toBe("pointer");
+    await page.mouse.click(box.x + 200, box.y + dy);
+    await expect.poll(async () => (await viewState(page)).scrollTop).toBeGreaterThan(400);
+    const { scrollTop, status } = await viewState(page);
+    landed.push(scrollTop);
+    expect(status, `entry ${index + 1} must name where it went`).toMatch(
+      new RegExp(TOC_HEADINGS[index]),
+    );
+  }
+  // Three entries, three DIFFERENT places — so "the first one works" cannot be
+  // satisfied by every entry going to the same heading.
+  expect(landed[1]).toBeGreaterThan(landed[0]);
+  expect(landed[2]).toBeGreaterThan(landed[1]);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("the caret lands ON the heading, not merely near it", async ({ page }) => {

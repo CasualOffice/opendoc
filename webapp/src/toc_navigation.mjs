@@ -35,6 +35,25 @@
 // which is exact, and it is what the round-trip preserves. This is the fallback
 // for when there is no link to follow.
 //
+// ## Does a PLAIN click follow, or does it place a caret?
+//
+// Decided from the competitors, not from convenience:
+//
+//   * **Word** requires Ctrl+Click. A plain click puts the caret in the field,
+//     because the field is editable text, and the whole field shades grey.
+//   * **Google Docs** follows on a plain click and shows a link bubble.
+//   * **ONLYOFFICE** follows on a plain click. Source-verified rather than
+//     recalled: `word/Editor/Document.js` follows `Selection.Data.Hyperlink` on
+//     mouse-up with NO modifier test anywhere in that path (it also follows a
+//     `PAGEREF` field the same way).
+//
+// **We follow on a plain click**, with ONLYOFFICE and Docs against Word — two of
+// three, including the product we are replacing, and the gesture a reader tries
+// first. The entries stay ordinary editable text: clicking past the end of an
+// entry places a caret (`targetAt` returns null at or beyond the paragraph
+// length, which is why that blank strip is left alone), and References ▸ Go to
+// heading plus the context-menu row reach the same capability from a caret.
+//
 // ## How an entry is recognised, and why not by field range
 //
 // The engine reports `fieldRangeEntries()` — `id\tinstruction` for every
@@ -175,6 +194,32 @@ export function buildHeadingIndex(rows) {
 }
 
 /**
+ * The reverse of [`buildHeadingIndex`]: node id to that heading's own text.
+ *
+ * Used to say where a jump LANDED. An authored `\h` contents entry is a
+ * hyperlink to a `_TocNNNNNNNNN` bookmark, and reporting that raw id back to the
+ * reader ("Jumped to _Toc130812265") names an implementation detail rather than
+ * a destination — while the same jump made through the contents path names the
+ * heading. Same document, same gesture, two different answers depending on which
+ * mechanism happened to answer.
+ *
+ * O(headings), built once per document version by the navigator and O(1) per use.
+ *
+ * @param {string[]} rows `documentOutline()` output
+ * @returns {Map<string, string>} node id to heading text
+ */
+export function buildHeadingLabels(rows) {
+  const labels = new Map();
+  for (const row of rows ?? []) {
+    const parts = String(row).split("\t");
+    if (parts.length < 3) continue;
+    const text = parts.slice(2).join("\t").trim();
+    if (text !== "" && !labels.has(parts[1])) labels.set(parts[1], text);
+  }
+  return labels;
+}
+
+/**
  * The node id the contents entry `text` names, or `null` when no heading
  * matches.
  *
@@ -242,6 +287,8 @@ export function hasTableOfContents(instructions) {
 export function createTocNavigator(host) {
   let index = null;
   let indexAt = null;
+  let labels = null;
+  let labelsAt = null;
   let present = false;
   let presentAt = null;
 
@@ -281,6 +328,20 @@ export function createTocNavigator(host) {
       }
       const target = resolveTocTarget(index, text);
       return target ? { node: target, label: tocEntryLabel(text) } : null;
+    },
+
+    /** The heading text of the node a jump landed on, or null when `node` is not
+     *  a heading this document's outline knows. Lets a caller name a
+     *  destination the reader recognises instead of the `_Toc…` bookmark id the
+     *  field happens to use. Cached per document version; O(1) per call. */
+    headingAt(node) {
+      const doc = host.doc();
+      if (!node || !doc) return null;
+      if (labelsAt !== host.revision()) {
+        labels = buildHeadingLabels(doc.documentOutline());
+        labelsAt = host.revision();
+      }
+      return labels.get(String(node)) ?? null;
     },
   };
 }

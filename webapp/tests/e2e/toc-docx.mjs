@@ -91,8 +91,10 @@ const numberField = (number) =>
     : `<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t xml:space="preserve">${number}</w:t></w:r><w:r><w:tab/></w:r>`;
 
 // A `\\h` entry: the heading text is wrapped in a real hyperlink to its bookmark.
-const entry = (n, text, page, level, number = null) => `
-  <w:p><w:pPr><w:pStyle w:val="TOC${level}"/></w:pPr>
+// `open` is the field's own `begin`/`instrText`/`separate`, which Word writes at
+// the head of the FIRST entry paragraph rather than in a paragraph of its own.
+const entry = (n, text, page, level, number = null, open = "") => `
+  <w:p><w:pPr><w:pStyle w:val="TOC${level}"/></w:pPr>${open}
     <w:hyperlink w:anchor="_Toc${n}" w:history="1">
       ${numberField(number)}
       <w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t xml:space="preserve">${text}</w:t></w:r>
@@ -108,8 +110,8 @@ const entry = (n, text, page, level, number = null) => `
 // A TOC written WITHOUT `\\h`: identical text, identical `TOCn` style, but no
 // hyperlink at all — which is what Word emits when the field has no `\\h` switch
 // and what most pre-2007 and LibreOffice-produced tables of contents look like.
-const plainEntry = (n, text, page, level, number = null) => `
-  <w:p><w:pPr><w:pStyle w:val="TOC${level}"/></w:pPr>
+const plainEntry = (n, text, page, level, number = null, open = "") => `
+  <w:p><w:pPr><w:pStyle w:val="TOC${level}"/></w:pPr>${open}
     ${number === null ? "" : `<w:r><w:t xml:space="preserve">${number}</w:t></w:r><w:r><w:tab/></w:r>`}
     <w:r><w:t xml:space="preserve">${text}</w:t></w:r>
     <w:r><w:tab/></w:r>
@@ -187,19 +189,24 @@ export function tocDocx(
   sdt = false,
   hyperlinked = true,
   numbered = false,
+  fieldInEntry = false,
 ) {
   const number = (i) => (numbered ? TOC_NUMBERS[i] : null);
+  // The field's own opening runs. Word puts these at the HEAD OF THE FIRST ENTRY
+  // paragraph, not in a paragraph of their own — so the first entry is the only
+  // one whose text is preceded by the field instruction, and the only one that
+  // can be broken by mistaking that instruction for content.
+  const fieldOpen = `
+    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+    <w:r><w:instrText xml:space="preserve">${hyperlinked ? ' TOC \\o "1-3" \\h \\z \\u ' : ' TOC \\o "1-3" \\z \\u '}</w:instrText></w:r>
+    <w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
   const body = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>
   ${sdt ? '<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>' : ''}
   <w:p><w:r><w:t>Contents</w:t></w:r></w:p>
-  <w:p>
-    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
-    <w:r><w:instrText xml:space="preserve">${hyperlinked ? ' TOC \\o "1-3" \\h \\z \\u ' : ' TOC \\o "1-3" \\z \\u '}</w:instrText></w:r>
-    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
-  </w:p>
-  ${(hyperlinked ? entry : plainEntry)(101, TOC_HEADINGS[0], 2, 1, number(0))}
+  ${fieldInEntry ? "" : `<w:p>${fieldOpen}</w:p>`}
+  ${(hyperlinked ? entry : plainEntry)(101, TOC_HEADINGS[0], 2, 1, number(0), fieldInEntry ? fieldOpen : "")}
   ${(hyperlinked ? entry : plainEntry)(102, TOC_HEADINGS[1], 3, 1, number(1))}
   ${(hyperlinked ? entry : plainEntry)(103, TOC_HEADINGS[2], 4, 2, number(2))}
   <w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
