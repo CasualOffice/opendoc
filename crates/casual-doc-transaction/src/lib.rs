@@ -40,11 +40,15 @@
 //! needs (`107` §3.3). The Phase-0 grapheme-addressed vocabulary is [`v0`]; ADR-043 records
 //! why the live path differs and why that is deliberate.
 //!
-//! # What is deliberately absent
+//! # Concurrency
 //!
-//! `transform`. This crate makes transform *possible* — an ordered log of invertible
-//! operations with a position map per commit — and does not implement it. Transform, tier
-//! classification and the node-addressed mapping steps are `107` §3 and §6.3.
+//! [`transform`] rebases one operation over a concurrent one (doc 150, ADR-045). It is a
+//! pure function over a [`Change`](transform::Change) — an operation together with the
+//! inverse recorded for it — and **nothing in this crate calls it**: OT is dormant at one
+//! editor, and a source guard fails the build if that stops being true.
+//!
+//! Still absent: the node-addressed mapping steps (`107` P-4), and everything above
+//! transform — session, relay, presence (`107` 6.6).
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -57,6 +61,7 @@ use casual_doc_edit::{EditError, RunIds};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
+pub mod transform;
 pub mod v0;
 
 /// The live operation vocabulary. One set, re-exported rather than re-declared: a second
@@ -438,6 +443,32 @@ impl Commit {
     #[must_use]
     pub const fn position_map(&self) -> &PositionMap {
         &self.position_map
+    }
+
+    /// This commit's changes — each forward operation paired with the inverse
+    /// `casual_doc_edit::apply` returned for it — in application order.
+    ///
+    /// This is the shape [`transform`](crate::transform::transform) consumes, and the
+    /// pairing is not obvious from the fields: `inverse_operations` is stored **reversed**,
+    /// because that is the order it must be applied in to undo the commit.
+    ///
+    /// `None` when the commit carries no inverses. A
+    /// [`Coalesce::ContinueKeepingFirstInverse`] commit records its forward operations and
+    /// deliberately contributes no inverse, so it cannot say what it destroyed and cannot
+    /// serve as a concurrent change (doc 150 §10 Q2).
+    ///
+    /// O(1) to call; O(operations) to consume.
+    #[must_use]
+    pub fn changes(&self) -> Option<impl ExactSizeIterator<Item = transform::Change<'_>>> {
+        if self.inverse_operations.len() != self.operations.len() {
+            return None;
+        }
+        Some(
+            self.operations
+                .iter()
+                .zip(self.inverse_operations.iter().rev())
+                .map(|(operation, inverse)| transform::Change::new(operation, inverse)),
+        )
     }
 }
 
