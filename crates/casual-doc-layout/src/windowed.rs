@@ -61,6 +61,12 @@ use crate::document_layout::SectionPlan;
 use crate::document_layout::apply_page_vertical_alignment;
 use crate::document_layout::blocks_with_endnotes;
 use crate::document_layout::build_section_plans;
+// Separate `use` line (anti-conflict). A windowed body is never reflowed: reflow's
+// guarantee is that the document stays editable, and a windowed body is already
+// read-only, so `casual-doc-wasm`'s `setLayoutView` refuses above the
+// whole-layout ceiling rather than producing a reflow nobody can type into
+// (`docs/151` §4.5 row 7, answered as a refusal).
+use crate::document_layout::LayoutView;
 use crate::document_layout::mirrored_page_config;
 use crate::document_layout::referenced_endnotes;
 use crate::flow::MeasureResume;
@@ -359,7 +365,7 @@ pub fn measure_document_prefix(
     // The section plan flows the headers/footers so the content area is the
     // one the body will actually be paginated into. Bounded by the running
     // content, not by the document.
-    let plans = build_section_plans(document, shaper, &labels);
+    let plans = build_section_plans(document, shaper, &labels, LayoutView::Paged);
     let config = plans[0].config;
     let content_width = config.content_area().size.width;
 
@@ -868,7 +874,12 @@ fn finish_window_pages(
     let labels: Vec<String> = (0..layout.pages.len())
         .map(|offset| page_number_label_at(section, first_index + offset))
         .collect();
-    resolve_fields_labeled_with_total(&mut layout, &labels, measures.pages.len() as u32, shaper);
+    resolve_fields_labeled_with_total(
+        &mut layout,
+        &labels,
+        &measures.pages.len().to_string(),
+        shaper,
+    );
     layout.pages
 }
 
