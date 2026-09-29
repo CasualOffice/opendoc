@@ -850,7 +850,26 @@ pub(crate) fn parse_shading(element: &BytesStart<'_>) -> (Shading, bool) {
             .as_deref()
             .is_some_and(|value| value != "none");
     let degraded = !pattern_modeled || theme_fill_unmapped;
-    (Shading { fill, theme_fill }, degraded)
+    // An explicit "no background" — `w:fill="auto"` (how Word writes **No
+    // Color**) or a `nil` pattern — is a CANCELLATION of whatever the style
+    // chain, the table style or the table contributed, not silence. Recorded as
+    // a flag because `fill: None` alone cannot tell the two apart, which is the
+    // `w:numId="0"` mistake in another property. An unmapped `themeFill` is not
+    // a cancellation: it names a fill we failed to resolve, and it is already
+    // reported above.
+    let fill_none = fill.is_none()
+        && theme_fill.is_none()
+        && !theme_fill_unmapped
+        && (attribute_value(element, b"fill").as_deref() == Some("auto")
+            || attribute_value(element, b"val").as_deref() == Some("nil"));
+    (
+        Shading {
+            fill,
+            theme_fill,
+            fill_none,
+        },
+        degraded,
+    )
 }
 
 #[cfg(test)]

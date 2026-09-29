@@ -305,13 +305,13 @@ fn cancelling_keep_next_lets_the_paragraph_stay_on_its_page() {
 /// `w:br`, so the second line does not depend on measuring a wrap) in a
 /// three-line section.
 fn two_then_split(extra: &str) -> Vec<usize> {
+    let split = format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="KeepLinesPara"/>{extra}</w:pPr><w:r><w:t>Three</w:t><w:br/><w:t>Four</w:t></w:r></w:p>"#
+    );
     let body = format!(
-        "{}{}{}",
+        "{}{}{split}",
         para("Normal", "", "One"),
         para("Normal", "", "Two"),
-        format!(
-            r#"<w:p><w:pPr><w:pStyle w:val="KeepLinesPara"/>{extra}</w:pPr><w:r><w:t>Three</w:t><w:br/><w:t>Four</w:t></w:r></w:p>"#
-        )
     );
     painted_per_page(&document_xml(&body, THREE_LINE_SECTION))
 }

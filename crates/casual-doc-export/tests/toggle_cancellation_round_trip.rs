@@ -45,7 +45,7 @@ const DOCUMENT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="
 const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:style w:type="paragraph" w:styleId="Flagged"><w:name w:val="Flagged"/>
-<w:pPr><w:keepNext/><w:keepLines/><w:pageBreakBefore/><w:contextualSpacing/><w:suppressLineNumbers/></w:pPr>
+<w:pPr><w:keepNext/><w:keepLines/><w:pageBreakBefore/><w:contextualSpacing/><w:suppressLineNumbers/><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:pPr>
 </w:style>
 </w:styles>"#;
 
@@ -57,6 +57,7 @@ const DOCUMENT: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?
 <w:p><w:pPr><w:pStyle w:val="Flagged"/>
 <w:keepNext w:val="0"/><w:keepLines w:val="false"/><w:pageBreakBefore w:val="off"/>
 <w:contextualSpacing w:val="0"/><w:suppressLineNumbers w:val="false"/>
+<w:shd w:val="clear" w:color="auto" w:fill="auto"/>
 </w:pPr><w:r><w:t>Cancelled</w:t></w:r></w:p>
 <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
 </w:body></w:document>"#;
@@ -116,6 +117,16 @@ fn assert_all_cancelled(properties: &ParagraphProperties, when: &str) {
              \"absent, inherit\", which hands the paragraph the style's flag back"
         );
     }
+    // The same obligation for `w:shd`: `w:fill="auto"` is Word's No Color and
+    // cancels the style's fill, so the writer has to put the attribute back.
+    assert!(
+        properties.shading.fill_none,
+        "w:shd w:fill=\"auto\" must stay an explicit cancellation {when}"
+    );
+    assert_eq!(
+        properties.shading.fill, None,
+        "and it must not acquire a fill of its own {when}"
+    );
 }
 
 #[test]

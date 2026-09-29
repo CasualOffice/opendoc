@@ -1932,9 +1932,22 @@ fn flow_table<S: GalleySink + ?Sized>(
             // Each level resolves its own `w:shd` (concrete sRGB *or* a `w:themeFill`
             // slot against the palette); the cell wins, then the table-style layer
             // (concrete only), then the table's own direct shading.
-            let shading = shading_rgba(&cell.properties.shading, ctx.palette)
-                .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
-                .or_else(|| shading_rgba(&table.properties.shading, ctx.palette));
+            // A cell whose own `w:shd` says `w:fill="auto"` has CANCELLED the
+            // fill, so the fallback chain stops there instead of reaching past
+            // the cancellation to the table style or the table. Word writes
+            // that attribute for **No Color**, so without this a cell cleared by
+            // hand keeps painting the banded/header fill of its table style.
+            let shading = if cell.properties.shading.fill_none {
+                None
+            } else {
+                shading_rgba(&cell.properties.shading, ctx.palette)
+                    .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
+                    .or_else(|| {
+                        (!table.properties.shading.fill_none)
+                            .then(|| shading_rgba(&table.properties.shading, ctx.palette))
+                            .flatten()
+                    })
+            };
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
@@ -9413,6 +9426,7 @@ mod tests {
                 theme_tint: None,
                 theme_shade: None,
             }),
+            fill_none: false,
         };
         assert_eq!(
             shading_rgba(&shading, Some(&palette)),

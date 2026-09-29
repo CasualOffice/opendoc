@@ -117,12 +117,41 @@ pub struct Shading {
     /// this without a duplicate concrete `w:fill`, so it is modeled separately.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme_fill: Option<ThemeColor>,
+    /// Shading explicitly set to NO background at this layer — `w:shd` with
+    /// `w:fill="auto"`, or `w:val="nil"`.
+    ///
+    /// This is the tri-state an inherited property needs, the same one
+    /// `ParagraphProperties::numbering_none` is. Both attributes state
+    /// "automatic / no fill", which is how Word writes **No Color**, and that is
+    /// a different statement from the element being absent: absent inherits the
+    /// paragraph style's, the table style's or the table's fill, while an
+    /// explicit `auto` CANCELS it. Without this flag the two collapse into
+    /// `fill: None` and the cancellation reads as silence, so the inherited fill
+    /// is painted over a paragraph or cell the document cleared.
+    ///
+    /// Confirmed against LibreOffice (`soffice --convert-to pdf`) on a fixture
+    /// whose style fills yellow and whose second paragraph carries
+    /// `<w:shd w:val="clear" w:color="auto" w:fill="auto"/>`: exactly one yellow
+    /// band is painted, not two.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fill_none: bool,
 }
 
 impl Shading {
     /// Whether this shading carries no modeled value (serializes to nothing).
+    ///
+    /// An explicit [`Self::fill_none`] is a *value*, not emptiness: it has to
+    /// survive the cascade to cancel what a lower layer contributed, and it has
+    /// to be written back out so the cancellation survives a save.
     #[must_use]
     pub fn is_empty(&self) -> bool {
+        self.fill.is_none() && self.theme_fill.is_none() && !self.fill_none
+    }
+
+    /// Whether this shading paints a background — false for an absent shading
+    /// and for an explicit cancellation alike.
+    #[must_use]
+    pub fn paints_nothing(&self) -> bool {
         self.fill.is_none() && self.theme_fill.is_none()
     }
 }

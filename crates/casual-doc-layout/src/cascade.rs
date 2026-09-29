@@ -246,15 +246,18 @@ fn apply_style_properties(
     if let Some(run) = run {
         overlay_run(&mut layer.run, run);
     }
+    // Shading is tri-state here too: `w:fill="auto"` in a conditional region
+    // (a banded row that clears the header fill, say) CANCELS what the base
+    // `wholeTable` layer contributed, where an absent `w:shd` inherits it.
     if let Some(table) = table {
         overlay_table_borders(&mut layer.table_borders, &table.borders);
-        if table.shading.fill.is_some() {
+        if !table.shading.is_empty() {
             layer.shading = table.shading.fill;
         }
     }
     if let Some(cell) = cell {
         overlay_table_borders(&mut layer.cell_borders, &cell.borders);
-        if cell.shading.fill.is_some() {
+        if !cell.shading.is_empty() {
             layer.shading = cell.shading.fill;
         }
     }

@@ -892,6 +892,20 @@ fn read_paragraph_container(
                     consumed = true;
                 }
             }
+            // `w:shd` carries its value in ATTRIBUTES (`@w:fill`/`@w:themeFill`),
+            // not in `@w:val`, so the flat `apply_paragraph_property` had no arm
+            // for it and a paragraph style's background was dropped outright —
+            // the body parser has read it since the beginning. Same shape as the
+            // `w:suppressLineNumbers` cascade gap: a property that works when it
+            // is written on the paragraph and vanishes when it is written on the
+            // style, which is where real templates put it.
+            b"shd" => {
+                let (shading, degraded) = parse_shading(&child);
+                if degraded {
+                    ctx.report(b"shd");
+                }
+                acc.paragraph.shading = shading;
+            }
             // `w:numPr` is a container of `w:numId`/`w:ilvl` leaves, so the flat
             // `apply_paragraph_property` cannot read it. A paragraph style that
             // carries list membership (e.g. ListBullet -> numId) must not lose it,
@@ -941,8 +955,28 @@ fn read_run_container(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        if !apply_run_property(run, child.local_name().as_ref(), &child) {
-            ctx.report(child.local_name().as_ref());
+        // `w:shd` and `w:bdr` keep their value in attributes other than `@w:val`,
+        // so `apply_run_property` has no arm for either and a CHARACTER style's
+        // highlight-like background and boxed-run border were both dropped. The
+        // body parser reads both; this is the same style-path gap the paragraph
+        // container above had.
+        match child.local_name().as_ref() {
+            b"shd" => {
+                let (shading, degraded) = parse_shading(&child);
+                if degraded {
+                    ctx.report(b"shd");
+                }
+                run.shading = shading;
+            }
+            b"bdr" => match border_edge(&child) {
+                Some(edge) => run.border = Some(edge),
+                None => ctx.report(b"bdr"),
+            },
+            other => {
+                if !apply_run_property(run, other, &child) {
+                    ctx.report(other);
+                }
+            }
         }
         if open {
             skip_subtree(reader, buffer, ctx)?;

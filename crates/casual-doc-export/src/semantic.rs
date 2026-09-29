@@ -4895,6 +4895,11 @@ fn write_shading(
     if let Some(fill) = &shading.fill {
         fill_str = rgb_hex(fill);
         el.push_attribute(("w:fill", fill_str.as_str()));
+    } else if shading.fill_none {
+        // The explicit cancellation, written back as Word writes **No Color**.
+        // Emitting nothing here would drop it and let the style's, table
+        // style's or table's fill return the next time the file is opened.
+        el.push_attribute(("w:fill", "auto"));
     }
     w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
