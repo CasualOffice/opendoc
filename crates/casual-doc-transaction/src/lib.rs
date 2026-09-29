@@ -507,11 +507,16 @@ impl RevisionLog {
     /// clone for a single operation, and no whole-model validation ever (`107` §4 B1). A
     /// multi-operation transaction clones once, which is the rollback the caller used to
     /// spell out by hand.
+    ///
+    /// The transaction is taken **by value** so its operations move into the commit rather
+    /// than being copied into it. The log has to keep them — that is the OT substrate — and
+    /// a pasted block sequence is a real payload, so the difference between one copy and two
+    /// is not academic.
     pub fn apply(
         &mut self,
         document: &mut Document,
         ids: &mut dyn RunIds,
-        transaction: &Transaction,
+        transaction: Transaction,
     ) -> Result<&Commit, TransactionError> {
         if transaction.base_revision != self.head {
             return Err(TransactionError::StaleRevision {
@@ -558,7 +563,7 @@ impl RevisionLog {
             group,
             label: transaction.label,
             origin: transaction.origin,
-            operations: transaction.operations.clone(),
+            operations: transaction.operations,
             inverse_operations: match transaction.coalesce {
                 Coalesce::ContinueKeepingFirstInverse => Vec::new(),
                 Coalesce::New | Coalesce::Continue => inverse_operations,
@@ -944,7 +949,7 @@ mod tests {
                 "x",
             );
             let revision = log
-                .apply(&mut doc, &mut ids, &tx)
+                .apply(&mut doc, &mut ids, tx)
                 .expect("applies")
                 .revision();
             assert_eq!(revision.get(), step + 1);
@@ -957,14 +962,14 @@ mod tests {
     fn a_stale_base_revision_is_refused_and_changes_nothing() {
         let (mut doc, nodes, mut ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(&mut doc, &mut ids, &typing(1, log.head(), nodes[0], 0, "a"))
+        log.apply(&mut doc, &mut ids, typing(1, log.head(), nodes[0], 0, "a"))
             .expect("first applies");
         let before = text_of(&doc, nodes[0]);
         let error = log
             .apply(
                 &mut doc,
                 &mut ids,
-                &typing(2, RevisionId::new(0), nodes[0], 0, "b"),
+                typing(2, RevisionId::new(0), nodes[0], 0, "b"),
             )
             .expect_err("stale base revision");
         assert!(matches!(error, TransactionError::StaleRevision { .. }));
@@ -980,7 +985,7 @@ mod tests {
         log.apply(
             &mut doc,
             &mut ids,
-            &typing(1, log.head(), nodes[0], 0, "seed"),
+            typing(1, log.head(), nodes[0], 0, "seed"),
         )
         .expect("seed applies");
         let before = text_of(&doc, nodes[0]);
@@ -1003,7 +1008,7 @@ mod tests {
                 },
             ],
         );
-        let error = log.apply(&mut doc, &mut ids, &bad).expect_err("refused");
+        let error = log.apply(&mut doc, &mut ids, bad).expect_err("refused");
         assert!(matches!(error, TransactionError::Edit(_)));
         assert_eq!(
             text_of(&doc, nodes[0]),
@@ -1021,7 +1026,7 @@ mod tests {
         log.apply(
             &mut doc,
             &mut ids,
-            &typing(1, log.head(), nodes[0], 0, "one"),
+            typing(1, log.head(), nodes[0], 0, "one"),
         )
         .expect("first");
         let first = log.undo_target().expect("something to undo");
@@ -1031,7 +1036,7 @@ mod tests {
         let inverse = log.inverse_of(first);
         let undo = Transaction::new(TransactionId::new(2), log.head(), "Typing", inverse)
             .with_origin(Origin::Undo { group: first });
-        log.apply(&mut doc, &mut ids, &undo).expect("undo applies");
+        log.apply(&mut doc, &mut ids, undo).expect("undo applies");
         assert_eq!(text_of(&doc, nodes[0]), "");
         assert_eq!(log.undo_target(), None, "the only edit is undone");
         let undone = log.redo_target().expect("redo available");
@@ -1043,7 +1048,7 @@ mod tests {
             log.inverse_of(undone),
         )
         .with_origin(Origin::Redo { group: undone });
-        log.apply(&mut doc, &mut ids, &redo).expect("redo applies");
+        log.apply(&mut doc, &mut ids, redo).expect("redo applies");
         assert_eq!(text_of(&doc, nodes[0]), "one");
         assert_eq!(log.redo_target(), None, "the redo is consumed");
         assert!(log.undo_target().is_some(), "the redone edit is undoable");
@@ -1053,7 +1058,7 @@ mod tests {
     fn a_fresh_edit_clears_redo_without_clearing_anything() {
         let (mut doc, nodes, mut ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(&mut doc, &mut ids, &typing(1, log.head(), nodes[0], 0, "a"))
+        log.apply(&mut doc, &mut ids, typing(1, log.head(), nodes[0], 0, "a"))
             .expect("edit");
         let group = log.undo_target().expect("undoable");
         let undo = Transaction::new(
@@ -1063,10 +1068,10 @@ mod tests {
             log.inverse_of(group),
         )
         .with_origin(Origin::Undo { group });
-        log.apply(&mut doc, &mut ids, &undo).expect("undo");
+        log.apply(&mut doc, &mut ids, undo).expect("undo");
         assert!(log.redo_target().is_some());
 
-        log.apply(&mut doc, &mut ids, &typing(3, log.head(), nodes[0], 0, "b"))
+        log.apply(&mut doc, &mut ids, typing(3, log.head(), nodes[0], 0, "b"))
             .expect("fresh edit");
         assert_eq!(
             log.redo_target(),
@@ -1094,7 +1099,7 @@ mod tests {
             } else {
                 tx.coalescing(Coalesce::Continue)
             };
-            log.apply(&mut doc, &mut ids, &tx).expect("keystroke");
+            log.apply(&mut doc, &mut ids, tx).expect("keystroke");
         }
         assert_eq!(text_of(&doc, nodes[0]), "word");
         assert_eq!(
@@ -1115,7 +1120,7 @@ mod tests {
             log.inverse_of(group),
         )
         .with_origin(Origin::Undo { group });
-        log.apply(&mut doc, &mut ids, &undo).expect("undo");
+        log.apply(&mut doc, &mut ids, undo).expect("undo");
         assert_eq!(text_of(&doc, nodes[0]), "", "one Undo takes the whole word");
     }
 
@@ -1123,12 +1128,12 @@ mod tests {
     fn keeping_the_first_inverse_records_the_forward_ops_and_no_more_inverses() {
         let (mut doc, nodes, mut ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(&mut doc, &mut ids, &typing(1, log.head(), nodes[0], 0, "a"))
+        log.apply(&mut doc, &mut ids, typing(1, log.head(), nodes[0], 0, "a"))
             .expect("first");
         log.apply(
             &mut doc,
             &mut ids,
-            &typing(2, log.head(), nodes[0], 1, "b")
+            typing(2, log.head(), nodes[0], 1, "b")
                 .coalescing(Coalesce::ContinueKeepingFirstInverse),
         )
         .expect("second");
@@ -1159,7 +1164,7 @@ mod tests {
             id += 1;
             let tx = typing(id, log.head(), nodes[0], offset, "x");
             offset += 1;
-            log.apply(doc, ids, &tx.coalescing(c)).expect("applies");
+            log.apply(doc, ids, tx.coalescing(c)).expect("applies");
         };
         push(&mut log, &mut doc, &mut ids, Coalesce::New);
         push(&mut log, &mut doc, &mut ids, Coalesce::New);
@@ -1196,7 +1201,7 @@ mod tests {
             log.apply(
                 &mut doc,
                 &mut ids,
-                &typing(id, log.head(), nodes[0], offset, "x"),
+                typing(id, log.head(), nodes[0], offset, "x"),
             )
             .expect("edit applies");
         }
@@ -1216,7 +1221,7 @@ mod tests {
                 log.inverse_of(group),
             )
             .with_origin(Origin::Undo { group });
-            log.apply(&mut doc, &mut ids, &undo).expect("undo applies");
+            log.apply(&mut doc, &mut ids, undo).expect("undo applies");
         }
         assert_eq!(log.undo_depth(), 0, "every retained step was undone");
         // One character survives: the action the bound evicted. That is the bound
@@ -1236,12 +1241,12 @@ mod tests {
         log.apply(
             &mut doc,
             &mut ids,
-            &typing(1, log.head(), nodes[0], 0, "hello"),
+            typing(1, log.head(), nodes[0], 0, "hello"),
         )
         .expect("seed");
         let head = log.head();
         let commit = log
-            .apply(&mut doc, &mut ids, &typing(2, head, nodes[0], 0, "ab"))
+            .apply(&mut doc, &mut ids, typing(2, head, nodes[0], 0, "ab"))
             .expect("insert");
         let map = commit.position_map().clone();
         assert_eq!(

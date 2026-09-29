@@ -13285,7 +13285,7 @@ impl WasmDocument {
         // — per keystroke. So the mutation is refused HERE, before the model
         // changes, rather than allowed to land against a layout that cannot be
         // brought up to date. Refusing at the atomic choke point is what makes
-        // this one line cover all 47 operations.
+        // this one line cover all 55 operations.
         if self.layout.is_windowed() {
             return Err(windowed_not_available("Editing"));
         }
@@ -13305,7 +13305,7 @@ impl WasmDocument {
         .with_origin(origin);
         let commit = self
             .log
-            .apply(&mut self.document, &mut self.edit_ids, &transaction)
+            .apply(&mut self.document, &mut self.edit_ids, transaction)
             .map_err(|error| match error {
                 // A refusal the OPERATION has already written as a sentence passes
                 // through verbatim (it carries the host's `refused: ` marker);
