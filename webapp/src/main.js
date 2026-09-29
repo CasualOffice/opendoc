@@ -6021,7 +6021,7 @@ function activateLink(link) {
       return true;
     }
     navigateToAnchor(link.targetNode, link.targetOffset, link.targetPage);
-    setStatus(`Jumped to ${link.anchor}`);
+    setStatus(t("toc.jumpedTo", { heading: tocNavigator.headingAt(link.targetNode) ?? link.anchor }));
     return true;
   }
 

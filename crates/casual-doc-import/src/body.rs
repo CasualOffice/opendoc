@@ -2640,7 +2640,20 @@ impl BodyParser<'_> {
                     leader,
                 });
             }
-            b"hyperlink" if self.paragraph_open && !self.run_open && self.field.is_none() => {
+            // A `w:hyperlink` inside an OPEN field is modeled, the mirror of the
+            // field-inside-hyperlink case `begin_field` already admits and for the
+            // same reason: it is the shape of the FIRST row of every Word table of
+            // contents. Word writes the field's `begin`/`instrText`/`separate` at
+            // the head of the first entry paragraph, so that one entry's
+            // `w:hyperlink` opens while the TOC field is still open — and only
+            // that one. Requiring `field.is_none()` therefore dropped the anchor
+            // from entry 1 of every TOC and from no other, which reads as "the
+            // first point is not clickable" while the rest behave.
+            //
+            // `push_segment` routes by the innermost `wrapper_order` entry, so the
+            // committed hyperlink lands inside the field rather than flattening
+            // past it, and the nesting survives the round trip.
+            b"hyperlink" if self.paragraph_open && !self.run_open => {
                 self.hyperlink_depth += 1;
                 if self.hyperlink_depth == 1 {
                     match self.resolve_hyperlink_target(element) {

@@ -9776,3 +9776,40 @@ fn a_grouped_text_bearing_shape_keeps_the_preset_a_text_free_one_keeps() {
         features(&import)
     );
 }
+
+/// The FIRST row of every Word table of contents: the field's
+/// `begin`/`instrText`/`separate` sit at the head of that same paragraph, so its
+/// `w:hyperlink` opens while the TOC field is still open — and no other entry's
+/// does. Requiring `field.is_none()` dropped the anchor from entry 1 alone,
+/// which reads as "the first point is not clickable" while the rest behave.
+#[test]
+fn a_hyperlink_inside_an_open_field_is_still_a_hyperlink() {
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \z \o "1-3" \u \h</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:hyperlink w:anchor="_Toc1"><w:r><w:t>Alpha</w:t></w:r></w:hyperlink></w:p></w:body></w:document>"#;
+    let empty_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+    let import = import_bytes(&build_package(document.as_bytes(), empty_rels, &[]));
+
+    let mut anchors = Vec::new();
+    collect_anchors(&paragraph(&import, 0).inlines, &mut anchors);
+    assert_eq!(
+        anchors,
+        vec!["_Toc1".to_owned()],
+        "the first contents row's anchor must survive the enclosing field"
+    );
+}
+
+/// Every `InternalTarget` anchor reachable under `inlines`, at any nesting depth
+/// (the hyperlink lands INSIDE the field segment, not beside it).
+fn collect_anchors(inlines: &[InlineNode], out: &mut Vec<String>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Hyperlink(link) => {
+                if let HyperlinkTarget::Internal(target) = &link.target {
+                    out.push(target.anchor.clone());
+                }
+                collect_anchors(&link.inlines, out);
+            }
+            InlineNode::Field(field) => collect_anchors(&field.inlines, out),
+            _ => {}
+        }
+    }
+}

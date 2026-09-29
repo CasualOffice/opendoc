@@ -21,6 +21,7 @@ import { test } from "node:test";
 
 import {
   buildHeadingIndex,
+  buildHeadingLabels,
   isTocEntryStyle,
   resolveTocTarget,
   tocEntryLabel,
@@ -109,4 +110,34 @@ test("the style id and the style name are both recognised", () => {
 
 test("a non-entry paragraph resolves to nothing", () => {
   assert.equal(resolveTocTarget(NDA_INDEX, "Some ordinary sentence.\t4"), null);
+});
+
+// A jump has to name a destination the reader recognises. An authored `\h` entry
+// is a hyperlink to a `_TocNNNNNNNNN` bookmark, and the link path used to report
+// that id verbatim — "Jumped to _Toc130812265" — while the SAME gesture on an
+// entry that resolved through the contents path named the heading. One document,
+// one gesture, two answers depending on which mechanism happened to win.
+test("a heading's node resolves back to its text, for naming a jump", () => {
+  const labels = buildHeadingLabels([
+    "1\tn7\tDefinitions & Interpretations",
+    "1\tn9\tConfidentiality & Privacy",
+  ]);
+  assert.equal(labels.get("n9"), "Confidentiality & Privacy");
+  assert.equal(labels.get("n7"), "Definitions & Interpretations");
+});
+
+test("a node that is not a heading names nothing, so the caller can fall back", () => {
+  const labels = buildHeadingLabels(["1\tn7\tAlpha"]);
+  assert.equal(labels.get("n99"), undefined);
+});
+
+test("the first heading with a node id wins, matching buildHeadingIndex", () => {
+  const labels = buildHeadingLabels(["1\tn1\tFirst", "2\tn1\tSecond"]);
+  assert.equal(labels.get("n1"), "First");
+});
+
+test("a malformed outline row is skipped rather than throwing", () => {
+  const labels = buildHeadingLabels(["nonsense", "1\tn1", "1\tn2\t   ", "1\tn3\tReal"]);
+  assert.equal(labels.size, 1);
+  assert.equal(labels.get("n3"), "Real");
 });
