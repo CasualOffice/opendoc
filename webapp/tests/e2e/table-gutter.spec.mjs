@@ -406,15 +406,13 @@ test.describe("touch", () => {
   });
 });
 
-/** The painted appearance of one gutter element: the box the pointer can hit,
- *  and the bar the eye actually sees, which is drawn by `::after` and is
- *  deliberately the narrower of the two. */
+/** The painted appearance of one overlay element: its box, its fill, and the
+ *  browser-resolved `var(--accent)` to compare that fill against. */
 const gutterPaint = (page, selector) =>
   page.evaluate((sel) => {
     const el = document.querySelector(sel);
     if (!el) return null;
     const box = el.getBoundingClientRect();
-    const bar = getComputedStyle(el, "::after");
     // `var(--accent)` resolved by the browser, so the comparison holds whatever
     // accent the user has persisted — main.js writes it inline on the root.
     const probe = document.createElement("div");
@@ -422,24 +420,76 @@ const gutterPaint = (page, selector) =>
     document.body.appendChild(probe);
     const accent = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    // Chrome serializes a `color-mix()` as `color(srgb 0.79 0.80 0.80)` — 0..1
-    // floats — and a plain colour as `rgb(51, 85, 196)`. Both are normalised to
-    // 0..255 here, or every comparison below would be between two scales.
+    // Chrome serializes a `color-mix()` as `color(srgb 0.79 0.80 0.80 / 0.26)` —
+    // 0..1 floats — and a plain colour as `rgb(51, 85, 196)`. Both are
+    // normalised to 0..255 here, or every comparison would be between scales.
     const rgb = (value) => {
-      const parts = (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
-      return value.startsWith("color(") ? parts.map((v) => Math.round(v * 255)) : parts;
+      const parts = (value.match(/[\d.]+/g) ?? []).map(Number);
+      const head = parts.slice(0, 3);
+      return value.startsWith("color(") ? head.map((v) => Math.round(v * 255)) : head;
     };
+    // These fills are deliberately TRANSLUCENT — they are drawn over a border
+    // the engine has already painted — so the channel triple alone cannot say
+    // which of two states is darker. The alpha comes back with it.
+    const alpha = (value) => {
+      const parts = (value.match(/[\d.]+/g) ?? []).map(Number);
+      if (value.startsWith("color(")) return parts.length > 3 ? parts[3] : 1;
+      return parts.length > 3 ? parts[3] : 1;
+    };
+    const canvas = document.querySelector(".page-wrap canvas.page");
+    const sheet = canvas.getBoundingClientRect();
     return {
-      boxWidth: box.width,
-      boxHeight: box.height,
-      boxFill: getComputedStyle(el).backgroundColor,
-      boxRing: getComputedStyle(el).boxShadow,
-      barWidth: parseFloat(bar.width),
-      barHeight: parseFloat(bar.height),
-      bar: rgb(bar.backgroundColor),
+      x: box.x - sheet.x,
+      y: box.y - sheet.y,
+      width: box.width,
+      height: box.height,
+      centreX: box.x + box.width / 2 - sheet.x,
+      centreY: box.y + box.height / 2 - sheet.y,
+      fill: rgb(getComputedStyle(el).backgroundColor),
+      alpha: alpha(getComputedStyle(el).backgroundColor),
       accent: rgb(accent),
     };
   }, selector);
+
+/**
+ * Where the ENGINE actually painted a dark vertical (or horizontal) rule, read
+ * out of the page raster within `win` CSS px of `about`.
+ *
+ * The border is drawn into a canvas, so this is the only way to check that the
+ * highlight lands ON it rather than a pixel or two off it — comparing the
+ * highlight against the same `tableChromeOnPage` geometry that positioned it
+ * would be a tautology, and a two-pixel offset reads as a second parallel rule
+ * next to the border rather than as the border being lit.
+ */
+const paintedRule = (page, axis, about, along, win = 10) =>
+  page.evaluate(
+    ([a, aboutCss, alongCss, w]) => {
+      const canvas = document.querySelector(".page-wrap canvas.page");
+      const rect = canvas.getBoundingClientRect();
+      const kx = canvas.width / rect.width;
+      const ky = canvas.height / rect.height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const vertical = a === "row";
+      const k = vertical ? kx : ky;
+      const from = Math.max(0, Math.round((aboutCss - w) * k));
+      const count = Math.max(1, Math.round(2 * w * k));
+      const at = Math.round(alongCss * (vertical ? ky : kx));
+      const data = vertical
+        ? ctx.getImageData(from, at, count, 1).data
+        : ctx.getImageData(at, from, 1, count).data;
+      let best = -1;
+      let darkest = 256;
+      for (let i = 0; i < count; i++) {
+        const lum = (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3;
+        if (lum < darkest) {
+          darkest = lum;
+          best = i;
+        }
+      }
+      return { at: (from + best) / k, luminance: darkest };
+    },
+    [axis, about, along, win],
+  );
 
 /** How far a colour is from grey: the spread between its strongest and weakest
  *  channel. 0 is a pure neutral; `--accent` (#3355c4 by default) is ~145. */
@@ -448,68 +498,166 @@ const chroma = ([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b);
 /** Perceived lightness, enough to say "this one is darker than that one". */
 const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-test("the gutter rests as a thin NEUTRAL bar and only turns accent when the row is SELECTED", async ({
+/** What the eye actually gets: the fill composited over the white sheet. A
+ *  translucent line's darkness lives in its alpha, not in its channels. */
+const onPaper = ({ fill, alpha }) => luma(fill.map((c) => c * alpha + 255 * (1 - alpha)));
+
+test("the table's own border is the affordance: lit on the border, neutral until the row is SELECTED", async ({
   page,
   consoleErrors,
 }) => {
-  // The owner's words about the first cut: *"you added thick top and left
-  // border, is that how google docs does it? i don't think so"*. He was right —
-  // the strip filled its whole 14px width with `accent 10%` and ringed it with
-  // `accent 32%`, so a table wore a thick blue border down its left edge and
-  // across its top whenever the pointer entered it.
+  // The owner, on the previous cut: *"instead of adding new header on left and
+  // top.. why not highlighting the existing border.. and using that"*. So
+  // nothing is drawn beside the table any more — what is drawn is a 3px line
+  // centred on the table's OWN leading border, in three states.
   //
-  // Docs draws a thin NEUTRAL grey bar outside the leading edge, darkens the
-  // segment under the pointer, and uses the accent ONLY for a row or column that
-  // is actually selected. This guard holds all three states, and the separation
-  // that lets the bar be quiet without shrinking the target: the hit box stays
-  // >= 14px (24px under a finger, WCAG 2.5.8) while the drawn bar is a fraction
-  // of it, the same way a 9px resize grip carries a 24px hit area.
+  // ONLYOFFICE is the product whose source was actually read for this:
+  // `private_CheckHitInBorder` cancels the border resize (`Border = -1`) on the
+  // leading edges and reports `RowSelection`/`ColumnSelection` instead.
+  //
+  // Four things are held here, and each can fail on its own:
+  //   1. the highlight lands ON the painted border, read out of the raster;
+  //   2. it is 3px drawn inside a >= 14px target, so no target shrank;
+  //   3. rest is neutral, hover is the same line darker, selection is accent;
+  //   4. a click exactly ON the border selects the row rather than placing a
+  //      caret, which is what "using that" means.
   await insertTable(page, 3, 3);
   const cell = await activeCell(page);
   const box = await stableBox(page.locator(".page-wrap .page").first());
+  const rowMiddle = cell.y + cell.h * 1.5;
 
-  // Found the way a user finds it: by sweeping the pointer left until it appears.
-  const at = await findRowStrip(page, { top: cell.y, height: cell.h });
-  expect(at).not.toBeNull();
+  // Arm the gutter the way a user does: by entering the table.
+  await page.mouse.move(box.x + cell.x + cell.w * 1.5, box.y + rowMiddle);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
 
-  // --- resting -------------------------------------------------------------
-  const strip = await gutterPaint(page, ".overlay .table-row-strip");
-  expect(strip).not.toBeNull();
-  expect(strip.boxWidth, "the pointer target stays at least 14 CSS px").toBeGreaterThanOrEqual(14);
-  // The box paints NOTHING. Everything visible is the bar, so the hit area can
-  // grow for a finger without a pixel of chrome growing with it.
-  expect(strip.boxFill, "the strip box itself must not be filled").toBe("rgba(0, 0, 0, 0)");
-  expect(strip.boxRing, "the strip box must not be ringed").toBe("none");
-  expect(strip.barWidth, "the drawn bar is narrower than the target").toBeLessThan(strip.boxWidth);
-  expect(strip.barWidth, "…but still wide enough to see").toBeGreaterThanOrEqual(4);
+  // --- 1. the highlight is ON the border -----------------------------------
+  const border = await paintedRule(page, "row", cell.x, rowMiddle);
+  expect(border.luminance, "the fixture table must have a painted left border").toBeLessThan(160);
+  const edge = await gutterPaint(page, ".overlay .table-gutter-edge");
+  expect(edge, "the resting highlight must be painted while the pointer is in the table").not.toBeNull();
   expect(
-    chroma(strip.bar),
-    `the resting bar must be neutral, not accent — got rgb(${strip.bar})`,
+    Math.abs(edge.centreX - border.at),
+    `the highlight is centred at ${edge.centreX} but the border is painted at ${border.at}`,
+  ).toBeLessThanOrEqual(1.5);
+
+  // --- 2. drawn 3px, targeted 14 -------------------------------------------
+  const strip = await gutterPaint(page, ".overlay .table-row-strip");
+  expect(strip.width, "the pointer target stays at least 14 CSS px").toBeGreaterThanOrEqual(14);
+  expect(strip.fill, "the grab zone paints nothing itself").toEqual([0, 0, 0]);
+  expect(edge.width, "the drawn line is far narrower than the target").toBeLessThan(strip.width);
+  expect(edge.width, "…and thick enough to read as a lit border").toBeGreaterThanOrEqual(2);
+
+  // --- 3. the three colours ------------------------------------------------
+  expect(
+    chroma(edge.fill),
+    `the resting border must be neutral, not accent — got rgb(${edge.fill})`,
   ).toBeLessThanOrEqual(8);
 
-  // --- hovered -------------------------------------------------------------
-  // The band the pointer is in darkens, and stays neutral while it does.
-  const band = await gutterPaint(page, ".overlay .table-gutter-band");
-  expect(band).not.toBeNull();
-  expect(chroma(band.bar), "the hovered band must be neutral too").toBeLessThanOrEqual(8);
+  // Hover the band, on the border itself.
+  await page.mouse.move(box.x + border.at, box.y + rowMiddle);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+  const hover = await gutterPaint(page, ".overlay .table-gutter-hover");
+  expect(hover, "the band under the pointer must light up").not.toBeNull();
+  expect(chroma(hover.fill), "the hovered band must be neutral too").toBeLessThanOrEqual(8);
   expect(
-    luma(band.bar),
-    "the hovered band must be DARKER than the resting bar, or hover says nothing",
-  ).toBeLessThan(luma(strip.bar) - 20);
-  expect(band.barWidth, "hover must not widen the bar").toBeCloseTo(strip.barWidth, 1);
+    onPaper(hover),
+    "the hovered band must be DARKER than the resting border, or hover says nothing",
+  ).toBeLessThan(onPaper(edge) - 20);
+  expect(edge.alpha, "the resting line must be translucent, or it bleaches the border").toBeLessThan(
+    1,
+  );
+  expect(hover.width, "hover must not move or widen the line").toBeCloseTo(edge.width, 1);
+  expect(hover.centreX, "hover must stay on the border").toBeCloseTo(edge.centreX, 1);
 
-  // --- selected ------------------------------------------------------------
-  await page.mouse.click(at.x, at.y);
+  // --- 4. the border IS the target -----------------------------------------
+  // A click exactly on the painted border selects that row.
+  await page.mouse.click(box.x + border.at, box.y + rowMiddle);
   await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(3);
+
+  // …and so does a click a hair INSIDE it. This is the half that only works
+  // because the PRESS path takes the border too: the hover lit it from either
+  // side while `tryBeginDrag` still bailed on anything inside the table's box,
+  // so the cursor promised a selection the press then declined. Clicking from
+  // outside alone could not have caught that, which is why both sides are here.
+  await page.mouse.click(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h / 2);
+  await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(0);
+  const inside = border.at + 2;
+  expect(inside, "the probe point must really be inside the table's box").toBeGreaterThan(cell.x);
+  await page.mouse.move(box.x + cell.x + cell.w * 1.5, box.y + rowMiddle);
+  await page.mouse.click(box.x + inside, box.y + rowMiddle);
+  await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(3);
+
   const selected = await gutterPaint(page, ".overlay .table-gutter-selection");
-  expect(selected, "a selected row keeps a bar in the gutter").not.toBeNull();
+  expect(selected, "a selected row keeps its border lit").not.toBeNull();
   expect(
-    selected.bar,
-    "the SELECTED bar is the accent — that is what colour means here",
+    selected.fill,
+    "the SELECTED border is the accent — that is what colour means here",
   ).toEqual(selected.accent);
-  // …and the hovered band over a selected row does not revert to hover grey.
-  const hoveredSelected = await gutterPaint(page, ".overlay .table-gutter-band");
-  expect(hoveredSelected.bar).toEqual(hoveredSelected.accent);
+  expect(selected.centreX, "the selection stays on the border too").toBeCloseTo(edge.centreX, 1);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("selecting on the border does not cost the resize: both survive, a few pixels apart", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The tension this design has to answer. Every row's leading edge except the
+  // first is the previous row's trailing edge — a real resize boundary — so the
+  // two gestures DO meet where an inner row boundary crosses the left border.
+  // The gutter wins there (it is consulted first in the press path and its zone
+  // carries the `cell` cursor), and the resize has to stay reachable immediately
+  // past the zone. Both halves are asserted, because only holding one of them
+  // would let the fix for either break the other silently.
+  await insertTable(page, 3, 3);
+  const cell = await activeCell(page);
+  const box = await stableBox(page.locator(".page-wrap .page").first());
+  const crossing = cell.y + cell.h; // row 0's bottom = row 1's top
+  await page.mouse.move(box.x + cell.x + cell.w * 1.5, box.y + cell.y + cell.h * 1.5);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+  const border = await paintedRule(page, "row", cell.x, cell.y + cell.h * 1.5);
+
+  /** What owns the point: the element the browser hit-tests to, its cursor, and
+   *  whatever the router has put on the page underneath it. */
+  const owner = async (x, y) => {
+    await page.mouse.move(x, y);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+    return page.evaluate(
+      ([cx, cy]) => {
+        const el = document.elementFromPoint(cx, cy);
+        return {
+          klass: typeof el?.className === "string" ? el.className : "",
+          cursor: el ? getComputedStyle(el).cursor : "",
+          pageCursor: getComputedStyle(document.querySelector(".page-wrap canvas.page")).cursor,
+        };
+      },
+      [x, y],
+    );
+  };
+
+  // ON the border, in the middle of a band: the grab zone, saying `cell`.
+  const mid = await owner(box.x + border.at, box.y + cell.y + cell.h * 1.5);
+  expect(mid.klass, "the grab zone owns the leading border").toContain("table-row-strip");
+  expect(mid.cursor, "and it says so with the select cursor").toBe("cell");
+  expect(mid.pageCursor, "a resize must NOT be promised on the leading border").not.toBe(
+    "row-resize",
+  );
+
+  // ON the border where an inner row boundary crosses it — the one place the
+  // two gestures really do meet. The gutter still owns it, as the `+` disc that
+  // inserts at that boundary, and no resize is promised.
+  const cross = await owner(box.x + border.at, box.y + crossing);
+  expect(cross.klass, "the gutter owns the crossing, as its insert disc").toContain(
+    "table-insert-target",
+  );
+  expect(cross.pageCursor, "a resize must not be promised at the crossing either").not.toBe(
+    "row-resize",
+  );
+
+  // Further along the SAME boundary, off the gutter: the resize, intact.
+  const away = await owner(box.x + cell.x + cell.w / 2, box.y + crossing);
+  expect(away.pageCursor, "the row resize must still arm off the leading border").toBe(
+    "row-resize",
+  );
   expect(consoleErrors).toEqual([]);
 });
 

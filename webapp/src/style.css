@@ -7097,48 +7097,46 @@ body.is-format-painting .page-wrap * {
   cursor: col-resize;
 }
 
-/* The table GUTTER (docs/141 D-2): the row and column grab strips, the hovered
-   band inside one, the selected band, and the `+` insert disc on a boundary.
+/* The table GUTTER (docs/141 D-2): the row and column grab zones, the highlight
+   on the table's own leading border, and the `+` insert disc on a boundary.
 
-   Every one of these sits OUTSIDE the table's own box, in the page margin beside
-   it, which is what makes them free: unlike a boundary zone, a strip can be as
-   wide as a finger needs without taking a single pixel away from clicking in a
-   cell to place the caret. They are hover chrome — painted for the one table the
-   pointer is over, taken down when it leaves — so nothing rests on the page.
+   ## The border IS the affordance
 
-   ## What it looks like, and why this changed
+   The owner, on the previous cut: *"instead of adding new header on left and
+   top.. why not highlighting the existing border.. and using that"*. So there is
+   no bar beside the table any more. What is drawn is a 3px line **centred on the
+   table's own leading border**, at that border's geometry, in three states.
 
-   **Google Docs** paints a thin NEUTRAL grey bar just outside the table's
-   leading edges, darkens the segment the pointer is on, and turns it
-   accent-coloured only once that row or column is SELECTED: colour is the signal
-   for selection, not for existence. **Word** paints no resting bar at all — the
-   pointer turns into a black arrow in the same place and nothing is drawn until
-   the row is selected. **We followed Docs**, because a visible bar is what makes
-   the strip discoverable at all, and because Docs is the product the owner named.
+   **ONLYOFFICE is the source that was actually read** (Google Docs could not be
+   checked from this machine, so it is not cited):
+   `CTable.prototype.private_CheckHitInBorder` finds a border within ±3px and
+   then CANCELS it — `Border = -1` — on the leading edges, reporting
+   `RowSelection` / `ColumnSelection` instead. The leading border selects; the
+   inner borders resize. Ours cannot collide even by accident: the engine reports
+   one boundary per band at its CLOSING edge, so the leading top and left borders
+   carry no resize zone at all. `table_gutter_zones.mjs` has the quotation.
 
-   The first cut filled the whole 14px strip with `accent 10%` and ringed it with
-   `accent 32%`, which on a table's two leading edges reads as a thick blue
-   border on the table rather than as a grab strip. That is the defect this block
-   fixes.
+   ## Drawn 3px, targeted 14px (24 under a finger)
 
-   ## The DRAWN bar is narrower than the TARGET, on purpose
+   The grab zone keeps every pixel it had and gains a 3px reach past the border,
+   so the border sits inside the target rather than one pixel outside it. It
+   paints nothing itself. This is the separation the resize grips already make —
+   9px drawn inside a 24px WCAG 2.5.8 hit area — and it means a finger's larger
+   target changes no pixel of what is on screen.
 
-   The same separation the resize grips already make (9px drawn inside a 24px hit
-   area, WCAG 2.5.8): the strip ELEMENT keeps its full 14px pointer / 24px touch
-   width and paints nothing itself, and its `::after` — a 6px bar sitting 2px
-   clear of the table's border — is the whole of what is visible. Widening a
-   finger's target therefore changes no pixel of the chrome, and the hit area is
-   never inferable from what is on screen.
+   ## Translucent at rest, on purpose
 
-   ## No new token
+   The rest and hover fills are `--paper-ink` mixed into TRANSPARENT rather than
+   into the paper, because this line is drawn ON TOP of a border the engine has
+   already painted. An opaque grey would bleach a black hairline border into
+   grey — it would remove the thing it is meant to be highlighting. Mixed into
+   transparent it darkens what is under it, and on a table whose border is `none`
+   it is still the only visible mark, which is what keeps a borderless table
+   findable.
 
-   The resting and hovered greys are the PAPER ink mixed into the paper, because
-   the gutter is painted on the sheet and the sheet is white in BOTH themes (the
-   paper layer in `:root` says why). A theme-following neutral such as `--line`
-   would be near-invisible on white paper in light theme and would change under
-   the sheet in dark theme for no reason — the paper layer is theme-independent
-   exactly so that chrome drawn on it is stable. Selection is `--accent`, the
-   same fill the cell selection is drawn with.
+   No new token: `--paper-ink` and `--paper` are the paper layer, which is
+   theme-independent because the sheet is white in BOTH themes, and `--accent` is
+   the fill the cell selection already uses.
 
    `cursor: cell` is the CSS keyword whose meaning is "select a table cell", and
    it is what `pointer_cursor.mjs` row `table-row-strip` promises. */
@@ -7151,58 +7149,42 @@ body.is-format-painting .page-wrap * {
   background: transparent;
 }
 
-/* The band the pointer is in, so "click selects THIS row" is visible before the
-   click rather than only after it, and the band that IS the selection. Both are
-   boxes the full width of the strip carrying the same thin bar, so the three
-   states occupy exactly the same pixels and only the colour changes. */
-.overlay .table-gutter-band,
+/* The three states of the border highlight. One geometry — the line the painter
+   centres on the border — and only the colour changes between them, so a band
+   never moves as it goes from resting to hovered to selected. */
+.overlay .table-gutter-edge,
+.overlay .table-gutter-hover,
 .overlay .table-gutter-selection {
   position: absolute;
   pointer-events: none;
-  background: transparent;
+  border-radius: 1px;
 }
 
-/* The bar itself — geometry first, flush with the leading edge of the table and
-   2px clear of its border, which is where Docs puts it. */
-.overlay .table-row-strip::after,
-.overlay .table-gutter-band[data-axis="row"]::after,
-.overlay .table-gutter-selection[data-axis="row"]::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 2px;
-  width: 6px;
-  border-radius: 2px;
+/* Rest: the pointer is in the table, so both leading borders say they can be
+   grabbed — quietly, and translucently so the border beneath still reads. */
+.overlay .table-gutter-edge {
+  background: color-mix(in srgb, var(--paper-ink) 26%, transparent);
 }
 
-.overlay .table-column-strip::after,
-.overlay .table-gutter-band[data-axis="column"]::after,
-.overlay .table-gutter-selection[data-axis="column"]::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 2px;
-  height: 6px;
-  border-radius: 2px;
+/* Under the pointer: this band's stretch of that border, clearly darker. */
+.overlay .table-gutter-hover {
+  background: color-mix(in srgb, var(--paper-ink) 62%, transparent);
 }
 
-/* Resting: a quiet neutral that says "there is a handle here" and nothing more. */
-.overlay .table-row-strip::after,
-.overlay .table-column-strip::after {
-  background: color-mix(in srgb, var(--paper-ink) 22%, var(--paper));
-}
-
-/* Under the pointer: the same bar, darker. */
-.overlay .table-gutter-band::after {
-  background: color-mix(in srgb, var(--paper-ink) 48%, var(--paper));
-}
-
-/* Selected — and only now — accent. */
-.overlay .table-gutter-selection::after,
-.overlay .table-gutter-band[data-selected]::after {
+/* Selected — and only now — accent, and opaque: a selection is not a hint. */
+.overlay .table-gutter-selection,
+.overlay .table-gutter-hover[data-selected] {
   background: var(--accent);
+}
+
+/* The reorder GRIP: a transparent slab the width of the grab zone, covering the
+   band whose row or column is already selected. It carries the cursor and the
+   press, because a `grab` on the 3px line would be a promise on a target too
+   thin to find. Nothing is painted here — the highlight above is what is seen. */
+.overlay .table-gutter-band {
+  position: absolute;
+  pointer-events: none;
+  background: transparent;
 }
 
 /* The same band once it IS the selection: now a handle. Docs reorders a row by
