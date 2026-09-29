@@ -21,6 +21,7 @@ import {
   MOD,
   expectEditorFocused,
   openAppMenu,
+  runAppMenuCommand,
   runFilePageCommand,
 } from "./fixtures.mjs";
 
@@ -381,8 +382,15 @@ const MODALS = [
     async open(page) {
       await gotoEditor(page);
       await clickIntoFirstPage(page);
-      await openAppMenu(page, "insert");
-      await page.locator('#appMenuPopover .app-menu-item[data-command="insert.field"]').click();
+      // Through `runAppMenuCommand`, not by clicking the row directly. When the
+      // long menus were folded into submenus, `insert.field` moved inside
+      // `sub("menuGroup.fields", …)` and this entry went on clicking a row that
+      // is no longer at the top level — all seven Insert-field cases below have
+      // been timing out on a row the locator resolves but the reader cannot see.
+      // The helper opens the flyout first, which is the click a reader makes,
+      // and is a no-op for a row that never folded; every spec that names a
+      // command by id should go through it rather than know which bands fold.
+      await runAppMenuCommand(page, "insert", "insert.field");
     },
   },
   {

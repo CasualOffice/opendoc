@@ -26,7 +26,7 @@
 // quietly excluded: `DOCUMENT_SURFACE` names it, and a second test asserts the
 // exemption is still NEEDED, so that when reflow lands and the document stops
 // overflowing, this file fails and the exemption comes out.
-import { test, expect, gotoEditor, clickIntoFirstPage, openCommandPalette } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow, openCommandPalette } from "./fixtures.mjs";
 
 /** Two real phones. 390 is an iPhone 14/15 and a Pixel 7 in portrait; 320 is
  *  the narrowest viewport still shipping (iPhone SE 1st gen) and is where a
@@ -136,9 +136,12 @@ for (const phone of PHONES) {
     // tiles are not the route to these panels on a phone — the menu bar is, as
     // doc 122 says it should be for the compact chrome. The panels themselves
     // are untouched and still measured here; only the door moved.
+    // Through `menuCommandRow`, which opens a submenu flyout when the band the
+    // command lives in folds into one — `runAppMenuCommand` cannot be used at
+    // this rung because it starts by clicking `#modeCompact`, which the phone
+    // withholds.
     const menuItem = (menu, command) => async () => {
-      await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
-      await page.locator(`#appMenuPopover .app-menu-item[data-command="${command}"]`).click();
+      await (await menuCommandRow(page, menu, command)).click();
     };
     const surfaces = [
       { what: "the File menu", open: () => page.locator('.app-menu-button[data-menu="file"]').click(), shown: "#appMenuPopover" },

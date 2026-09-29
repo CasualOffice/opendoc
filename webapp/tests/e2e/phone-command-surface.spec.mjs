@@ -10,7 +10,7 @@
 // gets `isMobile`, `hasTouch` and a real device scale factor rather than a narrow
 // desktop window — which, before that project existed, is all any "phone" spec in
 // this suite was ever getting (docs/148 §9 item 5).
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow } from "./fixtures.mjs";
 
 const PHONE = { width: 390, height: 844 };
 const NARROW = { width: 320, height: 568 };
@@ -24,10 +24,6 @@ const openSheet = async (page, trigger, surface) => {
   await page.locator(trigger).click();
   await expect(page.locator(surface)).toBeVisible();
 };
-
-/** Puts the caret inside the fixture's table, by looking for it rather than by
- *  a hard-coded offset — see the call site for why that matters at this rung.
- *  The contextual Table group appearing IS the signal that the caret arrived. */
 
 test.describe("the two sheets", () => {
   test("Aa and + are on the bar at both phone widths, and neither is what the fold spends", async ({
@@ -239,9 +235,7 @@ test.describe("the regions a phone withholds", () => {
     await expect(page.locator("#outlinePanel")).toHaveCount(1);
 
     // Pages, from the View menu, which is the home that made withholding safe.
-    await page.locator('.app-menu-button[data-menu="view"]').click();
-    const row = page.locator('#appMenuPopover .app-menu-item[data-command="view.pages"]');
-    await expect(row, "View ▸ Pages is the Pages panel's home on a phone").toBeVisible();
+    const row = await menuCommandRow(page, "view", "view.pages");
     await row.click();
     await expect(page.locator("#pagesPanel")).toBeVisible();
 
@@ -327,8 +321,10 @@ test("the toast clears an open dialog's pinned actions too", async ({ page, cons
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  await page.locator('.app-menu-button[data-menu="format"]').click();
-  await page.locator('#appMenuPopover .app-menu-item[data-command="layout.tabStops"]').click();
+  // `menuCommandRow`, not a direct click: Format's paragraph band folds into a
+  // submenu, and `runAppMenuCommand` cannot be used at this rung because it
+  // starts by clicking `#modeCompact`, which the phone withholds.
+  await (await menuCommandRow(page, "format", "layout.tabStops")).click();
   await expect(page.locator("#tabStopsDialog")).toBeVisible();
 
   await page.evaluate(() => {

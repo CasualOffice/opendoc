@@ -12,6 +12,7 @@ import {
   gotoEditor,
   MOD,
   openCommandPalette,
+  menuCommandRow,
   openAppMenu,
 } from "./fixtures.mjs";
 
@@ -102,8 +103,7 @@ test.describe("with a coarse pointer", () => {
     // now that every destination it carried has a command home (docs/148
     // §5.3a), and the sheet — which is what this test is actually about — is
     // unchanged by which door was used.
-    await openAppMenu(page, "review");
-    await page.locator('#appMenuPopover .app-menu-item[data-command="review.toggle"]').click();
+    await (await menuCommandRow(page, "review", "review.toggle")).click();
     const navButton = page.locator("#reviewNext");
     await expect(navButton).toBeVisible();
     const nav = await stableBox(navButton);

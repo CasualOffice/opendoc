@@ -380,26 +380,44 @@ export async function openFilePage(page) {
   return body;
 }
 
-/** Runs a command through its application-menu row, by command id. Asserts the
- *  row is actually present and enabled, so an unreachable command fails loudly
- *  rather than silently doing nothing. */
-export async function runAppMenuCommand(page, menu, commandId) {
-  await openAppMenu(page, menu);
-  const row = page.locator(
-    `#appMenuPopover .app-menu-item[data-command="${commandId}"]`,
-  );
+/** Opens `menu` and returns the row for `commandId`, having opened its submenu
+ *  flyout first if the band it lives in folds into one. Does NOT change chrome
+ *  mode, so it works at the phone rung where `#modeCompact` is withheld. */
+export async function menuCommandRow(page, menu, commandId) {
+  await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+  await expect(page.locator("#appMenuPopover")).toBeVisible();
   // A long band folds behind a submenu, so the row a caller names may be one
   // level in. Open its flyout first — the same click a reader makes — rather
   // than asking every spec to know which bands fold. If the row is already at
   // the top level this does nothing.
+  //
+  // Hoisted out of `runAppMenuCommand` because that helper begins by FORCING
+  // COMPACT CHROME, which is a thing two callers cannot do: the phone rung
+  // withholds `#modeCompact` (a toggle offering a chrome the rung does not
+  // allow is a dead control), and it is already in compact chrome anyway. Those
+  // callers were therefore reaching for the row directly — and a row that has
+  // since folded resolves, so the failure is a sixty-second timeout on an
+  // element the locator can see and the reader cannot. Seven cases in
+  // `dialog-contract.spec.mjs` were failing exactly that way when the long
+  // menus were folded, because nothing made the fold-awareness shareable.
   const parent = page
     .locator(`#appMenuPopover .app-menu-item-submenu:has(.app-menu-item[data-command="${commandId}"])`)
     .locator(".app-menu-item-parent");
   if (await parent.count()) await parent.first().click();
-  await expect(
-    row,
-    `${commandId} should be reachable from the ${menu} menu`,
-  ).toBeVisible();
+  const row = page.locator(`#appMenuPopover .app-menu-item[data-command="${commandId}"]`);
+  await expect(row, `${commandId} should be reachable from the ${menu} menu`).toBeVisible();
+  return row;
+}
+
+/** Runs a command through its application-menu row, by command id. Asserts the
+ *  row is present and enabled, so an unreachable command fails loudly rather
+ *  than silently doing nothing. Enters the compact chrome first: callers are
+ *  asking "is the capability reachable from its menu", not "is the editor in
+ *  ribbon mode". At the phone rung, where that switch is withheld, use
+ *  `menuCommandRow` directly — the chrome is already compact there. */
+export async function runAppMenuCommand(page, menu, commandId) {
+  await useCompactChrome(page);
+  const row = await menuCommandRow(page, menu, commandId);
   await expect(
     row,
     `${commandId} should be enabled in the ${menu} menu`,

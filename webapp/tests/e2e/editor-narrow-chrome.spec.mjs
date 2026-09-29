@@ -18,7 +18,7 @@
 // So the defect is real, the remedy the row names is the right one (Word and
 // Docs both drop a rail caption on a narrow window), and the assertion below is
 // about the harm rather than about the ellipsis that used to reveal it.
-import { expect, gotoEditor, runFilePageCommand, test } from "./fixtures.mjs";
+import { expect, gotoEditor, menuCommandRow, runFilePageCommand, test } from "./fixtures.mjs";
 
 /** The four rail tiles, as the markup declares them. */
 const RAIL = ["#railOutline", "#railPages", "#railReview", "#railVersions"];
@@ -145,9 +145,7 @@ test("a narrow window spends nothing on rail captions, and loses no destination 
       ["review", "review.toggle"],
       ["file", "file.versionHistory"],
     ]) {
-      await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
-      const row = page.locator(`#appMenuPopover .app-menu-item[data-command="${command}"]`);
-      await expect(row, `${tag}: ${command} has a menu home on a phone`).toBeVisible();
+      const row = await menuCommandRow(page, menu, command);
       expect((await row.innerText()).trim(), `${tag}: ${command} is named`).not.toBe("");
       await page.keyboard.press("Escape");
     }
