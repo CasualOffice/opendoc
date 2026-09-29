@@ -42,7 +42,10 @@ test("a floating image is selectable and exposes move/resize/wrap controls", asy
 
   await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "image");
   await expect(page.locator(".overlay .object-outline")).toHaveCount(1);
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+  await expect(page.locator(".overlay .object-handle:not(.object-rotate-handle)")).toHaveCount(8);
+  // The rotation grip rides alongside the eight, so the resize count is taken
+  // on the resize grips rather than on every `.object-handle`.
+  await expect(page.locator(".overlay .object-rotate-handle")).toHaveCount(1);
   // The chip offers the live Wrap control. SEVEN chips, not six: "In line" is a
   // mode of this control, not a different state of the product — Word's Layout
   // Options and Docs' image chip both put it above the six wrapping modes.

@@ -58,7 +58,10 @@ test("dragging a corner handle resizes the object, and one undo reverts it", asy
   expect(after.w).toBeGreaterThan(before.w + 10);
   expect(after.h).toBeGreaterThan(before.h + 10);
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+  await expect(page.locator(".overlay .object-handle:not(.object-rotate-handle)")).toHaveCount(8);
+  // The rotation grip rides alongside the eight, so the resize count is taken
+  // on the resize grips rather than on every `.object-handle`.
+  await expect(page.locator(".overlay .object-rotate-handle")).toHaveCount(1);
 
   // One undo reverts the resize to the original size.
   await page.keyboard.press(`${MOD}+z`);
@@ -134,6 +137,10 @@ test("an inline object offers all eight grips, like every other editor", async (
     "5",
     "6",
     "7",
+    // 8 is the ROTATION grip — ONLYOFFICE's own numbering, where `hitToHandles`
+    // returns 0..7 for the resize markers and 8 for the rotation one. An inline
+    // picture models `a:xfrm` and the layout paints it, so it is offered here.
+    "8",
   ]);
   expect(consoleErrors).toEqual([]);
 });

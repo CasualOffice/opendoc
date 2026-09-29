@@ -97,15 +97,10 @@ const BEARING_CURSORS = [
  * real angle into eight 45 degree sectors, as here, is strictly closer and no
  * harder; that is the deliberate divergence.
  *
- * **Every call site passes 0 today**, and the reason is narrower than it used to
- * read here. The MODEL does carry rotation — `setObjectRotation` takes arbitrary
- * degrees — but `object_resize_handles_in_inlines` answers `0` for any object
- * whose `rotation.is_some()`, so a rotated object advertises no handles at all
- * and there is nothing for this function to turn. `ObjectBox` also does not
- * publish the angle, so even once handles are advertised the host would have
- * nothing to pass. The parameter is written now rather than later because the
- * mapping is the part that is easy to get wrong, and this way it is stated and
- * tested once instead of rediscovered.
+ * The angle is live now. `objectFrame` publishes it beside the object's own
+ * unrotated frame, `paintResizeHandles` passes it, and the result is written as
+ * an inline `style.cursor` so it beats the `data-handle` rules in `style.css` —
+ * which are correct only for an upright object and stay untouched for one.
  *
  * O(1).
  *
@@ -631,27 +626,26 @@ export const CURSOR_TARGETS = [
       "(`Paragraph.js:12697`). It earns a row because the obvious guess is `pointer`.",
   },
 
-  // ---- Known gaps, recorded so they cannot be mistaken for oversights -----
   {
     id: "object-rotate-handle",
     cursor: "crosshair",
-    owner: "unprobed",
-    selector: null,
+    owner: "css",
+    selector: ".overlay .object-rotate-handle",
     gesture: "Rotating the object",
     why:
-      "There is no rotation handle, and the blocker is NOT the rotation operation " +
-      "— `setObjectRotation` already takes arbitrary degrees. It is that " +
-      "`object_resize_handles_in_inlines` returns 0 for any object with a " +
-      "rotation, so the moment one is rotated `can_resize` goes false and all " +
-      "eight grips and the size chrome disappear until undo; a rotate handle on " +
-      "top of that would be a half-feature. Two engine changes unblock it: " +
-      "advertise resize handles for a rotated object, and publish the unrotated " +
-      "frame plus the angle on `ObjectBox`. `crosshair` is what ONLYOFFICE uses " +
-      "(`CommonController.js:1531`) and is recorded as the fallback; Word and Docs " +
-      "both use a dedicated rotate glyph, which is the better answer when the " +
-      "feature lands. `resizeCursorForHandle` already takes the angle, so the " +
-      "resize grips will turn correctly on the same day.",
+      "`crosshair` is what ONLYOFFICE uses for the rotation marker " +
+      "(`CommonController.js:1531`). Word and Docs both use a dedicated rotate " +
+      "glyph, which is the better answer, but a data-URI cursor is a visual " +
+      "change for the owner to approve (`docs/63`) — so the honest keyword ships " +
+      "and this row records what it is approximating. " +
+      "This was an `unprobed` GAP until the engine stopped answering 0 handles " +
+      "for a rotated object: the blocker was never the rotation operation — " +
+      "`setObjectRotation` always took arbitrary degrees — it was that rotating " +
+      "anything made `can_resize` go false and took all eight grips with it, so a " +
+      "rotate handle on top of that would have been half a feature.",
   },
+
+  // ---- Known gaps, recorded so they cannot be mistaken for oversights -----
   {
     id: "table-row-strip",
     cursor: "cell",

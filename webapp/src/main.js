@@ -77,7 +77,10 @@ import {
 } from "./menu_render.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 import { beginGripDrag, cropFromDrag, keptRect, paintCropChrome } from "./object_crop_chrome.mjs";
-import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles, paintSizeReadout } from "./object_guides.mjs";
+import { clearGuides, objectBarPosition, paintGuides, paintMovePad, paintResizeHandles } from "./object_guides.mjs";
+// Own lines (anti-conflict): the two direct-manipulation geometry gestures.
+import { createObjectResizeDrag, sizeLabel as resizeSizeLabel } from "./object_resize_drag.mjs";
+import { createObjectRotateDrag } from "./object_rotate_drag.mjs";
 import { arrangeSurfaceRows, createObjectArrangeCommands } from "./object_arrange_commands.mjs";
 import { createObjectBar } from "./object_bar.mjs";
 import { renderShapeMenu } from "./shape_format_menu.mjs";
@@ -88,14 +91,7 @@ import { SHAPE_PRESETS, shapeNameKey } from "./shape_catalogue.mjs";
 import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_gallery.mjs";
 import { createShapeDrawMode } from "./shape_draw_mode.mjs";
 import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
-import {
-  pageSnapTargets,
-  resizeCommitOrigin,
-  resizeFromDrag,
-  resizeRulesFor,
-  snapBox,
-  snapResizedBox,
-} from "./object_snap.mjs";
+import { pageSnapTargets, snapBox } from "./object_snap.mjs";
 import { t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator } from "./status_counts.mjs";
@@ -2651,7 +2647,6 @@ function caretIsImplicit() {
 let objectSelection = null; // { node, kind, mode: "selected" | "editing" } | null
 /** Active object resize drag (docs/85 §5.3): a handle drag that previews as host
  * chrome and commits ONE `SetExtent` op on release. `null` when not resizing. */
-let objectResizeDrag = null;
 /** Active image-crop session — the Word/Docs-style direct-manipulation crop: the
  * selected image shows crop handles + a dimmed overlay of the region being cut,
  * dragged live and committed as ONE `SetImageCrop` op on Enter / click-away.
@@ -4225,7 +4220,7 @@ function paintObjectSelection() {
     return;
   }
   const rect = doc.objectRect(node); // [page, x, y, w, h] twips
-  place(rect, "object-outline");
+  const outlineEl = place(rect, "object-outline");
   // The objects held alongside it (Ctrl/⌘+click), so a multi-object selection
   // is visible before Group is pressed rather than being a state only the menu
   // knows about. One rect per HELD member — a user-picked handful, on a repaint,
@@ -4245,13 +4240,32 @@ function paintObjectSelection() {
     paintMovePad(padPage.overlay, rect.slice(1, 5), scaleOf(padPage), (event) =>
       startObjectMove(event, padPage, node));
   }
+  // The angle comes with the frame, in ONE engine read: the grips are drawn at
+  // the object's rotated corners, the cursors are turned with them, and the
+  // rotation grip is pushed out along the object's own axis.
+  const turned = (doc.objectFrame?.(node) ?? [])[5] ?? 0;
+  const rotationDegrees = turned / 1000;
+  // The outline is TURNED with the object rather than redrawn as its
+  // axis-aligned bounding box: a box that is bigger than the object on every
+  // side is not an outline of it, and Word, Docs and ONLYOFFICE all draw the
+  // turned rectangle.
+  if (rotationDegrees && outlineEl) outlineEl.style.transform = `rotate(${rotationDegrees}deg)`;
   paintResizeHandles(
     (pageNumber) => {
       const page = pages[pageNumber - 1];
       return page?.overlay ? { overlay: page.overlay, scale: scaleOf(page) } : null;
     },
     doc.objectHandles(node), // [page, cx, cy, kind] * supported handle count
-    (event, pageNumber, kind) => startObjectResize(event, pages[pageNumber - 1], node, kind),
+    (event, pageNumber, kind) => objectResize.start(event, pages[pageNumber - 1], node, kind),
+    {
+      rotationDegrees,
+      rotateLabel: t("object.rotate.handle"),
+      rotateValueText: t("object.rotate.degrees", { degrees: Math.round(rotationDegrees) }),
+      onRotateDown: objectSelection.canRotate
+        ? (event, pageNumber) => objectRotate.start(event, pages[pageNumber - 1], node)
+        : null,
+      onRotateKey: (event) => objectRotate.onKey(event),
+    },
   );
 }
 
@@ -4374,176 +4388,32 @@ function cancelCrop() {
   setStatus("");
 }
 
-/** Begins a handle drag-resize (docs/85 §5.3). Records the object's current
- *  placed size and shows a live preview outline; the model is untouched until
- *  release. Object geometry is not trackable, so a resize is blocked in
- *  Suggesting/Viewing mode. */
-function startObjectResize(event, page, node, handleKind) {
-  if (
-    !doc ||
-    !objectSelection ||
-    objectSelection.node !== node ||
-    !objectSelection.canResize
-  ) return;
-  // `preventDefault` suppresses the compatibility mouse events for the whole
-  // interaction, so a double-click that BEGINS on a grip opens no crop and
-  // descends into no group — a handle is a handle, as it is in Word, Docs and
-  // ONLYOFFICE. It matters more with eight grips ringing the object than with
-  // three, but only the few pixels each grip overhangs by are affected, and
-  // crop keeps its button.
-  event.preventDefault();
-  event.stopPropagation(); // do not let the page pointerdown re-hit-test
-  if (reviewMode === "viewing") {
-    blockMutationInViewing();
-    return;
-  }
-  if (reviewMode === "suggesting") {
-    setStatus("Resizing an object is not tracked; switch to Editing to resize it", "error");
-    return;
-  }
-  focusEditorSurface();
-  hideLinkChip();
-  resetPointerGesture();
-  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
-  if (rect.length < 5) return;
-  const [, x, y, w, h] = rect;
-  const preview = document.createElement("div");
-  preview.className = "object-resize-preview";
-  const { sx, sy } = scaleOf(page);
-  preview.style.left = `${x * sx}px`;
-  preview.style.top = `${y * sy}px`;
-  preview.style.width = `${w * sx}px`;
-  preview.style.height = `${h * sy}px`;
-  page.overlay.appendChild(preview);
-  objectResizeDrag = {
-    node,
-    root: objectSelection.ref.root,
-    handleKind,
-    page,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    startX: x,
-    startY: y,
-    startW: w,
-    startH: h,
-    anchored: objectSelection.anchored === true,
-    kind: objectSelection.kind,
-    lastX: x,
-    lastY: y,
-    lastW: w,
-    lastH: h,
-    aspect: h > 0 ? w / h : 1,
-    preview,
-    snap: snapContextFor(page),
-    guideEls: null,
-  };
-  event.currentTarget.setPointerCapture?.(event.pointerId);
-}
-
-// Minimum object edge in twips (~0.1in) so a drag can't collapse an object.
-const MIN_OBJECT_TWIP = 144;
-
-/** Updates the resize preview from the pointer delta. Per-handle signs decide
- *  which edges grow (corners = both axes, N/S = height, E/W = width); Shift
- *  constrains a corner to the original aspect and Ctrl/Cmd resizes about the
- *  centre. Both rules, and which kinds constrain by default, are
- *  `resizeRulesFor` (docs/85 §10.3). */
-function updateObjectResize(event) {
-  if (!objectResizeDrag) return;
-  const drag = objectResizeDrag;
-  const { sx, sy } = scaleOf(drag.page);
-  const dxTwip = Math.round((event.clientX - drag.startClientX) / sx);
-  const dyTwip = Math.round((event.clientY - drag.startClientY) / sy);
-  const { shiftKey, ctrlKey, metaKey } = event;
-  const modifiers = { kind: drag.kind, shiftKey, ctrlKey, metaKey };
-  const box = resizeFromDrag(
-    { x: drag.startX, y: drag.startY, w: drag.startW, h: drag.startH, aspect: drag.aspect },
-    drag.handleKind,
-    dxTwip,
-    dyTwip,
-    resizeRulesFor(modifiers, MIN_OBJECT_TWIP),
-  );
-  // Alt suppresses the pull, as it does on a move. The rest of the rule — and
-  // which drags are deliberately left unsnapped — is `snapResizedBox`.
-  const { box: snapped, guides } = snapResizedBox(
-    box,
-    event.altKey ? null : drag.snap,
-    MIN_OBJECT_TWIP,
-  );
-  const { x: newX, y: newY, w: newW, h: newH } = snapped;
-  paintSnapGuides(drag, guides);
-  drag.lastX = newX;
-  drag.lastY = newY;
-  drag.lastW = newW;
-  drag.lastH = newH;
-  drag.preview.style.left = `${newX * sx}px`;
-  drag.preview.style.top = `${newY * sy}px`;
-  drag.preview.style.width = `${newW * sx}px`;
-  drag.preview.style.height = `${newH * sy}px`;
-  // Say what size you are dragging TO. The preview was an outline and nothing
-  // else, so resizing to a specific size meant releasing, opening the properties
-  // panel to read what you got, and correcting it there. Docs shows a W×H bubble
-  // during the drag and Word live-updates its Size box; this is the same promise
-  // in the place the eye already is.
-  updateObjectResizeReadout(drag, newW, newH);
-  event.preventDefault();
-}
-
-/** Paints the live dimensions onto the resize preview. */
-function updateObjectResizeReadout(drag, widthTwip, heightTwip) {
-  drag.readout = paintSizeReadout(drag.preview, sizeLabel(widthTwip, heightTwip));
-}
-
-/** A placed size as the one sentence every size readout in the editor uses —
- *  inches to two places, because that is the unit the properties panel accepts
- *  and a readout in a unit you cannot type back is decoration. Through the key
- *  Page Setup's own preview label already declares, so "in" is not an
- *  untranslated corner in eighteen languages. */
-function sizeLabel(widthTwip, heightTwip) {
-  const inches = (twip) => (twip / TWIPS_PER_INCH).toFixed(2);
-  return t("pageSetup.dimensions", { width: inches(widthTwip), height: inches(heightTwip) });
-}
-
-/** Commits (or cancels) the resize on release through one engine geometry
- * transaction, converting the final page-local rectangle from twips to EMU.
- * Returns whether a drag was active. */
-function finishObjectResize(event) {
-  if (!objectResizeDrag) return false;
-  const drag = objectResizeDrag;
-  objectResizeDrag = null;
-  drag.preview.remove();
-  clearSnapGuides(drag);
-  event.preventDefault();
-  const changed =
-    Math.abs(drag.lastX - drag.startX) >= 8 ||
-    Math.abs(drag.lastY - drag.startY) >= 8 ||
-    Math.abs(drag.lastW - drag.startW) >= 8 ||
-    Math.abs(drag.lastH - drag.startH) >= 8;
-  if (changed) {
-    // An inline object commits its SIZE at the origin the paragraph gave it;
-    // only a float commits the origin it was dragged to. `resizeCommitOrigin`
-    // carries why the preview still pins the opposite edge.
-    const origin = resizeCommitOrigin(
-      { x: drag.lastX, y: drag.lastY },
-      { x: drag.startX, y: drag.startY },
-      drag.anchored,
-    );
-    runEdit(
-      () =>
-        doc.resizeObject(
-          drag.root,
-          origin.x * EMU_PER_TWIP,
-          origin.y * EMU_PER_TWIP,
-          drag.lastW * EMU_PER_TWIP,
-          drag.lastH * EMU_PER_TWIP,
-        ),
-      { gate: true },
-    );
-  } else {
-    drawSelection();
-  }
-  return true;
-}
+/** The two direct-manipulation geometry gestures. Both are modules: a grip
+ *  drag that now reasons in the object's own space, and the rotation handle.
+ *  What stays here is the application state they read and the gated edit path
+ *  they write through. */
+const gestureIo = {
+  doc: () => doc,
+  selection: () => objectSelection,
+  scaleOf: (page) => scaleOf(page),
+  runEdit: (thunk, options) => runEdit(thunk, options),
+  setStatus: (text, kind) => setStatus(text, kind),
+  t,
+  drawSelection: () => drawSelection(),
+  focusEditorSurface: () => focusEditorSurface(),
+  reviewMode: () => reviewMode,
+  blockMutationInViewing: () => blockMutationInViewing(),
+};
+const objectResize = createObjectResizeDrag({
+  ...gestureIo,
+  snapContextFor: (page) => snapContextFor(page),
+  paintSnapGuides: (drag, guides) => paintSnapGuides(drag, guides),
+  clearSnapGuides: (drag) => clearSnapGuides(drag),
+  hideLinkChip: () => hideLinkChip(),
+  resetPointerGesture: () => resetPointerGesture(),
+});
+const objectRotate = createObjectRotateDrag(gestureIo);
+const sizeLabel = (widthTwip, heightTwip) => resizeSizeLabel(t, widthTwip, heightTwip);
 
 /** Reflects the object-selection state onto `#pages` as data attributes so the
  *  host (and tests) can observe the grammar state machine without reading into
@@ -4667,6 +4537,7 @@ window.addEventListener("resize", positionObjectContextBar);
  *  are the authority for every exposed operation. */
 const OBJECT_CAPABILITY_KEYS = [
   "canResize",
+  "canRotate",
   "canMove",
   "canWrap",
   "canDelete",
@@ -5949,7 +5820,7 @@ const pointerHover = createPointerHover({
     ...pointerModeState(),
     inRunningStory: !!runningEditBand,
     insideObjectNode: objectSelection?.mode === "editing" ? objectSelection.node : null,
-    resizeDrag: objectResizeDrag,
+    resizeDrag: objectResize.record(),
     cropDrag: objectCropSession?.handleDrag ?? null,
     moveDrag: objectMoveDrag,
     tableDrag: tableChrome.dragKind(),
@@ -6270,23 +6141,17 @@ function onPointerDown(page, event) {
   event.preventDefault();
 }
 
-/** Aborts an in-progress object resize (pointer cancel / window blur), discarding
- *  the preview and committing nothing. */
-function cancelObjectResize() {
-  if (!objectResizeDrag) return;
-  objectResizeDrag.preview.remove();
-  clearSnapGuides(objectResizeDrag);
-  objectResizeDrag = null;
-  drawSelection();
-}
-
 function onPointerMove(page, event) {
   if (objectMoveDrag) {
     updateObjectMove(event);
     return;
   }
-  if (objectResizeDrag) {
-    updateObjectResize(event);
+  if (objectRotate.active()) {
+    objectRotate.update(event);
+    return;
+  }
+  if (objectResize.active()) {
+    objectResize.update(event);
     return;
   }
   if (tableChrome.dragging()) {
@@ -6426,7 +6291,8 @@ function onPointerUp(event) {
   document.body.style.cursor = ""; // the gesture no longer owns the cursor
   if (shapeDrawMode.finish()) return;
   if (finishObjectMove(event)) return;
-  if (finishObjectResize(event)) return;
+  if (objectRotate.finish(event)) return;
+  if (objectResize.finish(event)) return;
   if (tableChrome.finishDrag(event)) return;
   if (tableGutter.finishDrag(event)) return;
   const gesture = pointerGesture;
@@ -6601,8 +6467,12 @@ window.addEventListener("pointermove", (e) => {
     updateObjectMove(e);
     return;
   }
-  if (objectResizeDrag) {
-    updateObjectResize(e);
+  if (objectRotate.active()) {
+    objectRotate.update(e);
+    return;
+  }
+  if (objectResize.active()) {
+    objectResize.update(e);
     return;
   }
   if (tableChrome.dragging()) {
@@ -6749,7 +6619,8 @@ window.addEventListener("pointerup", onPointerUp);
  *  them and forgotten in the fourth. One list, named once. */
 function abortPointerGestures() {
   cancelObjectMove();
-  cancelObjectResize();
+  objectResize.cancel();
+  objectRotate.cancel();
   tableChrome.cancelDrag();
   tableGutter.cancelDrag();
   touchSelection.cancel();
@@ -14509,9 +14380,10 @@ document.addEventListener("keydown", async (e) => {
   // object is selected. Escape is the two-step exit (editing → selected → text);
   // Enter/Delete act on the object; a selected object swallows text keys so a
   // stale caret is never edited.
-  if ((objectResizeDrag || objectMoveDrag) && key === "Escape") {
+  if ((objectResize.active() || objectRotate.active() || objectMoveDrag) && key === "Escape") {
     e.preventDefault();
-    cancelObjectResize(); // Escape during a drag cancels it (docs/85 §4.2)
+    objectResize.cancel();
+  objectRotate.cancel(); // Escape during a drag cancels it (docs/85 §4.2)
     cancelObjectMove();
     return;
   }
