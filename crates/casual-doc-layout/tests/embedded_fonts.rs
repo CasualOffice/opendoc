@@ -118,6 +118,7 @@ fn styled(bold: bool, italic: bool) -> StyledRun<'static> {
     StyledRun {
         text: "iiiWWW".into(),
         requested_family: Some(FAMILY.into()),
+        requested_family_kind: None,
         font: FontId(0),
         size: Twip::from_points(11),
         character_scale_percent: 100,

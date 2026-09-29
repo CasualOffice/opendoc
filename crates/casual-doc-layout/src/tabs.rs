@@ -1000,6 +1000,7 @@ fn leader_run(
         text: s.as_str().into(),
         // A tab leader's glyph uses the resolved face; no declared family to prefer.
         requested_family: None,
+        requested_family_kind: None,
         font: style.font,
         size: style.size,
         character_scale_percent: style.character_scale_percent,
@@ -1132,6 +1133,7 @@ mod tests {
         StyledRun {
             text: text.into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,

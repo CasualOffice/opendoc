@@ -2866,6 +2866,7 @@ mod tests {
         let run = StyledRun {
             text: "Hello world".into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,
@@ -2914,6 +2915,7 @@ mod tests {
         let run = StyledRun {
             text: text.into(),
             requested_family: None,
+            requested_family_kind: None,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,

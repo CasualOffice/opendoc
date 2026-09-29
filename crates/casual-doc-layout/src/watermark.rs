@@ -248,6 +248,7 @@ fn shape_once(
         // The authored family, handed to the shaper so it resolves the face — and
         // its fallbacks, which is what lets a CJK watermark shape at all.
         requested_family: text.font.as_ref().map(|font| font.name.as_str().into()),
+        requested_family_kind: None,
         font: crate::fonts::face_id(text.bold, text.italic),
         size,
         character_scale_percent: 100,

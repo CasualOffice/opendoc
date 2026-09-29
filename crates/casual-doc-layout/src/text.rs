@@ -581,6 +581,18 @@ pub struct StyledRun<'a> {
     /// collection, so [`font`](Self::font) — the bundled resolution — is used and
     /// output is unchanged.
     pub requested_family: Option<Cow<'a, str>>,
+    /// The generic class the *document* declared for
+    /// [`requested_family`](Self::requested_family) in `word/fontTable.xml`
+    /// (`<w:family w:val="roman|swiss|modern"/>`), so the shaper classifies a
+    /// missing face by what the document says it is rather than by a substring of
+    /// its name. `None` when the document declared nothing usable.
+    ///
+    /// This must carry the **same** class the resolver was given in
+    /// [`crate::resolve::FaceRequest::declared`] when [`font`](Self::font) was
+    /// chosen: the shaper picks the family to shape with and the resolver picks
+    /// the face to outline with, and a class reaching only one of them would make
+    /// the two diverge.
+    pub requested_family_kind: Option<crate::font_substitution::GenericFamily>,
     /// The resolved font.
     pub font: FontId,
     /// Font size.

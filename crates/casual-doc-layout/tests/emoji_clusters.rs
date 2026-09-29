@@ -36,6 +36,7 @@ fn run(text: &str) -> StyledRun<'_> {
     StyledRun {
         text: text.into(),
         requested_family: None,
+        requested_family_kind: None,
         font: FontId(0),
         size: Twip::from_points(14),
         character_scale_percent: 100,

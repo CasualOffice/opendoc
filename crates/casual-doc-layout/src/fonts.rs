@@ -385,14 +385,21 @@ pub fn face_id(bold: bool, italic: bool) -> FontId {
     DEFAULT_FAMILY.face_id(bold, italic)
 }
 
-/// The registered family name for a [`FontId`] (falls back to the target's
-/// default family for an unknown id).
+/// The bundled family a [`FontId`] belongs to, or `None` when the id is not a
+/// bundled one — a face the host supplied, at or above
+/// [`DYNAMIC_FONT_BASE`](crate::font_registry::DYNAMIC_FONT_BASE).
+///
+/// This used to answer `"Roboto"` — the bundled default — for every id it did not
+/// recognise, including every host-resolved face. That cost an investigation an
+/// afternoon: a *correct* substitution onto a real installed face read back as
+/// "the engine painted Roboto", which is precisely the symptom of substitution
+/// not being consulted at all. A function that cannot name a face now says so.
 #[must_use]
-pub fn family_name(id: FontId) -> &'static str {
+pub fn family_name(id: FontId) -> Option<&'static str> {
     FAMILIES
         .iter()
         .find(|family| family.contains(id))
-        .map_or(DEFAULT_FAMILY.name, |family| family.name)
+        .map(|family| family.name)
 }
 
 /// The font bytes for a [`FontId`] (falls back to the target's default regular
@@ -498,20 +505,26 @@ mod tests {
 
     #[test]
     fn family_name_maps_each_block() {
-        assert_eq!(family_name(FontId(0)), "Roboto");
-        assert_eq!(family_name(FontId(3)), "Roboto");
-        assert_eq!(family_name(FontId(4)), "Caladea");
-        assert_eq!(family_name(FontId(7)), "Caladea");
-        assert_eq!(family_name(FontId(8)), "Carlito");
-        assert_eq!(family_name(FontId(11)), "Carlito");
-        assert_eq!(family_name(FontId(12)), "Liberation Sans");
-        assert_eq!(family_name(FontId(15)), "Liberation Sans");
-        assert_eq!(family_name(FontId(16)), "Liberation Serif");
-        assert_eq!(family_name(FontId(19)), "Liberation Serif");
-        assert_eq!(family_name(FontId(20)), "Liberation Mono");
-        assert_eq!(family_name(FontId(23)), "Liberation Mono");
-        // Unknown ids fall back to the default family name.
-        assert_eq!(family_name(FontId(99)), "Roboto");
+        assert_eq!(family_name(FontId(0)), Some("Roboto"));
+        assert_eq!(family_name(FontId(3)), Some("Roboto"));
+        assert_eq!(family_name(FontId(4)), Some("Caladea"));
+        assert_eq!(family_name(FontId(7)), Some("Caladea"));
+        assert_eq!(family_name(FontId(8)), Some("Carlito"));
+        assert_eq!(family_name(FontId(11)), Some("Carlito"));
+        assert_eq!(family_name(FontId(12)), Some("Liberation Sans"));
+        assert_eq!(family_name(FontId(15)), Some("Liberation Sans"));
+        assert_eq!(family_name(FontId(16)), Some("Liberation Serif"));
+        assert_eq!(family_name(FontId(19)), Some("Liberation Serif"));
+        assert_eq!(family_name(FontId(20)), Some("Liberation Mono"));
+        assert_eq!(family_name(FontId(23)), Some("Liberation Mono"));
+        // A non-bundled id is NOT named after the default family: a host-resolved
+        // face has no bundled family, and claiming one made a correct
+        // substitution read as a substitution bug.
+        assert_eq!(family_name(FontId(99)), None);
+        assert_eq!(
+            family_name(FontId(crate::font_registry::DYNAMIC_FONT_BASE)),
+            None
+        );
     }
 
     /// Every bundled Liberation face is valid TrueType the shaper can register

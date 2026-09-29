@@ -2063,6 +2063,7 @@ mod tests {
             &[StyledRun {
                 text: "Hello, opendoc!".into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
                 character_scale_percent: 100,
@@ -2402,6 +2403,7 @@ mod tests {
             &[StyledRun {
                 text: text.into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
                 character_scale_percent: 100,
@@ -3103,6 +3105,7 @@ mod tests {
             &[StyledRun {
                 text: "Hi".into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(28),
                 character_scale_percent: 100,
@@ -3157,6 +3160,7 @@ mod tests {
             &[StyledRun {
                 text: "中文字".into(),
                 requested_family: None,
+                requested_family_kind: None,
                 font: FontId(0),
                 size: Twip::from_points(32),
                 character_scale_percent: 100,
