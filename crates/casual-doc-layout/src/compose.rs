@@ -2479,7 +2479,13 @@ mod tests {
         // about an ordinary picture changed.
         let list = compose_paragraph(&line(upright.clone()), origin);
         assert!(
-            matches!(&list.items[0], PaintItem::Image { transform: None, .. }),
+            matches!(
+                &list.items[0],
+                PaintItem::Image {
+                    transform: None,
+                    ..
+                }
+            ),
             "an unrotated inline picture emits no transform"
         );
 
@@ -2500,7 +2506,11 @@ mod tests {
         else {
             panic!("a rotated inline picture must carry a transform onto its blit");
         };
-        assert_eq!(applied.rotation, 30 * 60_000, "the authored angle, verbatim");
+        assert_eq!(
+            applied.rotation,
+            30 * 60_000,
+            "the authored angle, verbatim"
+        );
         assert!(applied.flip_h && !applied.flip_v, "and the authored flips");
         assert_eq!(
             applied.center,

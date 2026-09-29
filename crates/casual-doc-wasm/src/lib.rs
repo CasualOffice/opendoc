@@ -14234,8 +14234,7 @@ impl WasmDocument {
                             .or_else(|| entry.0.iter().position(|used| !used));
                         if let Some(i) = pick {
                             entry.0[i] = true;
-                            let frame =
-                                object_resize_handles(self.document.body(), img_nodes[i].0);
+                            let frame = object_resize_handles(self.document.body(), img_nodes[i].0);
                             out.push(ObjectBox {
                                 root: img_nodes[i].0,
                                 subject: img_nodes[i].0,
@@ -22353,22 +22352,39 @@ fn group_resize_supported(group: &WordprocessingGroup) -> bool {
         && positive_extent(group.extent)
         && positive_extent(group.transform.extent)
         && positive_extent(group.transform.child_extent)
+        // A GROUP's own transform keeps its rotation/flip rejection, and the
+        // reason is the opposite of the leaves' (see
+        // `group_child_resize_supported`): nothing paints it TODAY, so the
+        // placed rect is the unrotated union of the children and a resize is
+        // exact — but the day the anchor pass honours it, that union becomes
+        // the turned bounding box and this arithmetic silently stops being an
+        // inverse. Failing closed on a case no renderer draws costs a user
+        // nothing; getting it wrong later costs them their geometry.
+        && !group.transform.flip_h
+        && !group.transform.flip_v
+        && group.transform.rotation.is_none()
         && !group.children.is_empty()
         && group.children.iter().all(group_child_resize_supported)
 }
 
 /// Whether one group member's geometry can be scaled with an exact inverse.
 ///
-/// **Rotation and flips are deliberately NOT conditions here.** They used to be,
-/// on both this predicate and the outer one, and that was the SECOND gate (after
-/// `object_resize_handles_in_inlines`) that made a rotated object's grips
-/// disappear — the one that caught every floating SHAPE, since a shape is
-/// modelled as a group of one. The arithmetic a group resize does — scale the
-/// outer `wp:extent` and the `a:xfrm` offsets/extents, then re-anchor from
-/// `group_content_bounds` — reads offsets and extents and never an angle, and an
-/// `a:xfrm` rotation or flip is applied about each child's own centre, so it
-/// leaves every one of those boxes exactly where the scaling put it. Excluding
-/// them bought nothing and cost the user their handles.
+/// **A LEAF's rotation and flips are deliberately no longer conditions.** They
+/// used to be, and this was the SECOND gate — after
+/// `object_resize_handles_in_inlines` — that made a rotated object's grips
+/// disappear. It was the one that caught every floating SHAPE, since a shape is
+/// modelled as a group of one, so rotating a shape took its eight grips away.
+///
+/// The arithmetic a group resize does — scale the outer `wp:extent` and the
+/// `a:xfrm` offsets/extents, then re-anchor from `group_content_bounds` — reads
+/// offsets and extents and never an angle, and a leaf's `a:xfrm` rotation or
+/// flip is applied about that leaf's OWN centre, which the scaling has already
+/// moved with it. So the inverse stays exact and the rejection bought nothing.
+///
+/// A nested GROUP's transform keeps the rejection, for the reason
+/// `group_resize_supported` gives: it is unpainted today, and the arithmetic
+/// that is exact against an unrotated union would stop being exact the day it
+/// is painted.
 fn group_child_resize_supported(child: &GroupChild) -> bool {
     match child {
         GroupChild::Picture(picture) => positive_extent(picture.extent),
@@ -22382,6 +22398,9 @@ fn group_child_resize_supported(child: &GroupChild) -> bool {
                 && positive_extent(nested.extent)
                 && positive_extent(nested.transform.extent)
                 && positive_extent(nested.transform.child_extent)
+                && !nested.transform.flip_h
+                && !nested.transform.flip_v
+                && nested.transform.rotation.is_none()
                 && !nested.children.is_empty()
                 && nested.children.iter().all(group_child_resize_supported)
         }
@@ -36551,7 +36570,22 @@ mod tests {
             .find(|object| object.root == root)
             .expect("rotated group remains selectable");
         assert!(!selected.capabilities.can_resize);
-        assert!(d.object_handles(&selected.subject.to_string()).is_empty());
+        // No RESIZE grips: the group's own `wp:group` transform is rotated, and
+        // the arithmetic that re-anchors a scaled group reads an unrotated union
+        // of its children — exact today, because nothing paints that transform,
+        // and not exact the day something does. Failing closed is the deliberate
+        // answer.
+        //
+        // The shape LEAF is still rotatable, though, and its `a:xfrm` IS
+        // painted, so the one grip that remains is the rotation grip — offered
+        // independently of resize, because "you may not scale this" and "you may
+        // not turn this" are different refusals and only one of them applies.
+        let handles = d.object_handles(&selected.subject.to_string());
+        assert_eq!(
+            handles.chunks_exact(4).map(|h| h[3]).collect::<Vec<_>>(),
+            vec![ROTATE_HANDLE_KIND],
+            "an unresizable group leaves only the rotation grip, not eight dead ones"
+        );
     }
 
     #[test]

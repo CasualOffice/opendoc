@@ -3561,19 +3561,16 @@ mod tests {
             "the published frame is the object's own UNROTATED box, unchanged by \
              the rotation — the rotation is about its centre"
         );
-        assert_eq!(frame[5], 30_000, "and the angle is published in milli-degrees");
+        assert_eq!(
+            frame[5], 30_000,
+            "and the angle is published in milli-degrees"
+        );
 
         // The grips are drawn where the object IS. A 30-degree turn moves the
         // north-west grip off the frame's corner by a computable amount.
-        let (cx, cy) = (
-            upright[1] + upright[3] / 2,
-            upright[2] + upright[4] / 2,
-        );
+        let (cx, cy) = (upright[1] + upright[3] / 2, upright[2] + upright[4] / 2);
         let radians = 30.0_f64.to_radians();
-        let (dx, dy) = (
-            f64::from(upright[1] - cx),
-            f64::from(upright[2] - cy),
-        );
+        let (dx, dy) = (f64::from(upright[1] - cx), f64::from(upright[2] - cy));
         #[allow(clippy::cast_possible_truncation)]
         let expected = (
             (f64::from(cx) + dx * radians.cos() - dy * radians.sin()).round() as i32,
@@ -3598,9 +3595,8 @@ mod tests {
             .expect("a rotated object resizes");
         let after = document.object_extent(&shape);
         assert_ne!(after, before, "the rotated shape's extent actually changed");
-        assert_eq!(
-            document.object_transform(&shape).is_empty(),
-            false,
+        assert!(
+            !document.object_transform(&shape).is_empty(),
             "and it is still rotated afterwards"
         );
         let read: serde_json::Value =
@@ -3628,7 +3624,9 @@ mod tests {
             "a top-level text box gets its eight resize grips and NO rotation grip"
         );
         assert!(
-            document.set_object_rotation_inner(&text_box, Some(30.0)).is_err(),
+            document
+                .set_object_rotation_inner(&text_box, Some(30.0))
+                .is_err(),
             "and the facade refuses to rotate it, which is what the missing grip says"
         );
     }
