@@ -464,7 +464,7 @@ pub struct RevisionLog {
 /// anyone who types — a behaviour change disguised as a constant.
 ///
 /// It replaces `casual-doc-wasm`'s `MAX_HISTORY_ENTRIES`, which capped an undo `Vec` and a
-/// redo `Vec` at 256 each. [`RevisionLog::enforce_bounds`] reproduces both caps, plus a
+/// redo `Vec` at 256 each. `RevisionLog::enforce_bounds` reproduces both caps, plus a
 /// ceiling on the settled groups that accumulate behind them.
 pub const DEFAULT_MAX_UNDO_GROUPS: usize = 256;
 
