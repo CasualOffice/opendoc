@@ -81,10 +81,20 @@ function zip(entries) {
   return Buffer.concat([...locals, centralBuf, end]);
 }
 
+// The number field a Word entry carries when the heading it names is NUMBERED:
+// `number TAB title TAB page`, where the number is the heading's LIST number and
+// so appears nowhere in the heading's own run text. Empty for the unnumbered
+// shape, which is `title TAB page`.
+const numberField = (number) =>
+  number === null
+    ? ""
+    : `<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t xml:space="preserve">${number}</w:t></w:r><w:r><w:tab/></w:r>`;
+
 // A `\\h` entry: the heading text is wrapped in a real hyperlink to its bookmark.
-const entry = (n, text, page, level) => `
+const entry = (n, text, page, level, number = null) => `
   <w:p><w:pPr><w:pStyle w:val="TOC${level}"/></w:pPr>
     <w:hyperlink w:anchor="_Toc${n}" w:history="1">
+      ${numberField(number)}
       <w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t xml:space="preserve">${text}</w:t></w:r>
       <w:r><w:tab/></w:r>
       <w:r><w:fldChar w:fldCharType="begin"/></w:r>
@@ -98,8 +108,9 @@ const entry = (n, text, page, level) => `
 // A TOC written WITHOUT `\\h`: identical text, identical `TOCn` style, but no
 // hyperlink at all — which is what Word emits when the field has no `\\h` switch
 // and what most pre-2007 and LibreOffice-produced tables of contents look like.
-const plainEntry = (n, text, page, level) => `
+const plainEntry = (n, text, page, level, number = null) => `
   <w:p><w:pPr><w:pStyle w:val="TOC${level}"/></w:pPr>
+    ${number === null ? "" : `<w:r><w:t xml:space="preserve">${number}</w:t></w:r><w:r><w:tab/></w:r>`}
     <w:r><w:t xml:space="preserve">${text}</w:t></w:r>
     <w:r><w:tab/></w:r>
     <w:r><w:fldChar w:fldCharType="begin"/></w:r>
@@ -109,12 +120,28 @@ const plainEntry = (n, text, page, level) => `
     <w:r><w:fldChar w:fldCharType="end"/></w:r>
   </w:p>`;
 
-const heading = (n, text, level) => `
-  <w:p><w:pPr><w:pStyle w:val="Heading${level}"/></w:pPr>
+// The heading's own run text NEVER carries the number: in the numbered shape the
+// number is painted from the list (`w:numPr`), so the text the outline reports
+// is the bare title. That asymmetry — number in the entry, absent from the
+// heading — is exactly what a matcher has to survive.
+const heading = (n, text, level, numbered = false) => `
+  <w:p><w:pPr><w:pStyle w:val="Heading${level}"/>${
+    numbered ? `<w:numPr><w:ilvl w:val="${level - 1}"/><w:numId w:val="1"/></w:numPr>` : ""
+  }</w:pPr>
     <w:bookmarkStart w:id="${n}" w:name="_Toc${n}"/>
     <w:r><w:t xml:space="preserve">${text}</w:t></w:r>
     <w:bookmarkEnd w:id="${n}"/>
   </w:p>`;
+
+/** A two-level decimal list, the shape Word attaches to numbered headings. */
+const NUMBERING = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="0">
+    <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl>
+    <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/><w:lvlJc w:val="left"/></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+</w:numbering>`;
 
 const filler = (t) => `<w:p><w:r><w:t xml:space="preserve">${t}</w:t></w:r></w:p>`;
 
@@ -142,8 +169,26 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 /** The three headings this document's TOC points at, in document order. */
 export const TOC_HEADINGS = ["Alpha chapter", "Beta chapter", "Gamma section"];
 
-/** A `{ name, mimeType, buffer }` ready for `setInputFiles`. */
-export function tocDocx(name = "toc.docx", filler_lines = 30, sdt = false, hyperlinked = true) {
+/** The list numbers the numbered shape puts in its entries, matching `NUMBERING`
+ *  applied to the three headings above (two level-1, then one level-2). */
+export const TOC_NUMBERS = ["1.", "2.", "2.1"];
+
+/**
+ * A `{ name, mimeType, buffer }` ready for `setInputFiles`.
+ *
+ * `numbered` builds the shape a real Word contract produces: the headings take
+ * their numbers from a list, so their own text is the bare title, while each
+ * entry reads `number TAB title TAB page`. Everything else is identical, so a
+ * test can compare the two and charge any difference to the numbering alone.
+ */
+export function tocDocx(
+  name = "toc.docx",
+  filler_lines = 30,
+  sdt = false,
+  hyperlinked = true,
+  numbered = false,
+) {
+  const number = (i) => (numbered ? TOC_NUMBERS[i] : null);
   const body = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>
@@ -154,17 +199,17 @@ export function tocDocx(name = "toc.docx", filler_lines = 30, sdt = false, hyper
     <w:r><w:instrText xml:space="preserve">${hyperlinked ? ' TOC \\o "1-3" \\h \\z \\u ' : ' TOC \\o "1-3" \\z \\u '}</w:instrText></w:r>
     <w:r><w:fldChar w:fldCharType="separate"/></w:r>
   </w:p>
-  ${(hyperlinked ? entry : plainEntry)(101, TOC_HEADINGS[0], 2, 1)}
-  ${(hyperlinked ? entry : plainEntry)(102, TOC_HEADINGS[1], 3, 1)}
-  ${(hyperlinked ? entry : plainEntry)(103, TOC_HEADINGS[2], 4, 2)}
+  ${(hyperlinked ? entry : plainEntry)(101, TOC_HEADINGS[0], 2, 1, number(0))}
+  ${(hyperlinked ? entry : plainEntry)(102, TOC_HEADINGS[1], 3, 1, number(1))}
+  ${(hyperlinked ? entry : plainEntry)(103, TOC_HEADINGS[2], 4, 2, number(2))}
   <w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
   ${sdt ? '</w:sdtContent></w:sdt>' : ''}
   <w:p><w:r><w:br w:type="page"/></w:r></w:p>
-  ${heading(101, TOC_HEADINGS[0], 1)}
+  ${heading(101, TOC_HEADINGS[0], 1, numbered)}
   ${Array.from({ length: filler_lines }, (_, i) => filler(`Alpha body line ${i + 1}.`)).join("")}
-  ${heading(102, TOC_HEADINGS[1], 1)}
+  ${heading(102, TOC_HEADINGS[1], 1, numbered)}
   ${Array.from({ length: filler_lines }, (_, i) => filler(`Beta body line ${i + 1}.`)).join("")}
-  ${heading(103, TOC_HEADINGS[2], 2)}
+  ${heading(103, TOC_HEADINGS[2], 2, numbered)}
   ${Array.from({ length: filler_lines }, (_, i) => filler(`Gamma body line ${i + 1}.`)).join("")}
   <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>
 </w:body>
@@ -177,6 +222,7 @@ export function tocDocx(name = "toc.docx", filler_lines = 30, sdt = false, hyper
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+${numbered ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ""}
 </Types>`,
     "_rels/.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -185,12 +231,14 @@ export function tocDocx(name = "toc.docx", filler_lines = 30, sdt = false, hyper
     "word/_rels/document.xml.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+${numbered ? '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>' : ""}
 </Relationships>`,
     // Word's own style definitions for the two families this document uses.
     // Without them the entries carry a `w:pStyle` pointing at nothing and the
     // headings are ordinary paragraphs — which is not what any real table of
     // contents looks like, and would make the fixture prove less than it claims.
     "word/styles.xml": STYLES,
+    ...(numbered ? { "word/numbering.xml": NUMBERING } : {}),
     "word/document.xml": body,
   });
 

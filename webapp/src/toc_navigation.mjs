@@ -76,6 +76,15 @@ export function isTocEntryStyle(name) {
   return TOC_STYLE.test(name.trim().toLowerCase().replace(/\s+/g, " "));
 }
 
+/** A trailing tab field that is a PAGE NUMBER rather than part of the title:
+ *  arabic or roman, optionally behind the leader characters a producer writes
+ *  into the text instead of using `w:leader`. */
+const PAGE_FIELD = /^[\s.…·_-]*(?:[0-9]+|[ivxlcdm]+)[\s.]*$/iu;
+
+/** A field that carries only NUMBERING — `1.`, `1.2`, `A)`, `iv.` — and so
+ *  cannot be a title on its own. */
+const NUMBERING_ONLY = /^\s*(?:[0-9]+|[ivxlcdm]+|[a-z])(?:[.)]|\.[0-9]+)*[.)]?\s*$/iu;
+
 /**
  * The heading text an entry names, with the parts a table of contents adds
  * stripped: the tab (or dot leader) and the page number that follow it.
@@ -92,9 +101,35 @@ export function isTocEntryStyle(name) {
  */
 export function tocEntryLabel(text) {
   if (typeof text !== "string") return "";
+  if (text.includes("\t")) {
+    // A GENERATED entry, where the tabs are the structure the field wrote:
+    //
+    //     title                     TAB page      an unnumbered heading
+    //     number TAB title          TAB page      a NUMBERED heading
+    //
+    // Word puts the heading's list number in its own tab field, so only the
+    // LAST field is ever the page number. Cutting at the FIRST tab reduced
+    // every numbered entry to its bare number ("1."), which matches no heading
+    // and silently disarmed the whole table — the shape in every contract,
+    // report and thesis whose headings are numbered.
+    const fields = text.split("\t");
+    const withoutPage = fields.slice(0, -1).join(" ").trim();
+    // Keep the page field when dropping it would leave nothing but numbering:
+    // that is an entry with no page number whose title merely looks like one
+    // ("1. TAB 2020"), and its title is the part that would have been thrown.
+    if (
+      fields.length > 1 &&
+      PAGE_FIELD.test(fields[fields.length - 1]) &&
+      withoutPage !== "" &&
+      !NUMBERING_ONLY.test(withoutPage)
+    ) {
+      fields.pop();
+    }
+    return fields.join(" ").replace(/\s+/gu, " ").trim();
+  }
+  // A HAND-BUILT table, whose leader and page number are literal characters in
+  // the run text rather than tab fields.
   let label = text;
-  const tab = label.indexOf("\t");
-  if (tab >= 0) label = label.slice(0, tab);
   // A leader written as literal dots (or the older `. . .`) rather than as a tab
   // with a leader character, which is what a hand-built table looks like.
   label = label.replace(/[.…·_\-\s]{3,}\d*\s*$/u, "");
