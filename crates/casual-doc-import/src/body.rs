@@ -4569,27 +4569,39 @@ impl BodyParser<'_> {
                 self.numpr_depth = self.numpr_depth.saturating_sub(1);
                 if self.numpr_depth == 0 {
                     if let Some(num_id) = self.pending_num_id.take() {
-                        match self
-                            .numbering
-                            .resolve(self.styles, &num_id, self.pending_ilvl)
-                        {
-                            Some(reference) => {
-                                self.paragraph_properties.numbering = Some(reference);
-                            }
-                            // A List-Style list whose `w:numStyleLink` could not
-                            // be followed (a dangling link, or a
-                            // `numStyleLink`/`styleLink` cycle) is NOT the same
-                            // loss as a dangling `numId`, and it must not be
-                            // silently defaulted to an unnumbered paragraph: name
-                            // the link so the report says which indirection broke
-                            // (`docs/142` LST-10).
-                            None if self
+                        // `w:numId="0"` is not a dangling reference to be
+                        // reported as loss — ECMA-376 §17.9.18 reserves 0 for
+                        // "not numbered", the idiom a paragraph uses to cancel a
+                        // list inherited from its style chain. Record the
+                        // cancellation so the cascade can honour it; resolving it
+                        // as a lookup would miss (there is no instance 0), leave
+                        // `numbering` unset, and let the inherited marker through.
+                        if num_id == "0" {
+                            self.paragraph_properties.numbering = None;
+                            self.paragraph_properties.numbering_none = true;
+                        } else {
+                            match self
                                 .numbering
-                                .has_unfollowable_style_link(self.styles, &num_id) =>
+                                .resolve(self.styles, &num_id, self.pending_ilvl)
                             {
-                                self.reporter.report_invalid(b"numStyleLink");
+                                Some(reference) => {
+                                    self.paragraph_properties.numbering = Some(reference);
+                                }
+                                // A List-Style list whose `w:numStyleLink` could not
+                                // be followed (a dangling link, or a
+                                // `numStyleLink`/`styleLink` cycle) is NOT the same
+                                // loss as a dangling `numId`, and it must not be
+                                // silently defaulted to an unnumbered paragraph: name
+                                // the link so the report says which indirection broke
+                                // (`docs/142` LST-10).
+                                None if self
+                                    .numbering
+                                    .has_unfollowable_style_link(self.styles, &num_id) =>
+                                {
+                                    self.reporter.report_invalid(b"numStyleLink");
+                                }
+                                None => self.reporter.report(b"numPr"),
                             }
-                            None => self.reporter.report(b"numPr"),
                         }
                     }
                     self.pending_ilvl = 0;

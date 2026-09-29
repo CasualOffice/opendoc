@@ -980,6 +980,21 @@ pub struct ParagraphProperties {
     /// Numbering reference.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub numbering: Option<NumberingRef>,
+    /// Numbering explicitly REMOVED at this layer (`w:numPr/w:numId w:val="0"`).
+    ///
+    /// ECMA-376 §17.9.18 reserves `numId` 0 as "this paragraph is not numbered":
+    /// it is not a reference to a list, it is the idiom a style or a paragraph
+    /// uses to *cancel* a numbering reference inherited from its `w:basedOn`
+    /// chain. Word's own `TOC Heading` style is the canonical instance — it is
+    /// based on `Heading 1`, which carries `numId="1"`, and cancels it this way.
+    ///
+    /// This is the tri-state an inherited property needs: `numbering: None` with
+    /// this flag clear means "unset, inherit"; this flag set means "off, and do
+    /// not inherit". Without it a cancellation is indistinguishable from silence
+    /// and the inherited list marker survives into a paragraph Word leaves
+    /// unnumbered.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub numbering_none: bool,
     /// Alignment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alignment: Option<Alignment>,
