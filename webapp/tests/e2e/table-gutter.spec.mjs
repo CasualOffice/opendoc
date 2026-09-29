@@ -406,6 +406,113 @@ test.describe("touch", () => {
   });
 });
 
+/** The painted appearance of one gutter element: the box the pointer can hit,
+ *  and the bar the eye actually sees, which is drawn by `::after` and is
+ *  deliberately the narrower of the two. */
+const gutterPaint = (page, selector) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const box = el.getBoundingClientRect();
+    const bar = getComputedStyle(el, "::after");
+    // `var(--accent)` resolved by the browser, so the comparison holds whatever
+    // accent the user has persisted — main.js writes it inline on the root.
+    const probe = document.createElement("div");
+    probe.style.background = "var(--accent)";
+    document.body.appendChild(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    // Chrome serializes a `color-mix()` as `color(srgb 0.79 0.80 0.80)` — 0..1
+    // floats — and a plain colour as `rgb(51, 85, 196)`. Both are normalised to
+    // 0..255 here, or every comparison below would be between two scales.
+    const rgb = (value) => {
+      const parts = (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+      return value.startsWith("color(") ? parts.map((v) => Math.round(v * 255)) : parts;
+    };
+    return {
+      boxWidth: box.width,
+      boxHeight: box.height,
+      boxFill: getComputedStyle(el).backgroundColor,
+      boxRing: getComputedStyle(el).boxShadow,
+      barWidth: parseFloat(bar.width),
+      barHeight: parseFloat(bar.height),
+      bar: rgb(bar.backgroundColor),
+      accent: rgb(accent),
+    };
+  }, selector);
+
+/** How far a colour is from grey: the spread between its strongest and weakest
+ *  channel. 0 is a pure neutral; `--accent` (#3355c4 by default) is ~145. */
+const chroma = ([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b);
+
+/** Perceived lightness, enough to say "this one is darker than that one". */
+const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+test("the gutter rests as a thin NEUTRAL bar and only turns accent when the row is SELECTED", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The owner's words about the first cut: *"you added thick top and left
+  // border, is that how google docs does it? i don't think so"*. He was right —
+  // the strip filled its whole 14px width with `accent 10%` and ringed it with
+  // `accent 32%`, so a table wore a thick blue border down its left edge and
+  // across its top whenever the pointer entered it.
+  //
+  // Docs draws a thin NEUTRAL grey bar outside the leading edge, darkens the
+  // segment under the pointer, and uses the accent ONLY for a row or column that
+  // is actually selected. This guard holds all three states, and the separation
+  // that lets the bar be quiet without shrinking the target: the hit box stays
+  // >= 14px (24px under a finger, WCAG 2.5.8) while the drawn bar is a fraction
+  // of it, the same way a 9px resize grip carries a 24px hit area.
+  await insertTable(page, 3, 3);
+  const cell = await activeCell(page);
+  const box = await stableBox(page.locator(".page-wrap .page").first());
+
+  // Found the way a user finds it: by sweeping the pointer left until it appears.
+  const at = await findRowStrip(page, { top: cell.y, height: cell.h });
+  expect(at).not.toBeNull();
+
+  // --- resting -------------------------------------------------------------
+  const strip = await gutterPaint(page, ".overlay .table-row-strip");
+  expect(strip).not.toBeNull();
+  expect(strip.boxWidth, "the pointer target stays at least 14 CSS px").toBeGreaterThanOrEqual(14);
+  // The box paints NOTHING. Everything visible is the bar, so the hit area can
+  // grow for a finger without a pixel of chrome growing with it.
+  expect(strip.boxFill, "the strip box itself must not be filled").toBe("rgba(0, 0, 0, 0)");
+  expect(strip.boxRing, "the strip box must not be ringed").toBe("none");
+  expect(strip.barWidth, "the drawn bar is narrower than the target").toBeLessThan(strip.boxWidth);
+  expect(strip.barWidth, "…but still wide enough to see").toBeGreaterThanOrEqual(4);
+  expect(
+    chroma(strip.bar),
+    `the resting bar must be neutral, not accent — got rgb(${strip.bar})`,
+  ).toBeLessThanOrEqual(8);
+
+  // --- hovered -------------------------------------------------------------
+  // The band the pointer is in darkens, and stays neutral while it does.
+  const band = await gutterPaint(page, ".overlay .table-gutter-band");
+  expect(band).not.toBeNull();
+  expect(chroma(band.bar), "the hovered band must be neutral too").toBeLessThanOrEqual(8);
+  expect(
+    luma(band.bar),
+    "the hovered band must be DARKER than the resting bar, or hover says nothing",
+  ).toBeLessThan(luma(strip.bar) - 20);
+  expect(band.barWidth, "hover must not widen the bar").toBeCloseTo(strip.barWidth, 1);
+
+  // --- selected ------------------------------------------------------------
+  await page.mouse.click(at.x, at.y);
+  await expect(page.locator(".overlay .table-cell-selection")).toHaveCount(3);
+  const selected = await gutterPaint(page, ".overlay .table-gutter-selection");
+  expect(selected, "a selected row keeps a bar in the gutter").not.toBeNull();
+  expect(
+    selected.bar,
+    "the SELECTED bar is the accent — that is what colour means here",
+  ).toEqual(selected.accent);
+  // …and the hovered band over a selected row does not revert to hover grey.
+  const hoveredSelected = await gutterPaint(page, ".overlay .table-gutter-band");
+  expect(hoveredSelected.bar).toEqual(hoveredSelected.accent);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the strips are hover chrome only: they never rest on the page, and a click in a cell still places the caret", async ({
   page,
   consoleErrors,
