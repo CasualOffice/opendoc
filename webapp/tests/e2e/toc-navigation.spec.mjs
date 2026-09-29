@@ -16,9 +16,11 @@ import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
 import { tocDocx, TOC_HEADINGS } from "./toc-docx.mjs";
 
 /** Opens a generated TOC document and waits for it to be laid out. */
-async function openToc(page, { hyperlinked }) {
+async function openToc(page, { hyperlinked, numbered = false }) {
   await gotoEditor(page);
-  await page.locator("#file").setInputFiles(tocDocx("toc.docx", 900, false, hyperlinked));
+  await page
+    .locator("#file")
+    .setInputFiles(tocDocx("toc.docx", 900, false, hyperlinked, numbered));
   await page.waitForFunction(
     () => /of\s+\d\d/.test(document.getElementById("statPages")?.textContent ?? ""),
     null,
@@ -38,14 +40,26 @@ async function viewState(page) {
   }));
 }
 
-for (const hyperlinked of [true, false]) {
-  const shape = hyperlinked ? "with \\h (authored hyperlinks)" : "without \\h (no hyperlink at all)";
+for (const [hyperlinked, numbered] of [
+  [true, false],
+  [false, false],
+  // The shape every numbered contract, report and thesis has, and the one the
+  // owner reported dead: the heading takes its number from a LIST, so the
+  // entry reads `number TAB title TAB page` while the heading's own text is the
+  // bare title. The resolver cut each entry at its FIRST tab, so every label
+  // collapsed to "1." and matched nothing — with `\h` and without it.
+  [true, true],
+  [false, true],
+]) {
+  const shape =
+    (hyperlinked ? "with \\h (authored hyperlinks)" : "without \\h (no hyperlink at all)") +
+    (numbered ? ", NUMBERED headings" : "");
 
   test(`every contents entry navigates to its heading — ${shape}`, async ({
     page,
     consoleErrors,
   }) => {
-    const { box, entryY } = await openToc(page, { hyperlinked });
+    const { box, entryY } = await openToc(page, { hyperlinked, numbered });
 
     const landed = [];
     for (const [index, dy] of entryY.entries()) {
@@ -70,10 +84,15 @@ for (const hyperlinked of [true, false]) {
       await page.mouse.click(box.x + 140, box.y + dy);
       await expect.poll(async () => (await viewState(page)).scrollTop).toBeGreaterThan(400);
       landed.push((await viewState(page)).scrollTop);
-      // The status bar names where it went, so the jump is reported and not just
-      // performed.
+      // The status bar names where it went, so the jump is reported and not
+      // just performed. Either spelling of THIS entry's destination counts —
+      // its bookmark or its heading text — because which of the two mechanisms
+      // answers depends on where in the entry the pointer landed (over a
+      // numbered entry's leading number, the contents-entry path answers rather
+      // than the authored hyperlink, and both arrive at the same heading). The
+      // per-entry index keeps that from degrading into "said something".
       expect((await viewState(page)).status).toMatch(
-        new RegExp(hyperlinked ? "_Toc10" : TOC_HEADINGS[index]),
+        new RegExp(`_Toc10${index + 1}|${TOC_HEADINGS[index]}`),
       );
     }
 
@@ -84,6 +103,34 @@ for (const hyperlinked of [true, false]) {
     expect(consoleErrors).toEqual([]);
   });
 }
+
+// The signal the owner's document never produced. Sweeping the pointer down a
+// 16-page numbered NDA, the canvas reported `running-content-band`, `body-text`
+// and `object-movable` — and `contents-entry` not once, so there was no cursor
+// change, no affordance, and a click put a caret in instead of navigating.
+//
+// This asserts the ARMING, separately from the navigation above, because the
+// two fail apart: an entry can resolve while nothing on screen says it will.
+test("a numbered contents entry arms the contents-entry pointer target", async ({ page }) => {
+  const { box, entryY } = await openToc(page, { hyperlinked: false, numbered: true });
+  const canvas = page.locator('.page-wrap[data-page-number="1"] canvas.page');
+
+  for (const [index, dy] of entryY.entries()) {
+    await page.mouse.move(box.x + 200, box.y + dy);
+    await expect
+      .poll(() => canvas.evaluate((el) => el.dataset.pointerTarget ?? "(none)"), {
+        message: `entry ${index + 1} must offer itself to the pointer`,
+      })
+      .toBe("contents-entry");
+  }
+
+  // And the line above the table is NOT a contents entry, so the signal means
+  // something: a target that is always armed says nothing.
+  await page.mouse.move(box.x + 200, box.y + 90);
+  await expect
+    .poll(() => canvas.evaluate((el) => el.dataset.pointerTarget ?? "(none)"))
+    .not.toBe("contents-entry");
+});
 
 test("the caret lands ON the heading, not merely near it", async ({ page }) => {
   const { box, entryY } = await openToc(page, { hyperlinked: false });
