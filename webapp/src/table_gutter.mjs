@@ -417,9 +417,27 @@ export function createTableGutter(host) {
       for (const axis of ["row", "column"]) {
         if (axis === "column" && !table.regular) continue;
         const rect = stripRect(table, axis, axis === "row" ? thickness.x : thickness.y);
-        if (rect) {
-          child(page, AXIS[axis].strip, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy);
-        }
+        if (!rect) continue;
+        child(page, AXIS[axis].strip, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy);
+        // The selected rows or columns keep an ACCENT bar whether or not the
+        // pointer is on them. That is what makes colour mean SELECTION here: a
+        // strip is grey because it exists and accent because it is chosen, which
+        // is Docs' rule and the reason the resting strip could go neutral.
+        // ONE box over the whole selected span rather than one per band — a row
+        // or column selection is contiguous, so the union is exact and the
+        // element count does not grow with the table.
+        const span = selectedSpan(page, table, axis);
+        if (!span) continue;
+        const alongY = axis === "row";
+        const bar = child(
+          page,
+          "table-gutter-selection",
+          alongY ? rect.x * sx : span.lo * sx,
+          alongY ? span.lo * sy : rect.y * sy,
+          alongY ? rect.w * sx : (span.hi - span.lo) * sx,
+          alongY ? (span.hi - span.lo) * sy : rect.h * sy,
+        );
+        bar.dataset.axis = axis;
       }
       paintDropIndicator(page, table, sx, sy);
       if (!target) return;
@@ -438,6 +456,11 @@ export function createTableGutter(host) {
           rowAxis ? strip.w * sx : band.extent * sx,
           rowAxis ? band.extent * sy : strip.h * sy,
         );
+        // The bar is drawn by CSS against the leading edge of the strip, so it
+        // has to know which edge that is; and a hovered band that is ALSO the
+        // selection stays accent rather than reverting to the hover grey.
+        el.dataset.axis = target.axis;
+        if (inSpan(selectedSpan(page, table, target.axis), band)) el.dataset.selected = "1";
         // A band that IS the selection is a handle, and says so with `grab`.
         // Not while a reorder is in flight: the band being carried keeps the
         // `grabbing` the router holds for the whole drag.
@@ -509,16 +532,50 @@ export function createTableGutter(host) {
     const bands = tableBands(table, axis);
     const band = bands.find((b) => b.i === target.index);
     if (!band) return false;
-    const middle = (band.start + band.end) / 2;
+    return inSpan(selectedSpan(page, table, axis), band);
+  }
+
+  /**
+   * The extent of the current row or column selection along `axis`, in
+   * page-local twips, or `null` when the selection is not one of this table's
+   * bands on this page.
+   *
+   * Answered in PAGE space from the rectangles the selection painter already
+   * holds, and never by asking the engine which row is selected: this runs from
+   * `paint`, which runs on every overlay repaint, so a document read here would
+   * put an O(document) call on the repaint path. A row or column selection is
+   * contiguous, so the UNION of its rectangles is its extent and one box paints
+   * it — the element count does not follow the selection's size.
+   *
+   * Complexity: O(selected cells on this page). No document read.
+   */
+  function selectedSpan(page, table, axis) {
+    if (!page?.pageNumber) return null;
+    const selection = host.range.descriptor();
+    if (!selection || selection.mode !== AXIS[axis].mode || selection.table !== table.node) {
+      return null;
+    }
     const flat = host.range.rects();
+    let lo = Infinity;
+    let hi = -Infinity;
     for (let i = 0; i + 4 < flat.length; i += 5) {
       const [pageNumber, x, y, width, height] = flat.slice(i, i + 5);
       if (pageNumber !== page.pageNumber) continue;
-      const lo = axis === "row" ? y : x;
+      const start = axis === "row" ? y : x;
       const extent = axis === "row" ? height : width;
-      if (middle >= lo && middle < lo + extent) return true;
+      lo = Math.min(lo, start);
+      hi = Math.max(hi, start + extent);
     }
-    return false;
+    return hi > lo ? { lo, hi } : null;
+  }
+
+  /** Whether a band's MIDDLE lies inside a selected span — the midpoint rather
+   *  than an overlap test, so a selection rectangle that rounds a twip past a
+   *  boundary never claims the neighbouring band. Complexity O(1). */
+  function inSpan(span, band) {
+    if (!span || !band) return false;
+    const middle = (band.start + band.end) / 2;
+    return middle >= span.lo && middle < span.hi;
   }
 
   /** Starts a reorder if this press is one, or `null` if it is a select drag.
