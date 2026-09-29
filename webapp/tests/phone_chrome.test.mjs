@@ -61,7 +61,13 @@ test("the touch-target floor the module publishes is the one the phone rung appl
   assert.equal(MIN_TOUCH_TARGET_PX, 24, "WCAG 2.5.8 Target Size (Minimum) is 24 CSS px");
   const css = read("style.css");
   const rung = css.slice(css.indexOf("body.phone-mode {"));
-  for (const selector of ["body.phone-mode .app-menu-button", "body.phone-mode .rail-btn"]) {
+  // `.rail-btn` used to be the second selector here. The rail is no longer
+  // painted at this rung (§5.3a), so the floor is asserted on the two surfaces
+  // a phone actually taps: the navigation axis and the docked command bar.
+  for (const selector of [
+    "body.phone-mode .app-menu-button",
+    "body.phone-mode .compact-toolbar .ctool",
+  ]) {
     const rule = rung.slice(rung.indexOf(selector));
     assert.match(
       rule.slice(0, 220),
@@ -163,6 +169,24 @@ test("the menu bar is kept, because it is the compact chrome's one axis", () => 
   assert.equal(phoneRegions().menuBar, true);
 });
 
+test("a region this table withholds is a region the stylesheet actually stops painting", () => {
+  // The other way `phoneRegions()` can lie. It is DATA — nothing in `main.js`
+  // reads it — so it describes what `style.css` does and is only true while the
+  // stylesheet agrees. A `false` here with no rule behind it would be a design
+  // document masquerading as code, which is `docs/99` §9.4's "built" that is
+  // not "reachable" with the polarity flipped.
+  const css = read("style.css");
+  const rung = css.slice(css.indexOf("body.phone-mode {"));
+  const regions = phoneRegions();
+  assert.equal(regions.rail, false);
+  assert.equal(regions.ruler, false);
+  assert.match(
+    rung,
+    /body\.phone-mode \.rail,\s*\n\s*body\.phone-mode \.ruler \{\s*\n\s*display: none;/,
+    "phoneRegions() withholds the rail and the ruler; style.css must be what withholds them",
+  );
+});
+
 // ---- Wiring -----------------------------------------------------------------
 
 /** A window with just enough surface to drive `createPhoneChrome`. */
@@ -239,6 +263,53 @@ test("the keyboard inset is published as a custom property, and only on a phone"
     "0px",
     "a desktop window with a focused field must not inherit a keyboard inset",
   );
+});
+
+test("the header's measured height is published, and only on a phone", () => {
+  // `--h-header: 63px` is a token and at this rung it is wrong: the menu bar
+  // WRAPS rather than scrolling, so the header is two rows at 390px and three
+  // at 320px, and a German menu bar wraps where an English one does not. The
+  // toast spends this number — while a bottom sheet is open it moves to the top
+  // of the screen, and the first version of that rule used the token and landed
+  // the status message across "Format Table References".
+  class FakeObserver {
+    constructor(fn) {
+      FakeObserver.last = fn;
+    }
+    observe() {}
+    disconnect() {
+      FakeObserver.disconnected = true;
+    }
+  }
+  const header = { getBoundingClientRect: () => ({ height: 110.4 }) };
+
+  const phone = fakeRoot();
+  const view = fakeView(390);
+  view.ResizeObserver = FakeObserver;
+  const chrome = createPhoneChrome({ view, body: fakeBody(), root: phone, header });
+  assert.equal(phone.props.get("--phone-header-height"), "110px", "rounded, in CSS pixels");
+
+  // A re-wrap republishes it without a resize of the window.
+  header.getBoundingClientRect = () => ({ height: 147 });
+  FakeObserver.last();
+  assert.equal(phone.props.get("--phone-header-height"), "147px");
+
+  chrome.release();
+  assert.equal(FakeObserver.disconnected, true, "the observer is released with the chrome");
+
+  // A desktop publishes zero, so a rule that spends it inherits nothing when the
+  // window grows back past the rung.
+  const desktop = fakeRoot();
+  const wide = fakeView(1280);
+  wide.ResizeObserver = FakeObserver;
+  createPhoneChrome({ view: wide, body: fakeBody(), root: desktop, header });
+  assert.equal(desktop.props.get("--phone-header-height"), "0px");
+
+  // And a browser with no `ResizeObserver` must not throw — the number is then
+  // published once at startup and simply does not follow a re-wrap.
+  const plain = fakeRoot();
+  createPhoneChrome({ view: fakeView(390), body: fakeBody(), root: plain, header });
+  assert.equal(plain.props.get("--phone-header-height"), "147px");
 });
 
 test("the stylesheet spends the inset on every region pinned to the bottom edge", () => {

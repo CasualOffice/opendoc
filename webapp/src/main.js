@@ -19,7 +19,7 @@ import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
-import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
+import { createPagesPanel } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
 import { createSpacingMenu } from "./spacing_menu.mjs";
 import { createTocNavigator } from "./toc_navigation.mjs";
@@ -1444,7 +1444,15 @@ const REVIEW_WINDOW_OVERSCAN = 800;
 // The responsive ladder — both rungs, the `phone-mode` class and the soft
 // keyboard's inset — is `phone_chrome.mjs` (docs/148). Crossing a rung swaps
 // the layout SHAPE, so it needs a re-render, not a repaint.
-const phoneChrome = createPhoneChrome({ view: window, body: document.body, root: document.documentElement });
+const phoneChrome = createPhoneChrome({
+  view: window,
+  body: document.body,
+  root: document.documentElement,
+  // The header's real height, which `--h-header: 63px` is not at this rung: the
+  // phone's menu bar wraps, so the header is two rows at 390px and three at
+  // 320px, and a German menu bar wraps where an English one does not.
+  header: document.querySelector("header.bar"),
+});
 /** True while the review surface should render as a bottom sheet (HF-088). */
 const reviewSheetMode = () => phoneChrome.reviewSheet();
 phoneChrome.onReviewSheetChange(() => scheduleReviewMarginRender());
@@ -2963,7 +2971,7 @@ function updatePageNumber() {
   }
   const total = pageTotalLabel(pages.length, doc.estimatedPageCount, doc.pageCountIsExact);
   statPages.textContent = pageIndicator(cur, total);
-  reflectPagesSelection(cur);
+  pagesPanelView.reflect(cur);
 }
 
 async function boot() {
@@ -3461,7 +3469,6 @@ let bandTopInScroller = 0;
 /** The materialized page range, inclusive; `last < first` means none. The
  *  Pages navigator keeps its own, because it windows separately. */
 let pageWindow = { first: 0, last: -1 };
-let pagesPanelRange = { start: 0, end: -1 };
 
 function ensurePageObserver() {
   if (pageObserver) return pageObserver;
@@ -3604,7 +3611,7 @@ function updatePageWindow({ force = false } = {}) {
     spellChecker.noteWindowChanged();
     paintOverlayLayer();
     if (runningEditBand) drawRunningBands(runningEditBand);
-    syncPagesPanelToViewport();
+    pagesPanelView.sync();
   }
 }
 
@@ -3751,7 +3758,7 @@ async function renderAll() {
     // leave an unchecked document looking like a clean one.
     if (statusEl.textContent === renderingStatus) setStatus(spellChecker.statusNote());
     updateStats();
-    if (!pagesPanel.hidden) buildPages();
+    pagesPanelView.build();
   }
 }
 
@@ -11058,78 +11065,30 @@ function toggleOutline() {
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
 
-/** The page the navigator marks as current: the caret's, falling back to the
- *  one being read. It is NOT what the panel centres on — a reader who has
- *  scrolled 6,000 pages away from their caret wants to see where they are. */
-function pagesPanelFocusPage() {
-  if (selection) {
-    const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
-    if (flat.length) return flat[0];
-  }
-  return pageInView()?.pageNumber ?? 1;
-}
-
-/** Rebuilds the Pages navigator around one page — by default the one being
- *  read. The panel shows a WINDOW of thumbnails (`pages_panel.mjs`), because a
- *  card per page is a `renderPage` per page. */
-function buildPages(centre = null) {
-  if (!doc || pagesPanel.hidden) return;
-  const focus = pagesPanelFocusPage();
-  pagesPanelRange = renderPagesPanel({
-    doc,
-    pages,
-    current: centre ?? pageInView()?.pageNumber ?? focus,
-    body: pagesBody,
-    onJump: (n) => goToPage(n),
-  });
-  reflectPagesSelection(focus);
-}
-
-/** Follow the reader: when the viewport leaves the range of pages the panel is
- *  showing, rebuild it around where they now are. Scrolling inside the shown
- *  range costs nothing. */
-function syncPagesPanelToViewport() {
-  if (pagesPanel.hidden || !doc) return;
-  const visible = pageInView()?.pageNumber ?? 1;
-  if (visible < pagesPanelRange.start || visible > pagesPanelRange.end) buildPages(visible);
-}
-
-/** Scrolls page `n` into view using the single scroll owner, then highlights it. */
-function goToPage(n) {
-  const page = pages[n - 1];
-  if (!page || !pageBandModel) return;
-  // From the band's geometry, not from the sheet's rect: the page being jumped
-  // to is usually the one page in the document that has no sheet yet.
-  const viewportHeight = viewportEl.clientHeight;
-  const docY = Math.max(0, pageBandModel.tops[n - 1] - 16);
-  const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, docY);
-  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
-  updatePageWindow();
-  paintPagesInView();
-  reflectPagesSelection(n);
-}
-
-/** Keeps the Pages navigator's active card synchronized with the caret's page. */
-function reflectPagesSelection(pageNumber) {
-  if (pagesPanel.hidden) return;
-  reflectPagesPanelSelection(pagesBody, pageNumber);
-}
-
-function togglePages() {
-  pagesPanel.hidden = !pagesPanel.hidden;
-  // Pages, Outline (left) and the review sidebar (right) are mutually exclusive
-  // so the canvas is never squeezed from both sides at once.
-  if (!pagesPanel.hidden) {
+/** The Pages navigator. Its behaviour lives in `pages_panel.mjs` (HF-085): six
+ *  closures in this file were the only description of what `view.pages` does. */
+const pagesPanelView = createPagesPanel({
+  panel: pagesPanel,
+  body: pagesBody,
+  railButton: railPages,
+  closeButton: pagesClose,
+  viewport: viewportEl,
+  getDoc: () => doc,
+  getSelection: () => selection,
+  getPages: () => pages,
+  getBandModel: () => pageBandModel,
+  pageInView,
+  bandTop: () => bandTopInScroller,
+  onExclusive: () => {
     outlinePanel.hidden = true;
     railOutline.setAttribute("aria-pressed", "false");
     if (!reviewSidebar.hidden) toggleReview(false);
-  }
-  railPages.setAttribute("aria-pressed", String(!pagesPanel.hidden));
-  buildPages();
-}
-railPages.addEventListener("click", togglePages);
-pagesClose.addEventListener("click", togglePages);
+  },
+  onJumped: () => {
+    updatePageWindow();
+    paintPagesInView();
+  },
+});
 
 /**
  * Timestamp for a review action. Author/initials are no longer read here:
@@ -11952,8 +11911,20 @@ function editorCommands(context = { surface: "palette" }) {
     // The outline lives in the RAIL, so a container that withheld the rail is not
     // handed a command that opens it — the palette and the chord belong to no
     // region, the hole `history` closed the same way ("no panels and nothing").
+    // `view.pages` beside it, and gated the same way for the same reason. The
+    // two panels are the rail's, so a HOST that withheld the rail region has
+    // withheld the panels with it and must not be handed a command that opens
+    // one. A PHONE is a different question and the opposite answer: it stops
+    // painting the rail strip while keeping both panels, which is why this had
+    // to become a command rather than staying a tile (`docs/148` §5.3a). The
+    // label is the catalogue's existing `pagesPanel.pages`, so this adds no
+    // English literal to a file that is at an unrouted-string ceiling and no
+    // key to eighteen catalogues that already answer this one.
     ...(HOST_CHROME.editing.has("rail")
-      ? [{ id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() }]
+      ? [
+          { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
+          { id: "view.pages", label: t("pagesPanel.pages"), group: "View", kw: "pages panel thumbnails navigator go to page jump browse", run: () => pagesPanelView.toggle() },
+        ]
       : []),
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
@@ -16281,6 +16252,11 @@ compactToolbarUi = createCompactToolbar({
   paraControls,
   formatToggleCache,
   localizeShortcut: (text) => localizeShortcutText(text, EDITOR_KEYBOARD_PLATFORM),
+  // Which roster the bar draws. A phone gets Docs' row over two named sheets
+  // (`PHONE_TOOLBAR`) instead of the desktop's thirteen groups over a fold whose
+  // membership changes with the window width — see `compact_toolbar.mjs`.
+  // Resolved at render time, not captured, so crossing the rung switches it.
+  isPhone: () => phoneChrome.isPhone(),
 });
 
 /** Switches chrome. Mutually exclusive by construction — `body` carries exactly

@@ -129,12 +129,26 @@ for (const phone of PHONES) {
 
     // Each is opened, measured, and closed, so one surface's overflow cannot be
     // charged to the next. Escape is the shared dismissal (`light-dismiss-contract`).
+    //
+    // The panels are opened from the MENU BAR rather than from the rail, and
+    // that is the change rather than an incidental rewrite: this rung withholds
+    // the rail now that `view.pages` exists (`docs/148` §5.3a), so the rail's
+    // tiles are not the route to these panels on a phone — the menu bar is, as
+    // doc 122 says it should be for the compact chrome. The panels themselves
+    // are untouched and still measured here; only the door moved.
+    const menuItem = (menu, command) => async () => {
+      await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+      await page.locator(`#appMenuPopover .app-menu-item[data-command="${command}"]`).click();
+    };
     const surfaces = [
       { what: "the File menu", open: () => page.locator('.app-menu-button[data-menu="file"]').click(), shown: "#appMenuPopover" },
       { what: "the Format menu", open: () => page.locator('.app-menu-button[data-menu="format"]').click(), shown: "#appMenuPopover" },
+      { what: "the Aa sheet", open: () => page.locator("#compactFormatBtn").click(), shown: "#compactFormatMenu" },
+      { what: "the + sheet", open: () => page.locator("#compactInsertBtn").click(), shown: "#compactInsertMenu" },
       { what: "Settings", open: () => page.locator("#settingsBtn").click(), shown: "#settingsPanel" },
-      { what: "the outline panel", open: () => page.locator("#railOutline").click(), shown: "#outlinePanel" },
-      { what: "the comment sheet", open: () => page.locator("#railReview").click(), shown: "#reviewSidebar" },
+      { what: "the outline panel", open: menuItem("view", "view.outline"), shown: "#outlinePanel" },
+      { what: "the Pages panel", open: menuItem("view", "view.pages"), shown: "#pagesPanel" },
+      { what: "the comment sheet", open: menuItem("review", "review.toggle"), shown: "#reviewSidebar" },
       { what: "the command palette", open: () => openCommandPalette(page), shown: "#cmdPalette" },
     ];
 
@@ -214,12 +228,15 @@ test("the phone chrome replaces the desktop chrome rather than shrinking it", as
   expect(await page.locator("#compactToolbar").evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
   expect(toolbar.y, "the toolbar is in the bottom half of the screen").toBeGreaterThan(844 / 2);
 
-  // The rail turned its axis rather than disappearing — it is the only surface
-  // `#pagesPanel` has (docs/148 §5.3). A horizontal strip is wider than it is
-  // tall; a column is not.
-  const rail = await page.locator(".rail").boundingBox();
-  expect(rail.width, "the rail is a strip, not a column").toBeGreaterThan(rail.height);
-  expect(await page.locator("#railPages").isVisible()).toBe(true);
+  // The rail and the ruler are gone, which is the OPPOSITE of what this test
+  // asserted when it was written, and the reversal is the point (docs/148
+  // §5.3a). They survived the first version of this rung against all three
+  // references on one argument — `#railPages` and `setTabStop` each had exactly
+  // one surface — and that argument was paid off by `view.pages` and
+  // `layout.tabStops`. `phone-command-surface.spec.mjs` holds the other half:
+  // the panels are still in the DOM and still reachable from the View menu.
+  await expect(page.locator(".rail")).toBeHidden();
+  await expect(page.locator(".ruler")).toBeHidden();
 
   expect(consoleErrors).toEqual([]);
 });

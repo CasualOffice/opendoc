@@ -171,7 +171,7 @@ export function phoneRegions() {
  *            onPhoneChange:(fn:Function)=>void,
  *            onReviewSheetChange:(fn:Function)=>void, release:()=>void}}
  */
-export function createPhoneChrome({ view, body, root }) {
+export function createPhoneChrome({ view, body, root, header = null }) {
   const media = (px) => view?.matchMedia?.(`(max-width: ${px}px)`) ?? null;
   const phoneQuery = media(PHONE_MAX_WIDTH);
   const sheetQuery = media(REVIEW_SHEET_MAX_WIDTH);
@@ -188,9 +188,40 @@ export function createPhoneChrome({ view, body, root }) {
     root?.style?.setProperty?.("--phone-keyboard-inset", `${isPhone() ? px : 0}px`);
   }
 
+  /** How tall the header actually is, published for whatever has to sit under
+   *  it.
+   *
+   *  `--h-header: 63px` is a token and at this rung it is a lie: the phone's
+   *  menu bar WRAPS (§5.3) rather than scrolling under a fade mask, so the
+   *  header is two rows at 390px and three at 320px, and which it is depends on
+   *  the locale — a German menu bar wraps where an English one does not.
+   *
+   *  It is published because the toast needs it. While a bottom sheet is open
+   *  the toast moves to the top of the screen (there is no band above a sheet
+   *  whose height CSS can know), and a status message painted across the menu
+   *  bar is the same defect as one painted across the command bar, which is
+   *  `109` HF-233 and was found the same way — by looking at it.
+   *
+   *  A `ResizeObserver` rather than a resize listener, because the header
+   *  changes height when the menu bar rewraps, and that happens on a locale
+   *  change and on a font load as well as on a resize. O(1): one element, and
+   *  it reads no document state. */
+  function syncHeader() {
+    if (!header) return;
+    const height = isPhone() ? Math.round(header.getBoundingClientRect?.().height ?? 0) : 0;
+    root?.style?.setProperty?.("--phone-header-height", `${height}px`);
+  }
+
   function syncMode() {
     body?.classList?.toggle?.("phone-mode", isPhone());
     syncInset();
+    syncHeader();
+  }
+
+  let headerObserver = null;
+  if (header && typeof view?.ResizeObserver === "function") {
+    headerObserver = new view.ResizeObserver(syncHeader);
+    headerObserver.observe(header);
   }
 
   syncMode();
@@ -210,6 +241,7 @@ export function createPhoneChrome({ view, body, root }) {
       phoneQuery?.removeEventListener?.("change", syncMode);
       view?.visualViewport?.removeEventListener?.("resize", syncInset);
       view?.visualViewport?.removeEventListener?.("scroll", syncInset);
+      headerObserver?.disconnect?.();
     },
   };
 }

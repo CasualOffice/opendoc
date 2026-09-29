@@ -314,33 +314,25 @@ export const PHONE_TOOLBAR = [
     ],
   },
   {
-    group: "text",
-    labelKey: "menuGroup.font",
-    divider: true,
-    pinned: true,
-    items: [
-      { id: "format.bold", icon: "format_bold", toggle: true, fmt: "bold", needs: "run" },
-      { id: "format.italic", icon: "format_italic", toggle: true, fmt: "italic", needs: "run" },
-      { id: "format.underline", icon: "format_underlined", toggle: true, fmt: "underline", needs: "run" },
-    ],
-  },
-  {
-    // "+" before "Aa", which is Docs' order.
-    group: "insertSheet",
-    divider: true,
-    pinned: true,
-    labelKey: "appMenuBar.insert",
-    items: [
-      {
-        kind: "menu",
-        id: "compactInsert",
-        icon: "add",
-        labelKey: "appMenuBar.insert",
-        sections: APP_MENU_SECTIONS.insert,
-      },
-    ],
-  },
-  {
+    // THE TWO SHEETS COME FIRST, AND THAT ORDER WAS FOUND BY LOOKING.
+    //
+    // The first version of this roster read undo · redo · B · I · U · + · Aa ·
+    // comment, with all four leading groups pinned. Screenshotted at 390px, the
+    // bar rendered undo · redo · B · I · U · + · ⋯ — **the Aa sheet had folded
+    // and the + sheet had not**, because `reflow()` spends groups right to left
+    // and Aa was the rightmost pinned one. The single most important control on
+    // a phone was the one the fold paid with, and no assertion would have
+    // caught it: the bar had not scrolled, nothing was off-window, and every
+    // command was still reachable — through a `⋯` nobody would think to open
+    // for formatting.
+    //
+    // So the sheets sit immediately after undo/redo and are the only groups
+    // besides history that are pinned. Everything to their right is what the
+    // fold is allowed to spend, in the order it should be spent: B/I/U (whose
+    // three commands are inside the Aa sheet anyway, in `menuGroup.font`), then
+    // zoom. Docs' left-to-right order is not a constraint here — `docs/148` §2
+    // records that no Google page enumerates it, so this document does not
+    // claim one either, and the fold order is a real constraint that does.
     group: "formatSheet",
     divider: true,
     pinned: true,
@@ -366,12 +358,51 @@ export const PHONE_TOOLBAR = [
     ],
   },
   {
-    group: "comment",
-    labelKey: "menuGroup.comments",
+    group: "insertSheet",
     divider: true,
-    items: [{ id: "review.comment", icon: "add_comment" }],
+    pinned: true,
+    labelKey: "appMenuBar.insert",
+    items: [
+      {
+        kind: "menu",
+        id: "compactInsert",
+        icon: "add",
+        labelKey: "appMenuBar.insert",
+        // `APP_MENU_SECTIONS.insert` already carries `review.comment` in its
+        // `menuGroup.comments` band, which is why this roster has no separate
+        // comment button: an inline one would be a second face of a command the
+        // sheet beside it already offers, bought with 38px the fold needs.
+        sections: APP_MENU_SECTIONS.insert,
+      },
+    ],
   },
   {
+    // Not pinned. Every one of these three is inside the Aa sheet's
+    // `menuGroup.font` band, so folding them costs a tap rather than a
+    // capability — which is exactly what a fold should be allowed to cost.
+    group: "text",
+    labelKey: "menuGroup.font",
+    divider: true,
+    items: [
+      { id: "format.bold", icon: "format_bold", toggle: true, fmt: "bold", needs: "run" },
+      { id: "format.italic", icon: "format_italic", toggle: true, fmt: "italic", needs: "run" },
+      { id: "format.underline", icon: "format_underlined", toggle: true, fmt: "underline", needs: "run" },
+    ],
+  },
+  {
+    // NO ZOOM GROUP, and the reason is worth keeping because it was got wrong
+    // once. `#zoom` is a text field that lives in the STATUS BAR and that the
+    // desktop roster adopts out of there. A first version of this roster left
+    // it behind, and `phone-no-horizontal-scroll.spec.mjs` immediately reported
+    // `footer.footer` at scrollWidth 344 against clientWidth 320 — the status
+    // bar had been overflowing at 320px all along, and the desktop bar was
+    // masking it by taking the control away. Adopting it here fixed that and
+    // cost the bar its inline B/I/U at 390px, which is the worse trade: three
+    // one-tap toggles for a percentage nobody types on a phone. So the readout
+    // is hidden at this rung in `style.css` instead, which fixes the status
+    // bar's own defect rather than relocating it, and zoom stays reachable from
+    // the steppers beside it, from View ▸ Zoom and from pinch.
+    //
     // Same contextual Table group the desktop bar carries, for the same reason:
     // in compact chrome there is no ribbon, so the Table band has no other home.
     group: "table",
