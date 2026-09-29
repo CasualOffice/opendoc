@@ -201,6 +201,50 @@ const MODALS = [
     },
   },
   {
+    id: "tocDialog",
+    name: "Table of contents",
+    // EDITOR_SURFACE, like every other ribbon-opened dialog here: a band button
+    // does not take focus on click, so the caret keeps it and typing is never
+    // interrupted. Measured — before the click the active element is the
+    // editable proxy, and after Escape it is the editable proxy again.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Word's Table of Contents dialog opens on the levels control: the number of
+    // heading levels is the only decision the author makes before inserting, and
+    // everything the preview shows is derived from it.
+    focus: "#tocLevels",
+    async open(page) {
+      await gotoEditor(page);
+      // `requires: "bodyCaret"` — the band control is disabled without an
+      // insertion point, so without this the row fails for the wrong reason.
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refTocBtn").click();
+    },
+  },
+  {
+    id: "tocUpdateDialog",
+    name: "Update table of contents",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The mode radios ARE the dialog — Word's Update Table of Contents is two
+    // radios and a pair of buttons — so focus lands on the checked one.
+    focus: '#tocUpdateForm input[name="tocUpdateMode"]:checked',
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      // Update is disabled until a contents field exists, so insert one first.
+      // The dialog under test is the UPDATE dialog, which is why this leaves
+      // the insert dialog by its primary action rather than by Escape.
+      await page.locator("#refTocBtn").click();
+      await page.locator('button[form="tocForm"][type="submit"]').click();
+      await expect(page.locator("#tocDialog")).toBeHidden();
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refUpdateFieldsBtn").click();
+    },
+  },
+  {
     id: "crossRefDialog",
     name: "Cross-reference",
     opener: null,
