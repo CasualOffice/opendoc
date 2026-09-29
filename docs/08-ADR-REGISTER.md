@@ -1526,6 +1526,84 @@ story, so a reading mode you must leave in order to type is not an answer.
 - **Open:** page- and margin-anchored drawings have no referent in reflow. Word keeps
   them and lets them overlap, Docs inlines them. Undecided; `149` §8 records it.
 
+## ADR-047 — The collaboration relay orders and fans out; it holds no document and runs no transform
+
+**Status:** Accepted for implementation, 2026-09-30. Specified in
+`152-COLLABORATION-PROTOCOL-SESSION-AND-IDENTITY.md`. Builds `107` 6.6's foundation on
+ADR-033's decision and ADR-045's transform. Answers `143` §16 Q1 and `107` §8 Q6.
+
+**Decision.** Four parts, and the first is the one that had to be chosen rather than copied.
+
+1. **The relay is a dumb, substitutable ordering service.** It assigns the total order,
+   suppresses duplicates by `(client, seq)`, retains a bounded tail of operations it never
+   reads into, and fans out. It holds **no document**, runs **no transform**, and interprets
+   no operation. A submission written against a position the document has moved past is
+   refused with `StaleBase{current}`; the client rebases it locally and resubmits with the
+   same sequence number.
+2. **`casual-doc-transaction::{protocol, session, wire}`** — pure data and two pure state
+   machines, in the engine crate, with no transport, no clock and no I/O. Both ends compile
+   from it. A relay binary, when it exists, is a workspace member under `server/` and nothing
+   under `crates/` may depend on it.
+3. **Rollback/replay, against a horizon on the revision log.** `RevisionLog` gains a
+   `horizon` — the revision up to which commits have been *ordered*. A rebase rewrites only
+   commits above it, which are by construction this replica's own unacknowledged work, and a
+   rewritten commit keeps its transaction id, undo group, label and origin, so undo is
+   untouched. **A replica with nothing pending does not roll back at all**: the arrival goes
+   through `RevisionLog::apply`, the same call a keystroke makes.
+4. **An introduction needs a private space; a reference needs the order.** Every participant
+   mints `NodeId`s in an `IdSpace` derived from the document's own space and the relay-assigned
+   participant number, and that derivation is **injective in the participant number** — so two
+   replicas cannot mint the same id. Ids an operation merely *names* are safe because the
+   session is totally ordered.
+
+**Why a dumb relay, given the sibling engine transforms server-side.** Our `transform` takes
+its concurrent operation as a `Change` — the operation *and the inverse `apply` returned for
+it* (ADR-045, `150` §2.3) — because our deletes name their victims by identity rather than by
+address. Only `apply` produces an inverse. **A relay that transforms must therefore be a full
+document replica running the whole engine**, which a spreadsheet's self-describing operations
+do not require. That would contradict `143` §6 ("the provider owns the transform *never*"),
+make a third-party or managed relay impossible (`143` P3), put the document and the engine's
+attack surface on the server, and reproduce ONLYOFFICE's shape — the thing this project exists
+to be an alternative to. It is also the **one-way** choice: nothing in this protocol forbids a
+deployment that links this crate and transforms server-side, and clients cannot tell the
+difference except that they are refused less.
+
+**What choosing this costs, stated plainly because it is real.** Ping-pong under contention: a
+refused client pays one extra round trip. Progress is guaranteed while each retry is against a
+strictly newer head — the arrivals that caused the refusal arrive on the same ordered
+connection, and `flush` refuses to resubmit until this replica's position has reached the one
+the refusal named — but **the head is not guaranteed to stop moving**, so sustained
+many-writer contention can starve a slow client. And no server-side snapshot verification by
+replay, which `150` §9.3 blocks anyway until operations carry the identities they cause to be
+minted. **The measurement that decides whether this was right is the refusal rate as
+concurrent writers rise**, and nothing here is proven until it is run (`152` §10 Q3).
+
+**Consequences.**
+
+- **`147` is corrected in place:** the log has two positions, not one. "Nothing rewrites a
+  commit" holds for everything below the horizon, which is everything anybody else has seen.
+- **`150` §10 Q1 is closed**, not worked around: the rollback driver *is* at the base state
+  when a `BlockPlacement` is needed, so it builds one there and nowhere else.
+- **`150` §10 Q2 is a blocker, not a question.** A `Coalesce::ContinueKeepingFirstInverse`
+  commit records no inverse, so it cannot be rolled back — **suggesting mode cannot take part
+  in a session** until `147`'s envelope retains inverses and drops them at undo-read time.
+  Refused with a stable code rather than diverged.
+- Rebasing a *sequence* of unordered commits needs the arrival's inverse at each intermediate
+  state, and that composition is three operations where `Change` carries one. The driver
+  therefore **probes**: it applies the arrival's image at each base state the rollback reveals,
+  keeps the inverses, and applies them straight back. This rests on one invariant, and it is
+  the one undo already rests on (ADR-030 I2).
+- **The live editor's minting namespace is derived from the document today**, so two replicas
+  collide from the first edit. Until that is fixed in `casual-doc-wasm` — the next increment,
+  a different lane's crate — a session refuses every arrival that introduces an id, loudly and
+  with `ODC-7008`, because the alternative is a silent overwrite of a definition.
+- `docs/20` gains `ODC-7002`…`ODC-7009`. `ODC-7001` is reused for `CannotMerge`.
+- The two O(document) costs — one document clone and one `BlockIndex` build — are on the
+  **contended** path only: a remote edit arriving while this replica has unacknowledged work.
+  Never on a keystroke, never on an uncontended arrival.
+- Deliberately not decided or built here: the byte codec, the relay binary, presence,
+  collaborative undo, the host-signed grant, and durability. `152` §9 and §10 say why for each.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

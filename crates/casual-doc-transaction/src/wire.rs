@@ -1,0 +1,553 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! An operation on the wire, and the identity discipline that keeps two replicas from
+//! minting the same id for two different nodes.
+//!
+//! # The hazard, measured rather than assumed
+//!
+//! The sibling engine records this as its ADR-025: *an interned id is replica-local; the
+//! value crosses the wire, the id never does.* A `StringId(3)` means **the sender's** third
+//! string, so the receiver must be handed the value and re-intern it locally. They found it
+//! as a production defect three separate times.
+//!
+//! Our shape is different, and the difference was verified before this module was written:
+//!
+//! 1. **Our operations already carry their values.** `SetStyleDefinition` carries the whole
+//!    `Style` beside the `StyleId`, `CreateBookmark` carries the name, `InsertNote` carries
+//!    the note's blocks, `InsertFieldRange` carries the definition. There is no operation
+//!    in the set of 55 that names a definition it does not either carry or that the total
+//!    order guarantees already exists. So there is **no side table to add to the wire op**,
+//!    and adding one would be redundant bytes.
+//! 2. **`v1::intern` is not an id table.** It is `Shared<T>` — an `Arc` flyweight that
+//!    "serializes exactly as `T` does". It puts no id on the wire at all, so it carries
+//!    none of this hazard.
+//! 3. **The hazard we do have is worse, and it is at the mint.** Every one of `StyleId`,
+//!    `BookmarkId`, `FieldRangeId`, `NoteId`, `SectionId`, `HeaderFooterId`, `CommentId`,
+//!    `MediaId` and the numbering ids is a newtype over [`NodeId`], which is
+//!    `(namespace: u64, counter: u64)`. The live editor derives that namespace **from the
+//!    document** — `(document.id() >> 64) ^ 0xED17_ED17_ED17_ED17` — and starts its counter
+//!    at one. Two replicas of one document therefore mint **identical ids for different
+//!    nodes**, from the first edit. That is not an id that means something else on the
+//!    receiver; it is two nodes with one name.
+//!
+//! # The rule, and why it needs no wire field
+//!
+//! **An introduction needs a private space; a reference needs the order.**
+//!
+//! - *Introductions* — the ids an operation mints — must come from a space nobody else
+//!   mints in. [`IdSpace::of`] derives one per participant from the document's own space and
+//!   the server-assigned [`ClientId`], and it is **injective in the client id**, so two
+//!   participants can never collide. It is derived rather than carried, so a receiver
+//!   computes the sender's space from the [`Arrival`](crate::protocol::Arrival)'s `client`
+//!   field and nothing has to be trusted.
+//! - *References* — the ids an operation names but did not mint — are safe because the
+//!   session is **totally ordered** and everybody starts from one snapshot: the operation
+//!   that created a definition is ordered before any operation that names it.
+//!
+//! [`WireOperation::localise`] enforces the first half and is the choke point for it.
+//!
+//! # The standing rule for the next interned table
+//!
+//! Any new definition table added to `v1::Definitions` must, in the same change:
+//!
+//! 1. have the operation that creates an entry **carry the value**, not just the key;
+//! 2. mint its key through the session's [`IdSpace`], never through a document-derived one;
+//! 3. add its variant to `WireOperation::introduces` — which is an exhaustive match, so
+//!    this one is a compile error rather than a review comment;
+//! 4. add its table to [`Table`] and to `localise`'s collision check;
+//! 5. arrive with **a test in which the receiver already holds a different entry at that
+//!    id**. An id that lines up by accident proves nothing, and a test that merely round
+//!    trips a value proves less.
+
+use casual_doc_edit::Operation;
+use casual_doc_model::NodeId;
+use casual_doc_model::v1::Document;
+
+use crate::protocol::ClientId;
+
+/// The 64-bit namespace a participant mints [`NodeId`]s in.
+///
+/// A [`NodeId`] is `(namespace, counter)`. Give every participant in a session a namespace
+/// of its own and two participants can never mint the same id, whatever order they edit in
+/// and whatever they name. That is the whole mechanism: no wire field, no re-mapping on
+/// receipt, and no quotient in the convergence comparison.
+///
+/// **Why not re-map on receipt instead.** Rewriting an arriving id into a local one is what
+/// the sibling does for an interned *value*, and it is wrong here: the id is the identity,
+/// so the two replicas would then disagree about the name of the same logical node, and a
+/// snapshot could never be compared byte for byte across replicas. Doc 150 §9.3 already
+/// names that as the blocker for persisted collaboration; re-mapping would make it
+/// permanent.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct IdSpace(u64);
+
+/// An odd multiplier, so multiplication by it is a bijection on `u64`.
+///
+/// The golden-ratio constant, used for its oddness and its spread, not for any
+/// cryptographic property — this has to be collision-free, not unguessable.
+const ODD_MULTIPLIER: u64 = 0x9E37_79B9_7F4A_7C15;
+
+impl IdSpace {
+    /// Wraps a raw namespace.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// The raw namespace.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// The space a document's own nodes live in — the high half of its id.
+    ///
+    /// Every replica of one document computes the same value, which is exactly why it
+    /// cannot be a *participant's* space.
+    #[must_use]
+    pub fn for_document(document: &Document) -> Self {
+        Self((document.id().as_u128() >> 64) as u64)
+    }
+
+    /// The space `client` mints in, given the document's own space.
+    ///
+    /// Derived, not assigned, so no wire field carries it and a receiver can compute the
+    /// sender's space from an arrival's `client` alone.
+    ///
+    /// # The two properties this has to have, and why they hold
+    ///
+    /// `space(c) = base ^ (K * (c + 1))` with `K` odd.
+    ///
+    /// - **Distinct clients get distinct spaces.** `K` odd makes `c ↦ K * (c + 1)` a
+    ///   bijection on `u64`, and xor with a constant is a bijection, so the composition is
+    ///   injective. Not "unlikely to collide" — cannot.
+    /// - **No client gets the document's own space.** `space(c) == base` would need
+    ///   `K * (c + 1) == 0`, i.e. `c + 1 == 0`, i.e. `c == u64::MAX`. Refused by
+    ///   [`IdSpace::of`] returning `None` there rather than being left as a remark.
+    #[must_use]
+    pub const fn of(base: Self, client: ClientId) -> Option<Self> {
+        match client.get().checked_add(1) {
+            Some(offset) => Some(Self(base.0 ^ ODD_MULTIPLIER.wrapping_mul(offset))),
+            None => None,
+        }
+    }
+
+    /// Whether `id` was minted in this space.
+    #[must_use]
+    pub const fn holds(self, id: NodeId) -> bool {
+        ((id.as_u128() >> 64) as u64) == self.0
+    }
+}
+
+/// One operation as it travels, together with the identities it introduces.
+///
+/// The identities are computed once by the sender and carried, rather than recomputed by
+/// the receiver, for one reason: the receiver must be able to check what the sender
+/// *claimed* to introduce against what its operation actually names. A sender that
+/// under-declares is caught by [`WireOperation::localise`] recomputing and comparing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WireOperation {
+    operation: Operation,
+    introduces: Vec<NodeId>,
+}
+
+impl WireOperation {
+    /// An operation prepared for the wire.
+    #[must_use]
+    pub fn of(operation: Operation) -> Self {
+        let introduces = Self::introduces(&operation);
+        Self {
+            operation,
+            introduces,
+        }
+    }
+
+    /// The operation, unchanged.
+    #[must_use]
+    pub const fn operation(&self) -> &Operation {
+        &self.operation
+    }
+
+    /// A wire operation whose declaration is whatever the caller says it is.
+    ///
+    /// Test-only, and it exists for one test: a sender that under-declares what it
+    /// introduces. That sender cannot be written with [`WireOperation::of`] — which is the
+    /// point — so without this the recomputation in [`WireOperation::localise`] would be
+    /// unreachable code that nothing could prove necessary.
+    #[cfg(test)]
+    pub(crate) fn forged(operation: Operation, introduces: Vec<NodeId>) -> Self {
+        Self {
+            operation,
+            introduces,
+        }
+    }
+
+    /// The identities this operation brings into existence, as its sender declared them.
+    #[must_use]
+    pub fn declared(&self) -> &[NodeId] {
+        &self.introduces
+    }
+
+    /// Accepts this operation from `sender`, or says why it cannot be applied.
+    ///
+    /// Two checks, and both are about identity rather than about content:
+    ///
+    /// 1. every id the operation introduces was minted in `sender`'s own space, so it
+    ///    cannot be an id this replica minted or one a third participant will;
+    /// 2. no definition table on `document` already holds an entry at one of those ids.
+    ///
+    /// The second is not redundant with the first. It is the check that catches a session
+    /// whose id-space discipline was never established — which is today's live editor,
+    /// whose minting namespace is derived from the document and is therefore *the same on
+    /// every replica*. Without it, an arriving `SetStyleDefinition` **silently replaces**
+    /// the receiver's own style of the same id, because `apply` treats `Some(style)` as
+    /// "insert or replace" by design.
+    ///
+    /// # Errors
+    ///
+    /// [`Collision`] naming the id and what it clashed with. The session turns that into
+    /// [`Refusal::IdCollision`](crate::protocol::Refusal::IdCollision) / `ODC-7008`.
+    ///
+    /// # Complexity
+    ///
+    /// O(ids introduced × log definitions). No document walk: the definition tables are
+    /// keyed maps, and the id-space test is arithmetic.
+    ///
+    /// # What this does not see
+    ///
+    /// Stated plainly, because a guard's blind spots are part of its contract:
+    ///
+    /// - **Ids inside a carried subtree.** `InsertBlocks`, `InsertTable`, `SetInlines`,
+    ///   `ReplaceTable`, `InsertRow`, `InsertColumn` and the note/field/header payloads
+    ///   carry whole `BlockNode`/`InlineNode` trees whose nodes have ids of their own.
+    ///   Enumerating them means a recursive walk of 4 block and 28 inline variants, which
+    ///   would duplicate the model's own structure in this crate. They are covered by the
+    ///   id-space rule at the *mint* and, if that discipline is broken, by
+    ///   `Document::validate`'s duplicate-node-id rule — which is O(document) and therefore
+    ///   deliberately off the apply path (doc 147 §3.2), so such a collision lands first and
+    ///   is only caught at the next validation point. Recorded as doc 152 §10 Q2.
+    /// - **References.** An operation naming a definition it did not mint is accepted here;
+    ///   the total order is what makes that safe, and this module cannot check an order.
+    pub fn localise(&self, document: &Document, sender: IdSpace) -> Result<&Operation, Collision> {
+        // Recomputed rather than trusted: a sender that under-declares would otherwise skip
+        // both checks below for the id it left out, which is the one that matters.
+        let actual = Self::introduces(&self.operation);
+        if let Some(&id) = actual.iter().find(|id| !self.introduces.contains(id)) {
+            return Err(Collision {
+                id,
+                clash: Clash::Undeclared,
+            });
+        }
+        for id in actual {
+            if !sender.holds(id) {
+                return Err(Collision {
+                    id,
+                    clash: Clash::ForeignSpace { sender },
+                });
+            }
+            if let Some(table) = held_by(document, id) {
+                return Err(Collision {
+                    id,
+                    clash: Clash::AlreadyHeld { table },
+                });
+            }
+        }
+        Ok(&self.operation)
+    }
+
+    /// A lower bound on the bytes this operation's payload occupies in any codec.
+    ///
+    /// # What it is for, and why a shallow measure is enough
+    ///
+    /// It exists to pack a **backlog** into chunks (`protocol::CHUNK_BUDGET_BYTES`), not to
+    /// enforce a frame cap. A single commit larger than the budget is admitted deliberately
+    /// — otherwise `flush` would spin on a submission it can never make — so the measure's
+    /// precision changes how well several commits are packed and never whether an over-cap
+    /// commit is sent. Enforcing a transport's frame cap belongs to the codec lane, with the
+    /// cap stated once so both ends read the same number.
+    ///
+    /// So this counts the text an operation names **directly** and charges a constant per
+    /// identity and per top-level payload item. It does not walk a carried subtree, for the
+    /// reason `localise` gives.
+    #[must_use]
+    pub fn carried_bytes(&self) -> usize {
+        /// A fixed charge per identity and per carried item, so the measure grows with a
+        /// payload that carries no text.
+        const PER_ITEM: usize = 32;
+
+        let ids = self.introduces.len() * PER_ITEM;
+        let payload = match &self.operation {
+            Operation::InsertText { text, .. } => text.len(),
+            Operation::RenameBookmark { name, .. } => name.len(),
+            Operation::CreateBookmark { name, .. } => name.len(),
+            Operation::SetHyperlink {
+                target, tooltip, ..
+            } => tooltip.as_ref().map_or(0, String::len) + target.as_ref().map_or(0, |_| PER_ITEM),
+            Operation::SetObjectDescr { descr, .. } => descr.as_ref().map_or(0, String::len),
+            Operation::SetInlines { inlines, .. } => inlines.len() * PER_ITEM,
+            Operation::InsertBlocks { blocks, .. }
+            | Operation::InsertFieldRange { blocks, .. }
+            | Operation::InsertNote { blocks, .. }
+            | Operation::CreateHeaderFooterBody { blocks, .. } => blocks.len() * PER_ITEM,
+            Operation::InsertColumn { cells, .. } => cells.len() * PER_ITEM,
+            Operation::InsertRow { row, .. } => row.cells.len() * PER_ITEM,
+            Operation::InsertTable { table, .. } => table.rows.len() * PER_ITEM,
+            Operation::ReplaceTable { replacement, .. } => replacement.rows.len() * PER_ITEM,
+            Operation::InsertField { field, .. } => field.instruction.len(),
+            Operation::UpdateReviewState {
+                paragraphs,
+                comments,
+            } => {
+                paragraphs.len() * PER_ITEM
+                    + comments.as_ref().map_or(0, |map| map.len() * PER_ITEM)
+            }
+            Operation::SetStyleDefinition { style, .. } => style.as_ref().map_or(0, |style| {
+                style.name.as_ref().map_or(0, String::len) + PER_ITEM
+            }),
+            // Every remaining operation carries a bounded, fixed-size payload: offsets, a
+            // property bundle, a geometry, a flag, or nothing but the ids already charged
+            // above. Grouped rather than wildcarded so a 56th variant is a compile error
+            // here too, and whoever adds it has to decide whether it carries bytes.
+            Operation::DeleteText { .. }
+            | Operation::SplitParagraph { .. }
+            | Operation::JoinParagraphs { .. }
+            | Operation::FormatText { .. }
+            | Operation::ClearFormatting { .. }
+            | Operation::SetParagraphProperties { .. }
+            | Operation::DeleteRow { .. }
+            | Operation::DeleteColumn { .. }
+            | Operation::DeleteTable { .. }
+            | Operation::DeleteBlocks { .. }
+            | Operation::SetExtent { .. }
+            | Operation::SetGroupGeometry { .. }
+            | Operation::SetAnchor { .. }
+            | Operation::SetImageCrop { .. }
+            | Operation::DeleteObject { .. }
+            | Operation::InsertObjectNode { .. }
+            | Operation::InsertInlineObject { .. }
+            | Operation::RemoveInlineObject { .. }
+            | Operation::SetTableCellProperties { .. }
+            | Operation::SetTableProperties { .. }
+            | Operation::SetCoreProperties { .. }
+            | Operation::SetSectionGeometry { .. }
+            | Operation::SpliceSectionBoundary { .. }
+            | Operation::DeleteBookmark { .. }
+            | Operation::RemoveField { .. }
+            | Operation::RemoveFieldRange { .. }
+            | Operation::RemoveNote { .. }
+            | Operation::RemoveHeaderFooterBody { .. }
+            | Operation::SetSectionRunningRef { .. }
+            | Operation::SetSectionTitlePage { .. }
+            | Operation::SetSectionWatermark { .. }
+            | Operation::SetSectionLineNumbering { .. }
+            | Operation::SetSectionPageNumbering { .. }
+            | Operation::SetSectionVerticalAlignment { .. }
+            | Operation::SetEvenAndOddHeaders { .. }
+            | Operation::SetShapeFill { .. }
+            | Operation::SetShapeStroke { .. }
+            | Operation::SetTextBoxBody { .. } => 0,
+        };
+        PER_ITEM + ids + payload
+    }
+
+    /// The identities an operation brings into existence.
+    ///
+    /// **Exhaustive with no wildcard arm**, so a 56th operation is a compile error here and
+    /// whoever adds it has to say whether it mints anything. That is the same enforcement
+    /// `transform`'s seven matches use, for the same reason: a rule kept in a doc comment in
+    /// another crate is not checked by anything.
+    ///
+    /// Ids inside a carried subtree are not enumerated; `localise` states why and doc 152
+    /// §10 Q2 records it.
+    fn introduces(operation: &Operation) -> Vec<NodeId> {
+        match operation {
+            Operation::SplitParagraph { new_id, .. } => vec![*new_id],
+            Operation::SetHyperlink { id, .. } => vec![*id],
+            Operation::CreateBookmark {
+                bookmark,
+                start_id,
+                end_id,
+                ..
+            } => vec![bookmark.node_id(), *start_id, *end_id],
+            Operation::InsertField { field, .. } => vec![field.id],
+            Operation::InsertFieldRange { field, .. } => vec![field.node_id()],
+            Operation::InsertNote {
+                note, reference_id, ..
+            } => vec![note.node_id(), *reference_id],
+            Operation::CreateHeaderFooterBody { id, .. } => vec![id.node_id()],
+            // `Some(style)` inserts OR replaces, so the id is an introduction only when the
+            // receiver does not already hold it — which is exactly what `localise` decides.
+            // Declaring it here is what makes the silent replace reachable by a check.
+            Operation::SetStyleDefinition { id, style } => {
+                style.as_ref().map_or_else(Vec::new, |_| vec![id.node_id()])
+            }
+            Operation::SpliceSectionBoundary { boundary, .. } => boundary
+                .as_ref()
+                .map_or_else(Vec::new, |boundary| vec![boundary.id.node_id()]),
+            Operation::UpdateReviewState { comments, .. } => {
+                comments.as_ref().map_or_else(Vec::new, |map| {
+                    map.iter().map(|(id, _)| id.node_id()).collect()
+                })
+            }
+            // Introduces nothing: it names what already exists, or removes it, or carries a
+            // subtree whose ids this match deliberately does not enumerate.
+            Operation::InsertText { .. }
+            | Operation::DeleteText { .. }
+            | Operation::JoinParagraphs { .. }
+            | Operation::FormatText { .. }
+            | Operation::ClearFormatting { .. }
+            | Operation::SetInlines { .. }
+            | Operation::SetParagraphProperties { .. }
+            | Operation::InsertRow { .. }
+            | Operation::DeleteRow { .. }
+            | Operation::InsertColumn { .. }
+            | Operation::DeleteColumn { .. }
+            | Operation::DeleteTable { .. }
+            | Operation::InsertTable { .. }
+            | Operation::InsertBlocks { .. }
+            | Operation::DeleteBlocks { .. }
+            | Operation::SetExtent { .. }
+            | Operation::SetGroupGeometry { .. }
+            | Operation::SetAnchor { .. }
+            | Operation::SetImageCrop { .. }
+            | Operation::SetObjectDescr { .. }
+            | Operation::DeleteObject { .. }
+            | Operation::InsertObjectNode { .. }
+            | Operation::InsertInlineObject { .. }
+            | Operation::RemoveInlineObject { .. }
+            | Operation::SetTableCellProperties { .. }
+            | Operation::SetTableProperties { .. }
+            | Operation::ReplaceTable { .. }
+            | Operation::SetCoreProperties { .. }
+            | Operation::SetSectionGeometry { .. }
+            | Operation::DeleteBookmark { .. }
+            | Operation::RenameBookmark { .. }
+            | Operation::RemoveField { .. }
+            | Operation::RemoveFieldRange { .. }
+            | Operation::RemoveNote { .. }
+            | Operation::RemoveHeaderFooterBody { .. }
+            | Operation::SetSectionRunningRef { .. }
+            | Operation::SetSectionTitlePage { .. }
+            | Operation::SetSectionWatermark { .. }
+            | Operation::SetSectionLineNumbering { .. }
+            | Operation::SetSectionPageNumbering { .. }
+            | Operation::SetSectionVerticalAlignment { .. }
+            | Operation::SetEvenAndOddHeaders { .. }
+            | Operation::SetShapeFill { .. }
+            | Operation::SetShapeStroke { .. }
+            | Operation::SetTextBoxBody { .. } => Vec::new(),
+        }
+    }
+}
+
+/// A definition table an arriving identity clashed with.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Table {
+    /// `Definitions::styles`.
+    Styles,
+    /// `Definitions::bookmarks`.
+    Bookmarks,
+    /// `Definitions::field_ranges`.
+    FieldRanges,
+    /// `Definitions::footnotes` or `Definitions::endnotes`.
+    Notes,
+    /// `Definitions::headers` or `Definitions::footers`.
+    HeadersFooters,
+    /// `Definitions::comments`.
+    Comments,
+    /// `Definitions::sections`.
+    Sections,
+    /// `Definitions::media`.
+    Media,
+    /// `Definitions::abstract_numbering` or `Definitions::numbering`.
+    Numbering,
+}
+
+/// Why an arriving identity cannot be accepted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Clash {
+    /// The id was not minted in the sender's own space, so the discipline that makes ids
+    /// unique across replicas was not followed and nothing here can make it true after the
+    /// fact.
+    ForeignSpace {
+        /// The space the sender was supposed to mint in.
+        sender: IdSpace,
+    },
+    /// This replica already holds a definition at that id. Applying the operation would
+    /// overwrite somebody's node with somebody else's.
+    AlreadyHeld {
+        /// Where it is held.
+        table: Table,
+    },
+    /// The operation introduces an id its sender did not declare, so neither check above
+    /// was applied to it.
+    Undeclared,
+}
+
+/// An arriving identity that cannot be accepted, and why.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Collision {
+    /// The identity.
+    pub id: NodeId,
+    /// What it clashed with.
+    pub clash: Clash,
+}
+
+/// Which definition table, if any, already holds `id`.
+///
+/// O(log n) per table. The section list is a `Vec` and is scanned, which is O(sections) —
+/// bounded by the document's section count, not by its size.
+fn held_by(document: &Document, id: NodeId) -> Option<Table> {
+    use casual_doc_model::v1::{
+        AbstractNumberingId, BookmarkId, CommentId, FieldRangeId, HeaderFooterId, MediaId, NoteId,
+        NumberingInstanceId, StyleId,
+    };
+
+    let definitions = document.definitions();
+    if definitions.styles.contains_key(&StyleId::new(id)) {
+        return Some(Table::Styles);
+    }
+    if definitions.bookmarks.contains_key(&BookmarkId::new(id)) {
+        return Some(Table::Bookmarks);
+    }
+    if definitions
+        .field_ranges
+        .contains_key(&FieldRangeId::new(id))
+    {
+        return Some(Table::FieldRanges);
+    }
+    if definitions.footnotes.contains_key(&NoteId::new(id))
+        || definitions.endnotes.contains_key(&NoteId::new(id))
+    {
+        return Some(Table::Notes);
+    }
+    if definitions.headers.contains_key(&HeaderFooterId::new(id))
+        || definitions.footers.contains_key(&HeaderFooterId::new(id))
+    {
+        return Some(Table::HeadersFooters);
+    }
+    if definitions.comments.contains_key(&CommentId::new(id)) {
+        return Some(Table::Comments);
+    }
+    if definitions.media.contains_key(&MediaId::new(id)) {
+        return Some(Table::Media);
+    }
+    if definitions
+        .abstract_numbering
+        .contains_key(&AbstractNumberingId::new(id))
+        || definitions
+            .numbering
+            .contains_key(&NumberingInstanceId::new(id))
+    {
+        return Some(Table::Numbering);
+    }
+    if definitions
+        .sections
+        .iter()
+        .any(|section| section.id.node_id() == id)
+    {
+        return Some(Table::Sections);
+    }
+    None
+}

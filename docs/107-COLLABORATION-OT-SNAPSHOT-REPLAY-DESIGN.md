@@ -15,6 +15,8 @@ measurable budget (§4), not an aspiration.
 transactions), **ADR-043 / `147`** (the §2.1 unification, as built — read it with §2 below),
 **ADR-045 / `150`** (the transform itself, as built — read it with §3 below; it corrects §3.1,
 §3.3, §8 Q1 and §8 Q4 in place),
+**ADR-047 / `152`** (6.6's foundation — the protocol, the two session state machines, the
+identity discipline and the rollback/replay driver; it corrects §8 Q6 and §7 6.6 in place),
 ADR-006 (collaboration is adapter-based), ADR-030 / `45` (extensibility
 invariants I1–I4), `24-TRANSACTION-SEMANTICS.md`, `25-NORMALIZED-SNAPSHOT-IO.md`,
 `26-SELECTION-FOUNDATION.md`, `59-V1-EDITING-OP-SET.md`, `82-REVIEW-IDENTITY-AND-HISTORY-DESIGN.md`,
@@ -317,7 +319,7 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 | **6.3** | T1 transform + tie-break + TP1 property tests + the §4 benchmarks. **No network yet** | Yes — offline compare/combine becomes possible. **Transform and TP1 landed 2026-09-30** (`150`, ADR-045); the §4 benchmarks remain |
 | **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set. **The rebase and the `Tombstoned` outcome landed with 6.3**; what remains is the *reporting* — routing a tombstone into the disposition taxonomy (`35`), which has no caller until 6.6 |
 | **6.5** | Compare and combine documents | **Yes** — closes OO-007 |
-| **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships |
+| **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction` and all with no transport. What remains is the byte codec, the relay binary, presence, the host-signed grant, and durability — plus the one prerequisite `152` §4.4 names, which is a live editor that mints in a session-supplied identity space instead of a document-derived one |
 | **6.7** | Roles and permission enforcement, against the Phase 4 permissions object | Closes OO-018 |
 
 Note 6.0–6.5 deliver four tracker rows and **no** networking. If collaboration were cancelled
@@ -361,9 +363,21 @@ Recorded rather than hidden, per AGENTS.md.
    operation enum becomes a compatibility surface. Needs a schema-version policy like
    `22-NORMALIZED-SCHEMA-V0.md`'s, and a decision on whether old logs must replay on new
    builds.
-6. **`site_id` allocation** without a mandatory server, and collision behaviour.
-7. **Relay protocol and transport.** Deliberately unspecified here. ONLYOFFICE uses
-   socket.io; that is an implementation detail, not a constraint on us.
+6. ~~**`site_id` allocation** without a mandatory server, and collision behaviour.~~
+   **Answered 2026-09-30 by `152` §4 (ADR-047), and by a property rather than by a
+   probability.** There is no separate `site_id`: the participant number the relay assigns *is*
+   it, and `wire::IdSpace::of(document_space, client)` derives a 64-bit minting namespace from
+   it that is **injective in the participant number**, so two replicas cannot mint the same
+   `NodeId`. Collision behaviour is therefore not a probability to bound — it is refused at
+   the receiver with `ODC-7008` whenever the discipline was not followed, which is what today's
+   live editor does: it derives its namespace from the *document*, so two replicas mint
+   identical ids for different nodes from the first edit. `152` §4.4 owns the fix.
+7. **Relay protocol and transport.** The *protocol* is now specified — `152` / ADR-047,
+   `casual-doc-transaction::{protocol, session, wire}`. The **transport and the byte codec are
+   still open**, deliberately: `casual-doc-edit` has no `serde` and the op-set lane is about to
+   move the operation shapes, so freezing an encoding now would freeze a compatibility surface
+   over shapes that are about to change. ONLYOFFICE uses socket.io; that remains an
+   implementation detail, not a constraint on us.
 
 ---
 
