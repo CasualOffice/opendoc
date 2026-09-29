@@ -225,7 +225,7 @@ served by a separate, simpler `CReaderTouchManager`
 | Menus hung off the bottom bar | dropdowns | **upward sheets** | There is nothing below a bottom bar to open into |
 | Comment column | margin column | bottom sheet **(already, at 700px)** | HF-088, unchanged |
 
-### 5.3 Two decisions that look wrong and are not
+### 5.3 Two decisions that look wrong and are not — **both since reversed, §5.3a**
 
 **The rail survives.** The obvious move is to delete a 40px column on a 390px
 screen, and Google and Word both do without one. It stays because
@@ -253,6 +253,42 @@ has been narrowed. It is the wrong answer when the window is the only window
 there is: reaching the last menu needs a sideways drag on a bar nobody will
 think to drag, and the owner's instruction forbids exactly that. Wrapping costs
 the header ~24px and costs the reader nothing.
+
+### 5.3a Both of those exemptions have now been paid off
+
+**2026-09-30, the lane after this one.** §5.3 is kept above as written rather than
+rewritten, because the reasoning is the point: two regions survived a rung
+*against all three references* on one argument, and that argument was a missing
+command id in each case, not a judgement about phones. It said so, and it said the
+ruler's case was the weaker of the two and worth revisiting.
+
+Both ids now exist:
+
+- **`view.pages`** joins the View menu's `menuGroup.show` band beside
+  `view.outline`, so `#pagesPanel` is reachable from the menu bar and the palette
+  and no longer depends on a rail tile.
+- **`layout.tabStops`** joins Format's `menuGroup.paragraph` band, where Word has
+  filed Tabs… for thirty years, backed by a real dialog. Note this was never only
+  a phone defect: `ruler.mjs` held the *only* calls to `setTabStop`, `moveTabStop`
+  and `removeTabStop` in the product, so tab stops were a one-surface capability
+  (`105` UX-004) at every width, for every user. The phone rung is where it
+  became visible.
+
+So `phoneRegions()` now reads `rail: false, ruler: false`, and the phone spends
+that height on the document: ~44px of rail strip and ~24px of ruler out of 844px.
+The number that matters is not 8% of the window but **~18% of what is left** once
+a soft keyboard has taken ~300px of it. Google Docs, Word mobile and ONLYOFFICE
+mobile all ship neither, which was the position §5.3 was arguing against and can
+now agree with.
+
+What did **not** change: neither region leaves the DOM. The phone tier hides
+regions in CSS, which is what keeps `one-axis-navigation.spec.mjs`'s
+palette-orphan guard reading the same surfaces at every width (ADR-044's "surface
+parity survives by construction"). And the guard moved with the decision rather
+than being deleted: `phone_chrome.test.mjs`'s "the rail is kept, because its Pages
+tile is the only surface that panel has" fired, as designed, and its replacement
+asserts the implication that can now rot — *a region a phone withholds has no
+capability that lives only there* — which fails if either id is removed.
 
 ### 5.4 Why this is not the thing the owner cancelled
 

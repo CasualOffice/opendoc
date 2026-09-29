@@ -261,9 +261,9 @@ test("the document surface is still the only exemption, and still needs to be", 
 }) => {
   // The other half of an exemption list: an exemption that is no longer needed
   // is cover, and `one-axis-navigation.spec.mjs` already carries this rule for
-  // its PALETTE_ONLY list. When reflow lands (docs/148 §9 item 1) the document
-  // will stop overflowing at 390px and THIS test fails — which is the prompt to
-  // delete the exemption rather than to leave it sitting there being true.
+  // its PALETTE_ONLY list. When reflow lands (docs/149) the document will stop
+  // overflowing at 390px and THIS test fails — which is the prompt to delete
+  // the exemption rather than to leave it sitting there being true.
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoEditor(page);
 
@@ -274,8 +274,41 @@ test("the document surface is still the only exemption, and still needs to be", 
   expect(
     overflows.scrollWidth,
     "the document no longer overflows at 390px — remove DOCUMENT_SURFACE from this spec " +
-      "and fold #viewport back into the general assertion (docs/148 §6)",
+      "and fold #viewport back into the general assertion (docs/148 §6, docs/149 §7)",
   ).toBeGreaterThan(overflows.clientWidth);
 
   expect(consoleErrors).toEqual([]);
+});
+
+test("the reflow seam has not landed without the shell that spends it", async ({ page }) => {
+  // The OUTCOME tripwire above fires on the day reflow is on by default at this
+  // rung. That is too late to be useful to the lane building the engine:
+  // `setLayoutView` could ship, sit unused for a month, and nothing anywhere
+  // would say so — which is exactly "built and unreachable", the failure
+  // `SKILL.md` §9.4 calls the most expensive recurring pattern in this
+  // repository. This one fires on the day the API EXISTS instead.
+  //
+  // Read off the generated binding rather than off a live editor, because
+  // `main.js` has zero exports and the document handle is a module local: what
+  // the engine offers is a property of the wasm surface, not of this session.
+  // The import is the same URL `main.js` already loaded, so it is the cached
+  // module and costs nothing.
+  //
+  // WHEN THIS GOES RED: the engine has landed `docs/149` §4.8. Implement
+  // `docs/149` §6 — the `view.reflow` command, `renderAll`'s width feed with
+  // its quantisation and debounce, `gap: 0` tiles, the ruler and Pages panel
+  // withholding, print forcing `Paged`, and §6.5's honesty about page numbers —
+  // and then delete this test, because at that point the assertion above is the
+  // one that matters.
+  await gotoEditor(page);
+  const surface = await page.evaluate(async () => {
+    const module = await import("/pkg/casual_doc_wasm.js");
+    const proto = module.WasmDocument?.prototype;
+    return proto ? Object.getOwnPropertyNames(proto) : null;
+  });
+  expect(surface, "the wasm binding no longer exports WasmDocument").not.toBeNull();
+  expect(
+    surface.filter((name) => /^(setLayoutView|setReflowWidth|setLayoutMode)$/.test(name)),
+    "the reflow seam exists — build docs/149 §6 and retire this test",
+  ).toEqual([]);
 });
