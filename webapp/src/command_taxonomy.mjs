@@ -224,7 +224,17 @@ export const APP_MENU_SECTIONS = {
   // passes.
   view: [
     band("menuGroup.mode", "review.mode.editing", "review.mode.suggesting", "review.mode.viewing"),
-    band("menuGroup.show", "view.outline", "view.showChanges", "view.compactRibbon"),
+    // `view.pages` sits beside `view.outline` because the two are the same kind
+    // of thing — a navigation panel the rail opens — and they were not the same
+    // kind of REACHABLE thing: the outline had a command id and Pages did not.
+    // Its only surface in the whole product was the rail's `#railPages` tile,
+    // so a chrome that withheld the rail (a host withholding the region, or a
+    // phone reclaiming 44px of height) took `#pagesPanel` off that device class
+    // entirely while it stayed reachable at 1280px. That is "never a dead
+    // control" seen from the other side, and it is why `docs/148` §5.3 kept the
+    // rail on a phone against all three references. With an id here the rail is
+    // a convenience rather than a life-support system. `docs/148` §9 item 3.
+    band("menuGroup.show", "view.outline", "view.pages", "view.showChanges", "view.compactRibbon"),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),
   ],
   // Word's Insert TAB group order, which ONLYOFFICE's Insert tab also follows:
@@ -341,10 +351,23 @@ export const APP_MENU_SECTIONS = {
       "paragraph.list.restart",
       "paragraph.list.continue",
     ),
+    // Tab stops join the paragraph band because that is where Word keeps them —
+    // the Tabs… dialog opens off the Paragraph launcher on both Home and Layout
+    // — and because they are a paragraph property, which is what the band means.
+    //
+    // It is filed here for a reason that is not the phone's. `setTabStop` had
+    // exactly two call sites, both inside `ruler.mjs`, and no command id: the
+    // ruler was the ONLY surface in the product from which a tab stop could be
+    // set, moved, retyped or removed, at every width, for every user. That is a
+    // one-surface capability (`docs/105` UX-004) and it has been one all along;
+    // the phone rung is only where it became visible, because a ruler showing
+    // 0-3in of an 8.5in page is 24px of a 844px screen spent on a control
+    // nobody drags with a finger. `docs/148` §9 item 7.
     sub(
       "menuGroup.paragraph",
       "paragraph.indent.decrease",
       "paragraph.indent.increase",
+      "layout.tabStops",
       "layout.paragraph",
     ),
     // Copying formatting is a FORMAT action — filing it under Edit put it next

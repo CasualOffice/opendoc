@@ -1,6 +1,10 @@
 # 148 — The phone layout: competitive analysis and design
 
-**Status:** §1–§8 accepted; §7's foundation implemented, §9's remainder open.
+**Status:** §1–§8 accepted. §7's foundation implemented; §9 six-of-nine closed
+by the lane after it (see §9's rewritten table), with reflow specified in
+`149-REFLOW-PAGELESS-LAYOUT-DESIGN.md` / ADR-045 rather than built, and the
+keyboard inset still unverified on hardware (§12). §5.3 and §8.4 are both
+answered by later sections rather than rewritten.
 **Opened:** 2026-09-30. **Decision:** [ADR-044](08-ADR-REGISTER.md).
 **Advances:** `105` UX-019 (no breakpoint below 620px), partially `105` UX-018.
 **Depends on:** `105` UX-001 (the editable focus owner), **closed** — a phone can
@@ -225,7 +229,7 @@ served by a separate, simpler `CReaderTouchManager`
 | Menus hung off the bottom bar | dropdowns | **upward sheets** | There is nothing below a bottom bar to open into |
 | Comment column | margin column | bottom sheet **(already, at 700px)** | HF-088, unchanged |
 
-### 5.3 Two decisions that look wrong and are not
+### 5.3 Two decisions that look wrong and are not — **both since reversed, §5.3a**
 
 **The rail survives.** The obvious move is to delete a 40px column on a 390px
 screen, and Google and Word both do without one. It stays because
@@ -253,6 +257,42 @@ has been narrowed. It is the wrong answer when the window is the only window
 there is: reaching the last menu needs a sideways drag on a bar nobody will
 think to drag, and the owner's instruction forbids exactly that. Wrapping costs
 the header ~24px and costs the reader nothing.
+
+### 5.3a Both of those exemptions have now been paid off
+
+**2026-09-30, the lane after this one.** §5.3 is kept above as written rather than
+rewritten, because the reasoning is the point: two regions survived a rung
+*against all three references* on one argument, and that argument was a missing
+command id in each case, not a judgement about phones. It said so, and it said the
+ruler's case was the weaker of the two and worth revisiting.
+
+Both ids now exist:
+
+- **`view.pages`** joins the View menu's `menuGroup.show` band beside
+  `view.outline`, so `#pagesPanel` is reachable from the menu bar and the palette
+  and no longer depends on a rail tile.
+- **`layout.tabStops`** joins Format's `menuGroup.paragraph` band, where Word has
+  filed Tabs… for thirty years, backed by a real dialog. Note this was never only
+  a phone defect: `ruler.mjs` held the *only* calls to `setTabStop`, `moveTabStop`
+  and `removeTabStop` in the product, so tab stops were a one-surface capability
+  (`105` UX-004) at every width, for every user. The phone rung is where it
+  became visible.
+
+So `phoneRegions()` now reads `rail: false, ruler: false`, and the phone spends
+that height on the document: ~44px of rail strip and ~24px of ruler out of 844px.
+The number that matters is not 8% of the window but **~18% of what is left** once
+a soft keyboard has taken ~300px of it. Google Docs, Word mobile and ONLYOFFICE
+mobile all ship neither, which was the position §5.3 was arguing against and can
+now agree with.
+
+What did **not** change: neither region leaves the DOM. The phone tier hides
+regions in CSS, which is what keeps `one-axis-navigation.spec.mjs`'s
+palette-orphan guard reading the same surfaces at every width (ADR-044's "surface
+parity survives by construction"). And the guard moved with the decision rather
+than being deleted: `phone_chrome.test.mjs`'s "the rail is kept, because its Pages
+tile is the only surface that panel has" fired, as designed, and its replacement
+asserts the implication that can now rot — *a region a phone withholds has no
+capability that lives only there* — which fails if either id is removed.
 
 ### 5.4 Why this is not the thing the owner cancelled
 
@@ -365,19 +405,49 @@ always did and no command loses a home.
    than scrolls, and already renders from the shared roster. Splitting it is a
    data change to `COMPACT_TOOLBAR` when it is wanted, not a rewrite. §9.
 
+   **Reversed 2026-09-30, and the last sentence was the part that held.** The
+   split landed as `PHONE_TOOLBAR` — a second roster for the same bar, chosen at
+   render time — which is exactly the data change this paragraph predicted, not
+   a rewrite. What it got wrong is that the `⋯` fold is a substitute for a
+   designed sheet. The fold's membership is a function of the WINDOW WIDTH (at
+   390px the style picker is inline, at 320px it folds) and its order is fold
+   order, right to left, pinned last. A surface whose contents change when the
+   window changes is one you cannot tell anyone about, and this document's own
+   two phone widths disagree about what is in it. §10's observation was real;
+   the conclusion drawn from it was not.
+
 ## 9. What is left, with its boundary named
 
-| # | Item | Lane | Why not here |
-| --- | --- | --- | --- |
-| 1 | **Reflow / pageless view** — lay out at viewport width, stop paginating | `crates/casual-doc-layout` + a View toggle | Engine work, outside this lane. Until it lands, the document surface is §6's named exception and the phone shows a real page it can pan |
-| 2 | **Touch selection** — handles, long-press-to-cursor, magnifier, pinch zoom, scroll-vs-select | `webapp/` + wasm | `105` UX-018, a lane of its own. §3 records ONLYOFFICE's four tunables so it starts from numbers |
-| 3 | **A command id for Pages** | `command_taxonomy.mjs` | Would let the rail be withheld on a phone. `phone_chrome.test.mjs` fails the moment it exists, which is the prompt |
-| 4 | **Aa / + as their own sheets** | `compact_toolbar.mjs` data | §8.4 |
-| 5 | **A phone Playwright project** | `playwright.config.mjs` | Today five specs set a viewport by hand and one enables touch. A `Pixel 7`-shaped project would run the suite as a phone; that is a CI-time decision, not a layout one |
-| 6 | **The keyboard-attached row on a real device** | — | `interactive-widget` and `visualViewport` are both implemented and both unit-tested, but Playwright's desktop Chromium has no soft keyboard, so the *integration* is reasoned rather than measured. Stated plainly rather than claimed |
-| 7 | **A command id for tab stops** | `command_taxonomy.mjs` + `ruler.mjs` | Would let the ruler be withheld on a phone, which is 24px of height for a control nobody drags with a finger. §5.3 |
-| 8 | **The toast over an open bottom sheet** | `style.css` | The toast now clears the docked command bar (found by looking; guarded). It still paints over an open sheet, because `--z-toast` is above the modal on purpose and a sheet occupies the same bottom-start corner. Pre-existing for dialogs, more visible here. Reserving a band above whatever sheet is open needs the sheet's height, which is content-dependent; not half-built |
-| 9 | **The comment sheet covers the command bar** | `style.css` | Pre-existing at the 700px rung and *reference behaviour* — Google's comments panel and ONLYOFFICE's Collaboration sheet both take over the screen. Nothing is orphaned (the menu bar and the rail stay visible, and the sheet has its own close), and raising it would collide with `narrow-review-column.spec.mjs`'s "the unoccluded band is >35% of the window" guard. Recorded rather than changed under another lane's guard |
+**Updated 2026-09-30 by the lane after this one.** Six of the nine are closed;
+the table keeps every row, with what happened to it, because a follow-up list
+that deletes its own entries cannot be audited.
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | **Reflow / pageless view** | **Specified, not built** — `149-REFLOW-PAGELESS-LAYOUT-DESIGN.md` and ADR-045. Every line of it is in `crates/**`, which that lane does not own, so it is reported precisely rather than half-built. The finding that changes the estimate: the flow engine is **already width-parametric end to end** (`flow::build_galley(document, shaper, content_width)` and eleven siblings take the width as an argument), so this is a *driver* change, not a line-breaking one. `#viewport` stays §6's named exception until it lands, and `phone-no-horizontal-scroll.spec.mjs` now carries **two** tripwires: the outcome one, and a new one that fails the day `setLayoutView` appears on the wasm surface — because an engine API with no consumer is `SKILL.md` §9.4's "built and unreachable" |
+| 2 | **Touch selection** | **Done** — `touch_selection.mjs`: long-press to select a word, two handles, a magnifier, caret drag. ONLYOFFICE's four tunables adopted by number and cited by line (`750`ms, `20`px, `20`px target, a `7`px dot). Arms on `pointerType === "touch"`, not on `phone-mode` (which would leave a tablet with nothing) and not on `(pointer: coarse)` (false on a touchscreen laptop). Pinch zoom is UX-018's other half and is still open |
+| 3 | **A command id for Pages** | **Done** — `view.pages`, in the View menu's Show band. The rail is withheld on a phone as a result; §5.3a |
+| 4 | **Aa / + as their own sheets** | **Done** — `PHONE_TOOLBAR`, a second roster for the same bar chosen at render time, over `APP_MENU_SECTIONS.format` and `.insert`. §8.4 records why the argument against it was wrong |
+| 5 | **A phone Playwright project** | **Done** — a `Pixel 7` project taking `phone-*.spec.mjs`, with `chromium` ignoring them. The rung specs (`editor-narrow-chrome`, `responsive-shell`, `narrow-review-column`) stay on the desktop project deliberately: a rung is not a device |
+| 6 | **The keyboard-attached row on a real device** | **Still open, and still unverified.** Chromium's mobile emulation has no soft keyboard, so `visualViewport` never shrinks under test and the inset arithmetic is exercised only against fake numbers in Node. The phone Playwright project does **not** close this and must not be read as if it did. See §12 |
+| 7 | **A command id for tab stops** | **Done** — `layout.tabStops` and a real Tab stops dialog (Word's, minus what the engine cannot do: no default-tab-stop stepper, because `w:defaultTabStop` has no wasm reader *or* writer, and no leader, because `setTabStop` takes no leader argument). The ruler is withheld on a phone as a result. Bar stops are now placeable, so `ruler.mjs` had to learn to draw one — it had been rendering a code-4 stop as a LEFT stop through a `?? "L"` fallback |
+| 8 | **The toast over an open bottom sheet** | **Done** — while a sheet is open the toast moves to the top of the screen. §9's reason for not fixing it ("reserving a band needs the sheet's height, which is content-dependent") was sound and was an argument against one answer: a sheet's height is unknowable in CSS, but where the sheet is *not* is entirely knowable |
+| 9 | **The comment sheet covers the command bar** | **Still open, deliberately** — unchanged from the reasoning below: it is reference behaviour (Google's comments panel and ONLYOFFICE's Collaboration sheet both take the screen), nothing is orphaned, and raising it would collide with `narrow-review-column.spec.mjs`'s "the unoccluded band is >35% of the window" guard. One thing did change: the rail is no longer visible behind it, so the escape route is now the sheet's own close and the menu bar rather than the rail |
+
+Still open, and named rather than implied:
+
+- **Pinch zoom** (`105` UX-018's other half). We do not suppress native
+  pinch — §5.5 — so magnification works; what is missing is a canvas-level
+  pinch that the engine can re-raster for.
+- **A caret drag that survives the browser's pan decision.** The browser latches
+  scroll-versus-drag at touch-start from the element under the finger. The
+  handles carry `touch-action: none` and can be dragged; the page cannot, so a
+  caret drag begun on bare text competes with a scroll.
+- **Object-, table- and running-content-aware touch gestures.** ONLYOFFICE
+  have a mode per object type (`InlineObj`, `FlowObj`, `TableMove`,
+  `TableRuler`); ours has text selection only.
+- **Reflow's shell half** (§6 of `149`), which cannot start until the engine
+  lane lands the setter.
 
 ## 10. What looking at it changed
 
@@ -403,3 +473,47 @@ first:
 
 Every guard added here was driven red before it was trusted (`SKILL.md` §4); the
 mutations and their failure output are recorded in the pull request.
+
+## 12. The keyboard inset is still unverified on a real device
+
+`SKILL.md` §13: do not overstate support. So, plainly, and in its own section so
+it cannot be read past:
+
+**Nobody has held a phone.** `keyboardInset()` and `--phone-keyboard-inset` are
+implemented and unit-tested, the viewport meta carries
+`interactive-widget=resizes-content`, and the docked bar, the status bar and
+every bottom sheet spend the variable. All of that is verified. What is *not*
+verified is the one thing the feature exists for: that a real soft keyboard
+opening on a real phone leaves the command bar on top of it.
+
+Why it could not be verified here:
+
+- **Playwright's Chromium has no soft keyboard**, in the phone project or out of
+  it. `isMobile` and `hasTouch` change pointer type, device scale and meta
+  viewport handling; they do not raise a keyboard. `visualViewport.height`
+  therefore never shrinks under test, so `keyboardInset()` returns 0 in every
+  end-to-end run and the only numbers it has ever been given are the fake ones
+  in `phone_chrome.test.mjs`.
+- **The two browsers behave differently and we depend on the difference.**
+  `interactive-widget=resizes-content` is honoured by Chrome for Android (which
+  shrinks the *layout* viewport, so `bottom: 0` moves by itself and the inset
+  correctly reads 0) and is **not** implemented by iOS Safari, which shrinks only
+  the *visual* viewport — the case `visualViewport` exists to cover. So the two
+  mechanisms in §5.5 are not belt-and-braces; each is the only mechanism on one
+  of the two platforms, and neither has been exercised on its own platform.
+
+What specifically remains unknown, rather than "it probably works":
+
+1. Whether iOS Safari's `visualViewport.resize` fires early enough that the bar
+   moves with the keyboard rather than after it.
+2. Whether `offsetTop` subtraction behaves as intended on iOS when the page is
+   also scrolled — the pinch-pan case the function guards against is reasoned
+   from the spec, not observed.
+3. Whether Android's layout-viewport shrink and our fixed positioning interact
+   cleanly with `env(safe-area-inset-bottom)` on a gesture-navigation device.
+4. Whether the toast's top placement while a sheet is open (§9 item 8) stays
+   clear of a browser URL bar that has re-expanded.
+
+Closing this needs a device, not another spec. Until someone runs the editor on
+an iPhone and an Android phone and watches the bar while the keyboard opens,
+this row stays open and nothing in this document should be read as claiming it.

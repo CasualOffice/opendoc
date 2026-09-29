@@ -120,3 +120,135 @@ export function reflectPagesPanelSelection(body, pageNumber) {
     else card.removeAttribute("aria-current");
   }
 }
+
+// ---- The panel's controller (`docs/148` §9 item 3) --------------------------
+//
+// The RENDERING moved out of `main.js` with the page-band work; the CONTROLLER
+// — open/close, what to centre on, following the reader, and jumping — stayed
+// behind as six closures and a piece of module state. That was tolerable while
+// the only way to reach this panel was a rail tile. It stopped being tolerable
+// when `view.pages` gave it a command: a command whose implementation is six
+// closures in a 16,000-line module is a command nobody can find the behaviour
+// of, and the file named `pages_panel.mjs` is where a reader will look.
+//
+// Everything is injected, so this file still names no `main.js` symbol and the
+// seam is readable in one place. `docToScroll` is imported here rather than
+// passed in, because it is the exact inverse of the page band's own scroll
+// compression and belongs to the band, not to the shell.
+//
+// Complexity: `build` is O(PAGES_PANEL_WINDOW) thumbnails — a fixed 40, never
+// the document — and `sync`, `reflect` and `jump` are O(cards on screen).
+// Nothing here walks the document, which is what `docs/107` §4 requires of
+// anything on a scroll path; `sync` in particular runs on every page-window
+// move.
+import { docToScroll } from "./page_scroll.mjs";
+
+/**
+ * Wires the Pages navigator to its panel.
+ *
+ * @param {object} deps
+ * @param {HTMLElement} deps.panel       `#pagesPanel`, whose `hidden` is the open state
+ * @param {HTMLElement} deps.body        `#pagesBody`, the scrolling thumbnail column
+ * @param {HTMLElement} deps.railButton  the rail tile, whose `aria-pressed` follows
+ * @param {HTMLElement} deps.closeButton the panel's own close control
+ * @param {HTMLElement} deps.viewport    the single scroll owner
+ * @param {() => object} deps.getDoc
+ * @param {() => ({focus:{node:string,offset:number}}|null)} deps.getSelection
+ * @param {() => Array} deps.getPages    the page records
+ * @param {() => object} deps.getBandModel
+ * @param {() => ({pageNumber:number}|null)} deps.pageInView
+ * @param {() => number} deps.bandTop    the band's top in scroller coordinates
+ * @param {() => void} deps.onExclusive  called when the panel opens, to close the others
+ * @param {() => void} deps.onJumped     called once a jump has moved the scroller
+ * @returns {{build:Function, sync:Function, reflect:Function, toggle:Function,
+ *            isOpen:() => boolean}}
+ */
+export function createPagesPanel({
+  panel,
+  body,
+  railButton,
+  closeButton,
+  viewport,
+  getDoc,
+  getSelection,
+  getPages,
+  getBandModel,
+  pageInView,
+  bandTop,
+  onExclusive,
+  onJumped,
+}) {
+  /** The range of pages currently carded. Its own, because the navigator
+   *  windows separately from the page band. */
+  let shown = { start: 0, end: -1 };
+
+  /** The page the navigator MARKS as current: the caret's, falling back to the
+   *  one being read. Deliberately not what the panel centres on — a reader who
+   *  has scrolled 6,000 pages from their caret wants to see where they now are,
+   *  not where they last typed. */
+  function focusPage() {
+    const selection = getSelection();
+    if (selection) {
+      const flat = getDoc().caretRect(selection.focus.node, selection.focus.offset);
+      if (flat.length) return flat[0];
+    }
+    return pageInView()?.pageNumber ?? 1;
+  }
+
+  function reflect(pageNumber) {
+    if (panel.hidden) return;
+    reflectPagesPanelSelection(body, pageNumber);
+  }
+
+  /** Scrolls page `n` into view through the single scroll owner, then marks it. */
+  function jump(n) {
+    const band = getBandModel();
+    if (!getPages()[n - 1] || !band) return;
+    // From the BAND's geometry, not from the sheet's rect: the page being jumped
+    // to is usually the one page in the document that has no sheet yet.
+    const viewportHeight = viewport.clientHeight;
+    const docY = Math.max(0, band.tops[n - 1] - 16);
+    const target = bandTop() + docToScroll(band, viewportHeight, docY);
+    const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    viewport.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
+    onJumped();
+    reflect(n);
+  }
+
+  /** Rebuilds the navigator around one page — by default the one being read. */
+  function build(centre = null) {
+    if (!getDoc() || panel.hidden) return;
+    const focus = focusPage();
+    shown = renderPagesPanel({
+      doc: getDoc(),
+      pages: getPages(),
+      current: centre ?? pageInView()?.pageNumber ?? focus,
+      body,
+      onJump: jump,
+    });
+    reflect(focus);
+  }
+
+  /** Follow the reader: when the viewport leaves the range the panel is
+   *  showing, rebuild around where they now are. Scrolling INSIDE the shown
+   *  range costs nothing, which is what keeps this off the scroll budget. */
+  function sync() {
+    if (panel.hidden || !getDoc()) return;
+    const visible = pageInView()?.pageNumber ?? 1;
+    if (visible < shown.start || visible > shown.end) build(visible);
+  }
+
+  function toggle() {
+    panel.hidden = !panel.hidden;
+    // Pages, Outline (left) and the review sidebar (right) are mutually
+    // exclusive, so the canvas is never squeezed from both sides at once.
+    if (!panel.hidden) onExclusive();
+    railButton.setAttribute("aria-pressed", String(!panel.hidden));
+    build();
+  }
+
+  railButton.addEventListener("click", toggle);
+  closeButton.addEventListener("click", toggle);
+
+  return { build, sync, reflect, toggle, isOpen: () => !panel.hidden };
+}

@@ -333,8 +333,27 @@ const SRC = new URL("../src/", import.meta.url);
  *  modifier rules and the commit origin into `object_snap.mjs`, so neither
  *  branch's number is this tree's: 16341 is what the merged file counts.
  *  Carrying either side forward would publish a ceiling the file never had,
- *  which is the merge trap this block records five times over. */
-const MAIN_JS_LINE_CEILING = 16341;
+ *  which is the merge trap this block records five times over.
+ *
+ *  16,341 -> 16,340 on the touch-selection branch (`105` UX-018). The gesture,
+ *  the handles, the loupe and every tunable went into `touch_selection.mjs`;
+ *  what came OUT of main.js to pay for the wiring is `selectWord` — one routine
+ *  now serving the finger's long press and the mouse's double click, which is
+ *  how ONLYOFFICE route the same pair — and the four identical copies of the
+ *  "drop every pointer gesture" list, which are now one `abortPointerGestures`.
+ *  RE-MEASURE from the merged file, as every note above says.
+ *
+ *  16,340 -> 16,336, and this one is the note's own lesson applied. Three
+ *  lanes met here: touch selection (-1), the tab-stops dialog (+2 for an import
+ *  and a registry row, +19 for a factory literal), and the phone roster work,
+ *  which paid for all of it by moving the Pages navigator's CONTROLLER into
+ *  `pages_panel.mjs` (-49) — six closures and a piece of module state that were
+ *  the only description of what `view.pages` does, in a file nobody reads to
+ *  find out what a command does. NEITHER branch's number is this tree's:
+ *  16,341 - 1 = 16,340 was true of the touch branch alone, and arithmetic on
+ *  two branches' numbers is always wrong. 16,336 is what the merged file
+ *  counts. */
+const MAIN_JS_LINE_CEILING = 16336;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -348,6 +367,13 @@ const PURE_MODULES = [
   // body and root are injected rather than reached for, which is the only
   // reason a keyboard-inset calculation can be driven from Node at all.
   "phone_chrome.mjs",
+  // The touch-selection machine (docs/105 UX-018). Its window, its document
+  // surface and its element factory are all injected, which is the only reason
+  // the long-press threshold, the handle hit radius, the endpoint ordering and
+  // the magnifier's flip at the top of the screen can be driven from node —
+  // Playwright cannot put a finger on the top edge of a phone at will, and
+  // arithmetic that only a browser can reach is arithmetic nothing checks.
+  "touch_selection.mjs",
   // The Symbol / Emoji sets: literal data with no behaviour, so nothing in it
   // has any business reaching a global.
   "glyph_sets.mjs",

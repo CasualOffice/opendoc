@@ -114,6 +114,35 @@ export const EN_STRINGS = Object.freeze({
   // a reuse: "line spacing" is the wrong noun for a gap above a paragraph, and a
   // language that inflects the two differently cannot be served by one string.
   "spacing.spaceFromStyleHint": "This space comes from the paragraph style. Type a value to set it here.",
+  // -- Tab stops (`docs/148` §9 item 7) --------------------------------------
+  // The dialog's own labels are markup, where their English sits beside the key
+  // in `editor.html`; what is here is what a SCRIPT composes — the command's
+  // label, the list row, and the four sentences the dialog says when it refuses.
+  "tabStops.command": "Tab stops…",
+  // The list row. One string rather than a number with a word glued after it:
+  // the two swap order in several languages, the unit belongs inside the
+  // sentence a translator is shown, and an RTL catalogue can put them where its
+  // readers expect without any call site changing.
+  "tabStops.rowLabel": "{position} in — {align}",
+  // Three refusals, three sentences, because they ask for three different
+  // things. `inchesToTwips` answers 0 for a blank box AND for "abc"; a dialog
+  // that silently placed a stop at the margin for either would be the "clamped
+  // to something the user did not ask for" failure this dialog was told to
+  // avoid.
+  "tabStops.needPosition": "Type a position first.",
+  // The example keeps a DOT in every language on purpose. `parsePosition` runs
+  // on `Number()`, which accepts `1.5` and not `1,5`, so a French or German
+  // catalogue writing `1,5` here would print an example the field then refuses —
+  // a translation that makes the product wrong. The field shares that limit with
+  // every other measurement box in the editor; localising the separator is a
+  // change to `units.mjs`, not to a catalogue.
+  "tabStops.badPosition": "That is not a position. Type a number of inches, like 1.5.",
+  "tabStops.outOfRange": "A tab stop has to be between 0 and 22 inches from the margin.",
+  // The two disabled buttons' reasons. A disabled control's one channel is its
+  // title, and it must say what to DO next (`spacing.*` above records the same
+  // rule).
+  "tabStops.selectStop": "Choose a tab stop in the list first.",
+  "tabStops.noneToClear": "These paragraphs have no tab stops.",
   // Following a contents entry whose field carried no `\\h`, so there was no
   // hyperlink to follow and the entry did nothing at all.
   // Generating and updating a table of contents. The three announcements are
@@ -468,6 +497,17 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.clear.cancel": "Keep the history",
   "versionHistory.clear.done.one": "Deleted {count} version and freed {size}.",
   "versionHistory.clear.done.other": "Deleted {count} versions and freed {size}.",
+
+  // ---- Touch selection (docs/105 UX-018, docs/148 §9) -----------------------
+  // The two drag handles a finger uses to make and adjust a selection. They are
+  // the only visible selection affordance on a touch device, so they are named
+  // rather than decorative: a screen reader explores a touchscreen by touch and
+  // an unlabelled circle over a word says nothing. LOGICAL names — "start" is
+  // the start of the selection in reading order, which in a right-to-left
+  // paragraph is the handle on the right — so a translation must not turn them
+  // into "left" and "right".
+  "touchSelection.startHandle": "Selection start",
+  "touchSelection.endHandle": "Selection end",
 
   // ---- Tables (docs/141) ---------------------------------------------------
   // The four reasons a Table-band control can be unavailable. They were already

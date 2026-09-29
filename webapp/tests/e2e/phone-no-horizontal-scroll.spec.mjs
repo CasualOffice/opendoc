@@ -26,7 +26,7 @@
 // quietly excluded: `DOCUMENT_SURFACE` names it, and a second test asserts the
 // exemption is still NEEDED, so that when reflow lands and the document stops
 // overflowing, this file fails and the exemption comes out.
-import { test, expect, gotoEditor, clickIntoFirstPage, openCommandPalette } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow, openCommandPalette } from "./fixtures.mjs";
 
 /** Two real phones. 390 is an iPhone 14/15 and a Pixel 7 in portrait; 320 is
  *  the narrowest viewport still shipping (iPhone SE 1st gen) and is where a
@@ -129,12 +129,29 @@ for (const phone of PHONES) {
 
     // Each is opened, measured, and closed, so one surface's overflow cannot be
     // charged to the next. Escape is the shared dismissal (`light-dismiss-contract`).
+    //
+    // The panels are opened from the MENU BAR rather than from the rail, and
+    // that is the change rather than an incidental rewrite: this rung withholds
+    // the rail now that `view.pages` exists (`docs/148` §5.3a), so the rail's
+    // tiles are not the route to these panels on a phone — the menu bar is, as
+    // doc 122 says it should be for the compact chrome. The panels themselves
+    // are untouched and still measured here; only the door moved.
+    // Through `menuCommandRow`, which opens a submenu flyout when the band the
+    // command lives in folds into one — `runAppMenuCommand` cannot be used at
+    // this rung because it starts by clicking `#modeCompact`, which the phone
+    // withholds.
+    const menuItem = (menu, command) => async () => {
+      await (await menuCommandRow(page, menu, command)).click();
+    };
     const surfaces = [
       { what: "the File menu", open: () => page.locator('.app-menu-button[data-menu="file"]').click(), shown: "#appMenuPopover" },
       { what: "the Format menu", open: () => page.locator('.app-menu-button[data-menu="format"]').click(), shown: "#appMenuPopover" },
+      { what: "the Aa sheet", open: () => page.locator("#compactFormatBtn").click(), shown: "#compactFormatMenu" },
+      { what: "the + sheet", open: () => page.locator("#compactInsertBtn").click(), shown: "#compactInsertMenu" },
       { what: "Settings", open: () => page.locator("#settingsBtn").click(), shown: "#settingsPanel" },
-      { what: "the outline panel", open: () => page.locator("#railOutline").click(), shown: "#outlinePanel" },
-      { what: "the comment sheet", open: () => page.locator("#railReview").click(), shown: "#reviewSidebar" },
+      { what: "the outline panel", open: menuItem("view", "view.outline"), shown: "#outlinePanel" },
+      { what: "the Pages panel", open: menuItem("view", "view.pages"), shown: "#pagesPanel" },
+      { what: "the comment sheet", open: menuItem("review", "review.toggle"), shown: "#reviewSidebar" },
       { what: "the command palette", open: () => openCommandPalette(page), shown: "#cmdPalette" },
     ];
 
@@ -214,12 +231,15 @@ test("the phone chrome replaces the desktop chrome rather than shrinking it", as
   expect(await page.locator("#compactToolbar").evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
   expect(toolbar.y, "the toolbar is in the bottom half of the screen").toBeGreaterThan(844 / 2);
 
-  // The rail turned its axis rather than disappearing — it is the only surface
-  // `#pagesPanel` has (docs/148 §5.3). A horizontal strip is wider than it is
-  // tall; a column is not.
-  const rail = await page.locator(".rail").boundingBox();
-  expect(rail.width, "the rail is a strip, not a column").toBeGreaterThan(rail.height);
-  expect(await page.locator("#railPages").isVisible()).toBe(true);
+  // The rail and the ruler are gone, which is the OPPOSITE of what this test
+  // asserted when it was written, and the reversal is the point (docs/148
+  // §5.3a). They survived the first version of this rung against all three
+  // references on one argument — `#railPages` and `setTabStop` each had exactly
+  // one surface — and that argument was paid off by `view.pages` and
+  // `layout.tabStops`. `phone-command-surface.spec.mjs` holds the other half:
+  // the panels are still in the DOM and still reachable from the View menu.
+  await expect(page.locator(".rail")).toBeHidden();
+  await expect(page.locator(".ruler")).toBeHidden();
 
   expect(consoleErrors).toEqual([]);
 });
@@ -261,9 +281,9 @@ test("the document surface is still the only exemption, and still needs to be", 
 }) => {
   // The other half of an exemption list: an exemption that is no longer needed
   // is cover, and `one-axis-navigation.spec.mjs` already carries this rule for
-  // its PALETTE_ONLY list. When reflow lands (docs/148 §9 item 1) the document
-  // will stop overflowing at 390px and THIS test fails — which is the prompt to
-  // delete the exemption rather than to leave it sitting there being true.
+  // its PALETTE_ONLY list. When reflow lands (docs/149) the document will stop
+  // overflowing at 390px and THIS test fails — which is the prompt to delete
+  // the exemption rather than to leave it sitting there being true.
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoEditor(page);
 
@@ -274,8 +294,41 @@ test("the document surface is still the only exemption, and still needs to be", 
   expect(
     overflows.scrollWidth,
     "the document no longer overflows at 390px — remove DOCUMENT_SURFACE from this spec " +
-      "and fold #viewport back into the general assertion (docs/148 §6)",
+      "and fold #viewport back into the general assertion (docs/148 §6, docs/149 §7)",
   ).toBeGreaterThan(overflows.clientWidth);
 
   expect(consoleErrors).toEqual([]);
+});
+
+test("the reflow seam has not landed without the shell that spends it", async ({ page }) => {
+  // The OUTCOME tripwire above fires on the day reflow is on by default at this
+  // rung. That is too late to be useful to the lane building the engine:
+  // `setLayoutView` could ship, sit unused for a month, and nothing anywhere
+  // would say so — which is exactly "built and unreachable", the failure
+  // `SKILL.md` §9.4 calls the most expensive recurring pattern in this
+  // repository. This one fires on the day the API EXISTS instead.
+  //
+  // Read off the generated binding rather than off a live editor, because
+  // `main.js` has zero exports and the document handle is a module local: what
+  // the engine offers is a property of the wasm surface, not of this session.
+  // The import is the same URL `main.js` already loaded, so it is the cached
+  // module and costs nothing.
+  //
+  // WHEN THIS GOES RED: the engine has landed `docs/149` §4.8. Implement
+  // `docs/149` §6 — the `view.reflow` command, `renderAll`'s width feed with
+  // its quantisation and debounce, `gap: 0` tiles, the ruler and Pages panel
+  // withholding, print forcing `Paged`, and §6.5's honesty about page numbers —
+  // and then delete this test, because at that point the assertion above is the
+  // one that matters.
+  await gotoEditor(page);
+  const surface = await page.evaluate(async () => {
+    const module = await import("/pkg/casual_doc_wasm.js");
+    const proto = module.WasmDocument?.prototype;
+    return proto ? Object.getOwnPropertyNames(proto) : null;
+  });
+  expect(surface, "the wasm binding no longer exports WasmDocument").not.toBeNull();
+  expect(
+    surface.filter((name) => /^(setLayoutView|setReflowWidth|setLayoutMode)$/.test(name)),
+    "the reflow seam exists — build docs/149 §6 and retire this test",
+  ).toEqual([]);
 });

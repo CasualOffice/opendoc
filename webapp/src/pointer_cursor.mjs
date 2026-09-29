@@ -314,6 +314,20 @@ export const CURSOR_TARGETS = [
     why: "The column twin of the row pill above; same size, same reason.",
   },
   {
+    id: "touch-selection-handle",
+    cursor: "grab",
+    owner: "css",
+    selector: ".overlay .touch-handle",
+    gesture: "Dragging a selection handle by touch (`105` UX-018)",
+    why:
+      "It is picked up and moved, so `grab` — the one keyword that says that and " +
+      "the same answer `.object-move-pad` gets for the same question. Not `text`: " +
+      "the handle is a control over the text, and promising a caret on it would " +
+      "say a click places one. Painted only after a FINGER made the selection, so " +
+      "the cursor is for a mouse that arrives on a hybrid device afterwards — the " +
+      "same reason the touch pills above carry one.",
+  },
+  {
     id: "checklist-checkbox",
     cursor: "pointer",
     owner: "css",

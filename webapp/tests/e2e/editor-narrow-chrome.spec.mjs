@@ -18,7 +18,7 @@
 // So the defect is real, the remedy the row names is the right one (Word and
 // Docs both drop a rail caption on a narrow window), and the assertion below is
 // about the harm rather than about the ellipsis that used to reveal it.
-import { expect, gotoEditor, runFilePageCommand, test } from "./fixtures.mjs";
+import { expect, gotoEditor, menuCommandRow, runFilePageCommand, test } from "./fixtures.mjs";
 
 /** The four rail tiles, as the markup declares them. */
 const RAIL = ["#railOutline", "#railPages", "#railReview", "#railVersions"];
@@ -29,6 +29,10 @@ function railMetrics(page) {
     const rail = document.querySelector(".rail");
     return {
       railWidth: Math.round(rail.getBoundingClientRect().width),
+      // Whether the rail is on screen at all. The phone rung withholds it
+      // (docs/148 §5.3a) and a withheld tile measures 0 — which reads as "a
+      // control that got smaller" unless the guard can tell the two apart.
+      railPainted: getComputedStyle(rail).display !== "none",
       viewport: window.innerWidth,
       // What the DOCUMENT is left with. The rail's own width stopped being the
       // way to measure that when the phone tier turned the rail on its side
@@ -59,59 +63,99 @@ function railMetrics(page) {
   });
 }
 
-test("the rail costs the same on a narrow window in every language, and still says what each destination is", async ({
+test("a narrow window spends nothing on rail captions, and loses no destination doing it", async ({
   page,
 }) => {
-  // Two languages whose rail captions differ by 45px of tile at a desktop width:
-  // English and Brazilian Portuguese ("Estrutura de tópicos"). If the narrow-window
-  // rail is glyphs, the two are identical; if a caption comes back, they are not,
-  // and the assertion cannot be satisfied by testing English alone.
+  // REWRITTEN when the phone rung stopped painting the rail at all (docs/148
+  // §5.3a). The previous version measured the rail's tiles at 390px, and it is
+  // the shape `SKILL.md` warns about: a guard pinned to the CIRCUMSTANCE it was
+  // written in — "there is a rail here, and it is made of glyphs" — reddens
+  // when a change removes the circumstance while strengthening the guarantee.
+  // At 390 the document now gets the whole window instead of five sixths of it,
+  // and the old assertions failed because a withheld tile measures 0.
+  //
+  // The guarantee has three parts and none of them names a width:
+  //   1. the rail carries its words where there is room for them;
+  //   2. where there is not, it costs the same in every language, because it
+  //      has stopped being made of words — a caption-sized tile is 66px in
+  //      English, 86px in Russian and 111px in Brazilian Portuguese;
+  //   3. dropping the caption silences nothing: every destination keeps a
+  //      translated accessible name, and on a phone, where the tile is not
+  //      painted at all, a menu row carrying the same name.
+  //
+  // Two languages whose captions differ by 45px of tile: English and Brazilian
+  // Portuguese ("Estrutura de tópicos"). English alone could not tell a glyph
+  // rail from a caption rail.
   const measured = {};
   for (const tag of ["en", "pt-BR"]) {
+    // The width comes FIRST, and on the second pass that matters: the loop's
+    // last act is to shrink to 390, where the rail is not painted, so a
+    // `waitForSelector` (which waits for visibility) would hang waiting for a
+    // tile this rung deliberately withholds.
+    await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`/editor.html?lang=${tag}`);
     await page.waitForSelector("#railOutline");
-    // Wide first: this is what proves the caption is a NARROW-window decision and
-    // not a caption somebody deleted. The rail carries its words at 1280.
-    await page.setViewportSize({ width: 1280, height: 900 });
+
+    // (1) Wide: the rail carries its words. This is what proves the shed is a
+    // decision about space rather than a caption somebody deleted.
     const wide = await railMetrics(page);
     expect(wide.tiles.every((tile) => tile.captionShown)).toBe(true);
 
-    await page.setViewportSize({ width: 390, height: 844 });
-    const narrow = await railMetrics(page);
-    measured[tag] = narrow;
+    // (2) The rung where the rail is painted and its space is contested: the
+    // review column in the margin, which is the surviving caption-shed rule
+    // (`:root:has(#viewport.has-review-sidebar:not(.review-sheet))`). 860 is a
+    // tablet in landscape — wide enough that the column stays a margin rather
+    // than becoming a sheet, narrow enough that 111px of Portuguese comes
+    // straight off the page.
+    await page.setViewportSize({ width: 860, height: 900 });
+    await page.locator("#railReview").click();
+    await expect(page.locator("#reviewSidebar")).toBeVisible();
+    const contested = await railMetrics(page);
+    measured[tag] = contested;
 
-    for (const tile of narrow.tiles) {
+    for (const tile of contested.tiles) {
+      expect(tile.captionShown, `${tag} ${tile.id} caption`).toBe(false);
       // The glyph carries the meaning on screen; the NAME has to survive, or
       // dropping the caption would silence the control for a screen reader.
-      expect(tile.captionShown, `${tag} ${tile.id} caption`).toBe(false);
       expect(tile.name.trim(), `${tag} ${tile.id} accessible name`).not.toBe("");
       expect(tile.localised, `${tag} ${tile.id} name goes through the seam`).toBe(true);
-      // Still a touch target. The owner has said mobile is supported, and a
-      // 24px floor is the UI floor this repository holds every control to.
+      // Still a touch target: 24px is the floor every control in this shell is
+      // held to (WCAG 2.5.8 Target Size (Minimum), Level AA).
       expect(tile.width, `${tag} ${tile.id} width`).toBeGreaterThanOrEqual(24);
       expect(tile.height, `${tag} ${tile.id} height`).toBeGreaterThanOrEqual(24);
     }
-    // THE GUARANTEE: the document gets the window. This used to be written as
-    // "the rail is at most a sixth of the screen", which was the same statement
-    // while the rail was a column beside the page — 52px of 390 (13%), against
-    // a pre-fix pt-BR 111px (28%). The phone tier turns the rail into a strip
-    // above the document (docs/148 §5.2), where it is as wide as the window and
-    // costs the page nothing, so the old form would fail a change that gave the
-    // document MORE room than the bound it was policing. Stated about the
-    // document, it holds under either axis and still catches a rail made of
-    // words: at 390 the measured document width is 326 with a column and 390
-    // with a strip, against a floor of 325.
+
+    // (3) And the phone, where the rail is not painted at all. The guarantee is
+    // stated about the DOCUMENT, so it holds under either answer and still
+    // catches a rail made of words: the previous version measured 326 of 390
+    // with a column and 390 with a strip against a floor of 325, and a withheld
+    // rail can only improve on that.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const phone = await railMetrics(page);
+    expect(phone.railPainted, `${tag}: the phone rung withholds the rail`).toBe(false);
     expect(
-      narrow.documentWidth,
+      phone.documentWidth,
       `${tag}: the rail must leave the document at least five sixths of the window`,
-    ).toBeGreaterThanOrEqual(Math.round((narrow.viewport * 5) / 6));
+    ).toBeGreaterThanOrEqual(Math.round((phone.viewport * 5) / 6));
+    // Nothing became unreachable by becoming unpainted: each destination has a
+    // menu row, carrying a name, in the language under test.
+    for (const [menu, command] of [
+      ["view", "view.outline"],
+      ["view", "view.pages"],
+      ["review", "review.toggle"],
+      ["file", "file.versionHistory"],
+    ]) {
+      const row = await menuCommandRow(page, menu, command);
+      expect((await row.innerText()).trim(), `${tag}: ${command} is named`).not.toBe("");
+      await page.keyboard.press("Escape");
+    }
   }
+
   // The point of the fix, stated as the guarantee rather than as a number: a
-  // narrow rail is the same size whatever language it is in, because it has
+  // contested rail is the same size whatever language it is in, because it has
   // stopped being made of words. Measured as the SUM OF THE TILES rather than
-  // as the rail's box, for the same reason as above — a full-width strip is
-  // 390px in every language whether or not it carries captions, so the rail's
-  // own width could no longer tell the two apart.
+  // as the rail's box — a full-width strip is 390px in every language whether
+  // or not it carries captions, so the rail's own width cannot tell them apart.
   expect(measured["pt-BR"].tileWidthTotal).toBe(measured.en.tileWidthTotal);
   // And it really did cost something at a desktop width — otherwise this whole
   // test would be asserting that a caption nobody has is still missing.

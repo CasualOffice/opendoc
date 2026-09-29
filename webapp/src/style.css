@@ -142,6 +142,11 @@
   --z-review-popover: 66;
   --z-review-card: 67;
   --z-palette: 90;
+  /* The touch loupe. Above the floating selection bar and the link chip, which
+     it is meant to be read over, and below the modal layer: a dialog is the
+     only thing in front of the document and the magnifier is not an exception
+     to that (`105` UX-018). */
+  --z-magnifier: 95;
   --z-modal: 100;
   /* Above the modal, for the same reason the tooltip below is: the toast is a
      `pointer-events: none` card that never receives input, so it cannot let a
@@ -1812,7 +1817,16 @@ body.modal-open {
   color: var(--primary-ink);
 }
 
-.dialog-button-primary:hover {
+/* `:not(:disabled)` is load-bearing, not symmetry with the rule above.
+   Without it this selector is (0,2,0) and `.dialog-button:hover:not(:disabled)`
+   is (0,3,0), so the GENERIC hover won on a primary button and repainted it
+   `--bg-2` while leaving the white primary text in place: measured
+   rgb(251,250,248) on rgb(244,246,251), about 1.03:1, in every dialog in the
+   product. It was invisible to the contrast sweep because the sweep reads
+   resting state, and invisible to every behavioural test because the button
+   still worked — it was found by hovering one and looking. `docs/63`'s AA floor
+   is 4.5:1 for text. */
+.dialog-button-primary:hover:not(:disabled) {
   border-color: var(--primary-bg-hover);
   background: var(--primary-bg-hover);
 }
@@ -7260,6 +7274,64 @@ body.is-format-painting .page-wrap * {
   cursor: col-resize;
 }
 
+/* Touch SELECTION handles and the loupe (`105` UX-018, `148` §9 item 2).
+
+   Draw small, hit big — the fifth surface in this file to make that separation
+   and the same one ONLYOFFICE make (`MOBILE_SELECT_TRACK_ROUND = 14` drawn
+   inside a `TrackTargetEps = 20` reach). The BOX is the target and carries
+   `touch-action: none`, because the browser latches its pan decision from the
+   hit element at touch-start and nothing a handler does afterwards can take it
+   back — the same trap the object move pad records. The DOT is a 14px circle
+   drawn by `::after`, ringed in the paper colour so it reads at 3:1 against
+   both the page and dark text (WCAG 1.4.11) in either theme.
+
+   Nothing here is direction-aware: `touch_selection.mjs` orders the two
+   endpoints by DOCUMENT position and places each handle on its caret rect, so
+   in a right-to-left paragraph the start handle is on the right, where it
+   belongs, without a rule in this file knowing about it. */
+.overlay .touch-handle {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+
+.overlay .touch-handle::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* The loupe. Fixed to the window rather than to a page, because staying inside
+   the WINDOW is its whole placement rule (`magnifierPlacement` flips it below
+   the finger at the top of the screen rather than letting it paint off-window).
+   `pointer-events: none` so it never eats the drag it is describing. */
+.touch-magnifier {
+  position: fixed;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: var(--z-magnifier);
+  pointer-events: none;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.touch-magnifier > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 /* The table GUTTER (docs/141 D-2): the row and column grab zones, the highlight
    on the table's own leading border, and the `+` insert disc on a boundary.
 
@@ -8828,30 +8900,55 @@ body.phone-mode .app-menu-button {
   padding-inline: 9px;
 }
 
-/* ---- The work area: the rail turns its axis ---------------------------- */
+/* ---- The work area ----------------------------------------------------- */
 
 body.phone-mode .workarea {
   flex-direction: column;
   min-width: 0;
 }
 
-body.phone-mode .rail {
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--line);
-  border-right: 0;
+/* ---- The rail and the ruler are not painted (docs/148 §5.3a) ------------ */
+
+/* The first version of this rung turned the rail's AXIS — a 40px column became
+   a horizontal strip — rather than withholding it, and kept the ruler, and said
+   why: `#railPages` was `#pagesPanel`'s only surface and `ruler.mjs` held the
+   only calls to `setTabStop`, so hiding either would have made a capability
+   unreachable at 390px that is reachable at 1280px. Google Docs, Word mobile
+   and ONLYOFFICE mobile all ship neither, and §5.3 was arguing against all
+   three references on that one point.
+
+   `view.pages` and `layout.tabStops` now exist, so the argument is paid off and
+   the phone spends the height on the document: ~44px of strip and ~24px of
+   ruler. Against 844px that is 8%; against what is LEFT once a soft keyboard
+   has taken ~300px it is ~18%, which is the number a reader feels.
+
+   `display: none` on the NAV only. `#outlinePanel`, `#pagesPanel`,
+   `#reviewSidebar` and the version panel are siblings of `.rail`, not children,
+   and they stay: this withholds the rail's TILES, not its destinations, which
+   open as bottom sheets from the View and Review menus. That distinction is
+   the whole reason this is safe, and it is also why it is NOT the same as
+   `body.chrome-no-rail` — a host withholding the `rail` REGION withholds the
+   panels with it, and `main.js` correspondingly withholds `view.outline` and
+   `view.pages` in that case. `phone_chrome.test.mjs` fails if either command id
+   disappears from the taxonomy while these rules stand. */
+body.phone-mode .rail,
+body.phone-mode .ruler {
+  display: none;
 }
 
-/* Four icon-only tiles (the captions went at 620px, above). A tile is free to
-   be wider; it may not be narrower than the target floor. */
-body.phone-mode .rail-btn {
-  min-width: 24px;
-  min-height: 24px;
-  height: 36px;
-  flex: 0 0 auto;
+/* The zoom READOUT, for a third variant of the same argument. `#zoom` is a text
+   field that lives in the status bar and is adopted into the compact bar; at
+   320px the bar has no room for it and the status bar reported scrollWidth 344
+   against clientWidth 320 with it left behind — the one kind of overflow this
+   rung forbids. At 390px it fitted, and cost the bar its inline B/I/U, which is
+   a worse trade: three one-tap toggles for a percentage nobody types on a
+   phone. Neither reference shows one (Docs and ONLYOFFICE mobile both zoom by
+   pinch, and pinch is deliberately not suppressed here — §5.5), and zoom stays
+   reachable from the two steppers beside it, from View ▸ Zoom and from the
+   palette. Hidden rather than removed, so `one-axis-navigation.spec.mjs`'s
+   `view.zoom.` value-family exemption still finds its one element. */
+body.phone-mode #zoom {
+  display: none;
 }
 
 /* ---- The command surface docks to the bottom --------------------------- */
@@ -8873,6 +8970,18 @@ body.phone-mode .compact-toolbar {
   padding-inline: calc(8px + env(safe-area-inset-left, 0px)) calc(8px + env(safe-area-inset-right, 0px));
   border-top: 1px solid var(--line);
   border-radius: 0;
+}
+
+/* The bar's own buttons. The `(pointer: coarse)` block further down raises
+   FLOATING controls to 44/48 (Apple HIG / Material); this is the dense-band
+   floor — the same 24 the menu bar carries and the same number
+   `phone_chrome.mjs` exports as `MIN_TOUCH_TARGET_PX` (WCAG 2.5.8 Target Size
+   (Minimum), Level AA). Stated explicitly because this bar is now the phone's
+   primary command surface and the rail that used to carry this rung's only
+   other explicit floor is no longer painted. */
+body.phone-mode .compact-toolbar .ctool {
+  min-width: 24px;
+  min-height: 24px;
 }
 
 /* Both bottom bars leave the flow, so the document has to be told not to end
@@ -8904,6 +9013,69 @@ body.phone-mode .footer {
    rung. The guard added with the fix measures the overlap instead. */
 body.phone-mode .toast {
   bottom: calc(var(--phone-bottom-chrome) + var(--space-3));
+}
+
+/* ...and the same arbitration one layer further out, for a sheet.
+   `docs/148` §9 item 8: the toast still painted over an OPEN bottom sheet,
+   because `--z-toast` is above `--z-modal` deliberately and a sheet occupies
+   the same bottom-start corner. It was recorded rather than fixed, with a
+   reason: "reserving a band above whatever sheet is open needs the sheet's
+   height, which is content-dependent".
+
+   That reason is sound and it is an argument against ONE answer, not against
+   all of them. A sheet's height cannot be known in CSS; where the sheet is NOT
+   is entirely knowable — it is the top of the screen. So while a sheet is open
+   the toast moves to the top, under the header, which is a placement Material
+   already specifies for a snackbar and which cannot overlap whatever the sheet
+   turns out to be. The rule needs no measurement, no JS and no z-index
+   argument, which is the same way `109` HF-233 was settled: arbitrate by
+   position, not by stacking order.
+
+   `:has()` on `body` rather than a class toggled in script, because every one
+   of these surfaces is opened by a different owner — `popover_manager.mjs` for
+   the menus, `modal.mjs` for the dialogs, `main.js` for the panels — and a
+   class would be a fourth thing each of them had to remember. The selector is
+   true by construction instead.
+
+   The dialog overlay is in the list because at this rung a dialog IS a bottom
+   sheet (see `.dialog-overlay` above), so it has exactly the same collision. */
+/* The list is exactly the surfaces capped at `max-height: 60vh`, and that bound
+   is what makes the rule safe rather than a preference: 60vh of 844 leaves the
+   sheet's top edge at ~266px, and a toast under a two-row header sits at
+   ~105-141. The other two candidates are deliberately NOT here, and both were
+   tried and measured:
+
+     `.side-panel`  — at this rung `.version-panel` is a top-anchored DRAWER,
+                      not a bottom sheet: measured 123→587 at 390px. There is no
+                      band above it, and moving the toast up put it across the
+                      drawer's head. That collision is already solved the other
+                      way — `109` HF-233 reserves `--h-toast-band` at the
+                      drawer's foot — and `editor-narrow-chrome.spec.mjs`
+                      measures it.
+   A modal is in the list through `body.modal-open`, which `modal.mjs` already
+   sets, rather than through a `:has()` of its own. It was excluded on a first
+   pass on the theory that a dialog card capped at `max-height: 86vh` leaves
+   only ~118px above it — but that is the CAP and not the height, and the
+   screenshot settled it: the Tab stops sheet stands about 60% tall at 390px,
+   and the toast lay straight across its Set and Clear all buttons. Even at the
+   cap the top placement is the better of the two collisions, because it lands
+   on the card's HEAD rather than on its pinned actions, and `109` HF-233's rule
+   is that the pinned action stays readable. */
+body.phone-mode.modal-open .toast,
+body.phone-mode:has(.app-menu-popover:not([hidden])) .toast,
+body.phone-mode:has(.compact-command-menu:not([hidden])) .toast,
+body.phone-mode:has(.compact-align-menu:not([hidden])) .toast,
+body.phone-mode:has(.compact-overflow-menu:not([hidden])) .toast {
+  /* `--phone-header-height` and NOT `--h-header`: the token says 63px and this
+     rung's header is two rows at 390px and three at 320px, because the menu bar
+     wraps rather than scrolling (§5.3) and how many rows that takes depends on
+     the locale. The first version of this rule used the token and the toast
+     landed across "Format Table References" — the same defect one row up, found
+     the same way, by looking. `phone_chrome.mjs` publishes the measured height
+     from a `ResizeObserver`; the fallback keeps the rule sane in a build where
+     nothing published it. */
+  top: calc(var(--phone-header-height, var(--h-header)) + var(--space-3) + env(safe-area-inset-top, 0px));
+  bottom: auto;
 }
 
 /* ---- Panels, dialogs and menus are bottom sheets ----------------------- */
@@ -8965,6 +9137,8 @@ body.phone-mode .cmd-palette {
    teaching that module about a breakpoint, which would put the rung in a third
    place. */
 body.phone-mode .app-menu-popover,
+body.phone-mode .compact-command-menu,
+body.phone-mode .compact-align-menu,
 body.phone-mode .compact-overflow-menu {
   position: fixed !important;
   top: auto !important;

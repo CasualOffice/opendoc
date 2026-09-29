@@ -1398,7 +1398,9 @@ mechanism, not a new one.
   problem.** A 6.5in text column cannot be both 390px wide and readable; the answer is
   reflow, which both references ship (Google's Pageless, ONLYOFFICE's
   `api.ChangeReaderMode()`), and which is layout-engine work. `148` §6 and §9 carry it.
-  The chrome is guarded; the paper is declared.
+  The chrome is guarded; the paper is declared. **Superseded in part by ADR-045**,
+  which specifies that engine work precisely; the exception itself stands until it
+  is built.
 - Pinch-zoom is **not** suppressed, though ONLYOFFICE suppress it. They have a canvas-level
   pinch to put in its place and we do not (`105` UX-018), and removing magnification with
   nothing behind it is an accessibility failure rather than a decision.
@@ -1463,6 +1465,66 @@ commit.
 - `107` §3.1, §3.3, §8 Q1 and §8 Q4 are corrected in place. §8 Q4's guess that table geometry
   was "the most likely place TP1 fails" was half right: the index arithmetic converges and the
   *carried payload* does not.
+
+## ADR-046 — Reflow is a layout VIEW parameter, tiled, and the document stays editable in it
+
+**Status:** Accepted as a design, **not implemented**, 2026-09-30. Specified in
+`151-REFLOW-PAGELESS-LAYOUT-DESIGN.md`. Completes the consequence ADR-044 left open.
+
+**Decision.** A pageless/reflow view is a **`LayoutView` parameter threaded to the one
+place layout geometry is decided**, not a second layout path and not a document edit:
+
+- `LayoutView::{Paged, Reflow { content_width, tile_height, gutter }}` enters
+  `casual-doc-layout`'s driver beside `ReviewView`, defaulting to `Paged`, so every
+  existing caller is byte-for-byte unchanged and `geometry_snapshot.golden` does not
+  move. Under `Reflow` the driver synthesises a `PageConfig` from the caller's width
+  instead of from `SectionBoundary`, forces `ColumnLayout::single`, suspends the
+  page-shaped *constraints* (`page_break_before`, `keep_next`, `keep_lines`,
+  widow/orphan, section parity) and suppresses the page-shaped *furniture* (headers,
+  footers, borders, watermarks, line numbers).
+- **The paginator still runs**, cutting the galley into fixed-height **tiles**. It has
+  to: `compose_page` rasterises one `Page` into one `Surface`, and a browser canvas
+  maxes out near 32,767px, so "one tall page" works on a fixture and fails on a real
+  document. Tiles keep `renderPage`, `hitTest`, the caret, every overlay and the whole
+  windowed path working with no change — which is *why* the document stays editable.
+- **It is a view, never an edit.** No `Operation`, no revision bump, nothing on the
+  export path. `setPageSetup` would produce the same visual result today and must not
+  be used: it would persist a 390px-wide "page" into the user's DOCX, which is the
+  silent-data-loss class the engineering priority order forbids outright.
+- **It is a per-viewer preference**, stored beside the theme, defaulting on below the
+  phone rung. Google made Pageless a *file* setting; we do not, because one person's
+  phone must not reformat another person's monitor.
+
+**Why this shape.** The flow engine is **already width-parametric end to end** —
+`flow::build_galley(document, shaper, content_width)` and its eleven siblings take the
+width as an explicit argument, and justification, indents, tab stops, auto-width
+tables, text boxes and float wrap all resolve against whatever width they are handed.
+That is the "uniform flow pipeline" invariant this repository has been holding on
+purpose, and reflow is the first thing to collect on it. What is missing is only where
+the width comes from. Both references converge on the same mechanism — ONLYOFFICE's
+`CDocumentReadView` is forty lines of overrides substituting a synthetic `SectPr`
+(`word/Editor/Layout/ReadView.js`) — so a second paginator would be inventing a
+parallel path the prior art does not have.
+
+**Where we differ from ONLYOFFICE, deliberately:** their reader mode sets
+`SelectEnabled = false` and is **not editable**. A phone browser is our whole mobile
+story, so a reading mode you must leave in order to type is not an answer.
+
+**Consequences.**
+
+- Entering or leaving reflow is O(document) — a full re-shape, because the galley
+  cache is width-scoped. It is a *mode change*, not an interaction: it goes through
+  the background/progress path, is cancellable, and is never driven straight off a
+  resize event. Resize must be quantised and debounced, or it is an O(document) pass
+  per animation frame on the slowest device we support.
+- A `PAGE` field and the page counter resolve against **tiles**, which are not pages.
+  The shell shows neither in reflow rather than printing a number that is wrong.
+- Print and PDF export force `Paged` unconditionally.
+- A table too wide for the reflow width keeps a horizontal scroller **of its own** —
+  Google's arbitration. That is the one horizontal scroll that survives, and it tells
+  the reader something true about a table rather than something false about the page.
+- **Open:** page- and margin-anchored drawings have no referent in reflow. Word keeps
+  them and lets them overlap, Docs inlines them. Undecided; `149` §8 records it.
 
 ## Pending ADRs
 

@@ -29,9 +29,19 @@
 // Pure DOM plus an injected engine handle: no module-level state, so a second
 // instance (a second editor on a page) does not share a scale with the first.
 
-/** The four tab-stop types, in Word's cycle order, as the engine codes them:
- *  0 left, 1 centre, 2 right, 3 decimal. */
-const TAB_LETTER = ["L", "C", "R", "."];
+/** The tab-stop types, in Word's cycle order, as the engine codes them:
+ *  0 left, 1 centre, 2 right, 3 decimal, 4 bar.
+ *
+ *  **Bar was added here when tab stops gained a second surface.** Until then no
+ *  control in the product could produce a code-4 stop, so a bar could only
+ *  arrive from an imported document, and this array's `?? "L"` fallback drew it
+ *  as a LEFT stop — a ruler saying something false about the paragraph, quietly.
+ *  `layout.tabStops`' dialog can place one (`flow.rs`/`tabs.rs` have drawn them
+ *  all along), so the ruler has to be able to say so, and the corner's cycle
+ *  has to be able to reach it: `% TAB_LETTER.length` is what makes both true
+ *  from one edit. Word's own bar marker is a vertical rule, which is what "|"
+ *  is standing in for. */
+const TAB_LETTER = ["L", "C", "R", ".", "|"];
 
 /**
  * Builds a ruler bound to one document view.

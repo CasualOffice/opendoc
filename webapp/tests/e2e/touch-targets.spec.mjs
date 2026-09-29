@@ -12,6 +12,7 @@ import {
   gotoEditor,
   MOD,
   openCommandPalette,
+  menuCommandRow,
   openAppMenu,
 } from "./fixtures.mjs";
 
@@ -97,8 +98,12 @@ test.describe("with a coarse pointer", () => {
     expect((await stableBox(cmdRow)).height).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);
     await page.keyboard.press("Escape");
 
-    // The comment column's icon buttons, which float over the page.
-    await page.locator("#railReview").click();
+    // The comment column's icon buttons, which float over the page. Opened from
+    // the Review MENU rather than from the rail: this rung withholds the rail
+    // now that every destination it carried has a command home (docs/148
+    // §5.3a), and the sheet — which is what this test is actually about — is
+    // unchanged by which door was used.
+    await (await menuCommandRow(page, "review", "review.toggle")).click();
     const navButton = page.locator("#reviewNext");
     await expect(navButton).toBeVisible();
     const nav = await stableBox(navButton);

@@ -19,7 +19,7 @@ import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
-import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
+import { createPagesPanel } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
 import { createSpacingMenu } from "./spacing_menu.mjs";
 import { createTocNavigator } from "./toc_navigation.mjs";
@@ -124,6 +124,7 @@ import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_ma
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, openingZoomMode } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
+import { createTouchSelection } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
@@ -213,6 +214,7 @@ import { createTableGutter } from "./table_gutter.mjs";
 import { createTableRange } from "./table_range.mjs";
 import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
+import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
 import { stampRibbonFaces } from "./ribbon_faces.mjs";
 import { bindTableBand, tableBandStates, tableContextLabel } from "./table_band.mjs";
@@ -1444,7 +1446,15 @@ const REVIEW_WINDOW_OVERSCAN = 800;
 // The responsive ladder — both rungs, the `phone-mode` class and the soft
 // keyboard's inset — is `phone_chrome.mjs` (docs/148). Crossing a rung swaps
 // the layout SHAPE, so it needs a re-render, not a repaint.
-const phoneChrome = createPhoneChrome({ view: window, body: document.body, root: document.documentElement });
+const phoneChrome = createPhoneChrome({
+  view: window,
+  body: document.body,
+  root: document.documentElement,
+  // The header's real height, which `--h-header: 63px` is not at this rung: the
+  // phone's menu bar wraps, so the header is two rows at 390px and three at
+  // 320px, and a German menu bar wraps where an English one does not.
+  header: document.querySelector("header.bar"),
+});
 /** True while the review surface should render as a bottom sheet (HF-088). */
 const reviewSheetMode = () => phoneChrome.reviewSheet();
 phoneChrome.onReviewSheetChange(() => scheduleReviewMarginRender());
@@ -2963,7 +2973,7 @@ function updatePageNumber() {
   }
   const total = pageTotalLabel(pages.length, doc.estimatedPageCount, doc.pageCountIsExact);
   statPages.textContent = pageIndicator(cur, total);
-  reflectPagesSelection(cur);
+  pagesPanelView.reflect(cur);
 }
 
 async function boot() {
@@ -3461,7 +3471,6 @@ let bandTopInScroller = 0;
 /** The materialized page range, inclusive; `last < first` means none. The
  *  Pages navigator keeps its own, because it windows separately. */
 let pageWindow = { first: 0, last: -1 };
-let pagesPanelRange = { start: 0, end: -1 };
 
 function ensurePageObserver() {
   if (pageObserver) return pageObserver;
@@ -3604,7 +3613,7 @@ function updatePageWindow({ force = false } = {}) {
     spellChecker.noteWindowChanged();
     paintOverlayLayer();
     if (runningEditBand) drawRunningBands(runningEditBand);
-    syncPagesPanelToViewport();
+    pagesPanelView.sync();
   }
 }
 
@@ -3751,7 +3760,7 @@ async function renderAll() {
     // leave an unchecked document looking like a clean one.
     if (statusEl.textContent === renderingStatus) setStatus(spellChecker.statusNote());
     updateStats();
-    if (!pagesPanel.hidden) buildPages();
+    pagesPanelView.build();
   }
 }
 
@@ -4170,6 +4179,7 @@ function paintOverlayLayer() {
     paintSelection(selection);
     tableChrome.paintCaretColumnHandles(pages, cellRect);
     tableChrome.paintTouchPills(pages);
+    touchSelection.paint(pages); // the finger's handles, same layer, same reason
   }
   // Outside the `selection` branch: a strip is armed by the POINTER, and being
   // over a table is not a reason to require a caret.
@@ -6029,6 +6039,27 @@ function activateLink(link) {
   return true;
 }
 
+/** Touch selection — the long press, the two handles, the loupe and the caret
+ *  drag (`105` UX-018, `148` §9 item 2). Every tunable and the whole gesture
+ *  live in the module; this is all the shell owes it. */
+const touchSelection = createTouchSelection({
+  view: window,
+  surface: pagesEl,
+  mount: document.body,
+  makeEl: (tag) => document.createElement(tag),
+  enabled: () => !!doc && chromeShows("caret"),
+  pageAt: (x, y) => pageFromClientPoint(x, y),
+  scaleOf,
+  anchorAt,
+  caretRect: (at) => doc.caretRect(at.node, at.offset),
+  wordAt: (node, offset) => doc.wordAt(node, offset),
+  selection: () => selection,
+  setSelection: (next) => void (selection = next),
+  draw: drawSelection,
+  focus: focusEditorSurface,
+  cancelGesture: resetPointerGesture,
+});
+
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
   // No caret region: a press neither places an insertion point nor starts a
@@ -6426,21 +6457,6 @@ function onPointerUp(event) {
   }
 }
 
-/** Double-click selects the word under the pointer. */
-function selectWord(page, event) {
-  const a = anchorAt(page, event);
-  if (!a) return;
-  focusEditorSurface();
-  const bounds = doc.wordAt(a.node, a.offset); // [start, end] or []
-  if (bounds.length === 2) {
-    selection = {
-      anchor: { node: a.node, offset: bounds[0] },
-      focus: { node: a.node, offset: bounds[1] },
-    };
-    drawSelection();
-  }
-}
-
 function selectionText() {
   if (!selection) return;
   const { anchor, focus } = selection;
@@ -6710,7 +6726,7 @@ pagesEl.addEventListener("dblclick", (e) => {
     void editRunningContent(bandAtPoint, page);
     return;
   }
-  selectWord(page, e);
+  touchSelection.selectWord(page, e); // the SAME routine the long press uses
 });
 // Triple-click selects the paragraph (the click's `detail` is the click count).
 pagesEl.addEventListener("click", (e) => {
@@ -6727,36 +6743,22 @@ pagesEl.addEventListener("click", (e) => {
   drawSelection();
 });
 window.addEventListener("pointerup", onPointerUp);
-window.addEventListener("pointercancel", () => {
+/** Every pointer gesture the document owns, dropped. The four events below mean
+ *  one thing — the pointer is gone and nothing will finish it — and were four
+ *  copies of one list, so the touch machine would have been added to three of
+ *  them and forgotten in the fourth. One list, named once. */
+function abortPointerGestures() {
   cancelObjectMove();
   cancelObjectResize();
   tableChrome.cancelDrag();
   tableGutter.cancelDrag();
+  touchSelection.cancel();
   resetPointerGesture();
-});
-window.addEventListener("lostpointercapture", () => {
-  cancelObjectMove();
-  cancelObjectResize();
-  tableChrome.cancelDrag();
-  tableGutter.cancelDrag();
-  resetPointerGesture();
-});
-window.addEventListener("blur", () => {
-  cancelObjectMove();
-  cancelObjectResize();
-  tableChrome.cancelDrag();
-  tableGutter.cancelDrag();
-  resetPointerGesture();
-});
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    cancelObjectMove();
-    cancelObjectResize();
-    tableChrome.cancelDrag();
-    tableGutter.cancelDrag();
-    resetPointerGesture();
-  }
-});
+}
+window.addEventListener("pointercancel", abortPointerGestures);
+window.addEventListener("lostpointercapture", abortPointerGestures);
+window.addEventListener("blur", abortPointerGestures);
+document.addEventListener("visibilitychange", () => document.hidden && abortPointerGestures());
 
 linkChip.addEventListener("mousedown", (event) => {
   // Keep the model selection visible while the host control receives the click.
@@ -7762,6 +7764,24 @@ const rulerView = createRuler({
     right: "Right indent",
     tabGlyph: "Tab stop — click to change type, drag to move, drag off to remove",
   },
+});
+
+/** The ruler's second surface. `setTabStop`, `moveTabStop` and `removeTabStop`
+ *  had exactly two call sites in the product, both inside `ruler.mjs`, so tab
+ *  stops were a one-surface capability at every width (`docs/105` UX-004) — the
+ *  phone rung is only where that became visible, because a ruler showing 0-3in
+ *  of an 8.5in page is 24px of a 844px screen spent on a control nobody drags
+ *  with a finger. Word has had this dialog for thirty years; `docs/148` §9
+ *  item 7 is the row that asked for it. */
+const tabStopsDialog = createTabStopsDialog({
+  getDoc: () => doc,
+  getSelection: () => selection,
+  runToolbarEdit,
+  registerModal,
+  setStatus,
+  fallbackFocus: () => pagesEl,
+  twipsPerInch: TWIPS_PER_INCH,
+  formatInches: twipsToDialogInches,
 });
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
@@ -9430,7 +9450,7 @@ function disarmFormatPainter(reason) {
 async function paintFormatFromGesture(gesture, event) {
   if (!hasRange()) {
     const page = gesture?.page || pageFromClientPoint(event.clientX, event.clientY);
-    if (page) selectWord(page, event);
+    if (page) touchSelection.selectWord(page, event);
   }
   const painted = hasRange() ? await applyPaintedFormat() : false;
   if (!formatPainter?.sticky) disarmFormatPainter();
@@ -11058,78 +11078,30 @@ function toggleOutline() {
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
 
-/** The page the navigator marks as current: the caret's, falling back to the
- *  one being read. It is NOT what the panel centres on — a reader who has
- *  scrolled 6,000 pages away from their caret wants to see where they are. */
-function pagesPanelFocusPage() {
-  if (selection) {
-    const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
-    if (flat.length) return flat[0];
-  }
-  return pageInView()?.pageNumber ?? 1;
-}
-
-/** Rebuilds the Pages navigator around one page — by default the one being
- *  read. The panel shows a WINDOW of thumbnails (`pages_panel.mjs`), because a
- *  card per page is a `renderPage` per page. */
-function buildPages(centre = null) {
-  if (!doc || pagesPanel.hidden) return;
-  const focus = pagesPanelFocusPage();
-  pagesPanelRange = renderPagesPanel({
-    doc,
-    pages,
-    current: centre ?? pageInView()?.pageNumber ?? focus,
-    body: pagesBody,
-    onJump: (n) => goToPage(n),
-  });
-  reflectPagesSelection(focus);
-}
-
-/** Follow the reader: when the viewport leaves the range of pages the panel is
- *  showing, rebuild it around where they now are. Scrolling inside the shown
- *  range costs nothing. */
-function syncPagesPanelToViewport() {
-  if (pagesPanel.hidden || !doc) return;
-  const visible = pageInView()?.pageNumber ?? 1;
-  if (visible < pagesPanelRange.start || visible > pagesPanelRange.end) buildPages(visible);
-}
-
-/** Scrolls page `n` into view using the single scroll owner, then highlights it. */
-function goToPage(n) {
-  const page = pages[n - 1];
-  if (!page || !pageBandModel) return;
-  // From the band's geometry, not from the sheet's rect: the page being jumped
-  // to is usually the one page in the document that has no sheet yet.
-  const viewportHeight = viewportEl.clientHeight;
-  const docY = Math.max(0, pageBandModel.tops[n - 1] - 16);
-  const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, docY);
-  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
-  updatePageWindow();
-  paintPagesInView();
-  reflectPagesSelection(n);
-}
-
-/** Keeps the Pages navigator's active card synchronized with the caret's page. */
-function reflectPagesSelection(pageNumber) {
-  if (pagesPanel.hidden) return;
-  reflectPagesPanelSelection(pagesBody, pageNumber);
-}
-
-function togglePages() {
-  pagesPanel.hidden = !pagesPanel.hidden;
-  // Pages, Outline (left) and the review sidebar (right) are mutually exclusive
-  // so the canvas is never squeezed from both sides at once.
-  if (!pagesPanel.hidden) {
+/** The Pages navigator. Its behaviour lives in `pages_panel.mjs` (HF-085): six
+ *  closures in this file were the only description of what `view.pages` does. */
+const pagesPanelView = createPagesPanel({
+  panel: pagesPanel,
+  body: pagesBody,
+  railButton: railPages,
+  closeButton: pagesClose,
+  viewport: viewportEl,
+  getDoc: () => doc,
+  getSelection: () => selection,
+  getPages: () => pages,
+  getBandModel: () => pageBandModel,
+  pageInView,
+  bandTop: () => bandTopInScroller,
+  onExclusive: () => {
     outlinePanel.hidden = true;
     railOutline.setAttribute("aria-pressed", "false");
     if (!reviewSidebar.hidden) toggleReview(false);
-  }
-  railPages.setAttribute("aria-pressed", String(!pagesPanel.hidden));
-  buildPages();
-}
-railPages.addEventListener("click", togglePages);
-pagesClose.addEventListener("click", togglePages);
+  },
+  onJumped: () => {
+    updatePageWindow();
+    paintPagesInView();
+  },
+});
 
 /**
  * Timestamp for a review action. Author/initials are no longer read here:
@@ -11952,8 +11924,20 @@ function editorCommands(context = { surface: "palette" }) {
     // The outline lives in the RAIL, so a container that withheld the rail is not
     // handed a command that opens it — the palette and the chord belong to no
     // region, the hole `history` closed the same way ("no panels and nothing").
+    // `view.pages` beside it, and gated the same way for the same reason. The
+    // two panels are the rail's, so a HOST that withheld the rail region has
+    // withheld the panels with it and must not be handed a command that opens
+    // one. A PHONE is a different question and the opposite answer: it stops
+    // painting the rail strip while keeping both panels, which is why this had
+    // to become a command rather than staying a tile (`docs/148` §5.3a). The
+    // label is the catalogue's existing `pagesPanel.pages`, so this adds no
+    // English literal to a file that is at an unrouted-string ceiling and no
+    // key to eighteen catalogues that already answer this one.
     ...(HOST_CHROME.editing.has("rail")
-      ? [{ id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() }]
+      ? [
+          { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
+          { id: "view.pages", label: t("pagesPanel.pages"), group: "View", kw: "pages panel thumbnails navigator go to page jump browse", run: () => pagesPanelView.toggle() },
+        ]
       : []),
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
@@ -11976,6 +11960,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => toggleSettings(true) },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => pageSetup.open(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
+    { id: "layout.tabStops", label: t("tabStops.command"), group: "Layout", kw: "tab tabs stop stops ruler decimal bar align position", enabled: !!selection && reviewMode !== "viewing", disabledReason: selection ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : t("paragraph.caretRequired"), run: () => tabStopsDialog.open() },
     // The Layout and References tabs' own rows, generated from the SAME tables
     // their buttons are built from, so a tab button and its palette row can
     // never disagree about whether the command is available or why it is not.
@@ -13697,8 +13682,13 @@ function positionSelToolbar() {
   const topBound = Math.max(8, viewport.top + 8);
   const bottomBound = Math.min(window.innerHeight - 8, viewport.bottom - 8);
   let x = (left + right) / 2 - tw / 2;
-  let y = top - th - 8;
-  if (y < topBound) y = bottom + 8; // no room above → drop below the selection
+  // …plus whatever the touch handles need. They hang above the selection's top
+  // and below its bottom, and this bar is a FIXED element over the page: eight
+  // pixels of gap put it through the middle of the start handle's dot and took
+  // every touch aimed at it (`touch_selection.mjs`'s `clearance`).
+  const gap = 8 + touchSelection.clearance();
+  let y = top - th - gap;
+  if (y < topBound) y = bottom + gap; // no room above → drop below the selection
   if (y + th > bottomBound) {
     // A selection at the viewport bottom may have no full-height slot below it;
     // keep the bar visible and out of the browser chrome rather than allowing a
@@ -16281,6 +16271,11 @@ compactToolbarUi = createCompactToolbar({
   paraControls,
   formatToggleCache,
   localizeShortcut: (text) => localizeShortcutText(text, EDITOR_KEYBOARD_PLATFORM),
+  // Which roster the bar draws. A phone gets Docs' row over two named sheets
+  // (`PHONE_TOOLBAR`) instead of the desktop's thirteen groups over a fold whose
+  // membership changes with the window width — see `compact_toolbar.mjs`.
+  // Resolved at render time, not captured, so crossing the rung switches it.
+  isPhone: () => phoneChrome.isPhone(),
 });
 
 /** Switches chrome. Mutually exclusive by construction — `body` carries exactly
