@@ -112,16 +112,36 @@ export function keyboardInset({ innerHeight, visualHeight, offsetTop = 0 }) {
  * one place and testable without a browser — and so `docs/148` §5's table and
  * the code cannot drift, because the test compares them.
  *
- * `rail: true` is the entry that looks wrong and is not. The rail's Pages tile
- * is the ONLY surface `#pagesPanel` has — it carries no `data-command`, so it
- * is in no menu, no band and no palette row — and withholding the rail on a
- * phone would make a panel unreachable there while it is reachable everywhere
- * else. "Never a dead control" cuts both ways: a capability that exists at
- * 1280px and cannot be reached at 390px is the same defect seen from the other
- * side. What changes on a phone is the rail's AXIS, not its presence: it lays
- * out as a horizontal strip above the document instead of a column beside it,
- * so it costs height (which a phone has) rather than width (which it does
- * not). Giving Pages a command id is `docs/148` §9's first follow-up.
+ * ---- The rail and the ruler: an exemption that has now been paid off --------
+ *
+ * These two read `true` in the first version of this table and read `false`
+ * now, and the change is worth reading, because it is the entire argument for
+ * why the two command ids in `docs/148` §9 items 3 and 7 were worth building.
+ *
+ * `docs/148` §5.3 kept both AGAINST all three references — Google Docs, Word
+ * mobile and ONLYOFFICE mobile ship neither a rail nor a ruler on a phone — for
+ * one reason, stated there plainly: `#railPages` carried no `data-command`, and
+ * `setTabStop` had no call site outside `ruler.mjs`. Each was therefore the
+ * ONLY surface its capability had, and withholding it would have made the Pages
+ * panel and every tab-stop operation unreachable at 390px while both stayed
+ * reachable at 1280px. "Never a dead control" cuts both ways: a capability that
+ * exists on one device class and not on another is the same defect as a button
+ * that does nothing. So the rail survived on life support, and §5.3 said so and
+ * said the ruler's case was weaker still.
+ *
+ * `view.pages` and `layout.tabStops` now exist, each with a menu home and a
+ * palette row, so both regions are conveniences rather than life support and a
+ * phone can spend their height on the document instead. That is ~44px of rail
+ * strip and ~24px of ruler out of 844px — and the number that matters is not
+ * 8% of the window but 18% of what is left once a soft keyboard has taken
+ * ~300px of it.
+ *
+ * Note what did NOT change: neither region leaves the DOM, on a phone or
+ * anywhere else. The phone tier hides regions in CSS, which is what keeps
+ * `one-axis-navigation.spec.mjs`'s palette-orphan guard reading the same
+ * surfaces at every width (ADR-044: "surface parity survives by construction").
+ * A region that is `false` here is one a phone does not PAINT, not one the
+ * shell does not HAVE.
  */
 export function phoneRegions() {
   return Object.freeze({
@@ -130,9 +150,11 @@ export function phoneRegions() {
     ribbonTabs: false,
     chromeModeToggle: false,
     brandMark: false,
+    // Gone now that their capabilities have command homes — see above.
+    rail: false,
+    ruler: false,
     // Kept, restructured.
     menuBar: true,
-    rail: true,
     compactToolbar: true,
     statusBar: true,
   });

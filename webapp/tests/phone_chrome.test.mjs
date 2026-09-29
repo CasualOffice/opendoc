@@ -125,16 +125,37 @@ test("the phone withholds both navigation systems a phone has no width for", () 
   assert.equal(regions.chromeModeToggle, false);
 });
 
-test("the rail is kept, because its Pages tile is the only surface that panel has", () => {
-  // If Pages ever gains a command id this can change — but then the guard
-  // changes with it, deliberately, rather than a panel quietly becoming
-  // unreachable on one device class.
-  assert.equal(phoneRegions().rail, true);
-  assert.doesNotMatch(
-    read("command_taxonomy.mjs"),
+// The previous version of this test read "the rail is kept, because its Pages
+// tile is the only surface that panel has", asserted `rail === true`, and
+// watched `command_taxonomy.mjs` for the literal `view.pages` so that the
+// exemption could not rot. It fired. This is the other side of it, and it has to
+// assert the OPPOSITE implication or the exemption could come back for free:
+// a region is withheld on a phone only while every capability it carries has a
+// home somewhere else.
+test("a region a phone withholds has no capability that lives only there", () => {
+  const regions = phoneRegions();
+  const taxonomy = read("command_taxonomy.mjs");
+
+  // The rail. `#railPages` was the Pages panel's only surface; `view.pages` is
+  // the home that replaced it. Delete the id from the taxonomy and this goes
+  // red rather than a phone quietly losing a panel it has at 1280px.
+  assert.equal(regions.rail, false);
+  assert.match(
+    taxonomy,
     /["']view\.pages["']/,
-    "if Pages now has a command id, the rail no longer has to survive the phone rung " +
-      "— revisit phoneRegions() rather than deleting this assertion",
+    "the phone withholds the rail, so #pagesPanel needs a menu home — restore " +
+      "`view.pages` to APP_MENU_SECTIONS.view, or set rail:true again (docs/148 §5.3)",
+  );
+
+  // The ruler. `ruler.mjs` holds the only calls to `setTabStop`/`moveTabStop`/
+  // `removeTabStop` in the product, so hiding it takes tab stops off a phone
+  // unless the dialog behind `layout.tabStops` exists.
+  assert.equal(regions.ruler, false);
+  assert.match(
+    taxonomy,
+    /["']layout\.tabStops["']/,
+    "the phone withholds the ruler, so tab stops need a menu home — restore " +
+      "`layout.tabStops` to APP_MENU_SECTIONS.format, or set ruler:true again",
   );
 });
 

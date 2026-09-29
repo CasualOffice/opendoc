@@ -50,7 +50,57 @@ export default defineConfig({
     // measuring. Harmless to the other specs.
     launchOptions: { args: ["--enable-precise-memory-info", "--js-flags=--expose-gc"] },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Two device classes, because this shell has two (ADR-044) and one of them
+  // was being tested by hand.
+  //
+  // `docs/148` §9 item 5 records the state this replaces: the whole suite ran a
+  // single `Desktop Chrome` project, five specs set a narrow viewport by hand,
+  // and exactly ONE — `touch-targets.spec.mjs` — turned on touch emulation. So
+  // every phone assertion was really an assertion about a *narrow desktop
+  // window*: a fine pointer, a 1x backing store, no `isMobile`, and therefore no
+  // meta-viewport processing at all. The two things the phone tier is built on —
+  // `interactive-widget=resizes-content` and `viewport-fit=cover` — are meta
+  // viewport directives, and a project without `isMobile` does not parse them.
+  // Testing the phone rung in that project was testing the one thing it is not.
+  //
+  // The split is by FILENAME, and deliberately so rather than by `test.use`:
+  //
+  //   * `phone-*.spec.mjs` runs ONLY in the `phone` project, so a phone spec
+  //     cannot be written that silently runs as a desktop. `testIgnore` on
+  //     `chromium` is the other half — without it every phone spec would run
+  //     twice and the suite would pay for a device class it is not testing.
+  //   * everything else runs ONLY in `chromium`. `editor-narrow-chrome`,
+  //     `responsive-shell` and `narrow-review-column` stay there on purpose:
+  //     they test the 620px and 700px RUNGS, which a laptop reaches by being
+  //     narrowed, and a rung is not a device. `touch-targets.spec.mjs` also
+  //     stays, because its whole subject is that a coarse pointer can arrive at
+  //     any width — it opts into touch with `test.use` and says so.
+  //
+  // Pixel 7 rather than an iPhone: Playwright's iPhone descriptors carry
+  // `defaultBrowserType: "webkit"`, and this suite has no WebKit browser
+  // installed, so an iPhone project would be a project that never runs. Pixel 7
+  // is a Chromium descriptor at 412x915 with `isMobile`, `hasTouch` and a 2.625
+  // device scale factor — a real phone's pixel budget, which is also what makes
+  // the raster cost honest. Specs that care about an exact width still call
+  // `setViewportSize` (390 and 320 are both narrower than the descriptor), and
+  // that override keeps `isMobile` and `hasTouch`.
+  //
+  // What this still does NOT give us is a soft keyboard: Chromium's emulation
+  // has none, so `visualViewport` never shrinks and the keyboard-inset path
+  // remains reasoned rather than measured (`docs/148` §9 item 6). Naming that
+  // here so the project is not read as evidence it covers it.
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+      testIgnore: /phone-.*\.spec\.mjs$/,
+    },
+    {
+      name: "phone",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /phone-.*\.spec\.mjs$/,
+    },
+  ],
   webServer: {
     command: `python3 serve.py ${port}`,
     url: `${baseURL}/`,

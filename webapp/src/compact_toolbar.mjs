@@ -250,6 +250,147 @@ export const COMPACT_TOOLBAR = [
   },
 ];
 
+// ---- The phone roster: Aa and + (docs/148 §9 item 4) ------------------------
+//
+// `docs/148` §8.4 argued AGAINST splitting formatting and insertion into two
+// sheets, on the grounds that this bar's own `⋯` fold already IS Google's "Aa"
+// sheet — and §10 recorded that discovery honestly: at 390px the fold holds
+// zoom, font, size, B/I/U, colour, highlight, link, comment, image, alignment,
+// lists, indent and clear-formatting, "which is Google's Aa sheet, arrived at
+// without writing one."
+//
+// **That argument is wrong and this roster is why.** What the `⋯` fold holds is
+// whatever did not fit, so its contents are a function of the WIDTH: at 390px
+// the style picker is inline and at 320px it folds. A sheet whose membership
+// changes when the window changes is not a designed surface — you cannot tell
+// someone where a command lives, and the two phones in `PHONES` disagree about
+// it. It also arrives in fold order (right to left, pinned last), which is a
+// layout accident rather than a reading order. The competitive standard is a
+// sheet with a STABLE, NAMED roster:
+//
+//   * Google Docs' **Aa** opens a panel with a **Text** section (Style, Font,
+//     Size, Text colour, Highlight) and a separate **Paragraph** tab
+//     (alignment, line spacing, indentation) — support answer 1663349. Its
+//     **+** is the insert sheet.
+//   * ONLYOFFICE's **Edit** is a bottom Sheet on a phone and a Popover on
+//     anything wider (`apps/documenteditor/mobile/src/view/edit/Edit.jsx:278-302`),
+//     with a tab bar keyed to the SELECTED OBJECT TYPE — text, paragraph,
+//     image, shape, table, chart, header, TOC (`EditingPage.jsx:68-190`). Their
+//     **Add** is a full-screen Popup with the same tab-then-push shape
+//     (`src/view/add/Add.jsx:101-127`).
+//
+// So two references, one shape. What this roster does NOT copy is ONLYOFFICE's
+// second front end: the two sheets are `kind: "menu"` entries over
+// `APP_MENU_SECTIONS.format` and `APP_MENU_SECTIONS.insert` — the SAME
+// declarations the Format and Insert menus and the palette already render — so
+// there is no second roster to keep in step and no second answer to "where does
+// this command live". Google's Text/Paragraph tab split arrives as the existing
+// named BANDS (`menuGroup.font`, `menuGroup.alignment`, `menuGroup.paragraph`,
+// …), which are already `role="group"` with translated names, so a screen
+// reader gets more structure than a tab bar would give it, not less.
+//
+// The inline run is Docs': undo · redo · B · I · U · + · Aa · comment. Nothing
+// else is inline, because at 320px nothing else fits and a bar that folds
+// differently on two phones is the defect above.
+//
+// ONLYOFFICE's object-type tab keying is deliberately NOT here. The mechanism
+// exists — `contextual` already shows the Table group only inside a table, and
+// the object chip (`object_bar.mjs`) is this shell's answer for a selected
+// drawing — so an object-keyed sheet is a data change when it is wanted. It is
+// named rather than half-built.
+export const PHONE_TOOLBAR = [
+  {
+    // Every group name in THIS roster is a catalogue key, never an English
+    // literal. The desktop roster above carries raw English under a ceiling
+    // (`no_unrouted_strings.test.mjs`), and the way not to make that worse is
+    // not to add to it — these keys are already translated into all nineteen
+    // locales, because the menu bar and the taxonomy's bands use them.
+    group: "history",
+    labelKey: "menuGroup.undo",
+    pinned: true,
+    items: [
+      { id: "edit.undo", icon: "undo" },
+      { id: "edit.redo", icon: "redo" },
+    ],
+  },
+  {
+    group: "text",
+    labelKey: "menuGroup.font",
+    divider: true,
+    pinned: true,
+    items: [
+      { id: "format.bold", icon: "format_bold", toggle: true, fmt: "bold", needs: "run" },
+      { id: "format.italic", icon: "format_italic", toggle: true, fmt: "italic", needs: "run" },
+      { id: "format.underline", icon: "format_underlined", toggle: true, fmt: "underline", needs: "run" },
+    ],
+  },
+  {
+    // "+" before "Aa", which is Docs' order.
+    group: "insertSheet",
+    divider: true,
+    pinned: true,
+    labelKey: "appMenuBar.insert",
+    items: [
+      {
+        kind: "menu",
+        id: "compactInsert",
+        icon: "add",
+        labelKey: "appMenuBar.insert",
+        sections: APP_MENU_SECTIONS.insert,
+      },
+    ],
+  },
+  {
+    group: "formatSheet",
+    divider: true,
+    pinned: true,
+    labelKey: "appMenuBar.format",
+    items: [
+      {
+        kind: "menu",
+        id: "compactFormat",
+        // Material Symbols' own name for the "Aa" glyph, verified present in
+        // the SELF-HOSTED face (`assets/fonts/material-symbols-outlined.woff2`)
+        // rather than assumed — a missing ligature renders as its own name in
+        // text, which is worse than a wrong icon.
+        icon: "text_format",
+        labelKey: "appMenuBar.format",
+        // Style, Font, Size at the top, which is where Docs' Aa panel opens.
+        // See `adoptInto`: they are value pickers, not commands, and the ribbon
+        // that owns them is hidden in compact chrome, so a phone without this
+        // strip would have no font, no size and no paragraph style at all.
+        adopt: ["style", "font", "size"],
+        adoptLabelKey: "menuGroup.font",
+        sections: APP_MENU_SECTIONS.format,
+      },
+    ],
+  },
+  {
+    group: "comment",
+    labelKey: "menuGroup.comments",
+    divider: true,
+    items: [{ id: "review.comment", icon: "add_comment" }],
+  },
+  {
+    // Same contextual Table group the desktop bar carries, for the same reason:
+    // in compact chrome there is no ribbon, so the Table band has no other home.
+    group: "table",
+    labelKey: "appMenuBar.table",
+    contextual: true,
+    divider: true,
+    items: [
+      {
+        kind: "menu",
+        id: "compactTable",
+        icon: "grid_on",
+        labelKey: "appMenuBar.table",
+        sections: APP_MENU_SECTIONS.table,
+        labels: TABLE_MENU_LABELS,
+      },
+    ],
+  },
+];
+
 /** Which alignment key each align command applies, for the trigger's icon. */
 const ALIGN_KEY = {
   "paragraph.align.start": "start",
@@ -301,7 +442,19 @@ export function createCompactToolbar({
   // does not pass it working, unlocalised, rather than throwing.
   localizeShortcut = (text) => text,
   table = COMPACT_TOOLBAR,
+  // The phone's roster (see `PHONE_TOOLBAR`). Passed as a SECOND table rather
+  // than as a different `createCompactToolbar` call, because one bar with two
+  // rosters keeps one set of adopted controls, one overflow menu and one
+  // enablement contribution — two instances would fight over `#fontFamily`.
+  phoneTable = PHONE_TOOLBAR,
+  // Resolved at RENDER time, never captured: crossing the rung re-renders, and
+  // a bar that had captured the answer at construction would be a phone bar on
+  // a desktop for the rest of the session. Defaults to "never a phone" so every
+  // existing caller and every unit test is unchanged.
+  isPhone = () => false,
 }) {
+  /** The roster in force. A function, not a value, for the reason above. */
+  const roster = () => (isPhone() ? phoneTable : table);
   /** Where each adopted control came from, so leaving compact mode restores the
    *  ribbon exactly rather than leaving a hole in it. */
   const adoptedHome = new Map();
@@ -451,9 +604,51 @@ export function createCompactToolbar({
    *  DISABLED is rendered disabled carrying its reason, never dropped — the
    *  whole point of the surface is that a user browsing it learns the editor can
    *  do this and what is missing, which an absent row cannot say. */
+  /** Moves the ribbon-owned value controls into a sheet's leading strip.
+   *
+   *  Google Docs' Aa panel opens with **Style, Font, Size** and only then the
+   *  toggles (support answer 1663349), and those three are not commands — they
+   *  are value pickers whose whole surface is the control itself, which is why
+   *  `one-axis-navigation.spec.mjs` exempts `format.family.*`, `format.size.*`
+   *  and `style.*` as VALUE_FAMILIES keyed to `#fontFamily`, `#fontSize` and
+   *  `#stylesTrigger` rather than as rows.
+   *
+   *  So a phone that dropped them from the bar without putting them anywhere
+   *  would have no font, no size and no paragraph style at all: the ribbon that
+   *  owns those elements is hidden in compact chrome. They are ADOPTED here —
+   *  moved, never cloned — for the reason `ADOPTED_CONTROL_IDS` already gives:
+   *  one element means one set of listeners, one reflected value and one
+   *  disabled state, so the sheet and the ribbon cannot disagree about what
+   *  font this is. `adoptedHome` is recorded on the first move and
+   *  `releaseAdoptedControls` puts every one of them back, which is what makes
+   *  widening the window past the rung restore the ribbon intact. */
+  function adoptInto(strip, controls) {
+    for (const control of controls) {
+      const el = document.getElementById(ADOPTED_CONTROL_IDS[control]);
+      if (!el) continue;
+      if (!adoptedHome.has(el)) {
+        adoptedHome.set(el, { parent: el.parentNode, next: el.nextSibling });
+      }
+      el.classList.add("cadopted");
+      strip.appendChild(el);
+    }
+  }
+
   function fillMenu(entry, surface) {
     const commands = registry();
     surface.replaceChildren();
+    if (entry.adopt?.length) {
+      const strip = document.createElement("div");
+      strip.className = "menu-group menu-value-strip";
+      strip.setAttribute("role", "group");
+      strip.setAttribute("aria-label", t(entry.adoptLabelKey));
+      strip.dataset.group = entry.adoptLabelKey;
+      adoptInto(strip, entry.adopt);
+      // Only if something actually arrived: a host that withheld the ribbon
+      // leaves the ids unresolvable, and an empty named group announces a band
+      // that is not there.
+      if (strip.childElementCount) surface.appendChild(strip);
+    }
     for (const section of entry.sections) {
       // The SAME named band the Table menu renders, from the same declaration:
       // `role="group"` with the band's translated name, and the rule between
@@ -678,7 +873,7 @@ export function createCompactToolbar({
     // would leave the new buttons unsynced and write state into detached ones.
     formatToggleCache.clear();
     rendered = [];
-    for (const group of table) {
+    for (const group of roster()) {
       const el = document.createElement("span");
       el.className = "cgroup";
       el.dataset.group = group.group;

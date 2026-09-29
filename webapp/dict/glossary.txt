@@ -295,6 +295,7 @@ contextualSpacing
 customXml
 customizable
 debounce
+debounced
 decodable
 deduplication
 del
@@ -467,6 +468,7 @@ recurse
 recurses
 recursing
 reflow
+reflowed
 reflows
 relayout
 rels
@@ -489,6 +491,7 @@ scalable
 schemas
 scrollable
 scrollbar
+scroller
 sdk
 sdkjs
 sdt
