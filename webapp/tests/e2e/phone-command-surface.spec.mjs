@@ -316,3 +316,37 @@ test("the toast clears an open bottom sheet as well as the command bar", async (
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("the toast clears an open dialog's pinned actions too", async ({ page, consoleErrors }) => {
+  // The screenshot half of the rule above, and it is the case that was WRONG on
+  // the first pass: a modal was excluded on the theory that an 86vh cap leaves
+  // no band above the card. That is the cap, not the height — the Tab stops
+  // sheet stands about 60% tall at 390px — and "Rendering 1 page at 100%…" lay
+  // straight across its Set and Clear all buttons, which is `109` HF-233
+  // exactly: the drawer's pinned action must stay readable.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.locator('.app-menu-button[data-menu="format"]').click();
+  await page.locator('#appMenuPopover .app-menu-item[data-command="layout.tabStops"]').click();
+  await expect(page.locator("#tabStopsDialog")).toBeVisible();
+
+  await page.evaluate(() => {
+    const toast = document.querySelector(".toast");
+    toast.textContent = "A status message long enough to be a real card";
+    toast.classList.add("is-shown");
+    toast.hidden = false;
+  });
+
+  const overlap = await page.evaluate(() => {
+    const box = (selector) => document.querySelector(selector).getBoundingClientRect();
+    const hits = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const toast = box(".toast");
+    return [...document.querySelectorAll("#tabStopsDialog .dialog-button")]
+      .filter((el) => hits(toast, el.getBoundingClientRect()))
+      .map((el) => el.textContent.trim());
+  });
+  expect(overlap, "the toast must not land on a dialog's buttons").toEqual([]);
+
+  expect(consoleErrors).toEqual([]);
+});

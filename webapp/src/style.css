@@ -9052,10 +9052,16 @@ body.phone-mode .toast {
                       way — `109` HF-233 reserves `--h-toast-band` at the
                       drawer's foot — and `editor-narrow-chrome.spec.mjs`
                       measures it.
-     `.dialog-overlay` — a phone dialog is a bottom sheet but capped at 86vh,
-                      which leaves ~118px of screen above it: the toast would
-                      not fit under the header. Out of scope here and recorded
-                      rather than papered over. */
+   A modal is in the list through `body.modal-open`, which `modal.mjs` already
+   sets, rather than through a `:has()` of its own. It was excluded on a first
+   pass on the theory that a dialog card capped at `max-height: 86vh` leaves
+   only ~118px above it — but that is the CAP and not the height, and the
+   screenshot settled it: the Tab stops sheet stands about 60% tall at 390px,
+   and the toast lay straight across its Set and Clear all buttons. Even at the
+   cap the top placement is the better of the two collisions, because it lands
+   on the card's HEAD rather than on its pinned actions, and `109` HF-233's rule
+   is that the pinned action stays readable. */
+body.phone-mode.modal-open .toast,
 body.phone-mode:has(.app-menu-popover:not([hidden])) .toast,
 body.phone-mode:has(.compact-command-menu:not([hidden])) .toast,
 body.phone-mode:has(.compact-align-menu:not([hidden])) .toast,
