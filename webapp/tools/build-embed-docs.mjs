@@ -57,6 +57,7 @@ import {
   sandboxTokensFor,
 } from "../src/capabilities.mjs";
 import { REGIONS, resolveRegions } from "../src/capabilities.mjs";
+import { NOTE_CODES, OPTIONS, optionTally } from "../src/host_options.mjs";
 import { TEXT_CONTRAST_FLOOR, UI_CONTRAST_FLOOR } from "../src/contrast.mjs";
 import {
   BrandRefusal,
@@ -81,6 +82,7 @@ const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = join(WEBAPP, "..");
 const PACKAGE = join(REPO, "packages", "opendoc-embed");
 const PAGE = join(WEBAPP, "embedding.page.html");
+const OPTION_MAP_DOC = join(REPO, "docs", "149-ONLYOFFICE-HOST-CONFIGURATION-PARITY.md");
 const PLAYGROUND = join(WEBAPP, "playground.page.html");
 
 const read = (path) => readFileSync(path, "utf8");
@@ -829,6 +831,7 @@ const REGION_MEANINGS = Object.freeze({
   context: "The right-click menu on the document.",
   objects: "Object selection: the outline, its handles and the object bar.",
   history: "The version-history timeline, its ribbon entry and its preview bar.",
+  review: "The Editing / Suggesting / Read-only switcher in the top bar.",
   status: "The status bar: counts, page number, language, mode.",
   zoom: "The zoom cluster in the status bar.",
   find: "The find and replace card.",
@@ -994,7 +997,7 @@ const CAPABILITY_GROUPS = Object.freeze([
 const REGION_GROUPS = Object.freeze([
   Object.freeze({
     title: say("site.group.topBar", "Top bar"),
-    ids: ["brand", "title", "state", "menu", "ribbon"],
+    ids: ["brand", "title", "state", "review", "menu", "ribbon"],
   }),
   Object.freeze({
     title: say("site.group.ribbonBands", "Ribbon bands"),
@@ -1500,6 +1503,64 @@ function indentHtml(block, indent) {
     .join("\n");
 }
 
+/** Markdown table cells may not contain a pipe, and a note that did would split
+ *  a row in half silently. */
+const cell = (text) => String(text ?? "").replaceAll("|", "\\|").replaceAll("\n", " ");
+
+/** The verdict column's wording, one per code, so the document reads as prose
+ *  rather than as an enum dump. Keyed off `NOTE_CODES`, and the generator throws
+ *  on a code with no wording — a new answer cannot reach the published table
+ *  unexplained. */
+const VERDICT = Object.freeze({
+  mapped: "Have it",
+  narrowed: "Have it, differently",
+  "cannot-widen": "Refused by design",
+  unsupported: "Gap — work named",
+  declined: "Declined",
+  elsewhere: "Another product",
+  unknown: "n/a",
+});
+
+/** The option map, as the two generated regions of `docs/149`. */
+function optionMapRegions() {
+  const missing = NOTE_CODES.filter((code) => !VERDICT[code]);
+  if (missing.length) {
+    throw new Error(`build-embed-docs: no verdict wording for: ${missing.join(", ")}`);
+  }
+  const tally = optionTally();
+  const summary = [
+    "| Verdict | Options | What it means |",
+    "| --- | --- | --- |",
+    ...NOTE_CODES.filter((code) => code !== "unknown").map(
+      (code) => `| ${VERDICT[code]} | ${tally[code]} | ${cell(CODE_MEANING[code])} |`,
+    ),
+    `| **Total enumerated** | **${OPTIONS.length}** | every leaf of their \`permissions\`, \`editorConfig\` and \`customization\` |`,
+  ];
+  const rows = [
+    "| Theirs | Ours | Verdict | Note |",
+    "| --- | --- | --- | --- |",
+    ...OPTIONS.map(
+      (row) =>
+        `| \`${cell(row.option)}\` | ${row.ours ? `\`${cell(row.ours)}\`` : "—"} | ${VERDICT[row.code]} | ${
+          cell(row.note) || "—"
+        } |`,
+    ),
+  ];
+  return { "option-tally": summary.join("\n"), "option-map": rows.join("\n") };
+}
+
+/** What each verdict is, for the summary table. Separate from `VERDICT` because
+ *  one is a label and the other is a definition, and a table whose two columns
+ *  came from one string would be saying the same thing twice. */
+const CODE_MEANING = Object.freeze({
+  mapped: "lowered onto one of our three axes, and the resolved container really changes",
+  narrowed: "honoured in part; the note says what is different and why",
+  "cannot-widen": "it would GRANT something, and a host list may only narrow — reported, naming `mode`",
+  unsupported: "the editor has no such state or surface yet; the note names the work",
+  declined: "deliberately not wanted, with the argument",
+  elsewhere: "belongs to spreadsheets, presentations or PDF forms (`SKILL` §1)",
+});
+
 /** The pages this tool owns, each with the region and claim maps it uses.
  *
  *  Two of them, and the region/claim namespaces are PER PAGE rather than shared:
@@ -1512,6 +1573,15 @@ function indentHtml(block, indent) {
 const PAGES = Object.freeze([
   Object.freeze({ path: PAGE, regions, claims }),
   Object.freeze({ path: PLAYGROUND, regions: playgroundRegions, claims: playgroundClaims }),
+  // The option map. A DOCUMENT rather than a site page, and deliberately: the two
+  // pages above are localised — every authored clause carries a `data-i18n` key —
+  // and the map is 121 rows of two text columns, so publishing it there would put
+  // 240-odd developer-facing sentences in front of nineteen translators to no
+  // benefit. `docs/` is where this repository keeps prose that is about the code
+  // rather than in the product, and the table is generated into it for the same
+  // reason the pages are generated: a hand-maintained count has drifted into a
+  // false public claim here twice (`SKILL` §8).
+  Object.freeze({ path: OPTION_MAP_DOC, regions: optionMapRegions, claims: () => ({}) }),
 ]);
 
 /** Rewrites every generated region and every claim value in one page. */

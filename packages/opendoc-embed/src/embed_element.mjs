@@ -40,11 +40,15 @@ import {
   CAPABILITIES,
   REGIONS,
   editingModeFor,
+  normalizePreferences,
+  parsePreferenceObject,
   parseWithheld,
   resolveCapabilities,
+  resolvePreferences,
   resolveRegions,
   sandboxTokensFor,
 } from "./capabilities.mjs";
+import { translateHostConfig, unhandledNotes } from "./host_options.mjs";
 
 /** Where the editor lives relative to the host page, when the host does not say. */
 export const DEFAULT_EDITOR_SRC = "./editor.html";
@@ -62,7 +66,16 @@ export const CAPABILITIES_EVENT = "opendoc-capabilities";
 
 /** Attributes that change what the embed IS, so a change to any of them is a
  *  remount rather than a live update. */
-const MOUNT_ATTRIBUTES = Object.freeze(["mode", "can", "chrome", "editor-src", "frame-title"]);
+const MOUNT_ATTRIBUTES = Object.freeze([
+  "mode",
+  "can",
+  "chrome",
+  "prefs",
+  "config",
+  "editor-lang",
+  "editor-src",
+  "frame-title",
+]);
 
 /** The two NARROWING attributes, each read against the authority's own vocabulary.
  *
@@ -89,8 +102,8 @@ const MOUNT_ATTRIBUTES = Object.freeze(["mode", "can", "chrome", "editor-src", "
  *  `?can=-download` quietly restore `download` — a widening, through the one
  *  channel the whole model rests on never widening. */
 const NARROWING = Object.freeze([
-  Object.freeze({ attribute: "can", known: CAPABILITIES }),
-  Object.freeze({ attribute: "chrome", known: REGIONS }),
+  Object.freeze({ attribute: "can", known: CAPABILITIES, fromConfig: "can" }),
+  Object.freeze({ attribute: "chrome", known: REGIONS, fromConfig: "chrome" }),
 ]);
 
 /** What the element extends.
@@ -134,6 +147,22 @@ const SHADOW_STYLE = `
  *    so that a host expressing "commentor, but without download" does not have to
  *    leave the declarative API and hand-write a query string.
  *  * `chrome` — chrome regions to withhold, by the same rule: `"-brand,-rail"`.
+ *  * `prefs` — the container's OPENING POSITIONS, as a JSON object:
+ *    `'{"user":"Ada Lovelace","spellcheck":false}'`. Not permissions and not
+ *    surfaces — defaults the visitor may still change, which is why they are
+ *    neither narrowed nor widened but simply set. An unknown name or an
+ *    unreadable value is dropped and reported.
+ *  * `config` — an ONLYOFFICE-shaped host configuration
+ *    (`permissions` / `editorConfig` / `editorConfig.customization`), accepted
+ *    verbatim and lowered onto `mode`, `can`, `chrome`, `prefs` and the editor's
+ *    language. This is the migration surface: a host hands over the object they
+ *    already wrote for the editor they already pay for. Everything that cannot be
+ *    honoured is REPORTED on the capabilities event and warned about once — never
+ *    silently dropped, which is what their `_applyCustomization` does to every
+ *    unlicensed integrator.
+ *  * `editor-lang` — the editor's language (their `editorConfig.lang`). Not
+ *    called `lang`: that is a global HTML attribute and setting it here would
+ *    relabel the host's own element for every assistive technology on the page.
  *  * `editor-src` — where `editor.html` is. May carry the host's own query
  *    (`?blank=1`, `?fixture=rich`); `mode` is merged into it, never appended
  *    twice, and `can`/`chrome` are unioned with any the query already carries.
@@ -154,6 +183,7 @@ export class OpenDocEditorElement extends ElementBase {
   #frame = null;
   #capabilities = new Set();
   #regions = new Set();
+  #preferences = Object.freeze({});
   #remountQueued = false;
 
   /** The role or preset this embed resolved to, as the host asked for it. */
@@ -239,7 +269,7 @@ export class OpenDocEditorElement extends ElementBase {
   #mount() {
     this.#teardown();
 
-    const url = this.#resolveUrl();
+    const { url, notes } = this.#resolveUrl();
     const resolution = {
       // An element-mounted editor is framed by construction, so the default
       // when nobody asked is the framed one. This is the same rule the page
@@ -262,6 +292,9 @@ export class OpenDocEditorElement extends ElementBase {
       withhold: url.searchParams.get("chrome"),
       capabilities: this.#capabilities,
     });
+    // Read back off the URL the frame is about to be given, like the two sets
+    // above, so the element cannot report one thing and navigate to another.
+    this.#preferences = resolvePreferences(url.searchParams.get("prefs"));
 
     const frame = document.createElement("iframe");
     // `sandbox` and `src` are both set BEFORE the element enters the document,
@@ -296,12 +329,28 @@ export class OpenDocEditorElement extends ElementBase {
           chrome: url.searchParams.get("chrome"),
           capabilities: this.capabilities,
           regions: this.regions,
+          // The opening positions that survived resolution, keyed by the SETTING
+          // each one moves — the same shape the editor merges over its defaults,
+          // so a host reads back what the container actually opened with rather
+          // than what they typed.
+          preferences: this.preferences,
           editingMode: this.editingMode,
           sandbox: this.sandbox,
           src: url.href,
+          // WHAT WE DID NOT DO, and why. Present on every mount, empty when a
+          // host configured nothing we could not honour. This is the field
+          // ONLYOFFICE has no place for: `_applyCustomization` early-returns on
+          // an unlicensed integrator and on an option it does not know, and an
+          // early return has nothing to say.
+          notes,
         },
       }),
     );
+
+    // Said once per page, like the missing-title warning and for the same reason.
+    // Only the notes that are not plain successes: a console that reports what
+    // worked is a console nobody reads twice.
+    reportNotes(unhandledNotes(notes));
   }
 
   /** The frame's URL, with the resolved mode and both withhold lists written
@@ -325,19 +374,52 @@ export class OpenDocEditorElement extends ElementBase {
     // `document.baseURI` rather than `location.href`: a host page with a
     // `<base>` element means something by it.
     const url = new URL(base, document.baseURI);
-    const asked = this.getAttribute("mode") ?? url.searchParams.get("mode");
+    // The competitor's config is lowered FIRST, so every attribute below is the
+    // more specific spelling and wins — which is the rule a host would guess:
+    // `config` is the block they brought with them, and an attribute is what
+    // they wrote for us.
+    const translated = translateHostConfig(this.getAttribute("config"));
+    const asked = this.getAttribute("mode") ?? translated.mode ?? url.searchParams.get("mode");
     // No mode anywhere is a deliberate absence, not an empty string: it must
     // reach `resolveCapabilities` as "nobody asked", which with `framed: true`
     // is the embedded default.
     if (asked === null) url.searchParams.delete("mode");
     else url.searchParams.set("mode", asked);
-    for (const { attribute, known } of NARROWING) {
-      const merged = [url.searchParams.get(attribute) ?? "", this.getAttribute(attribute) ?? ""];
+    for (const { attribute, known, fromConfig } of NARROWING) {
+      const merged = [
+        url.searchParams.get(attribute) ?? "",
+        translated[fromConfig].join(","),
+        this.getAttribute(attribute) ?? "",
+      ];
       const names = parseWithheld(merged.join(","), known);
       if (names.length) url.searchParams.set(attribute, names.map((name) => `-${name}`).join(","));
       else url.searchParams.delete(attribute);
     }
-    return url;
+    // Preferences MERGE rather than union, because they are values and not a
+    // set: the query is the deployment's, the config is what the host brought,
+    // and the attribute is what they wrote here — least to most specific.
+    const prefs = {
+      ...parsePreferenceObject(url.searchParams.get("prefs")),
+      ...translated.prefs,
+      ...parsePreferenceObject(this.getAttribute("prefs")),
+    };
+    // Written back NORMALISED, through the authority, for `can` and `chrome`'s
+    // reason: an unknown name or an unreadable value is dropped HERE, once, and
+    // the frame is navigated to a preference set the editor has already read.
+    const accepted = normalizePreferences(prefs);
+    if (Object.keys(accepted).length) url.searchParams.set("prefs", JSON.stringify(accepted));
+    else url.searchParams.delete("prefs");
+    const lang = this.getAttribute("editor-lang") ?? translated.lang;
+    if (lang) url.searchParams.set("lang", lang);
+    return { url, notes: translated.notes };
+  }
+
+  /** The opening positions in force, keyed by the SETTING each one moves. The
+   *  same shape the editor merges over its defaults; frozen, like the two sets
+   *  above, because a host mutating it would be editing a container after it
+   *  opened. */
+  get preferences() {
+    return this.#preferences;
   }
 
   /** Releases the frame. Blanked before removal so the WebAssembly instance,
@@ -357,12 +439,46 @@ export class OpenDocEditorElement extends ElementBase {
     this.#root?.replaceChildren();
     this.#capabilities = new Set();
     this.#regions = new Set();
+    this.#preferences = Object.freeze({});
   }
 }
 
 /** `?autosave=1` / `?autosave=0` as the tri-state the authority expects. */
 function autosaveRequest(value) {
   return value === "1" ? true : value === "0" ? false : null;
+}
+
+/** Configurations already reported, so a host that remounts on every render is
+ *  told once per distinct answer rather than once per render. */
+const reportedNotes = new Set();
+
+/**
+ * Says out loud what a host's configuration could not do.
+ *
+ * THE HONESTY RULE, in its configuration form. The repository's standing
+ * position is that unsupported data is preserved or REPORTED and never silently
+ * dropped (`SKILL` §12), and a host configuration is data. ONLYOFFICE's
+ * `_applyCustomization` fails the same test from the other direction: it returns
+ * early on an unlicensed integrator and walks past an option it does not know,
+ * both without a word, so an integrator's only signal is a screenshot that looks
+ * wrong.
+ *
+ * `console.warn` and not a throw: a configuration the editor could not fully
+ * honour must still open the document. The full list — successes included — is
+ * on the capabilities event for a host that wants to assert on it.
+ *
+ * Complexity: O(notes).
+ */
+function reportNotes(notes) {
+  if (!notes.length) return;
+  const key = notes.map((note) => `${note.option}:${note.code}`).join("|");
+  if (reportedNotes.has(key)) return;
+  reportedNotes.add(key);
+  const lines = notes.map((note) => `  ${note.option} — ${note.code}: ${note.message}`);
+  console.warn(
+    `<${OPENDOC_EDITOR_TAG}> could not honour ${notes.length} configuration ` +
+      `option(s) as written. Nothing was ignored silently:\n${lines.join("\n")}`,
+  );
 }
 
 let warnedAboutTitle = false;
@@ -397,4 +513,6 @@ export function defineOpenDocEditor(tag = OPENDOC_EDITOR_TAG) {
 }
 
 export { editingModeFor, resolveCapabilities, resolveRegions, sandboxTokensFor };
-export { CAPABILITIES, LEGACY_PRESETS, PRESET_NAMES, REGIONS, ROLES } from "./capabilities.mjs";
+export { CAPABILITIES, LEGACY_PRESETS, PRESET_NAMES, PREFERENCES, REGIONS, ROLES } from "./capabilities.mjs";
+export { resolvePreferences } from "./capabilities.mjs";
+export { NOTE_CODES, OPTIONS, OPTION_PATHS, optionTally, translateHostConfig } from "./host_options.mjs";

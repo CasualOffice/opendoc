@@ -221,7 +221,9 @@ test("the URL is the one configuration channel, read in one place", () => {
   // was something else, and `docs/104` is explicit that gating applies before the
   // first frame.
   const view = {
-    location: { search: "?mode=readonly&can=-print&chrome=-find&autosave=1" },
+    location: {
+      search: "?mode=readonly&can=-print&chrome=-find&autosave=1&prefs=%7B%22spellcheck%22%3Afalse%7D",
+    },
     self: 1,
     top: 2,
   };
@@ -231,6 +233,10 @@ test("the URL is the one configuration channel, read in one place", () => {
     autosave: true,
     withhold: "-print",
     chrome: "-find",
+    // The opening positions, read in the same place and at the same moment as
+    // the other four. Two places that know how a host configures this editor is
+    // how `autosave` came to be known by both this file and `main.js`.
+    prefs: '{"spellcheck":false}',
     framed: true,
   });
   assert.deepEqual([...hostRegions(view)].sort(), regions({ mode: "readonly", framed: true, withhold: "-find" }));

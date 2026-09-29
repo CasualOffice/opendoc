@@ -23,7 +23,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { REGIONS } from "../src/capabilities.mjs";
-import { applyRegions, bandElements, regionClass } from "../src/chrome_regions.mjs";
+import {
+  applyRegions,
+  bandElements,
+  regionClass,
+} from "../src/chrome_regions.mjs";
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const editor = readFileSync(join(WEBAPP, "editor.html"), "utf8");
@@ -59,7 +63,11 @@ const EXPECTED = Object.freeze({
   ruler: ['class="ruler"'],
   caret: ['class="caret"', 'class="highlight"'],
   context: ['class="editor-context-menu"'],
-  objects: ['class="object-outline"', 'class="object-handle"', 'class="object-bar-actions"'],
+  objects: [
+    'class="object-outline"',
+    'class="object-handle"',
+    'class="object-bar-actions"',
+  ],
   menu: ['id="appMenuBar"'],
   ribbon: ['class="ribbon"', 'class="ribbon-nav"'],
   rail: ['class="rail"', 'id="outlinePanel"', 'id="pagesPanel"'],
@@ -73,6 +81,11 @@ const EXPECTED = Object.freeze({
     'id="railVersions"',
     'id="versionPreviewBanner"',
   ],
+  // The Editing / Suggesting / Read-only switcher (ONLYOFFICE
+  // `customization.review.hideReviewDisplay`). One element: the segmented
+  // control is a `role="group"` holding the three buttons, so removing it
+  // removes all three and cannot leave one behind.
+  review: ['id="reviewModeControl"'],
   status: ['class="footer"', 'id="statusToast"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],
@@ -90,7 +103,10 @@ test("every region names something that exists in editor.html", () => {
       continue;
     }
     const expected = EXPECTED[id];
-    assert.ok(expected, `${id} has no expected selector, so this guard cannot check it`);
+    assert.ok(
+      expected,
+      `${id} has no expected selector, so this guard cannot check it`,
+    );
     for (const needle of expected) {
       // An id is declared in the markup and nowhere else, so it is matched
       // literally. A CLASS may be written as an attribute, assigned as part of a
@@ -112,7 +128,11 @@ test("every region names something that exists in editor.html", () => {
       "withheld a surface that is still on screen, and would ship it",
   );
   // The half that fails when the guard breaks rather than when the tree does.
-  assert.equal(Object.keys(EXPECTED).length + REGIONS.filter((r) => r.startsWith("band.")).length, REGIONS.length);
+  assert.equal(
+    Object.keys(EXPECTED).length +
+      REGIONS.filter((r) => r.startsWith("band.")).length,
+    REGIONS.length,
+  );
 });
 
 // The half the table above could not check, and the reason it is here.
@@ -157,14 +177,24 @@ test("every region has a rule that actually removes it", () => {
   // the only thing joining them is the spelling of one class name.
   const missing = [];
   for (const id of REGIONS) {
-    if (!css.includes(`body.${regionClass(id)} `)) missing.push(regionClass(id));
+    if (!css.includes(`body.${regionClass(id)} `))
+      missing.push(regionClass(id));
   }
-  assert.deepEqual(missing, [], "these region classes are set by JS and styled by nothing");
+  assert.deepEqual(
+    missing,
+    [],
+    "these region classes are set by JS and styled by nothing",
+  );
   // And the eight band ids the CSS names really are the eight the vocabulary has,
   // in both directions — a stale rule for a renamed band is a rule that fires for
   // nothing.
-  const styled = [...css.matchAll(/body\.chrome-no-band-(\w+) /g)].map((m) => `band.${m[1]}`);
-  assert.deepEqual([...new Set(styled)].sort(), REGIONS.filter((r) => r.startsWith("band.")).sort());
+  const styled = [...css.matchAll(/body\.chrome-no-band-(\w+) /g)].map(
+    (m) => `band.${m[1]}`,
+  );
+  assert.deepEqual(
+    [...new Set(styled)].sort(),
+    REGIONS.filter((r) => r.startsWith("band.")).sort(),
+  );
 });
 
 test("the menu bar survives the ribbon being withheld, or reading chrome has no axis", () => {
@@ -173,11 +203,17 @@ test("the menu bar survives the ribbon being withheld, or reading chrome has no 
   // ribbon therefore has to REVEAL the menu bar, with higher specificity, or a
   // reading container has neither axis and File > Print — `readonly`'s only grant —
   // is unreachable.
-  assert.match(css, /body\.chrome-no-ribbon\.ribbon-mode #appMenuBar \{\s*display: flex;/);
+  assert.match(
+    css,
+    /body\.chrome-no-ribbon\.ribbon-mode #appMenuBar \{\s*display: flex;/,
+  );
   // And `preview`, which withholds the menu too, gets neither. `!important` because
   // the rule above would otherwise win by specificity.
   assert.match(css, /body\.chrome-no-menu\.ribbon-mode #appMenuBar,/);
-  assert.match(css, /body\.chrome-no-menu #appMenuPopover \{\s*display: none !important;/);
+  assert.match(
+    css,
+    /body\.chrome-no-menu #appMenuPopover \{\s*display: none !important;/,
+  );
 });
 
 test("the top bar collapses exactly when every region it paints is withheld", () => {
@@ -189,8 +225,11 @@ test("the top bar collapses exactly when every region it paints is withheld", ()
   // fails here rather than silently re-inflating the strip for a host that asked
   // for no chrome; dropping a region out of the conjunction fails here too, which
   // would collapse the bar over chrome the host still wanted.
-  const bar = editor.slice(editor.indexOf('<header class="bar">'), editor.indexOf("</header>"));
-  assert.ok(bar.length > 0, "editor.html no longer has a <header class=\"bar\">");
+  const bar = editor.slice(
+    editor.indexOf('<header class="bar">'),
+    editor.indexOf("</header>"),
+  );
+  assert.ok(bar.length > 0, 'editor.html no longer has a <header class="bar">');
   const inBar = Object.entries(EXPECTED)
     .filter(([, needles]) => needles.some((needle) => bar.includes(needle)))
     .map(([id]) => id);
@@ -209,16 +248,30 @@ test("applying a region set toggles a class for every region, both ways", () => 
   // narrowing a role live would end up with chrome that never comes back.
   const classes = new Set();
   const body = {
-    classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) },
+    classList: {
+      toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
+    },
     dataset: {},
   };
   const tabs = new Map(
-    REGIONS.filter((r) => r.startsWith("band.")).map((id) => [bandElements(id).tab, { hidden: false, getAttribute: () => null }]),
+    REGIONS.filter((r) => r.startsWith("band.")).map((id) => [
+      bandElements(id).tab,
+      { hidden: false, getAttribute: () => null },
+    ]),
   );
   const root = { getElementById: (id) => tabs.get(id) ?? null };
 
-  const withheld = applyRegions({ body, root, regions: new Set(["status"]), selectBand: () => {} });
-  assert.equal(classes.has(regionClass("status")), false, "a SHOWN region must carry no class");
+  const withheld = applyRegions({
+    body,
+    root,
+    regions: new Set(["status"]),
+    selectBand: () => {},
+  });
+  assert.equal(
+    classes.has(regionClass("status")),
+    false,
+    "a SHOWN region must carry no class",
+  );
   assert.equal(classes.has(regionClass("ribbon")), true);
   assert.equal(withheld.includes("ribbon"), true);
   assert.equal(withheld.includes("status"), false);
@@ -230,7 +283,11 @@ test("applying a region set toggles a class for every region, both ways", () => 
 
   // Now widen, and every class must come back off.
   applyRegions({ body, root, regions: new Set(REGIONS), selectBand: () => {} });
-  assert.deepEqual([...classes], [], "applying the full set left classes behind");
+  assert.deepEqual(
+    [...classes],
+    [],
+    "applying the full set left classes behind",
+  );
   assert.equal(body.dataset.chromeWithheld, "");
   for (const tab of tabs.values()) assert.equal(tab.hidden, false);
 });
@@ -241,18 +298,35 @@ test("a container whose selected band was withheld is shown a surviving one", ()
   // `?chrome=-band.home` opens onto nothing at all.
   const selected = new Map([["tabHome", "true"]]);
   const root = {
-    getElementById: (id) => ({ hidden: false, getAttribute: () => selected.get(id) ?? null }),
+    getElementById: (id) => ({
+      hidden: false,
+      getAttribute: () => selected.get(id) ?? null,
+    }),
   };
   const body = { classList: { toggle: () => {} }, dataset: {} };
   const chosen = [];
   const shown = new Set(REGIONS.filter((r) => r !== "band.home"));
-  applyRegions({ body, root, regions: shown, selectBand: (band) => chosen.push(band) });
-  assert.deepEqual(chosen, ["insert"], "the first surviving band should have been selected");
+  applyRegions({
+    body,
+    root,
+    regions: shown,
+    selectBand: (band) => chosen.push(band),
+  });
+  assert.deepEqual(
+    chosen,
+    ["insert"],
+    "the first surviving band should have been selected",
+  );
 
   // And when the selected band survives, nothing is switched — a container must not
   // be yanked off the band its host chose.
   chosen.length = 0;
-  applyRegions({ body, root, regions: new Set(REGIONS), selectBand: (band) => chosen.push(band) });
+  applyRegions({
+    body,
+    root,
+    regions: new Set(REGIONS),
+    selectBand: (band) => chosen.push(band),
+  });
   assert.deepEqual(chosen, []);
 
   // `band.file` is never the survivor: it is the File PAGE, which covers the work
@@ -270,8 +344,14 @@ test("a container whose selected band was withheld is shown a surviving one", ()
 test("band ids are derived from region ids, not listed a second time", () => {
   // `ribbon_faces.mjs` versus `one-axis-navigation.spec.mjs` is this repository's
   // standing example of what a second table of ids costs.
-  assert.deepEqual(bandElements("band.home"), { tab: "tabHome", panel: "panelHome" });
-  assert.deepEqual(bandElements("band.references"), { tab: "tabReferences", panel: "panelReferences" });
+  assert.deepEqual(bandElements("band.home"), {
+    tab: "tabHome",
+    panel: "panelHome",
+  });
+  assert.deepEqual(bandElements("band.references"), {
+    tab: "tabReferences",
+    panel: "panelReferences",
+  });
   assert.equal(regionClass("band.table"), "chrome-no-band-table");
   assert.equal(regionClass("status"), "chrome-no-status");
 });

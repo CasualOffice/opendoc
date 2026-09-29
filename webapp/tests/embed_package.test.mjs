@@ -133,11 +133,22 @@ test("the element module stays independent of the editor page", () => {
   // that nothing can, and a package that imported it would be unpublishable as
   // well as wrong.
   assert.doesNotMatch(source, /from\s+["'][^"']*main\.js["']/);
-  // Its only import is the capability authority's copy. One import is what
-  // makes "is this the same contract the editor resolves?" a question with an
-  // answer.
+  // Its imports are the two PURE modules that decide what an embed is: the
+  // capability authority, and the translation from the competitor's
+  // configuration onto it. Pinned as a closed list, because the property being
+  // protected is that the element depends on nothing with a DOM, an engine or a
+  // locale in it — "is this the same contract the editor resolves?" only has an
+  // answer while that holds. `host_options.mjs` states in its own header that it
+  // is not a second statement of what a capability or a region is; it reads both
+  // vocabularies back out of `capabilities.mjs`, and `host_options.test.mjs`
+  // fails on a row that names anything they do not contain.
   const imports = [...source.matchAll(/^import .*?from\s+["']([^"']+)["']/gms)].map((m) => m[1]);
-  assert.deepEqual(imports, ["./capabilities.mjs"]);
+  assert.deepEqual(imports, ["./capabilities.mjs", "./host_options.mjs"]);
+  // And that second module is pure too, or the first assertion above is only
+  // true one level deep.
+  const options = readFileSync(join(WEBAPP, "src", "host_options.mjs"), "utf8");
+  const optionImports = [...options.matchAll(/^import .*?from\s+["']([^"']+)["']/gms)].map((m) => m[1]);
+  assert.deepEqual(optionImports, ["./capabilities.mjs"]);
 });
 
 test("importing the package outside a browser does not throw", async () => {

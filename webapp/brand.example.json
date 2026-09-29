@@ -4,6 +4,26 @@
   "version": 1,
   "name": "Northwind Docs",
   "mark": "./opendoc-mark.svg",
+  "//markHref": "ONLYOFFICE `customization.logo.url`: the mark becomes a link back to the host's own product. Refused unless it is http(s)/mailto/tel — a `javascript:` here would be script injected into the editor's origin by configuration.",
+  "markHref": "https://example.invalid/northwind",
+  "//customer": "ONLYOFFICE `customization.customer`, field for field, shown in About. Every value is host text in the host's own language, so none of it is translated and none of it adds a catalogue key — the same rule `frame-title` follows on the embed element.",
+  "customer": {
+    "name": "Northwind Trading Co.",
+    "info": "Document workspace for the Northwind field teams.",
+    "address": "14 Harbour Road, Bristol BS1 4RN",
+    "www": "https://example.invalid/northwind",
+    "mail": "mailto:docs@example.invalid",
+    "phone": "tel:+441170000000"
+  },
+  "//feedback": "Their `customization.feedback`, with one addition: the LABEL is the host's too. Theirs shows their own English, which is exactly what a white-label cannot afford.",
+  "feedback": {
+    "text": "Tell us what broke",
+    "url": "https://example.invalid/northwind/support"
+  },
+  "help": {
+    "text": "Northwind help centre",
+    "url": "https://example.invalid/northwind/help"
+  },
   "tabTitle": "document",
   "theme": {
     "//": "A deliberately DIFFERENT palette from ours, because a guard that passes because the default theme is applied proves nothing. The accent is a deep teal and the greys are warmer than ours; every value was checked against the floors by the generator rather than picked by eye, and two of the first three attempts were refused (see the PR).",

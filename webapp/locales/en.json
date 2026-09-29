@@ -1581,6 +1581,7 @@
   "site.region.menu": "The application menu bar — one of the two navigation axes.",
   "site.region.objects": "Object selection: the outline, its handles and the object bar.",
   "site.region.rail": "The left navigation rail: outline and page thumbnails.",
+  "site.region.review": "The Editing / Suggesting / Read-only switcher in the top bar.",
   "site.region.ribbon": "The whole tabbed ribbon, strip and bands together.",
   "site.region.ruler": "The ruler strip above the page: indents and tab stops.",
   "site.region.selection": "The floating toolbar above a selection.",

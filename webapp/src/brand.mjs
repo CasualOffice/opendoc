@@ -8,6 +8,10 @@ export const BRAND = Object.freeze({
   "named": false,
   "tabTitle": "document+product",
   "mark": "./opendoc-mark.svg",
+  "markHref": null,
+  "customer": null,
+  "feedback": null,
+  "help": null,
   "themed": false,
   "accentPinned": false
 });

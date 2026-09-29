@@ -21,7 +21,8 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAPABILITIES, LEGACY_PRESETS, PRESET_NAMES, ROLES } from "../src/capabilities.mjs";
-import { REGIONS } from "../src/capabilities.mjs";
+import { PREFERENCES, REGIONS } from "../src/capabilities.mjs";
+import { NOTE_CODES, OPTION_PATHS, optionTally } from "../src/host_options.mjs";
 import { HOST_EVENTS, REFUSAL_CODES, REQUIREMENTS } from "../src/host_contract.mjs";
 import { CONTRACT_VERSION } from "../src/host_contract.mjs";
 
@@ -42,6 +43,11 @@ const COPIES = Object.freeze({
   // client a host cannot use.
   "host_contract.mjs": "host_contract.mjs",
   "host_client.mjs": "host_client.mjs",
+  // The competitor's configuration, accepted verbatim and answered honestly.
+  // `embed_element.mjs` imports it, so a package that shipped the element
+  // without this would not resolve — and a host migrating from ONLYOFFICE is
+  // exactly the host who installs the package rather than framing a URL.
+  "host_options.mjs": "host_options.mjs",
 });
 
 /** The legal files the tarball has to carry, and the repository file each one is
@@ -181,6 +187,85 @@ export declare function hostConfig(view?: unknown): {
 /** Parses a withhold list against a vocabulary. Only ever narrows. */
 export declare function parseWithheld(raw: string | null | undefined, known: readonly string[]): readonly string[];
 
+// ---- Opening positions -----------------------------------------------------
+//
+// The third axis, and the one ONLYOFFICE has most of. Neither a permission nor a
+// surface: a value the container OPENS with, which the visitor may then change.
+// Held to neither the narrow-only rule (it takes nothing away) nor the
+// composition rule (it removes nothing) — a host's opening position is not a
+// decision about someone else's eyes.
+
+/** Every opening position a host may set. */
+export type Preference = ${union(PREFERENCES.map((row) => row.name))};
+
+export declare const PREFERENCES: readonly {
+  readonly name: Preference;
+  /** The settings key this preference moves. */
+  readonly setting: string;
+  readonly kind: "text" | "flag" | "enum";
+  readonly values?: readonly string[];
+}[];
+
+/** Resolves a host's preference object into the settings delta it means, keyed
+ *  by SETTING. An unknown name or an unreadable value is dropped, which leaves
+ *  the editor's own default — the outcome a host who typed nothing would have. */
+export declare function resolvePreferences(
+  raw: Partial<Record<Preference, unknown>> | string | null | undefined,
+): Readonly<Record<string, unknown>>;
+
+// ---- The competitor's configuration ----------------------------------------
+//
+// ONLYOFFICE gates every \`customization\` key in code:
+// \`LayoutManager._applyCustomization\` opens \`if (!_licensed || !config) return;\`.
+// Ours is Apache-2.0 and ungated, and this is where that becomes a product: a
+// host hands over the object they already wrote, it is lowered onto the three
+// axes above, and everything that cannot be honoured is REPORTED rather than
+// silently dropped.
+
+/** How one of their options was answered. */
+export type HostOptionCode = ${union([...NOTE_CODES])};
+
+export declare const NOTE_CODES: readonly HostOptionCode[];
+
+/** Every option in their host configuration, against ours. ${OPTION_PATHS.length} of them. */
+export declare const OPTIONS: readonly {
+  /** Their dotted path, exactly as their source spells it. */
+  readonly option: string;
+  /** What a host says to us instead, or null where there is nothing to say. */
+  readonly ours: string | null;
+  readonly code: HostOptionCode;
+  readonly note?: string;
+}[];
+
+export declare const OPTION_PATHS: readonly string[];
+
+/** How many of their options fall into each answer. Derived, never written down. */
+export declare function optionTally(): Readonly<Record<HostOptionCode, number>>;
+
+/** One thing we did, or did not do, with one of their options. */
+export interface HostOptionNote {
+  /** Their dotted path. */
+  option: string;
+  code: HostOptionCode;
+  /** Developer-facing English. Branch on \`code\`, not on this. */
+  message: string;
+}
+
+/** Lowers an ONLYOFFICE-shaped host configuration onto ours.
+ *
+ *  Only \`false\` narrows. A \`true\` that the resolved role does not grant comes
+ *  back as \`cannot-widen\` rather than being honoured: a configuration channel
+ *  that can widen a role is a channel an attacker fills in, and that property is
+ *  the whole model. */
+export declare function translateHostConfig(config: object | string | null | undefined): {
+  mode: string | null;
+  can: readonly Capability[];
+  chrome: readonly Region[];
+  prefs: Readonly<Record<string, unknown>>;
+  lang: string | null;
+  notes: readonly HostOptionNote[];
+};
+
 // ---- Release and provenance (\`docs/126\` phase 3) ---------------------------
 
 /** What a host installed, what it speaks, and what it was built from.
@@ -220,9 +305,17 @@ export interface OpenDocCapabilitiesDetail {
   chrome: string | null;
   capabilities: readonly Capability[];
   regions: readonly Region[];
+  /** The opening positions in force, keyed by the setting each one moves. */
+  preferences: Readonly<Record<string, unknown>>;
   editingMode: EditingMode;
   sandbox: readonly string[];
   src: string;
+  /** What the host's \`config\` asked for that could not be honoured as written,
+   *  and what was done instead. Empty when everything mapped. This is the field
+   *  ONLYOFFICE has no place for: \`_applyCustomization\` early-returns on an
+   *  unlicensed integrator and walks past an option it does not know, both
+   *  without a word. */
+  notes: readonly HostOptionNote[];
 }
 
 /** An embedded opendoc editor.
@@ -243,6 +336,7 @@ export declare class OpenDocEditorElement extends HTMLElement {
   mode: string | null;
   readonly capabilities: readonly Capability[];
   readonly regions: readonly Region[];
+  readonly preferences: Readonly<Record<string, unknown>>;
   readonly editingMode: EditingMode;
   readonly sandbox: readonly string[];
   readonly frame: HTMLIFrameElement | null;

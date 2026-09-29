@@ -194,8 +194,8 @@
         <p class="doc-body">
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
-          <span data-claim="package-file-count">11</span> files,
-          <span data-claim="package-unpacked-kb">134 kB</span> unpacked,
+          <span data-claim="package-file-count">12</span> files,
+          <span data-claim="package-unpacked-kb">194 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b data-i18n="site.embedding.nothingPublishesRegistryYet">Nothing publishes it to a registry yet</b>, so today a host installs
           the tarball <code data-i18n="site.embedding.npmPack">npm pack</code> produces from a checkout. The
@@ -267,14 +267,16 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
 
         <h2 id="mount" class="doc-h2" data-i18n="site.embedding.mount">Mount it</h2>
         <p class="doc-body" data-i18n="site.embedding.elementTakes">
-          The element takes <span data-claim="attribute-count">5</span>
-          attributes and no configuration object. <code>mode</code> names a role;
-          <code>can</code> and <code>chrome</code> narrow it, per capability and
-          per region, so the role never has to be the unit of what a host can
-          express. This is the package's own documented usage, and a guard checks
-          every attribute in it against the attributes the element really reads,
-          and the <code>mode</code> value against the names the authority really
-          accepts:
+          The element takes <span data-claim="attribute-count">8</span>
+          attributes. <code>mode</code> names a role; <code>can</code> and
+          <code>chrome</code> narrow it, per capability and per region, so the role
+          never has to be the unit of what a host can express; <code>prefs</code>
+          sets the container's opening positions. <code>config</code> takes an
+          ONLYOFFICE-shaped block whole, for a host migrating one, and reports back
+          everything it could not honour. This is the package's own documented
+          usage, and a guard checks every attribute in it against the attributes the
+          element really reads, and the <code>mode</code> value against the names
+          the authority really accepts:
         </p>
         <!-- @generated declarative-usage -->
         <div class="code-panel">
@@ -558,7 +560,7 @@ function resolveFor({ mode, can }</code></pre>
         </p>
         <p class="doc-body" data-i18n="site.embedding.chromeReflects">
           The chrome reflects that. A <code>readonly</code> container gets
-          <span data-claim="reading-region-count">9</span> regions — the menu bar, the
+          <span data-claim="reading-region-count">10</span> regions — the menu bar, the
           navigation rail, the status bar, zoom, find and the document title — and
           <strong data-i18n="site.embedding.noEditingRibbonAll">no editing ribbon at all</strong>, not a ribbon full of greyed
           buttons. A <code>preview</code> container gets
@@ -959,6 +961,23 @@ export function parseOriginAllowlist(raw, selfOrigin) {
   "version": 1,
   "name": "Northwind Docs",
   "mark": "./opendoc-mark.svg",
+  "markHref": "https://example.invalid/northwind",
+  "customer": {
+    "name": "Northwind Trading Co.",
+    "info": "Document workspace for the Northwind field teams.",
+    "address": "14 Harbour Road, Bristol BS1 4RN",
+    "www": "https://example.invalid/northwind",
+    "mail": "mailto:docs@example.invalid",
+    "phone": "tel:+441170000000"
+  },
+  "feedback": {
+    "text": "Tell us what broke",
+    "url": "https://example.invalid/northwind/support"
+  },
+  "help": {
+    "text": "Northwind help centre",
+    "url": "https://example.invalid/northwind/help"
+  },
   "tabTitle": "document",
   "theme": {
     "tokens": {
@@ -1046,7 +1065,7 @@ brand.json was refused:
 
         <h3 id="chrome-selection" class="doc-h3" data-i18n="site.embedding.chooseChrome">Choose the chrome</h3>
         <p class="doc-body">
-          <span data-claim="region-count">24</span> regions, of which
+          <span data-claim="region-count">25</span> regions, of which
           <span data-claim="band-count">8</span> are ribbon bands, each withheld
           independently with <code>chrome</code>. A withheld region is a presentation
           decision about your page, not a permission — so it is <em>absent</em> and
@@ -1076,6 +1095,12 @@ brand.json was refused:
           <div class="disp-row">
             <div class="disp-name"><code>state</code></div>
             <div class="disp-cell" data-i18n="site.region.state">The document-state chips and Document properties in the top bar.</div>
+            <div class="disp-cell">yes</div>
+            <div class="disp-cell">—</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>review</code></div>
+            <div class="disp-cell" data-i18n="site.region.review">The Editing / Suggesting / Read-only switcher in the top bar.</div>
             <div class="disp-cell">yes</div>
             <div class="disp-cell">—</div>
           </div>
@@ -1389,16 +1414,17 @@ brand.json was refused:
           </li>
           <li>
             <b data-i18n="site.embedding.noWayHandYour">No way to hand it your document.</b> The element's
-            <span data-claim="attribute-count">5</span> attributes configure what
-            the editor <em>is</em> — the role, the two withhold lists, where the
-            editor lives and the frame's accessible name — and none of them is a
-            document. <code>editor-src</code> may carry the editor's own query
-            parameters; there is no host-supplied document URL or byte array.
+            <span data-claim="attribute-count">8</span> attributes configure what
+            the editor <em>is</em> — the role, the two withhold lists, the opening
+            positions, a competitor's configuration block, the editor's language,
+            where the editor lives and the frame's accessible name — and none of
+            them is a document. <code>editor-src</code> may carry the editor's own
+            query parameters; there is no host-supplied document URL or byte array.
           </li>
           <li>
             <b data-i18n="site.embedding.noPerGroupSelection">No per-GROUP selection inside a ribbon band.</b> All eight bands are
             selectable and every one of the
-            <span data-claim="region-count">24</span> chrome regions can be
+            <span data-claim="region-count">25</span> chrome regions can be
             withheld, but the groups <em>inside</em> a band are not addressable:
             <span data-claim="unnamed-group-count">46</span> of them carry no
             <code>data-group</code> attribute at all, so a per-group roster would

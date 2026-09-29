@@ -55,7 +55,7 @@ export declare function resolveCapabilities(input?: {
 // silent; "not right now" is state and explains itself with a reason.
 
 /** Every region of the chrome a host can withhold. */
-export type Region = "brand" | "title" | "state" | "menu" | "ribbon" | "band.file" | "band.home" | "band.insert" | "band.layout" | "band.references" | "band.review" | "band.view" | "band.table" | "rail" | "ruler" | "caret" | "context" | "objects" | "history" | "status" | "zoom" | "find" | "selection" | "settings";
+export type Region = "brand" | "title" | "state" | "review" | "menu" | "ribbon" | "band.file" | "band.home" | "band.insert" | "band.layout" | "band.references" | "band.review" | "band.view" | "band.table" | "rail" | "ruler" | "caret" | "context" | "objects" | "history" | "status" | "zoom" | "find" | "selection" | "settings";
 
 export declare const REGIONS: readonly Region[];
 
@@ -88,6 +88,85 @@ export declare function hostConfig(view?: unknown): {
 
 /** Parses a withhold list against a vocabulary. Only ever narrows. */
 export declare function parseWithheld(raw: string | null | undefined, known: readonly string[]): readonly string[];
+
+// ---- Opening positions -----------------------------------------------------
+//
+// The third axis, and the one ONLYOFFICE has most of. Neither a permission nor a
+// surface: a value the container OPENS with, which the visitor may then change.
+// Held to neither the narrow-only rule (it takes nothing away) nor the
+// composition rule (it removes nothing) — a host's opening position is not a
+// decision about someone else's eyes.
+
+/** Every opening position a host may set. */
+export type Preference = "user" | "initials" | "spellcheck" | "grammar" | "proofLanguage" | "theme";
+
+export declare const PREFERENCES: readonly {
+  readonly name: Preference;
+  /** The settings key this preference moves. */
+  readonly setting: string;
+  readonly kind: "text" | "flag" | "enum";
+  readonly values?: readonly string[];
+}[];
+
+/** Resolves a host's preference object into the settings delta it means, keyed
+ *  by SETTING. An unknown name or an unreadable value is dropped, which leaves
+ *  the editor's own default — the outcome a host who typed nothing would have. */
+export declare function resolvePreferences(
+  raw: Partial<Record<Preference, unknown>> | string | null | undefined,
+): Readonly<Record<string, unknown>>;
+
+// ---- The competitor's configuration ----------------------------------------
+//
+// ONLYOFFICE gates every `customization` key in code:
+// `LayoutManager._applyCustomization` opens `if (!_licensed || !config) return;`.
+// Ours is Apache-2.0 and ungated, and this is where that becomes a product: a
+// host hands over the object they already wrote, it is lowered onto the three
+// axes above, and everything that cannot be honoured is REPORTED rather than
+// silently dropped.
+
+/** How one of their options was answered. */
+export type HostOptionCode = "mapped" | "narrowed" | "cannot-widen" | "unsupported" | "declined" | "elsewhere" | "unknown";
+
+export declare const NOTE_CODES: readonly HostOptionCode[];
+
+/** Every option in their host configuration, against ours. 121 of them. */
+export declare const OPTIONS: readonly {
+  /** Their dotted path, exactly as their source spells it. */
+  readonly option: string;
+  /** What a host says to us instead, or null where there is nothing to say. */
+  readonly ours: string | null;
+  readonly code: HostOptionCode;
+  readonly note?: string;
+}[];
+
+export declare const OPTION_PATHS: readonly string[];
+
+/** How many of their options fall into each answer. Derived, never written down. */
+export declare function optionTally(): Readonly<Record<HostOptionCode, number>>;
+
+/** One thing we did, or did not do, with one of their options. */
+export interface HostOptionNote {
+  /** Their dotted path. */
+  option: string;
+  code: HostOptionCode;
+  /** Developer-facing English. Branch on `code`, not on this. */
+  message: string;
+}
+
+/** Lowers an ONLYOFFICE-shaped host configuration onto ours.
+ *
+ *  Only `false` narrows. A `true` that the resolved role does not grant comes
+ *  back as `cannot-widen` rather than being honoured: a configuration channel
+ *  that can widen a role is a channel an attacker fills in, and that property is
+ *  the whole model. */
+export declare function translateHostConfig(config: object | string | null | undefined): {
+  mode: string | null;
+  can: readonly Capability[];
+  chrome: readonly Region[];
+  prefs: Readonly<Record<string, unknown>>;
+  lang: string | null;
+  notes: readonly HostOptionNote[];
+};
 
 // ---- Release and provenance (`docs/126` phase 3) ---------------------------
 
@@ -128,9 +207,17 @@ export interface OpenDocCapabilitiesDetail {
   chrome: string | null;
   capabilities: readonly Capability[];
   regions: readonly Region[];
+  /** The opening positions in force, keyed by the setting each one moves. */
+  preferences: Readonly<Record<string, unknown>>;
   editingMode: EditingMode;
   sandbox: readonly string[];
   src: string;
+  /** What the host's `config` asked for that could not be honoured as written,
+   *  and what was done instead. Empty when everything mapped. This is the field
+   *  ONLYOFFICE has no place for: `_applyCustomization` early-returns on an
+   *  unlicensed integrator and walks past an option it does not know, both
+   *  without a word. */
+  notes: readonly HostOptionNote[];
 }
 
 /** An embedded opendoc editor.
@@ -151,6 +238,7 @@ export declare class OpenDocEditorElement extends HTMLElement {
   mode: string | null;
   readonly capabilities: readonly Capability[];
   readonly regions: readonly Region[];
+  readonly preferences: Readonly<Record<string, unknown>>;
   readonly editingMode: EditingMode;
   readonly sandbox: readonly string[];
   readonly frame: HTMLIFrameElement | null;

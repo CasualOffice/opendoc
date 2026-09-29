@@ -171,6 +171,25 @@ export const REGIONS = Object.freeze([
   // read-only. The cluster is not an editing surface — nothing in it changes the
   // document — so it is not in `EDITING_REGIONS` either, and Viewing mode keeps it.
   "state",
+  // The Editing / Suggesting / Read-only segmented control in the top bar.
+  //
+  // ONLYOFFICE's `customization.review.hideReviewDisplay`, and a region rather
+  // than a capability for the reason the whole second axis exists: which MODES a
+  // container may enter is already a permission — `allowsMode`, resolved from
+  // `edit` and `comment` — and `reflectReviewModeAccess` already disables a
+  // withheld mode WITH A REASON rather than removing it. This is the other
+  // question: a host who has decided the mode for their container, and does not
+  // want a switch offered at all, because their own product decides who is
+  // reviewing. Taking the control away does not widen or narrow anything; the
+  // grant still decides what the editor does.
+  //
+  // IT IS IN `READING_REGIONS` ON PURPOSE. A `readonly` container shows the
+  // control today, with two segments disabled and explaining themselves, and
+  // that is `reflectReviewModeAccess`'s stated design — a reader can see which of
+  // three modes they are in. Leaving it out of reading chrome would have changed
+  // every existing `readonly` container as a side effect of adding a switch for
+  // somebody else, which is not what adding an option means.
+  "review",
   "menu", // the application menu bar — one of the two navigation axes
   "ribbon", // the whole tabbed ribbon, strip and bands together
   "band.file",
@@ -297,7 +316,22 @@ const ALL_REGIONS = Object.freeze([...REGIONS]);
  *
  *  And no `brand`: a reader is not somewhere we advertise, and no preset below
  *  `owner` grants `branding` anyway, so listing it would be a dead entry. */
-const READING_REGIONS = Object.freeze(["title", "state", "menu", "rail", "status", "zoom", "find", "caret", "context"]);
+const READING_REGIONS = Object.freeze([
+  "title",
+  "state",
+  "menu",
+  "rail",
+  // The mode control, kept: see its entry in `REGIONS`. A reader is told which of
+  // the three modes they are in and why the other two are closed to them, which
+  // is `reflectReviewModeAccess`'s whole argument; a host who wants it gone says
+  // `chrome=-review`.
+  "review",
+  "status",
+  "zoom",
+  "find",
+  "caret",
+  "context",
+]);
 
 /** PREVIEW CHROME.
  *
@@ -367,6 +401,194 @@ export const CAPABILITY_AFFORDANCES = Object.freeze({
   // `branding` IS the brand region: showing our name and mark is the whole of it.
   branding: Object.freeze(["brand"]),
 });
+
+// ---- Host preferences ------------------------------------------------------
+//
+// THE THIRD AXIS, and the one ONLYOFFICE has most of. Read their
+// `customization` block (`reference/web-apps/apps/api/documents/api.js:137+`)
+// and most of it is neither a permission nor a surface: `spellcheck.mode`,
+// `uiTheme`, `zoom`, `compactToolbar`, `review.trackChanges`, `unit` and
+// `editorConfig.user` are all INITIAL VALUES for state the visitor may then
+// change. Their own comments say so in as many words — "init value in de/pe",
+// "init value for right panel".
+//
+// That is a different kind of thing from both of ours, and collapsing it into
+// either would be wrong in a way that matters:
+//
+//   * Not a CAPABILITY. A capability is a permission and may only ever be
+//     narrowed, because a configuration channel that can widen a role is a
+//     channel an attacker fills in. A preference is not a permission at all —
+//     "open with spell check off" takes nothing away and grants nothing — so
+//     holding it to the narrow-only rule would make it unexpressible.
+//   * Not a REGION. A region is "never, for you"; a preference is "start here",
+//     and the visitor may move. A host who wants a surface gone says `chrome`.
+//
+// So preferences are their own vocabulary, in the same authority, resolved from
+// the same URL at the same moment. They are a DELTA ON THE DEFAULTS
+// (`settings_defaults.mjs`) rather than a second settings store, which is what
+// `docs/125` already names as the layer a host configuration sits on: a value a
+// visitor has since chosen for themselves still wins, because a host's opening
+// position is not a decision about someone else's eyes or ears.
+//
+// WHY THEY CARRY A SETTING KEY. Each row names the `DEFAULT_SETTINGS` key it
+// moves, so the whole axis is applied by one merge in one place and no consumer
+// learns that host preferences exist. A preference with nowhere to land would be
+// a dead control in configuration form, which is why the table cannot hold one:
+// `settings_defaults.test.mjs` refuses a row whose `setting` is not a real key.
+
+/** A preference's shape, so a bad value is dropped rather than written through
+ *  to a setting that expected something else. */
+const PREFERENCE_KINDS = Object.freeze(["text", "flag", "enum"]);
+
+/**
+ * Every opening position a host may set, and the setting each one moves.
+ *
+ * Deliberately small, and deliberately only values that ALREADY EXIST as
+ * settings. A preference whose setting the editor does not have is not a
+ * preference we can honour, and inventing the state to hold it is engine or
+ * chrome work — reported through `host_options.mjs` rather than declared here
+ * and silently ignored, which is the failure mode the whole option map exists to
+ * remove.
+ */
+export const PREFERENCES = Object.freeze([
+  // ONLYOFFICE `editorConfig.user.name`. The sharpest gap of the three: an
+  // embedded editor's comments and tracked changes are signed by whoever the
+  // SETTINGS dialog says, so a host that knows exactly who is looking at the
+  // document had no way to say so, and every suggestion in every container was
+  // authored by "You".
+  Object.freeze({ name: "user", setting: "authorName", kind: "text" }),
+  // No competitor equivalent — ONLYOFFICE derives initials from the name. Ours
+  // are a separate setting because a reviewer mark is not always a name's
+  // initials, so a host that sets the name may set these too.
+  Object.freeze({ name: "initials", setting: "authorInitials", kind: "text" }),
+  // ONLYOFFICE `customization.features.spellcheck.mode` (and the deprecated
+  // `customization.spellcheck`). Their `change: false` — hide the feature
+  // entirely — is the REGION axis here, not this one.
+  Object.freeze({ name: "spellcheck", setting: "spellCheck", kind: "flag" }),
+  // No competitor equivalent: theirs is one switch. Ours are two, as in Word,
+  // because the owner rates grammar the more important of the pair and it must
+  // not be reachable only by leaving spelling on.
+  Object.freeze({ name: "grammar", setting: "grammarCheck", kind: "flag" }),
+  // The language proofing falls back to where the document's own `w:lang` does
+  // not say. ONLYOFFICE has no per-editor equivalent; `editorConfig.region` is
+  // number and date formatting, which is a different question.
+  Object.freeze({ name: "proofLanguage", setting: "spellLanguage", kind: "text" }),
+  // ONLYOFFICE `customization.uiTheme`. A DEFAULT, never a pin, and the
+  // difference is the whole reason this is allowed at all: ADR-039 lets a host
+  // pin the accent and refuses to let one pin light/dark, because that is a
+  // reader's preference about their own eyes. An opening position a reader can
+  // change in Settings takes nothing from them; `brand.css` still cannot hold it.
+  Object.freeze({ name: "theme", setting: "theme", kind: "enum", values: Object.freeze(["system", "light", "dark"]) }),
+]);
+
+/** Preference name → row, for O(1) resolution. */
+const PREFERENCE_ROWS = new Map(PREFERENCES.map((row) => [row.name, row]));
+
+/** The setting keys the preference axis can move. Exported so the defaults
+ *  module can prove every row lands somewhere real. */
+export const PREFERENCE_SETTINGS = Object.freeze(PREFERENCES.map((row) => row.setting));
+
+/** One preference value, read against its row's kind, or `undefined` when the
+ *  host sent something the row cannot mean.
+ *
+ *  DROPPED RATHER THAN COERCED. `spellcheck: "yes"` is a host mistake, and
+ *  turning it into `true` would mean the container silently disagreed with the
+ *  configuration the host is reading. It is dropped here and REPORTED by
+ *  `host_options.mjs`, which is the same honesty the withhold lists get.
+ *
+ *  Complexity: O(1). */
+function readPreference(row, value) {
+  if (row.kind === "flag") {
+    if (value === true || value === "1" || value === "true") return true;
+    if (value === false || value === "0" || value === "false") return false;
+    return undefined;
+  }
+  if (row.kind === "enum") {
+    return row.values.includes(value) ? value : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  // An empty string is a real value for `authorName` — it is the default — so a
+  // host clearing a name is honoured; a whitespace-only one is not a name.
+  return value === "" ? "" : text || undefined;
+}
+
+/**
+ * Resolves a host's preference object into the settings delta it means.
+ *
+ * Keyed by SETTING, not by preference name, because the delta's only consumer is
+ * a merge over `DEFAULT_SETTINGS` and a caller holding preference names would
+ * have to learn the mapping a second time.
+ *
+ * Unknown names and unreadable values are dropped. Dropping a preference leaves
+ * the editor's own default, which is the outcome a host who typed nothing would
+ * have had — so a typo can never produce a container nobody designed.
+ *
+ * Complexity: O(entries).
+ *
+ * @param {object|string|null|undefined} raw the `prefs` object, or its JSON text.
+ * @returns {Readonly<Record<string, unknown>>}
+ */
+export function resolvePreferences(raw) {
+  const accepted = normalizePreferences(raw);
+  const delta = {};
+  for (const [name, value] of Object.entries(accepted)) delta[PREFERENCE_ROWS.get(name).setting] = value;
+  return Object.freeze(delta);
+}
+
+/**
+ * The same resolution, keyed by PREFERENCE NAME rather than by setting.
+ *
+ * Two shapes because there are two audiences and each would otherwise learn the
+ * other's vocabulary: the settings layer merges by setting key, and a URL or a
+ * host-facing report speaks the published names. Both come from one walk, so
+ * they cannot answer differently — which is the whole reason this is not two
+ * functions with two loops.
+ *
+ * Complexity: O(entries).
+ *
+ * @param {object|string|null|undefined} raw
+ * @returns {Readonly<Record<string, unknown>>}
+ */
+export function normalizePreferences(raw) {
+  const asked = parsePreferenceObject(raw);
+  const accepted = {};
+  for (const [name, value] of Object.entries(asked)) {
+    const row = PREFERENCE_ROWS.get(name);
+    if (!row) continue;
+    const read = readPreference(row, value);
+    if (read === undefined) continue;
+    accepted[name] = read;
+  }
+  return Object.freeze(accepted);
+}
+
+/**
+ * The preference object a host sent, as an object, however it arrived.
+ *
+ * JSON in a URL parameter rather than a comma list, which is what `can` and
+ * `chrome` use. The difference is deliberate and is about the VALUES: a withhold
+ * list is a set of fixed names, where a preference carries host text — an author
+ * called "Lovelace, Ada" would split a comma list in half, and a separator
+ * chosen to dodge that is a mini-language nobody asked for. `URLSearchParams`
+ * already escapes JSON correctly in both directions, so there is nothing to
+ * invent.
+ *
+ * Unparseable text is an empty object, never a throw: a malformed `prefs` must
+ * leave the editor with its own defaults rather than no editor.
+ *
+ * Complexity: O(text).
+ */
+export function parsePreferenceObject(raw) {
+  if (raw && typeof raw === "object") return raw;
+  if (typeof raw !== "string" || !raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Parses a withhold list: `"-print,-download"` or `"print,download"`.
@@ -652,8 +874,21 @@ export function hostConfig(view = globalThis) {
     autosave: asked === "1" ? true : asked === "0" ? false : null,
     withhold: params?.get("can") ?? null,
     chrome: params?.get("chrome") ?? null,
+    // The opening positions, as JSON. Read here with the other four because a
+    // host's configuration arrives in one place or it arrives in two, and two is
+    // how `autosave` came to be known by both this file and `main.js`.
+    prefs: params?.get("prefs") ?? null,
     framed,
   };
+}
+
+/** The settings delta this page load was opened with, from the same inputs.
+ *
+ *  Separated from `resolvePreferences` for the reason every `host*` function
+ *  here is: the decision stays pure and answerable in node, and only this reads
+ *  a real page. */
+export function hostPreferences(view = globalThis) {
+  return resolvePreferences(hostConfig(view).prefs);
 }
 
 /** Reads the host inputs off a real page. Separated from `resolveCapabilities`

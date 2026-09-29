@@ -8,7 +8,28 @@
 // Every value below is a decision with a reason attached. They are written down
 // because "why is this on by default" is asked of each of them eventually, and
 // the answer is otherwise in a commit message nobody will find.
-export const DEFAULT_SETTINGS = Object.freeze({
+//
+// ---- Where a host's opening positions land ---------------------------------
+//
+// `docs/125` names this module as "the layer a host configuration sits on top
+// of: an embedded editor's defaults are the host's to choose". `PRODUCT_DEFAULTS`
+// is that layer — ours, pure, and what a node test reads — and `DEFAULT_SETTINGS`
+// is the same table with the host's `?prefs=` delta merged over it.
+//
+// ONE MERGE, HERE, so nothing downstream learns that host preferences exist.
+// `main.js` still calls `loadPrefObject("opendoc.settings", DEFAULT_SETTINGS)`
+// and is unchanged; the stored preferences of a visitor who has chosen for
+// themselves still win over both, because a host's opening position is not a
+// decision about someone else's eyes. That ordering is the whole difference
+// between a default and a pin (ADR-039).
+//
+// In node there is no `location`, so `hostPreferences()` reads no parameters and
+// `DEFAULT_SETTINGS` is `PRODUCT_DEFAULTS` exactly — which is what keeps this
+// module answerable without a browser.
+import { hostPreferences } from "./capabilities.mjs";
+
+/** The product's own opening position, before any host has spoken. */
+export const PRODUCT_DEFAULTS = Object.freeze({
   theme: "system",
   // "" means follow the browser. A person who has never touched this gets
   // their own language if we ship it, and a person who chose one keeps it even
@@ -88,3 +109,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // versions; 15 of 25 leaves ten slots that automatic capture can always use.
   versionNamedLimit: 15,
 });
+
+/**
+ * What the editor believes before anyone has told it anything, INCLUDING the
+ * host — the table every consumer reads.
+ *
+ * A host preference that names a key this table does not have is dropped by
+ * `resolvePreferences`; one that names a key it does have replaces the value.
+ * Complexity: O(preferences), once at module evaluation.
+ */
+export const DEFAULT_SETTINGS = Object.freeze({ ...PRODUCT_DEFAULTS, ...hostPreferences() });

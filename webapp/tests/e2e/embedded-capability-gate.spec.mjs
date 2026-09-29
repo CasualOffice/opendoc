@@ -363,6 +363,114 @@ test("the demo host is the page the package documents", async () => {
  *
  *  Three separate facts, because "absent" and "disabled" are different product
  *  behaviours and only one of them is acceptable. */
+// ── The competitor's configuration, on a real container ──────────────────────
+//
+// `host_options.test.mjs` proves the TRANSLATION in node: their option, our axis,
+// the resolved set. It cannot prove the resolved set reached a browser, and that
+// is precisely the gap `docs/99` §9.4 keeps recording — "built" is not
+// "reachable". A previous lane's snippet guard stayed green while broken because
+// the live frame and the snippet were built from one state and went wrong
+// together; nothing below reads anything this test wrote into the page. Every
+// assertion after the mount is made against the EDITOR's own DOM, inside the
+// frame, after it booted from a URL it was handed.
+test("an ONLYOFFICE-shaped configuration changes the container, and reports what it could not do", async ({
+  page,
+}) => {
+  await page.goto("/embed.html");
+
+  // Exactly the block a host already wrote for the editor they already pay for.
+  // Four different answers in one object on purpose — one capability withheld,
+  // two regions withheld, one opening position set, and three options we cannot
+  // honour as written — so a single mount exercises every arm of the translator.
+  const ONLYOFFICE_CONFIG = {
+    permissions: { print: false, edit: true },
+    editorConfig: {
+      user: { name: "Ada Lovelace" },
+      customization: {
+        hideRulers: true,
+        review: { hideReviewDisplay: true },
+        macros: true,
+        unit: "cm",
+      },
+    },
+  };
+
+  const detail = await page.evaluate(async (config) => {
+    const element = document.createElement("opendoc-editor");
+    element.dataset.configDemo = "";
+    element.setAttribute("editor-src", "./editor.html");
+    element.setAttribute("frame-title", "Configured by an ONLYOFFICE-shaped block");
+    element.setAttribute("config", JSON.stringify(config));
+    const announced = new Promise((resolve) => {
+      element.addEventListener("opendoc-capabilities", (event) => resolve(event.detail), {
+        once: true,
+      });
+    });
+    document.querySelector('[data-embed="element"] .embed-stage').append(element);
+    const seen = await announced;
+    return {
+      capabilities: [...seen.capabilities],
+      regions: [...seen.regions],
+      preferences: { ...seen.preferences },
+      notes: seen.notes.map((note) => ({ option: note.option, code: note.code })),
+    };
+  }, ONLYOFFICE_CONFIG);
+
+  // What the element resolved. `permissions.edit: true` is in the config and must
+  // NOT appear as a grant it handed out: a host list may only narrow, and this is
+  // the one channel the whole model rests on never widening.
+  expect(detail.capabilities).not.toContain("print");
+  expect(detail.regions).not.toContain("ruler");
+  expect(detail.regions).not.toContain("review");
+  expect(detail.preferences.authorName).toBe("Ada Lovelace");
+  const answered = Object.fromEntries(detail.notes.map((note) => [note.option, note.code]));
+  expect(answered["permissions.edit"], "a true must be refused, not honoured").toBe("cannot-widen");
+  expect(answered["customization.macros"]).toBe("declined");
+  expect(answered["customization.unit"]).toBe("unsupported");
+  expect(answered["permissions.print"]).toBe("mapped");
+
+  // ── And now the container itself ────────────────────────────────────────────
+  const handle = await page.locator("[data-config-demo] iframe").elementHandle();
+  const frame = await handle.contentFrame();
+  await waitForFramedEditor(frame);
+  // Bring the embed into the HOST's viewport before driving anything inside it.
+  // Playwright scrolls within a frame but cannot scroll the page the frame is
+  // clipped by, so a control that is perfectly visible inside a below-the-fold
+  // embed reports "element is outside of the viewport" until the timeout — which
+  // is exactly what this test did on its first real run, and what
+  // `mountEmbedPanel` already does for the two panels above.
+  await page.locator("[data-config-demo]").scrollIntoViewIfNeeded();
+
+  // The two withheld regions are gone from the chrome — read off the editor's own
+  // published list AND off an element, because the list is what the page believes
+  // and the element is what a visitor sees.
+  const withheld = (
+    await frame.evaluate(() => document.body.dataset.chromeWithheld ?? "")
+  ).split(" ");
+  expect(withheld).toContain("ruler");
+  expect(withheld).toContain("review");
+  await expect(
+    frame.locator("#reviewModeControl"),
+    "customization.review.hideReviewDisplay must take the switcher off the page",
+  ).toBeHidden();
+  // The positive control for the region half: a band the host said nothing about
+  // is still there, so this is not passing because the chrome failed to paint.
+  await expect(frame.locator("#tabHome")).toBeVisible();
+
+  // The opening position reached the editor's own settings, which is the whole
+  // claim of the third axis: a host who knows who is looking at the document can
+  // say so, and every suggestion in the container is signed with it rather than
+  // with nobody.
+  await expect(frame.locator("#authorName")).toHaveValue("Ada Lovelace");
+
+  // And the withheld capability is refused where a visitor meets it — disabled,
+  // present, and saying why, which is the rule one level down from composition.
+  const [print] = await readPaletteRows(frame, ["file.print"]);
+  expect(print.present, "file.print was hidden rather than refused").toBe(true);
+  expect(print.disabled, "permissions.print: false did not reach the command").toBe(true);
+  expect(print.reason.length, "a withheld command must say why").toBeGreaterThan(0);
+});
+
 async function readPaletteRows(frame, ids) {
   // `openCommandPalette` goes through the File surface of whichever chrome is
   // showing — a real clickable path, not a chord — so this also proves a pointer

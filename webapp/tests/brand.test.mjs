@@ -301,6 +301,90 @@ test("a per-theme token in the shared block is refused, and the other way round"
   );
 });
 
+// ---- The deployment's identity (ONLYOFFICE `customization.logo` / `customer`) -
+
+test("a link that executes rather than navigates is refused", () => {
+  // THE HOLE THIS CLOSES. Every value in `brand.json` came out of somebody else's
+  // file, and `markHref` and the two link blocks are the only fields that become
+  // an `href`. A `javascript:` there would be script running in the EDITOR's own
+  // origin, injected by configuration — the shape of every white-label XSS — and
+  // `data:` is the same hole spelled differently.
+  for (const href of ["javascript:alert(1)", "data:text/html,<script>", "vbscript:x"]) {
+    assert.throws(
+      () => normalize({ version: 1, markHref: href }, themes),
+      (err) => err instanceof BrandRefusal && /scheme/.test(err.message),
+      `${href} was accepted as a link`,
+    );
+  }
+  // And the four that navigate are accepted, or a support desk could not be named
+  // — the refusal has to be about the scheme and not about leaving the origin.
+  for (const href of ["https://example.invalid/x", "http://example.invalid", "mailto:a@b.invalid", "tel:+1"]) {
+    assert.doesNotThrow(() => normalize({ version: 1, markHref: href }, themes));
+  }
+});
+
+test("a labelled destination with nowhere to go is refused", () => {
+  // A dead control in configuration form: a link that renders and does nothing.
+  assert.throws(
+    () => normalize({ version: 1, feedback: { text: "Tell us" } }, themes),
+    (err) => err instanceof BrandRefusal && /feedback\.url is required/.test(err.message),
+  );
+  assert.throws(
+    () => normalize({ version: 1, customer: { nope: "x" } }, themes),
+    (err) => err instanceof BrandRefusal && /customer\.nope is not a field/.test(err.message),
+  );
+  // A customer LOGO is an asset, not a link, so it is held to the local rule: the
+  // chrome must paint with the network off.
+  assert.throws(
+    () => normalize({ version: 1, customer: { logo: "https://cdn.invalid/logo.svg" } }, themes),
+    (err) => err instanceof BrandRefusal && /absolute or protocol-relative/.test(err.message),
+  );
+});
+
+test("a linked mark carries its name in text, and the host's text is escaped", () => {
+  // Two properties in one generated element, and both are rules this repository
+  // already holds elsewhere. A focusable node inside `aria-hidden` is the axe
+  // `aria-hidden-focus` violation `SKILL` §10 forbids outright, so the anchor
+  // cannot simply wrap the decorative span; and the name it announces is host
+  // text going into markup, so it is escaped.
+  const config = normalize(
+    { version: 1, name: 'Northwind "<b>" & Co', markHref: "https://example.invalid/x" },
+    themes,
+  );
+  const region = editorRegions(config, markPaths(config)).get("brand-mark");
+  assert.match(region, /<a class="brand-logo-link" href="https:\/\/example\.invalid\/x"/);
+  assert.match(region, /rel="noreferrer noopener"/);
+  assert.match(region, /<span class="sr-only">Northwind &quot;&lt;b&gt;&quot; &amp; Co<\/span>/);
+  assert.doesNotMatch(region, /<b>/, "host text reached the markup unescaped");
+  // The decorative span keeps its `aria-hidden`, and it is not the focusable node.
+  assert.match(region, /<span class="brand-logo" aria-hidden="true">/);
+  // Without a `markHref` the mark is what it always was: no anchor at all, so a
+  // deployment that did not ask for a link does not grow a tab stop.
+  const plain = normalize({ version: 1 }, themes);
+  assert.doesNotMatch(editorRegions(plain, markPaths(plain)).get("brand-mark"), /<a /);
+});
+
+test("a dark mark is declared in all three theme entry points, or in none", () => {
+  // HF-092's shape: three patches shipped in one dark entry point and not the
+  // other, so a reader who chose Dark on a light OS saw the unfixed one. A mark
+  // is the most visible thing on the page to get that wrong about.
+  const both = normalize({ version: 1, markDark: "./dark-mark.svg" }, themes);
+  const css = brandCss(both, markPaths(both));
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\n  :root:not\(\[data-theme\]\) \{\n    --brand-mark: url\("\.\.\/dark-mark\.svg"\)/);
+  assert.match(css, /:root\[data-theme="dark"\] \{\n  --brand-mark: url\("\.\.\/dark-mark\.svg"\)/);
+  // And a host who named only one mark gets NO dark block, rather than an empty
+  // image that would erase the mark they did supply.
+  const single = normalize({ version: 1 }, themes);
+  assert.doesNotMatch(brandCss(single, markPaths(single)), /prefers-color-scheme: dark/);
+  // A dark variant of a mark that was switched off is a contradiction, not a
+  // no-op: silently accepting it would leave the host believing they configured
+  // something.
+  assert.throws(
+    () => normalize({ version: 1, mark: false, markDark: "./dark-mark.svg" }, themes),
+    (err) => err instanceof BrandRefusal && /no mark to vary/.test(err.message),
+  );
+});
+
 test("an unknown config version is refused rather than coerced", () => {
   for (const version of [undefined, 0, 2, "1", null]) {
     assert.throws(
