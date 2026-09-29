@@ -14,11 +14,13 @@ use crate::display::{
     Color, DisplayList, Fill, Gradient, GradientKind, GradientStop, PaintItem, ShapeGeometry,
     ShapeOutline, Stroke,
 };
+// Own line (anti-conflict): the inline picture's paint transform.
+use crate::display::ShapeTransform;
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::LayerBlend;
 use crate::page::PlacedWatermarkContent;
-use crate::text::{LineLayout, TextBoxContentLayout};
+use crate::text::{InlineImage, LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
 
 /// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
@@ -131,15 +133,20 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
         // paragraph-absolute; translate into page space and emit a blit. The
         // backend resolves `media` to pixels and scales them into the box.
         for image in &line.images {
+            let rect = Rect::new(
+                Point::new(origin.x + image.origin.x, origin.y + image.origin.y),
+                image.size,
+            );
             list.push(PaintItem::Image {
                 media: image.media.clone(),
-                rect: Rect::new(
-                    Point::new(origin.x + image.origin.x, origin.y + image.origin.y),
-                    image.size,
-                ),
+                rect,
                 crop: image.crop,
-                // Inline images are not rotated (a:xfrm applies to floats).
-                transform: None,
+                // `a:xfrm` is in `pic:spPr` and applies to an inline picture just
+                // as it does to a floating one — this used to emit `None` with a
+                // comment saying rotation was a float-only concern, so an
+                // imported rotated inline picture painted upright and
+                // `setObjectRotation` on one changed the model and nothing else.
+                transform: inline_image_transform(image, rect),
                 opacity: image.opacity,
             });
         }
@@ -1155,6 +1162,30 @@ fn push_border_rect(list: &mut DisplayList, rect: Rect, color: [u8; 4]) {
 ///
 /// Shading fills the whole outer box, up to and under the border — Word fills
 /// behind the frame, not merely inside it.
+/// The paint transform for one inline picture: its `a:xfrm` rotation/flip about
+/// the placed box's centre, or `None` for the identity so an unrotated picture
+/// blits through the untransformed path.
+///
+/// The centre is resolved here rather than carried on `InlineImage` because only
+/// composition knows the box's page-absolute rectangle — the same split the float
+/// path already uses (`crate::page`'s `shape_transform`).
+///
+/// O(1).
+fn inline_image_transform(image: &InlineImage, rect: Rect) -> Option<ShapeTransform> {
+    if image.transform.is_identity() {
+        return None;
+    }
+    Some(ShapeTransform {
+        rotation: image.transform.rotation,
+        flip_h: image.transform.flip_h,
+        flip_v: image.transform.flip_v,
+        center: Point::new(
+            Twip(rect.origin.x.raw() + rect.size.width.raw() / 2),
+            Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
+        ),
+    })
+}
+
 fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &ParagraphDecor) {
     let b = &decor.borders;
     let s = &decor.space;
@@ -2401,6 +2432,84 @@ mod tests {
         assert!(
             matches!(frame(DashStyle::Solid), DashStyle::Solid),
             "a solid frame stays solid"
+        );
+    }
+
+    /// An INLINE picture's `a:xfrm` must reach the paint list too. It did not:
+    /// `compose_paragraph` hard-coded `transform: None` with the comment
+    /// "inline images are not rotated (a:xfrm applies to floats)", which is not
+    /// what OOXML says — `a:xfrm` lives in `pic:spPr`, inline or floating — and
+    /// not what Word or ONLYOFFICE do. So an imported rotated inline picture
+    /// painted upright, and `setObjectRotation` on one changed the model and
+    /// nothing else. A rotation handle on top of that would have been a control
+    /// that does nothing visible.
+    #[test]
+    fn an_inline_pictures_rotation_reaches_its_composed_blit() {
+        use crate::text::{InlineImage, InlineTransform, Line, LineBreak, LineLayout};
+        let node = NodeId::from_parts(9, 1).unwrap();
+        let upright = InlineImage {
+            media: "m".to_owned(),
+            origin: Point::new(Twip(10), Twip(20)),
+            size: Size::new(Twip(100), Twip(60)),
+            crop: None,
+            opacity: None,
+            transform: InlineTransform::default(),
+        };
+        let line = |image: InlineImage| LineLayout {
+            lines: vec![Line {
+                runs: Vec::new(),
+                ascent: Twip(60),
+                descent: Twip::ZERO,
+                height: Twip(60),
+                clip: false,
+                range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
+                line_break: LineBreak::Wrap,
+                page_break_after: false,
+                bars: Vec::new(),
+                images: vec![image],
+                fields: Vec::new(),
+                notes: Vec::new(),
+                text_boxes: Vec::new(),
+                rules: Vec::new(),
+            }],
+        };
+        let origin = Point::new(Twip(200), Twip(300));
+
+        // The identity still blits through the untransformed path, so nothing
+        // about an ordinary picture changed.
+        let list = compose_paragraph(&line(upright.clone()), origin);
+        assert!(
+            matches!(&list.items[0], PaintItem::Image { transform: None, .. }),
+            "an unrotated inline picture emits no transform"
+        );
+
+        let rotated = InlineImage {
+            transform: InlineTransform {
+                rotation: 30 * 60_000,
+                flip_h: true,
+                flip_v: false,
+            },
+            ..upright
+        };
+        let list = compose_paragraph(&line(rotated), origin);
+        let PaintItem::Image {
+            transform: Some(applied),
+            rect,
+            ..
+        } = &list.items[0]
+        else {
+            panic!("a rotated inline picture must carry a transform onto its blit");
+        };
+        assert_eq!(applied.rotation, 30 * 60_000, "the authored angle, verbatim");
+        assert!(applied.flip_h && !applied.flip_v, "and the authored flips");
+        assert_eq!(
+            applied.center,
+            Point::new(
+                Twip(rect.origin.x.raw() + rect.size.width.raw() / 2),
+                Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
+            ),
+            "turned about the PLACED box's centre, in page space — a centre in \
+             paragraph-relative coordinates would swing the picture off the page"
         );
     }
 

@@ -1999,6 +1999,8 @@ mod tests {
         Decoration, FontId, Glyph, GlyphRun, InlineImage, InlineRule, InlineTextBox, Line,
         LineBreak, LineLayout, TextBoxContentLayout,
     };
+    // Own line (anti-conflict): the inline picture's `a:xfrm` carrier.
+    use crate::text::InlineTransform;
     use casual_doc_model::NodeId;
 
     #[test]
@@ -2300,6 +2302,7 @@ mod tests {
             origin: Point::new(Twip(20), Twip(260)),
             size: Size::new(Twip(40), Twip(50)),
             crop: None,
+            transform: InlineTransform::default(),
         });
         second.text_boxes.push(InlineTextBox {
             origin: Point::new(Twip(30), Twip(270)),
@@ -3241,6 +3244,7 @@ mod tests {
                 origin: Point::new(Twip(20), Twip(70 * 240 + 20)),
                 size: Size::new(Twip(80), Twip(80)),
                 crop: None,
+                transform: InlineTransform::default(),
             });
         }
         let mut tall_cell = cell_of(21, vec![tall_paragraph]);

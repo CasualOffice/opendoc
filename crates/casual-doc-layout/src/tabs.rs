@@ -79,6 +79,8 @@ pub enum FlowItem<'a> {
         /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent;
         /// `None` is fully opaque.
         opacity: Option<u32>,
+        /// The `a:xfrm` rotation/flip, painted about the placed box's centre.
+        transform: crate::text::InlineTransform,
     },
     /// A typed equation pre-laid out into an atomic glyph/rule box.
     Math {
