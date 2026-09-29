@@ -268,13 +268,15 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         <h2 id="mount" class="doc-h2" data-i18n="site.embedding.mount">Mount it</h2>
         <p class="doc-body" data-i18n="site.embedding.elementTakes">
           The element takes <span data-claim="attribute-count">8</span>
-          attributes and no configuration object. <code>mode</code> names a role;
-          <code>can</code> and <code>chrome</code> narrow it, per capability and
-          per region, so the role never has to be the unit of what a host can
-          express. This is the package's own documented usage, and a guard checks
-          every attribute in it against the attributes the element really reads,
-          and the <code>mode</code> value against the names the authority really
-          accepts:
+          attributes. <code>mode</code> names a role; <code>can</code> and
+          <code>chrome</code> narrow it, per capability and per region, so the role
+          never has to be the unit of what a host can express; <code>prefs</code>
+          sets the container's opening positions. <code>config</code> takes an
+          ONLYOFFICE-shaped block whole, for a host migrating one, and reports back
+          everything it could not honour. This is the package's own documented
+          usage, and a guard checks every attribute in it against the attributes the
+          element really reads, and the <code>mode</code> value against the names
+          the authority really accepts:
         </p>
         <!-- @generated declarative-usage -->
         <div class="code-panel">
@@ -1413,10 +1415,11 @@ brand.json was refused:
           <li>
             <b data-i18n="site.embedding.noWayHandYour">No way to hand it your document.</b> The element's
             <span data-claim="attribute-count">8</span> attributes configure what
-            the editor <em>is</em> — the role, the two withhold lists, where the
-            editor lives and the frame's accessible name — and none of them is a
-            document. <code>editor-src</code> may carry the editor's own query
-            parameters; there is no host-supplied document URL or byte array.
+            the editor <em>is</em> — the role, the two withhold lists, the opening
+            positions, a competitor's configuration block, the editor's language,
+            where the editor lives and the frame's accessible name — and none of
+            them is a document. <code>editor-src</code> may carry the editor's own
+            query parameters; there is no host-supplied document URL or byte array.
           </li>
           <li>
             <b data-i18n="site.embedding.noPerGroupSelection">No per-GROUP selection inside a ribbon band.</b> All eight bands are
