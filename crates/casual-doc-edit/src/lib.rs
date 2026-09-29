@@ -5323,16 +5323,7 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
         //
         // A `FORMCHECKBOX` holds no content: layout synthesises one box
         // character from the field's state, so it is one position wide.
-        InlineNode::Field(field) => match field.form.as_ref().map(|form| &form.kind) {
-            Some(FormFieldKind::CheckBox(checkbox)) => checkbox.glyph().len_utf8() as u32,
-            // A `FORMTEXT` blank and a `FORMDROPDOWN` both occupy the width of the
-            // value they SHOW, which is their cached result — as does every field
-            // that carries no legacy form record at all. Named rather than left to
-            // a wildcard so a fourth form kind has to decide.
-            Some(FormFieldKind::TextInput(_) | FormFieldKind::DropDown(_)) | None => {
-                nested_len(&field.inlines)
-            }
-        },
+        InlineNode::Field(field) => field_text_len(field),
         // The two block-story containers: see this function's doc comment. Zero is
         // the answer for THIS paragraph; the box's own paragraphs are measured
         // when they are themselves the subject.
@@ -5378,6 +5369,31 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
 
 fn nested_len(inlines: &[InlineNode]) -> u32 {
     inlines.iter().map(inline_text_len).sum()
+}
+
+/// The bytes a [`Field`] contributes to its own paragraph's projected text.
+///
+/// Public because the OT transform in `casual-doc-transaction` must compute the
+/// positional effect of an [`Operation::InsertField`] — how far it pushes every
+/// offset after it — from the **same** rule `apply` uses. A transform that models
+/// an edit differently from the way `apply` performs it converges on paper and
+/// diverges in the document, so there is one implementation and both read it.
+///
+/// **O(inlines in the field)**; no document walk.
+#[must_use]
+pub fn field_text_len(field: &Field) -> u32 {
+    match field.form.as_ref().map(|form| &form.kind) {
+        // A `FORMCHECKBOX` holds no content: layout synthesises one box character
+        // from the field's state, so it is one position wide.
+        Some(FormFieldKind::CheckBox(checkbox)) => checkbox.glyph().len_utf8() as u32,
+        // A `FORMTEXT` blank and a `FORMDROPDOWN` both occupy the width of the
+        // value they SHOW, which is their cached result — as does every field
+        // that carries no legacy form record at all. Named rather than left to
+        // a wildcard so a fourth form kind has to decide.
+        Some(FormFieldKind::TextInput(_) | FormFieldKind::DropDown(_)) | None => {
+            nested_len(&field.inlines)
+        }
+    }
 }
 
 /// The paragraph's total shaped-text byte length.

@@ -457,6 +457,8 @@ rasters
 reachability
 rebase
 rebased
+rebases
+rebasing
 rebuildable
 recalc
 rect
