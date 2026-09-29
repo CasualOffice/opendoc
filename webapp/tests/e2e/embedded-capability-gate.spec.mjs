@@ -433,6 +433,13 @@ test("an ONLYOFFICE-shaped configuration changes the container, and reports what
   const handle = await page.locator("[data-config-demo] iframe").elementHandle();
   const frame = await handle.contentFrame();
   await waitForFramedEditor(frame);
+  // Bring the embed into the HOST's viewport before driving anything inside it.
+  // Playwright scrolls within a frame but cannot scroll the page the frame is
+  // clipped by, so a control that is perfectly visible inside a below-the-fold
+  // embed reports "element is outside of the viewport" until the timeout — which
+  // is exactly what this test did on its first real run, and what
+  // `mountEmbedPanel` already does for the two panels above.
+  await page.locator("[data-config-demo]").scrollIntoViewIfNeeded();
 
   // The two withheld regions are gone from the chrome — read off the editor's own
   // published list AND off an element, because the list is what the page believes
