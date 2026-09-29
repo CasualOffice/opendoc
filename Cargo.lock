@@ -243,6 +243,7 @@ dependencies = [
 name = "casual-doc-transaction"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-edit",
  "casual-doc-model",
  "unicode-segmentation",
 ]
@@ -261,6 +262,7 @@ dependencies = [
  "casual-doc-ooxml",
  "casual-doc-render",
  "casual-doc-selection",
+ "casual-doc-transaction",
  "serde",
  "serde_json",
  "unicode-segmentation",

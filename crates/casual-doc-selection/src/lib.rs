@@ -15,7 +15,7 @@ use std::error::Error;
 use std::fmt;
 
 use casual_doc_model::{BlockNode, Document, NodeId};
-use casual_doc_transaction::{Affinity, Position, PositionMap};
+use casual_doc_transaction::v0::{Affinity, Position, PositionMap};
 
 pub mod table_cells;
 
@@ -156,7 +156,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use casual_doc_model::IdGenerator;
-    use casual_doc_transaction::{Operation, RevisionId, Transaction, TransactionId, apply};
+    use casual_doc_transaction::v0::{Operation, RevisionId, Transaction, TransactionId, apply};
 
     use super::*;
 

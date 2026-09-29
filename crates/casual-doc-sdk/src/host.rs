@@ -15,12 +15,15 @@
 //! rather than invented"* and that error codes be this crate's, not new ones.
 //!
 //! Full convergence is not this phase. It is `docs/125` §9 row 5 — size **L** —
-//! and it is blocked by `109` CQ-002: the live editing path applies
-//! `casual-doc-edit`'s ops directly and references `casual_doc_transaction` zero
-//! times, so this crate's five typed requests over the v0 normalized `Document`
-//! are not the ops the editor runs. Wiring the editor to `DocumentSession` today
-//! would mean reimplementing the v1 editing surface on a v0 model, which is a
-//! migration and not a wiring.
+//! and the half of `109` CQ-002 that blocked it is now closed on the editor's
+//! side: doc 147 (ADR-043) routes every live mutation through
+//! `casual_doc_transaction`, so the editor *does* run transactions. What still
+//! separates the two is the **model**, not the envelope — this crate's five typed
+//! requests address the v0 normalized `Document`, and the editor's fifty-five
+//! operations address `v1::Document`. Wiring the editor to `DocumentSession`
+//! today would still mean reimplementing the v1 editing surface on a v0 model,
+//! which is a migration and not a wiring; `147` §6 names that boundary and `126`
+//! owns crossing it.
 //!
 //! What phase 2 *can* do, and what this module is, is refuse to let the two grow
 //! separate vocabularies while that convergence waits. So:

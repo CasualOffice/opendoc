@@ -43,6 +43,10 @@ casual-doc-render.workspace = true
 # selection exactly as it transforms a text one (ADR-033), and a facade-local
 # copy would guarantee a second implementation of one rule.
 casual-doc-selection.workspace = true
+# The transaction envelope and the revision log: EVERY mutation of the live
+# document goes through it (doc 147, ADR-043, ADR-005). This dependency used to
+# be absent, which is precisely how ADR-005 came to be honoured nowhere.
+casual-doc-transaction.workspace = true
 # Unicode word segmentation for double-click word selection.
 unicode-segmentation.workspace = true
 # The rich-clipboard payload crosses the JS boundary as one JSON string (bridge,

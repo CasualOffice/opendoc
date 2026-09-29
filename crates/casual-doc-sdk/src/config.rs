@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use casual_doc_model as model;
 use casual_doc_selection as selection;
-use casual_doc_transaction as transaction;
+use casual_doc_transaction::v0 as transaction;
 
 use crate::error::{
     ErrorCode, ErrorSeverity, SdkError, map_initial_selection_error, map_snapshot_error,

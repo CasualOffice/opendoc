@@ -689,11 +689,14 @@ test("the contract stays readable by the Rust facade's parity test", () => {
   // `src/host_parity.rs` reading THIS FILE and failing in both directions when
   // the two disagree. That is the half a browser test cannot do.
   //
-  // Phase 2 does not make the crate the editor's runtime: the live editing path
-  // applies `casual-doc-edit`'s ops directly and references
-  // `casual_doc_transaction` zero times (`109` CQ-002, `docs/125` §9 row 5), so
-  // convergence is its own piece of work. What it does do is refuse to let the two
-  // grow separate vocabularies while that waits.
+  // Phase 2 does not make the crate the editor's runtime, and doc 147 (ADR-043)
+  // only closed half of what kept it from being one: the live editing path now
+  // DOES route every mutation through `casual_doc_transaction`, but the crate's
+  // typed requests still address the Phase-0 schema-v0 `Document` while the editor
+  // addresses `v1::Document`. The model, not the envelope, is what is left
+  // (`docs/125` §9 row 5, `147` §6), so convergence is still its own piece of
+  // work. What this does do is refuse to let the two grow separate vocabularies
+  // while that waits.
   //
   // This test is the other end of that guard. The Rust side PARSES rather than
   // executes — a JavaScript runtime in a Rust test is not the trade to make — so

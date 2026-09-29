@@ -34,6 +34,12 @@
 
 **Why:** undo, collaboration, validation, events, and deterministic invalidation.
 
+**Made true in practice by ADR-043** (`147`). Until then this was aspirational on the live
+path: `casual-doc-wasm` referenced `casual-doc-transaction` zero times and applied
+`casual-doc-edit` operations directly against a flat undo stack with no revision chain. The
+live path now routes every mutation through one transaction envelope, and an exhaustive
+source guard fails the build if a second route appears.
+
 ## ADR-006 — Collaboration is adapter-based
 
 **Decision:** Core does not depend on Yjs or a specific CRDT.
@@ -475,10 +481,15 @@ last-writer-wins). A tombstoned operation is **reported through the disposition 
   per-keystroke work O(1) in document size, transform cost O(concurrent ops since base),
   typing coalesced per run, no paragraph-rewrite op on the typing path, periodic not
   per-operation snapshots, incremental invalidation for remote operations, and a bounded log.
-- **Prerequisite:** the live editing path currently references `casual-doc-transaction` zero
-  times and applies `casual-doc-edit` operations directly, so ADR-005 is not honoured in
-  practice and there are two parallel operation sets. Unifying them (`107` §2.1) precedes any
-  OT work, and is debt owed regardless.
+- **Prerequisite — now met on the live path by ADR-043 (`147`).** The live editing path used
+  to reference `casual-doc-transaction` zero times and apply `casual-doc-edit` operations
+  directly, so ADR-005 was not honoured in practice and there were two parallel operation
+  sets. `147` unified them: the envelope is re-founded on `v1::Document` and the
+  `casual-doc-edit` op set, every WASM mutation is a transaction appended to an ordered
+  revision log, and undo is derived from that log. The Phase-0 **v0** stack
+  (`casual-doc-sdk`, `casual-doc-selection::TextSelection`) is deliberately left behind the
+  boundary `147` §6 names; it edits a model no product surface renders, and retiring it is
+  `126`'s v1 SDK work.
 - A CRDT adapter remains possible later behind the same seam for peer-to-peer or
   partition-tolerant merge, which relay-ordered OT deliberately does not attempt.
 
@@ -1285,6 +1296,63 @@ unanswered rather than assumed.
   is body-only and `moveCaret` stops at a story boundary by design, while painting already
   works for those nodes. Footnote and endnote bodies have no host-reachable route at all.
   That is `crates/**` work and is why `docs/146` ranks it P3.
+
+## ADR-043 — Transactions are the one mutation path, and undo is a projection of the revision log
+
+**Status:** Accepted. Designed in `147-TRANSACTIONS-AS-THE-ONE-MUTATION-PATH.md`, which
+implements `107` §2.1 P-1…P-3 and is the prerequisite ADR-033 named. Supersedes nothing;
+it makes ADR-005 true in practice for the first time.
+
+**Decision:** Every change to a live (`v1`) document is a `casual_doc_transaction::Transaction`
+applied through one function, which appends one `Commit` to an ordered, append-only
+`RevisionLog` and advances the document's `RevisionId` by one. Undo and redo are **reads of
+that log** — a backward scan for the target group, then the group's inverse operations applied
+as a new transaction — not a second store maintained beside it. `casual-doc-transaction` is
+re-founded on `casual_doc_model::v1::Document` and takes a dependency on `casual-doc-edit`, so
+the envelope is defined over the closed operation set rather than owning a rival one.
+
+**Why this shape.** It is the ProseMirror / CodeMirror factoring — transaction, invertible
+steps, a position map per commit, history derived from the transaction stream — which is
+command sourcing with a single mutation choke point. The repository already had the choke
+point (`45` I1), the invertible closed op set (`45` I2) and the envelope; they had never been
+joined, and a flat `Vec<HistoryEntry>` had grown in the gap.
+
+**Two decisions this takes explicitly, because they were being taken by accident:**
+
+1. **The live operation vocabulary is byte-addressed, not grapheme-addressed.**
+   `24-TRANSACTION-SEMANTICS.md` rejected UTF-8 operation offsets for the Phase-0 v0 model.
+   The v1 op set (`59`) is byte-addressed in the same anchor space as hit-testing (`58` §3),
+   and `107` §2.1 chose it as the survivor without noticing it reverses that rejection. It is
+   reversed here, deliberately: grapheme boundaries are a *caret-movement* rule, which belongs
+   to the selection layer, not to the operation vocabulary. `Affinity` is retained, because it
+   is orthogonal to the unit and is load-bearing for OT's insert-at-the-same-boundary
+   tie-break.
+
+2. **Transaction application does not clone or whole-document-validate.** `24`'s atomic
+   pipeline cloned the document and revalidated it per transaction. Both are O(document) and
+   would violate `107` B1 on every keystroke. Atomicity on the live path is provided by the
+   rule the choke point already used: a single operation needs no snapshot because
+   `casual_doc_edit::apply` validates before it mutates; a multi-operation group takes one
+   working copy. `24` is corrected in place.
+
+**Consequences:**
+
+- ADR-005 becomes checkable rather than aspirational: an exhaustive source guard in
+  `casual-doc-wasm` fails the build if the editor reaches the operation set outside the
+  envelope, or if a history read resolves against anything but the log.
+- The log keeps **forward** operations as well as inverses. That is what OT needs and roughly
+  doubles history memory for the same undo depth; the bound moves from 256 undo entries to 256
+  undo *groups*, so user-visible undo depth is unchanged.
+- Undo granularity is a `GroupId` on the commit. Typing coalescing is "continue the previous
+  group", and the review-typing rule that keeps only the first paragraph snapshot becomes a
+  declared coalescing mode rather than an ad-hoc stack rewrite.
+- **The Phase-0 v0 stack is not migrated.** `casual-doc-sdk` and
+  `casual-doc-selection::TextSelection` edit the schema-v0 model, which no product surface
+  renders, opens or saves, and the SDK's whole public API is shaped by it. That engine moves
+  unchanged into `casual_doc_transaction::v0` and keeps its own pipeline. The two paths share
+  no document, so this is a boundary, not a half-migration; retiring it is `126`'s v1 SDK work.
+- `transform` is still absent, and this ADR does not add it. It makes it possible: an ordered
+  log of transformable operations with per-commit position maps now exists on the live path.
 
 ## Pending ADRs
 

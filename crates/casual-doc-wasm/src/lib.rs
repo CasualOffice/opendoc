@@ -27,11 +27,17 @@ use casual_doc_edit::clone::{CloneReport, clone_block_with_fresh_ids};
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
-    RunningRegion, apply as apply_edit, caret_run_properties, cell_properties, find_table,
-    locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
-    run_properties_in_range,
+    RunningRegion, caret_run_properties, cell_properties, find_table, locate_cell,
+    locate_table_cell, locate_table_row, paragraph_properties, run_properties_in_range,
 };
+// The transaction envelope and the ordered revision log (doc 147, ADR-043). Its
+// own `use` line, where the pinned rustfmt sorts it, so a parallel branch adding
+// an import does not conflict here. `casual_doc_edit::apply` is deliberately NOT
+// imported any more: after this change the facade reaches the op set only
+// through the envelope, and `every_document_mutation_is_a_transaction` fails the
+// build if that stops being true.
 use casual_doc_edit::{find_paragraph_any, surface_block_lists};
+use casual_doc_transaction::{Coalesce, Origin, RevisionLog, Transaction, TransactionId};
 // Break authoring (`docs/130` section 4.3, OO-022): the site check, the
 // inline-break builder, and the section-split rules.
 use casual_doc_edit::breaks::{BreakSite, break_site, section_break_ops, section_split_site};
@@ -475,13 +481,21 @@ pub struct WasmDocument {
     /// Mints run identities for edits, in a namespace distinct from the imported
     /// ids so new runs never collide with existing nodes.
     edit_ids: IdGenerator,
-    /// Undo stack: each entry is one user action's inverse ops, stored in the
-    /// order they must be re-applied to undo the action (reverse of how the
-    /// forward ops ran), so a multi-op action (cross-paragraph delete, type-over)
-    /// undoes in a single step.
-    undo: Vec<HistoryEntry>,
-    /// Redo stack — forward-op groups of undone actions; cleared on a fresh edit.
-    redo: Vec<HistoryEntry>,
+    /// The document's own history, as an ordered append-only chain of committed
+    /// transactions (doc 147 §3.3, ADR-043). Every mutation — a keystroke, an
+    /// undo, a redo — appends one commit and advances one revision.
+    ///
+    /// **Undo and redo are reads of this**, not a second store beside it. There
+    /// used to be two flat `Vec` history stacks here and no revision chain at
+    /// all, which is how ADR-005 came to be honoured nowhere: the flat stacks
+    /// carried the inverses, the forward operations were thrown away, and
+    /// nothing could replay, rebase or transform them.
+    log: RevisionLog,
+    /// Mints transaction identities for this session. Monotonic and never
+    /// reused, including after Undo — the same rule `edit_ids` and
+    /// `revision_ids` follow, and for the same reason: an id that comes back is
+    /// an id two different things can mean.
+    next_transaction: u128,
     /// The last incremental typing action eligible to absorb another adjacent
     /// keystroke. The host owns gesture boundaries through `session`; the engine
     /// additionally requires exact caret continuity before coalescing history.
@@ -499,7 +513,16 @@ pub struct WasmDocument {
     /// ids remain untouched; allocated values are never reused within a session,
     /// including after Undo.
     revision_ids: RevisionIdAllocator,
-    /// Monotonic model revision, bumped on every applied edit.
+    /// The host-visible **view epoch**, bumped by every `finish_edit*` — which
+    /// includes the paths that changed the layout without committing a
+    /// transaction. It is what the frontend compares to decide whether to
+    /// re-raster, and `revision == 0` is how export knows the retained source is
+    /// still byte-identical.
+    ///
+    /// Deliberately NOT the same number as `log.head()`, which is the DOCUMENT
+    /// revision: one transaction advances both, but a re-layout advances only
+    /// this. Collapsing them would make a repaint look like an edit to anything
+    /// replaying the chain (doc 147 §3.3).
     revision: u32,
     /// Shaped-paragraph cache for the incremental edit path: an edit re-shapes only
     /// the paragraph(s) it touched (hash-based invalidation) and reuses the rest, so
@@ -583,8 +606,6 @@ struct TypingHistory {
     caret: Pos,
     review_group: Option<RevisionGroup>,
 }
-
-const MAX_HISTORY_ENTRIES: usize = 256;
 
 #[derive(Clone, Debug)]
 struct RevisionIdAllocator {
@@ -695,19 +716,6 @@ impl HistoryKind {
             Self::ReviewTyping => "Review typing",
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct HistoryEntry {
-    kind: HistoryKind,
-    operations: Vec<Operation>,
-}
-
-fn push_history(stack: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
-    if stack.len() == MAX_HISTORY_ENTRIES {
-        stack.remove(0);
-    }
-    stack.push(entry);
 }
 
 fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
@@ -998,14 +1006,19 @@ impl WasmDocument {
     #[wasm_bindgen(getter, js_name = canUndo)]
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        // Derived: a backward walk of the revision chain, in which each undo
+        // commit cancels the edit before it (doc 147 §3.4). Bounded by the log's
+        // group bound, so O(1) in document size.
+        self.log.undo_target().is_some()
     }
 
     /// Whether the document has at least one undone action available to redo.
     #[wasm_bindgen(getter, js_name = canRedo)]
     #[must_use]
     pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
+        // The same walk, in which a fresh EDIT ends the scan — which is where "a
+        // new edit clears redo" now comes from. No stack is cleared anywhere.
+        self.log.redo_target().is_some()
     }
 
     /// User-facing label for the next undoable action, or an empty string when
@@ -1014,9 +1027,11 @@ impl WasmDocument {
     #[wasm_bindgen(getter, js_name = undoLabel)]
     #[must_use]
     pub fn undo_label(&self) -> String {
-        self.undo
-            .last()
-            .map_or_else(String::new, |entry| entry.kind.label().to_owned())
+        self.log
+            .undo_target()
+            .and_then(|group| self.log.label_of(group))
+            .unwrap_or_default()
+            .to_owned()
     }
 
     /// User-facing label for the next redoable action, or an empty string when
@@ -1024,9 +1039,11 @@ impl WasmDocument {
     #[wasm_bindgen(getter, js_name = redoLabel)]
     #[must_use]
     pub fn redo_label(&self) -> String {
-        self.redo
-            .last()
-            .map_or_else(String::new, |entry| entry.kind.label().to_owned())
+        self.log
+            .redo_target()
+            .and_then(|group| self.log.label_of(group))
+            .unwrap_or_default()
+            .to_owned()
     }
 
     /// The page box size of page `index` (0-based), in twips, resolved against
@@ -12332,29 +12349,23 @@ impl WasmDocument {
     /// wasm target.
     fn undo_inner(&mut self) -> Result<EditResult, String> {
         self.typing_history = None;
-        let entry = self
-            .undo
-            .pop()
+        // Read from the chain, not popped off a stack: the group Undo targets is
+        // derived by walking the log backwards (doc 147 §3.4), and its inverse is
+        // the concatenation of its commits' inverses, newest commit first.
+        let group = self
+            .log
+            .undo_target()
             .ok_or_else(|| "nothing to undo".to_string())?;
-        // `group` is stored in the order it must be re-applied to undo the action.
-        let (caret, redo_group) = match self.apply_group(&entry.operations) {
-            Ok(applied) => applied,
-            Err(e) => {
-                // Straight back onto the Vec, not through `push_history`: the
-                // stack was one shorter a line ago, so this cannot evict and the
-                // depth is exactly what it was.
-                self.undo.push(entry);
-                return Err(format!("undo failed: {e}"));
-            }
-        };
-        push_history(
-            &mut self.redo,
-            HistoryEntry {
-                kind: entry.kind,
-                operations: redo_group,
-            },
-        );
-        Ok(self.finish_edit_with(caret, &damage_of(&entry.operations)))
+        let label = self.log.label_of(group).unwrap_or("Edit");
+        let operations = self.log.inverse_of(group);
+        // Nothing is removed on failure because nothing was removed on entry:
+        // `apply_group` appends only on success, so a refused undo leaves the
+        // chain — and therefore the step, its label and the redo state — exactly
+        // as it was. The old code popped first and had to push the entry back.
+        let caret = self
+            .apply_group(&operations, label, Coalesce::New, Origin::Undo { group })
+            .map_err(|e| format!("undo failed: {e}"))?;
+        Ok(self.finish_edit_with(caret, &damage_of(&operations)))
     }
 
     /// Redoes the last undone action.
@@ -12370,25 +12381,16 @@ impl WasmDocument {
     /// [`undo_inner`](Self::undo_inner) for why it exists.
     fn redo_inner(&mut self) -> Result<EditResult, String> {
         self.typing_history = None;
-        let entry = self
-            .redo
-            .pop()
+        let group = self
+            .log
+            .redo_target()
             .ok_or_else(|| "nothing to redo".to_string())?;
-        let (caret, undo_group) = match self.apply_group(&entry.operations) {
-            Ok(applied) => applied,
-            Err(e) => {
-                self.redo.push(entry);
-                return Err(format!("redo failed: {e}"));
-            }
-        };
-        push_history(
-            &mut self.undo,
-            HistoryEntry {
-                kind: entry.kind,
-                operations: undo_group,
-            },
-        );
-        Ok(self.finish_edit_with(caret, &damage_of(&entry.operations)))
+        let label = self.log.label_of(group).unwrap_or("Edit");
+        let operations = self.log.inverse_of(group);
+        let caret = self
+            .apply_group(&operations, label, Coalesce::New, Origin::Redo { group })
+            .map_err(|e| format!("redo failed: {e}"))?;
+        Ok(self.finish_edit_with(caret, &damage_of(&operations)))
     }
 
     /// Serializes the current (edited) document to a `.docx` package the host can
@@ -13017,16 +13019,9 @@ impl WasmDocument {
             return Err("empty edit".into());
         }
         // Rollback lives in `apply_group` now (HF-045): on `Err` the document is
-        // already back to what it was, and no history entry was pushed.
-        let (caret, inverses) = self.apply_group(&ops)?;
-        push_history(
-            &mut self.undo,
-            HistoryEntry {
-                kind,
-                operations: inverses,
-            },
-        );
-        self.redo.clear();
+        // already back to what it was, and no commit was appended. Nothing clears
+        // redo either — an `Origin::Edit` commit ends the redo scan by itself.
+        let caret = self.apply_group(&ops, kind.label(), Coalesce::New, Origin::Edit)?;
         Ok(self.finish_edit_with(caret, &damage_of(&ops)))
     }
 
@@ -13053,15 +13048,7 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err("empty edit".into());
         }
-        let (_, inverses) = self.apply_group(&ops)?;
-        push_history(
-            &mut self.undo,
-            HistoryEntry {
-                kind,
-                operations: inverses,
-            },
-        );
-        self.redo.clear();
+        self.apply_group(&ops, kind.label(), Coalesce::New, Origin::Edit)?;
         Ok(self.finish_edit_with(caret, &damage_of(&ops)))
     }
 
@@ -13083,26 +13070,17 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err("empty typing edit".into());
         }
-        match self.apply_group(&ops) {
-            Ok((_, mut inverses)) => {
-                let merge = may_merge
-                    && self.redo.is_empty()
-                    && self.undo.last().is_some()
-                    && self.typing_history.is_some_and(|previous| {
-                        previous.session == session && previous.caret == start
-                    });
-                if merge {
-                    let mut previous = self.undo.pop().expect("history entry checked above");
-                    inverses.append(&mut previous.operations);
-                }
-                push_history(
-                    &mut self.undo,
-                    HistoryEntry {
-                        kind: HistoryKind::Typing,
-                        operations: inverses,
-                    },
-                );
-                self.redo.clear();
+        // Coalescing is now a property of the transaction, not a rewrite of a
+        // stack: the commit joins the newest undo group and contributes its own
+        // inverse to it, so one Undo still takes the whole word while the log
+        // keeps every keystroke for OT (doc 147 §3.4).
+        let coalesce = if self.merges_with_open_gesture(may_merge, session, start) {
+            Coalesce::Continue
+        } else {
+            Coalesce::New
+        };
+        match self.apply_group(&ops, HistoryKind::Typing.label(), coalesce, Origin::Edit) {
+            Ok(_) => {
                 self.typing_history = keep_open.then_some(TypingHistory {
                     session,
                     caret,
@@ -13118,6 +13096,32 @@ impl WasmDocument {
                 Err(error)
             }
         }
+    }
+
+    /// The operations a single Undo would apply — the newest undoable group's
+    /// inverse, read from the chain. Tests assert on the shape of a step, and
+    /// this is where a step now lives.
+    #[cfg(test)]
+    fn undo_group_inverse(&self) -> Vec<Operation> {
+        self.log
+            .undo_target()
+            .map(|group| self.log.inverse_of(group))
+            .unwrap_or_default()
+    }
+
+    /// Whether an incremental tick continues the gesture the previous one opened.
+    ///
+    /// The host owns gesture boundaries through `session`; the engine
+    /// additionally requires exact caret continuity, and that nothing has been
+    /// undone since — a redo that is still available means the newest commit is
+    /// an undo, and typing must not be folded into it.
+    fn merges_with_open_gesture(&self, may_merge: bool, session: u32, start: Pos) -> bool {
+        may_merge
+            && self.log.redo_target().is_none()
+            && self.log.undo_target().is_some()
+            && self
+                .typing_history
+                .is_some_and(|previous| previous.session == session && previous.caret == start)
     }
 
     /// Review-mode counterpart to [`Self::apply_typing_action`]. A continuing
@@ -13138,32 +13142,27 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err("empty review typing edit".into());
         }
-        match self.apply_group(&ops) {
-            Ok((_, inverses)) => {
-                let merge = may_merge
-                    && self.redo.is_empty()
-                    && self.undo.last().is_some()
-                    && self.typing_history.is_some_and(|previous| {
-                        previous.session == session
-                            && previous.caret == start
-                            && previous.review_group == Some(group)
-                    });
-                let operations = if merge {
-                    self.undo
-                        .pop()
-                        .expect("history entry checked above")
-                        .operations
-                } else {
-                    inverses
-                };
-                push_history(
-                    &mut self.undo,
-                    HistoryEntry {
-                        kind: HistoryKind::ReviewTyping,
-                        operations,
-                    },
-                );
-                self.redo.clear();
+        let merge = self.merges_with_open_gesture(may_merge, session, start)
+            && self
+                .typing_history
+                .is_some_and(|previous| previous.review_group == Some(group));
+        // The distinction from ordinary typing, declared rather than open-coded:
+        // a continuing review tick records its FORWARD operations and contributes
+        // no further inverse, because a `SetInlines` inverse is a whole-paragraph
+        // snapshot and one word must not retain one per character. The group's
+        // first snapshot already restores the paragraph.
+        let coalesce = if merge {
+            Coalesce::ContinueKeepingFirstInverse
+        } else {
+            Coalesce::New
+        };
+        match self.apply_group(
+            &ops,
+            HistoryKind::ReviewTyping.label(),
+            coalesce,
+            Origin::Edit,
+        ) {
+            Ok(_) => {
                 self.typing_history = keep_open.then_some(TypingHistory {
                     session,
                     caret,
@@ -13178,30 +13177,38 @@ impl WasmDocument {
         }
     }
 
-    /// Applies each op in `ops`, returning the caret (from the last op) and the
-    /// inverse group ordered so that applying it in turn undoes the whole action.
+    /// Applies `ops` as ONE transaction against the current revision, appends the
+    /// resulting commit to the log, and returns the caret the last op rests at.
     ///
-    /// **This is the single atomic boundary for model mutation** (HF-045). Every
-    /// call that changes `self.document` goes through here — `apply_edit` is
-    /// called in exactly one place in this crate, and
-    /// `every_model_mutation_goes_through_the_atomic_choke_point` fails the build
-    /// if a second call site appears. The guarantee is all-or-nothing: on `Err`
-    /// the document is exactly what it was on entry, so no caller can observe
-    /// (or save, or export) a half-applied group.
+    /// **This is the single boundary for model mutation** (HF-045), and since doc
+    /// 147 it is also the single boundary for *history*: the transaction is what
+    /// allocates the revision, records the forward operations and their inverses,
+    /// and decides the undo group. `every_document_mutation_is_a_transaction`
+    /// fails the build if a second route appears, if the facade reaches
+    /// `casual_doc_edit::apply` directly, or if a history read stops resolving
+    /// against `self.log`.
     ///
-    /// The atomicity used to be spelled out at four *call sites* as a
+    /// The guarantee is all-or-nothing: on `Err` the document is exactly what it
+    /// was on entry and **nothing is appended**, so no caller can observe (or
+    /// save, or export) a half-applied group, and a refused undo costs the user
+    /// neither their step nor their document.
+    ///
+    /// The rollback used to be spelled out at four *call sites* as a
     /// `(ops.len() > 1).then(clone)` snapshot, and four is three too many:
     /// `apply_review_typing_action` never grew one, and neither `undo` nor
     /// `redo` ever had one at all — which is what let a failed undo leave the
-    /// document half-reverted. The rule now lives with the mutation it
-    /// protects.
+    /// document half-reverted. It moved into the choke point, and has now moved
+    /// once more, into the envelope, with the mutation it protects.
     ///
-    /// Cost is unchanged: a multi-op group clones the document once (what the
-    /// call sites already paid), and a **single** op does not, because
-    /// [`casual_doc_edit::apply`] documents — and that crate's
+    /// Cost is unchanged by the migration: a multi-op group clones the document
+    /// once (what the call sites already paid), and a **single** op does not,
+    /// because [`casual_doc_edit::apply`] documents — and that crate's
     /// `a_refused_operation_leaves_the_document_unchanged` asserts — that a
-    /// refused op leaves `doc` unchanged. That keeps the per-keystroke path
-    /// clone-free and `O(edit)`, per `docs/107` §4.
+    /// refused op leaves the document unchanged. The envelope adds one revision
+    /// bump, one `Vec` push and at most one mapping step per operation, all
+    /// `O(1)`, so the per-keystroke path stays clone-free and `O(edit)` per
+    /// `docs/107` §4 B1. It deliberately does NOT validate the whole model per
+    /// transaction the way `24`'s Phase-0 pipeline does; that is `O(document)`.
     /// Refuses an edit that `w:documentProtection w:edit="forms"` forbids.
     ///
     /// Word locks the body of a forms-protected document and lets only its form
@@ -13263,7 +13270,13 @@ impl WasmDocument {
         text_form_field_at_offset(&paragraph.inlines, offset, &mut 0)
     }
 
-    fn apply_group(&mut self, ops: &[Operation]) -> Result<(Pos, Vec<Operation>), String> {
+    fn apply_group(
+        &mut self,
+        ops: &[Operation],
+        label: &'static str,
+        coalesce: Coalesce,
+        origin: Origin,
+    ) -> Result<Pos, String> {
         self.refuse_if_protected(ops)?;
         // A windowed body cannot re-paginate after a mutation: `finish_edit`
         // re-runs `paginate_document_cached` over the whole document, which is
@@ -13272,43 +13285,57 @@ impl WasmDocument {
         // — per keystroke. So the mutation is refused HERE, before the model
         // changes, rather than allowed to land against a layout that cannot be
         // brought up to date. Refusing at the atomic choke point is what makes
-        // this one line cover all 47 operations.
+        // this one line cover all 55 operations.
         if self.layout.is_windowed() {
             return Err(windowed_not_available("Editing"));
         }
-        let snapshot = (ops.len() > 1).then(|| self.document.clone());
-        let mut inverses = Vec::with_capacity(ops.len());
-        let mut caret = Pos::new(self.document.id(), 0);
-        for op in ops {
-            let inverse = match apply_edit(&mut self.document, &mut self.edit_ids, op) {
-                Ok(inverse) => inverse,
-                Err(error) => {
-                    // Roll the whole group back before reporting. `edit_ids` is a
-                    // monotonic allocator and is deliberately NOT rewound: ids
-                    // minted by the abandoned ops are simply never reused, which
-                    // is cheaper than rewinding and keeps every id in a session
-                    // unique (the same rule `revision_ids` already follows).
-                    if let Some(snapshot) = snapshot {
-                        self.document = snapshot;
-                    }
-                    // A refusal the ENGINE has already written as a sentence
-                    // passes through verbatim (it carries the host's `refused: `
-                    // marker); everything else is internal vocabulary the host
-                    // translates. Without this, a Backspace inside a footer's
-                    // page-count field arrived as the debug name `FieldResult(…)`
-                    // and the host showed its one generic sentence, which blames
-                    // the selection for a calculated value.
-                    return Err(error
-                        .reason()
-                        .map_or_else(|| format!("{error:?}"), str::to_owned));
-                }
-            };
-            caret = caret_after(op, &inverse, &self.document);
-            inverses.push(inverse);
-        }
-        // To undo, apply the inverses in reverse order of the forward ops.
-        inverses.reverse();
-        Ok((caret, inverses))
+        // `edit_ids` is a monotonic allocator and is deliberately NOT rewound
+        // when the envelope rolls a refused group back: ids minted by the
+        // abandoned ops are simply never reused, which is cheaper than rewinding
+        // and keeps every id in a session unique (the same rule `revision_ids`
+        // and `next_transaction` already follow).
+        self.next_transaction = self.next_transaction.saturating_add(1);
+        let transaction = Transaction::new(
+            TransactionId::new(self.next_transaction),
+            self.log.head(),
+            label,
+            ops.to_vec(),
+        )
+        .coalescing(coalesce)
+        .with_origin(origin);
+        let commit = self
+            .log
+            .apply(&mut self.document, &mut self.edit_ids, transaction)
+            .map_err(|error| match error {
+                // A refusal the OPERATION has already written as a sentence passes
+                // through verbatim (it carries the host's `refused: ` marker);
+                // everything else is internal vocabulary the host translates.
+                // Without this, a Backspace inside a footer's page-count field
+                // arrived as the debug name `FieldResult(…)` and the host showed
+                // its one generic sentence, which blames the selection for a
+                // calculated value.
+                //
+                // The envelope is unwrapped rather than printed, so the debug name
+                // the host branches on stays the operation's — `OffsetOutOfRange`,
+                // not `Edit(OffsetOutOfRange)`. An existing guard caught the
+                // difference, which is the whole point of having one.
+                casual_doc_transaction::TransactionError::Edit(error) => error
+                    .reason()
+                    .map_or_else(|| format!("{error:?}"), str::to_owned),
+                envelope => envelope.to_string(),
+            })?;
+        // The caret rests where the LAST op leaves it. The commit stores inverses
+        // in undo order — last op first — so its head is that op's inverse, and
+        // `None` is the review-typing case, where the group keeps only its first
+        // snapshot and the caller supplies the caret itself.
+        let caret = match (
+            commit.operations().last(),
+            commit.inverse_operations().first(),
+        ) {
+            (Some(last), inverse) => caret_after(last, inverse, &self.document),
+            (None, _) => Pos::new(self.document.id(), 0),
+        };
+        Ok(caret)
     }
 
     /// [`finish_edit_with`](Self::finish_edit_with) with no damage report — the
@@ -23384,8 +23411,8 @@ fn open_document_bounded(
         },
         default_config,
         edit_ids: IdGenerator::new(edit_namespace),
-        undo: Vec::new(),
-        redo: Vec::new(),
+        log: RevisionLog::default(),
+        next_transaction: 0,
         typing_history: None,
         editing_a_form_field: false,
         revision_ids,
@@ -24898,7 +24925,7 @@ fn apply_marker_spec(level: &mut NumberingLevel, spec: &str) -> Result<(), Strin
     Ok(())
 }
 
-fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos {
+fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document) -> Pos {
     let doc_id = document.id();
     let table_anchor = |table| {
         find_table(document, table)
@@ -24911,7 +24938,7 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         Operation::DeleteText { range } => range.start,
         Operation::SplitParagraph { new_id, .. } => Pos::new(*new_id, 0),
         Operation::JoinParagraphs { first, .. } => match inverse {
-            Operation::SplitParagraph { at, .. } => *at,
+            Some(Operation::SplitParagraph { at, .. }) => *at,
             _ => Pos::new(*first, 0),
         },
         // Formatting keeps the selection; the frontend does not collapse to this.
@@ -25028,7 +25055,7 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // `RemoveField` only ever runs as an `InsertField` inverse (undo); rest the
         // caret where the removed field was — its inverse carries that position.
         Operation::RemoveField { .. } => match inverse {
-            Operation::InsertField { at, .. } => *at,
+            Some(Operation::InsertField { at, .. }) => *at,
             _ => Pos::new(doc_id, 0),
         },
         // A field range is a block span, and both ops route through
@@ -31110,8 +31137,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5d),
-            undo: Vec::new(),
-            redo: Vec::new(),
+            log: RevisionLog::default(),
+            next_transaction: 0,
             typing_history: None,
             revision_ids,
             revision: 0,
@@ -31203,9 +31230,13 @@ mod tests {
         d.suggest_insert(&node, 2, "c", Some("Tester".to_owned()), None, Some(41))
             .expect("third suggested character");
 
-        assert_eq!(d.undo.len(), 1, "one typing gesture is one history entry");
+        assert_eq!(
+            d.log.undo_depth(),
+            1,
+            "one typing gesture is one history entry"
+        );
         assert!(matches!(
-            d.undo[0].operations.as_slice(),
+            d.undo_group_inverse().as_slice(),
             [Operation::UpdateReviewState {
                 paragraphs,
                 comments: None,
@@ -31550,8 +31581,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5c),
-            undo: Vec::new(),
-            redo: Vec::new(),
+            log: RevisionLog::default(),
+            next_transaction: 0,
             typing_history: None,
             revision_ids,
             revision: 0,
@@ -31711,19 +31742,45 @@ mod tests {
         );
     }
 
+    /// History is bounded, and the bound counts USER ACTIONS.
+    ///
+    /// This used to drive `push_history` against a bare `Vec` — the mechanism, not
+    /// the guarantee — and so it could not have caught the mistake the log makes
+    /// possible, which is bounding COMMITS: a coalesced word is one step and many
+    /// commits, so a commit bound would silently shorten undo depth for anyone who
+    /// types. It now drives the real editor and asserts the guarantee: one action
+    /// past the bound leaves exactly the bound undoable, and the oldest action is
+    /// gone rather than merely unreachable.
     #[test]
-    fn history_stack_drops_the_oldest_entry_at_the_bound() {
-        let mut history = Vec::new();
-        for _ in 0..=MAX_HISTORY_ENTRIES {
-            push_history(
-                &mut history,
-                HistoryEntry {
-                    kind: HistoryKind::Edit,
-                    operations: Vec::new(),
-                },
-            );
+    fn history_drops_the_oldest_action_at_the_bound() {
+        let bound = casual_doc_transaction::DEFAULT_MAX_UNDO_GROUPS;
+        let mut d = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = d.ordered_paragraphs()[0];
+        let node = node.to_string();
+        for index in 0..=bound {
+            // A distinct host session each time, so each tick is its own action.
+            d.type_text(
+                &node,
+                0,
+                &node,
+                0,
+                "x".to_owned(),
+                u32::try_from(index).expect("session id"),
+            )
+            .expect("typing tick");
         }
-        assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
+        assert_eq!(
+            d.log.undo_depth(),
+            bound,
+            "one action past the bound must leave exactly the bound undoable"
+        );
+        for _ in 0..bound {
+            d.undo_inner().expect("each retained action undoes");
+        }
+        assert!(
+            !d.can_undo(),
+            "the action beyond the bound must be gone, not merely unreachable"
+        );
     }
 
     #[test]
@@ -31823,8 +31880,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5b),
-            undo: Vec::new(),
-            redo: Vec::new(),
+            log: RevisionLog::default(),
+            next_transaction: 0,
             typing_history: None,
             revision_ids,
             revision: 0,
@@ -32896,7 +32953,11 @@ mod tests {
             .expect("first typing tick");
         d.type_text(&node, 1, &node, 1, "B".to_owned(), 41)
             .expect("adjacent typing tick");
-        assert_eq!(d.undo.len(), 1, "one host typing session is one action");
+        assert_eq!(
+            d.log.undo_depth(),
+            1,
+            "one host typing session is one action"
+        );
         assert_eq!(d.undo_label(), "Typing");
         assert!(d.can_undo());
         assert!(!d.can_redo());
@@ -32922,7 +32983,7 @@ mod tests {
         d.type_text(&node, 2, &node, 2, "C".to_owned(), 42)
             .expect("new typing gesture");
         assert_eq!(
-            d.undo.len(),
+            d.log.undo_depth(),
             2,
             "a different host session starts a new action"
         );
@@ -32972,7 +33033,7 @@ mod tests {
             )
             .expect("styled typing tick");
         }
-        assert_eq!(d.undo.len(), 1);
+        assert_eq!(d.log.undo_depth(), 1);
         assert!(d.format_at(&node, 0, 2).bold());
         d.undo().expect("undo styled typing session");
         assert_eq!(
@@ -32998,7 +33059,11 @@ mod tests {
         let result = d
             .insert_plain_text(&node, 0, &node, 2, "A\r\nB\nC".to_owned())
             .expect("replace selection with multiline text");
-        assert_eq!(d.undo.len(), 1, "the complete replacement is one action");
+        assert_eq!(
+            d.log.undo_depth(),
+            1,
+            "the complete replacement is one action"
+        );
         assert_eq!(
             d.copy_text(&node, 0, &result.node(), result.offset()),
             "A\nB\nC",
@@ -35669,8 +35734,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
-            undo: Vec::new(),
-            redo: Vec::new(),
+            log: RevisionLog::default(),
+            next_transaction: 0,
             typing_history: None,
             revision_ids,
             revision: 0,
@@ -37399,7 +37464,7 @@ mod tests {
         assert_eq!(style.underline_style(), "wavy");
         assert_eq!(style.underline_color(), "#00aa44");
         assert_eq!(
-            d.undo.len(),
+            d.log.undo_depth(),
             1,
             "insert and formatting share one history entry"
         );
@@ -37664,8 +37729,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5a),
-            undo: Vec::new(),
-            redo: Vec::new(),
+            log: RevisionLog::default(),
+            next_transaction: 0,
             typing_history: None,
             revision_ids,
             revision: 0,
@@ -39211,7 +39276,7 @@ mod tests {
         let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
         let (node, _len) = doc.ordered_paragraphs()[0];
         let before = model_fingerprint(&doc);
-        let undo_depth = doc.undo.len();
+        let undo_depth = doc.log.undo_depth();
         let revision = doc.revision;
 
         let error = doc
@@ -39229,7 +39294,7 @@ mod tests {
             "a failed group left the document half-applied",
         );
         assert_eq!(
-            doc.undo.len(),
+            doc.log.undo_depth(),
             undo_depth,
             "a failed group pushed an undo entry for an edit that never landed"
         );
@@ -39248,7 +39313,7 @@ mod tests {
         let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
         let (node, _len) = doc.ordered_paragraphs()[0];
         let before = model_fingerprint(&doc);
-        let undo_depth = doc.undo.len();
+        let undo_depth = doc.log.undo_depth();
 
         let error = doc
             .apply_review_typing_action(
@@ -39275,7 +39340,7 @@ mod tests {
             "a failed review-typing group left the document half-applied",
         );
         assert_eq!(
-            doc.undo.len(),
+            doc.log.undo_depth(),
             undo_depth,
             "a failed review-typing group pushed an undo entry"
         );
@@ -39285,36 +39350,51 @@ mod tests {
         );
     }
 
-    /// The undo path — the half of HF-045 that was still open. An entry whose
-    /// group cannot apply (an inverse that no longer fits the document) must
-    /// cost the user nothing: same document, same stack depth, same entry, and
-    /// an error that says so. The old code popped the entry before applying and
-    /// had no snapshot, so this lost the step *and* half-reverted the document.
+    /// Locks the document the way Word's `w:edit="forms"` protection does, so the
+    /// next mutation — an undo included — is refused at the choke point.
+    ///
+    /// This is how the two guards below CREATE their condition, and the
+    /// precondition is explicit on purpose (SKILL: assert the guarantee, not the
+    /// circumstance). They used to shove a hand-built poisoned group onto the undo
+    /// `Vec`; the log makes that impossible by design, because a group's inverse is
+    /// recorded by the engine against the state it will be applied to and nothing
+    /// can put a group into the chain that was never applied. The property under
+    /// test is unchanged — a refused undo costs the user neither their step nor
+    /// their document — and the refusal is now one a real user can reach.
+    fn lock_as_a_form(doc: &mut WasmDocument) {
+        use casual_doc_model::v1::DocumentProtection;
+
+        doc.document.definitions_mut().settings.document_protection = Some(DocumentProtection {
+            edit: DocumentProtectionEdit::Forms,
+            enforcement: true,
+            formatting: false,
+        });
+    }
+
+    /// The undo path — the half of HF-045 that was still open. An undo that cannot
+    /// apply must cost the user nothing: same document, same step, same redo
+    /// state, same revision, same chain, and an error that says so. The old code
+    /// popped the entry before applying and had no snapshot, so a refusal lost the
+    /// step *and* half-reverted the document.
     #[test]
     fn a_failed_undo_keeps_its_step_and_the_document() {
         let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
         let (node, _len) = doc.ordered_paragraphs()[0];
-        // A real edit first, so the stack has a step the user genuinely made and
-        // the test can prove it is still reachable afterwards.
         doc.apply_action(vec![Operation::InsertText {
             at: Pos::new(node, 0),
             text: "kept".to_owned(),
         }])
         .expect("the ordinary edit lands");
+        // The lock is part of the PRECONDITION, so the fingerprint is taken with it
+        // already in place: what is under test is that the refused UNDO changed
+        // nothing, not that the test's own setup changed nothing.
+        lock_as_a_form(&mut doc);
         let typed = model_fingerprint(&doc);
-        let pristine_depth = doc.undo.len();
-
-        push_history(
-            &mut doc.undo,
-            HistoryEntry {
-                kind: HistoryKind::Edit,
-                operations: half_applying_group(node),
-            },
-        );
-        let depth = doc.undo.len();
+        let depth = doc.log.undo_depth();
         let revision = doc.revision;
+        let head = doc.log.head();
 
-        let error = doc.undo_inner().expect_err("the undo group cannot apply");
+        let error = doc.undo_inner().expect_err("the undo is refused");
 
         assert!(
             error.starts_with("undo failed:"),
@@ -39325,20 +39405,28 @@ mod tests {
             &doc,
             "a failed undo left the document half-reverted — neither before nor after",
         );
-        assert_eq!(doc.undo.len(), depth, "a failed undo lost a history step");
-        assert!(
-            doc.redo.is_empty(),
+        assert_eq!(
+            doc.log.undo_depth(),
+            depth,
+            "a failed undo lost a history step"
+        );
+        assert_eq!(
+            doc.log.redo_depth(),
+            0,
             "a failed undo pushed a redo entry for a revert that never happened"
         );
         assert_eq!(
             doc.revision, revision,
             "a failed undo bumped the model revision"
         );
+        assert_eq!(
+            doc.log.head(),
+            head,
+            "a failed undo appended a commit to the revision chain"
+        );
 
-        // And the step underneath is still reachable: dropping the poisoned
-        // entry and undoing again returns the user to a state they did see.
-        doc.undo.pop().expect("the poisoned entry is still there");
-        assert_eq!(doc.undo.len(), pristine_depth);
+        // And the step is still there: unlocked, it undoes.
+        doc.document.definitions_mut().settings.document_protection = None;
         doc.undo_inner().expect("the real edit still undoes");
         assert_ne!(
             model_fingerprint(&doc),
@@ -39352,19 +39440,19 @@ mod tests {
     fn a_failed_redo_keeps_its_step_and_the_document() {
         let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
         let (node, _len) = doc.ordered_paragraphs()[0];
+        doc.apply_action(vec![Operation::InsertText {
+            at: Pos::new(node, 0),
+            text: "kept".to_owned(),
+        }])
+        .expect("the ordinary edit lands");
+        doc.undo_inner().expect("the edit undoes");
+        lock_as_a_form(&mut doc);
         let before = model_fingerprint(&doc);
+        let redo_depth = doc.log.redo_depth();
+        let undo_depth = doc.log.undo_depth();
+        let head = doc.log.head();
 
-        push_history(
-            &mut doc.redo,
-            HistoryEntry {
-                kind: HistoryKind::Edit,
-                operations: half_applying_group(node),
-            },
-        );
-        let depth = doc.redo.len();
-        let undo_depth = doc.undo.len();
-
-        let error = doc.redo_inner().expect_err("the redo group cannot apply");
+        let error = doc.redo_inner().expect_err("the redo is refused");
 
         assert!(
             error.starts_with("redo failed:"),
@@ -39375,11 +39463,20 @@ mod tests {
             &doc,
             "a failed redo left the document half-applied",
         );
-        assert_eq!(doc.redo.len(), depth, "a failed redo lost a history step");
         assert_eq!(
-            doc.undo.len(),
+            doc.log.redo_depth(),
+            redo_depth,
+            "a failed redo lost a history step"
+        );
+        assert_eq!(
+            doc.log.undo_depth(),
             undo_depth,
             "a failed redo pushed an undo entry for an edit that never landed"
+        );
+        assert_eq!(
+            doc.log.head(),
+            head,
+            "a failed redo appended a commit to the revision chain"
         );
     }
 
@@ -39418,71 +39515,158 @@ mod tests {
         );
     }
 
-    /// Fixing the class, not the instance (SKILL §10): atomicity is worth having
-    /// only while every mutation goes through the one place that provides it.
-    /// This reads the crate's own source and fails the build the moment a second
-    /// call to the edit crate's `apply` appears, or the choke point stops rolling
-    /// back — which is how the four hand-copied snapshots drifted apart in the
-    /// first place.
+    /// The span of `apply_group` in the engine source — the choke point every
+    /// mutation and every history read has to go through.
+    ///
+    /// Returned as a range so the guard below can ask both "is this inside the
+    /// choke point" and "is this outside it", which are the two halves of
+    /// exhaustiveness. The signature is matched on its opening line only, because
+    /// it takes four arguments and rustfmt breaks it across lines.
+    fn choke_point_span(engine: &str) -> core::ops::Range<usize> {
+        let start = engine
+            .find("    fn apply_group(\n")
+            .expect("the choke point `fn apply_group(`");
+        // The next doc comment at method indentation ends the function.
+        let end = engine[start..]
+            .find("\n    /// ")
+            .map_or(engine.len(), |offset| start + offset);
+        start..end
+    }
+
+    /// **Every document mutation is a transaction, and every history read is a
+    /// read of the log** — ADR-005, ADR-043, doc 147 §5.
+    ///
+    /// Fixing the class, not the instance (SKILL §10). A unification like this
+    /// decays silently: the next edit path added is one direct
+    /// `casual_doc_edit::apply` call away from bypassing the revision chain, and
+    /// NOTHING USER-VISIBLE BREAKS when it does — the edit lands, undo still works
+    /// through the other path, and the log merely stops being complete. That is the
+    /// worst failure mode available, because the log then *looks* like a full
+    /// history. So the rule is held by the build rather than by review.
+    ///
+    /// What this guard cannot see, stated because a guard's blind spots are part
+    /// of its contract (doc 147 §5):
+    ///
+    /// * It scans ONE crate's source. Another crate taking `&mut v1::Document` and
+    ///   calling `casual_doc_edit::apply` is invisible here.
+    /// * It cannot see mutation that never goes through the op set at all — a
+    ///   direct `body_mut()` write.
+    /// * It checks shape, not semantics: a transaction carrying the wrong
+    ///   operations passes. That is what the rest of this suite is for.
     #[test]
-    fn every_model_mutation_goes_through_the_atomic_choke_point() {
+    fn every_document_mutation_is_a_transaction() {
         let source = engine_source(include_str!("lib.rs"));
         let engine = source.as_str();
+        let choke = choke_point_span(engine);
 
-        assert!(
-            !engine.contains("casual_doc_edit::apply("),
-            "the edit crate's `apply` must be reached only through the `apply_edit` \
-             alias inside the choke point"
-        );
-        let sites: Vec<usize> = engine
-            .match_indices("apply_edit(")
-            .map(|(index, _)| index)
-            .collect();
-        assert_eq!(
-            sites.len(),
-            1,
-            "model mutation must have exactly one call site (found {}); a new one \
-             bypasses the rollback in `apply_group` and can half-apply a group",
-            sites.len()
-        );
-
-        let choke = engine
-            .find("    fn apply_group(&mut self, ops: &[Operation])")
-            .expect(
-                "the choke point, taking its ops by reference so a failed undo can \
-                 put its history entry back",
+        // 1. The facade may no longer reach the operation set at all. Before doc
+        //    147 this was "exactly one call site"; it is now ZERO, because the one
+        //    call moved into the envelope, and an op applied outside a transaction
+        //    is an edit with no revision, no inverse in the chain and nothing for
+        //    OT to transform.
+        for direct in ["casual_doc_edit::apply(", "apply_edit("] {
+            assert!(
+                !engine.contains(direct),
+                "`{direct}` appears in the facade: an operation applied outside the \
+                 transaction envelope is an edit the revision chain never sees"
             );
-        // The next item at method indentation ends the function.
-        let end = engine[choke..]
-            .find("\n    /// ")
-            .map_or(engine.len(), |offset| choke + offset);
-        assert!(
-            sites[0] > choke && sites[0] < end,
-            "the single mutation call site must be inside `apply_group`"
-        );
-        let body = &engine[choke..end];
-        assert!(
-            body.contains("self.document = snapshot"),
-            "`apply_group` must restore the pre-edit document when an op is refused"
-        );
+        }
 
-        // No caller may keep a rollback of its own: a second copy of the rule is
-        // a second copy to forget to update.
-        let snapshots: Vec<usize> = engine
-            .match_indices("(ops.len() > 1).then(|| self.document.clone())")
+        // 2. The envelope has exactly one call site, and it is the choke point.
+        let applies: Vec<usize> = engine
+            .match_indices(".apply(&mut self.document, &mut self.edit_ids,")
             .map(|(index, _)| index)
             .collect();
         assert_eq!(
-            snapshots.len(),
+            applies.len(),
             1,
-            "the snapshot decision belongs to `apply_group` alone; found {} copies \
-             of it",
-            snapshots.len()
+            "document mutation must have exactly one call site (found {}); a second \
+             one would advance the revision chain from two places",
+            applies.len()
         );
         assert!(
-            snapshots[0] > choke && snapshots[0] < end,
-            "the one snapshot must be the choke point's own"
+            choke.contains(&applies[0]),
+            "the one mutation call site must be inside `apply_group`"
         );
+
+        // 3. A `Transaction` is built in exactly one place too. Without this, a
+        //    caller could construct its own transaction, apply it through the
+        //    envelope, and skip `refuse_if_protected` and the windowed-body
+        //    refusal that only the choke point performs.
+        let built: Vec<usize> = engine
+            .match_indices("Transaction::new(")
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(
+            built.len(),
+            1,
+            "a transaction must be constructed in exactly one place (found {}); the \
+             choke point is where protection and windowing are enforced",
+            built.len()
+        );
+        assert!(
+            choke.contains(&built[0]),
+            "the one `Transaction::new` must be the choke point's own"
+        );
+
+        // 4. No parallel history. The flat `Vec<HistoryEntry>` stacks are what the
+        //    log replaced; a field of that shape coming back is the migration
+        //    undone, and it would be invisible from the outside for exactly as long
+        //    as the two agreed.
+        for parallel in ["HistoryEntry", "push_history", "self.undo.", "self.redo."] {
+            assert!(
+                !engine.contains(parallel),
+                "`{parallel}` is back in the facade: undo must be derived from the \
+                 revision log, not maintained beside it"
+            );
+        }
+
+        // 5. Every history READ resolves against the log. A getter that answered
+        //    from a cached count would drift from the chain the moment a commit was
+        //    compacted, and the drift would show as a greyed-out Undo button on a
+        //    document that can be undone.
+        for (reader, expected) in [
+            (
+                "    pub fn can_undo(&self) -> bool {",
+                "self.log.undo_target()",
+            ),
+            (
+                "    pub fn can_redo(&self) -> bool {",
+                "self.log.redo_target()",
+            ),
+            (
+                "    pub fn undo_label(&self) -> String {",
+                "self.log.undo_target()",
+            ),
+            (
+                "    pub fn redo_label(&self) -> String {",
+                "self.log.redo_target()",
+            ),
+            ("    fn undo_inner(&mut self)", "self.log.undo_target()"),
+            ("    fn redo_inner(&mut self)", "self.log.redo_target()"),
+        ] {
+            let start = engine
+                .find(reader)
+                .unwrap_or_else(|| panic!("the history reader `{reader}`"));
+            let end = engine[start..]
+                .find("\n    }\n")
+                .map_or(engine.len(), |offset| start + offset);
+            // Whitespace is stripped before matching, for the same reason
+            // `engine_source` normalizes line endings: rustfmt breaks a method
+            // chain across lines at its own discretion, so a guard that matches
+            // the chain literally reports a missing call every time the line gets
+            // one character longer. That is a guard failing on formatting, which
+            // teaches nothing and gets deleted.
+            let body: String = engine[start..end]
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            assert!(
+                body.contains(expected),
+                "`{reader}` must answer from the revision log (`{expected}`); a \
+                 second source of truth for history is how the two used to drift"
+            );
+        }
     }
 
     /// A plain-text document of `paragraphs` lines — the shape of the owner's
@@ -39505,6 +39689,81 @@ mod tests {
         casual_doc_edit::reset_block_visits();
         f(document);
         casual_doc_edit::block_visits()
+    }
+
+    /// **A keystroke must not cost work proportional to the HISTORY.**
+    ///
+    /// The one genuinely new risk in routing every edit through a revision log:
+    /// per-keystroke work that walks the chain. Re-validating retained commits,
+    /// re-deriving an undo stack, rebuilding a position map from the log — each is
+    /// a plausible addition, each would pass every correctness test, and each
+    /// turns typing quadratic in the length of the gesture. `107` §4 B1 forbids it.
+    ///
+    /// Measured as a RATIO of two gesture lengths, not as a clock: the 200th
+    /// keystroke of a run must cost what the 1st did.
+    #[test]
+    fn a_keystroke_costs_the_same_however_long_the_history_is() {
+        let mut d = plain_text_document(200);
+        let (node, _len) = d.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let mut offset = 0_u32;
+        let tick = |d: &mut WasmDocument, offset: &mut u32| {
+            casual_doc_edit::reset_block_visits();
+            d.type_text(&node, *offset, &node, *offset, "x".to_owned(), 7)
+                .expect("typing tick");
+            *offset += 1;
+            casual_doc_edit::block_visits()
+        };
+
+        let first = tick(&mut d, &mut offset);
+        for _ in 0..200 {
+            tick(&mut d, &mut offset);
+        }
+        let late = tick(&mut d, &mut offset);
+
+        assert!(first > 0, "the meter must be measuring something");
+        assert!(
+            late <= first * 2,
+            "a keystroke 200 commits into a gesture cost {late} block visits against \
+             {first} for the first: the transaction log is being walked per keystroke"
+        );
+    }
+
+    /// **A keystroke must not cost work proportional to the SQUARE of the
+    /// document.**
+    ///
+    /// The doubling form SKILL §8 requires: build documents of `n` and `2n`, make
+    /// the SAME single interaction in each, and assert the work roughly doubles.
+    /// The edit path is already linear per keystroke (`blocks_owning_mut` walks the
+    /// block lists to find the paragraph's owner), so linear is the standard this
+    /// holds; what it catches is the class one order worse — a per-node lookup at
+    /// the new choke point, which is `documentOutline`'s defect (`105` CQ) moved
+    /// into the mutation path, and which a millisecond threshold could not tell
+    /// from a slow constant.
+    #[test]
+    fn a_keystroke_is_linear_in_document_length_after_the_transaction_migration() {
+        let small_n = 400;
+        let mut small_doc = plain_text_document(small_n);
+        let mut large_doc = plain_text_document(small_n * 2);
+        let type_once = |d: &mut WasmDocument| {
+            let (node, _len) = d.ordered_paragraphs()[0];
+            let node = node.to_string();
+            casual_doc_edit::reset_block_visits();
+            d.type_text(&node, 0, &node, 0, "x".to_owned(), 11)
+                .expect("typing tick");
+            casual_doc_edit::block_visits()
+        };
+        let small = type_once(&mut small_doc);
+        let large = type_once(&mut large_doc);
+
+        assert!(small > 0, "the meter must be measuring something");
+        assert!(
+            large < small * 3,
+            "one keystroke must cost roughly twice as much in a document twice as \
+             long, not four times: {small} block visits at {small_n} paragraphs and \
+             {large} at {}",
+            small_n * 2
+        );
     }
 
     /// `documentOutline` must cost work proportional to the document, not to its
