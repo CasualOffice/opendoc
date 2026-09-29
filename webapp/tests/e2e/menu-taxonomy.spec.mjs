@@ -13,7 +13,9 @@ import {
   openAppMenu,
   runAppMenuCommand,
   runFilePageCommand,
+  useCompactChrome,
 } from "./fixtures.mjs";
+import { APP_MENU_SECTIONS } from "../../src/command_taxonomy.mjs";
 
 /** Command ids offered by a menu, in render order. */
 async function menuCommandIds(page, menu) {
@@ -29,7 +31,7 @@ test("no command is offered by two different menus", async ({ page, consoleError
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
-  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
+  const MENUS = ["file", "edit", "view", "insert", "format", "table", "references", "review"];
   const home = new Map();
   for (const menu of MENUS) {
     for (const id of await menuCommandIds(page, menu)) {
@@ -180,6 +182,228 @@ test("Page setup is on the File surface, where Docs puts it", async ({
   // is worse than a buried one.
   await runAppMenuCommand(page, "file", "layout.pageSetup");
   await expect(page.locator("#pageSetupMenu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  expect(consoleErrors).toEqual([]);
+});
+
+// ---- The bands, in the browser ---------------------------------------------
+//
+// The owner's report was that the menus are flat lists of commands and that
+// grouping is necessary — "in file menus in compact mode … basically menus like
+// File, Edit, View". The structural half is `menu_taxonomy.test.mjs`: every
+// band is named, non-empty and lists nothing twice. This is the half only a
+// browser can answer — that the bands actually reach the screen, that each one
+// is announced by NAME rather than as an anonymous rule, and that the keyboard
+// still walks rows and only rows.
+//
+// Every assertion here is written against the guarantee and not against a
+// count. Nothing below names a number of rules, a number of bands or a band's
+// membership by hand: a menu may be regrouped tomorrow and these stay green,
+// while a menu that goes back to one undifferentiated run cannot.
+
+/** Every menu row on screen, with the band it belongs to. */
+async function rowsWithGroups(page, menu) {
+  await openAppMenu(page, menu);
+  const rows = await page.$$eval("#appMenuPopover .app-menu-item", (items) =>
+    items.map((item) => {
+      const group = item.closest('[role="group"]');
+      return {
+        id: item.dataset.command,
+        group: group?.dataset.group ?? null,
+        name: group?.getAttribute("aria-label") ?? null,
+      };
+    }),
+  );
+  await page.keyboard.press("Escape");
+  return rows;
+}
+
+test("every menu row is inside a band with a translated name", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await useCompactChrome(page);
+  await clickIntoFirstPage(page);
+
+  const loose = [];
+  const unnamed = [];
+  const untranslated = [];
+  for (const menu of Object.keys(APP_MENU_SECTIONS)) {
+    const rows = await rowsWithGroups(page, menu);
+    expect(rows.length, `the ${menu} menu rendered nothing`).toBeGreaterThan(0);
+    for (const row of rows) {
+      if (!row.group) loose.push(`${menu}: ${row.id}`);
+      else if (!row.name) unnamed.push(`${menu}: ${row.group}`);
+      // `t()` renders the KEY when a catalogue cannot answer it, so a band
+      // named `menuGroup.clipboard` is one a screen reader reads out as a
+      // dotted identifier. That is the failure mode this catches, and it is
+      // invisible to a check that only asks whether the name is non-empty.
+      else if (row.name === row.group) untranslated.push(`${menu}: ${row.group}`);
+    }
+  }
+  expect(
+    loose,
+    "a menu row outside every band — it belongs to no group a reader can be told about",
+  ).toEqual([]);
+  expect(unnamed, "a band with no accessible name is a line that says nothing").toEqual([]);
+  expect(untranslated, "these bands are announced as their own catalogue keys").toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("each menu renders the bands the taxonomy declares, in order", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await useCompactChrome(page);
+  await clickIntoFirstPage(page);
+
+  // Band membership proved through the DOM rather than trusted from the data:
+  // a renderer that dropped the grouping and emitted one flat run would satisfy
+  // the unit test and fail here.
+  for (const [menu, sections] of Object.entries(APP_MENU_SECTIONS)) {
+    const rows = await rowsWithGroups(page, menu);
+    const keyFor = new Map();
+    for (const section of sections) for (const id of section.ids) keyFor.set(id, section.nameKey);
+    const misfiled = rows.filter((row) => row.group !== keyFor.get(row.id));
+    expect(
+      misfiled,
+      `${menu}: rows rendered under a band the taxonomy did not put them in`,
+    ).toEqual([]);
+
+    // A band whose rows the registry does not offer prints nothing at all — no
+    // heading over blank space and no rule with nothing under it — so what is
+    // on screen is exactly the bands with at least one live row, in order.
+    const onScreen = [...new Set(rows.map((row) => row.group))];
+    const populated = sections.filter((section) =>
+      section.ids.some((id) => rows.some((row) => row.id === id)),
+    );
+    expect(onScreen).toEqual(populated.map((section) => section.nameKey));
+  }
+  expect(consoleErrors).toEqual([]);
+});
+
+test("arrow, Home and End walk rows only — a band boundary is never a stop", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await useCompactChrome(page);
+  await clickIntoFirstPage(page);
+
+  // Format has the most bands and the most rows, so walking it end to end
+  // crosses every kind of boundary this change introduced.
+  await openAppMenu(page, "format");
+  const rowCount = await page.locator("#appMenuPopover .app-menu-item:not([disabled])").count();
+  expect(rowCount).toBeGreaterThan(8);
+
+  /** What the keyboard is actually on: the role it carries and whether it is a
+   *  row. A band container caught in the walk answers `"group"` here. */
+  const focused = () =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      return {
+        role: el?.getAttribute("role") ?? null,
+        isRow: !!el?.classList?.contains("app-menu-item"),
+        disabled: el?.disabled ?? null,
+      };
+    });
+
+  // One full lap plus two, so the wrap at each end is walked as well as the
+  // middle: the boundary between the last band and the first is the one a
+  // modulo bug lands on.
+  for (let step = 0; step < rowCount + 2; step += 1) {
+    expect(await focused(), `ArrowDown step ${step} left the rows`).toEqual({
+      role: "menuitem",
+      isRow: true,
+      disabled: false,
+    });
+    await page.keyboard.press("ArrowDown");
+  }
+  for (let step = 0; step < rowCount + 2; step += 1) {
+    await page.keyboard.press("ArrowUp");
+    expect(await focused(), `ArrowUp step ${step} left the rows`).toEqual({
+      role: "menuitem",
+      isRow: true,
+      disabled: false,
+    });
+  }
+
+  // Home and End jump ACROSS bands in one press, so they are the two most
+  // likely to land on a container.
+  await page.keyboard.press("End");
+  expect(await focused()).toEqual({ role: "menuitem", isRow: true, disabled: false });
+  await page.keyboard.press("Home");
+  expect(await focused()).toEqual({ role: "menuitem", isRow: true, disabled: false });
+
+  await page.keyboard.press("Escape");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the File page prints the same bands the File dropdown announces", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await page.locator("#modeRibbon").click();
+  await page.locator("#tabFile").click();
+
+  const printed = await page.$$eval("#filePageBody [role='group']", (groups) =>
+    groups.map((group) => ({
+      key: group.dataset.group,
+      heading: group.querySelector("h3")?.textContent ?? null,
+      labelled: group.getAttribute("aria-labelledby"),
+    })),
+  );
+  expect(printed.length).toBeGreaterThan(3);
+  for (const group of printed) {
+    expect(group.heading, `${group.key} printed no heading`).toBeTruthy();
+    expect(group.heading).not.toBe(group.key);
+    // Named BY the heading rather than beside it: a visible heading plus an
+    // `aria-label` repeating it is the same name written twice, and two copies
+    // of one name drift.
+    expect(group.labelled, `${group.key} has a heading it does not point at`).toBeTruthy();
+  }
+  await page.keyboard.press("Escape");
+
+  // One declaration, two renderings: the dropdown announces a band, the page
+  // prints it, and the words are the same because both read `t(nameKey)`.
+  await useCompactChrome(page);
+  const dropdown = await rowsWithGroups(page, "file");
+  expect([...new Set(dropdown.map((row) => row.group))]).toEqual(printed.map((g) => g.key));
+  const announced = new Map(dropdown.map((row) => [row.group, row.name]));
+  for (const group of printed) expect(announced.get(group.key)).toBe(group.heading);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("References is reachable from the compact chrome, not only from the ribbon", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await useCompactChrome(page);
+  await clickIntoFirstPage(page);
+
+  // The ribbon is hidden in this chrome, so before the References menu existed
+  // the table of contents, captions and cross-references were reachable here
+  // only by typing their names into the command palette — a single-surface
+  // capability in the chrome whose ONLY axis is this bar.
+  await expect(page.locator("#ribbon")).toBeHidden();
+  const ids = await menuCommandIds(page, "references");
+  for (const id of [
+    "reference.tableOfContents",
+    "reference.caption",
+    "reference.crossReference",
+    "insert.footnote",
+  ]) {
+    expect(ids, `${id} has no References menu row`).toContain(id);
+  }
+
+  // And a row RUNS rather than being a label that closes the menu: the caption
+  // dialog opening is the engine-side proof.
+  await runAppMenuCommand(page, "references", "reference.caption");
+  await expect(page.locator("#captionDialog")).toBeVisible();
   await page.keyboard.press("Escape");
   expect(consoleErrors).toEqual([]);
 });

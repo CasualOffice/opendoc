@@ -14,6 +14,66 @@
 // `.few` and `.many` without any call site changing, which is the entire
 // reason plural selection lives in the seam (`i18n.mjs`).
 export const EN_STRINGS = Object.freeze({
+  // ---- Menu band names ------------------------------------------------------
+  //
+  // Every band of every menu, and every band of the File page, names itself
+  // from here. A band is a `role="group"` with this string as its accessible
+  // name, and on the File page it is also the visible heading — so these are
+  // read aloud, not decoration, and an English literal in `command_taxonomy.mjs`
+  // would have been an untranslated string a screen reader says in every locale.
+  //
+  // Where the ribbon already had a group of the same name the ENGLISH IS THE
+  // SAME SENTENCE and each locale's value was copied from the catalogue entry
+  // the ribbon's own `rgroup-label` uses (`panelInsert.illustrations`,
+  // `panelReview.proofing`, and so on) rather than translated a second time.
+  // One vocabulary across the ribbon, the menus and the File page; two words
+  // for one band is how a surface starts reading as a different product.
+  "menuGroup.allChanges": "All changes",
+  "menuGroup.alignment": "Alignment",
+  "menuGroup.captions": "Captions",
+  "menuGroup.cellSize": "Cell size",
+  "menuGroup.changeCase": "Change case",
+  "menuGroup.changes": "Changes",
+  "menuGroup.clearFormatting": "Clear formatting",
+  "menuGroup.clipboard": "Clipboard",
+  "menuGroup.comments": "Comments",
+  "menuGroup.delete": "Delete",
+  "menuGroup.document": "Document",
+  "menuGroup.fields": "Fields",
+  "menuGroup.find": "Find and replace",
+  "menuGroup.font": "Font",
+  "menuGroup.headerFooter": "Header & footer",
+  "menuGroup.help": "Help",
+  "menuGroup.history": "History",
+  "menuGroup.illustrations": "Illustrations",
+  "menuGroup.links": "Links",
+  "menuGroup.lists": "Lists",
+  "menuGroup.merge": "Merge",
+  "menuGroup.mode": "Mode",
+  "menuGroup.move": "Move",
+  "menuGroup.navigation": "Navigation",
+  "menuGroup.newAndOpen": "New and open",
+  "menuGroup.notes": "Notes",
+  "menuGroup.paragraph": "Paragraph",
+  "menuGroup.print": "Print",
+  "menuGroup.proofing": "Proofing",
+  "menuGroup.properties": "Properties",
+  "menuGroup.rowsAndColumns": "Rows & columns",
+  "menuGroup.save": "Save",
+  "menuGroup.select": "Select",
+  "menuGroup.selection": "Selection",
+  "menuGroup.settings": "Settings",
+  "menuGroup.show": "Show",
+  "menuGroup.sort": "Sort",
+  "menuGroup.style": "Style",
+  "menuGroup.styles": "Styles",
+  "menuGroup.symbols": "Symbols",
+  "menuGroup.table": "Table",
+  "menuGroup.text": "Text",
+  "menuGroup.textColor": "Text color",
+  "menuGroup.tracking": "Tracking",
+  "menuGroup.undo": "Undo",
+  "menuGroup.zoom": "Zoom",
   // The one sentence white-labelling needs (docs/126 phase 3). A deployment whose
   // `brand.json` pinned the accent owns it, so the Settings colour controls are
   // disabled WITH A REASON rather than removed — a control inside a surface the

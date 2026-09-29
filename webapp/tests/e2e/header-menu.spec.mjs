@@ -26,6 +26,11 @@ const MENU_LABELS = [
   // Table sits where Word and LibreOffice put it — every structural table
   // command used to have no menu home at all (docs/105 UX-012).
   "Table",
+  // References, in the slot Word's ribbon gives it. It was missing entirely, so
+  // in COMPACT mode — where there is no ribbon behind the bar — the table of
+  // contents, captions and cross-references were reachable only by typing their
+  // names into the palette.
+  "References",
   "Review",
 ];
 
@@ -90,19 +95,28 @@ test("application menus support keyboard traversal, disabled reasons, and real d
     "Select content to copy",
   );
 
-  // Left/right moves between top-level categories while the menu stays open.
+  // Left/right moves between top-level categories while the menu stays open,
+  // and lands on the next menu's FIRST row — whichever row that is. Naming the
+  // id would pin this to today's band order, so a menu that regroups its rows
+  // (which is exactly what the band work did) would redden a guard that has
+  // nothing to say about grouping. The guarantee is "the keyboard arrives
+  // somewhere real in the menu it opened", and that is what is asserted.
+  // The first row the KEYBOARD can reach: a disabled row takes no focus, so
+  // "first row" and "first focusable row" are different questions and only the
+  // second one is the contract.
+  const firstRow = () => menu.locator(".app-menu-item[data-command]:not([disabled])").first();
   await page.keyboard.press("ArrowRight");
   await expect(page.locator('.app-menu-button[data-menu="view"]')).toHaveAttribute(
     "aria-expanded",
     "true",
   );
-  await expect(menu.locator('[data-command="view.outline"]')).toBeFocused();
+  await expect(firstRow()).toBeFocused();
   await page.keyboard.press("ArrowRight");
   await expect(page.locator('.app-menu-button[data-menu="insert"]')).toHaveAttribute(
     "aria-expanded",
     "true",
   );
-  await expect(menu.locator('[data-command="insert.table"]')).toBeFocused();
+  await expect(firstRow()).toBeFocused();
 
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();

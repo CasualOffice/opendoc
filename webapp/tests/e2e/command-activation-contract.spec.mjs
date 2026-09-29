@@ -38,7 +38,7 @@ import {
   openFilePage,
 } from "./fixtures.mjs";
 
-const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
+const MENUS = ["file", "edit", "view", "insert", "format", "table", "references", "review"];
 // The Table tab is included since `109` UX-005 stamped its controls: it was left
 // out while its 19 buttons carried no command id, so a dead Table control was
 // invisible to the one sweep that exists to find dead controls.

@@ -16,13 +16,15 @@
 // `webapp/tests/e2e/menu-taxonomy.spec.mjs`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 import {
   APP_MENU_SECTIONS,
   FILE_SURFACE,
   RIBBON_TABS,
   TABLE_MENU_LABELS,
+  allMenuSections,
+  appMenuNames,
   fileMenuSections,
   fileSurfaceCommandIds,
   menuCommandIds,
@@ -145,15 +147,82 @@ test("the File page and the File menu offer the same rows, in the same order", (
 
 test("every File section is headed and non-empty", () => {
   for (const section of FILE_SURFACE) {
-    assert.ok(section.heading, `a File section with no heading: ${section.ids?.join(", ")}`);
+    assert.ok(section.nameKey, `a File section with no name: ${section.ids?.join(", ")}`);
     assert.ok(
       Array.isArray(section.ids) && section.ids.length > 0,
-      `File section "${section.heading}" offers nothing, so the page prints a ` +
+      `File section "${section.nameKey}" offers nothing, so the page prints a ` +
         "heading over blank space",
     );
   }
   const ids = fileSurfaceCommandIds();
   assert.equal(new Set(ids).size, ids.length, "a File row listed twice answers twice");
+});
+
+// ---- Every menu's rows fall into NAMED bands -------------------------------
+//
+// The owner's report: "grouping of things is necessary in file menus in compact
+// mode … basically menus like File, Edit, View". Bands existed in the data and
+// rendered as anonymous hairlines; what they could not do is say what they
+// were, to a reader or to a screen reader. These three rules are what "the
+// menus are grouped" means as something a build can check, and each is written
+// against the GUARANTEE rather than against a count of rules or of bands — a
+// menu may legitimately gain, lose or merge a band without any of them moving.
+
+test("every band of every menu is named, non-empty, and names no row twice", () => {
+  const unnamed = [];
+  const empty = [];
+  for (const section of allMenuSections()) {
+    if (!section.nameKey) unnamed.push(`${section.menu}: ${section.ids?.join(", ")}`);
+    if (!section.ids?.length) empty.push(`${section.menu}: ${section.nameKey}`);
+  }
+  assert.deepEqual(
+    unnamed,
+    [],
+    "a band with no name renders as a rule a screen reader can only call " +
+      '"separator" — a visual line that says nothing, which is half the feature',
+  );
+  assert.deepEqual(empty, [], "a band with no rows prints a heading over blank space");
+
+  for (const name of appMenuNames()) {
+    const ids = menuCommandIds(name);
+    assert.equal(
+      new Set(ids).size,
+      ids.length,
+      `the ${name} menu lists a command twice, so it answers the same question ` +
+        "in two bands and stops being a map of where things live",
+    );
+  }
+});
+
+test("every band name is a key the catalogue really declares", () => {
+  const english = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8"));
+  // A band's name is rendered with `t()`, and `t()` on an unknown key prints the
+  // KEY. So an invented `nameKey` does not fail loudly — it ships a dotted
+  // identifier as the accessible name of a group, in every language.
+  const undeclared = [...FILE_SURFACE, ...allMenuSections()]
+    .map((section) => section.nameKey)
+    .filter((key) => !(key in english));
+  assert.deepEqual(
+    [...new Set(undeclared)],
+    [],
+    "a band names itself with a key `en_strings.mjs` does not declare; `t()` " +
+      "would render the key itself as the group's name",
+  );
+});
+
+test("a band name is translated in every locale, not only in English", () => {
+  const dir = new URL("../locales/", import.meta.url);
+  const keys = [...new Set([...FILE_SURFACE, ...allMenuSections()].map((s) => s.nameKey))];
+  const missing = [];
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith(".json") || file === "en.json") continue;
+    const catalogue = JSON.parse(readFileSync(new URL(file, dir), "utf8"));
+    for (const key of keys) if (!(key in catalogue)) missing.push(`${file}: ${key}`);
+  }
+  // Script-side strings have no English in the markup to fall back to, so a
+  // catalogue that cannot answer one renders the dotted key. A group NAME is
+  // the worst place for that: it is what a screen reader says on arrival.
+  assert.deepEqual(missing, [], "these locales would announce a dotted key as a band's name");
 });
 
 // The Tools and Help menus are gone; their rows are not. Removing a top-level

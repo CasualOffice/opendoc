@@ -170,7 +170,7 @@ import {
   tableCommandLabel,
   tableMenuPlaceholders,
 } from "./command_taxonomy.mjs";
-import { FILE_SURFACE, fileMenuSections } from "./command_taxonomy.mjs";
+import { fileMenuSections } from "./command_taxonomy.mjs";
 import { FIELD_KINDS, fieldLabel, fieldResultText } from "./field_kinds.mjs";
 import {
   createMenuBar,
@@ -12384,7 +12384,7 @@ function renderFilePage() {
     menuRegistry(),
     {
       itemClass: "file-page-item",
-      headingFor: (_ids, index) => FILE_SURFACE[index]?.heading,
+      headings: true,
       formatShortcut,
       rowFor: (id, ids) =>
         fileCategoryRowFor(id, ids, {

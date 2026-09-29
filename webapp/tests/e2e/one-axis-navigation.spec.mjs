@@ -21,6 +21,10 @@
 // running application, so it can.
 import { test, expect, gotoEditor, clickIntoFirstPage, openAppMenu, MOD } from "./fixtures.mjs";
 
+/** The bar's names, in bar order. Declared once: three tests walk them, and a
+ *  menu added to one list and not the others is a menu nothing sweeps. */
+const MENUS = ["file", "edit", "view", "insert", "format", "table", "references", "review"];
+
 /** The tab strip, in rendered order, with each tab's enabled state. */
 async function tabStrip(page) {
   return page.locator(".ribbon-tabs .ribbon-tab").evaluateAll((tabs) =>
@@ -71,13 +75,16 @@ test("the compact chrome shows ONE axis: the menu bar, and no ribbon", async ({
   await expect(page.locator(".ribbon")).toBeHidden();
   await expect(page.locator(".ribbon-tabs")).toBeHidden();
 
-  // Seven names, and neither Tools nor Help among them: their rows moved to the
-  // File surface and the Review band. Two names fewer is two names that cannot
-  // scroll off the end of the bar behind a hidden scrollbar (`109` HF-097).
+  // Eight names, and neither Tools nor Help among them: their rows moved to the
+  // File surface and the Review band. References is here because the compact
+  // chrome had no other way to reach the table of contents, captions and
+  // cross-references — the ribbon that carries them is hidden in this chrome.
+  // Still two names fewer than Tools and Help made it, which is what stops the
+  // bar scrolling names off its end behind a hidden scrollbar (`109` HF-097).
   const menus = await page
     .locator("#appMenuBar .app-menu-button")
     .evaluateAll((b) => b.map((x) => x.dataset.menu));
-  expect(menus).toEqual(["file", "edit", "view", "insert", "format", "table", "review"]);
+  expect(menus).toEqual(MENUS);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -389,7 +396,6 @@ test("no command is reachable from the command palette alone", async ({
   await page.keyboard.press("Escape");
 
   // Every menu of the compact chrome, and its toolbar.
-  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
   for (const menu of MENUS) {
     await openAppMenu(page, menu);
     claim(

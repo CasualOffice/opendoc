@@ -17,10 +17,34 @@
 // descriptors — `{id, label, shortcut, enabled, disabledReason, run}` — and the
 // shortcut formatter, so gating and activation stay single-sourced in `main.js`
 // with the state they read.
+//
+// ---- A band is a NAMED GROUP, not a rule -----------------------------------
+//
+// Every band renders as an element with `role="group"` carrying the band's name
+// — as `aria-label` in a dropdown, as `aria-labelledby` pointing at the visible
+// `<h3>` on the File page. The hairline between bands is drawn by CSS on the
+// group's own top edge; there is no `role="separator"` element any more, and
+// that is a deliberate choice between the two shapes ARIA offers:
+//
+//   * `role="separator"` announces "separator" and stops. It tells a screen
+//     reader that a boundary exists and nothing about what changed across it,
+//     which is the "visual line that says nothing" half-feature.
+//   * `role="group"` with a name announces "Clipboard, group" as the reader
+//     arrives, which is the same information the hairline plus the band's
+//     position gives a sighted reader. With that name present a separator
+//     between two named groups is redundant — it would announce every boundary
+//     twice — so the rule became presentation and the group became the
+//     structure.
+//
+// A group element is not focusable and is not a `.app-menu-item`, so the
+// keyboard walk, the type-ahead and the light-dismiss contract in
+// `createMenuBar` below are unchanged: they query ROWS, and rows are now one
+// level deeper in the tree rather than fewer or differently shaped.
+import { t } from "./i18n.mjs";
 
 /**
- * Renders `sections` (arrays of command ids, one array per separator group) into
- * `host` as activatable rows, skipping any id the registry does not offer.
+ * Renders `sections` (named bands of command ids) into `host` as activatable
+ * rows, skipping any id the registry does not offer.
  *
  * A row carries its command id in `data-command` so a surface's membership is
  * readable from the DOM — which is what lets the reachability guard compare what
@@ -31,29 +55,27 @@
  * opening a menu O(commands²).
  *
  * @param {HTMLElement} host cleared and refilled.
- * @param {string[][]} sections id groups, in render order.
+ * @param {{nameKey: string, ids: string[]}[]} sections bands, in render order.
  * @param {Map<string, object>} byId the live registry, id → descriptor.
  * @param {object} options
  * @param {string} options.itemClass class for each row.
- * @param {string} [options.separatorClass] class for the rule between groups;
- *   omitted means no separators (the File page uses headings instead).
- * @param {(section: string[], index: number) => string|undefined} [options.headingFor]
- *   a heading to print above a group.
+ * @param {boolean} [options.headings] print each band's name as a visible
+ *   `<h3>` (the File page) instead of only naming the group (a dropdown).
  * @param {(shortcut: string|undefined) => string} options.formatShortcut
  * @param {(command: object) => void} options.onRun invoked for an enabled row.
  * @returns {number} how many rows were rendered, so a caller can tell an empty
  *   surface from a full one without re-reading the DOM.
  */
 export function renderCommandRows(host, sections, byId, options) {
-  const { itemClass, separatorClass, headingFor, formatShortcut, onRun, rowFor } = options;
+  const { itemClass, headings, formatShortcut, onRun, rowFor } = options;
   host.replaceChildren();
   let rendered = 0;
-  let groups = 0;
-  sections.forEach((ids, index) => {
-    // A section can carry rows that are not commands — the File page's category
+  sections.forEach((section, index) => {
+    const ids = section.ids;
+    // A band can carry rows that are not commands — the File page's category
     // rows, which select a pane instead of running one. A category row takes
     // the PLACE of the command it stands in for rather than being appended
-    // after the section, so the two File surfaces list the same things in the
+    // after the band, so the two File surfaces list the same things in the
     // same order; `SKIP_ROW` is how one category row speaks for several
     // commands (Export, for the six formats behind it).
     const rows = [];
@@ -67,25 +89,30 @@ export function renderCommandRows(host, sections, byId, options) {
       const command = byId.get(id);
       if (command) rows.push(commandRow(command, { itemClass, formatShortcut, onRun }));
     }
+    // An empty band prints nothing at all — not a heading over blank space, and
+    // not a hairline with no rows under it. Bands go empty legitimately: the
+    // outline row is absent when the host withheld the rail.
     if (!rows.length) return;
-    if (separatorClass && groups > 0) {
-      const separator = document.createElement("div");
-      separator.className = separatorClass;
-      separator.setAttribute("role", "separator");
-      host.appendChild(separator);
-    }
-    const heading = headingFor?.(ids, index);
-    if (heading) {
+    const group = document.createElement("div");
+    group.className = `${itemClass}-group`;
+    group.setAttribute("role", "group");
+    group.dataset.group = section.nameKey;
+    const name = t(section.nameKey);
+    if (headings) {
       const h = document.createElement("h3");
       h.className = `${itemClass}-heading`;
-      h.textContent = heading;
-      host.appendChild(h);
+      h.id = `${itemClass}-heading-${index}`;
+      h.textContent = name;
+      group.appendChild(h);
+      group.setAttribute("aria-labelledby", h.id);
+    } else {
+      group.setAttribute("aria-label", name);
     }
-    groups += 1;
     for (const row of rows) {
-      host.appendChild(row);
+      group.appendChild(row);
       rendered += 1;
     }
+    host.appendChild(group);
   });
   return rendered;
 }
@@ -132,7 +159,8 @@ function commandRow(command, { itemClass, formatShortcut, onRun }) {
  * @param {object} deps
  * @param {HTMLElement} deps.bar the `nav` holding `.app-menu-button`s.
  * @param {HTMLElement} deps.popover the shared popover element.
- * @param {(name: string) => string[][]} deps.sectionsFor the menu's taxonomy.
+ * @param {(name: string) => {nameKey: string, ids: string[]}[]} deps.sectionsFor
+ *   the menu's taxonomy, as named bands.
  * @param {() => Map<string, object>} deps.registry live descriptors by id.
  * @param {(shortcut: string|undefined) => string} deps.formatShortcut
  * @returns {{open: Function, close: Function, isOpen: () => boolean, activeMenu: () => string|null}}
@@ -172,7 +200,6 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
     activeTrigger = trigger;
     renderCommandRows(popover, sectionsFor(name), registry(), {
       itemClass: "app-menu-item",
-      separatorClass: "app-menu-separator",
       formatShortcut,
       onRun: (command) => {
         const from = activeTrigger;

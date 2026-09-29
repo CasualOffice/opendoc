@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1343],
-  ["de", 1343],
-  ["es", 1343],
-  ["fr", 1343],
-  ["hi", 1343],
-  ["id", 1343],
-  ["it", 1343],
-  ["ja", 1343],
-  ["ko", 1343],
-  ["nl", 1343],
-  ["pl", 1343],
-  ["pt-BR", 1343],
-  ["ru", 1343],
-  ["tr", 1343],
-  ["uk", 1343],
-  ["vi", 1343],
-  ["zh-Hans", 1343],
-  ["zh-Hant", 1343],
+  ["ar", 1389],
+  ["de", 1389],
+  ["es", 1389],
+  ["fr", 1389],
+  ["hi", 1389],
+  ["id", 1389],
+  ["it", 1389],
+  ["ja", 1389],
+  ["ko", 1389],
+  ["nl", 1389],
+  ["pl", 1389],
+  ["pt-BR", 1389],
+  ["ru", 1389],
+  ["tr", 1389],
+  ["uk", 1389],
+  ["vi", 1389],
+  ["zh-Hans", 1389],
+  ["zh-Hant", 1389],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -215,7 +215,23 @@ const COVERAGE = new Map([
  *  number forward would have published a floor twenty short of the truth while
  *  this gate stayed green -- the merge trap `module_seams.test.mjs` records
  *  three times, and the reason a number in this file is never arithmetic on two
- *  branches' figures. */
+ *  branches' figures.
+ *
+ *  1,343 -> 1,389 is the MENU BAND NAMES. Every band of every menu and of the
+ *  File page now carries a `role="group"` whose accessible name is one of the
+ *  forty-five `menuGroup.*` keys, plus `documentChrome.references` for the menu
+ *  bar's new References button. A band name is script-side — it is rendered
+ *  with `t()` and has no English in the markup to fall back on — so a locale
+ *  that could not answer one would announce a dotted key to a screen reader on
+ *  arrival, which is why all forty-six landed translated in the same change
+ *  that routed them.
+ *
+ *  Thirty-three of the forty-six are NOT new translations: where the ribbon
+ *  already had a group of the same name, each locale's value is the value it
+ *  already gives that key (`panelHome.clipboard`, `panelReview.proofing`, and
+ *  so on). One vocabulary across the ribbon, the menus and the File page; two
+ *  words for one band is how a surface starts reading as a different product.
+ *  MEASURED from the merged catalogues, not incremented by forty-six. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];
