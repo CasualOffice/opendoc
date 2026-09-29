@@ -93,6 +93,17 @@ export function renderCommandRows(host, sections, byId, options) {
     // not a hairline with no rows under it. Bands go empty legitimately: the
     // outline row is absent when the host withheld the rail.
     if (!rows.length) return;
+
+    // A band declared `submenu` folds behind one row — but only in a DROPDOWN.
+    // The File page passes `headings`, and a full window has the room to show
+    // the group, which is why it prints a heading where the dropdown prints a
+    // name. Folding there would hide rows that already fit.
+    if (section.submenu && !headings) {
+      host.appendChild(submenuRow(section, rows, { itemClass }));
+      rendered += rows.length;
+      return;
+    }
+
     const group = document.createElement("div");
     group.className = `${itemClass}-group`;
     group.setAttribute("role", "group");
@@ -115,6 +126,61 @@ export function renderCommandRows(host, sections, byId, options) {
     host.appendChild(group);
   });
   return rendered;
+}
+
+
+/** One band folded into a row that opens a flyout.
+ *
+ * The parent is a real `menuitem` carrying `aria-haspopup="menu"` and
+ * `aria-expanded`, and the flyout is a `role="menu"` — so a screen reader
+ * announces "Text, submenu, collapsed" rather than reading thirty-one rows.
+ * The rows inside are the SAME row elements the flat path builds, so a
+ * disabled row keeps its reason and a shortcut keeps its label.
+ *
+ * Opening is CSS-free state: the flyout carries `hidden`, which is what keeps
+ * its rows out of the keyboard walk (`focusable()` selects visible rows only)
+ * and out of the accessibility tree while closed.
+ *
+ * O(rows in the band).
+ */
+function submenuRow(section, rows, { itemClass }) {
+  const wrap = document.createElement("div");
+  wrap.className = `${itemClass}-submenu`;
+  wrap.setAttribute("role", "group");
+  wrap.setAttribute("aria-label", t(section.nameKey));
+  wrap.dataset.group = section.nameKey;
+
+  const parent = document.createElement("button");
+  parent.type = "button";
+  parent.className = `${itemClass}-parent`;
+  parent.setAttribute("role", "menuitem");
+  parent.setAttribute("aria-haspopup", "menu");
+  parent.setAttribute("aria-expanded", "false");
+  parent.dataset.submenu = section.nameKey;
+
+  const label = document.createElement("span");
+  label.className = `${itemClass}-label`;
+  label.textContent = t(section.nameKey);
+  parent.appendChild(label);
+
+  // The affordance is drawn, not typed: a glyph in the row's trailing slot, the
+  // same place a shortcut sits, and `aria-hidden` because `aria-haspopup`
+  // already says it to a reader.
+  const chevron = document.createElement("span");
+  chevron.className = `${itemClass}-chevron`;
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = "\u203A";
+  parent.appendChild(chevron);
+
+  const flyout = document.createElement("div");
+  flyout.className = `${itemClass}-flyout`;
+  flyout.setAttribute("role", "menu");
+  flyout.setAttribute("aria-label", t(section.nameKey));
+  flyout.hidden = true;
+  for (const row of rows) flyout.appendChild(row);
+
+  wrap.append(parent, flyout);
+  return wrap;
 }
 
 /** One row. Disabled rows keep their reason in `title`, which is the only
@@ -170,7 +236,74 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
   let activeMenu = null;
   let activeTrigger = null;
 
-  const focusable = () => [...popover.querySelectorAll(".app-menu-item:not(:disabled)")];
+  // Visible rows only. A closed flyout carries `hidden`, so its rows are out of
+  // the walk exactly as they are out of the accessibility tree — one state, not
+  // two lists that can disagree. `closest` rather than a descendant selector
+  // because a flyout may hold a row of any kind.
+  const focusable = () =>
+    [...popover.querySelectorAll(".app-menu-item:not(:disabled), .app-menu-item-parent")].filter(
+      (row) => !row.closest(".app-menu-item-flyout[hidden]"),
+    );
+
+  /** The open flyout, if one is. Only ever one: opening a sibling closes it. */
+  const openFlyout = () => popover.querySelector(".app-menu-item-flyout:not([hidden])");
+
+  /** Opens or closes one submenu. Closing returns focus to its parent row, which
+   *  is what Left and Escape owe a reader who opened it by keyboard. */
+  function setSubmenu(parent, open, { focusParent = false } = {}) {
+    const flyout = parent?.parentElement?.querySelector(".app-menu-item-flyout");
+    if (!flyout) return false;
+    if (open) {
+      const other = openFlyout();
+      if (other && other !== flyout) {
+        other.hidden = true;
+        other.parentElement.querySelector(".app-menu-item-parent")?.setAttribute("aria-expanded", "false");
+      }
+    }
+    flyout.hidden = !open;
+    parent.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      placeFlyout(parent, flyout);
+      flyout.querySelector(".app-menu-item:not(:disabled)")?.focus();
+    } else {
+      flyout.style.left = "";
+      flyout.style.top = "";
+      if (focusParent) parent.focus();
+    }
+    return true;
+  }
+
+  /** Puts an open flyout beside its parent row, in viewport coordinates.
+   *
+   *  The flyout is `position: fixed` because the popover scrolls and an overflow
+   *  container clips on both axes — measured, 173px of a 180px flyout was simply
+   *  not painted while `hidden` was correctly false. Fixed takes it out of that
+   *  context, and the cost is that nothing positions it any more, so this does.
+   *
+   *  Flips to the parent's left when there is no room on the right, and clamps
+   *  to the viewport bottom. On a phone the stylesheet puts it back in flow
+   *  (`position: static`, the drill shape) and this clears its inline offsets so
+   *  they cannot fight the media query.
+   *
+   *  O(1). */
+  function placeFlyout(parent, flyout) {
+    if (getComputedStyle(flyout).position !== "fixed") {
+      flyout.style.left = "";
+      flyout.style.top = "";
+      return;
+    }
+    const row = parent.getBoundingClientRect();
+    const box = flyout.getBoundingClientRect();
+    const gutter = 8;
+    const right = row.right + box.width + gutter <= window.innerWidth;
+    flyout.style.left = `${Math.max(gutter, right ? row.right : row.left - box.width)}px`;
+    const top = Math.min(row.top - 6, window.innerHeight - box.height - gutter);
+    flyout.style.top = `${Math.max(gutter, top)}px`;
+  }
+
+  /** The submenu parent whose flyout contains `row`, if any. */
+  const parentOf = (row) =>
+    row?.closest(".app-menu-item-flyout")?.parentElement?.querySelector(".app-menu-item-parent") ?? null;
 
   function position(trigger) {
     const rect = trigger.getBoundingClientRect();
@@ -244,6 +377,38 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
     });
   }
 
+  // Pointer: hovering a parent opens it, hovering a sibling row closes whatever
+  // was open. That is how a menu behaves everywhere, and it costs no click.
+  popover.addEventListener("pointerover", (event) => {
+    const row = event.target.closest?.(".app-menu-item, .app-menu-item-parent");
+    if (!row || !popover.contains(row)) return;
+    if (row.classList.contains("app-menu-item-parent")) setSubmenu(row, true);
+    else if (!row.closest(".app-menu-item-flyout")) {
+      const other = openFlyout();
+      if (other) {
+        other.hidden = true;
+        other.parentElement.querySelector(".app-menu-item-parent")?.setAttribute("aria-expanded", "false");
+      }
+    }
+  });
+
+  // A parent row is a destination, not a command: click and Enter OPEN it, and
+  // never close it. Toggling here looked right and was wrong — a click is
+  // preceded by `pointerover`, which has already opened the flyout, so a toggle
+  // closed what the same gesture had just opened. Measured: aria-expanded went
+  // false -> (true) -> false within one click, at every width. Closing is
+  // Escape, Left, or moving to another row, which is how Word and Docs behave.
+  //
+  // This is also the ONLY path on a touch device, where there is no hover at
+  // all, so it has to be the one that works without one.
+  popover.addEventListener("click", (event) => {
+    const parent = event.target.closest?.(".app-menu-item-parent");
+    if (!parent || !popover.contains(parent)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSubmenu(parent, true);
+  });
+
   popover.addEventListener("keydown", (event) => {
     const items = focusable();
     const index = items.indexOf(document.activeElement);
@@ -256,11 +421,35 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
       items[event.key === "Home" ? 0 : items.length - 1]?.focus();
     } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
+      // The ARIA menubar rule, and the one every application follows: Right
+      // opens the submenu the focus is ON, Left closes the submenu the focus is
+      // IN. Only when neither applies does the arrow move to the next menu —
+      // otherwise a submenu would be unreachable by keyboard, and leaving one
+      // would jump the reader to a different menu entirely.
+      const row = document.activeElement;
+      if (event.key === "ArrowRight" && row?.classList.contains("app-menu-item-parent")) {
+        setSubmenu(row, true);
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        const parent = parentOf(row);
+        if (parent) {
+          setSubmenu(parent, false, { focusParent: true });
+          return;
+        }
+      }
       const next = adjacent(activeTrigger, event.key === "ArrowRight" ? 1 : -1);
       next.scrollIntoView({ inline: "nearest", block: "nearest" });
       open(next.dataset.menu);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      // Escape inside a flyout closes the flyout, not the menu — the reader is
+      // one level in and expects to come back out, not to lose the menu.
+      const parent = parentOf(document.activeElement);
+      if (parent) {
+        setSubmenu(parent, false, { focusParent: true });
+        return;
+      }
       close({ restoreFocus: true });
     } else if (event.key === "Tab") {
       close();

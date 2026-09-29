@@ -295,17 +295,26 @@ test("arrow, Home and End walk rows only — a band boundary is never a stop", a
   // Format has the most bands and the most rows, so walking it end to end
   // crosses every kind of boundary this change introduced.
   await openAppMenu(page, "format");
-  const rowCount = await page.locator("#appMenuPopover .app-menu-item:not([disabled])").count();
+  const rowCount = await page
+    .locator("#appMenuPopover .app-menu-item:not([disabled]), #appMenuPopover .app-menu-item-parent")
+    .count();
   expect(rowCount).toBeGreaterThan(8);
 
   /** What the keyboard is actually on: the role it carries and whether it is a
-   *  row. A band container caught in the walk answers `"group"` here. */
+   *  row. A band container caught in the walk answers `"group"` here.
+   *
+   *  A SUBMENU PARENT counts as a row. It is a focusable `menuitem` that opens
+   *  a flyout — a destination, not a boundary — and the guarantee this test
+   *  holds is that the walk never lands on a group CONTAINER, which is still
+   *  asserted below. Before submenus every row wore one class, so the class was
+   *  a fair proxy for "is a row"; it is not any more.  */
   const focused = () =>
     page.evaluate(() => {
       const el = document.activeElement;
+      const classes = el?.classList;
       return {
         role: el?.getAttribute("role") ?? null,
-        isRow: !!el?.classList?.contains("app-menu-item"),
+        isRow: !!(classes?.contains("app-menu-item") || classes?.contains("app-menu-item-parent")),
         disabled: el?.disabled ?? null,
       };
     });

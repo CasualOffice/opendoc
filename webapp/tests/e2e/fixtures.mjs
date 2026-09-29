@@ -388,6 +388,14 @@ export async function runAppMenuCommand(page, menu, commandId) {
   const row = page.locator(
     `#appMenuPopover .app-menu-item[data-command="${commandId}"]`,
   );
+  // A long band folds behind a submenu, so the row a caller names may be one
+  // level in. Open its flyout first — the same click a reader makes — rather
+  // than asking every spec to know which bands fold. If the row is already at
+  // the top level this does nothing.
+  const parent = page
+    .locator(`#appMenuPopover .app-menu-item-submenu:has(.app-menu-item[data-command="${commandId}"])`)
+    .locator(".app-menu-item-parent");
+  if (await parent.count()) await parent.first().click();
   await expect(
     row,
     `${commandId} should be reachable from the ${menu} menu`,
