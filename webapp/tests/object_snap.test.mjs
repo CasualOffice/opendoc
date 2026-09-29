@@ -9,7 +9,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { objectBarPosition, GRIP_REACH } from "../src/object_guides.mjs";
-import { pageSnapTargets, resizeFromDrag, snapBox, snapEdge } from "../src/object_snap.mjs";
+import {
+  pageSnapTargets,
+  resizeCommitOrigin,
+  resizeFromDrag,
+  resizeRulesFor,
+  snapBox,
+  snapEdge,
+  snapResizedBox,
+} from "../src/object_snap.mjs";
 
 // US Letter with 1in margins, in twips.
 const PAGE = {
@@ -114,6 +122,102 @@ test("a NW drag moves the north and west edges and pins the south-east corner", 
   assert.equal(box.y + box.h, 2000, "the south edge did not move");
   assert.equal(box.movesWest, true);
   assert.equal(box.movesNorth, true);
+});
+
+// ---- The modifier contract (ONLYOFFICE `ResizeTracks.js`) -------------------
+// Shift CONSTRAINS and never frees, for every object kind. We had shipped the
+// opposite for pictures — `lockAspect: isImage ? !shift : shift` — so the same
+// key meant opposite things on a picture and a text box, a convention no product
+// uses. These assert the KEY's effect on the geometry, not a count of anything.
+
+test("Shift on a text box corner constrains instead of freeing", () => {
+  const free = resizeRulesFor(
+    { kind: "textbox", shiftKey: false, ctrlKey: false, metaKey: false },
+    144,
+  );
+  assert.equal(free.lockAspect, false, "a text box is free by default");
+  const held = resizeRulesFor(
+    { kind: "textbox", shiftKey: true, ctrlKey: false, metaKey: false },
+    144,
+  );
+  assert.equal(held.lockAspect, true, "and Shift adds the constraint");
+
+  // And the constraint is real at the geometry, not just in the flag: the same
+  // mostly-horizontal SE drag keeps the 2:1 ratio with Shift and not without it.
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  assert.equal(resizeFromDrag(start, 4, 600, 20, held).h, 1300);
+  assert.equal(resizeFromDrag(start, 4, 600, 20, free).h, 1020);
+});
+
+test("Shift never frees a picture — it is already constrained, and stays so", () => {
+  for (const shiftKey of [false, true]) {
+    const rules = resizeRulesFor({ kind: "image", shiftKey, ctrlKey: false, metaKey: false }, 144);
+    assert.equal(rules.lockAspect, true, `a picture stays proportional with shift=${shiftKey}`);
+  }
+});
+
+test("an edge midpoint is free even under Shift, because only one axis moves", () => {
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  const rules = resizeRulesFor({ kind: "image", shiftKey: true, ctrlKey: false, metaKey: false }, 144);
+  const box = resizeFromDrag(start, 3, 600, 0, rules); // E midpoint
+  assert.equal(box.lockedAspect, false);
+  assert.equal(box.w, 2600);
+  assert.equal(box.h, 1000, "the height did not follow the ratio");
+});
+
+test("Ctrl (or Cmd) resizes about the centre: both edges move by the delta", () => {
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  for (const held of [{ ctrlKey: true, metaKey: false }, { ctrlKey: false, metaKey: true }]) {
+    const rules = resizeRulesFor({ kind: "textbox", shiftKey: false, ...held }, 144);
+    assert.equal(rules.fromCentre, true);
+    const box = resizeFromDrag(start, 3, 300, 0, rules); // E midpoint, 300 twips out
+    assert.equal(box.w, 2600, "the box grew by the delta on BOTH sides");
+    assert.equal(box.x, 700, "so the west edge moved out by the same 300");
+    assert.equal(box.x + box.w / 2, 2000, "and the centre is exactly where it was");
+    assert.equal(box.h, 1000);
+  }
+  // Without the modifier the opposite edge is pinned, as before.
+  const plain = resizeFromDrag(start, 3, 300, 0, { lockAspect: false, minEdge: 144 });
+  assert.equal(plain.w, 2300);
+  assert.equal(plain.x, 1000);
+});
+
+test("a centre resize is not snapped, so the symmetry it promised survives", () => {
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  const snap = { targets: pageSnapTargets(PAGE), tolerance: TOLERANCE };
+  // An E drag that lands the east edge within tolerance of the right margin.
+  const plain = resizeFromDrag(start, 3, 7770, 0, { lockAspect: false, minEdge: 144 });
+  const pulled = snapResizedBox(plain, snap, 144);
+  assert.equal(pulled.box.x + pulled.box.w, 10800, "a plain drag is pulled onto the margin");
+  assert.equal(pulled.guides.length, 1);
+
+  const centred = resizeFromDrag(start, 3, 7770, 0, { lockAspect: false, fromCentre: true, minEdge: 144 });
+  const free = snapResizedBox(centred, snap, 144);
+  assert.deepEqual(free.guides, [], "a centre resize draws no guide");
+  assert.equal(free.box.x + free.box.w / 2, 2000, "and its centre is still where it was");
+});
+
+// ---- Where an inline object's resize actually commits ----------------------
+// The eight grips are useless without this half: the engine refuses a rect whose
+// top-left moved on an inline object, so a north or west drag has to commit the
+// origin it STARTED from. The preview still pins the opposite edge, which is
+// what Word and ONLYOFFICE draw.
+
+test("an inline object commits its new size at the origin the paragraph gave it", () => {
+  const start = { x: 1000, y: 1000, w: 2000, h: 1000, aspect: 2 };
+  const box = resizeFromDrag(start, 7, -400, 0, { lockAspect: false, minEdge: 144 }); // W midpoint
+  assert.equal(box.x, 600, "the PREVIEW moves the west edge out");
+  assert.equal(box.w, 2400);
+  assert.deepEqual(
+    resizeCommitOrigin(box, start, false),
+    { x: 1000, y: 1000 },
+    "but the COMMIT keeps the flow origin, so the engine accepts the widening",
+  );
+  assert.deepEqual(
+    resizeCommitOrigin(box, start, true),
+    { x: 600, y: 1000 },
+    "a float commits the origin it was dragged to",
+  );
 });
 
 test("no drag can collapse an object below the minimum edge", () => {

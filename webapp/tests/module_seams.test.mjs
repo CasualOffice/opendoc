@@ -325,7 +325,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  nor the branch's own 16,355 describes the merge — the two rounds took
  *  different code out and both deletions applied — which is the trap the notes
  *  above record five times. */
-const MAIN_JS_LINE_CEILING = 16348;
+const MAIN_JS_LINE_CEILING = 16342;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
