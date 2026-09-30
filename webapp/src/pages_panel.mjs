@@ -254,11 +254,24 @@ export function createPagesPanel({
   /** Closes the panel and disables the rail tile when the navigator is withheld,
    *  so a mode change cannot leave a panel of tile thumbnails standing open.
    *  Returns the reason, or "". */
-  const railTitle = railButton.title;
+  // The title to put back when the navigator stops being withheld is read at
+  // the moment it is needed, NOT captured here. Capturing it at construction
+  // snapshots the ENGLISH literal that is in the markup before the localisation
+  // sweep runs, and the first `reflectWithheld()` then writes that English back
+  // over the translated title — which is exactly what
+  // `localisation.spec.mjs`'s "no routed string shows its English at FIRST
+  // PAINT" caught. The element carries `data-i18n-title`, so the string table
+  // owns this value; asking the element for it keeps one owner instead of two.
+  const railTitle = () => railButton.dataset.railTitle ?? railButton.title;
   function reflectWithheld() {
     const reason = withheldReason();
+    // Remember the localised title the first time we are about to replace it,
+    // so a second withholding does not save the REASON as the title.
+    if (reason && railButton.dataset.railTitle === undefined) {
+      railButton.dataset.railTitle = railButton.title;
+    }
     railButton.disabled = !!reason;
-    railButton.title = reason || railTitle;
+    railButton.title = reason || railTitle();
     if (reason && !panel.hidden) {
       panel.hidden = true;
       railButton.setAttribute("aria-pressed", "false");
