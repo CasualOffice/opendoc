@@ -1372,3 +1372,286 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
         "got {answer:?}; the loss has to be announced, not implied by a snapshot"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// What a dumb relay costs under contention — doc 152 §10 Q3, ADR-047
+// ---------------------------------------------------------------------------------------
+
+/// A document of `paragraphs` one-run paragraphs, so every writer in a contention run has a
+/// paragraph of its own.
+///
+/// The contention this measures is the relay's **ordering** rule — a submission whose base
+/// is not the current head is refused — and that rule fires whether or not two edits touch
+/// the same text. Giving each writer its own paragraph removes semantic conflict from the
+/// measurement so what is left is the cost of the ordering discipline alone, which is the
+/// thing ADR-047 chose and the thing §10 Q3 asks about.
+fn wide_seed(paragraphs: usize) -> (Document, Vec<NodeId>) {
+    let mut ids = IdGenerator::new(7);
+    let document_id = ids.next_id().expect("id");
+    let mut blocks = Vec::new();
+    let mut nodes = Vec::new();
+    for _ in 0..paragraphs {
+        let id = ids.next_id().expect("id");
+        let run = ids.next_id().expect("id");
+        nodes.push(id);
+        blocks.push(BlockNode::Paragraph(Paragraph {
+            id,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: run,
+                properties: RunProperties::default().into(),
+                text: "abcdefgh".to_owned(),
+            })],
+        }));
+    }
+    let document =
+        Document::new(document_id, blocks, Definitions::default()).expect("a valid document");
+    (document, nodes)
+}
+
+/// What one contention run cost.
+#[derive(Debug)]
+struct Contention {
+    /// Chunks the relay ordered.
+    ordered: usize,
+    /// Chunks the relay refused with `StaleBase`, each of which is one wasted round trip.
+    refused: usize,
+    /// The most attempts any single writer needed to get one chunk ordered — the starvation
+    /// measure, which an average hides.
+    worst_attempts: usize,
+}
+
+impl Contention {
+    /// Wasted round trips per chunk that actually landed.
+    fn refusals_per_ordered(&self) -> f64 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "counts here are in the hundreds; the ratio is a report, not a decision"
+        )]
+        {
+            self.refused as f64 / self.ordered as f64
+        }
+    }
+}
+
+/// Drives `writers` replicas that each make `edits` edits, all against one relay, and
+/// returns what the ordering discipline cost.
+///
+/// Deterministic: the scheduler is a fixed round robin, there is no clock and no randomness,
+/// so the numbers are reproducible and a regression is a real change rather than noise.
+///
+/// The loop models a transport honestly in the one way that matters here: a refused writer
+/// cannot retry until it has **received** the arrivals that caused the refusal, which is
+/// `ClientSession::flush` holding itself closed on `awaiting` rather than a promise about
+/// message order.
+fn contend(writers: usize, edits: usize) -> Contention {
+    const LABEL: &str = "Typing";
+
+    let (document, paragraphs) = wide_seed(writers);
+    let mut server = ServerSession::default();
+    let mut replicas: Vec<Replica> = (0..writers)
+        .map(|w| Replica::join(&document, &mut server, &format!("writer-{w}"), "ada"))
+        .collect();
+    let mut inboxes: Vec<Vec<crate::protocol::Arrival>> = vec![Vec::new(); writers];
+
+    let mut ordered = 0_usize;
+    let mut refused = 0_usize;
+    let mut worst_attempts = 0_usize;
+
+    for round in 0..edits {
+        // Everybody types before anybody sends, so every writer is contending from the same
+        // instant against the same head. Staggering them would measure the scheduler instead
+        // of the protocol, and is exactly how a first draft of this harness measured zero.
+        for (w, replica) in replicas.iter_mut().enumerate() {
+            replica.edit(
+                LABEL,
+                vec![Operation::InsertText {
+                    at: Pos::new(paragraphs[w], 0),
+                    text: char::from(b'A' + u8::try_from(round % 26).expect("a letter"))
+                        .to_string(),
+                }],
+            );
+        }
+
+        let mut attempts = vec![0_usize; writers];
+        // A bound, so a protocol that cannot make progress fails rather than hanging the
+        // suite. One tick per writer is the ping-pong's own shape; the assertions say what
+        // was actually needed.
+        for _ in 0..=(writers * 2 + 2) {
+            // 1. Everyone offers what it has, on what it knows NOW. This is the whole point:
+            //    the offers are simultaneous, so all but one are written against a head the
+            //    relay is about to move past.
+            let mut batch = Vec::new();
+            for (w, replica) in replicas.iter_mut().enumerate() {
+                let Replica { session, log, .. } = replica;
+                if let Some(submission) = session.flush(log) {
+                    attempts[w] += 1;
+                    batch.push((w, submission));
+                }
+            }
+            let quiet = batch.is_empty() && inboxes.iter().all(Vec::is_empty);
+            if quiet {
+                break;
+            }
+
+            // 2. The relay orders them in the sequence they reached it.
+            for (w, submission) in batch {
+                let replica = &mut replicas[w];
+                match server.commit(&submission) {
+                    Outcome::Ordered { revision } | Outcome::Duplicate { revision } => {
+                        ordered += 1;
+                        worst_attempts = worst_attempts.max(attempts[w]);
+                        let Replica { session, log, .. } = replica;
+                        session
+                            .acknowledge(submission.seq, revision, log)
+                            .expect("the acknowledgement lands");
+                        let arrival = crate::protocol::Arrival {
+                            revision,
+                            client: submission.client,
+                            operations: submission.operations.clone(),
+                        };
+                        for (other, inbox) in inboxes.iter_mut().enumerate() {
+                            if other != w {
+                                inbox.push(arrival.clone());
+                            }
+                        }
+                    }
+                    Outcome::Refused { reason } => {
+                        refused += 1;
+                        let Replica { session, log, .. } = replica;
+                        session
+                            .refused(Some(submission.seq), reason, log)
+                            .expect("a stale base is not terminal");
+                    }
+                }
+            }
+
+            // 3. The fan-out lands. A refused writer cannot retry until this has happened —
+            //    `flush` holds itself closed on `awaiting` — which is a state guarantee
+            //    rather than a promise about message order.
+            for w in 0..writers {
+                for arrival in std::mem::take(&mut inboxes[w]) {
+                    replicas[w].receive(&arrival).expect("the arrival merges");
+                }
+            }
+        }
+    }
+
+    // Everything every writer wrote is ordered and acknowledged. This is the assertion that
+    // makes the numbers mean something: a protocol that dropped work would show a *lower*
+    // refusal rate.
+    for (w, replica) in replicas.iter_mut().enumerate() {
+        assert!(
+            !replica.session.has_unacknowledged(),
+            "writer {w} still has unacknowledged work, so the run did not finish"
+        );
+        let Replica { session, log, .. } = replica;
+        assert!(
+            session.flush(log).is_none(),
+            "writer {w} still has something to send, so the run did not finish"
+        );
+    }
+
+    Contention {
+        ordered,
+        refused,
+        worst_attempts,
+    }
+}
+
+#[test]
+fn the_dumb_relay_s_refusal_rate_is_the_ping_pong_and_nothing_worse() {
+    // **ADR-047's unproven claim, measured.** The relay holds no document and runs no
+    // transform, so a submission written against a head the document has moved past is
+    // refused and the client rebases locally and resubmits. The ADR says the cost is "one
+    // extra round trip" per refusal and that "sustained many-writer contention can starve a
+    // slow client", and it says nothing there is proven until the refusal rate is run.
+    //
+    // This runs it. Every number below is produced by this test; it is not quoted from
+    // anywhere. The shape it asserts is the guarantee — progress for everybody, and a cost
+    // that grows no faster than the number of writers — rather than a pinned constant, which
+    // would redden on any scheduling change that removed nothing.
+    let mut report = String::new();
+    let mut previous: Option<f64> = None;
+    for writers in [1_usize, 2, 4, 8, 16] {
+        let run = contend(writers, 4);
+        let rate = run.refusals_per_ordered();
+        report.push_str(&format!(
+            "{writers:>3} writers: {} ordered, {} refused, {rate:.2} refusals/ordered, \
+             worst {} attempts for one chunk\n",
+            run.ordered, run.refused, run.worst_attempts
+        ));
+
+        // 1. Progress. `contend` already asserts every writer finished; this says the relay
+        //    ordered something for each of them rather than one writer taking the lot.
+        assert!(
+            run.ordered >= writers,
+            "{writers} writers produced only {} ordered chunks",
+            run.ordered
+        );
+
+        // 2. The cost is LINEAR in writers, not worse. Each refused writer pays one round
+        //    trip per writer that beat it to the head, so the bound is the writer count with
+        //    room for the first round; anything above this is not ping-pong, it is a defect.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a small integer bound compared against a ratio"
+        )]
+        let bound = writers as f64;
+        assert!(
+            rate <= bound,
+            "{writers} writers cost {rate:.2} refusals per ordered chunk, above the linear \
+             ping-pong bound of {bound:.2} — the extra cost is not the ordering discipline"
+        );
+
+        // 3. It DOES grow. Recorded as an assertion rather than as prose because it is the
+        //    finding: a dumb relay makes the client pay for concurrency, and a reader who
+        //    only saw the bound above might conclude the cost was flat.
+        if let Some(earlier) = previous {
+            assert!(
+                rate >= earlier,
+                "the refusal rate fell from {earlier:.2} to {rate:.2} as writers rose, which \
+                 contradicts the ordering rule — check the harness before believing it"
+            );
+        }
+        previous = Some(rate);
+
+        // 4. No writer starves outright: nobody needs more attempts than there are writers
+        //    plus the rounds they are competing over.
+        assert!(
+            run.worst_attempts <= writers + 4,
+            "one writer needed {} attempts with {writers} writers — that is starvation, not \
+             ping-pong",
+            run.worst_attempts
+        );
+    }
+    // Printed so `cargo test -- --nocapture` is the artifact doc 152 §10 Q3's table is read
+    // from, rather than a number typed into prose (a published number is generated from a
+    // committed artifact, or it is not published). This is the one place in the crate that
+    // may write to stdout, and it is a measurement harness rather than library code.
+    #[expect(
+        clippy::print_stdout,
+        reason = "the measurement's artifact; doc 152 §10 Q3 reads its table from this"
+    )]
+    {
+        println!("{report}");
+    }
+    assert!(
+        previous.is_some_and(|rate| rate > 0.0),
+        "no contention was measured at all, so nothing here is evidence"
+    );
+}
+
+#[test]
+fn a_single_writer_is_never_refused_by_the_ordering_rule() {
+    // The floor the growth above is measured from, and the A1 line: one person editing pays
+    // nothing for the machinery. If this ever costs a round trip, the relay has started
+    // charging single-user editing for collaboration.
+    let run = contend(1, 8);
+    assert_eq!(
+        run.refused, 0,
+        "a lone writer was refused {} times by a rule about concurrent writers",
+        run.refused
+    );
+    assert_eq!(run.worst_attempts, 1, "a lone writer had to retry");
+}

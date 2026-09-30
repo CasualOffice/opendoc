@@ -603,8 +603,47 @@ Each is out for a reason, not for lack of time.
    deliberately off the apply path (`147` §3.2), so such a collision **lands first** and is
    only caught at the next validation point. Closing this properly means the walk belonging to
    `casual-doc-model`, where the structure already lives.
-3. **The relay's refusal rate under contention** (§3.4). This is the measurement that decides
-   whether §3.3 was right, and nothing here should be called proven until it is run.
+3. ~~**The relay's refusal rate under contention**~~ — **run 2026-10-01.** §3.4 said nothing
+   here should be called proven until this was measured, so it was.
+   `the_dumb_relay_s_refusal_rate_is_the_ping_pong_and_nothing_worse` drives *W* replicas
+   that all type before any of them sends — simultaneous offers against one head, which is
+   the only arrangement that contends at all — and counts what the relay ordered against
+   what it refused. Deterministic: a fixed round robin, no clock, no randomness. The table is
+   printed by the test (`cargo test -p casual-doc-transaction -- --nocapture refusal`), not
+   typed into this prose:
+
+   | Writers | Ordered | Refused | Refusals per ordered chunk | Worst attempts for one chunk |
+   | ---: | ---: | ---: | ---: | ---: |
+   | 1 | 4 | 0 | 0.00 | 1 |
+   | 2 | 8 | 4 | 0.50 | 2 |
+   | 4 | 16 | 24 | 1.50 | 4 |
+   | 8 | 32 | 112 | 3.50 | 8 |
+   | 16 | 64 | 480 | 7.50 | 16 |
+
+   **The answer, stated plainly.** The cost is exactly `(W - 1) / 2` wasted round trips per
+   chunk that lands, and the worst single writer needs `W` attempts. It is **linear in the
+   number of concurrent writers, not quadratic** — the ping-pong ADR-047 described and
+   nothing worse — and a **lone writer is never refused at all**, which is the A1 line and is
+   pinned separately by `a_single_writer_is_never_refused_by_the_ordering_rule`.
+
+   **What this does and does not decide.** It decides that the mechanism is sound and its
+   cost has the shape the ADR claimed: nobody starves, everybody's work lands, and the bound
+   is the writer count. It does **not** say the shape is acceptable at a given latency: at 16
+   simultaneous writers a chunk costs eight extra round trips, which on a 100 ms link is
+   nearly a second of ping-pong. Two things move that number and neither needs the relay to
+   hold a document: **coalescing** (`107` §4 B3 — one transaction per typing run, not per
+   character, which is what makes 16 *simultaneous* writers a pathological rather than a
+   typical arrangement) and **pipelining** (`MAX_OUTSTANDING`, §5.4). The measurement to run
+   next is therefore the same table under realistic coalescing and a non-zero think time,
+   and that one belongs with the `107` §4 benchmarks rather than here.
+
+   The guard was driven red twice (`SKILL` §4). Dropping the chunk-rewind in
+   `ClientSession::refused` — so a refused chunk is not put back — produced "*writer 1 still
+   has unacknowledged work, so the run did not finish*", which is the assertion that stops a
+   protocol from looking cheap by losing work. Dropping the relay's `base != revision` check
+   produced "*no contention was measured at all, so nothing here is evidence*", which is what
+   stops the harness from reporting a comfortable zero because it forgot to contend — the
+   defect its own first draft had, and which is recorded in the harness's comments.
 4. **The host-signed grant.** `protocol::Join` carries an opaque `Identity` and no token. The
    sibling's token is "the whole integration contract" — who, which document, what permission,
    where to fetch, where to POST back — and `143` §16 Q5 leaves the encoding open (JWT, PASETO,
