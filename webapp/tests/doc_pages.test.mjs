@@ -459,14 +459,22 @@ test("how much English the reference pages put on the site, measured and publish
   // them. That is the figure earning its keep in the direction nobody watches —
   // it is here to notice unrouted prose arriving in the shared chrome, and this
   // is what it looks like when prose arrives routed.
+  //
+  // 2005 -> 2066 when `35-DISPOSITION-TAXONOMY.md` gained the loss-coverage-gate
+  // section (`105` FID-P-03). Sixty-one strings, all of them ARTICLE body prose in
+  // one published design document, which is the region this figure deliberately
+  // does not route: the per-page breakdown in the failure message confirms the
+  // whole movement is `reference/disposition-taxonomy.html` (290 -> 351) and that
+  // the eleven other pages and the shared chrome are unchanged. Re-measured after
+  // regenerating the pages, not calculated from the diff.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2005,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2005). That ` +
+    2066,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2066). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),

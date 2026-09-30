@@ -145,9 +145,10 @@ on the value, so does the arm. The class is `mapped` + `not-applicable`
 | `w:nsid`, `w:tmpl` | always | Word's list-gallery identity for an abstract numbering definition. Nothing in the package joins on them; numbering resolves through `w:abstractNumId`/`w:numId`. |
 | `wp14:sizeRelH`, `wp14:sizeRelV` | always | A wrapper carrying only `@relativeFrom`; the percentage inside decides whether relative sizing is on. |
 | `wp14:pctWidth`, `wp14:pctHeight` | value is `0` | Zero means relative sizing is **off**, and Word writes the element anyway. A non-zero percentage is a size the model (which sizes in EMU) does not carry, and it is reported. |
-| `wps:cNvSpPr`, `wps:cNvCnPr`, `wpg:cNvGrpSpPr`, `wps:txbx` | always | Non-visual property wrappers and the text-box wrapper, beside `pic:cNvPr`/`pic:cNvPicPr` which were already excluded. Their children (`a:spLocks`, `w:txbxContent`) are judged, or imported, on their own. |
+| `wps:cNvSpPr`, `wps:cNvCnPr`, `wpg:cNvGrpSpPr`, `wp:cNvGraphicFramePr`, `wps:txbx` | always | Non-visual property wrappers and the text-box wrapper, beside `pic:cNvPr`/`pic:cNvPicPr` which were already excluded. Their children (`a:spLocks`, `a:graphicFrameLocks`, `w:txbxContent`) are judged, or imported, on their own. |
 | `a:effectLst` | self-closing | An empty effect list is DrawingML for "no effects". A populated one is a lost shadow or glow, and is reported. |
-| `a:spLocks` | no attributes | Locks nothing. A lock that locks something is a restriction the document asked for and did not get, and is reported. |
+| `a:spLocks`, `a:graphicFrameLocks`, `a:picLocks` | no attributes | Locks nothing. A lock that locks something is a restriction the document asked for and did not get, and is reported. The frame and picture flavours were **unconditionally** silent until FID-P-03's coverage guard measured them, so a `noChangeAspect="1"` was dropped with exactly as little noise as an empty element. |
+| `wp:effectExtent` | every edge zero or absent | How far a drawing's shadow, glow or reflection bleeds past its `wp:extent`, in EMU per edge. All-zero — which is also what an absent edge means — says the ink stops at the frame, which is what this engine assumes. A non-zero extent makes the drawing occupy more room than its extent claims, so text wraps in the wrong place; that is reported. Also unconditionally silent until FID-P-03. |
 | `a14:useLocalDpi` | `val` is false | Asks that a picture *not* be rescaled to the authoring DPI, which is what this engine does. |
 | `a:prstTxWarp` | `prst="textNoShape"` | DrawingML's token for *no* warp; Word writes it into every `wps:bodyPr`. ONLYOFFICE special-cases the same token in four places. A real preset is unmodeled and is reported. |
 | `w:clrSchemeMapping` | the default mapping | The permutation every consumer already assumes when the element is absent. A swapped slot inverts real colours and is reported. |
@@ -248,6 +249,75 @@ recognizes a paragraph across saves by it — so they are dispositioned as locat
 attribute findings on the elements that carry them. The element is modeled, so
 the model outcome is `degraded`.
 
+## How the no-op class is kept honest: the loss-coverage gate
+
+Added 2026-09-30 with `105` FID-P-03. Every table above is a decision that
+something carries no meaning, and nothing was checking those decisions: the
+suite's round-trip tests assert a **fixed point**
+(`reopen(source) == reopen(write(reopen(source)))`), whose left side is the
+importer's own output, so anything dropped on first import is a perfect fixed
+point and passes. Roughly two hundred `*_survive_the_semantic_round_trip` tests
+share that blind spot and none of them compared output against the source XML.
+
+The gate is `crates/casual-doc-export/tests/source_element_coverage.rs`: **no
+element local name present in a source package may be absent from the written
+package without a compatibility-report entry naming it.** Its shape is standard —
+coverage instrumentation plus a suppression list that requires a reason per entry,
+with the staleness rule that makes such a list survive contact with time (an
+exception no fixture exercises is itself a failure, the analogue of
+`--report-unused-disable-directives`). It reads the source through
+`casual_doc_import::meaningful_markup`, so the no-op class above is **consulted,
+not copied**: a second copy in a test would drift, and would drift invisibly in
+the direction that matters.
+
+Two consequences are load-bearing:
+
+- **A member of the no-op class must live in `casual-doc-import`'s `noop` module**,
+  not in a parser's private "consumed silently" list, because the gate can only see
+  the former. Three names moved for that reason and all three turned out to be
+  unconditionally silent when they should have been conditional (the
+  `wp:effectExtent` and lock rows above).
+- **A whole-subtree loss reported on its outermost element covers its
+  descendants**, which this document already permits. The gate implements it by
+  ancestry rather than by listing the descendants: a bézier `a:cubicBezTo` is
+  accounted for by the one `custGeom` finding that says the geometry left the
+  modeled subset.
+
+### The attribute axis of the gate is deliberately deferred
+
+The same diff run over attribute names rather than element names yields **52
+names** across the fixture corpus, falling to **19** once attributes whose element
+is itself reported (subsumed) or absent from the output (already gated) are
+removed. Arming it was not done here, and the reason is measured rather than
+budgetary: the remaining 19 are dominated by **spelling equivalence, not loss** —
+`w:keepNext w:val="true"` against the bare `<w:keepNext/>` that means the same
+thing, `w:tab w:leader="none"` against an omitted default, `w:ind w:left` against
+the logical `w:start`, `wp:docPr w:descr=""` (an empty alt text), and
+`mc:Ignorable`, which this document already places outside the taxonomy. A
+name-level attribute gate would therefore mostly assert *the writer's spelling
+conventions*, and each exception's justification would be a claim about a schema
+default that has to be checked one at a time against ECMA-376. Gating it on the
+evidence available today would produce a table of eleven weakly-justified rows,
+which is the failure mode the staleness rule exists to prevent.
+
+One item from that list is recorded here because it is a real question and not a
+spelling one: the writer emits `<w:u/>` for single underline on the theory that
+`single` is `w:u@w:val`'s implicit default. `CT_Underline/@w:val` is optional with
+**no** schema default, so whether a consumer reads a bare `w:u` as single or as
+none is a compatibility question this document cannot settle. The round trip is
+self-consistent (the importer reads a bare `w:u` as single too), so no test sees
+it; it is written down rather than left in a diff.
+
+### Corpus gap, recorded rather than worked around
+
+**No `.docx` under `fixtures/` carries a single `w:rsid*` or `w14:paraId`.** The
+corpus is LibreOffice output plus repository-generated packages, so the
+highest-volume attribute in WordprocessingML and the durable identities
+`commentsExtended.xml` joins on were exercised only by synthetic reporter unit
+tests, never through a package. The gate builds a Word-shaped package in the test
+to cover them. A committed fixture would be better and belongs with the fixture
+generator, which this lane does not own.
+
 ## Relationship to the fidelity vocabulary
 
 This taxonomy is per-construct disposition. It is distinct from, and feeds, the
@@ -341,12 +411,12 @@ constructed today:
 | Value | Constructed by |
 | --- | --- |
 | `omitted` | Any element the model does not represent — the common case. |
-| `degraded` | An attribute of a modeled element whose meaning is not carried (`a:theme/@name`, `a:fontScheme/@name`, `w:p/@w14:paraId`, `w:p/@w14:textId`, `w:tr/@w14:paraId`), and a modeled value clamped to the model's bounds (`wp:anchor/@distT` and its siblings). |
+| `degraded` | An attribute of a modeled element whose meaning is not carried (`a:theme/@name`, `a:fontScheme/@name`, `w:p/@w14:paraId`, `w:p/@w14:textId`, `w:tr/@w14:paraId`), a modeled value clamped to the model's bounds (`wp:anchor/@distT` and its siblings), and a font-table value the model cannot hold (`w:family/@val`, `w:pitch/@val`, `w:altName/@val`, `w:panose1/@val`, `w:charset/@val`, `w:sig/@usb0…csb1`) — added with FID-R-04, since `word/fontTable.xml` is regenerated on every semantic save and had no report sites at all. |
 | `mapped` | Nothing, by construction — see "What the report enumerates". |
 | `preserved` | The retention byte floor (every finding, citing the source-snapshot record); an opaque side-table part (citing its own record); an OMML equation with no typed projection (citing its model-subtree record) — the last of these on the **semantic** path, which is the case a per-mode constant could not reach. |
 | `not-retained` | A regenerated part's unmapped element on the semantic path. |
 | `blocked` | A digital-signature part on the semantic path: retention is refused because a signature over regenerated content would assert an integrity nobody verified. "Nothing is trusted or stored" is the distinction from `not-retained`. |
-| `rejected` | A structurally unusable construct: a `w15:commentEx` with no `paraId` to join on, a `w16cid:commentId` missing half its pair, a `w15:person` with no author, a `w15:presenceInfo` with no person. |
+| `rejected` | A structurally unusable construct: a `w15:commentEx` with no `paraId` to join on, a `w16cid:commentId` missing half its pair, a `w15:person` with no author, a `w15:presenceInfo` with no person, a `w:font` with no usable `@w:name` (a table keyed by name has nothing to key it by), and a `w:embed*` face whose `r:id` or `w:fontKey` resolves to nothing to decrypt. |
 | `not-applicable` | Nothing, by construction — it pairs only with `mapped`. |
 
 `degraded` + `blocked` is legal and currently unconstructed: refusal happens at

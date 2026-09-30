@@ -367,11 +367,13 @@ fn an_embedded_face_with_bytes_reports_nothing() {
     assert_package_is_self_consistent(&export.bytes, "embedded face with bytes");
 }
 
-/// `w:background` is imported into the model and has no writer, so every save
-/// drops the page fill. Emitting it is FID-R-04's fidelity fix; until then the
-/// loss must at least be named, exactly as the ODT writer names its own.
+/// `w:background` used to be imported into the model and dropped on every save,
+/// and #541 answered that with a finding (`docx.export.background`) rather than a
+/// writer. FID-R-04's actual fix is to emit it — so the guard is no longer "the
+/// loss is named", it is "there is no loss", and the retired finding must not come
+/// back as a report entry describing something that no longer happens.
 #[test]
-fn a_page_background_the_writer_cannot_emit_is_reported() {
+fn a_page_background_is_emitted_rather_than_reported() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:background w:color="FFF9ED"/><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
     let document = import_main_document_xml(xml, ImportConfig::default())
         .unwrap()
@@ -381,26 +383,48 @@ fn a_page_background_the_writer_cannot_emit_is_reported() {
         "the importer captures the page fill"
     );
     let export = export_document(&document, &BTreeMap::new()).expect("exports");
-    assert!(features(&export.report).contains("docx.export.background"));
-
-    // And it is LOCATED (FID-R-03): the stable id says which finding it is, the
-    // location says what in the source it is about. Before the export report had
-    // an attribute vocabulary, `docx.export.background` was all there was — a
-    // feature-level pseudo-name standing in for `w:background/@w:color`.
-    let entry = export
-        .report
-        .entries
-        .iter()
-        .find(|entry| entry.feature == "docx.export.background")
-        .expect("the finding is present");
-    assert_eq!(
-        entry.location.part_name.as_deref(),
-        Some("word/document.xml")
+    assert!(
+        !features(&export.report).contains("docx.export.background"),
+        "the retired finding must not come back to describe a loss that no longer \
+         happens: {:?}",
+        export.report.entries
     );
-    assert_eq!(entry.location.element.as_deref(), Some("background"));
-    assert_eq!(entry.location.attribute.as_deref(), Some("color"));
+    assert!(
+        export.report.is_empty(),
+        "nothing is lost any more, so nothing is reported, got {:?}",
+        export.report.entries
+    );
 
-    // And a document without one must not raise it.
+    // The colour reaches the package, and it reaches it BEFORE `w:body`: ECMA-376
+    // makes `w:background` the first child of `w:document`, and Word refuses the
+    // part outright if it follows the body.
+    let parts = parts_of(&export.bytes);
+    let main = String::from_utf8(
+        parts
+            .get("word/document.xml")
+            .expect("a main document part")
+            .clone(),
+    )
+    .expect("UTF-8");
+    assert!(
+        main.contains(r#"<w:background w:color="FFF9ED"/>"#),
+        "the page fill is written: {main}"
+    );
+    assert!(
+        main.find("<w:background").expect("the background")
+            < main.find("<w:body").expect("the body"),
+        "`w:background` precedes `w:body` or the part is schema-invalid: {main}"
+    );
+
+    // And it survives the reopen, which is the property a caller cares about.
+    let (reopened, _) = import(&export.bytes);
+    assert_eq!(
+        reopened.background(),
+        document.background(),
+        "the page fill round-trips instead of being reported away"
+    );
+
+    // A document without one writes no element and raises nothing.
     let plain = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
     let plain = import_main_document_xml(plain, ImportConfig::default())
         .unwrap()
@@ -410,6 +434,12 @@ fn a_page_background_the_writer_cannot_emit_is_reported() {
         export.report.is_empty(),
         "a document with no page fill must raise nothing, got {:?}",
         export.report.entries
+    );
+    let parts = parts_of(&export.bytes);
+    assert!(
+        !String::from_utf8_lossy(parts.get("word/document.xml").expect("a main part"))
+            .contains("<w:background"),
+        "no page fill, no element"
     );
 }
 

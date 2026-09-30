@@ -30,6 +30,24 @@
 //!    noChangeArrowheads="1"/>` — is *not*, however cosmetic it looks, and stays
 //!    reported.
 //!
+//! A third rule was added by FID-P-03's coverage guard, which compares the source
+//! package's element names against the written package's and demands a finding for
+//! every name that vanished. **A member of this class must be a member of *this*
+//! module**, not of a parser's private "consumed silently" list, because the guard
+//! reads the source through [`crate::meaningful_markup`] — which consults this
+//! module — and a name silenced anywhere else looks to it like an unreported loss.
+//! Three names moved here for that reason (`wp:effectExtent`,
+//! `a:graphicFrameLocks`, `a:picLocks`), and measuring them showed all three had
+//! been silent *unconditionally*: a shadow that bled past its frame and a shape
+//! locked against resizing were dropped as quietly as an empty element. They are
+//! conditional now.
+//!
+//! Note what that does **not** buy, because the guard was mutated to check: a name
+//! wrongly admitted to *this* module is invisible to the coverage guard, since the
+//! guard applies this same policy to the source side. The pressure the guard exerts
+//! is on parser-private silencing; what protects membership here is the both-halves
+//! unit tests below, and they are the reason every conditional arm has one.
+//!
 //! The rest of this class lives at the sites that know the context, because a name
 //! alone cannot decide them: the DrawingML non-visual wrappers in
 //! `body::is_drawing_scaffolding`, the `wp14:pctWidth`/`pctHeight` percentage and
@@ -88,6 +106,15 @@ pub(crate) fn carries_no_meaning(local: &[u8]) -> bool {
         // relative size is still named; all 63 in the corpus are `0`.
         | b"sizeRelH"
         | b"sizeRelV"
+        // `wp:cNvGraphicFramePr` — the non-visual property wrapper around a
+        // drawing's `a:graphicFrameLocks`, and the last member of the family
+        // already excluded here (`wps:cNvSpPr`, `wps:cNvCnPr`, `wpg:cNvGrpSpPr`,
+        // `pic:cNvPr`, `pic:cNvPicPr`). It carries nothing of its own: the locks
+        // inside it are judged on their own terms below, which is the only reason
+        // the wrapper can be silent. It moved here from `body`'s drawing
+        // scaffolding list so the policy has one home and the coverage guard can
+        // consult it (FID-P-03).
+        | b"cNvGraphicFramePr"
     )
 }
 
@@ -145,7 +172,39 @@ pub(crate) fn carries_no_meaning_when(
             attribute_value(element, b"val").as_deref(),
             None | Some("nil") | Some("none")
         ),
+        // `wp:effectExtent` — how far a drawing's shadow, glow or reflection
+        // bleeds past its extent, in EMU on each edge. All-zero (which is also
+        // what an absent edge means) says the ink stops at the frame, which is
+        // what this engine assumes, and every occurrence in the repository's
+        // fixture corpus is all-zero. A NON-zero extent is a real difference —
+        // the drawing occupies more room than its `wp:extent` claims, so text
+        // wraps in the wrong place — and it reports. It was unconditionally
+        // silent in `body`'s drawing scaffolding list until FID-P-03's coverage
+        // guard named it.
+        b"effectExtent" => [b"l".as_slice(), b"t", b"r", b"b"]
+            .iter()
+            .all(|edge| is_zero_or_absent(element, edge)),
+        // `a:graphicFrameLocks` / `a:picLocks` — the same rule `a:spLocks` above
+        // already states, for the frame and the picture flavours of the lock
+        // element. No attributes locks nothing; each attribute
+        // (`noChangeAspect`, `noResize`, `noChangeArrowheads`, …) is one
+        // restriction the document asked for and this engine does not honour, so
+        // a populated one is a loss and reports. Both were unconditionally silent
+        // until FID-P-03 measured them.
+        b"graphicFrameLocks" | b"picLocks" => element.attributes().next().is_none(),
         _ => false,
+    }
+}
+
+/// Whether `attribute` is absent from `element` or reads as zero.
+///
+/// An absent EMU edge and an explicit `0` are the same statement, so the two
+/// must not be distinguished: treating "absent" as unknown would make every
+/// partially-written `wp:effectExtent` a finding.
+fn is_zero_or_absent(element: &BytesStart<'_>, attribute: &[u8]) -> bool {
+    match attribute_value(element, attribute) {
+        None => true,
+        Some(value) => value.trim().parse::<i64>() == Ok(0),
     }
 }
 
@@ -207,6 +266,7 @@ mod tests {
             b"tmpl",
             b"sizeRelH",
             b"sizeRelV",
+            b"cNvGraphicFramePr",
         ] {
             assert!(
                 carries_no_meaning(name),
@@ -223,6 +283,10 @@ mod tests {
             b"autoRedefine",
             b"docPartUnique",
             b"miter",
+            // Judged with their element, not by name: see the conditional half.
+            b"effectExtent",
+            b"graphicFrameLocks",
+            b"picLocks",
         ] {
             assert!(
                 !carries_no_meaning(name),
@@ -256,6 +320,51 @@ mod tests {
         assert!(!carries_no_meaning_when(
             b"spLocks",
             &element(r#"a:spLocks noChangeArrowheads="1""#),
+            true
+        ));
+    }
+
+    /// The other two lock flavours obey the same rule as `a:spLocks`, and a
+    /// drawing whose effect bleeds past its frame is not the same document as one
+    /// whose effect stops at it.
+    #[test]
+    fn the_drawing_no_ops_moved_out_of_the_scaffolding_list_stay_conditional() {
+        for (local, silent, loud) in [
+            (
+                b"graphicFrameLocks".as_slice(),
+                "a:graphicFrameLocks",
+                r#"a:graphicFrameLocks noChangeAspect="1""#,
+            ),
+            (
+                b"picLocks",
+                "a:picLocks",
+                r#"a:picLocks noChangeAspect="1" noChangeArrowheads="1""#,
+            ),
+            (
+                b"effectExtent",
+                r#"wp:effectExtent l="0" t="0" r="0" b="0""#,
+                r#"wp:effectExtent l="0" t="0" r="114300" b="76200""#,
+            ),
+        ] {
+            assert!(
+                carries_no_meaning_when(local, &element(silent), true),
+                "reported a loss that cannot be seen: {silent}"
+            );
+            assert!(
+                !carries_no_meaning_when(local, &element(loud), true),
+                "dropped something visible in silence: {loud}"
+            );
+        }
+        // An effect extent that omits its edges states the same thing as one that
+        // writes four zeroes, and a single non-zero edge is enough to be a loss.
+        assert!(carries_no_meaning_when(
+            b"effectExtent",
+            &element("wp:effectExtent"),
+            true
+        ));
+        assert!(!carries_no_meaning_when(
+            b"effectExtent",
+            &element(r#"wp:effectExtent t="12700""#),
             true
         ));
     }
