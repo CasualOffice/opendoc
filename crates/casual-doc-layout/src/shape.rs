@@ -600,14 +600,43 @@ fn compact_fallback_glyph_widow(
     layout.lines.pop();
 }
 
+/// One line's resolved box: how tall it is, and **where in it the baseline sits**.
+///
+/// The second half is the whole reason this is a struct rather than a triple. The
+/// box height alone does not place the text: leading has to go somewhere, and
+/// OOXML and CSS answer differently. `parley` centres it (the CSS half-leading
+/// rule); Word and LibreOffice put it **below** the baseline. At single spacing
+/// that is the 4–8 twip residual `crates/casual-doc-render/tests/oracle_geometry.rs`
+/// documents and defers — but it is the *same* rule that governs a
+/// `w:lineRule="auto"` multiple, so it scales with the spacing: measured against
+/// LibreOffice 26.2.4.2, our first line sat **74 twips** low at `w:line="360"`
+/// (1.5×) and **143** at `w:line="480"` (2×), and that is the whole of the 132-twip
+/// per-page divergence on a real 15-page agreement whose `Normal` style is
+/// 1.5-spaced.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LineBox {
+    /// Ascent above the baseline, from the font metrics.
+    pub ascent: Twip,
+    /// Descent below the baseline, carrying the leading the box rule added.
+    pub descent: Twip,
+    /// Total box height the paginator advances by.
+    pub height: Twip,
+    /// Distance from the box's **top** to the baseline. Not `ascent` whenever
+    /// leading belongs above the text — see the type docs and `apply_line_rule`.
+    pub baseline: Twip,
+}
+
 /// Applies the `w:spacing@lineRule` box model to a shaped line's natural metrics,
-/// returning the `(ascent, descent, height)` to store. Word (ECMA-376 §17.3.1.33):
+/// returning the resolved [`LineBox`]. Word (ECMA-376 §17.3.1.33):
 ///
 /// - **auto** (the default, and any `MetricsRelative` multiple parley already
 ///   applied): the natural box is kept as-is.
 /// - **atLeast(v)**: the box is at least `v` tall — a shorter natural box is grown
-///   to `v`, the extra height added below the baseline (as leading/descent); a
-///   taller natural box is left alone.
+///   to `v`, and the extra height sits **above** the baseline: measured against
+///   LibreOffice 26.2.4.2, `w:lineRule="atLeast" w:line="480"` over a 276-twip
+///   natural box puts the text 204 twips down from the box top, exactly the
+///   shortfall. (The box's `descent` still carries the extra, because that is what
+///   the paginator advances by; `baseline` is what places the glyphs.)
 /// - **exact(v)**: the box is exactly `v` tall regardless of content. The ascent is
 ///   clamped into the box so the baseline stays inside it and the remainder is the
 ///   descent; when `v` is smaller than the natural content the glyphs may extend
@@ -645,11 +674,16 @@ pub(crate) fn apply_line_rule(
     natural: Twip,
     constraints: &LineConstraints,
     inline_box_height: Twip,
-) -> (Twip, Twip, Twip) {
+) -> LineBox {
     if let Some(exact) = constraints.line_exact {
         let height = exact.raw().max(0);
-        let ascent = ascent.raw().clamp(0, height);
-        return (Twip(ascent), Twip((height - ascent).max(0)), Twip(height));
+        let ascent = Twip(ascent.raw().clamp(0, height));
+        return LineBox {
+            ascent,
+            descent: Twip((height - ascent.raw()).max(0)),
+            height: Twip(height),
+            baseline: ascent,
+        };
     }
     let natural = if inline_box_height > Twip::ZERO {
         natural.max(ascent + descent)
@@ -669,11 +703,28 @@ pub(crate) fn apply_line_rule(
         }
         _ => required,
     };
+    // Only the `atLeast` floor's own share of the extra sits ABOVE the baseline.
+    // Everything else — the font's own line gap, an `auto` multiple, the grid
+    // rounding — sits below it, which is what `baseline: ascent` expresses.
+    let at_least_extra = constraints
+        .line_at_least
+        .map_or(0, |at_least| (at_least.raw() - natural.raw()).max(0));
+    let baseline = Twip(ascent.raw().saturating_add(at_least_extra));
     if height.raw() > natural.raw() {
         let extra = height.raw() - natural.raw();
-        return (ascent, Twip(descent.raw().saturating_add(extra)), height);
+        return LineBox {
+            ascent,
+            descent: Twip(descent.raw().saturating_add(extra)),
+            height,
+            baseline,
+        };
     }
-    (ascent, descent, natural)
+    LineBox {
+        ascent,
+        descent,
+        height: natural,
+        baseline,
+    }
 }
 
 /// Maps the crate's [`TextAlignment`] to `parley`'s, honoring the paragraph's
@@ -1464,14 +1515,15 @@ impl ParleyShaper {
             // `LineHeight::FontSizeRelative` into it). The `atLeast`/`exact` rules
             // reshape it further below.
             let natural = Twip(metrics.line_height.round() as i32);
-            let (ascent, descent, height) =
+            let line_box =
                 apply_line_rule(ascent, descent, natural, &constraints, inline_box_height);
+            let (ascent, descent, height) = (line_box.ascent, line_box.descent, line_box.height);
             let source_baseline = Twip(metrics.baseline.round() as i32);
-            let baseline_in_line = if constraints.line_exact.is_some() {
-                ascent
-            } else {
-                source_baseline - source_y
-            };
+            // `parley` reports its own baseline, which centres the leading (the
+            // CSS half-leading rule). OOXML does not: the box model owns where the
+            // baseline sits, so take it from `apply_line_rule` rather than from the
+            // shaper. See `LineBox`.
+            let baseline_in_line = line_box.baseline;
             let target_baseline = output_y + baseline_in_line;
             let baseline_delta = target_baseline - source_baseline;
             let box_delta = output_y - source_y;
@@ -2003,6 +2055,112 @@ mod tests {
         }
     }
 
+    /// Leading sits **below** the baseline, and only an `atLeast` floor's share
+    /// sits above it.
+    ///
+    /// # The defect
+    ///
+    /// `parley` places a line's baseline by the CSS half-leading rule — extra
+    /// height split evenly above and below. OOXML does not: Word and LibreOffice
+    /// put it all below. At single spacing that is the 4–8 twip residual
+    /// `crates/casual-doc-render/tests/oracle_geometry.rs` documented and
+    /// deferred, but it is the *same* rule that governs a `w:lineRule="auto"`
+    /// multiple, so the error scales with the spacing.
+    ///
+    /// # Measured, against LibreOffice 26.2.4.2
+    ///
+    /// Two-line paragraphs at 12pt Liberation Serif, natural box 276 twips
+    /// (ascent 214, descent 52, 10 of font line gap):
+    ///
+    /// ```text
+    /// rule                     first line's top     before -> after
+    /// (none)                   margin               +5     -> 0
+    /// auto, w:line="240" (1x)  margin               +5     -> 0
+    /// auto, w:line="360" (1.5) margin               +74    -> 0
+    /// auto, w:line="480" (2x)  margin               +143   -> 0
+    /// atLeast, w:line="480"    margin + 204         -199   -> 0
+    /// ```
+    ///
+    /// Every line of every one of those probes now agrees to the twip, and the
+    /// line-to-line pitch already did — so this was purely where the baseline sat
+    /// inside an already-correct box. `exact` is deliberately unchanged and still
+    /// diverges (LibreOffice appears to scale the natural ascent into the exact
+    /// box proportionally); it is measured but not yet confirmed at more than one
+    /// value, so it is left alone rather than fitted.
+    #[test]
+    fn leading_sits_below_the_baseline_and_only_at_least_raises_it() {
+        // The 12pt Liberation Serif box the probes above measured.
+        let ascent = Twip(214);
+        let descent = Twip(52);
+        let natural = Twip(276); // ascent + descent + a 10-twip font line gap
+
+        // No rule: the font's own gap is leading, so it goes below and the
+        // baseline stays at the ascent. This is the case that was off by +5.
+        let plain = apply_line_rule(
+            ascent,
+            descent,
+            natural,
+            &LineConstraints::default(),
+            Twip::ZERO,
+        );
+        assert_eq!(plain.baseline, ascent, "the font's line gap sits below");
+        assert_eq!(plain.height, natural);
+
+        // `auto` multiples ride `line_height_percent` into parley, which hands
+        // back an already-scaled `natural`; the baseline must not move with it.
+        for scaled in [Twip(414), Twip(552)] {
+            let multiple = apply_line_rule(
+                ascent,
+                descent,
+                scaled,
+                &LineConstraints {
+                    line_height_percent: Some(150),
+                    ..LineConstraints::default()
+                },
+                Twip::ZERO,
+            );
+            assert_eq!(
+                multiple.baseline, ascent,
+                "an auto multiple adds leading below, so the first line does not \
+                 move down: at {scaled:?} it used to move by half the extra"
+            );
+            assert_eq!(multiple.height, scaled);
+        }
+
+        // `atLeast` is the one rule whose extra sits ABOVE: 480 − 276 = 204,
+        // exactly the offset LibreOffice puts the text at.
+        let at_least = apply_line_rule(
+            ascent,
+            descent,
+            natural,
+            &LineConstraints {
+                line_at_least: Some(Twip(480)),
+                ..LineConstraints::default()
+            },
+            Twip::ZERO,
+        );
+        assert_eq!(at_least.baseline, Twip(214 + 204));
+        assert_eq!(at_least.height, Twip(480));
+        assert_eq!(
+            at_least.descent,
+            Twip(52 + 204),
+            "the box still advances by the full height"
+        );
+
+        // An `atLeast` shorter than the natural box changes nothing at all.
+        let slack = apply_line_rule(
+            ascent,
+            descent,
+            natural,
+            &LineConstraints {
+                line_at_least: Some(Twip(100)),
+                ..LineConstraints::default()
+            },
+            Twip::ZERO,
+        );
+        assert_eq!((slack.baseline, slack.height), (ascent, natural));
+    }
+
     #[test]
     fn document_grid_rounds_required_height_and_exact_still_wins() {
         let natural = Twip(250);
@@ -2013,9 +2171,16 @@ mod tests {
             line_grid_pitch: Some(Twip(360)),
             ..LineConstraints::default()
         };
+        // Grid rounding is leading like any other: it sits BELOW the baseline,
+        // so the baseline stays at the ascent.
         assert_eq!(
             apply_line_rule(ascent, descent, natural, &one_unit, Twip::ZERO),
-            (Twip(180), Twip(180), Twip(360))
+            LineBox {
+                ascent: Twip(180),
+                descent: Twip(180),
+                height: Twip(360),
+                baseline: Twip(180),
+            }
         );
 
         let two_units = LineConstraints {
@@ -2023,9 +2188,16 @@ mod tests {
             line_grid_pitch: Some(Twip(360)),
             ..LineConstraints::default()
         };
+        // `atLeast` raises the box to 370, and THAT share of the extra (120)
+        // sits above the baseline; the grid's further rounding to 720 does not.
         assert_eq!(
             apply_line_rule(ascent, descent, natural, &two_units, Twip::ZERO),
-            (Twip(180), Twip(540), Twip(720))
+            LineBox {
+                ascent: Twip(180),
+                descent: Twip(540),
+                height: Twip(720),
+                baseline: Twip(300),
+            }
         );
 
         let exact = LineConstraints {
@@ -2035,7 +2207,12 @@ mod tests {
         };
         assert_eq!(
             apply_line_rule(ascent, descent, natural, &exact, Twip::ZERO),
-            (Twip(180), Twip(20), Twip(200))
+            LineBox {
+                ascent: Twip(180),
+                descent: Twip(20),
+                height: Twip(200),
+                baseline: Twip(180),
+            }
         );
     }
 

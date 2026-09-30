@@ -38,7 +38,25 @@ const DPI: f32 = 96.0;
 /// moved. A pixel hash cannot show *what* moved, which is why the twip figures
 /// are written out here; they are reproducible by removing the reserve from
 /// `CellFragment::occupied_height` and re-running.
-const EXPECTED_RGBA_FNV1A64: u64 = 0xb368_c649_ad5b_235e;
+///
+/// # Re-blessed again, same day, for the line-box leading rule
+///
+/// Was `0xb368_c649_ad5b_235e`. A line's leading now sits entirely below its
+/// baseline (Word/OOXML) instead of being centred (`parley`'s CSS half-leading) —
+/// see `casual_doc_layout::shape::LineBox`. For this fixture's face the leading is
+/// nearly zero, so the interesting part is not the size of the shift but that it
+/// **removes an accumulating rounding error**. Each line's baseline used to creep
+/// down by a fraction of a twip, and it compounded across the document:
+///
+/// ```text
+/// first baseline on page   3     4     5
+///                 before   972   975   978    (drifting)
+///                 after    971   971   971    (exact, 290-twip pitch throughout)
+/// ```
+///
+/// Still five pages, same number of painted runs per page, and every containment
+/// and split-row assertion below unchanged.
+const EXPECTED_RGBA_FNV1A64: u64 = 0xa3ae_e806_7550_7d76;
 
 #[derive(Clone, Copy, Debug)]
 struct InkLine {

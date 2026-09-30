@@ -647,10 +647,12 @@ fn layout_tabbed_line(
         .map(|(index, mut work)| {
             // Apply the paragraph's authored line rule once, after every segment
             // contributing to this physical line has established its natural box.
-            let (ascent, descent, height) =
-                assembled_line_metrics(work.ascent, work.descent, constraints);
+            let line_box = assembled_line_metrics(work.ascent, work.descent, constraints);
+            let (ascent, descent, height) = (line_box.ascent, line_box.descent, line_box.height);
             for run in &mut work.runs {
-                run.origin.y = cursor_y + ascent;
+                // The box model says where the baseline sits, which is not
+                // `ascent` whenever leading belongs above the text (`LineBox`).
+                run.origin.y = cursor_y + line_box.baseline;
             }
             let line = Line {
                 runs: work.runs,
@@ -779,7 +781,7 @@ fn assembled_line_metrics(
     ascent: Twip,
     descent: Twip,
     constraints: LineConstraints,
-) -> (Twip, Twip, Twip) {
+) -> crate::shape::LineBox {
     let natural = Twip(ascent.raw() + descent.raw());
     // `lineRule="auto"` with an explicit `w:line`: scale the single-line box by
     // the percent, with positive leading below the baseline.
