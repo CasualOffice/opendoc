@@ -357,6 +357,24 @@ pub fn builtin_registry_with_format_limits(
     // importer, so it never becomes a format the picker offers to open.
     crate::register_pdf_exporter(&mut registry)
         .expect("built-in PDF exporter registration is unique");
+    // Export only, and built in for the same reason PDF is: `docs/153`
+    // `shell.export-markdown`. ONLYOFFICE's Download-as grid offers `MD`; ours
+    // did not. Registered here rather than behind an opt-in so the capability is
+    // reachable in every host rather than in the ones that remembered.
+    registry
+        .register_exporter(Arc::new(crate::MarkdownAdapter::default()))
+        .expect("built-in Markdown exporter registration is unique");
+    // Export only, built in for the same reason: `docs/153` `shell.export-html`.
+    // Theirs is a zip of markup plus sibling image files; ours is one file with
+    // the pictures inside it, which is the local-first argument applied to an
+    // export.
+    registry
+        .register_exporter(Arc::new(crate::HtmlAdapter::default()))
+        .expect("built-in HTML exporter registration is unique");
+    // Export only, built in for the same reason: `docs/153` `shell.export-dotx`.
+    registry
+        .register_exporter(Arc::new(crate::DotxAdapter::default()))
+        .expect("built-in DOTX exporter registration is unique");
     registry
 }
 
@@ -404,7 +422,9 @@ fn convert_retention_outcome(outcome: DocxRetentionOutcome) -> RetentionOutcome 
 /// disposition itself is not re-decided here — both axes come from the writer's
 /// `Disposition` — so a finding cannot mean one thing to the writer and another
 /// to the caller.
-fn convert_export_report(report: &casual_doc_export::CompatibilityReport) -> CompatibilityReport {
+pub(crate) fn convert_export_report(
+    report: &casual_doc_export::CompatibilityReport,
+) -> CompatibilityReport {
     let mut converted = CompatibilityReport {
         entries: report
             .entries

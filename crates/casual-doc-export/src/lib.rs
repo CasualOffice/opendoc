@@ -27,8 +27,8 @@ pub use report::{
     RetentionOutcome,
 };
 pub use semantic::{
-    export_document, export_document_with_retained_parts, write_document,
-    write_document_with_retained_parts,
+    PackageKind, export_document, export_document_with_retained_parts, export_package,
+    write_document, write_document_with_retained_parts,
 };
 
 /// A package-writing failure.
