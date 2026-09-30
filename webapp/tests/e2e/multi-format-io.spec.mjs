@@ -44,11 +44,25 @@ test("browser Open and Save dispatch text through the generic ODT exporter", asy
   // real-text PDF adapter (`docs/98`, HF-030), and `application.pdf` sorts
   // first on id. It has no importer, so it never appears as something the
   // picker offers to open — which the Rust side asserts separately.
+  // Three export-only formats joined this list. They are NOT yet named: with no
+  // `FORMAT_CATALOG` entry the picker falls back to the raw format id, and this
+  // asserts that unflattering truth rather than hiding it, because the day they
+  // are named this line has to be the thing that changes.
+  //
+  // Naming them is not a one-line edit, which is why it is a follow-up and not
+  // smuggled in here: `format_io.mjs` carries an unrouted-strings CEILING of 6,
+  // every label in it is an untranslated literal, and a ceiling is paid down, not
+  // raised. Doing it properly means three keys in the string table and a
+  // translation in each of the eighteen locales, with the picker looking the
+  // label up instead of reading it out of a frozen data table.
   await expect(format.locator("option")).toHaveText([
     "PDF",
     "Normalized JSON",
     "ODT",
     "DOCX",
+    "org.openxmlformats.wordprocessingml.template",
+    "text.html",
+    "text.markdown",
     "Plain text",
   ]);
 
