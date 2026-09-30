@@ -15,6 +15,7 @@
 
 mod artifact;
 mod docx;
+mod dotx;
 mod error;
 mod format;
 mod html;
@@ -35,6 +36,7 @@ pub use docx::{
     DocxAdapter, builtin_registry, builtin_registry_with_format_limits,
     builtin_registry_with_limits, builtin_registry_with_package_limits,
 };
+pub use dotx::{DOTX_MIME, DotxAdapter};
 pub use error::{AdapterError, IoError};
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
 pub use html::{HTML_MIME, HtmlAdapter, HtmlLimits};

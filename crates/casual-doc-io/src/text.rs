@@ -924,6 +924,7 @@ mod tests {
                 formats::NORMALIZED_JSON,
                 formats::ODT,
                 formats::DOCX,
+                formats::DOTX,
                 // The three `text.*` formats sort among themselves because the
                 // list is ascending by format id.
                 formats::HTML,

@@ -371,6 +371,10 @@ pub fn builtin_registry_with_format_limits(
     registry
         .register_exporter(Arc::new(crate::HtmlAdapter::default()))
         .expect("built-in HTML exporter registration is unique");
+    // Export only, built in for the same reason: `docs/153` `shell.export-dotx`.
+    registry
+        .register_exporter(Arc::new(crate::DotxAdapter::default()))
+        .expect("built-in DOTX exporter registration is unique");
     registry
 }
 
@@ -418,7 +422,9 @@ fn convert_retention_outcome(outcome: DocxRetentionOutcome) -> RetentionOutcome 
 /// disposition itself is not re-decided here — both axes come from the writer's
 /// `Disposition` — so a finding cannot mean one thing to the writer and another
 /// to the caller.
-fn convert_export_report(report: &casual_doc_export::CompatibilityReport) -> CompatibilityReport {
+pub(crate) fn convert_export_report(
+    report: &casual_doc_export::CompatibilityReport,
+) -> CompatibilityReport {
     let mut converted = CompatibilityReport {
         entries: report
             .entries

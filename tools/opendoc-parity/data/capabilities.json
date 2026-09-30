@@ -4108,15 +4108,21 @@
       "area": "shell",
       "title": "Save as a Word template (DOTX)",
       "ours": {
-        "absent": [
-          "file.export.dotx"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-io/src/dotx.rs",
+              "literal": "DotxAdapter"
+            }
+          },
+          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.dotx`"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 4,
-      "note": "Their DOTX row is FileMenuPanels.js:58. The OpenDocument template OTT (FileMenuPanels.js:61) is the same gap in the other family; we write neither template format."
+      "note": "ECMA-376 gives a template its own main-part content type and changes nothing else, so this is a `PackageKind` on the existing DOCX writer rather than a second writer. Registered in the built-in registry, so the Save selector offers it; what is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs` for the label, and a `file.export.*` contract row so a host can drive it."
     },
     {
       "id": "shell.export-epub",

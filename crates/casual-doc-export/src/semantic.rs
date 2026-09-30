@@ -85,6 +85,16 @@ const DOC_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 const DOC_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+/// The main-part content type of a Word TEMPLATE, which is the only thing that
+/// distinguishes a `.dotx` package from a `.docx` one.
+///
+/// ECMA-376 gives a template its own main-part type and nothing else: the parts,
+/// the relationships and the body are identical, and Word decides "open a copy
+/// of this" from this string alone. That is why a template is a `PackageKind`
+/// here rather than a second writer — two writers for one rule diverge
+/// (`SKILL` §8, "prefer one mechanism over two").
+const TEMPLATE_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml";
 const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const HYPERLINK_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
@@ -528,6 +538,39 @@ pub fn export_document_with_retained_parts(
     media: &BTreeMap<String, Vec<u8>>,
     retained_parts: &RetainedParts,
 ) -> Result<DocxExport, ExportError> {
+    export_package(document, media, retained_parts, PackageKind::Document)
+}
+
+/// Which WordprocessingML package to write: a document or a template.
+///
+/// The two differ by exactly one string — the main part's content type — so this
+/// is a parameter rather than a second writer (`SKILL` §8: prefer one mechanism
+/// over two; a parallel path is evidence the abstraction is wrong).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PackageKind {
+    /// A `.docx` document.
+    #[default]
+    Document,
+    /// A `.dotx` template: the same parts and the same body, declared so that
+    /// Word opens a copy of it instead of the file itself.
+    Template,
+}
+
+/// Serializes a v1 `Document` as a document or a template package, reporting
+/// what the package does not carry.
+///
+/// `docs/153` `shell.export-dotx`. Everything except the main part's content
+/// type is identical between the two kinds, which is why this is one function.
+///
+/// # Errors
+///
+/// Returns [`ExportError`] when the package cannot be assembled.
+pub fn export_package(
+    document: &Document,
+    media: &BTreeMap<String, Vec<u8>>,
+    retained_parts: &RetainedParts,
+    kind: PackageKind,
+) -> Result<DocxExport, ExportError> {
     let definitions = document.definitions();
     let mut reporter = Reporter::default();
     // The media the package will contain. An entry whose bytes the caller did
@@ -914,6 +957,7 @@ pub fn export_document_with_retained_parts(
             &available_media,
             has_embedded_fonts,
             retained_parts,
+            kind,
         )?,
     );
     parts.push(
@@ -1127,6 +1171,7 @@ fn content_types_xml(
     media: &DefinitionMap<MediaId, MediaReference>,
     has_embedded_fonts: bool,
     retained_parts: &RetainedParts,
+    kind: PackageKind,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
@@ -1166,7 +1211,13 @@ fn content_types_xml(
     }
     let mut over = start("Override");
     over.push_attribute(("PartName", "/word/document.xml"));
-    over.push_attribute(("ContentType", DOC_CT));
+    over.push_attribute((
+        "ContentType",
+        match kind {
+            PackageKind::Document => DOC_CT,
+            PackageKind::Template => TEMPLATE_CT,
+        },
+    ));
     w.write_event(Event::Empty(over)).map_err(pkg)?;
     for extra in extras {
         let part_name = format!("/{}", extra.part_name);

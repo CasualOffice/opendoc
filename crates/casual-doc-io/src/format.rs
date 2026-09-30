@@ -88,6 +88,10 @@ pub mod formats {
     /// reading it needs a parser and a sanitiser, and only the writer exists
     /// (`docs/153` `shell.export-html`).
     pub const HTML: &str = "text.html";
+    /// Office Open XML word-processing TEMPLATE (`.dotx`). Export only: the same
+    /// package as a document with one content type changed (`docs/153`
+    /// `shell.export-dotx`).
+    pub const DOTX: &str = "org.openxmlformats.wordprocessingml.template";
 }
 
 /// Public capabilities and aliases for one registered format.

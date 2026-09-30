@@ -27915,6 +27915,7 @@ mod tests {
                 formats::NORMALIZED_JSON,
                 formats::ODT,
                 formats::DOCX,
+                formats::DOTX,
                 // Export-only for the same reason, and ordered here because the
                 // list is ascending by format id (`docs/153`
                 // `shell.export-html` and `shell.export-markdown`).
