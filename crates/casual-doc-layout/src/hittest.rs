@@ -1989,6 +1989,7 @@ mod tests {
                 vertical_alignment: CellVAlign::Bottom,
                 vertical_merge: CellVerticalMerge::Restart { height: Twip(1000) },
                 borders: CellBorders::default(),
+                border_reserve: crate::block::CellBorderReserve::default(),
                 table_borders: CellBorders::default(),
                 shading: None,
             }],
@@ -2087,6 +2088,7 @@ mod tests {
             vertical_alignment: valign,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         }
@@ -2446,6 +2448,7 @@ mod tests {
             vertical_alignment: CellVAlign::Top,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         };
@@ -2502,6 +2505,7 @@ mod tests {
             vertical_alignment: CellVAlign::Top,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         };
@@ -3132,6 +3136,7 @@ mod tests {
             vertical_alignment: CellVAlign::Top,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         };
@@ -3606,6 +3611,7 @@ mod table_chrome_tests {
                             vertical_alignment: CellVAlign::Top,
                             vertical_merge: CellVerticalMerge::None,
                             borders: CellBorders::default(),
+                            border_reserve: crate::block::CellBorderReserve::default(),
                             table_borders: CellBorders::default(),
                             shading: None,
                         }
@@ -3759,6 +3765,7 @@ mod table_chrome_tests {
                 vertical_alignment: CellVAlign::Top,
                 vertical_merge: CellVerticalMerge::None,
                 borders: CellBorders::default(),
+                border_reserve: crate::block::CellBorderReserve::default(),
                 table_borders: CellBorders::default(),
                 shading: None,
             }],

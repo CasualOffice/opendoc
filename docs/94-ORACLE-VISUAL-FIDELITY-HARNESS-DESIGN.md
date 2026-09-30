@@ -282,6 +282,45 @@ and `Times New Roman PS MT` all follow their family. The result is
 metrics are known, so a Light or Condensed cut is a better guess and still a
 guess, and it keeps reporting as a fallback loss.
 
+### Closed with it: cell borders occupied no vertical space (FID-L-21)
+
+The first fidelity gap the instrument closed, and the cause was one rule missing
+in one place. A cell's horizontal borders reserved **nothing**: the engine already
+pays for a *paragraph* border's band (Word: `BaseLineOffset += Brd.Top.Space +
+Brd.Top.Size`) and charged nothing for a cell's, so every bordered row came out
+short by its borders' thickness and the error accumulated down the page.
+
+Isolated on synthetic probes rather than reasoned about. Against the pinned
+LibreOffice, the shortfall was exactly twice the authored border width per row for
+`single` at `w:sz` 2, 4, 8, 16 and 24, and six times it for `double` at 2, 4 and
+8 — so a `double` edge occupies 3× its authored width. Single-edge probes showed
+the top edge alone pushes content down by its full width, the bottom edge alone
+grows the row without moving content, and left/right edges do nothing vertically.
+A three-row table grew by 80 twips where three independent rows would have needed
+120, so each **collapsed** edge is paid for once: a cell pays for its own top
+always and its bottom only in the table's last row, which charges a shared
+boundary to the lower row and the table's perimeter to the first and last.
+
+| | before | after |
+| --- | --- | --- |
+| `real-producer-table-merges` y1 | −55 | **+5** |
+| `real-producer-table-list` y1 | −60 | **−15** |
+| 12 border probes, worst y1 | −115 | **+5** |
+
+Both fixtures' `KNOWN_DIVERGENCES` entries are gone, and the gate itself forced
+the review: it went **red** when their registered divergences stopped diverging,
+which is the property that registry was built to have.
+
+`rich` is not closed, and its residual is now isolated and is a different thing:
+LibreOffice **discards** the paragraph ECMA-376 §17.4.66 requires after a nested
+table inside a cell. We keep it — as Word does, and as the caret needs, since it
+is the only insertion point after a nested table — and that accounts for the whole
+remaining +323 (a probe isolates +333, present only when the paragraph is empty
+*and* directly follows a nested table, absent when it carries text or when no
+nested table precedes it). Matching the oracle here would cost Word fidelity and
+an editing anchor, so the entry stays registered with that cause rather than being
+"fixed".
+
 ### Signals this instrument has measured and not yet closed
 
 Each is reproducible with one command; none is a judgement by eye.
@@ -331,6 +370,12 @@ Each is reproducible with one command; none is a judgement by eye.
    hang).
 4. **Comparable line count**, ours short by 1–3 on five pages. Remains after the
    substitution fix, so it is not that; the per-line dump localises it.
+5. **Left and right cell borders take no horizontal space either** — the same
+   omission as the closed vertical one, on the other axis. Measured on the border
+   probes: a cell's text region ends 10 twips further right at a 20-twip border
+   and 28 at a 60-twip one. It does not accumulate into pagination the way the
+   vertical one did, which is why it was not in FID-L-21's symptoms, and it is
+   the next thing to close.
 
 ## Open questions
 

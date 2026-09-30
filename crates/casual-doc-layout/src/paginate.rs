@@ -2907,6 +2907,7 @@ mod tests {
             vertical_alignment: CellVAlign::default(),
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         }

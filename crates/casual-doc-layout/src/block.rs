@@ -66,6 +66,36 @@ pub struct ResolvedEdge {
     pub pattern: BorderPattern,
 }
 
+impl ResolvedEdge {
+    /// The **total** band this edge occupies across the box boundary, in twips —
+    /// what layout has to reserve for it, as distinct from [`width`](Self::width),
+    /// which is the authored `w:sz`.
+    ///
+    /// For every pattern but one the two are the same number. A `double` border
+    /// is drawn as line-gap-line, each part the authored width, so it occupies
+    /// **three times** as much. That is measured, not assumed: against a pinned
+    /// LibreOffice, a single-row bordered table's height grows by twice the
+    /// authored width for `single` at `w:sz` 2/4/8/16/24, and by *six* times it
+    /// for `double` at 2/4/8 — i.e. 3× per edge in both directions.
+    ///
+    /// Note that composition currently paints a `double` edge as two bands
+    /// *inside* the authored width ([`BorderPattern::Double`]), so the painted
+    /// thickness and this reserved thickness disagree for that one pattern. The
+    /// reserve is the measured quantity and is what moves text and pagination;
+    /// bringing the paint up to it is a separate change.
+    #[must_use]
+    pub fn total_thickness(self) -> Twip {
+        match self.pattern {
+            BorderPattern::Double => Twip(self.width.raw().saturating_mul(3)),
+            BorderPattern::Solid
+            | BorderPattern::Dotted
+            | BorderPattern::Dashed
+            | BorderPattern::DotDash
+            | BorderPattern::DotDotDash => self.width,
+        }
+    }
+}
+
 /// One independently resolved interval along a horizontal cell side.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ResolvedBorderSegment {
@@ -248,6 +278,77 @@ impl CellContentMargins {
     }
 }
 
+/// The vertical band a cell's resolved top and bottom borders occupy inside the
+/// row box, in twips.
+///
+/// # Why this is data on the cell rather than derived at each use
+///
+/// A border occupies space: the engine already pays for a *paragraph* border's
+/// band (`w:pBdr`, mirroring Word's `BaseLineOffset += Brd.Top.Space +
+/// Brd.Top.Size`), and cell borders were simply missed — every bordered row was
+/// short by its borders' thickness, and the error accumulated down the page. It
+/// is the whole of backlog row FID-L-21 on `table-merges` (−55 twips over three
+/// rows of `double w:sz="2"`, i.e. 4 collapsed edges × 15) and part of it on
+/// `rich` and `table-list`.
+///
+/// **Only the horizontal edges count.** Measured against a pinned LibreOffice, a
+/// table whose cells carry left/right borders only is vertically identical to one
+/// with no borders at all.
+///
+/// # Collapsed edges are paid for exactly once
+///
+/// Border-conflict resolution (ECMA-376 §17.4.66) hands the *same* winning edge
+/// to both cells abutting a horizontal boundary, so summing every cell's top and
+/// bottom would count each interior edge twice — measured, a three-row table with
+/// 20-twip borders grows by 80 twips, not 120. The rule that reproduces every
+/// measurement with integer arithmetic is: **a cell pays for its own top edge
+/// always, and for its bottom edge only when its row is the last in the table.**
+/// The shared boundary between two rows is then charged to the lower row's top,
+/// and the table's bottom perimeter to the final row. `top` and `bottom` here are
+/// already resolved that way by the producer, so consumers just add them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CellBorderReserve {
+    /// The band this cell's top border occupies.
+    pub top: Twip,
+    /// The band this cell's bottom border occupies — zero unless the cell's row
+    /// is the last in its table (see the type docs).
+    pub bottom: Twip,
+}
+
+impl CellBorderReserve {
+    /// Whether the cell's borders occupy no vertical space (serializes to
+    /// nothing): no border, or a zero-width one.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The reserve for a cell with these resolved `borders`, where `last_in_table`
+    /// says whether its row is the table's last (see the type docs for why the
+    /// bottom edge is conditional).
+    #[must_use]
+    pub fn resolve(borders: &CellBorders, last_in_table: bool) -> Self {
+        Self {
+            top: borders
+                .top
+                .map_or(Twip::ZERO, ResolvedEdge::total_thickness),
+            bottom: if last_in_table {
+                borders
+                    .bottom
+                    .map_or(Twip::ZERO, ResolvedEdge::total_thickness)
+            } else {
+                Twip::ZERO
+            },
+        }
+    }
+
+    /// The total vertical space the two edges take from the row.
+    #[must_use]
+    pub fn total(&self) -> Twip {
+        self.top + self.bottom
+    }
+}
+
 /// The separated-cell gap allocated around one physical cell box. Horizontal
 /// values are also retained after `x`/`width` have been inset so composition can
 /// recover the table-grid slot for its distinct outer-border layer.
@@ -331,6 +432,11 @@ pub struct CellFragment {
     /// The cell's resolved visible borders (border-conflict winners).
     #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
     pub borders: CellBorders,
+    /// The vertical band [`borders`](Self::borders) occupies inside the row box.
+    /// Resolved once by the producer because the bottom edge's share depends on
+    /// whether the row is the table's last — see [`CellBorderReserve`].
+    #[serde(default, skip_serializing_if = "CellBorderReserve::is_empty")]
+    pub border_reserve: CellBorderReserve,
     /// Table-perimeter borders painted on the enclosing grid slot. Non-empty
     /// only for separated-cell rows, where table and cell borders both remain
     /// visible instead of collapsing to one winner.
@@ -386,21 +492,49 @@ impl CellFragment {
             .fold(Twip::ZERO, |a, h| a + h)
     }
 
-    /// The cell's content height plus its top and bottom margins (twips) — the
-    /// vertical space the cell demands of its row.
+    /// The cell's content height plus its top and bottom margins **and the band
+    /// its horizontal borders occupy** (twips) — the vertical space the cell
+    /// demands of its row.
+    ///
+    /// The border term is the fix for backlog row FID-L-21: a border occupies
+    /// space, the engine already pays for a paragraph border's band, and cell
+    /// borders were not counted at all, so every bordered row came out short by
+    /// its borders' thickness and the error accumulated down the page. See
+    /// [`CellBorderReserve`] for why the bottom edge is conditional.
     #[must_use]
     pub fn occupied_height(&self) -> Twip {
+        self.vertical_insets() + self.content_height()
+    }
+
+    /// Everything above and below the cell's content that the row must pay for:
+    /// the separated-cell gap, the border band, and the content margins.
+    ///
+    /// One method rather than the same sum written out at each use — the measure
+    /// tier folds these into a single number (`crate::measure::CellMeasure`) and
+    /// the windowed/resumable paginator's whole correctness property is that its
+    /// pages equal a full pagination's *field for field*. Two copies of this sum
+    /// would drift, and the drift would show up as a document that paginates
+    /// differently depending on where the reader scrolled.
+    #[must_use]
+    pub fn vertical_insets(&self) -> Twip {
         self.cell_spacing.top
+            + self.border_reserve.top
             + self.margins.top
-            + self.content_height()
             + self.margins.bottom
+            + self.border_reserve.bottom
             + self.cell_spacing.bottom
     }
 
     /// The vertical offset (twips) from the cell's top edge to the top of its
-    /// content, once the row height is known: the top margin plus the `w:vAlign`
-    /// share of the leftover slack (`Top` → 0, `Center` → half, `Bottom` → all).
-    /// `row_height` is the resolved row box height the content is aligned within.
+    /// content, once the row height is known: the top border's band, plus the top
+    /// margin, plus the `w:vAlign` share of the leftover slack (`Top` → 0,
+    /// `Center` → half, `Bottom` → all). `row_height` is the resolved row box
+    /// height the content is aligned within.
+    ///
+    /// The border term keeps content from being drawn *under* its own top border
+    /// and is the same quantity [`occupied_height`](Self::occupied_height)
+    /// charges the row for, so the slack stays the true leftover and a centred
+    /// cell is still centred.
     #[must_use]
     pub fn content_y_offset(&self, row_height: Twip) -> Twip {
         let slack = (row_height.raw() - self.occupied_height().raw()).max(0);
@@ -409,7 +543,7 @@ impl CellFragment {
             CellVAlign::Center => slack / 2,
             CellVAlign::Bottom => slack,
         };
-        Twip(self.margins.top.raw() + valign)
+        Twip(self.border_reserve.top.raw() + self.margins.top.raw() + valign)
     }
 }
 

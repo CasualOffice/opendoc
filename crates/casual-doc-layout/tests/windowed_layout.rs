@@ -30,6 +30,8 @@
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::block::BoxMetrics;
 use casual_doc_layout::block::BreakControl;
+// Separate `use` line (anti-conflict): the cell border reserve, FID-L-21.
+use casual_doc_layout::block::CellBorderReserve;
 use casual_doc_layout::block::CellContentMargins;
 use casual_doc_layout::block::CellFragment;
 use casual_doc_layout::block::ParagraphDecor;
@@ -166,6 +168,16 @@ fn cell_of(id: u64, blocks: Vec<BlockFragment>) -> CellFragment {
         vertical_alignment: Default::default(),
         vertical_merge: Default::default(),
         borders: Default::default(),
+        // Non-zero for the same reason the margins above are: a cell's horizontal
+        // borders occupy vertical space, the measure tier has to fold them into
+        // the same total the paint tier does, and with a zero reserve a tier that
+        // dropped them would still cut rows in exactly the same place. Set as
+        // data rather than derived from `borders`, because the measure tier reads
+        // the reserve and never the painted edges.
+        border_reserve: CellBorderReserve {
+            top: Twip(20),
+            bottom: Twip(20),
+        },
         table_borders: Default::default(),
         shading: None,
     }

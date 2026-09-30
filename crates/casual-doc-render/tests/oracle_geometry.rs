@@ -219,36 +219,20 @@ struct Divergence {
 ///
 /// Removing an entry is the goal. Do not add one without a measured delta, a
 /// tracker row, and a sentence saying what diverges.
-const KNOWN_DIVERGENCES: &[Divergence] = &[
-    Divergence {
-        fixture: "docx-real-producer-rich",
-        page: 1,
-        edge: "y1",
-        delta: 263,
-        row: "FID-L-21",
-        reason: "the paragraph after the nested table sits one line lower than \
-                 LibreOffice puts it, so the page's last baseline is ~1 line down",
-    },
-    Divergence {
-        fixture: "docx-real-producer-table-merges",
-        page: 1,
-        edge: "y1",
-        delta: -55,
-        row: "FID-L-21",
-        reason: "merged-cell row heights accumulate ~55 twips short of \
-                 LibreOffice's by the paragraph below the table",
-    },
-    Divergence {
-        fixture: "docx-real-producer-table-list",
-        page: 1,
-        edge: "y1",
-        delta: -60,
-        row: "FID-L-21 (second instance, found by arming this gate)",
-        reason: "vertical drift accumulates monotonically down the page — table \
-                 rows −10 then −25 twips, list items −65 — leaving the closing \
-                 paragraph 60 twips above LibreOffice's",
-    },
-];
+const KNOWN_DIVERGENCES: &[Divergence] = &[Divergence {
+    fixture: "docx-real-producer-rich",
+    page: 1,
+    edge: "y1",
+    delta: 323,
+    row: "FID-L-21 (residual; the shared cause is fixed)",
+    reason: "LibreOffice DISCARDS the empty paragraph that ECMA-376 §17.4.66 \
+             requires after a nested table inside a cell; we keep it, as Word \
+             does and as the caret needs. Isolated on a synthetic probe: the \
+             divergence is exactly that paragraph's line box plus its \
+             w:spacing@after (+329 at 12pt, +333 measured), appears ONLY when \
+             the paragraph is empty AND directly follows a nested table, and is \
+             absent when it carries text or when no nested table precedes it",
+}];
 
 /// The registered divergences that apply to `fixture_id`.
 fn divergences_for(fixture_id: &str) -> Vec<Divergence> {

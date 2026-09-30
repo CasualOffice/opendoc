@@ -1380,6 +1380,7 @@ mod tests {
                 }),
                 ..CellBorders::default()
             },
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         };
@@ -2026,6 +2027,7 @@ mod tests {
                 start: Some(border([0, 0, 255, 255])),
                 ..CellBorders::default()
             },
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders {
                 start: Some(border([255, 0, 0, 255])),
                 ..CellBorders::default()
@@ -2077,6 +2079,7 @@ mod tests {
             vertical_alignment: CellVAlign::default(),
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: Some([200, 100, 50, 255]),
         };
@@ -2132,6 +2135,7 @@ mod tests {
             vertical_alignment: CellVAlign::default(),
             vertical_merge,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading,
         };
