@@ -235,6 +235,25 @@ test.describe("the regions a phone withholds", () => {
     await expect(page.locator("#outlinePanel")).toHaveCount(1);
 
     // Pages, from the View menu, which is the home that made withholding safe.
+    //
+    // At this rung it arrives WITHHELD, and that is reflow's doing rather than
+    // the phone's: reflow is on by default below the phone rung (ADR-046 §3.4)
+    // and a page navigator over a document with no pages would card tiles
+    // (`docs/151` §6.4). So the row is disabled and carries the reason — never a
+    // dead control — and the capability is one toggle away, which is exactly
+    // what this test exists to assert and is asserted by driving it.
+    const withheld = await menuCommandRow(page, "view", "view.pages");
+    await expect(withheld).toBeDisabled();
+    expect(await withheld.getAttribute("title")).toMatch(/reflow/i);
+    await page.keyboard.press("Escape");
+
+    await (await menuCommandRow(page, "view", "view.reflow")).click();
+    await expect
+      .poll(async () =>
+        page.evaluate(() => document.getElementById("viewport").classList.contains("is-reflow")),
+      )
+      .toBe(false);
+
     const row = await menuCommandRow(page, "view", "view.pages");
     await row.click();
     await expect(page.locator("#pagesPanel")).toBeVisible();

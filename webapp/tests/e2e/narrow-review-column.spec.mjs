@@ -168,6 +168,21 @@ for (const [name, size] of [
     await expect
       .poll(async () => (await hitTestPage(page, Math.round(size.height / 2))).reviewPoints)
       .toEqual([]);
+
+    // Wait for the layout to SETTLE before measuring it. Resizing into this rung
+    // turns reflow on, and reflow's width feed is debounced — deliberately, so a
+    // drag does not relayout per frame. Before reflow existed the page kept paper
+    // width whatever the window did, so there was no settling to wait for and no
+    // race to see; now there is, and reading `scrollWidth` mid-flight measures
+    // the paper layout that is about to be replaced (794 into 390).
+    //
+    // Polled on the guarantee rather than slept on: the page stack fits the
+    // window once reflow has been applied.
+    await expect
+      .poll(async () => (await columnBox(page)).viewportScrollWidth, {
+        message: "the page stack must settle to the window's width once reflow applies",
+      })
+      .toBeLessThanOrEqual(size.width);
     const box = await columnBox(page);
 
     // A sheet: pinned to the bottom edge, full width, at most half the screen.

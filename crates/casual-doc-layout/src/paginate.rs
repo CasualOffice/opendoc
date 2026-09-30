@@ -1654,7 +1654,8 @@ fn page_shell(
 /// [`crate::anchor::place_floats`] has populated [`Page::anchored`].
 pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
     let labels = decimal_page_labels(layout);
-    resolve_fields_labeled(layout, &labels, shaper);
+    let total = layout.pages.len().to_string();
+    resolve_fields_labeled(layout, &labels, &total, shaper);
 }
 
 /// [`resolve_fields`] with an explicit per-page `PAGE` label for each page (index
@@ -1662,12 +1663,19 @@ pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
 /// `w:pgNumType` format (`lowerRoman`/`upperLetter`/…) and `@start` restart
 /// instead of the physical decimal index. A page whose label is missing falls
 /// back to its physical `number`.
+///
+/// `total` is what `NUMPAGES` prints. It is a **string, not a count**, because a
+/// layout can have a page count and still have no honest number to print for it:
+/// a reflow layout's pages are tiles (`docs/151` §6.5), and the driver passes a
+/// refusal token rather than a tile count. Widening the parameter was cheaper than
+/// the alternative the design proposed — a field on `PaginatedLayout`, which every
+/// literal constructing one in another crate's test module would have had to grow.
 pub(crate) fn resolve_fields_labeled(
     layout: &mut PaginatedLayout,
     labels: &[String],
+    total: &str,
     shaper: &dyn LineShaper,
 ) {
-    let total = layout.pages.len() as u32;
     resolve_fields_labeled_with_total(layout, labels, total, shaper);
 }
 
@@ -1681,7 +1689,7 @@ pub(crate) fn resolve_fields_labeled(
 pub(crate) fn resolve_fields_labeled_with_total(
     layout: &mut PaginatedLayout,
     labels: &[String],
-    total: u32,
+    total: &str,
     shaper: &dyn LineShaper,
 ) {
     for (index, page) in layout.pages.iter_mut().enumerate() {
@@ -1870,7 +1878,8 @@ fn to_letters(mut number: u32) -> Option<String> {
 /// it is idempotent for the same reason [`resolve_fields`] is.
 pub fn resolve_anchored_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
     let labels = decimal_page_labels(layout);
-    resolve_anchored_fields_labeled(layout, &labels, shaper);
+    let total = layout.pages.len().to_string();
+    resolve_anchored_fields_labeled(layout, &labels, &total, shaper);
 }
 
 /// [`resolve_anchored_fields`] with explicit per-page `PAGE` labels (see
@@ -1879,9 +1888,9 @@ pub fn resolve_anchored_fields(layout: &mut PaginatedLayout, shaper: &dyn LineSh
 pub(crate) fn resolve_anchored_fields_labeled(
     layout: &mut PaginatedLayout,
     labels: &[String],
+    total: &str,
     shaper: &dyn LineShaper,
 ) {
-    let total = layout.pages.len() as u32;
     for (index, page) in layout.pages.iter_mut().enumerate() {
         let fallback = page.number.to_string();
         let label = labels.get(index).unwrap_or(&fallback);
@@ -1901,7 +1910,7 @@ pub(crate) fn resolve_anchored_fields_labeled(
 fn resolve_in_fragment(
     fragment: &mut BlockFragment,
     page_label: &str,
-    total: u32,
+    total: &str,
     shaper: &dyn LineShaper,
 ) {
     match fragment {
@@ -1930,7 +1939,7 @@ fn resolve_in_fragment(
 /// value whose width changed (e.g. `9` → `10`) keeps the following text contiguous.
 /// The reposition seeds from each field's stored `base_x` (its flow anchor), so the
 /// pass is idempotent.
-fn resolve_in_line(line: &mut Line, page_label: &str, total: u32, shaper: &dyn LineShaper) {
+fn resolve_in_line(line: &mut Line, page_label: &str, total: &str, shaper: &dyn LineShaper) {
     if line.fields.is_empty() {
         return;
     }
@@ -1943,7 +1952,7 @@ fn resolve_in_line(line: &mut Line, page_label: &str, total: u32, shaper: &dyn L
         }
         field.value = match field.kind {
             FieldKind::Page => page_label.to_string(),
-            FieldKind::NumPages => total.to_string(),
+            FieldKind::NumPages => total.to_owned(),
             // Any other field displays its cached result verbatim.
             FieldKind::Passthrough => std::mem::take(&mut field.value),
         };

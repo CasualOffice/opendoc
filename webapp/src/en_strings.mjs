@@ -90,6 +90,33 @@ export const EN_STRINGS = Object.freeze({
   "status.characters.withSpaces": "{count} characters (with spaces)",
   // Reassigned from script on every render, so the markup sweep never sees it.
   "status.pageOf": "Page {page} of {total}",
+  // -- Reflow (pageless) ------------------------------------------------------
+  // `docs/151` §6, ADR-046. Named "Reflow" and not "Reader mode", "Pageless" or
+  // "Web Layout" — the three references' own words — because ours is the only
+  // one of the four that is accurate for a view that is still EDITABLE and still
+  // cut into tiles. "Reader mode" in particular would promise ONLYOFFICE's
+  // read-only behaviour, which §3.2 rejects on purpose.
+  //
+  // The two command labels are whole sentences rather than a stem and a glued-on
+  // "on"/"off": a language that puts the state before the noun, or inflects the
+  // noun for it, cannot be served by concatenation. Same reason the spacing rows
+  // above are two keys.
+  "reflow.commandOn": "Reflow: on",
+  "reflow.commandOff": "Reflow: off",
+  "reflow.on": "Reflow is on: the document is laid out to the window rather than on pages.",
+  "reflow.off": "Reflow is off: the document is laid out on its own pages again.",
+  "reflow.withholds": "There are no pages in reflow, so the ruler and the Pages panel are unavailable.",
+  "reflow.pagesWithheld": "The Pages panel shows pages, and there are none in reflow. Turn Reflow off to use it.",
+  "reflow.rulerWithheld": "The ruler measures a page and its margins, and there are none in reflow. Tab stops and indents are on the Layout tab.",
+  // The engine refuses reflow on a document it is showing one page-window at a
+  // time, because reflow's promise is that the document stays editable in it and
+  // a windowed body is already read-only. Disabled WITH this, never dead.
+  "reflow.unavailable":
+    "This document is too large to lay out whole, so it is shown one page-window at a time and cannot be reflowed.",
+  // Reflow cuts the document into tiles, not pages, so "Page 3 of 12" would be
+  // wrong in both halves (`docs/151` §6.5). How far through the reader is, is a
+  // question the tile index can answer honestly.
+  "status.readingPosition": "{percent}% through",
   // -- Line & paragraph spacing ---------------------------------------------
   // The verb on each one-gesture row is chosen from the caret paragraph's
   // current state, so the two spellings are two keys rather than one key and a

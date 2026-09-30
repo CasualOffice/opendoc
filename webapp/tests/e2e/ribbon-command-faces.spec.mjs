@@ -272,6 +272,29 @@ async function activationEffect(page, activate) {
   return difference(before, after);
 }
 
+/** Drops every persisted per-viewer preference, so the next load starts from the
+ *  product's defaults.
+ *
+ *  A FRESH DOCUMENT IS NOT BY ITSELF A FRESH BASELINE, and that is what this
+ *  closes. The two halves below each reload the editor, on the premise that
+ *  neither can decide the other's answer — but a preference written to
+ *  `localStorage` survives a reload by design, so a face that TOGGLES a stored
+ *  view leaves the second half starting from the opposite state and the two
+ *  halves diverge for a correct implementation. `view.reflow` (ADR-046 §3.4 — a
+ *  per-viewer preference, stored beside the theme) is the first ribbon face that
+ *  is one; it will not be the last, which is why this is a reset rather than an
+ *  exclusion. Wrapped, because touching storage throws outright where site data
+ *  is blocked. */
+async function forgetPreferences(page) {
+  await page.evaluate(() => {
+    try {
+      localStorage.clear();
+    } catch {
+      /* storage unavailable — there is nothing persisted to forget */
+    }
+  });
+}
+
 /** Runs `id` from the command palette — the second surface, with no knowledge of
  *  which control is supposed to match it. */
 async function runFromPaletteById(page, id) {
@@ -302,12 +325,14 @@ for (const tab of ["home", "view", "table"]) {
 
     const divergent = [];
     for (const face of pairs) {
+      await forgetPreferences(page);
       await prepare(page);
       await page.locator(`.ribbon-tab[data-tab="${tab}"]`).click();
       const fromRibbon = await activationEffect(page, () =>
         page.locator(`${panelOf(tab)} [data-command="${face.command}"]`).first().click(),
       );
 
+      await forgetPreferences(page);
       await prepare(page);
       // The same panel is showing in both halves, so the baseline is the same and
       // "the Table tab appeared" is not counted as an effect of one and not the

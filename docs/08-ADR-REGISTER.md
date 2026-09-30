@@ -1439,13 +1439,19 @@ mechanism, not a new one.
 - The ribbon is not a navigation axis a phone can hold (measured: 550px of tab strip in a
   109px box at 390px), so the phone runs the compact chrome. The stored preference is
   untouched, so a window that widens past the rung gets back the chrome its owner chose.
-- **The document surface is a named exception to "no horizontal scroll", not a solved
-  problem.** A 6.5in text column cannot be both 390px wide and readable; the answer is
-  reflow, which both references ship (Google's Pageless, ONLYOFFICE's
-  `api.ChangeReaderMode()`), and which is layout-engine work. `148` §6 and §9 carry it.
-  The chrome is guarded; the paper is declared. **Superseded in part by ADR-045**,
-  which specifies that engine work precisely; the exception itself stands until it
-  is built.
+- ~~**The document surface is a named exception to "no horizontal scroll".**~~
+  **Retired 2026-10-01 by ADR-046.** A 6.5in text column cannot be both 390px wide
+  and readable; the answer was reflow, which both references ship (Google's
+  Pageless, ONLYOFFICE's `api.ChangeReaderMode()`), and which was layout-engine
+  work. It is built, in both halves, and `#viewport` now measures **384 into 390**
+  at the phone rung where it measured 794 into 326. The exception is struck from
+  `148` §6 and §8, from `style.css`'s phone block and from
+  `phone-no-horizontal-scroll.spec.mjs`, whose two tripwires both fired and have
+  been deleted. (This bullet said "superseded in part by ADR-045"; the engine
+  design is ADR-046 and `151` — the citation drifted while the document was being
+  renumbered.) The one horizontal scroll that survives is a table too wide for the
+  column, in a scroller of its own, which tells the reader something true about a
+  table instead of something false about the document.
 - Pinch-zoom is **not** suppressed, though ONLYOFFICE suppress it. They have a canvas-level
   pinch to put in its place and we do not (`105` UX-018), and removing magnification with
   nothing behind it is an accessibility failure rather than a decision.
@@ -1513,8 +1519,13 @@ commit.
 
 ## ADR-046 — Reflow is a layout VIEW parameter, tiled, and the document stays editable in it
 
-**Status:** Accepted as a design, **not implemented**, 2026-09-30. Specified in
-`151-REFLOW-PAGELESS-LAYOUT-DESIGN.md`. Completes the consequence ADR-044 left open.
+**Status:** Accepted 2026-09-30; **implemented, both halves** — the engine's
+`LayoutView` and `setLayoutView` seam, and the shell's `view.reflow`, width feed,
+seamless tiles, withheld chrome and forced-paper printing (`151` §6), 2026-10-01.
+Specified in `151-REFLOW-PAGELESS-LAYOUT-DESIGN.md`. Completes the consequence
+ADR-044 left open, and **retires `#viewport`'s exemption from ADR-044's
+no-horizontal-scroll rule**: 384 into 390 at the phone rung, where it measured
+794 into 326.
 
 **Decision.** A pageless/reflow view is a **`LayoutView` parameter threaded to the one
 place layout geometry is decided**, not a second layout path and not a document edit:
@@ -1526,7 +1537,26 @@ place layout geometry is decided**, not a second layout path and not a document 
   instead of from `SectionBoundary`, forces `ColumnLayout::single`, suspends the
   page-shaped *constraints* (`page_break_before`, `keep_next`, `keep_lines`,
   widow/orphan, section parity) and suppresses the page-shaped *furniture* (headers,
-  footers, borders, watermarks, line numbers).
+  footers, borders, watermarks, line numbers, section `w:vAlign`).
+  **All of it happens in the driver.** No paginator, no `columns.rs`, no
+  `running.rs`/`page_border.rs`/`line_number.rs`/`watermark.rs` and no line of
+  `flow.rs` changed: the constraints are cleared once on the flowed galley (which
+  covers all three paginators), and the furniture is suppressed by building an empty
+  section plan, so the passes that place it find nothing. The design's own version
+  wanted edits in four of those files; one mechanism turned out to be available and
+  the diff is smaller for it.
+- **Tiles are trimmed to their content**, and a zero gap is not enough without it.
+  The paginator carries the chunk that does not fit, leaving up to a line of slack at
+  each cut, so untrimmed tiles drawn edge to edge still show a blank band at every
+  tile boundary. A reflow-only final pass cuts each tile's page box to its content
+  extent; it is idempotent, it only ever shortens (so a page-anchored float below the
+  text is held, not clipped), and it makes the painted column independent of the tile
+  height — which is what lets the guard be exact rather than tolerant.
+- **A `PAGE`/`NUMPAGES` field prints a refusal, not a tile index.** The refusal lives
+  in the per-page labels the field pass already takes, not in a new field on
+  `PaginatedLayout` (7 literals across two crates — the two-green-PRs-make-main-red
+  hazard). The engine refuses rather than deferring to the host because a host cannot
+  un-print a number the engine has already shaped into a glyph run.
 - **The paginator still runs**, cutting the galley into fixed-height **tiles**. It has
   to: `compose_page` rasterises one `Page` into one `Surface`, and a browser canvas
   maxes out near 32,767px, so "one tall page" works on a fixture and fails on a real
@@ -1558,18 +1588,37 @@ story, so a reading mode you must leave in order to type is not an answer.
 **Consequences.**
 
 - Entering or leaving reflow is O(document) — a full re-shape, because the galley
-  cache is width-scoped. It is a *mode change*, not an interaction: it goes through
-  the background/progress path, is cancellable, and is never driven straight off a
-  resize event. Resize must be quantised and debounced, or it is an O(document) pass
-  per animation frame on the slowest device we support.
+  cache is width-scoped. It is a *mode change*, not an interaction: it is never
+  driven straight off a resize event. Resize is **quantised to 16 CSS px, floored,
+  and debounced 150ms trailing** (`reflow_view.mjs`), which makes a resize inside
+  one bucket cost one division and no document work at all; the debounce only
+  bounds a drag that crosses buckets. **Not yet cancellable and shows no
+  progress** — `151` §8 item 6 carries that honestly rather than this line
+  claiming it.
 - A `PAGE` field and the page counter resolve against **tiles**, which are not pages.
   The shell shows neither in reflow rather than printing a number that is wrong.
-- Print and PDF export force `Paged` unconditionally.
+- Print forces `Paged` unconditionally, in `print.mjs`'s `withPagedLayout`, with
+  the restore in a `finally`. **PDF export needed no guard**: `export_as_inner`
+  takes `&self.document` and never reads `self.layout` or `self.layout_view`, so
+  the writer re-paginates from the document's own sections. That is this ADR's
+  "nothing on the export path" holding by construction — verified, not assumed.
 - A table too wide for the reflow width keeps a horizontal scroller **of its own** —
   Google's arbitration. That is the one horizontal scroll that survives, and it tells
   the reader something true about a table rather than something false about the page.
+- Entering or leaving reflow **discards the galley cache and rebuilds whole**, never
+  resuming a layout built in the other view: a reflow pass clears the break flags on
+  the galley it retains, and a paged rebuild served one of those fragments would
+  silently lose the author's page break.
+- **A windowed body is refused reflow, with the reason** — `151` §4.5 row 7 proposed a
+  windowed *variant* and that is wrong. A windowed body is already read-only (every
+  mutation is refused at `apply_group`), and reflow's defining promise is that the
+  document stays editable in it, so a variant would be a second thing with different
+  guarantees sold under the same name. Never a silent no-op: a toggle reading
+  "Reflow: on" over an unchanged, still-panning page is the worst outcome available.
 - **Open:** page- and margin-anchored drawings have no referent in reflow. Word keeps
-  them and lets them overlap, Docs inlines them. Undecided; `149` §8 records it.
+  them and lets them overlap, Docs inlines them. Undecided; `151` §8 item 1 records
+  it, and `LayoutView::approximations()` reports it to the host so a reader is told
+  rather than left to notice.
 
 ## ADR-047 — The collaboration relay orders and fans out; it holds no document and runs no transform
 

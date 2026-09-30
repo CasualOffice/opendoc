@@ -436,6 +436,7 @@ overridable
 pPr
 pageBreakBefore
 paginator
+paginators
 para
 parsers
 passthrough
@@ -451,6 +452,7 @@ preedit
 premultiplied
 preprocessing
 prev
+quantised
 quiesce
 rAF
 rPr

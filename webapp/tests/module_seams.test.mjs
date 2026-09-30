@@ -410,6 +410,16 @@ const PURE_MODULES = [
   // rather than reached through a crypto global: that would trip this guard, and it
   // would make a checksum MISMATCH undrivable without corrupting a real file.
   "proof_packs.mjs",
+  // Reflow's cost model (`docs/151` §6.2): which widths count as the same width,
+  // how long to wait before believing one, and when the engine will refuse. Those
+  // decide whether a resize is O(1) or O(document) in the reader's file, which is
+  // a `docs/107` §4 constraint and far too expensive a question to be answerable
+  // only in a browser against a stopwatch. Its timers are INJECTED for the same
+  // reason `proof_packs.mjs`'s digest is: reaching for `setTimeout` through a
+  // global would trip this guard, and it would make "sixty resize events cost
+  // nothing" undrivable without waiting on a wall clock. The DOM half is
+  // `reflow_chrome.mjs`.
+  "reflow_view.mjs",
   // The caption / cross-reference VOCABULARY: which "Insert reference to"
   // options a reference type offers, when Word offers "Include above/below",
   // and what a caption will read as. Word's own rules, with no widget attached,

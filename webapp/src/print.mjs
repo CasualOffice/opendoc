@@ -133,8 +133,60 @@ async function printViaPdf(doc) {
  */
 export async function printDocument(doc) {
   if (!doc) return;
-  if (await printViaPdf(doc)) return;
-  printViaRaster(doc);
+  await withPagedLayout(doc, async () => {
+    if (await printViaPdf(doc)) return;
+    printViaRaster(doc);
+  });
+}
+
+/**
+ * Runs `build` with the engine laid out on the document's own paper, whatever
+ * view the reader has on screen, and puts the view back afterwards.
+ *
+ * PAPER IS PAPER (`docs/151` §6.4, ADR-046). Reflow lays the body out at the
+ * reader's window width and cuts it into 11in TILES, which is the right answer
+ * for a phone and the wrong one for a printer: the sheets would come out at the
+ * width of somebody's browser, every tile boundary would fall mid-paragraph, and
+ * every header, footer, page border and watermark the author wrote would be
+ * missing, because reflow suppresses all four. That is not a rendering
+ * preference, it is a different document, so this is a correctness requirement
+ * rather than a nicety.
+ *
+ * It lives HERE, next to the two printers, rather than in the shell, because
+ * `printDocument` has two entry points already (`file.print` and the Print
+ * shortcut) and the PDF writer it prefers is the same one `file.export.pdf`
+ * uses. A rule enforced beside the thing it is a rule about cannot be forgotten
+ * by the next caller.
+ *
+ * COST, stated rather than hidden: switching the view is O(document) in each
+ * direction, because the galley cache is width-scoped. Printing is already the
+ * one path that touches every page at full resolution, so it is the one
+ * interaction where a whole re-shape is in proportion. The restore is in a
+ * `finally`, so a printer error or a dismissed dialog cannot strand the reader
+ * on paper they did not ask for.
+ *
+ * `setLayoutView` is a VIEW and issues no operation, so none of this touches the
+ * document, its revision, its undo history or its dirty state (ADR-046 §3.1).
+ */
+export async function withPagedLayout(doc, build) {
+  let restore = null;
+  try {
+    const view = JSON.parse(doc.layoutView ?? "{}");
+    if (view.reflow) {
+      restore = [view.contentWidthTwip, view.tileHeightTwip, view.gutterTwip];
+      doc.setLayoutView(0, 0, 0);
+    }
+  } catch {
+    // An engine with no layout-view seam at all, or one that refused: print what
+    // it is showing rather than not printing. Silent because the alternative is
+    // a message about an internal view parameter in front of a print dialog.
+    restore = null;
+  }
+  try {
+    await build();
+  } finally {
+    if (restore) doc.setLayoutView(...restore);
+  }
 }
 
 /** The 150-DPI page-image path. Fallback only — see `printDocument`. */
