@@ -531,6 +531,7 @@ teardown
 textbox
 tickable
 tombstoned
+tombstoning
 toolchain
 tooltip
 tooltips
