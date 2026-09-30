@@ -58,10 +58,12 @@ use casual_doc_io::{
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::document_layout::{
-    LayoutUpdate, document_page_config, paginate_document, paginate_document_view,
-    paginate_document_view_after_edit,
-};
+use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config, paginate_document};
+// Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
+use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
+use casual_doc_layout::document_layout::LayoutView;
+use casual_doc_layout::document_layout::paginate_document_after_edit_in;
+use casual_doc_layout::document_layout::paginate_document_in;
 use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
@@ -551,6 +553,12 @@ pub struct WasmDocument {
     /// `author`/`initials` arguments are omitted. Never serialized itself; only
     /// its `name`/`initials` strings flow into authored comments/revisions.
     active_author: Option<ActiveAuthor>,
+    /// Which geometry the body is laid out in — the document's own paper, or a
+    /// reflowed column of the host's width (ADR-046, `docs/151`). A **view**, not
+    /// an edit: it issues no `Operation`, bumps no revision, and the export path
+    /// cannot observe it, which is the whole point of not driving reflow through
+    /// `setPageSetup`.
+    layout_view: LayoutView,
     /// docs/108 phase 2 (HF-131). While `Some`, paragraph formatting applied through
     /// `apply_paragraph_props_as` or `apply_indent_props` is recorded as a tracked
     /// `w:pPrChange`, dated with the inner value. The host scopes it to ONE command
@@ -979,6 +987,93 @@ impl WasmDocument {
     #[must_use]
     pub fn showing_changes(&self) -> bool {
         self.markup_layout.is_some()
+    }
+
+    /// Lays the body out as a **reflowed column** of `content_width_twip` instead
+    /// of on the document's paper, cutting the result into tiles
+    /// `tile_height_twip` tall with `gutter_twip` of padding on each side
+    /// (ADR-046, `docs/151`). `contentWidthTwip <= 0` returns to `Paged`.
+    ///
+    /// A phone cannot show a 6.5in text column at 390px and stay readable, and
+    /// the two alternatives are a ~31% zoom (which `view_zoom.mjs` already
+    /// computes and refuses) or a sideways pan. This is the third answer. Pass
+    /// `0` for `tileHeightTwip` to take the engine's default (11in).
+    ///
+    /// **It is a view, never an edit.** No `Operation` is issued, the revision is
+    /// not bumped, nothing reaches the export path, and the document's own
+    /// `w:sectPr` is untouched. `setPageSetup` would produce a similar picture
+    /// today and must not be used for this: it would pollute undo, dirty
+    /// autosave, and persist a 390px-wide "page" into the user's DOCX.
+    ///
+    /// Returns a JSON object: `{ "reflow": bool, "approximations": [string] }`.
+    /// The approximations are **reported, not hidden** — a page- or
+    /// margin-anchored drawing keeps its paper-relative position (`docs/151` §8
+    /// item 1 is still open), a footnote lands at a tile bottom rather than a page
+    /// bottom, and a `PAGE`/`NUMPAGES` field prints a refusal because a tile index
+    /// is not a page number (`docs/151` §6.5).
+    ///
+    /// Complexity: `O(document)`. Entering or leaving reflow is a full re-shape —
+    /// the galley cache is width-scoped, so nothing in it survives a width change
+    /// — which makes this a **mode change, not an interaction**. A host must drive
+    /// it the way it drives an open (off the main thread where it can be,
+    /// cancellable, showing progress) and must never drive it straight off a
+    /// resize event: an un-quantised, un-debounced resize handler here is an
+    /// `O(document)` pass per animation frame on the slowest device we support
+    /// (`docs/151` §5).
+    ///
+    /// # Errors
+    ///
+    /// Throws, rather than silently doing nothing, for:
+    ///
+    /// - geometry that is not a reading column (a column under 1in or over 22in, a
+    ///   tile under 2in or over 33in, a gutter that is negative or wider than the
+    ///   column it pads). The bounds catch an unconverted CSS pixel value — 390
+    ///   twips is a quarter of an inch — and an inverted argument order, at the
+    ///   seam rather than in a layout nobody can read;
+    /// - a document laid out one page-window at a time. Reflow's defining promise
+    ///   is that the document stays EDITABLE in it, which is where we diverge from
+    ///   ONLYOFFICE's read-only reader mode — and a windowed body is already
+    ///   read-only (`apply_group` refuses every mutation on one). So reflow cannot
+    ///   keep its promise there, and `docs/151` §4.5 row 7's "make it a windowed
+    ///   variant" is answered as an honest refusal instead.
+    #[wasm_bindgen(js_name = setLayoutView)]
+    pub fn set_layout_view(
+        &mut self,
+        content_width_twip: i32,
+        tile_height_twip: i32,
+        gutter_twip: i32,
+    ) -> Result<String, JsValue> {
+        self.set_layout_view_inner(content_width_twip, tile_height_twip, gutter_twip)
+            .map_err(to_js)
+    }
+
+    /// The current layout view as JSON — `{ "reflow": bool, "contentWidthTwip":
+    /// n|null, "tileHeightTwip": n|null, "gutterTwip": n|null, "approximations":
+    /// [string] }` — so a host can render its own toggle state from the engine
+    /// rather than from a shadow copy that can drift out of step with it.
+    #[wasm_bindgen(getter, js_name = layoutView)]
+    #[must_use]
+    pub fn layout_view(&self) -> String {
+        let (width, height, gutter) = match self.layout_view {
+            LayoutView::Paged => (None, None, None),
+            LayoutView::Reflow {
+                content_width,
+                tile_height,
+                gutter,
+            } => (
+                Some(content_width.raw()),
+                Some(tile_height.raw()),
+                Some(gutter.raw()),
+            ),
+        };
+        serde_json::to_string(&LayoutViewJson {
+            reflow: self.layout_view.is_reflow(),
+            content_width_twip: width,
+            tile_height_twip: height,
+            gutter_twip: gutter,
+            approximations: self.layout_view.approximations(),
+        })
+        .unwrap_or_else(|_| "{\"reflow\":false,\"approximations\":[]}".to_owned())
     }
 
     /// Why this document cannot be edited, or the empty string when it can be.
@@ -8227,6 +8322,21 @@ impl WasmDocument {
             return Ok(self.ruler_geometry_of_config());
         }
         let page = self.render_page_of(index)?;
+        // Under reflow the section describes paper this layout is not on, so
+        // reading it here would report a 12,240-twip page with 1,440-twip margins
+        // for a 6,120-twip tile — and the ruler would be wrong rather than absent.
+        // `docs/151` §6.4 hides the ruler in reflow because there are no page
+        // margins to drag; until the shell does, the honest answer is the tile's.
+        if self.layout_view.is_reflow() {
+            return Ok(RulerGeometry {
+                width_twip: page.page_size.width.raw(),
+                margin_start_twip: page.content_area.origin.x.raw(),
+                margin_end_twip: (page.page_size.width
+                    - page.content_area.origin.x
+                    - page.content_area.size.width)
+                    .raw(),
+            });
+        }
         let section = page.section;
         Ok(self
             .document
@@ -12740,9 +12850,92 @@ impl WasmDocument {
         if on && self.layout.is_windowed() {
             return Err(windowed_not_available("The show-changes preview"));
         }
-        self.markup_layout =
-            on.then(|| paginate_document_view(&self.document, &self.shaper, ReviewView::Markup));
+        self.markup_layout = on.then(|| {
+            paginate_document_in(
+                &self.document,
+                &self.shaper,
+                ReviewView::Markup,
+                self.layout_view,
+            )
+        });
         Ok(())
+    }
+
+    /// See [`WasmDocument::set_layout_view`]. Split out so native tests take the
+    /// same path as the `#[wasm_bindgen]` boundary.
+    fn set_layout_view_inner(
+        &mut self,
+        content_width_twip: i32,
+        tile_height_twip: i32,
+        gutter_twip: i32,
+    ) -> Result<String, String> {
+        let requested = if content_width_twip <= 0 {
+            LayoutView::Paged
+        } else {
+            let tile = if tile_height_twip <= 0 {
+                DEFAULT_TILE_HEIGHT
+            } else {
+                Twip(tile_height_twip)
+            };
+            LayoutView::reflow(Twip(content_width_twip), tile, Twip(gutter_twip))
+                .map_err(|refused| refused.reason())?
+        };
+        // A windowed body is already read-only, so reflow cannot keep its own
+        // promise there. Refused with the reason, never a silent no-op: a host
+        // whose toggle read "Reflow: on" over an unchanged 794px-wide page would
+        // be lying about the one thing the reader can see.
+        if requested.is_reflow() && self.layout.is_windowed() {
+            return Err(windowed_not_available("Reflow"));
+        }
+        if requested == self.layout_view {
+            // Idempotent, and cheap: no re-shape for a host that calls this on
+            // every render with the width it already passed.
+            return Ok(self.layout_view());
+        }
+        self.layout_view = requested;
+        // The galley cache MUST go, for two independent reasons, and neither is an
+        // optimisation:
+        //
+        // - its entries are scoped to the width they were shaped at, so nothing in
+        //   it describes the new measure;
+        // - a reflow pass CLEARS the page-shaped break flags on the galley it
+        //   retains, so a paged rebuild served one of those fragments would
+        //   silently lose the author's `w:pageBreakBefore`.
+        //
+        // The width scoping in `GalleyCache::begin_build` already covers the second
+        // reason for every width EXCEPT one: a host asking for a column exactly as
+        // wide as the document's own text measure (an embedding frame, a tablet, a
+        // "reflow at the current measure" toggle) changes no width, so nothing there
+        // fires. That hole is what this line closes, and it is stated here because
+        // no test in this repository can demonstrate it: the galley-reuse fast path
+        // is gated behind `!cfg!(debug_assertions)` in `build_galley_cached`, so a
+        // debug build always re-derives the fragment and a release-only defect
+        // cannot be reproduced by `cargo test`. Recorded rather than hidden.
+        //
+        // And the layout is rebuilt WHOLE rather than resumed: a layout built in
+        // the other view has different geometry and different break decisions on
+        // every page, so offering it as a resume baseline would splice pages laid
+        // out to rules that no longer apply.
+        self.galley_cache = GalleyCache::new();
+        self.layout = BodyLayout::Whole(paginate_document_in(
+            &self.document,
+            &self.shaper,
+            ReviewView::Editing,
+            self.layout_view,
+        ));
+        if self.markup_layout.is_some() {
+            self.markup_layout = Some(paginate_document_in(
+                &self.document,
+                &self.shaper,
+                ReviewView::Markup,
+                self.layout_view,
+            ));
+        }
+        // A re-layout is a view change, not a document change: bump the view epoch
+        // the host re-rasters on, and leave `log.head()` — the DOCUMENT revision —
+        // exactly where it was.
+        self.revision += 1;
+        Ok(self.layout_view())
     }
 
     /// See [`WasmDocument::page_size`].
@@ -12840,14 +13033,20 @@ impl WasmDocument {
             self.layout.remeasure(&self.document, &self.shaper);
             return;
         }
-        self.layout = BodyLayout::Whole(paginate_document(&self.document, &self.shaper));
+        self.layout = BodyLayout::Whole(paginate_document_in(
+            &self.document,
+            &self.shaper,
+            ReviewView::Editing,
+            self.layout_view,
+        ));
         // A new face re-shapes the markup view as much as the editing one, and
         // the markup view is what is on screen while it exists.
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_view(
+            self.markup_layout = Some(paginate_document_in(
                 &self.document,
                 &self.shaper,
                 ReviewView::Markup,
+                self.layout_view,
             ));
         }
     }
@@ -13457,13 +13656,14 @@ impl WasmDocument {
         // edit rather than to the document (`docs/107` B1, `109` HF-182). With a
         // damage set that is not complete this still produces the identical
         // layout, by re-deriving and re-hashing every paragraph.
-        let update = paginate_document_view_after_edit(
+        let update = paginate_document_after_edit_in(
             &self.document,
             &self.shaper,
             &mut self.galley_cache,
             damage,
             ReviewView::Editing,
             previous,
+            self.layout_view,
         );
         // Dirty pages — and the page count the host compares against — must be
         // measured on the layout the RENDERER reads. While "show changes" is on
@@ -13483,13 +13683,14 @@ impl WasmDocument {
                 // per keystroke against the editing path's 2.5 ms on a 28-page
                 // document — a dropped frame from layout alone, paid by
                 // exactly the users the review features are for.
-                let markup = paginate_document_view_after_edit(
+                let markup = paginate_document_after_edit_in(
                     &self.document,
                     &self.shaper,
                     &mut self.galley_cache,
                     damage,
                     ReviewView::Markup,
                     Some(previous),
+                    self.layout_view,
                 );
                 let dirty = pages_to_repaint(&markup);
                 self.markup_layout = Some(markup.layout);
@@ -14947,6 +15148,14 @@ impl WasmDocument {
     /// The page box (width/height) for a page, from its own section geometry,
     /// falling back to the first-section config when the section id is unknown.
     fn page_box(&self, page: &Page) -> Size {
+        // A reflow tile's box is synthetic (`reflow_page_config`) and NO section
+        // describes it, so the page carries the only true answer. This is the one
+        // place that mattered: `page_size` and `render_page` both size themselves
+        // from here, so without this arm a reflowed tile would be measured — and
+        // rasterised — at Letter size, and every tile would be trimmed for nothing.
+        if self.layout_view.is_reflow() {
+            return page.page_size;
+        }
         self.document
             .definitions()
             .sections
@@ -15048,6 +15257,32 @@ impl WasmDocument {
 /// bridge payload, not a new engine type — so `copyRichRuns` and
 /// `pasteRichRuns` share exactly this shape with no separate wasm-bindgen
 /// struct to keep in sync. Field names match [`FormatDelta`]'s vocabulary.
+/// The bridge payload for [`layout_view`](WasmDocument::layout_view) and
+/// [`set_layout_view`](WasmDocument::set_layout_view) — which geometry the body is
+/// laid out in, and what that view knowingly approximates.
+///
+/// `approximations` is the part that is easy to leave out and must not be: each
+/// entry is something a reader can SEE, so a host that shows a reflow toggle has
+/// the sentences it needs rather than a boolean and a surprise.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LayoutViewJson {
+    /// Whether the body is reflowed (`false` = the document's own paper).
+    reflow: bool,
+    /// The reflow column width in twips; `null` under `Paged`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_width_twip: Option<i32>,
+    /// The tile height in twips; `null` under `Paged`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tile_height_twip: Option<i32>,
+    /// The side gutter in twips; `null` under `Paged`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gutter_twip: Option<i32>,
+    /// What this view approximates, as sentences a host can show. Empty under
+    /// `Paged`.
+    approximations: Vec<String>,
+}
+
 /// The "Page Setup" dialog's bridge payload — crosses the JS boundary as
 /// JSON, mirrors [`page_setup`](WasmDocument::page_setup)/
 /// [`set_page_setup`](WasmDocument::set_page_setup). `section` is the
@@ -23684,6 +23919,7 @@ fn open_document_bounded(
         checklist_checked: None,
         active_author: None,
         paragraph_tracking: None,
+        layout_view: LayoutView::Paged,
     })
 }
 
@@ -27732,6 +27968,389 @@ mod tests {
 
     // ---- docs/113 §8: a viewer that holds a window, not every page ----------
 
+    // ---- ADR-046 / docs/151: reflow is a view the host sets, never an edit ----
+
+    /// A reflow column and tile that a phone would plausibly ask for: a 390px
+    /// viewport less its gutters, in twips (390px at 96dpi is 5,850 twips).
+    const PHONE_COLUMN: i32 = 5_400;
+    const PHONE_TILE: i32 = 2_880;
+    const PHONE_GUTTER: i32 = 360;
+
+    /// Turning reflow on re-lays the body at the host's width and reports what it
+    /// approximates; turning it off restores the document's own paper exactly.
+    ///
+    /// The last clause is the one worth having: the round trip has to be lossless,
+    /// or a reader who tried reflow once would be left with a subtly different
+    /// document afterwards.
+    #[test]
+    fn setting_and_clearing_the_reflow_view_round_trips_to_the_same_paged_layout() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let paged_pages = doc.page_count();
+        let paged_first = doc.page_size_inner(0).expect("page 0 has a size");
+        assert!(
+            paged_first.width_twip > PHONE_COLUMN * 2,
+            "the fixture is on paper wider than the phone column"
+        );
+
+        let reported = doc
+            .set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a 3.75in column in a 2in tile is a reading column");
+        let view: LayoutViewJson = serde_json::from_str(&reported).expect("the view serializes");
+        assert!(view.reflow);
+        assert_eq!(view.content_width_twip, Some(PHONE_COLUMN));
+        assert_eq!(view.tile_height_twip, Some(PHONE_TILE));
+        assert_eq!(view.gutter_twip, Some(PHONE_GUTTER));
+        assert_eq!(
+            view.approximations.len(),
+            3,
+            "the known approximations are reported, not hidden: {:?}",
+            view.approximations
+        );
+
+        // The tile, not the paper — and this is the assertion that would have
+        // caught `page_box` reading the section: a host sizes every wrapper from
+        // `pageSize`, so a tile reported at Letter size is a Letter-sized blank
+        // sheet with a narrow column of text in it.
+        let tile = doc.page_size_inner(0).expect("tile 0 has a size");
+        assert_eq!(tile.width_twip, PHONE_COLUMN + 2 * PHONE_GUTTER);
+        assert!(
+            tile.height_twip <= PHONE_TILE,
+            "tile 0 is {} twips tall against a {PHONE_TILE}-twip tile — it was not trimmed",
+            tile.height_twip
+        );
+        assert!(
+            doc.page_count() > paged_pages,
+            "a 2in tile makes more tiles ({}) than the paper made pages ({paged_pages})",
+            doc.page_count()
+        );
+
+        // The ruler reports the tile it is on, not paper this layout is not using.
+        let ruler = doc
+            .page_ruler_geometry_inner(0)
+            .expect("tile 0 has a ruler");
+        assert_eq!(ruler.width_twip, PHONE_COLUMN + 2 * PHONE_GUTTER);
+        assert_eq!(ruler.margin_start_twip, PHONE_GUTTER);
+        assert_eq!(ruler.margin_end_twip, PHONE_GUTTER);
+
+        // Back to paper, exactly.
+        let back = doc
+            .set_layout_view_inner(0, 0, 0)
+            .expect("clearing the view always succeeds");
+        let back: LayoutViewJson = serde_json::from_str(&back).expect("the view serializes");
+        assert!(!back.reflow);
+        assert!(back.approximations.is_empty());
+        assert_eq!(doc.page_count(), paged_pages);
+        assert_eq!(
+            doc.page_size_inner(0)
+                .expect("page 0 has a size")
+                .width_twip,
+            paged_first.width_twip
+        );
+    }
+
+    /// Reflow is a VIEW: it issues no operation, so the document revision — the
+    /// history head every replay and every export decision reads — does not move,
+    /// and the retained source stays byte-identical.
+    ///
+    /// This is ADR-046 §3.1 made into a test. `setPageSetup` would produce a
+    /// similar picture today by issuing a real section-geometry mutation, and doing
+    /// it that way would persist a 390px-wide "page" into the user's DOCX.
+    #[test]
+    fn setting_the_reflow_view_issues_no_operation_and_moves_no_document_revision() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let history_before = doc.log.head();
+        let setup_before = doc.page_setup();
+
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+
+        assert_eq!(
+            doc.log.head(),
+            history_before,
+            "reflow advanced the DOCUMENT revision, so it committed a transaction"
+        );
+        assert!(!doc.can_undo(), "reflow put something on the undo stack");
+        assert_eq!(
+            doc.page_setup(),
+            setup_before,
+            "reflow rewrote the section geometry, which a save would persist"
+        );
+        // The VIEW epoch does move, because the host has to re-raster.
+        assert!(doc.revision > 0, "the host was not told to re-raster");
+    }
+
+    /// Geometry that is not a reading column is refused with a sentence naming the
+    /// value and the bound, never silently substituted and never a silent no-op.
+    #[test]
+    fn a_reflow_view_that_is_not_a_reading_column_is_refused_with_its_reason() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let paged = doc.page_count();
+
+        // An unconverted CSS pixel value — the mistake the lower bound exists for.
+        let reason = doc
+            .set_layout_view_inner(390, PHONE_TILE, PHONE_GUTTER)
+            .expect_err("390 twips is a quarter of an inch");
+        assert!(reason.contains("390"), "{reason}");
+        assert!(reason.contains("1440"), "{reason}");
+        // And the refusal changed nothing.
+        assert_eq!(doc.page_count(), paged);
+        let view: LayoutViewJson =
+            serde_json::from_str(&doc.layout_view()).expect("the view serializes");
+        assert!(!view.reflow, "a refused view was applied anyway");
+
+        for (width, tile, gutter, needle) in [
+            (50_000, PHONE_TILE, PHONE_GUTTER, "22in"),
+            (PHONE_COLUMN, 1_000, PHONE_GUTTER, "2in"),
+            (PHONE_COLUMN, 60_000, PHONE_GUTTER, "canvas"),
+            (PHONE_COLUMN, PHONE_TILE, -1, "gutter"),
+        ] {
+            let reason = doc
+                .set_layout_view_inner(width, tile, gutter)
+                .expect_err("out-of-range geometry is refused");
+            assert!(
+                reason.contains(needle),
+                "{reason} does not mention {needle}"
+            );
+        }
+    }
+
+    /// A tile height of zero takes the engine's default rather than being refused,
+    /// so a host that has no opinion about rasterisation does not have to invent
+    /// one.
+    #[test]
+    fn a_zero_tile_height_takes_the_engine_default() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let reported = doc
+            .set_layout_view_inner(PHONE_COLUMN, 0, PHONE_GUTTER)
+            .expect("a zero tile height is a request for the default");
+        let view: LayoutViewJson = serde_json::from_str(&reported).expect("the view serializes");
+        assert_eq!(view.tile_height_twip, Some(DEFAULT_TILE_HEIGHT.raw()));
+    }
+
+    /// The break suspension never leaks out of reflow: a document that declares a
+    /// `w:pageBreakBefore` keeps the page that break creates, across a reflow round
+    /// trip and across typing in both views.
+    ///
+    /// Reflow clears the page-shaped break flags on the galley, and a leak of that
+    /// into a paged layout is the worst-shaped defect in this increment: the
+    /// document would silently re-paginate with every author page break gone, no
+    /// operation would have caused it, and undo could not reverse it.
+    ///
+    /// The reflow column here is the document's OWN text measure rather than a
+    /// phone width, deliberately: the galley cache is width-scoped, so at any other
+    /// width its own guard would stand in for this one and the test would pass
+    /// whatever the code did. This is the width where nothing else is protecting
+    /// the round trip.
+    ///
+    /// MUTATION PROOF: making the driver's `push_section_run` suspend in every view
+    /// rather than only under reflow fails this with `the fixture must gain a page
+    /// from the break (11 -> 11)`.
+    ///
+    /// NOT proven here, and said plainly rather than implied: the *other* half of
+    /// the hazard — a retained galley of suspended fragments being moved into the
+    /// next build — cannot be reproduced by any test in this repository, because
+    /// that reuse path is gated behind `!cfg!(debug_assertions)` in
+    /// `casual-doc-layout`'s `build_galley_cached`; a debug build always re-derives
+    /// the fragment and verifies its hash. The explicit `galley_cache` reset in
+    /// `set_layout_view_inner` is therefore defence whose justification is the code
+    /// path, not a red test, and it is documented there as such.
+    #[test]
+    fn the_break_suspension_never_leaks_out_of_reflow() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        // The one width at which the cache's own scoping does not save us.
+        let paper_column = doc.default_config.content_area().size.width.raw();
+        let paragraphs: Vec<String> = doc
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                    Some(paragraph.id.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let target = paragraphs.first().expect("a body paragraph").clone();
+        let broken = paragraphs.get(1).expect("a second body paragraph").clone();
+
+        // The document must actually DECLARE a page break, or losing the break
+        // flags would change nothing and this guard would prove nothing.
+        let flat = doc.page_count();
+        doc.set_page_break_before(&broken, 0, &broken, 0, true)
+            .expect("force a page break before the second paragraph");
+        let paged_pages = doc.page_count();
+        assert!(
+            paged_pages > flat,
+            "the fixture must gain a page from the break ({flat} -> {paged_pages})"
+        );
+
+        // A keystroke on paper, so the cache is warm with an UNsuspended galley.
+        doc.insert_text(&target, 0, "a".to_owned()).expect("type");
+        assert_eq!(
+            doc.page_count(),
+            paged_pages,
+            "typing changed the page count"
+        );
+
+        doc.set_layout_view_inner(paper_column, PHONE_TILE, 0)
+            .expect("a column the width of the document's own text measure");
+        // A keystroke IN reflow, which is what retains a SUSPENDED galley.
+        doc.insert_text(&target, 0, "b".to_owned())
+            .expect("type in reflow");
+        doc.set_layout_view_inner(0, 0, 0).expect("back to paper");
+        doc.insert_text(&target, 0, "c".to_owned())
+            .expect("type after returning to paper");
+
+        assert_eq!(
+            doc.page_count(),
+            paged_pages,
+            "typing after leaving reflow lost the document's page break — the suspended galley \
+             was reused across the view change"
+        );
+        assert!(
+            doc.paragraph_flags(&broken).page_break_before(),
+            "the MODEL still declares the break, so the layout losing it is a layout bug"
+        );
+    }
+
+    /// A windowed body is REFUSED reflow, with the reason, rather than given a
+    /// reflow it cannot keep the promise of.
+    ///
+    /// Reflow's defining difference from ONLYOFFICE's reader mode is that the
+    /// document stays editable in it. A windowed body is already read-only — every
+    /// mutation is refused at `apply_group` — so that promise cannot hold there,
+    /// and `docs/151` §4.5 row 7's "make it a windowed variant" is answered as an
+    /// honest refusal. A silent no-op would be the worst outcome: the host's toggle
+    /// would read "Reflow: on" over an unchanged, still-panning page.
+    #[test]
+    fn a_windowed_document_is_refused_reflow_with_the_reason() {
+        let mut doc = open_windowed(600);
+        let tiles_before = doc.page_count();
+
+        let reason = doc
+            .set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect_err("a windowed body cannot be reflowed");
+        assert_eq!(reason, windowed_not_available("Reflow"));
+        assert!(
+            reason.contains(&thousands(MAX_WHOLE_LAYOUT_BLOCKS)),
+            "the refusal names the limit it is about: {reason}"
+        );
+        assert!(
+            doc.layout.is_windowed() && doc.page_count() == tiles_before,
+            "a refused reflow changed the layout anyway"
+        );
+        let view: LayoutViewJson =
+            serde_json::from_str(&doc.layout_view()).expect("the view serializes");
+        assert!(!view.reflow, "the getter reported a view that was refused");
+
+        // And clearing the view is still allowed, so a host that persists the
+        // preference and reopens a large document is not stuck on an error.
+        doc.set_layout_view_inner(0, 0, 0)
+            .expect("returning to paper is always available");
+    }
+
+    /// Typing in reflow keeps the reflow geometry, and the caret lands where the
+    /// text went. The regression this pins is the one that would make reflow look
+    /// like it worked and then silently revert on the first keystroke.
+    #[test]
+    fn typing_in_reflow_stays_in_reflow() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+        let width = doc
+            .page_size_inner(0)
+            .expect("tile 0 has a size")
+            .width_twip;
+
+        let target = doc
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                    Some(paragraph.id.to_string())
+                }
+                _ => None,
+            })
+            .expect("a body paragraph");
+        doc.insert_text(&target, 0, "z".to_owned())
+            .expect("typing into the first body paragraph");
+
+        assert_eq!(
+            doc.page_size_inner(0)
+                .expect("tile 0 still has a size")
+                .width_twip,
+            width,
+            "a keystroke reverted the layout to paper"
+        );
+        let view: LayoutViewJson =
+            serde_json::from_str(&doc.layout_view()).expect("the view serializes");
+        assert!(view.reflow, "a keystroke cleared the reflow view");
+    }
+
+    /// Setting the view a second time with the same geometry is idempotent and
+    /// costs nothing, because a host calls this on every render with the width it
+    /// already passed — and an O(document) re-shape per frame is the trap
+    /// `docs/151` §5 names.
+    #[test]
+    fn setting_the_same_reflow_view_twice_re_lays_out_nothing() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+        let revision = doc.revision;
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("the same reading column");
+        assert_eq!(
+            doc.revision, revision,
+            "an unchanged view re-laid the document out and told the host to re-raster"
+        );
+    }
+
+    /// Every tile a reflow layout hands a host is reported at, and rasterised at,
+    /// the size the ENGINE laid it out at.
+    ///
+    /// The comparison is deliberately against `Page::page_size` — the layout's own
+    /// number — rather than between `pageSize` and `renderPage`, because both of
+    /// those read `page_box` and would agree with each other while both reported
+    /// the paper. That is the mistake this arm exists for: a host builds one
+    /// wrapper per page and sizes it from `pageSize`, and `renderPage` allocates
+    /// its surface the same way, so a tile measured as Letter is a Letter-sized
+    /// blank sheet with a narrow column of text at the top of it.
+    #[test]
+    fn every_reflow_tile_is_reported_and_rasterised_at_the_size_the_engine_laid_it_out_at() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+        let tiles = doc.page_count();
+        assert!(tiles > 1, "the fixture makes more than one tile");
+
+        for index in 0..tiles {
+            let laid_out = doc
+                .render_page_of(index)
+                .unwrap_or_else(|e| panic!("tile {index} exists: {e}"))
+                .page_size;
+            let reported = doc
+                .page_size_inner(index)
+                .unwrap_or_else(|e| panic!("tile {index} has a size: {e}"));
+            assert_eq!(
+                (reported.width_twip, reported.height_twip),
+                (laid_out.width.raw(), laid_out.height.raw()),
+                "tile {index} was reported at a different size than it was laid out at"
+            );
+            let bitmap = doc
+                .render_page_inner(index, 96.0)
+                .unwrap_or_else(|e| panic!("tile {index} rasterises: {e}"));
+            assert_eq!(
+                (bitmap.width_px, bitmap.height_px),
+                (
+                    laid_out.width.to_device_px(96.0).ceil() as u32,
+                    laid_out.height.to_device_px(96.0).ceil() as u32
+                ),
+                "tile {index} rasterised at a different size than it was laid out at"
+            );
+        }
+    }
+
     /// The whole-layout ceiling a windowing test runs at. Small enough that a
     /// few hundred paragraphs reach the windowed path, so the same document can
     /// also be opened whole and the two compared.
@@ -31437,6 +32056,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
         let node = paragraph.to_string();
 
@@ -31881,6 +32501,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
         let node = paragraph.to_string();
 
@@ -32180,6 +32801,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
 
         let summary: serde_json::Value =
@@ -36034,6 +36656,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         }
     }
 
@@ -38091,6 +38714,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
         (handle, source_id, target_id)
     }
