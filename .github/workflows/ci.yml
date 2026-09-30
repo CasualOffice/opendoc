@@ -190,9 +190,31 @@ jobs:
       - name: Check WASM-compatible foundation
         run: cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
 
+  # Sharded across four runners rather than crowded onto one.
+  #
+  # The suite is ~1,275 tests and was taking 39-55 minutes on a single runner,
+  # which made it the long pole on every merge: a red `main` could not be
+  # confirmed fixed for the better part of an hour, and a queued run held the
+  # concurrency slot for everything behind it.
+  #
+  # Sharding, NOT raising `--workers`. Playwright defaults to half the runner's
+  # cores (2 of 4 here), and this suite has a documented set of specs that fail
+  # under worker contention on a clean tree — `context-menu`,
+  # `header-footer-editing`, `object-command-reach`, `table-editing-ux`. Packing
+  # more workers onto one runner would buy wall-clock by making those flakier,
+  # which trades a slow honest gate for a fast unreliable one. Four shards each
+  # keep the same per-runner concurrency and simply run a quarter of the tests.
+  #
+  # `fail-fast: false` so one shard's failure still lets the others report; a
+  # partial picture is exactly how a second, unrelated failure gets missed.
   browser-smoke:
-    name: browser-smoke
+    name: browser-smoke (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -220,15 +242,19 @@ jobs:
         run: npm ci --prefix webapp
       - name: Install Playwright Chromium
         run: npx --prefix webapp playwright install --with-deps chromium
+      # Only the first shard runs the unit suite: it is the same suite on every
+      # shard and takes the same time, so running it four times buys nothing.
       - name: Run webapp unit tests
+        if: matrix.shard == 1
         run: npm run --prefix webapp test:unit
       - name: Run browser smoke suite
-        run: npm run --prefix webapp test:e2e
+        run: npx playwright test --shard=${{ matrix.shard }}/4
+        working-directory: webapp
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report
+          name: playwright-report-shard-${{ matrix.shard }}
           path: webapp/playwright-report/
           retention-days: 7
 
