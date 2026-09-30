@@ -169,6 +169,7 @@
         </table>
         </div>
         <p class="doc-body">Cancellation is an expected non-fatal error, not a warning or panic.</p>
+        <p class="doc-body"><strong>Severity is a property of the code; terminality is a property of the message carrying it.</strong> The <code>ODC-7xxx</code> collaboration family makes that visible: the same code can arrive in a message that ends the session or in one the connection survives, and <code>casual_doc_transaction::protocol::Refusal</code> answers <code>is_terminal</code> and <code>is_retryable</code> separately for exactly that reason. Collapsing the two is how a client comes to retry something it must never send again. See <code>152</code> §5.6.</p>
         <h2 class="doc-h2" id="initial-registry">Initial Registry</h2>
         <div class="doc-table-scroll">
         <table class="doc-table">
@@ -305,7 +306,55 @@
         <td><code>ODC-7001</code></td>
         <td><code>collaboration_conflict</code></td>
         <td>error</td>
-        <td>A remote operation cannot be safely applied or rebased.</td>
+        <td>A remote operation cannot be safely applied or rebased. <em>That one action did not take; redo it.</em></td>
+        </tr>
+        <tr>
+        <td><code>ODC-7002</code></td>
+        <td><code>collaboration_protocol_version</code></td>
+        <td>fatal</td>
+        <td>The two ends do not speak the same protocol version. Terminal, and <strong>never retried</strong> — a client that retries a version mismatch loops for ever.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7003</code></td>
+        <td><code>collaboration_not_authorised</code></td>
+        <td>fatal</td>
+        <td>The session is not authorised. Deliberately undetailed: detail is useful to an operator in a log and useful to an attacker in a response.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7004</code></td>
+        <td><code>collaboration_read_only</code></td>
+        <td>error</td>
+        <td>This participant may read but not write. Enforced at the operation, not by hiding a control.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7005</code></td>
+        <td><code>collaboration_not_saving</code></td>
+        <td>error</td>
+        <td>The ordered session cannot persist work. <em>Copy it out.</em> Distinct from <code>ODC-7001</code> because the two ask the user for opposite things.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7006</code></td>
+        <td><code>collaboration_too_far_behind</code></td>
+        <td>error</td>
+        <td>The participant is behind the retained history and cannot be caught up by replay. Work it had not had acknowledged is lost, and saying so is the point of the code.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7007</code></td>
+        <td><code>collaboration_malformed</code></td>
+        <td>error</td>
+        <td>The message could not be read. The sender must <strong>not</strong> send the same bytes again.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7008</code></td>
+        <td><code>collaboration_id_collision</code></td>
+        <td>error</td>
+        <td>An arriving operation introduces an identity this replica already holds, or one minted outside the sender's own identity space. Refused rather than applied, because applying it overwrites a node somebody else minted.</td>
+        </tr>
+        <tr>
+        <td><code>ODC-7009</code></td>
+        <td><code>collaboration_stale_base</code></td>
+        <td>error</td>
+        <td>The submission was written against an ordered position the document has moved past. Nothing is lost: the client rebases it and resubmits with the same sequence number.</td>
         </tr>
         <tr>
         <td><code>ODC-8001</code></td>

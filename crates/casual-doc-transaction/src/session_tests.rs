@@ -300,6 +300,74 @@ fn the_three_refusals_that_ask_for_opposite_things_are_three_codes() {
     assert!(Refusal::NotSaving.is_terminal());
 }
 
+#[test]
+fn every_refusal_code_has_a_row_in_the_register() {
+    // `docs/20`: "Error codes are never recycled. Message wording may improve without a
+    // breaking release, but code meaning may not." A code the register does not list is a
+    // string a host cannot look up, and an `ODC-7xxx` row no variant carries is a code a
+    // host can look up and never receive. Both directions are checked, because drift is
+    // silent in both.
+    //
+    // The pairing is enum <-> register, and it is deliberately NOT a reachability claim:
+    // `NotAuthorised` and `ReadOnlyAccess` have rows and variants but no sender in this
+    // crate, because no host-signed grant is built here (`152` §9). They are wire surface a
+    // host fills in. "This code is documented" and "this code is emitted" are different
+    // claims, and this guard makes only the first.
+    let register = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("docs")
+            .join("20-ERROR-CODE-REGISTRY.md"),
+    )
+    .expect("the error code register is readable");
+
+    // Every refusal this crate can send, by construction rather than by a list someone
+    // maintains: one of each variant, so adding a variant without a code fails to compile and
+    // adding one without a register row fails here.
+    let every: [Refusal; 9] = [
+        Refusal::ProtocolVersion {
+            server: 1,
+            client: 2,
+        },
+        Refusal::NotAuthorised,
+        Refusal::ReadOnlyAccess,
+        Refusal::NotSaving,
+        Refusal::TooFarBehind {
+            oldest: Revision::new(0),
+            current: Revision::new(1),
+        },
+        Refusal::StaleBase {
+            current: Revision::new(1),
+        },
+        Refusal::CannotMerge,
+        Refusal::IdCollision,
+        Refusal::Malformed,
+    ];
+    let mut codes = std::collections::BTreeSet::new();
+    for refusal in every {
+        let code = refusal.code();
+        assert!(
+            codes.insert(code),
+            "{refusal:?} shares code {code} with another refusal that asks for something else"
+        );
+        assert!(
+            register.contains(&format!("`{code}`")),
+            "{refusal:?} sends {code}, which docs/20 does not list"
+        );
+    }
+    // And the other direction: the register lists no collaboration code nothing sends.
+    for line in register.lines() {
+        if let Some(rest) = line.split_once("| `ODC-7").map(|(_, rest)| rest) {
+            let code = format!("ODC-7{}", &rest[..3]);
+            assert!(
+                codes.contains(code.as_str()),
+                "docs/20 lists {code}, which no refusal in this crate sends"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // The identity discipline — doc 152 §4
 // ---------------------------------------------------------------------------------------
@@ -491,6 +559,56 @@ fn a_replica_with_nothing_pending_does_not_roll_back() {
     assert_eq!(receiver.log.horizon(), receiver.log.head());
     assert_eq!(receiver.log.unordered_commits(), 0);
     assert!(plain_text(&receiver.document).starts_with("Zabcdefgh"));
+}
+
+#[test]
+fn a_replica_never_sends_back_an_operation_it_received() {
+    // A remote chunk becomes a commit in this replica's own log — that is the whole point of
+    // it going down `RevisionLog::apply`, the same path a keystroke takes. So "everything in
+    // the log this client has not sent yet" is **not** the right set to flush: it includes
+    // somebody else's edit, which would be echoed back under this client's own sequence
+    // number and applied twice by everyone.
+    //
+    // The floor is therefore the horizon as well as the flush mark. Found by reading `flush`
+    // rather than by a failing test, which is exactly the kind of bug that ships green.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    // Grace has nothing of her own in flight: the uncontended path.
+    ada.edit(
+        "Typing",
+        vec![Operation::InsertText {
+            at: Pos::new(paragraphs[0], 0),
+            text: "A".to_owned(),
+        }],
+    );
+    let fanned = ada.exchange(&mut server);
+    let reception = grace.receive(&fanned[0]).expect("the arrival merges");
+    assert_eq!(reception.replayed, 0);
+
+    assert!(
+        grace.session.flush(&grace.log).is_none(),
+        "this replica offered somebody else's operation as its own work"
+    );
+    // And an edit of her own afterwards carries only her own operation.
+    grace.edit(
+        "Typing",
+        vec![Operation::InsertText {
+            at: Pos::new(paragraphs[1], 0),
+            text: "G".to_owned(),
+        }],
+    );
+    let submission = grace.session.flush(&grace.log).expect("her own work");
+    assert_eq!(submission.operations.len(), 1);
+    assert_eq!(
+        submission.operations[0].operation(),
+        &Operation::InsertText {
+            at: Pos::new(paragraphs[1], 0),
+            text: "G".to_owned(),
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------------------

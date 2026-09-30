@@ -118,14 +118,15 @@ pub enum SessionError {
     Refused(TransactionError),
     /// An arriving operation introduces an identity this replica already holds.
     IdCollision(Collision),
-    /// A `Chained` submission from a client with nothing accepted. It cannot happen from a
-    /// correct client, and inventing a base is how divergence starts.
-    NothingAccepted,
-    /// A revision outside the retained history.
-    UnknownRevision,
     /// A participant number for which no id space exists (`u64::MAX`, the one value
     /// [`IdSpace::of`] refuses).
     NoIdSpace,
+    // A `Chained` submission from a client with nothing accepted, and a revision outside the
+    // retained history, are deliberately NOT variants here. They are things a relay decides,
+    // and it answers them with `Outcome::Refused` / `ServerMessage::Refused` directly — so a
+    // variant for either would be a state this type claims and nothing can reach. An
+    // unreachable variant of a public enum is a claim about the API that the code does not
+    // make.
 }
 
 impl SessionError {
@@ -141,9 +142,8 @@ impl SessionError {
                 Refusal::CannotMerge
             }
             Self::IdCollision(_) => Refusal::IdCollision,
-            Self::OutOfOrder | Self::NothingAccepted | Self::NoIdSpace => Refusal::Malformed,
+            Self::OutOfOrder | Self::NoIdSpace => Refusal::Malformed,
             Self::Stopped(reason) => *reason,
-            Self::UnknownRevision => Refusal::NotSaving,
         }
     }
 }
@@ -169,10 +169,6 @@ impl fmt::Display for SessionError {
                 "arriving operation introduces identity {} which this replica already holds",
                 collision.id
             ),
-            Self::NothingAccepted => {
-                formatter.write_str("a chained submission from a client with nothing accepted")
-            }
-            Self::UnknownRevision => formatter.write_str("revision outside the retained history"),
             Self::NoIdSpace => formatter.write_str("no identity space exists for that client"),
         }
     }
@@ -383,10 +379,16 @@ impl ClientSession {
         if self.sent.len() >= MAX_OUTSTANDING {
             return None;
         }
+        // The floor is the horizon as well as the flush mark, and both halves are load-bearing.
+        // A remote chunk becomes a commit in *this* log — that is the point of it going down
+        // `RevisionLog::apply` — so "everything not yet sent" would include somebody else's
+        // edit, offered back under this client's own sequence number and applied twice by
+        // everyone. Below the horizon is, by definition, already ordered.
+        let floor = self.flushed.max(log.horizon());
         let mut operations = Vec::new();
         let mut spent = 0_usize;
-        let mut upto = self.flushed;
-        for commit in log.commits().filter(|c| c.revision() > self.flushed) {
+        let mut upto = floor;
+        for commit in log.commits().filter(|c| c.revision() > floor) {
             let carried: Vec<WireOperation> = commit
                 .operations()
                 .iter()

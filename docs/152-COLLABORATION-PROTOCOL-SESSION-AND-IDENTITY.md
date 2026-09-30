@@ -395,7 +395,7 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-23 tests over the state machines, driving **two replicas and a relay in one process**. The
+25 tests over the state machines, driving **two replicas and a relay in one process**. The
 sibling's recorded lesson about where its own collaboration bugs were is *"both sides were
 individually correct and no test put them in a room together"* — a WASM binding that sent a
 bare submission instead of a tagged message, and integer-keyed maps that were undeliverable,
@@ -409,10 +409,37 @@ both invisible to every test that *constructed* a message instead of parsing one
 | Remove the uncontended fast path in `ClientSession::receive` | `a_replica_with_nothing_pending_does_not_roll_back` — and the arrival was **dropped**, which is what added the empty-arrival guard |
 | Make `Coalesce::ContinueKeepingFirstInverse` keep its inverses | `an_unordered_commit_that_kept_no_inverse_cannot_be_rolled_back` — the rollback succeeded, so the guard is about the real cause |
 | Stop the probe putting the document back | `a_probe_leaves_the_document_exactly_as_it_found_it` **and** `two_replicas_editing_one_paragraph_converge`, which diverged visibly: `abcdAGgefgh` against `abcdAGgAGefgh` — the arrival applied twice |
+| Give `IdCollision` a code `docs/20` does not list | `every_refusal_code_has_a_row_in_the_register` — "*IdCollision sends ODC-7099, which docs/20 does not list*" |
+| Add an `ODC-7010` row to `docs/20` that no variant carries | the same guard, the other way — "*docs/20 lists ODC-7010, which no refusal in this crate sends*" |
 
 The convergence test is the one that matters most: two replicas typing into one paragraph at
 the same offset, one of them twice, so the rebase is of a **sequence** and not of a single
 operation — the case the probe exists for.
+
+**What the register guard pairs, stated exactly, because it is narrower than it sounds.** It
+pairs the `Refusal` *enum* with `docs/20` — every variant has a row, every `ODC-7xxx` row has
+a variant — and it is written as an array holding one of each variant, so adding a variant
+without a code fails to compile and adding one without a row fails the test. It does **not**
+prove a variant is reachable. Two are not yet sent by anything in this crate:
+`NotAuthorised` and `ReadOnlyAccess` are the authorisation family, and §9 says why no
+host-signed grant is built here. They are wire surface a host fills in, and the register
+describes them so a host can; that is a different claim from "this code is emitted", and
+conflating the two is how a registry comes to document behaviour nothing performs.
+
+**One defect was found by writing a guard rather than by mutating one, and it is worth
+recording because it is a consequence of this design and not of a slip.** Because a remote
+chunk becomes a commit in *this replica's own log* — which is the point of it going down
+`RevisionLog::apply` — "everything in the log this client has not sent yet" is the wrong set
+to flush: on the uncontended path it includes the arrival, which would be **echoed back under
+this client's own sequence number and applied twice by everyone**. The floor for a flush is
+therefore the **horizon as well as** the flush mark. `a_replica_never_sends_back_an_operation_it_received`
+was written first and went red against exactly that:
+
+> this replica offered somebody else's operation as its own work
+
+The general lesson, for the next increment: the moment a remote edit shares one log with local
+edits, *every* set the session computes from "what is in the log" has to say which side of the
+horizon it means.
 
 **What is not verified, and is not claimed.** There is no encoded round trip, because there is
 no encoding. The class of defect the sibling found lives exactly there, which is why §10 makes
