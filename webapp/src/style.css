@@ -3987,6 +3987,15 @@ body.modal-open {
 
 .cmd-search input {
   flex: 1;
+  /* A flex item defaults to `min-width: auto`, which refuses to shrink below the
+     item's INTRINSIC width — and a text input's intrinsic width is its character
+     `size`, not its content. So this row's width depended on the platform's font
+     metrics: it fitted a 320px window on macOS (input 187px, row scrollWidth 292
+     == clientWidth) and overflowed on CI's Linux faces (scrollWidth 366 against a
+     292px client), which is how a genuine sideways scroller reached `main` while
+     every local run was green. `min-width: 0` is the textbook fix and makes the
+     row's width depend on the window instead of on the font. */
+  min-width: 0;
   border: none;
   background: none;
   color: var(--ink);
