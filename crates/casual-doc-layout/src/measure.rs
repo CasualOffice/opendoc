@@ -239,14 +239,9 @@ impl CellMeasure {
     pub fn of(cell: &CellFragment) -> Self {
         Self {
             blocks: cell.blocks.iter().map(FragmentMeasure::of).collect(),
-            vertical_margins: Twip(
-                cell.margins
-                    .top
-                    .raw()
-                    .saturating_add(cell.margins.bottom.raw())
-                    .saturating_add(cell.cell_spacing.top.raw())
-                    .saturating_add(cell.cell_spacing.bottom.raw()),
-            ),
+            // The border band counts too, so this is the paint tier's own sum
+            // rather than a copy of it (`CellFragment::vertical_insets`).
+            vertical_margins: cell.vertical_insets(),
         }
     }
 }
@@ -511,14 +506,7 @@ impl PaginableCell for CellFragment {
     }
 
     fn vertical_margins(&self) -> Twip {
-        Twip(
-            self.margins
-                .top
-                .raw()
-                .saturating_add(self.margins.bottom.raw())
-                .saturating_add(self.cell_spacing.top.raw())
-                .saturating_add(self.cell_spacing.bottom.raw()),
-        )
+        CellFragment::vertical_insets(self)
     }
 
     fn occupied_height(&self) -> Twip {

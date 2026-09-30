@@ -46,8 +46,8 @@ use casual_doc_model::v1::PaginatedField;
 
 use crate::block::BlockBorderSpace;
 use crate::block::{
-    BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
-    CellBoxSpacing, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+    BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorderReserve,
+    CellBorders, CellBoxSpacing, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
     ParagraphDecor, ResolvedBorderSegment, ResolvedEdge,
 };
 use crate::cascade::{
@@ -2030,6 +2030,15 @@ fn flow_table<S: GalleySink + ?Sized>(
                 } else {
                     CellVerticalMerge::None
                 },
+                // A cell pays for its own top border always, and for its bottom
+                // only in the table's last row: border-conflict resolution hands
+                // the same winner to both cells abutting a horizontal boundary,
+                // so this charges each collapsed edge exactly once. See
+                // `CellBorderReserve`.
+                border_reserve: CellBorderReserve::resolve(
+                    &borders,
+                    row_index + 1 == table.rows.len(),
+                ),
                 borders,
                 table_borders,
                 shading,
@@ -5698,11 +5707,17 @@ pub(crate) fn shape_field_run(
             node: anchor.node,
             font: style.font,
             size: style.size,
-            // Synthesized here rather than shaped, so there is no face to
-            // measure: zero means "use the line's metrics", which is exactly
-            // what a caret in this run drew before per-run metrics existed.
-            ascent: Twip(0),
-            descent: Twip(0),
+            // The value IS shaped, just not from model text — `layout` above is
+            // the shaped probe, and its first line's metrics are the face's at
+            // this run's size. Carry them: zero used to mean "use the line's",
+            // and on a mixed-size line the line's are the TALLEST thing sharing
+            // it, which is the very thing per-run metrics exist to stop (a 12pt
+            // PAGE field in a footer beside 28pt text drew a 28pt caret). It also
+            // left every field run unmeasurable to any consumer that reduces a
+            // page by run metrics — the oracle comparison excluded every footer
+            // carrying a page number on that account.
+            ascent,
+            descent,
             character_scale_percent: style.character_scale_percent,
             color: style.color,
             origin,
@@ -12793,6 +12808,158 @@ mod tests {
         );
     }
 
+    /// A cell's horizontal borders occupy vertical space, and each collapsed edge
+    /// is paid for exactly once (backlog row FID-L-21).
+    ///
+    /// # The defect
+    ///
+    /// The engine already pays for a *paragraph* border's band (Word:
+    /// `BaseLineOffset += Brd.Top.Space + Brd.Top.Size`) and charged **nothing**
+    /// for a cell's, so every bordered row came out short by its borders'
+    /// thickness and the error accumulated down the page. Measured against
+    /// LibreOffice 26.2.4.2 on synthetic probes, a single-row bordered table's
+    /// height was short by twice the authored border width at `w:sz` 2, 4, 8, 16
+    /// and 24; `real-producer-table-merges` ran 55 twips short by the paragraph
+    /// below a three-row table and `real-producer-table-list` 60.
+    ///
+    /// # Why the shape below, and not one row
+    ///
+    /// Because the interesting half of the rule is the *collapse*.
+    /// `table_outer_and_inside_horizontal_borders_apply_to_the_correct_rows`
+    /// above establishes that border-conflict resolution hands the SAME
+    /// `w:insideH` winner to both cells abutting the shared boundary, so summing
+    /// every cell's top and bottom would charge that edge twice — measured, a
+    /// three-row table with 20-twip borders grows by 80 twips and not 120. Three
+    /// distinct widths (20 outer top, 10 inside, 30 outer bottom) make each
+    /// edge's contribution individually identifiable, so a rule that charged the
+    /// wrong edge cannot pass by arithmetic coincidence.
+    #[test]
+    fn a_cells_horizontal_borders_are_paid_for_once_each() {
+        let red = RgbColor { r: 255, g: 0, b: 0 };
+        let blue = RgbColor { r: 0, g: 0, b: 255 };
+        let green = RgbColor { r: 0, g: 128, b: 0 };
+        let table = Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties {
+                borders: TableBorders {
+                    top: Some(colored_edge("single", 8, red)),       // 20 twips
+                    inside_h: Some(colored_edge("single", 4, blue)), // 10 twips
+                    bottom: Some(colored_edge("single", 12, green)), // 30 twips
+                    ..TableBorders::default()
+                },
+                ..TableProperties::default()
+            },
+            rows: vec![
+                ModelRow {
+                    id: node(51),
+                    properties: TableRowProperties::default(),
+                    cells: vec![text_cell(60, TableCellProperties::default(), "top")],
+                },
+                ModelRow {
+                    id: node(52),
+                    properties: TableRowProperties::default(),
+                    cells: vec![text_cell(61, TableCellProperties::default(), "bottom")],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(9000));
+        let [
+            BlockFragment::TableRow {
+                cells: top_cells,
+                height: top_height,
+                ..
+            },
+            BlockFragment::TableRow {
+                cells: bottom_cells,
+                height: bottom_height,
+                ..
+            },
+        ] = rows.as_slice()
+        else {
+            panic!("expected two table rows");
+        };
+
+        // The table's top perimeter is charged to the first row; the shared
+        // boundary is charged to the LOWER row's top, so the first row's bottom
+        // costs nothing even though its `borders.bottom` is the insideH winner.
+        assert_eq!(top_cells[0].border_reserve.top, Twip(20));
+        assert_eq!(
+            top_cells[0].border_reserve.bottom,
+            Twip::ZERO,
+            "the shared boundary is charged to the row below, not twice"
+        );
+        assert!(
+            top_cells[0].borders.bottom.is_some(),
+            "…and that is despite the edge being resolved onto this cell too, \
+             which is exactly how the double charge would arise"
+        );
+        assert_eq!(bottom_cells[0].border_reserve.top, Twip(10));
+        assert_eq!(bottom_cells[0].border_reserve.bottom, Twip(30));
+
+        // Each physical edge once: 20 + 10 + 30 over the whole table.
+        let reserved = top_cells[0].border_reserve.total().raw()
+            + bottom_cells[0].border_reserve.total().raw();
+        assert_eq!(reserved, 60, "20 outer top + 10 shared + 30 outer bottom");
+
+        // The reserve reaches the row height through `occupied_height`, which is
+        // what the paginator and the measure tier both budget against.
+        let content = top_cells[0].content_height().raw()
+            + top_cells[0].margins.top.raw()
+            + top_cells[0].margins.bottom.raw();
+        assert_eq!(
+            top_cells[0].occupied_height().raw(),
+            content + 20,
+            "the row must be as tall as its content plus its own top border"
+        );
+        assert!(
+            top_height.raw() >= content + 20 && bottom_height.raw() >= content + 40,
+            "resolved row heights carry the reserve: {top_height:?} / {bottom_height:?}"
+        );
+
+        // Content is offset below its own top border, so it is not drawn under it.
+        assert_eq!(
+            bottom_cells[0].content_y_offset(*bottom_height).raw(),
+            10 + bottom_cells[0].margins.top.raw(),
+            "content clears the 10-twip insideH border above it"
+        );
+    }
+
+    /// A `double` edge occupies three times its authored width, and no other
+    /// pattern does.
+    ///
+    /// Measured, not assumed: against the pinned LibreOffice a single-row table's
+    /// height grew by 2× the authored width for `single` at `w:sz` 2/4/8/16/24
+    /// and by 6× it for `double` at 2/4/8 — i.e. 3× per edge. Left and right
+    /// edges were measured too and contribute nothing vertically, which is why
+    /// only the horizontal ones are reserved.
+    #[test]
+    fn a_double_edge_reserves_three_times_its_authored_width() {
+        let edge = |pattern| ResolvedEdge {
+            color: [0, 0, 0, 255],
+            width: Twip(20),
+            pattern,
+        };
+        assert_eq!(edge(BorderPattern::Double).total_thickness(), Twip(60));
+        for pattern in [
+            BorderPattern::Solid,
+            BorderPattern::Dotted,
+            BorderPattern::Dashed,
+            BorderPattern::DotDash,
+            BorderPattern::DotDotDash,
+        ] {
+            assert_eq!(
+                edge(pattern).total_thickness(),
+                Twip(20),
+                "{pattern:?} occupies exactly its authored width"
+            );
+        }
+    }
+
     #[test]
     fn horizontal_border_conflicts_compare_abutting_rows() {
         let red = RgbColor { r: 255, g: 0, b: 0 };
@@ -14444,6 +14611,7 @@ mod tests {
             vertical_alignment: valign,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
             table_borders: CellBorders::default(),
             shading: None,
         };

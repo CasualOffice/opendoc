@@ -123,15 +123,10 @@
 use std::path::PathBuf;
 
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
-use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::display::PaintItem;
 use casual_doc_layout::document_layout::paginate_document;
-use casual_doc_layout::fonts::{
-    CALADEA, CARLITO, LIBERATION_MONO, LIBERATION_SANS, LIBERATION_SERIF,
-};
 use casual_doc_layout::page::Page;
 use casual_doc_layout::shape::ParleyShaper;
-use casual_doc_layout::text::{FontId, GlyphRun};
+use casual_doc_layout::text_region::page_text_region;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 
 /// The extraction semantics the committed references must have been produced
@@ -224,36 +219,20 @@ struct Divergence {
 ///
 /// Removing an entry is the goal. Do not add one without a measured delta, a
 /// tracker row, and a sentence saying what diverges.
-const KNOWN_DIVERGENCES: &[Divergence] = &[
-    Divergence {
-        fixture: "docx-real-producer-rich",
-        page: 1,
-        edge: "y1",
-        delta: 263,
-        row: "FID-L-21",
-        reason: "the paragraph after the nested table sits one line lower than \
-                 LibreOffice puts it, so the page's last baseline is ~1 line down",
-    },
-    Divergence {
-        fixture: "docx-real-producer-table-merges",
-        page: 1,
-        edge: "y1",
-        delta: -55,
-        row: "FID-L-21",
-        reason: "merged-cell row heights accumulate ~55 twips short of \
-                 LibreOffice's by the paragraph below the table",
-    },
-    Divergence {
-        fixture: "docx-real-producer-table-list",
-        page: 1,
-        edge: "y1",
-        delta: -60,
-        row: "FID-L-21 (second instance, found by arming this gate)",
-        reason: "vertical drift accumulates monotonically down the page — table \
-                 rows −10 then −25 twips, list items −65 — leaving the closing \
-                 paragraph 60 twips above LibreOffice's",
-    },
-];
+const KNOWN_DIVERGENCES: &[Divergence] = &[Divergence {
+    fixture: "docx-real-producer-rich",
+    page: 1,
+    edge: "y1",
+    delta: 323,
+    row: "FID-L-21 (residual; the shared cause is fixed)",
+    reason: "LibreOffice DISCARDS the empty paragraph that ECMA-376 §17.4.66 \
+             requires after a nested table inside a cell; we keep it, as Word \
+             does and as the caret needs. Isolated on a synthetic probe: the \
+             divergence is exactly that paragraph's line box plus its \
+             w:spacing@after (+329 at 12pt, +333 measured), appears ONLY when \
+             the paragraph is empty AND directly follows a nested table, and is \
+             absent when it carries text or when no nested table precedes it",
+}];
 
 /// The registered divergences that apply to `fixture_id`.
 fn divergences_for(fixture_id: &str) -> Vec<Divergence> {
@@ -337,133 +316,22 @@ fn geometry_diffs(
     diffs
 }
 
-/// One piece of painted text reduced to the box `pdftotext -bbox` reports per
-/// word: pen extents horizontally, face ascent/descent about the baseline
-/// vertically, in page-local twips.
-#[derive(Clone, Copy, Debug)]
-struct TextBox {
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    /// Whether this text shaped with a face the oracle container also has, so its
-    /// advances are pinned to the same metrics on both sides.
-    pinned: bool,
-}
-
-/// Whether `font` is one of the bundled **metric-compatible** faces the oracle
-/// container installs (Liberation Sans/Serif/Mono, Carlito, Caladea).
-///
-/// Roboto is bundled but deliberately excluded: it is our native *default*, not a
-/// substitute for anything LibreOffice would pick, so a run that fell back to it
-/// has no font parity either. A dynamic (interned fallback / host / system) face is
-/// outside every bundled block and so is excluded by construction.
-fn is_pinned_face(font: FontId) -> bool {
-    [
-        &CALADEA,
-        &CARLITO,
-        &LIBERATION_SANS,
-        &LIBERATION_SERIF,
-        &LIBERATION_MONO,
-    ]
-    .iter()
-    .any(|family| family.contains(font))
-}
-
-/// Reduces one composed glyph run to its oracle-comparable box, or `None` when it
-/// contributes no word to the PDF text layer — a run of pure whitespace, since
-/// poppler emits *words* and a word carries no leading or trailing spaces.
-///
-/// A run with no face metrics cannot be measured vertically, so it is kept but
-/// marked unpinned: that excludes its line (and shows up in the excluded-line
-/// count) instead of silently vanishing from a region the oracle did measure.
-fn run_text_box(run: &GlyphRun) -> Option<TextBox> {
-    let has_metrics = run.ascent.raw() != 0 || run.descent.raw() != 0;
-    let mut pen = run.origin.x.raw();
-    let mut x0 = None;
-    let mut x1 = pen;
-    for glyph in &run.glyphs {
-        if !glyph.is_whitespace {
-            x0.get_or_insert(pen);
-            x1 = pen + glyph.advance.raw();
-        }
-        pen += glyph.advance.raw();
-    }
-    Some(TextBox {
-        x0: x0?,
-        y0: run.origin.y.raw() - run.ascent.raw(),
-        x1,
-        y1: run.origin.y.raw() + run.descent.raw(),
-        pinned: has_metrics && is_pinned_face(run.font),
-    })
-}
-
-/// Groups text boxes into lines by vertical overlap, the same rule the extraction
-/// script applies to the oracle's word boxes: sort by top edge, then start a new
-/// line whenever a box begins at or below the running bottom of the current one.
-///
-/// Mixed font sizes on one line still overlap vertically, so they group together.
-/// Side-by-side content (table cells, columns) can merge into one band — that is
-/// deliberately conservative: it can only *widen* what a single unshapeable run
-/// excludes, never narrow it, and the excluded-line count is compared so an
-/// asymmetry between the two sides is reported rather than absorbed.
-fn group_into_lines(mut boxes: Vec<TextBox>) -> Vec<Vec<TextBox>> {
-    boxes.sort_by_key(|b| (b.y0, b.x0));
-    let mut lines: Vec<Vec<TextBox>> = Vec::new();
-    let mut bottom = i32::MIN;
-    for text_box in boxes {
-        match lines.last_mut() {
-            Some(line) if text_box.y0 < bottom => {
-                bottom = bottom.max(text_box.y1);
-                line.push(text_box);
-            }
-            _ => {
-                bottom = text_box.y1;
-                lines.push(vec![text_box]);
-            }
-        }
-    }
-    lines
-}
-
 /// Reduces one laid-out page to the oracle-comparable shape.
 ///
-/// The text is taken from [`compose_page`] — the same display list the renderer
-/// paints — so body text, running headers/footers, footnote bodies, table cells,
-/// inline and floating text boxes are all already flattened into absolute
-/// page-local coordinates by the one implementation that owns those transforms.
+/// The reduction itself — what the text region *is*, how lines are grouped, and
+/// which faces count as font-pinned — lives in
+/// [`casual_doc_layout::text_region`], because the `opendoc-fidelity` comparison
+/// harness measures the identical quantity for arbitrary documents. Two
+/// implementations of one rule diverge invisibly: this gate would keep passing
+/// while the harness reported different numbers for the same page. This function
+/// is the projection of that reduction onto the three quantities a committed
+/// reference stores.
 fn page_geometry(page: &Page) -> PageGeom {
-    let display = compose_page(page);
-    let boxes = display
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            PaintItem::Glyphs { run } => run_text_box(run),
-            _ => None,
-        })
-        .collect();
-    let mut content_bbox: Option<[i32; 4]> = None;
-    let mut excluded_extent = 0;
-    for line in group_into_lines(boxes) {
-        if line.iter().any(|text_box| !text_box.pinned) {
-            // The band the dropped line occupies, summed rather than counted:
-            // grouping is per-renderer, the extent is not. See the module docs.
-            let top = line.iter().map(|b| b.y0).min().unwrap_or(0);
-            let bottom = line.iter().map(|b| b.y1).max().unwrap_or(0);
-            excluded_extent += bottom - top;
-            continue;
-        }
-        for b in line {
-            content_bbox = Some(match content_bbox {
-                None => [b.x0, b.y0, b.x1, b.y1],
-                Some([x0, y0, x1, y1]) => [x0.min(b.x0), y0.min(b.y0), x1.max(b.x1), y1.max(b.y1)],
-            });
-        }
-    }
+    let region = page_text_region(page);
     PageGeom {
-        size: [page.page_size.width.raw(), page.page_size.height.raw()],
-        content_bbox,
-        excluded_extent,
+        size: region.size,
+        content_bbox: region.content_bbox,
+        excluded_extent: region.excluded_extent,
     }
 }
 
@@ -861,9 +729,6 @@ fn the_oracle_gate_is_armed() {
 
 #[cfg(test)]
 mod tests {
-    use casual_doc_layout::text::{Decoration, Glyph};
-    use casual_doc_layout::units::{Point, Twip};
-
     use super::*;
 
     fn page(w: i32, h: i32, bbox: Option<[i32; 4]>) -> PageGeom {
@@ -876,16 +741,6 @@ mod tests {
 
     /// No registered divergence: the plain comparison.
     const PLAIN: &[Divergence] = &[];
-
-    fn text_box(x0: i32, y0: i32, x1: i32, y1: i32, pinned: bool) -> TextBox {
-        TextBox {
-            x0,
-            y0,
-            x1,
-            y1,
-            pinned,
-        }
-    }
 
     #[test]
     fn identical_geometry_has_no_diffs() {
@@ -1087,78 +942,6 @@ mod tests {
     }
 
     #[test]
-    fn boxes_group_into_lines_by_vertical_overlap() {
-        // Two boxes sharing a band (different sizes, so different tops) plus one
-        // clearly below: two lines.
-        let lines = group_into_lines(vec![
-            text_box(0, 100, 50, 200, true),
-            text_box(60, 120, 90, 190, true),
-            text_box(0, 400, 50, 500, true),
-        ]);
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].len(), 2);
-        assert_eq!(lines[1].len(), 1);
-    }
-
-    /// A glyph run on a baseline at `(100, 1000)` whose glyphs are `(advance,
-    /// is_whitespace)` pairs, with 200/50 twips of ascent/descent.
-    fn run_of(glyphs: &[(i32, bool)]) -> GlyphRun {
-        GlyphRun {
-            node: None,
-            font: LIBERATION_SERIF.face_id(false, false),
-            size: Twip(240),
-            ascent: Twip(200),
-            descent: Twip(50),
-            character_scale_percent: 100,
-            color: [0, 0, 0, 255],
-            origin: Point::new(Twip(100), Twip(1000)),
-            bidi_level: 0,
-            decoration: Decoration::default(),
-            highlight: None,
-            shading: None,
-            glyphs: glyphs
-                .iter()
-                .enumerate()
-                .map(|(index, &(advance, is_whitespace))| Glyph {
-                    id: 1,
-                    advance: Twip(advance),
-                    cluster: index as u32,
-                    is_whitespace,
-                })
-                .collect(),
-            is_marker: false,
-            is_leader: false,
-        }
-    }
-
-    #[test]
-    fn a_word_box_spans_the_non_whitespace_glyphs_and_the_face_metrics() {
-        // Mirrors poppler: a word starts at the first non-space glyph's pen
-        // position and ends at the last one's pen end, and is as tall as the
-        // face's ascent+descent about the baseline — never the ink.
-        let measured = run_text_box(&run_of(&[(30, true), (60, false), (40, false), (30, true)]))
-            .expect("the run carries a word");
-        assert_eq!(
-            [measured.x0, measured.y0, measured.x1, measured.y1],
-            [130, 800, 230, 1050]
-        );
-        assert!(measured.pinned);
-        // Pure whitespace contributes no word at all.
-        assert!(run_text_box(&run_of(&[(30, true), (30, true)])).is_none());
-        // A run with no face metrics cannot be measured vertically, so it is
-        // reported as unpinned (excluding and counting its line) rather than
-        // dropped from a region the oracle did measure.
-        let mut metricless = run_of(&[(60, false)]);
-        metricless.ascent = Twip::ZERO;
-        metricless.descent = Twip::ZERO;
-        assert!(
-            !run_text_box(&metricless)
-                .expect("the run still carries a word")
-                .pinned
-        );
-    }
-
-    #[test]
     fn our_geometry_extracts_pages_from_a_real_docx() {
         // The extraction path itself is exercised even before an oracle
         // reference exists: the corpus fixture paginates to at least one sized
@@ -1224,6 +1007,12 @@ mod tests {
 
     #[test]
     fn only_metric_compatible_bundled_faces_count_as_pinned() {
+        use casual_doc_layout::fonts::{
+            CALADEA, CARLITO, LIBERATION_MONO, LIBERATION_SANS, LIBERATION_SERIF,
+        };
+        use casual_doc_layout::text::FontId;
+        use casual_doc_layout::text_region::is_pinned_face;
+
         assert!(is_pinned_face(LIBERATION_SERIF.face_id(false, false)));
         assert!(is_pinned_face(LIBERATION_SANS.face_id(true, false)));
         assert!(is_pinned_face(CARLITO.face_id(false, true)));

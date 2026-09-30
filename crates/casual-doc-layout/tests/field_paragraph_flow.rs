@@ -232,3 +232,70 @@ fn a_contents_row_with_a_page_reference_draws_its_dot_leader() {
         "a contents row with a dot-leader tab stop must paint leader glyphs"
     );
 }
+
+#[test]
+fn a_recomputed_field_run_carries_the_faces_metrics_not_zero() {
+    // A `PAGE` field's value is synthesized after pagination rather than taken
+    // from model text, and its glyph run used to be built with `ascent`/`descent`
+    // of zero, meaning "use the line's". The line's are the metrics of the
+    // TALLEST run sharing it, which is the exact thing per-run metrics exist to
+    // stop: `GlyphRun::ascent` documents that a caret must be as tall as the text
+    // at the insertion point, not as tall as its neighbour. It also left the run
+    // unmeasurable to anything that reduces a page by run metrics — the oracle
+    // geometry comparison dropped every footer carrying a page number for it.
+    //
+    // The guarantee, not the mechanism: the field's run reports a real vertical
+    // extent, and it is the SMALL face's, not the 28pt neighbour's.
+    let small = RunProperties {
+        size_half_points: Some(16), // 8pt
+        ..RunProperties::default()
+    };
+    let large = RunProperties {
+        size_half_points: Some(56), // 28pt
+        ..RunProperties::default()
+    };
+    let document = document(vec![paragraph(
+        100,
+        ParagraphProperties::default(),
+        vec![
+            InlineNode::Run(Run {
+                id: node(101),
+                properties: large.into(),
+                text: "Tall ".to_owned(),
+            }),
+            InlineNode::Field(Box::new(Field {
+                id: node(200),
+                instruction: " PAGE ".to_owned(),
+                kind: casual_doc_model::v1::FieldKind::parse(" PAGE "),
+                inlines: vec![InlineNode::Run(Run {
+                    id: node(201),
+                    properties: small.into(),
+                    text: "1".to_owned(),
+                })],
+                form: None,
+                update: Default::default(),
+            })),
+        ],
+    )]);
+
+    let lines = lines(&document);
+    let line = lines.first().expect("the paragraph lays out one line");
+    let field_run = line
+        .runs
+        .iter()
+        .find(|run| run.size == Twip::from_points(8))
+        .expect("the 8pt field value is a run of its own");
+    assert!(
+        field_run.ascent > Twip::ZERO && field_run.descent > Twip::ZERO,
+        "a recomputed field's run must carry its own face metrics, got \
+         ascent {:?} descent {:?}",
+        field_run.ascent,
+        field_run.descent
+    );
+    assert!(
+        field_run.ascent < line.ascent,
+        "the 8pt field must report ITS ascent ({:?}), not the 28pt line's ({:?})",
+        field_run.ascent,
+        line.ascent
+    );
+}

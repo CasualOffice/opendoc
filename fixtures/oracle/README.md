@@ -74,6 +74,33 @@ shapes with bundled faces, and its geometry is already gated identically on Linu
 and macOS by the H1 golden (`crates/casual-doc-layout/tests/geometry_snapshot.golden`).
 Windows shapes differently and is excluded from the geometry comparison.
 
+## `samples/` — the two reducers, pinned to each other
+
+The same reduction exists twice on purpose: `scripts/oracle/extract-geometry.sh`
+(Python) is the **blessing** path that produces the `.geom.json` files above, and
+`tools/opendoc-fidelity/src/oracle.rs` (Rust) is the **investigation** path that
+reduces an arbitrary document at line granularity with no committed reference.
+Two implementations of one rule diverge, and the divergence would be invisible.
+
+`samples/` holds one fixture's worth of the script's own inputs and output:
+
+| file | what it is |
+| --- | --- |
+| `real-producer-hyperlinks.bbox.html` | `pdftotext -bbox` output for the fixture's LibreOffice PDF |
+| `real-producer-hyperlinks.fonts.txt` | `pdffonts` output for the same PDF |
+| `real-producer-hyperlinks.reduced.json` | what `extract-geometry.sh` reduced those two to |
+
+`the_rust_reduction_reproduces_the_blessing_scripts_numbers` feeds the first two
+to the Rust reducer and asserts it produces the third, exactly. It needs neither
+LibreOffice nor Python, so it runs in ordinary CI. Regenerate all three together
+(never one alone) with the re-bless recipe below plus
+`pdftotext -bbox`/`pdffonts` over the same PDF.
+
+The committed `.reduced.json` is byte-for-byte identical to
+`docx-real-producer-hyperlinks.geom.json`, which is a small reproducibility fact
+worth keeping: re-running the blessing script on the pinned build reproduces the
+blessed reference.
+
 ## Re-blessing
 
 Run the `Oracle geometry re-bless` workflow, review the diff, merge the PR it
