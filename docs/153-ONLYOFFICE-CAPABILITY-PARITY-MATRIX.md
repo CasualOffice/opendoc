@@ -59,6 +59,19 @@ much as the other: `docs/105` CQ-005 still reads "no i18n seam at all" while
 nineteen locales ship, and CQ-010 reads "no embed surface" while
 `packages/opendoc-embed` exists.
 
+### One constraint on the generated prose
+
+Identifiers in every generated cell go inside a code span, and each
+theirs-absent row's search line is wrapped whole. That is not a style
+preference. `webapp/tools/build-glossary.mjs` earns the shipped spell-check
+vocabulary from this repository's own documentation — four occurrences across two
+files, code spans excluded — so a document that writes `documenteditor`,
+`cantSplit` or `STYLEREF` as prose pushes them into the dictionary the product
+ships, and stales a generated artifact in a directory this work does not own.
+That is the shape `SKILL` §5a warns about: two green branches, one red `main`.
+Anyone adding rows here keeps identifiers in backticks and reaches for a word
+the tree already uses rather than minting one.
+
 ## What this method cannot establish
 
 Stated plainly, because understating a method's limits is the same defect as
@@ -129,8 +142,8 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | Parity | 172 | both products ship it, and both anchors resolve |
 | Ours, ungated | 26 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 59 | we ship part of it; the row says what is missing |
-| Gap | 111 | their standalone browser session ships it and we do not |
+| Partial | 60 | we ship part of it; the row says what is missing |
+| Gap | 110 | their standalone browser session ships it and we do not |
 | Theirs, gated | 17 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -207,7 +220,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Word count dialog, including a count for the selection | `review.word-count-dialog` | `DE.Views.FileMenuPanels.DocumentInfo.txtStatistics` | Theirs is the document-info statistics block, not a live selection count; neither matches Word's dialog, but ours has no second surface at all. |
 | 3 | Dark document (invert the page, not just the chrome) | `shell.dark-document` | `btnDarkDocument` | We have a dark interface theme but the page itself stays white. Reading a long document at night is the case this covers. |
 | 3 | Export as HTML | `shell.export-html` | `asc_docs_api.asc_DownloadAs` | Their HTML (Zipped) row is FileMenuPanels.js:68. We register no HTML exporter in casual_doc_io::formats. Their grid also offers the pages as zipped JPG or PNG (FileMenuPanels.js:70-71), which we do not package either although the renderer already renders to pixels a page at any DPI. |
-| 3 | Export as Markdown | `shell.export-markdown` | `asc_docs_api.asc_DownloadAs` | Their MD row is FileMenuPanels.js:63. Worth more to us than EPUB or FB2 because it is what an agent or a repository consumes. |
 | 3 | Search with a regular expression | `shell.find-regex` | `Common.Views.SearchPanel.textMatchUsingRegExp` | Our scan is literal with case and whole-word options only (main.js scanAllMatches). |
 | 3 | Show several pages side by side | `shell.multiple-pages-view` | `btnMultiplePages` | Theirs lays out two or more pages across the viewport. Ours paints one column of pages at every zoom. |
 | 3 | Borders and background dialog with a preview | `table.borders-dialog` | `DE.Views.TableSettingsAdvanced.textBordersBackgroung` | Theirs has a dedicated tab with a clickable border-diagram preview that shows which edges are set. Ours is a flat row of preset buttons in a popover with no preview. |
@@ -441,7 +453,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Convert table to text | Gap | none (`table.convert.tableToText` undeclared) | `btnConvert` | Theirs takes a separator and a 'convert nested tables' flag. |
 | Convert text to table | Gap | none (`table.convert.textToTable` undeclared) | `DE.Views.Toolbar.mniTextToTable` | Theirs takes a separator (paragraph, tab, semicolon or a typed character), a column count and an autofit choice. We have no conversion in either direction. |
 | Text wrapping around a table | Gap | none (`table.wrap` undeclared) | `btnWrapParallel` | Our importer and layout do place a w:tblpPr table on the float layer and wrap body text beside it, but nothing in the editor authors or changes that — the properties inspector has no wrapping control. |
-| Undo a merge a merged cell | Ours only | `webapp/src/table_commands.mjs` · `table.unmerge` | none (searched `grep -rin 'unmerge\\|UnmergeCells\\|splitMerged' over web-apps/apps/documenteditor and sdkjs/word — no unmerge control, menu row, locale key or API; only SplitTableCells, which refuses a 1x1 split`) | We ship a dedicated Undo a merge that clears grid_span and vertical_merge and back-fills the vacated cells. Theirs only offers Split cells, which needs a count greater than one and therefore cannot restore a merged cell to its original grid. |
+| Undo a cell merge | Ours only | `webapp/src/table_commands.mjs` · `table.unmerge` | none (searched `grep -rin 'unmerge\\|UnmergeCells\\|splitMerged' over web-apps/apps/documenteditor and sdkjs/word — no unmerge control, menu row, locale key or API; only SplitTableCells, which refuses a 1x1 split`) | We ship a dedicated command that clears `grid_span` and `vertical_merge` and back-fills the vacated cells. Theirs only offers Split cells, which needs a count greater than one and therefore cannot restore a merged cell to its original grid. |
 
 ### Images, shapes, charts and drawings (59 rows)
 
@@ -666,7 +678,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Export as EPUB | Gap | none (`file.export.epub` undeclared) | `asc_docs_api.asc_DownloadAs` | Their EPUB row is FileMenuPanels.js:67. FB2 (FileMenuPanels.js:66) is the same gap and the same ranking. |
 | Export as HTML | Gap | none (`file.export.html` undeclared) | `asc_docs_api.asc_DownloadAs` | Their HTML (Zipped) row is FileMenuPanels.js:68. We register no HTML exporter in casual_doc_io::formats. Their grid also offers the pages as zipped JPG or PNG (FileMenuPanels.js:70-71), which we do not package either although the renderer already renders to pixels a page at any DPI. |
 | Export a normalized JSON snapshot of the document | Ours only | `file.export.json` | none (searched `c_oAscFileType.JSON in sdkjs/word/api.js:9406 is the mail-merge data container (mailMergeFileData), not a document projection; the ViewSaveAs format grid (FileMenuPanels.js:53-72) has no JSON row`) | Ours is the typed model as JSON, which is what makes comparison, testing and machine consumption possible without a converter. Their only JSON is mail-merge recipient data. |
-| Export as Markdown | Gap | none (`file.export.markdown` undeclared) | `asc_docs_api.asc_DownloadAs` | Their MD row is FileMenuPanels.js:63. Worth more to us than EPUB or FB2 because it is what an agent or a repository consumes. |
+| Export as Markdown | Partial | `crates/casual-doc-io/src/markdown.rs` · `MarkdownAdapter` — missing: a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.md` | `asc_docs_api.asc_DownloadAs` | A bounded CommonMark writer is registered in the built-in registry, so `availableExportFormats()` offers it and the download takes its name from the artifact's own suggested extension. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs`, without which the Save selector labels the option with the raw format id, and a `file.export.*` contract row so a host can drive it. |
 | Export as ODT | Parity | `file.export.odt` | `asc_docs_api.asc_DownloadAs` | Their ODT row is FileMenuPanels.js:56. |
 | Export as PDF | Parity | `file.export.pdf` | `asc_docs_api.asc_DownloadAs` | Both write real-text PDF. Ours is the engine's own writer (docs/98); theirs renders to a renderer part and sends it to the server (`api.js:9391`). |
 | Export as PDF/A | Gap | none (`file.export.pdfa` undeclared) | `asc_docs_api.asc_DownloadAs` | Their PDFA row is FileMenuPanels.js:60. Archival PDF is a compliance requirement in public-sector deployments, which is the market the licence wedge targets. |

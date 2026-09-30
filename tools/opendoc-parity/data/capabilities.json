@@ -4168,15 +4168,21 @@
       "area": "shell",
       "title": "Export as Markdown",
       "ours": {
-        "absent": [
-          "file.export.markdown"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-io/src/markdown.rs",
+              "literal": "MarkdownAdapter"
+            }
+          },
+          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.md`"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 3,
-      "note": "Their MD row is FileMenuPanels.js:63. Worth more to us than EPUB or FB2 because it is what an agent or a repository consumes."
+      "note": "A bounded CommonMark writer is registered in the built-in registry, so `availableExportFormats()` offers it and the download takes its name from the artifact's own suggested extension. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs`, without which the Save selector labels the option with the raw format id, and a `file.export.*` contract row so a host can drive it."
     },
     {
       "id": "shell.export-odt",
@@ -5922,7 +5928,7 @@
     {
       "id": "table.unmerge-cells",
       "area": "table",
-      "title": "Undo a merge a merged cell",
+      "title": "Undo a cell merge",
       "ours": {
         "anchor": {
           "file": "webapp/src/table_commands.mjs",
@@ -5935,7 +5941,7 @@
         }
       },
       "rank": 3,
-      "note": "We ship a dedicated Undo a merge that clears grid_span and vertical_merge and back-fills the vacated cells. Theirs only offers Split cells, which needs a count greater than one and therefore cannot restore a merged cell to its original grid."
+      "note": "We ship a dedicated command that clears `grid_span` and `vertical_merge` and back-fills the vacated cells. Theirs only offers Split cells, which needs a count greater than one and therefore cannot restore a merged cell to its original grid."
     },
     {
       "id": "text.all-caps",

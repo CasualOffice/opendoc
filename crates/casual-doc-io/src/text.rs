@@ -924,6 +924,9 @@ mod tests {
                 formats::NORMALIZED_JSON,
                 formats::ODT,
                 formats::DOCX,
+                // Markdown sits between the two text formats because the list is
+                // ordered by format id and `text.markdown` < `text.plain`.
+                formats::MARKDOWN,
                 formats::TEXT,
             ]
         );

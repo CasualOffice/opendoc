@@ -80,6 +80,10 @@ pub mod formats {
     /// Portable Document Format (`.pdf`). Export only: the engine writes PDF
     /// and never reads it.
     pub const PDF: &str = "application.pdf";
+    /// CommonMark (`.md`). Export only: writing Markdown is a serializer,
+    /// reading it needs a parser, and only the writer exists (`docs/153`
+    /// `shell.export-markdown`).
+    pub const MARKDOWN: &str = "text.markdown";
 }
 
 /// Public capabilities and aliases for one registered format.

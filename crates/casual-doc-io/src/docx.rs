@@ -357,6 +357,13 @@ pub fn builtin_registry_with_format_limits(
     // importer, so it never becomes a format the picker offers to open.
     crate::register_pdf_exporter(&mut registry)
         .expect("built-in PDF exporter registration is unique");
+    // Export only, and built in for the same reason PDF is: `docs/153`
+    // `shell.export-markdown`. ONLYOFFICE's Download-as grid offers `MD`; ours
+    // did not. Registered here rather than behind an opt-in so the capability is
+    // reachable in every host rather than in the ones that remembered.
+    registry
+        .register_exporter(Arc::new(crate::MarkdownAdapter::default()))
+        .expect("built-in Markdown exporter registration is unique");
     registry
 }
 
