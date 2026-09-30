@@ -40,9 +40,15 @@ use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::PaginatedField;
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::Watermark;
+// The three definition tables an editing command used to write BEHIND the transaction
+// envelope (`147`, ADR-005). Separate `use` lines so a parallel lane adding one does not
+// conflict in the shared sorted block.
+use casual_doc_model::v1::{AbstractNumbering, AbstractNumberingId};
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
+use casual_doc_model::v1::{MediaId, MediaReference};
+use casual_doc_model::v1::{NumberingInstance, NumberingInstanceId};
 // The paragraph-spanning field range (`docs/128`): its definition payload, its id,
 // and the two body markers that delimit it.
 use casual_doc_model::v1::{FieldRange, FieldRangeId};
@@ -779,6 +785,57 @@ pub enum Operation {
         id: StyleId,
         /// The style to install (create/update), or `None` to remove `id`.
         style: Option<Box<Style>>,
+    },
+    /// Install, replace, or remove one **abstract numbering** definition.
+    ///
+    /// The same shape as [`Operation::SetStyleDefinition`], deliberately: one definition
+    /// table, one operation, the value carried beside the key, and the inverse is whatever
+    /// was there before. Nothing about a list needed a different mechanism, and two
+    /// mechanisms for one rule diverge.
+    ///
+    /// **Why it exists.** `set_list_format`, `restart_list`, `ensure_list` and
+    /// `ensure_checklist` used to write straight into `Definitions::abstract_numbering` and
+    /// `Definitions::numbering` and then send only the paragraph re-pointing through the
+    /// log. The definition was therefore not in the commit: undo put the paragraph back and
+    /// left the definition behind, and a session would have fanned out a paragraph pointing
+    /// at a definition no other replica had. `147`/ADR-005 say every mutation is an
+    /// operation; these three make that true rather than nearly true.
+    ///
+    /// Inverse: the same operation carrying the previous definition, or `None` where there
+    /// was none.
+    SetAbstractNumbering {
+        /// The abstract numbering id to install, replace, or remove.
+        id: AbstractNumberingId,
+        /// The definition to install, or `None` to remove `id`.
+        definition: Option<Box<AbstractNumbering>>,
+    },
+    /// Install, replace, or remove one **numbering instance** (`w:num`).
+    ///
+    /// See [`Operation::SetAbstractNumbering`] for why this exists. An instance names an
+    /// abstract definition, so an instance that arrives before its abstract is refused by
+    /// the model's own validation rather than landing half-formed.
+    ///
+    /// Inverse: the same operation carrying the previous instance, or `None`.
+    SetNumberingInstance {
+        /// The numbering instance id to install, replace, or remove.
+        id: NumberingInstanceId,
+        /// The instance to install, or `None` to remove `id`.
+        instance: Option<Box<NumberingInstance>>,
+    },
+    /// Install, replace, or remove one **media reference**.
+    ///
+    /// See [`Operation::SetAbstractNumbering`] for why this exists. The bytes themselves are
+    /// not carried: they live in the host's resource map beside the document, keyed by the
+    /// part name this reference names. That split is deliberate and is the same one export
+    /// and import use — the model holds the reference, the package holds the stream — and it
+    /// is why a media introduction is a small operation rather than an image on the wire.
+    ///
+    /// Inverse: the same operation carrying the previous reference, or `None`.
+    SetMediaReference {
+        /// The media id to install, replace, or remove.
+        id: MediaId,
+        /// The reference to install, or `None` to remove `id`.
+        reference: Option<Box<MediaReference>>,
     },
     /// Create a bookmark: register `name` under the fresh `bookmark` id in
     /// `Definitions::bookmarks` and insert its paired `BookmarkStart`/`BookmarkEnd`
@@ -1978,19 +2035,59 @@ pub fn apply(
             if paragraphs.is_empty() && comments.is_none() {
                 return Err(EditError::EmptyEdit);
             }
-            {
-                // "Accept all changes" passes one entry per affected paragraph, so
-                // this list can be the whole document. Rescanning the entries
-                // already seen made the duplicate check quadratic in its own
-                // length, and resolving each node walked every surface again; a
-                // set and one index answer both in a single pass. The first
-                // duplicate or unknown node still decides, in list order.
+            // **The typing case is one paragraph, and it must not pay for the batch one.**
+            // "Accept all changes" passes one entry per affected paragraph, so this list can
+            // be the whole document, and for that shape an index is right: rescanning the
+            // entries already seen made the duplicate check quadratic in its own length, and
+            // resolving each node walked every surface again. But a SUGGESTED KEYSTROKE
+            // passes exactly one paragraph, where the duplicate check is vacuous and the
+            // existence check is what the mutation loop's own `find_paragraph_mut` already
+            // does — so building a whole-document index for it is one document walk bought
+            // for nothing (`104` HF-111, `107` §4 B1). The first duplicate or unknown node
+            // still decides, in list order, on both paths.
+            if paragraphs.len() > 1 {
                 let by_id = ParagraphIndex::build(doc);
                 let mut seen: HashSet<NodeId> = HashSet::with_capacity(paragraphs.len());
                 for paragraph in paragraphs {
                     if !seen.insert(paragraph.node) || by_id.paragraph(paragraph.node).is_none() {
                         return Err(EditError::NodeNotFound);
                     }
+                }
+            }
+
+            // **Validated BEFORE the swap, and scoped to what this operation can break.**
+            //
+            // This used to be a `doc.validate()` after the swap, with a rollback — one
+            // whole-document pass per suggested keystroke, which is `104` HF-111 and the one
+            // violation `107` §4 B1 names by number. Measured on a 200-paragraph document a
+            // suggested keystroke cost five document walks and one whole-document
+            // validation against a plain keystroke's two walks and none.
+            //
+            // What an inline replacement can break is inline invariants: empty runs,
+            // adjacent equivalent runs, grapheme overflow, hyperlink/field wrapper rules,
+            // and property references. `validate_paragraph_inlines` is exactly those, in
+            // O(the inlines given). Checking first also means there is nothing to roll back
+            // — a refusal never mutated anything, which is a stronger guarantee than the
+            // rollback it replaces, not a weaker one.
+            //
+            // The residual, stated rather than hidden: a replacement carrying a node id that
+            // already exists ELSEWHERE is not visible from one paragraph and costs
+            // O(document) to find. That residual is shared with every other
+            // content-carrying operation (`147` §3.2), is what the per-replica identity
+            // partition makes unreachable in practice, and is caught at the next validation
+            // point.
+            //
+            // **Only when the comments table is not also changing.** A paragraph's inlines
+            // can carry comment range markers, and those resolve against the comments table
+            // — so pre-validating a paragraph whose comment is about to be added would
+            // refuse a legitimate edit for naming something that arrives one line later.
+            // That path (accept, reject, add or edit a comment) is a deliberate command, not
+            // a keystroke, so it keeps the whole-document check and its rollback below. The
+            // keystroke shape passes `comments: None` and is what this scoped check serves.
+            if comments.is_none() {
+                for replacement in paragraphs {
+                    doc.validate_paragraph_inlines(replacement.node, &replacement.inlines)
+                        .map_err(|_| EditError::ValueTooLarge)?;
                 }
             }
 
@@ -2007,7 +2104,13 @@ pub fn apply(
             let previous_comments = comments.as_ref().map(|replacement| {
                 std::mem::replace(&mut doc.definitions_mut().comments, replacement.clone())
             });
-            if doc.validate().is_err() {
+            // A comments-table replacement swaps a whole definition table, whose invariants
+            // are cross-document (every anchor must resolve), so it keeps the whole-document
+            // check and its rollback. That path is accepting or rejecting a comment — a
+            // deliberate command, never a keystroke — so it is not on the budget B1 governs,
+            // and `previous_comments.is_some()` is exactly the condition that separates the
+            // two. A suggested keystroke passes `comments: None` and runs none of this.
+            if previous_comments.is_some() && doc.validate().is_err() {
                 for previous in &previous_paragraphs {
                     let paragraph =
                         find_paragraph_mut(blocks_owning_mut(doc, previous.node)?, previous.node)
@@ -2146,6 +2249,75 @@ pub fn apply(
             Ok(Operation::SetStyleDefinition {
                 id: *id,
                 style: previous.map(Box::new),
+            })
+        }
+        Operation::SetAbstractNumbering { id, definition } => {
+            let table = &mut doc.definitions_mut().abstract_numbering;
+            let previous = match definition {
+                Some(definition) => table.insert(*id, (**definition).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().abstract_numbering;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetAbstractNumbering {
+                id: *id,
+                definition: previous.map(Box::new),
+            })
+        }
+        Operation::SetNumberingInstance { id, instance } => {
+            let table = &mut doc.definitions_mut().numbering;
+            let previous = match instance {
+                Some(instance) => table.insert(*id, (**instance).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().numbering;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetNumberingInstance {
+                id: *id,
+                instance: previous.map(Box::new),
+            })
+        }
+        Operation::SetMediaReference { id, reference } => {
+            let table = &mut doc.definitions_mut().media;
+            let previous = match reference {
+                Some(reference) => table.insert(*id, (**reference).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().media;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetMediaReference {
+                id: *id,
+                reference: previous.map(Box::new),
             })
         }
         Operation::CreateBookmark {
@@ -5106,6 +5278,36 @@ thread_local! {
     static BLOCK_VISITS: Cell<u64> = const { Cell::new(0) };
 }
 
+/// How many paragraphs have been recorded into a [`ParagraphIndex`] on this thread since
+/// [`reset_indexed_paragraphs`].
+///
+/// A second meter, because [`block_visits`] cannot see this cost. It charges a whole block
+/// list whether a walk returned early or not, so an early-returning lookup and a full index
+/// build over the same list score the same — while the index also allocates a hash entry per
+/// paragraph, which on the owner's 1.3-million-paragraph file is 1.3 million inserts.
+///
+/// Building an index is right when a caller resolves *many* ids and would otherwise be
+/// quadratic. It is wrong on a per-keystroke path resolving one, and that is a distinction
+/// only this meter can state, so a guard can assert a keystroke indexes nothing.
+#[must_use]
+pub fn indexed_paragraphs() -> u64 {
+    INDEXED_PARAGRAPHS.with(Cell::get)
+}
+
+/// Zeroes the [`indexed_paragraphs`] counter for this thread.
+pub fn reset_indexed_paragraphs() {
+    INDEXED_PARAGRAPHS.with(|count| count.set(0));
+}
+
+thread_local! {
+    static INDEXED_PARAGRAPHS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Charges `n` indexed paragraphs to this thread's counter.
+fn note_indexed(n: usize) {
+    INDEXED_PARAGRAPHS.with(|count| count.set(count.get().saturating_add(n as u64)));
+}
+
 /// Charges `n` block visits to this thread's counter.
 fn note_blocks(n: usize) {
     BLOCK_VISITS.with(|visits| visits.set(visits.get().saturating_add(n as u64)));
@@ -5146,6 +5348,9 @@ impl<'a> ParagraphIndex<'a> {
         for blocks in surface_block_lists(document) {
             index_blocks(blocks, false, &mut index);
         }
+        // Charged once per build rather than per insert, so the meter reads "paragraphs
+        // indexed" and a caller that builds two indexes is charged twice.
+        note_indexed(index.by_id.len());
         index
     }
 

@@ -1331,6 +1331,23 @@ unanswered rather than assumed.
 implements `107` §2.1 P-1…P-3 and is the prerequisite ADR-033 named. Supersedes nothing;
 it makes ADR-005 true in practice for the first time.
 
+**Amended 2026-10-01.** "Every change" was not true when this was accepted: five call sites in
+`casual-doc-wasm` wrote straight into a definition table — one media registration and four
+numbering definitions — and sent only the paragraph re-pointing through the log, so the
+definition was outside the commit. Undo left it behind, a refusal after it left it behind, and
+a session would have fanned out a paragraph or a drawing naming a definition no other replica
+held. The exhaustiveness guard counted what went THROUGH the envelope and was structurally
+blind to what never went near it.
+
+Closed by three operations modelled on `SetStyleDefinition` — `SetAbstractNumbering`,
+`SetNumberingInstance`, `SetMediaReference` — each ordered first in the same transaction as
+the nodes that name it (an ADR-030 I2 op-set change: 58 operations, and the compiler found all
+eleven exhaustive matches that had to decide). The guard now forbids the facade taking a
+**mutable borrow of the definitions at all**, because a first version listing table names was
+defeated in one line by `let defs = …definitions_mut();`. `147` §6a records the mechanism,
+the three consequences, and the two things it does not cover (`settings`/`sections`, and a
+refusal guard that cannot be written while `to_js` panics on a native target).
+
 **Decision:** Every change to a live (`v1`) document is a `casual_doc_transaction::Transaction`
 applied through one function, which appends one `Commit` to an ordered, append-only
 `RevisionLog` and advances the document's `RevisionId` by one. Undo and redo are **reads of
@@ -1603,8 +1620,19 @@ connection, and `flush` refuses to resubmit until this replica's position has re
 the refusal named — but **the head is not guaranteed to stop moving**, so sustained
 many-writer contention can starve a slow client. And no server-side snapshot verification by
 replay, which `150` §9.3 blocks anyway until operations carry the identities they cause to be
-minted. **The measurement that decides whether this was right is the refusal rate as
-concurrent writers rise**, and nothing here is proven until it is run (`152` §10 Q3).
+minted.
+
+**The measurement that decides whether this was right has now been run** (2026-10-01, `152`
+§10 Q3). With *W* simultaneous writers the relay refuses `(W - 1) / 2` chunks per chunk it
+orders, and the worst-placed writer needs `W` attempts: **linear in the writer count, not
+quadratic** — the ping-pong this decision described and nothing worse. Everybody's work
+lands; nobody starves. A **lone writer is never refused**, so single-user editing pays nothing
+for the machinery. Measured at 1/2/4/8/16 writers by
+`the_dumb_relay_s_refusal_rate_is_the_ping_pong_and_nothing_worse`, deterministically and
+with no clock. What is *not* decided is whether that shape is acceptable at a given latency:
+at 16 simultaneous writers a chunk costs eight extra round trips. Coalescing (`107` §4 B3)
+and pipelining are what move it, and neither needs the relay to hold a document — so the
+decision stands and the next measurement belongs with the `107` §4 benchmarks.
 
 **Consequences.**
 
@@ -1621,10 +1649,30 @@ concurrent writers rise**, and nothing here is proven until it is run (`152` §1
   therefore **probes**: it applies the arrival's image at each base state the rollback reveals,
   keeps the inverses, and applies them straight back. This rests on one invariant, and it is
   the one undo already rests on (ADR-030 I2).
-- **The live editor's minting namespace is derived from the document today**, so two replicas
-  collide from the first edit. Until that is fixed in `casual-doc-wasm` — the next increment,
-  a different lane's crate — a session refuses every arrival that introduces an id, loudly and
-  with `ODC-7008`, because the alternative is a silent overwrite of a definition.
+- ~~**The live editor's minting namespace is derived from the document today**~~ —
+  **closed 2026-10-01, and the closure amends part 4 of this decision.** The editor now mints
+  every identity through the model's `IdSpace`: `IdSpace::participant(base, number)` after a
+  room assigns a participant number, and a **reserved offline space** `IdSpace::local(base)`
+  before one does, so a document with no session and no server still mints, in O(1) per
+  keystroke. Three consequences of the closure:
+  - the derivation moved from `base ^ (K · (c + 1))` to `base ^ (K · (c + 2))`, so `base ^ K`
+    is free for the offline space and **two** participant numbers are refused rather than one;
+  - the partition lives in **`casual-doc-model`**, not in `casual-doc-transaction::wire` —
+    identity is a property of the model, and hosting it in the collaboration crate would have
+    made single-user editing depend on it. `wire` re-exports `IdSpace` and adds
+    `wire::space_of`, so there is one derivation and not two, and
+    `the_live_editor_has_no_collaboration_dependency` still holds unchanged;
+  - **`PROTOCOL_VERSION` goes 1 → 2.** No wire field changed — the space is derived from the
+    `client` field a message already carries — but a version-1 peer and a version-2 peer
+    compute different spaces for one participant number and would refuse each other's every
+    introduction while both believed the message well formed.
+
+  `152` §4.4 records the mechanism, the id families enumerated from the code, the
+  backward-compatibility case (a normalized JSON snapshot preserves node ids verbatim, so the
+  allocator is seeded above what the document already holds), and four mutation proofs.
+  `150` §9.3 is **narrowed, not closed**: snapshot verification by replay across replicas is
+  still blocked, now solely because operations do not declare the identities they cause to be
+  minted.
 - `docs/20` gains `ODC-7002`…`ODC-7009`. `ODC-7001` is reused for `CannotMerge`.
 - The two O(document) costs — one document clone and one `BlockIndex` build — are on the
   **contended** path only: a remote edit arriving while this replica has unacknowledged work.

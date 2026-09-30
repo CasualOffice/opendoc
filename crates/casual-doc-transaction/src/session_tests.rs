@@ -29,7 +29,7 @@ use crate::protocol::{
     Base, ClientId, ClientMessage, Identity, Join, MAX_OUTSTANDING, Outcome, PROTOCOL_VERSION,
     Refusal, Resume, ResumeKey, Revision, Seq, ServerMessage,
 };
-use crate::wire::{Clash, IdSpace, WireOperation};
+use crate::wire::{self, Clash, Collision, IdSpace, WireOperation};
 use crate::{Coalesce, RevisionLog, Transaction, TransactionId};
 
 use super::{ClientSession, ServerSession, SessionError};
@@ -375,10 +375,10 @@ fn every_refusal_code_has_a_row_in_the_register() {
 #[test]
 fn two_participants_never_share_an_identity_space() {
     let (document, _) = seed();
-    let base = IdSpace::for_document(&document);
+    let base = wire::document_space(&document);
     let mut seen = std::collections::BTreeSet::new();
     for number in 0..2048_u64 {
-        let space = IdSpace::of(base, ClientId::new(number)).expect("a space");
+        let space = wire::space_of(base, ClientId::new(number)).expect("a space");
         assert!(
             seen.insert(space.get()),
             "participant {number} was given a space another already had"
@@ -389,22 +389,25 @@ fn two_participants_never_share_an_identity_space() {
             "participant {number} was given the document's own space, where imported nodes live"
         );
     }
-    // The one participant number the function refuses, rather than leaving as a remark.
-    assert!(IdSpace::of(base, ClientId::new(u64::MAX)).is_none());
+    // The two participant numbers the function refuses, rather than leaving as a remark:
+    // one would alias the document's own space, the other the reserved offline space.
+    assert!(wire::space_of(base, ClientId::new(u64::MAX - 1)).is_none());
+    assert!(wire::space_of(base, ClientId::new(u64::MAX)).is_none());
 }
 
 #[test]
 fn an_identity_minted_in_the_document_s_own_space_is_refused() {
-    // THIS IS TODAY'S LIVE EDITOR. `casual-doc-wasm` derives its minting namespace from the
-    // document — `(document.id() >> 64) ^ 0xED17_ED17_ED17_ED17` — and starts its counter at
-    // one, so two replicas of one document mint identical ids for different nodes from the
-    // first edit. Not an id that means something else on the receiver: two nodes with one
-    // name.
+    // The document's own space is where the IMPORTER mints, identically on every replica, so
+    // nobody may introduce into it. Until the identity partition landed this was also the
+    // live editor's space — `(document.id() >> 64) ^ 0xED17_ED17_ED17_ED17`, a document-
+    // derived constant — which is why a session could refuse every arrival an editor made
+    // and collaboration could not run. The editor now mints through `IdSpace`; this guard
+    // keeps the importer's space closed.
     let (document, paragraphs) = seed();
     let mut server = ServerSession::default();
     let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
 
-    let document_space = IdSpace::for_document(&document);
+    let document_space = wire::document_space(&document);
     let mut as_the_editor_does = IdGenerator::new(document_space.get());
     let colliding = as_the_editor_does.next_id().expect("id");
     let operation = Operation::SplitParagraph {
@@ -440,8 +443,8 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
     // "insert OR replace" by design, so without this check the arrival silently overwrites
     // the receiver's own style and the loss is invisible to everything.
     let (mut document, _) = seed();
-    let base = IdSpace::for_document(&document);
-    let sender_space = IdSpace::of(base, ClientId::new(0)).expect("a space");
+    let base = wire::document_space(&document);
+    let sender_space = wire::space_of(base, ClientId::new(0)).expect("a space");
     let contested = StyleId::new(IdGenerator::new(sender_space.get()).next_id().expect("id"));
     document
         .definitions_mut()
@@ -486,13 +489,113 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
 }
 
 #[test]
+fn each_new_definition_table_refuses_an_arrival_at_an_id_the_receiver_already_holds() {
+    // `wire`'s standing rule for a new definition table, step 5, applied to the three added
+    // by `147`/ADR-005's completion: **the receiver must already hold a DIFFERENT entry at
+    // that id.** An id that lines up by accident proves nothing, and a test that merely
+    // round-trips a value proves less.
+    //
+    // It matters for exactly the reason it matters for styles: `Some(_)` is "insert or
+    // replace" by design, so without the already-held check the arrival silently overwrites
+    // a definition the receiver minted and the loss is invisible to everything.
+    for (table, build) in [
+        (
+            wire::Table::Media,
+            (|id: NodeId| Operation::SetMediaReference {
+                id: casual_doc_model::v1::MediaId::new(id),
+                reference: Some(Box::new(casual_doc_model::v1::MediaReference {
+                    relationship_id: "rIdTheSender".to_owned(),
+                    media_type: "image/png".to_owned(),
+                    part_name: "word/media/sender.png".to_owned(),
+                })),
+            }) as fn(NodeId) -> Operation,
+        ),
+        (
+            wire::Table::Numbering,
+            (|id: NodeId| Operation::SetAbstractNumbering {
+                id: casual_doc_model::v1::AbstractNumberingId::new(id),
+                definition: Some(Box::new(casual_doc_model::v1::AbstractNumbering {
+                    levels: Vec::new(),
+                    multi_level_type: None,
+                    num_style_link: None,
+                    style_link: None,
+                })),
+            }) as fn(NodeId) -> Operation,
+        ),
+        (
+            wire::Table::Numbering,
+            (|id: NodeId| Operation::SetNumberingInstance {
+                id: casual_doc_model::v1::NumberingInstanceId::new(id),
+                instance: Some(Box::new(casual_doc_model::v1::NumberingInstance {
+                    abstract_ref: casual_doc_model::v1::AbstractNumberingId::new(
+                        NodeId::from_parts(7, 9_000).expect("an id"),
+                    ),
+                    overrides: Vec::new(),
+                })),
+            }) as fn(NodeId) -> Operation,
+        ),
+    ] {
+        let (mut document, _) = seed();
+        let base = wire::document_space(&document);
+        let sender_space = wire::space_of(base, ClientId::new(0)).expect("a space");
+        let contested = IdGenerator::new(sender_space.get()).next_id().expect("id");
+
+        // The receiver's OWN entry, at the very id the sender is about to introduce.
+        {
+            let definitions = document.definitions_mut();
+            match table {
+                wire::Table::Media => {
+                    definitions.media.insert(
+                        casual_doc_model::v1::MediaId::new(contested),
+                        casual_doc_model::v1::MediaReference {
+                            relationship_id: "rIdTheReceiver".to_owned(),
+                            media_type: "image/png".to_owned(),
+                            part_name: "word/media/receiver.png".to_owned(),
+                        },
+                    );
+                }
+                wire::Table::Numbering => {
+                    definitions.abstract_numbering.insert(
+                        casual_doc_model::v1::AbstractNumberingId::new(contested),
+                        casual_doc_model::v1::AbstractNumbering {
+                            levels: Vec::new(),
+                            multi_level_type: None,
+                            num_style_link: None,
+                            style_link: None,
+                        },
+                    );
+                }
+                other => panic!("this test does not cover {other:?}"),
+            }
+        }
+
+        let operation = WireOperation::of(build(contested));
+        assert_eq!(
+            operation.declared(),
+            [contested],
+            "the operation must DECLARE the id it introduces, or `localise` has nothing to \
+             check and the silent replace is unreachable by a guard"
+        );
+        let clash = operation
+            .localise(&document, sender_space)
+            .expect_err("an arrival at an id this replica already holds must be refused")
+            .clash;
+        assert_eq!(
+            clash,
+            Clash::AlreadyHeld { table },
+            "the refusal must name the table the id was found in"
+        );
+    }
+}
+
+#[test]
 fn an_operation_that_under_declares_what_it_introduces_is_refused() {
     // A sender that declares nothing would otherwise skip both identity checks for the id it
     // left out — which is the one that matters. So the receiver recomputes rather than trusts.
     let (document, paragraphs) = seed();
     let mut server = ServerSession::default();
     let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
-    let space = IdSpace::of(IdSpace::for_document(&document), ClientId::new(0)).expect("a space");
+    let space = wire::space_of(wire::document_space(&document), ClientId::new(0)).expect("a space");
     let minted = IdGenerator::new(space.get()).next_id().expect("id");
 
     // An operation prepared honestly, then stripped of its declaration.
@@ -523,6 +626,122 @@ fn an_operation_that_under_declares_what_it_introduces_is_refused() {
         }
         other => panic!("expected an undeclared identity, got {other:?}"),
     }
+}
+
+#[test]
+fn the_space_a_replica_mints_in_offline_is_no_participant_s_space() {
+    // The reserved third space. A replica with no session still has to mint — local-first is
+    // not negotiable — so it mints in `IdSpace::local`. If a participant could ever be handed
+    // that space, a document edited offline and then shared into a room would have its ids
+    // re-minted underneath it by whoever drew that number.
+    let (document, _) = seed();
+    let base = wire::document_space(&document);
+    let offline = IdSpace::local(base);
+    assert_ne!(offline, base, "the offline space is the importer's space");
+
+    for number in 0..4096_u64 {
+        let space = wire::space_of(base, ClientId::new(number)).expect("a space");
+        assert_ne!(
+            space, offline,
+            "participant {number} was handed the space an offline replica mints in"
+        );
+    }
+    // The property, not the sample: `space(c) == local` needs `K * (c + 2) == K * 1`, and `K`
+    // odd makes that `c == u64::MAX` — the number the derivation refuses.
+    assert!(wire::space_of(base, ClientId::new(u64::MAX)).is_none());
+}
+
+#[test]
+fn an_identity_minted_in_the_offline_space_is_refused_from_a_session() {
+    // The offline space is private to a replica, so nothing may introduce into it over the
+    // wire: two participants sending from it would be the very collision this partition
+    // exists to make impossible.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
+
+    let offline = IdSpace::local(wire::document_space(&document));
+    let minted = IdGenerator::new(offline.get()).next_id().expect("id");
+    let arrival = crate::protocol::Arrival {
+        revision: Revision::new(1),
+        client: ClientId::new(0),
+        operations: vec![WireOperation::of(Operation::SplitParagraph {
+            at: Pos::new(paragraphs[0], 4),
+            new_id: minted,
+            properties: None,
+        })],
+    };
+    let error = receiver
+        .receive(&arrival)
+        .expect_err("an id from the offline space cannot be accepted");
+    assert!(matches!(
+        error,
+        SessionError::IdCollision(Collision {
+            clash: Clash::ForeignSpace { .. },
+            ..
+        })
+    ));
+    assert_eq!(error.refusal().code(), "ODC-7008");
+}
+
+#[test]
+fn two_replicas_introducing_a_definition_at_once_do_not_contend_for_one_id() {
+    // The decisive shape, and the sibling's standing rule for it: **the receiver already
+    // holds a different entry at the id its own mint produced.** Both replicas perform the
+    // *same* action — define a style — with allocators in the same state, which is exactly
+    // the case a document-derived namespace turned into a silent overwrite.
+    //
+    // What makes this able to fail: the receiver's own style is already in its table under
+    // the id ITS allocator minted, and the assertion at the end reads that entry back by
+    // name. A partition that did not partition would put the sender's style at that id and
+    // `SetStyleDefinition`'s "insert or replace" would swallow it without an error.
+    let (document, _) = seed();
+    let mut server = ServerSession::default();
+    let mut sender = Replica::join(&document, &mut server, "sender", "ada");
+    let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
+    assert_ne!(
+        sender.session.id_space(),
+        receiver.session.id_space(),
+        "the relay handed two participants one space"
+    );
+
+    let senders_id = StyleId::new(sender.ids.next_id().expect("id"));
+    let receivers_id = StyleId::new(receiver.ids.next_id().expect("id"));
+    assert_ne!(
+        senders_id, receivers_id,
+        "two replicas minted one id for two different styles"
+    );
+
+    receiver
+        .document
+        .definitions_mut()
+        .styles
+        .insert(receivers_id, style("the receiver's own"));
+
+    sender.edit(
+        "Define a style",
+        vec![Operation::SetStyleDefinition {
+            id: senders_id,
+            style: Some(Box::new(style("the sender's"))),
+        }],
+    );
+    let fanned = sender.exchange(&mut server);
+    assert_eq!(fanned.len(), 1);
+    receiver
+        .receive(&fanned[0])
+        .expect("a concurrently introduced definition arrives");
+
+    let styles = &receiver.document.definitions().styles;
+    assert_eq!(
+        styles.get(&receivers_id).and_then(|held| held.name.clone()),
+        Some("the receiver's own".to_owned()),
+        "the arrival overwrote the definition this replica minted"
+    );
+    assert_eq!(
+        styles.get(&senders_id).and_then(|held| held.name.clone()),
+        Some("the sender's".to_owned()),
+        "the arrival's own definition is not in the receiver's table"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1252,4 +1471,287 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
         ),
         "got {answer:?}; the loss has to be announced, not implied by a snapshot"
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// What a dumb relay costs under contention — doc 152 §10 Q3, ADR-047
+// ---------------------------------------------------------------------------------------
+
+/// A document of `paragraphs` one-run paragraphs, so every writer in a contention run has a
+/// paragraph of its own.
+///
+/// The contention this measures is the relay's **ordering** rule — a submission whose base
+/// is not the current head is refused — and that rule fires whether or not two edits touch
+/// the same text. Giving each writer its own paragraph removes semantic conflict from the
+/// measurement so what is left is the cost of the ordering discipline alone, which is the
+/// thing ADR-047 chose and the thing §10 Q3 asks about.
+fn wide_seed(paragraphs: usize) -> (Document, Vec<NodeId>) {
+    let mut ids = IdGenerator::new(7);
+    let document_id = ids.next_id().expect("id");
+    let mut blocks = Vec::new();
+    let mut nodes = Vec::new();
+    for _ in 0..paragraphs {
+        let id = ids.next_id().expect("id");
+        let run = ids.next_id().expect("id");
+        nodes.push(id);
+        blocks.push(BlockNode::Paragraph(Paragraph {
+            id,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: run,
+                properties: RunProperties::default().into(),
+                text: "abcdefgh".to_owned(),
+            })],
+        }));
+    }
+    let document =
+        Document::new(document_id, blocks, Definitions::default()).expect("a valid document");
+    (document, nodes)
+}
+
+/// What one contention run cost.
+#[derive(Debug)]
+struct Contention {
+    /// Chunks the relay ordered.
+    ordered: usize,
+    /// Chunks the relay refused with `StaleBase`, each of which is one wasted round trip.
+    refused: usize,
+    /// The most attempts any single writer needed to get one chunk ordered — the starvation
+    /// measure, which an average hides.
+    worst_attempts: usize,
+}
+
+impl Contention {
+    /// Wasted round trips per chunk that actually landed.
+    fn refusals_per_ordered(&self) -> f64 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "counts here are in the hundreds; the ratio is a report, not a decision"
+        )]
+        {
+            self.refused as f64 / self.ordered as f64
+        }
+    }
+}
+
+/// Drives `writers` replicas that each make `edits` edits, all against one relay, and
+/// returns what the ordering discipline cost.
+///
+/// Deterministic: the scheduler is a fixed round robin, there is no clock and no randomness,
+/// so the numbers are reproducible and a regression is a real change rather than noise.
+///
+/// The loop models a transport honestly in the one way that matters here: a refused writer
+/// cannot retry until it has **received** the arrivals that caused the refusal, which is
+/// `ClientSession::flush` holding itself closed on `awaiting` rather than a promise about
+/// message order.
+fn contend(writers: usize, edits: usize) -> Contention {
+    const LABEL: &str = "Typing";
+
+    let (document, paragraphs) = wide_seed(writers);
+    let mut server = ServerSession::default();
+    let mut replicas: Vec<Replica> = (0..writers)
+        .map(|w| Replica::join(&document, &mut server, &format!("writer-{w}"), "ada"))
+        .collect();
+    let mut inboxes: Vec<Vec<crate::protocol::Arrival>> = vec![Vec::new(); writers];
+
+    let mut ordered = 0_usize;
+    let mut refused = 0_usize;
+    let mut worst_attempts = 0_usize;
+
+    for round in 0..edits {
+        // Everybody types before anybody sends, so every writer is contending from the same
+        // instant against the same head. Staggering them would measure the scheduler instead
+        // of the protocol, and is exactly how a first draft of this harness measured zero.
+        for (w, replica) in replicas.iter_mut().enumerate() {
+            replica.edit(
+                LABEL,
+                vec![Operation::InsertText {
+                    at: Pos::new(paragraphs[w], 0),
+                    text: char::from(b'A' + u8::try_from(round % 26).expect("a letter"))
+                        .to_string(),
+                }],
+            );
+        }
+
+        let mut attempts = vec![0_usize; writers];
+        // A bound, so a protocol that cannot make progress fails rather than hanging the
+        // suite. One tick per writer is the ping-pong's own shape; the assertions say what
+        // was actually needed.
+        for _ in 0..=(writers * 2 + 2) {
+            // 1. Everyone offers what it has, on what it knows NOW. This is the whole point:
+            //    the offers are simultaneous, so all but one are written against a head the
+            //    relay is about to move past.
+            let mut batch = Vec::new();
+            for (w, replica) in replicas.iter_mut().enumerate() {
+                let Replica { session, log, .. } = replica;
+                if let Some(submission) = session.flush(log) {
+                    attempts[w] += 1;
+                    batch.push((w, submission));
+                }
+            }
+            let quiet = batch.is_empty() && inboxes.iter().all(Vec::is_empty);
+            if quiet {
+                break;
+            }
+
+            // 2. The relay orders them in the sequence they reached it.
+            for (w, submission) in batch {
+                let replica = &mut replicas[w];
+                match server.commit(&submission) {
+                    Outcome::Ordered { revision } | Outcome::Duplicate { revision } => {
+                        ordered += 1;
+                        worst_attempts = worst_attempts.max(attempts[w]);
+                        let Replica { session, log, .. } = replica;
+                        session
+                            .acknowledge(submission.seq, revision, log)
+                            .expect("the acknowledgement lands");
+                        let arrival = crate::protocol::Arrival {
+                            revision,
+                            client: submission.client,
+                            operations: submission.operations.clone(),
+                        };
+                        for (other, inbox) in inboxes.iter_mut().enumerate() {
+                            if other != w {
+                                inbox.push(arrival.clone());
+                            }
+                        }
+                    }
+                    Outcome::Refused { reason } => {
+                        refused += 1;
+                        let Replica { session, log, .. } = replica;
+                        session
+                            .refused(Some(submission.seq), reason, log)
+                            .expect("a stale base is not terminal");
+                    }
+                }
+            }
+
+            // 3. The fan-out lands. A refused writer cannot retry until this has happened —
+            //    `flush` holds itself closed on `awaiting` — which is a state guarantee
+            //    rather than a promise about message order.
+            for w in 0..writers {
+                for arrival in std::mem::take(&mut inboxes[w]) {
+                    replicas[w].receive(&arrival).expect("the arrival merges");
+                }
+            }
+        }
+    }
+
+    // Everything every writer wrote is ordered and acknowledged. This is the assertion that
+    // makes the numbers mean something: a protocol that dropped work would show a *lower*
+    // refusal rate.
+    for (w, replica) in replicas.iter_mut().enumerate() {
+        assert!(
+            !replica.session.has_unacknowledged(),
+            "writer {w} still has unacknowledged work, so the run did not finish"
+        );
+        let Replica { session, log, .. } = replica;
+        assert!(
+            session.flush(log).is_none(),
+            "writer {w} still has something to send, so the run did not finish"
+        );
+    }
+
+    Contention {
+        ordered,
+        refused,
+        worst_attempts,
+    }
+}
+
+#[test]
+fn the_dumb_relay_s_refusal_rate_is_the_ping_pong_and_nothing_worse() {
+    // **ADR-047's unproven claim, measured.** The relay holds no document and runs no
+    // transform, so a submission written against a head the document has moved past is
+    // refused and the client rebases locally and resubmits. The ADR says the cost is "one
+    // extra round trip" per refusal and that "sustained many-writer contention can starve a
+    // slow client", and it says nothing there is proven until the refusal rate is run.
+    //
+    // This runs it. Every number below is produced by this test; it is not quoted from
+    // anywhere. The shape it asserts is the guarantee — progress for everybody, and a cost
+    // that grows no faster than the number of writers — rather than a pinned constant, which
+    // would redden on any scheduling change that removed nothing.
+    let mut report = String::new();
+    let mut previous: Option<f64> = None;
+    for writers in [1_usize, 2, 4, 8, 16] {
+        let run = contend(writers, 4);
+        let rate = run.refusals_per_ordered();
+        report.push_str(&format!(
+            "{writers:>3} writers: {} ordered, {} refused, {rate:.2} refusals/ordered, \
+             worst {} attempts for one chunk\n",
+            run.ordered, run.refused, run.worst_attempts
+        ));
+
+        // 1. Progress. `contend` already asserts every writer finished; this says the relay
+        //    ordered something for each of them rather than one writer taking the lot.
+        assert!(
+            run.ordered >= writers,
+            "{writers} writers produced only {} ordered chunks",
+            run.ordered
+        );
+
+        // 2. The cost is LINEAR in writers, not worse. Each refused writer pays one round
+        //    trip per writer that beat it to the head, so the bound is the writer count with
+        //    room for the first round; anything above this is not ping-pong, it is a defect.
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a small integer bound compared against a ratio"
+        )]
+        let bound = writers as f64;
+        assert!(
+            rate <= bound,
+            "{writers} writers cost {rate:.2} refusals per ordered chunk, above the linear \
+             ping-pong bound of {bound:.2} — the extra cost is not the ordering discipline"
+        );
+
+        // 3. It DOES grow. Recorded as an assertion rather than as prose because it is the
+        //    finding: a dumb relay makes the client pay for concurrency, and a reader who
+        //    only saw the bound above might conclude the cost was flat.
+        if let Some(earlier) = previous {
+            assert!(
+                rate >= earlier,
+                "the refusal rate fell from {earlier:.2} to {rate:.2} as writers rose, which \
+                 contradicts the ordering rule — check the harness before believing it"
+            );
+        }
+        previous = Some(rate);
+
+        // 4. No writer starves outright: nobody needs more attempts than there are writers
+        //    plus the rounds they are competing over.
+        assert!(
+            run.worst_attempts <= writers + 4,
+            "one writer needed {} attempts with {writers} writers — that is starvation, not \
+             ping-pong",
+            run.worst_attempts
+        );
+    }
+    // Printed so `cargo test -- --nocapture` is the artifact doc 152 §10 Q3's table is read
+    // from, rather than a number typed into prose (a published number is generated from a
+    // committed artifact, or it is not published). This is the one place in the crate that
+    // may write to stdout, and it is a measurement harness rather than library code.
+    #[expect(
+        clippy::print_stdout,
+        reason = "the measurement's artifact; doc 152 §10 Q3 reads its table from this"
+    )]
+    {
+        println!("{report}");
+    }
+    assert!(
+        previous.is_some_and(|rate| rate > 0.0),
+        "no contention was measured at all, so nothing here is evidence"
+    );
+}
+
+#[test]
+fn a_single_writer_is_never_refused_by_the_ordering_rule() {
+    // The floor the growth above is measured from, and the A1 line: one person editing pays
+    // nothing for the machinery. If this ever costs a round trip, the relay has started
+    // charging single-user editing for collaboration.
+    let run = contend(1, 8);
+    assert_eq!(
+        run.refused, 0,
+        "a lone writer was refused {} times by a rule about concurrent writers",
+        run.refused
+    );
+    assert_eq!(run.worst_attempts, 1, "a lone writer had to retry");
 }

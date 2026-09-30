@@ -76,7 +76,7 @@ use crate::protocol::{
 use crate::transform::{
     BlockIndex, BlockPlacement, Change, Rebase, Side, Tombstone, TransformError, transform_placed,
 };
-use crate::wire::{Collision, IdSpace, WireOperation};
+use crate::wire::{self, Collision, IdSpace, WireOperation};
 use crate::{Commit, Operation, RevisionId, RevisionLog, TransactionError};
 
 /// Why a session step could not be taken.
@@ -119,7 +119,7 @@ pub enum SessionError {
     /// An arriving operation introduces an identity this replica already holds.
     IdCollision(Collision),
     /// A participant number for which no id space exists (`u64::MAX`, the one value
-    /// [`IdSpace::of`] refuses).
+    /// [`wire::space_of`] refuses).
     NoIdSpace,
     // A `Chained` submission from a client with nothing accepted, and a revision outside the
     // retained history, are deliberately NOT variants here. They are things a relay decides,
@@ -251,8 +251,8 @@ impl ClientSession {
                 client: PROTOCOL_VERSION,
             });
         }
-        let document_space = IdSpace::for_document(document);
-        let space = IdSpace::of(document_space, client).ok_or(SessionError::NoIdSpace)?;
+        let document_space = wire::document_space(document);
+        let space = wire::space_of(document_space, client).ok_or(SessionError::NoIdSpace)?;
         log.settle(log.head());
         Ok(Self {
             client,
@@ -551,7 +551,7 @@ impl ClientSession {
             return Err(SessionError::OutOfOrder);
         }
         let sender =
-            IdSpace::of(self.document_space, arrival.client).ok_or(SessionError::NoIdSpace)?;
+            wire::space_of(self.document_space, arrival.client).ok_or(SessionError::NoIdSpace)?;
         let mut remote = Vec::with_capacity(arrival.operations.len());
         for carried in &arrival.operations {
             remote.push(
