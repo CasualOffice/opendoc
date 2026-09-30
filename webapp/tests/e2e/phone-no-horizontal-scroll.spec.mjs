@@ -311,3 +311,47 @@ test("the status toast does not land on the docked command bar", async ({ page, 
 
   expect(consoleErrors).toEqual([]);
 });
+
+// The same rule, made independent of the platform's font metrics.
+//
+// `menus, dialogs and panels fit the window` above measures what the fonts on
+// THIS machine happen to produce. That is not enough, and `main` proved it: the
+// command palette's search row fitted a 320px window on macOS (input 187px, row
+// scrollWidth 292 against a 292px client) and overflowed on CI's Linux faces
+// (scrollWidth 366), so a genuine sideways scroller shipped while every local
+// run was green.
+//
+// The cause was `min-width: auto`, a flex item's default, which refuses to shrink
+// below the item's INTRINSIC width — and a text input's intrinsic width is its
+// character `size`, not its content. So the honest guard is not "it fits with the
+// fonts I have" but "it fits WHATEVER the intrinsic width is": widen the input's
+// own `size` far past the window and require the row still not to scroll. That
+// fails on every platform when the shrink is refused, and passes on every
+// platform when it is allowed.
+test("the palette search row fits a 320px window whatever the input's intrinsic size", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await gotoEditor(page);
+  await expect(page.locator("body")).toHaveClass(/phone-mode/);
+
+  const measured = await page.evaluate(() => {
+    const palette = document.getElementById("cmdPalette");
+    palette.hidden = false;
+    const input = document.querySelector(".cmd-search input");
+    // Stand in for a font whose glyphs are wider than this machine's. 60
+    // characters is far past any real face at this width, so the assertion turns
+    // on whether the item may shrink at all — not on how wide a character is.
+    input.setAttribute("size", "60");
+    const row = document.querySelector(".cmd-search");
+    const result = { client: row.clientWidth, scroll: row.scrollWidth };
+    input.removeAttribute("size");
+    palette.hidden = true;
+    return result;
+  });
+
+  expect(
+    measured.scroll,
+    `the palette search row scrolls sideways: ${measured.scroll}px of content in a ${measured.client}px box`,
+  ).toBeLessThanOrEqual(measured.client);
+});

@@ -566,7 +566,22 @@ test("the gates the page names are armed", () => {
   const job = ci.slice(ci.indexOf("browser-smoke:"), ci.indexOf("platform:"));
   assert.match(job, /\.\/webapp\/build\.sh/, "browser-smoke must build the webapp");
   assert.match(job, /npm run --prefix webapp test:unit/, "browser-smoke must run the unit lane");
-  assert.match(job, /npm run --prefix webapp test:e2e/, "browser-smoke must run the browser lane");
+  // The browser lane is SHARDED across runners, so "does it run the browser
+  // suite" is no longer one literal command. Assert the guarantee instead: the
+  // job shards, and every shard the matrix declares is actually run — a matrix
+  // of four with a `--shard=N/2` command would leave half the suite unexecuted
+  // while every job reported success, which is precisely the "claimed as
+  // CI-enforced but never executed" failure this test exists for.
+  assert.match(job, /playwright test --shard=/, "browser-smoke must run the browser lane");
+  const declared = job.match(/shard: \[([0-9, ]+)\]/);
+  assert.ok(declared, "browser-smoke must declare its shards in a matrix");
+  const shards = declared[1].split(",").map((n) => Number(n.trim()));
+  const total = Number(job.match(/--shard=\$\{\{ matrix\.shard \}\}\/(\d+)/)[1]);
+  assert.deepEqual(
+    shards,
+    Array.from({ length: total }, (_, i) => i + 1),
+    `the matrix must declare every one of the ${total} shards the command splits the suite into`,
+  );
   assert.match(built, /browser-smoke/, "the page must name the job that runs its guards");
   // `build.sh` is "the build", and a stale page has to fail there too.
   assert.match(
