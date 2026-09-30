@@ -281,11 +281,24 @@ Three costs were removed, and each is now held by a guard that was driven red:
   self-referential, and a stale index is a correctness bug where a rebuilt one is merely
   O(n)). That is a design question, not an optimisation, and it is the honest next item for
   B1. Both existing guards therefore hold **linearity**, not O(1), and say so.
-- **Accepting every change is quadratic.** `UpdateReviewState` with N paragraphs resolves
-  each one separately — a lookup-by-id inside a loop over ids, the exact shape that made
-  `documentOutline` never return. The index built for that path prevents the *prevalidation*
-  from being quadratic; the mutation loop after it is not fixed. Closing it means one walk
-  that swaps every target paragraph, keyed by a set.
+- ~~**Accepting every change is quadratic.**~~ **Closed 2026-10-01.** `UpdateReviewState`
+  resolved each of its N paragraphs separately — a lookup-by-id inside a loop over ids, the
+  exact shape that made `documentOutline` never return — so on the owner's 1.3-million-
+  paragraph file "accept all changes" was 1.3M × 1.3M block visits. It is now one walk that
+  swaps every target paragraph, keyed by a set, which is the fix this row asked for.
+  Measured, as a ratio at *n* and *2n*:
+
+  | accept-all over every paragraph | 100 ¶ | 200 ¶ | ratio |
+  | --- | ---: | ---: | ---: |
+  | before | 20,100 | 80,200 | **3.99×** — quadratic |
+  | after | 200 | 400 | **2.00×** — linear |
+
+  The guard asserts the ratio rather than the number, so it cannot be satisfied by a faster
+  machine and cannot pass over an operation that swapped nothing (it holds a floor as well as
+  a ceiling). The mutation that restores the old loop reddens it with exactly the numbers
+  above. The walk mirrors `ParagraphIndex`'s descent deliberately — a surface one reaches and
+  the other does not is the one way a refusal could return after a partial swap — and a
+  second guard drives a replacement into a table cell to hold that mirror.
 
 ### 4.2 The benchmark harness: what was broken, what is fixed, and what a clock cannot gate
 

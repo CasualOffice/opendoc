@@ -2119,16 +2119,15 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 }
             }
 
-            let mut previous_paragraphs = Vec::with_capacity(paragraphs.len());
-            for replacement in paragraphs {
-                let paragraph =
-                    find_paragraph_mut(blocks_owning_mut(doc, replacement.node)?, replacement.node)
-                        .ok_or(EditError::NodeNotFound)?;
-                previous_paragraphs.push(ReviewParagraphState {
-                    node: replacement.node,
-                    inlines: std::mem::replace(&mut paragraph.inlines, replacement.inlines.clone()),
-                });
-            }
+            // **One walk for every paragraph, not one walk per paragraph.** This used to
+            // resolve each entry with `blocks_owning_mut` + `find_paragraph_mut` — a
+            // lookup-by-id inside a loop over ids, which is the exact shape that made
+            // `documentOutline` never return. "Accept all changes" passes one entry per
+            // affected paragraph, so on the owner's 1.3-million-paragraph file that was
+            // 1.3M x 1.3M block visits for a command the reader is waiting on.
+            // `swap_paragraph_inlines` is O(document + entries) whatever the entry count, and
+            // `107` §4.1 named it as the residual to close.
+            let previous_paragraphs = swap_paragraph_inlines(doc, paragraphs)?;
             let previous_comments = comments.as_ref().map(|replacement| {
                 std::mem::replace(&mut doc.definitions_mut().comments, replacement.clone())
             });
@@ -5480,6 +5479,153 @@ fn index_group<'a>(children: &'a [GroupChild], out: &mut ParagraphIndex<'a>) {
     }
 }
 
+/// Replaces the inlines of every paragraph `replacements` names, in **one** document walk,
+/// returning what each one held before — in `replacements`'s own order.
+///
+/// # Why this exists rather than a loop over `find_paragraph_mut`
+///
+/// `find_paragraph_mut` is a linear scan that reads like an accessor at the call site, so
+/// calling it once per entry is O(entries x document). `Operation::UpdateReviewState` is
+/// given one entry per affected paragraph by "accept all changes", which on a large document
+/// is every paragraph — the quadratic that `107` §4.1 records as still open. This walks the
+/// surfaces once, keyed by a set, which is the fix that section names.
+///
+/// # Errors
+///
+/// [`EditError::NodeNotFound`] when any entry names a paragraph the document does not hold,
+/// and then **nothing has been swapped**. That property is not local to this function, and
+/// saying where it comes from matters more than asserting it:
+///
+/// - a **single-entry** operation — the suggested keystroke — has nothing swapped before the
+///   miss, because the miss is the only entry;
+/// - a **multi-entry** one has already had every id checked against a `ParagraphIndex` by the
+///   caller, so this walk cannot miss unless the index's descent and this walk's descent
+///   disagree. That is why the two mirror each other deliberately, and why
+///   `the_single_walk_reaches_a_paragraph_inside_a_table_cell` exists: a surface one reaches
+///   and the other does not is the one way a partial swap could return `Err`, and a partial
+///   swap with no inverse is how a refused operation destroys content.
+///
+/// # Complexity
+///
+/// O(document + entries). One walk, one hash lookup per paragraph visited.
+fn swap_paragraph_inlines(
+    doc: &mut Document,
+    replacements: &[ReviewParagraphState],
+) -> Result<Vec<ReviewParagraphState>, EditError> {
+    let wanted: HashMap<NodeId, usize> = replacements
+        .iter()
+        .enumerate()
+        .map(|(index, state)| (state.node, index))
+        .collect();
+    // `None` until the walk finds that paragraph. Every slot must be filled or the operation
+    // named something that is not there.
+    let mut taken: Vec<Option<Vec<InlineNode>>> = vec![None; replacements.len()];
+    for surface in all_surfaces(doc) {
+        let Some(blocks) = surface_blocks_mut(doc, &surface) else {
+            continue;
+        };
+        swap_in_blocks(blocks, &wanted, replacements, &mut taken);
+    }
+    let mut previous = Vec::with_capacity(replacements.len());
+    for (state, inlines) in replacements.iter().zip(taken) {
+        previous.push(ReviewParagraphState {
+            node: state.node,
+            inlines: inlines.ok_or(EditError::NodeNotFound)?,
+        });
+    }
+    Ok(previous)
+}
+
+/// The block half of [`swap_paragraph_inlines`], mirroring [`index_blocks`]'s descent — the
+/// index exists to answer in one pass exactly what the per-id walk answers, and this swaps in
+/// one pass exactly what the per-id walk would have swapped. If the two descents differ, a
+/// paragraph is reachable one way and not the other.
+///
+/// A document holding two paragraphs under one id (which `Document::validate` forbids) would
+/// have both swapped here where the linear search swapped only the first. That is a
+/// difference in the treatment of an invalid document, and the id partition plus
+/// `validate`'s duplicate rule are what keep it unreachable.
+fn swap_in_blocks(
+    blocks: &mut [BlockNode],
+    wanted: &HashMap<NodeId, usize>,
+    replacements: &[ReviewParagraphState],
+    taken: &mut [Option<Vec<InlineNode>>],
+) {
+    note_blocks(blocks.len());
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(&index) = wanted.get(&paragraph.id)
+                    && taken[index].is_none()
+                {
+                    taken[index] = Some(std::mem::replace(
+                        &mut paragraph.inlines,
+                        replacements[index].inlines.clone(),
+                    ));
+                    // The swapped-in inlines are the operation's payload and hold no
+                    // paragraph of their own that this operation also names, so there is
+                    // nothing below to visit. Continuing into them would walk the new
+                    // content instead of the old and could match a text-box paragraph twice.
+                    continue;
+                }
+                swap_in_inlines(&mut paragraph.inlines, wanted, replacements, taken);
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        swap_in_blocks(&mut cell.blocks, wanted, replacements, taken);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => swap_in_blocks(&mut sdt.blocks, wanted, replacements, taken),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// The inline half of [`swap_in_blocks`], on the declared container set.
+fn swap_in_inlines(
+    inlines: &mut [InlineNode],
+    wanted: &HashMap<NodeId, usize>,
+    replacements: &[ReviewParagraphState],
+    taken: &mut [Option<Vec<InlineNode>>],
+) {
+    for inline in inlines.iter_mut() {
+        match inline_descent_mut(inline) {
+            InlineDescentMut::Blocks(blocks) => {
+                swap_in_blocks(blocks, wanted, replacements, taken);
+            }
+            InlineDescentMut::Inlines(nested) => {
+                swap_in_inlines(nested, wanted, replacements, taken);
+            }
+            InlineDescentMut::Group(children) => {
+                swap_in_group(children, wanted, replacements, taken);
+            }
+            InlineDescentMut::Leaf => {}
+        }
+    }
+}
+
+/// The shape-group half of [`swap_in_blocks`], mirroring [`index_group`].
+fn swap_in_group(
+    children: &mut [GroupChild],
+    wanted: &HashMap<NodeId, usize>,
+    replacements: &[ReviewParagraphState],
+    taken: &mut [Option<Vec<InlineNode>>],
+) {
+    for child in children.iter_mut() {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                swap_in_blocks(&mut text_box.blocks, wanted, replacements, taken);
+            }
+            GroupChild::Group(nested) => {
+                swap_in_group(&mut nested.children, wanted, replacements, taken);
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
 /// A source of fresh run identities. Backed by
 /// [`IdGenerator`](casual_doc_model::IdGenerator) in practice; a trait so the
 /// edit crate does not dictate the id-allocation policy.
@@ -7094,6 +7240,165 @@ mod tests {
 
     fn n(counter: u64) -> NodeId {
         NodeId::from_parts(7, counter).unwrap()
+    }
+
+    /// A body of `paragraphs` one-run paragraphs, and their ids in order.
+    fn review_document(paragraphs: usize) -> (Document, Vec<NodeId>) {
+        let mut blocks = Vec::with_capacity(paragraphs);
+        let mut ids = Vec::with_capacity(paragraphs);
+        for index in 0..paragraphs {
+            let id = n(index as u64 * 2 + 1_000);
+            ids.push(id);
+            blocks.push(BlockNode::Paragraph(Paragraph {
+                id,
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![run(index as u64 * 2 + 1_001, "abcdefgh")],
+            }));
+        }
+        let document = Document::new(n(1), blocks, Definitions::default()).expect("a document");
+        (document, ids)
+    }
+
+    /// The block visits an accept-all-shaped `UpdateReviewState` over every paragraph costs.
+    fn visits_for_accept_all(paragraphs: usize) -> u64 {
+        let (mut document, ids) = review_document(paragraphs);
+        let op = Operation::UpdateReviewState {
+            paragraphs: ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| ReviewParagraphState {
+                    node: *id,
+                    inlines: vec![run(index as u64 * 2 + 1_001, "abcdefg")],
+                })
+                .collect(),
+            comments: None,
+        };
+        reset_block_visits();
+        let mint = Mint::reserve(&mut IdGenerator::new(9), 1).expect("a mint");
+        super::apply(&mut document, mint, &op).expect("accept-all applies");
+        block_visits()
+    }
+
+    #[test]
+    fn accepting_every_change_is_linear_in_the_document_not_quadratic() {
+        // `107` §4.1 recorded this as the open residual: `UpdateReviewState` resolved each
+        // entry with `find_paragraph_mut`, a linear scan, inside a loop over the entries —
+        // the same lookup-by-id-inside-a-loop-over-ids that made `documentOutline` never
+        // return. "Accept all changes" passes one entry per affected paragraph, so on the
+        // owner's 1.3-million-paragraph file it was 1.3M x 1.3M block visits.
+        //
+        // Asserted as a RATIO at n and 2n, because that is the only shape that separates
+        // linear from quadratic: a quadratic quadruples, a linear one doubles, and a
+        // millisecond threshold could tell neither apart from a slow machine.
+        let small = visits_for_accept_all(100);
+        let large = visits_for_accept_all(200);
+        assert!(
+            small > 0,
+            "the meter read zero, so this guard measures nothing"
+        );
+        assert!(
+            (large as f64) < 2.6 * (small as f64),
+            "accept-all grew faster than the document: {small} visits at 100 paragraphs, \
+             {large} at 200. A quadratic path lands near 4x here"
+        );
+        assert!(
+            (large as f64) > 1.5 * (small as f64),
+            "the work did not grow with the document at all ({small} then {large}), so the \
+             walk is not visiting the paragraphs and this guard would pass over an operation \
+             that swapped nothing"
+        );
+    }
+
+    #[test]
+    fn an_accept_all_naming_a_paragraph_that_is_not_there_swaps_nothing() {
+        // The refusal has to be all-or-nothing. A walk that swapped as it went would leave
+        // the paragraphs it reached before the missing one rewritten, with no inverse
+        // recorded — `apply` returned `Err`, so the caller has nothing to undo with. That is
+        // the failure the validate-before-mutate rule exists to prevent, and a single-walk
+        // swap is exactly where it could have been reintroduced.
+        let (mut document, ids) = review_document(3);
+        let before = document.clone();
+        let op = Operation::UpdateReviewState {
+            paragraphs: vec![
+                ReviewParagraphState {
+                    node: ids[0],
+                    inlines: vec![run(9_001, "changed")],
+                },
+                ReviewParagraphState {
+                    node: n(999_999),
+                    inlines: vec![run(9_002, "nowhere")],
+                },
+            ],
+            comments: None,
+        };
+        let mint = Mint::reserve(&mut IdGenerator::new(9), 1).expect("a mint");
+        assert!(matches!(
+            super::apply(&mut document, mint, &op),
+            Err(EditError::NodeNotFound)
+        ));
+        assert_eq!(
+            document, before,
+            "a refused accept-all left the document changed, so the first paragraph was \
+             rewritten with nothing to undo it"
+        );
+    }
+
+    #[test]
+    fn the_single_walk_reaches_a_paragraph_inside_a_table_cell() {
+        // The descent has to match the per-id walk's, or a paragraph is reachable one way
+        // and not the other. A cell is the shape the old loop reached through
+        // `blocks_owning_mut`; a walk that stopped at the body would refuse it.
+        let inner = n(5_000);
+        let body = vec![BlockNode::Table(Box::new(Table {
+            id: n(4_000),
+            properties: Default::default(),
+            grid: Vec::new(),
+            grid_change: None,
+            rows: vec![TableRow {
+                id: n(4_001),
+                properties: Default::default(),
+                cells: vec![TableCell {
+                    id: n(4_002),
+                    properties: Default::default(),
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: inner,
+                        properties: ParagraphProperties::default().into(),
+                        inlines: vec![run(5_001, "in a cell")],
+                    })],
+                }],
+            }],
+        }))];
+        let mut document = Document::new(n(1), body, Definitions::default()).expect("a document");
+        let op = Operation::UpdateReviewState {
+            paragraphs: vec![ReviewParagraphState {
+                node: inner,
+                inlines: vec![run(5_001, "rewritten")],
+            }],
+            comments: None,
+        };
+        let mint = Mint::reserve(&mut IdGenerator::new(9), 1).expect("a mint");
+        let inverse = super::apply(&mut document, mint, &op).expect("the cell paragraph swaps");
+        assert_eq!(
+            paragraph_text_of(&document, inner),
+            "rewritten",
+            "the walk did not reach into the table cell"
+        );
+        let mint = Mint::reserve(&mut IdGenerator::new(11), 1).expect("a mint");
+        super::apply(&mut document, mint, &inverse).expect("the inverse applies");
+        assert_eq!(paragraph_text_of(&document, inner), "in a cell");
+    }
+
+    /// The projected text of paragraph `id`, for the guards above.
+    fn paragraph_text_of(document: &Document, id: NodeId) -> String {
+        find_paragraph_any(document, id)
+            .expect("the paragraph is in the document")
+            .inlines
+            .iter()
+            .map(|inline| match inline {
+                InlineNode::Run(run) => run.text.clone(),
+                _ => String::new(),
+            })
+            .collect()
     }
 
     fn run(id: u64, text: &str) -> InlineNode {
