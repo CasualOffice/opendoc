@@ -1468,8 +1468,9 @@ commit.
 
 ## ADR-046 — Reflow is a layout VIEW parameter, tiled, and the document stays editable in it
 
-**Status:** Accepted as a design, **not implemented**, 2026-09-30. Specified in
-`151-REFLOW-PAGELESS-LAYOUT-DESIGN.md`. Completes the consequence ADR-044 left open.
+**Status:** Accepted 2026-09-30; **engine half implemented**, shell half (`151` §6)
+outstanding. Specified in `151-REFLOW-PAGELESS-LAYOUT-DESIGN.md`. Completes the
+consequence ADR-044 left open.
 
 **Decision.** A pageless/reflow view is a **`LayoutView` parameter threaded to the one
 place layout geometry is decided**, not a second layout path and not a document edit:
@@ -1481,7 +1482,26 @@ place layout geometry is decided**, not a second layout path and not a document 
   instead of from `SectionBoundary`, forces `ColumnLayout::single`, suspends the
   page-shaped *constraints* (`page_break_before`, `keep_next`, `keep_lines`,
   widow/orphan, section parity) and suppresses the page-shaped *furniture* (headers,
-  footers, borders, watermarks, line numbers).
+  footers, borders, watermarks, line numbers, section `w:vAlign`).
+  **All of it happens in the driver.** No paginator, no `columns.rs`, no
+  `running.rs`/`page_border.rs`/`line_number.rs`/`watermark.rs` and no line of
+  `flow.rs` changed: the constraints are cleared once on the flowed galley (which
+  covers all three paginators), and the furniture is suppressed by building an empty
+  section plan, so the passes that place it find nothing. The design's own version
+  wanted edits in four of those files; one mechanism turned out to be available and
+  the diff is smaller for it.
+- **Tiles are trimmed to their content**, and a zero gap is not enough without it.
+  The paginator carries the chunk that does not fit, leaving up to a line of slack at
+  each cut, so untrimmed tiles drawn edge to edge still show a blank band at every
+  tile boundary. A reflow-only final pass cuts each tile's page box to its content
+  extent; it is idempotent, it only ever shortens (so a page-anchored float below the
+  text is held, not clipped), and it makes the painted column independent of the tile
+  height — which is what lets the guard be exact rather than tolerant.
+- **A `PAGE`/`NUMPAGES` field prints a refusal, not a tile index.** The refusal lives
+  in the per-page labels the field pass already takes, not in a new field on
+  `PaginatedLayout` (7 literals across two crates — the two-green-PRs-make-main-red
+  hazard). The engine refuses rather than deferring to the host because a host cannot
+  un-print a number the engine has already shaped into a glyph run.
 - **The paginator still runs**, cutting the galley into fixed-height **tiles**. It has
   to: `compose_page` rasterises one `Page` into one `Surface`, and a browser canvas
   maxes out near 32,767px, so "one tall page" works on a fixture and fails on a real
@@ -1523,8 +1543,20 @@ story, so a reading mode you must leave in order to type is not an answer.
 - A table too wide for the reflow width keeps a horizontal scroller **of its own** —
   Google's arbitration. That is the one horizontal scroll that survives, and it tells
   the reader something true about a table rather than something false about the page.
+- Entering or leaving reflow **discards the galley cache and rebuilds whole**, never
+  resuming a layout built in the other view: a reflow pass clears the break flags on
+  the galley it retains, and a paged rebuild served one of those fragments would
+  silently lose the author's page break.
+- **A windowed body is refused reflow, with the reason** — `151` §4.5 row 7 proposed a
+  windowed *variant* and that is wrong. A windowed body is already read-only (every
+  mutation is refused at `apply_group`), and reflow's defining promise is that the
+  document stays editable in it, so a variant would be a second thing with different
+  guarantees sold under the same name. Never a silent no-op: a toggle reading
+  "Reflow: on" over an unchanged, still-panning page is the worst outcome available.
 - **Open:** page- and margin-anchored drawings have no referent in reflow. Word keeps
-  them and lets them overlap, Docs inlines them. Undecided; `149` §8 records it.
+  them and lets them overlap, Docs inlines them. Undecided; `151` §8 item 1 records
+  it, and `LayoutView::approximations()` reports it to the host so a reader is told
+  rather than left to notice.
 
 ## Pending ADRs
 

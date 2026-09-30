@@ -1,18 +1,28 @@
 # 151 — Reflow (pageless) layout: what the engine owes, and what the shell does with it
 
-**Status:** Design accepted; **not implemented**. The engine half is specified here
-and is entirely inside `crates/**`; the shell half is specified here and waits on it.
-**Opened:** 2026-09-30. **Decision:** [ADR-046](08-ADR-REGISTER.md).
+**Status:** **Engine half implemented** (`casual-doc-layout`'s `LayoutView` +
+`casual-doc-wasm`'s `setLayoutView`); the shell half (§6) is specified here and
+still waits on nobody. **Opened:** 2026-09-30. **Decision:**
+[ADR-046](08-ADR-REGISTER.md).
 **Advances:** `148` §6 and §9 item 1, `105` UX-019, `01-ORD.md` §137
 ("continuous layout as a host option").
 **Depends on:** nothing. Blocks: the retirement of `#viewport`'s exemption from the
 no-horizontal-scroll rule (`148` §6).
 
-> **Read this first.** Nothing described in §4–§8 is built. This document exists
-> because the phone lane established *precisely* what the engine needs and could not
-> build it in its own lane, and because a boundary that is only described in a chat
-> message is a boundary nobody can act on next week. Every claim about existing code
-> below carries a file and a symbol so it can be checked rather than believed.
+> **Read this first.** §4 is built; §6 is not. The engine work landed as specified
+> except in **four** places, all corrected in place below and each marked
+> **CORRECTED** with the evidence: §4.5 row 1's vertical metrics, §4.5 row 2's
+> `columns.rs`/`paginate.rs` edits, §4.5 row 3's flag, and §4.5 row 7's windowed
+> variant. A fifth thing the design did not know about at all — fixed-height tiles
+> still showing a blank band at every cut — is §4.4a. Every claim about existing
+> code below carries a file and a symbol so it can be checked rather than believed.
+>
+> **The shell half is now the whole of what is left, and it is load-bearing.**
+> `webapp/tests/e2e/phone-no-horizontal-scroll.spec.mjs`'s second tripwire ("the
+> reflow seam has not landed without the shell that spends it") is RED as of the
+> engine landing, by design: it fires on the day `setLayoutView` exists precisely
+> so a landed engine API cannot sit unreachable. Implementing §6 and deleting that
+> test is what turns it green.
 
 ## 1. The problem, stated as a measurement
 
@@ -271,35 +281,127 @@ that is large relative to a viewport (so a scroll rarely crosses one) and small
 relative to a canvas limit. **11in (15,840 twips) is the proposed default**, with
 the number recorded as a decision rather than a constant with no source.
 
+### 4.4a CORRECTION: zero-gap tiles are not enough — each tile must be trimmed
+
+This is the one thing §4.4 got wrong by omission, and it was only visible once the
+tiles were on screen next to each other.
+
+The paginator fills a tile with **whole chunks**: the chunk that does not fit is
+carried to the next tile, and the space it would have occupied stays empty at the
+bottom of this one. That slack is up to **one line high** (or one table row). So
+tiles drawn at `gap: 0` still show a blank band at every cut — the exact artefact
+reflow exists to remove, reintroduced at a different frequency.
+
+The fix is a **reflow-only final pass** (`document_layout.rs`'s `trim_reflow_tiles`,
+last in `post_pagination_passes`) that cuts each tile's `page_size.height` and
+`content_area.height` down to the extent of what is on it: placed body content,
+floats resolved onto it, footnotes. Properties that matter:
+
+- **Idempotent**, so it can live in the shared post-pagination pass and be re-run
+  over a tile the incremental path reused.
+- **Only ever shortens.** A page-anchored float that the §8 item 1 approximation
+  left below the text holds its tile open rather than being clipped.
+- It makes the painted column **independent of `tile_height`**, which is what turns
+  the guard into something exact: stack the tiles of the same document cut at 2in,
+  3in and 11in and the painted glyph positions are identical. That is the guard
+  `tests/reflow.rs` ships, because it is the only form of "a tile is as tall as its
+  content" that has no tolerance in it.
+
+One consequence to know about: a trimmed tile no longer matches the tile height its
+`PageConfig` declares, so `paginate::repaginate_at`'s existing geometry check — which
+exists to stop a page with a stale content area being reused — declines the
+incremental *pagination* resume under reflow and re-tiles from the top. That is an
+`O(pages)` walk with no re-shaping; the galley cache still makes a keystroke
+`O(edit)` in shaping, which is ~99% of the cost.
+
 ### 4.5 The engine work item list
+
+This is the list as designed, annotated with what was actually built. Four rows were
+wrong and are **CORRECTED** here; the corrections are the substance of this section
+now, because the design's own version would have shipped visible defects.
 
 | # | File | Change |
 | --- | --- | --- |
-| 1 | `casual-doc-layout/src/document_layout.rs` | `LayoutView` (§4.3); `reflow_page_config()` beside `section_page_config` (148) — the section's vertical metrics, `page_size.width = content_width + 2·gutter`, `margin_start/end = gutter`, `header_height = footer_height = 0`; thread the view through `build_section_plans` (266, esp. the `content_width` at 284), `push_section_run` (550) and `build_body_galley` (615); new `paginate_document_in` beside `paginate_document_view` (686); reflow arms in `finish_pagination_pass` (1087) |
-| 2 | `casual-doc-layout/src/columns.rs` | force `ColumnLayout::single` (97) under reflow; `section_starts_new_page` (256) and `section_start_parity` (288) return "no break" |
-| 3 | `casual-doc-layout/src/paginate.rs` | `Paginator` (807) suspends `page_break_before`, `keep_next`, `keep_lines` and `MIN_WIDOW_ORPHAN`; `resolve_fields` (1655) / `page_number_labels` (1721) resolve `PAGE`/`NUMPAGES` against tiles and **flag it**, so §6.5 can be honest |
-| 4 | `casual-doc-layout/src/running.rs`, `page_border.rs`, `line_number.rs`, `watermark.rs` | suppressed under reflow |
-| 5 | `casual-doc-layout/src/anchor.rs` | page- and margin-relative float frames have no referent; fall back to paragraph/column-relative, or inline. **This is the only genuinely open design question in the engine half** — see §8 |
-| 6 | `casual-doc-layout/src/flow.rs` | **untouched**, except §6.3's wide-table decision if it is taken in the engine rather than the shell |
-| 7 | `casual-doc-layout/src/windowed.rs`, `measure.rs` | a reflow variant, or a `NotWindowable` refusal. A refusal means a large document loses reflow, which on a phone is the wrong way round — this should be a variant |
-| 8 | `casual-doc-wasm/src/lib.rs` | `setLayoutView(kind, contentWidthTwip, tileHeightTwip)` + a `layoutView` getter; a field on `WasmDocument` (451); honoured by the private `repaginate` (12766) and by `finish_edit` (~13391); reflow arms in `page_size_inner` (12680), `page_ruler_geometry_inner` (8155) and `set_show_changes_inner` (12670). **Must issue no `Operation`, bump no revision, and never reach the export path** (§3.1) |
-| 9 | tests | a new `casual-doc-layout/tests/reflow.rs`; the existing `geometry_snapshot.golden` must **not** move (`LayoutView::Paged` is the default and the output is byte-identical — that is the guard that the parameter is inert when unused) |
+| 1 | `casual-doc-layout/src/document_layout.rs` | `LayoutView` (§4.3); `reflow_page_config()` beside `section_page_config`; thread the view through `build_section_plans`, `push_section_run`, `build_section_runs_cached`, `finish_pagination`, `finish_pagination_pass` and `post_pagination_passes`; new `paginate_document_in` beside `paginate_document_view`, and `paginate_document_after_edit_in` beside `paginate_document_view_after_edit` so a keystroke in reflow stays in reflow. **CORRECTED:** the design said the tile takes "the section's vertical metrics". It must not. A section's 1in top margin applied *per tile* paints a white band across the middle of a paragraph every 11in of scroll — a tile's top and bottom edges are not page edges. A tile is `page_size = (content_width + 2·gutter, tile_height)` with `margin_top = margin_bottom = 0`, `margin_start = margin_end = gutter`, and zero header/footer distance AND height (`PageConfig::content_area` only consults a distance when the matching height is non-zero, so both have to go). The reader's breathing room at the top and bottom of the *document* belongs to the host's scroller, not to every tile |
+| 2 | ~~`casual-doc-layout/src/columns.rs`~~ | **CORRECTED: no edit needed, and the driver-side version is better.** Forcing one column is `ColumnLayout::single(config.content_area())` in `push_section_run` — the same constructor the section-less body already uses. Clearing the section start type is `starts_new_page: false` / `start_parity: None` on the `SectionRun` the driver builds. Teaching `columns.rs` about the view would have put the same rule in two places |
+| 3 | ~~`casual-doc-layout/src/paginate.rs`~~ (paginators) | **CORRECTED: the paginators need no edit.** The constraints are suspended by clearing the galley's break flags **once**, in the driver, before any paginator sees it (`suspend_page_break_constraints`) — which covers all **three** paginators (`paginate`, `ColPaginator`, `paginate_section_footnotes`) without a line changing in any. Two tiers had to be cleared, not one: a paragraph's `BreakControl` (`w:pageBreakBefore`/`keepNext`/`keepLines`/`widowControl`) **and** a line's `page_break_after`, because `flow.rs`'s `apply_section_break` stamps a `nextPage` section break onto the last line using the same flag an explicit `<w:br w:type="page"/>` uses — so without the second tier a section break still cut a tile. `LineBreak::Page` is left alone, so a page break becomes a line break, which is what Pageless does with one. **CORRECTED on the field half too:** the design wanted the `PAGE`/`NUMPAGES` approximation flagged on `PaginatedLayout`. That struct has 7 literals across two crates and adding a field to it is the `SKILL.md` §5a hazard. The refusal belongs in the labels instead — `resolve_fields_labeled` already takes per-page `PAGE` strings, so reflow passes a refusal token, and only `NUMPAGES`'s total needed widening from `u32` to `&str`. The token is an em dash, and the engine refuses rather than printing a tile count because a host cannot un-print a number the engine already shaped into a glyph run |
+| 4 | `casual-doc-layout/src/running.rs`, `page_border.rs`, `line_number.rs`, `watermark.rs` | suppressed under reflow — **and none of those files was edited either.** Headers, footers and page borders are suppressed by building an **empty `SectionPlan`**, so the passes that place them find nothing and are already correct for a section that declares none. Line numbers and the watermark are skipped in `post_pagination_passes`, along with section `w:vAlign` (which distributes slack inside a page, on a tile whose height is about to be trimmed to its content) |
+| 5 | `casual-doc-layout/src/anchor.rs` | **Unchanged, and still open.** Page- and margin-relative floats keep their paper-relative positions. Rather than pick an answer quietly, the view **reports** it: `LayoutView::approximations()` returns the sentence, `setLayoutView` hands it to the host. §8 item 1 stands |
+| 6 | `casual-doc-layout/src/flow.rs` | **untouched**, as designed. §6.3's wide-table decision remains a shell decision |
+| 7 | ~~`casual-doc-layout/src/windowed.rs`, `measure.rs`~~ | **CORRECTED: an honest refusal, not a variant.** The design argued a refusal "means a large document loses reflow, which on a phone is the wrong way round". That reasoning misses what a windowed body already is: **read-only.** `apply_group` refuses every one of the 55 operations on one (`windowed_not_available("Editing")`). Reflow's defining promise — and the whole of §3.2, where we diverge from ONLYOFFICE — is that the document stays editable in it, so that promise cannot hold on a windowed body whatever the layout looks like. A variant would have been a second, read-only reflow with different guarantees, sold under the same name. `setLayoutView` refuses above `MAX_WHOLE_LAYOUT_BLOCKS` with the reason; clearing the view stays available, so a host that persisted the preference is not stuck on an error |
+| 8 | `casual-doc-wasm/src/lib.rs` | `setLayoutView(contentWidthTwip, tileHeightTwip, gutterTwip)` returning the view as JSON (with its approximations), plus a `layoutView` getter; a `layout_view` field on `WasmDocument`; honoured by `repaginate`, `finish_edit_with` and `set_show_changes_inner`. Issues no `Operation`, bumps no document revision, never reaches the export path (§3.1). A mode change **discards the galley cache and rebuilds whole**, never resuming a layout built in the other view. **CORRECTED on where the arms go:** `page_size_inner` needs no arm of its own, but `page_box` — which it and `render_page_inner` both call — absolutely does, and it was the one place that mattered. `page_box` looks a tile's size up **by its section id**, not off `Page::page_size`, so without a reflow arm every tile would be reported *and rasterised* at Letter size and the trim would have bought nothing. `page_ruler_geometry_inner` needs one for the same reason (it reads `SectionBoundary`); until §6.4 hides the ruler, the honest answer is the tile's own geometry |
+| 9 | tests | `casual-doc-layout/tests/reflow.rs` (17 cases) and eight cases in `casual-doc-wasm`. `geometry_snapshot.golden` does **not** move. One thing found by mutating rather than assumed: the inertness comparison is only **half** a guard, because both of its sides run the same driver and a driver that reflowed unconditionally would move both and leave it green. The golden is the other half — it is a committed artifact and cannot move with the code — and `tests/reflow.rs` now says so rather than claiming inertness on its own |
 
-### 4.6 The guard the engine must ship with
+### 4.6 The guards the engine shipped with
 
-`SKILL.md` §4: it has to be possible to drive it red.
+`SKILL.md` §4: it has to be possible to drive it red. Every guard below was driven
+red by mutating the production code, and each one's mutation and failure output are
+recorded on the test.
+
+The two that matter most are asserted at the **paint tier** — over the
+`DisplayList` a renderer executes — rather than over the model, because a
+model-level assertion has passed through every real defect in this engine.
 
 1. **Inertness.** `paginate_document(d, s)` and
-   `paginate_document_in(d, s, Editing, LayoutView::Paged)` produce identical
-   `PaginatedLayout`s on the whole fixture corpus. Mutate `reflow_page_config` to be
-   reached unconditionally and this goes red immediately.
-2. **The width is honoured.** Reflow at width *W* produces no line box wider than
-   *W*. Mutate the driver to keep using `section_page_config` and it goes red.
-3. **Editability.** A caret placed by `hitTest` in reflow, given a character, lands
-   at the same model position it would have landed at in `Paged`. This is the guard
-   that stops (B) from quietly becoming a read-only view.
-4. **No mutation.** After a reflow pass, the document's serialised bytes and its
-   revision are unchanged. This is §3.1 made into a test rather than a promise.
+   `paginate_document_in(d, s, Editing, Paged)` agree page-for-page over eleven
+   fixtures (prose, banded, multi-column, bordered, line-numbered, watermarked,
+   `vAlign`, two-section, page-broken, tabular, field-bearing), in both review
+   views. **This is only half the guard**, and the reason is worth keeping: both
+   sides run the same driver, so a driver that reflowed *unconditionally* moves
+   both and leaves it green. The other half is `geometry_snapshot.golden`, a
+   committed artifact that cannot move with the code — mutating
+   `reflow_page_config` to ignore its view leaves the inertness test green and
+   turns the golden red, the first fixture going from
+   `size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)` to
+   `size=(306.00x792.00) content=(18.00,0.00 270.00x792.00)`.
+2. **The width is honoured, at the paint tier.** Nothing a reflow layout *paints*
+   reaches past `gutter + content_width`, and the tile is exactly
+   `content_width + 2·gutter` wide. A glyph run's right edge is its **inked** pen
+   extent: a line broken at a space carries that space's advance and is allowed to
+   hang past the measure, and counting it reported a 43-twip overhang on a
+   correctly justified line. Flowing the galley at
+   `section_page_config(boundary).content_area().size.width` while leaving the tile
+   geometry correct — the driver's behaviour before this work — fails it with
+   `tile 1 paints out to 9652 past its own 6120 width`.
+3. **A tile is exactly as tall as its content, at the paint tier.** Asserted in the
+   strong, tolerance-free form §4.4a explains: the **stacked painted column is
+   identical** whether the document is cut at 2in, 3in or 11in tiles. Deleting
+   `trim_reflow_tiles` fails it with `glyph run 9 moved between a 2880-twip tiling
+   and a 4320-twip tiling: (360, 3111, 5104, 52) vs (360, 2841, 5104, 52)` — a
+   270-twip shift. The companion "nothing falls off a tile" carries **one** stated
+   twip of tolerance, because a line box's height is a rounded sum of face metrics
+   and a face's descent can land one rounding unit below it (1/1440in — 0.067 CSS
+   px, a quarter of a device pixel at 4x). Measured, not tuned; the mutation it
+   guards misses by 270.
+4. **Editability.** Every model position the paged layout can place a caret at is
+   still placeable in reflow, and `hit_test` on its caret rect still returns that
+   same position. This is the guard that stops (B) from quietly becoming the
+   read-only view ONLYOFFICE ships.
+5. **No mutation.** The document's serialised bytes and its section geometry are
+   unchanged after a reflow pass; on the wasm side, `log.head()` (the *document*
+   revision) does not move, nothing lands on the undo stack, and `pageSetup` reads
+   back identically. §3.1 made into a test rather than a promise.
+6. **Complexity, by doubling.** Entering reflow costs about twice as much at twice
+   the document (1.6–2.4x measured, on `GalleyCache::shaped_last_build`); a
+   steady-state keystroke in reflow re-shapes a **flat** number of paragraphs,
+   asserted *equal* at *n* and 2*n* rather than merely sub-linear, because the
+   behaviour a regression would reintroduce re-shapes every paragraph and a
+   doubling bound would accept it.
+7. **The suspension never leaks into a paged layout.** A document declaring
+   `w:pageBreakBefore` keeps the page that break creates across a reflow round trip
+   and across typing in both views. Making the driver suspend in every view fails it
+   with `the fixture must gain a page from the break (11 -> 11)`.
+
+**One hazard is documented rather than guarded, and is recorded here rather than
+left to be rediscovered.** A reflow pass clears the break flags on the galley it
+*retains*, and the incremental path moves that galley's fragments into the next
+build. `GalleyCache::begin_build` already drops a retained galley whose width does
+not match, which covers every reflow width except one — a host asking for a column
+exactly as wide as the document's own text measure. `setLayoutView` discards the
+cache outright to close that hole, and **no test in this repository can demonstrate
+it**: the galley-reuse fast path is gated behind `!cfg!(debug_assertions)` in
+`build_galley_cached`, so a debug build always re-derives the fragment and verifies
+its hash, and a release-only defect cannot be reproduced by `cargo test`.
 
 ## 5. Complexity, because a phone is the slowest device we support
 
@@ -398,11 +500,21 @@ tripwire and it fires on the day reflow is on by default at the phone rung.
 
 A second tripwire is added by the lane that wrote this document, because the outcome
 one fires too late to be useful to the engine lane: the same spec now also asserts
-the **engine seam is still absent** (`typeof doc.setLayoutView !== "function"`). The
-moment §4.8 ships, that assertion goes red and names this document — so the shell
-work in §6 cannot be forgotten behind a landed engine API, which is exactly the
-"built and unreachable" failure `SKILL.md` §9.4 calls the most expensive recurring
-pattern here.
+the **engine seam is still absent** (it reads the wasm binding's own prototype and
+expects no `setLayoutView`/`setReflowWidth`/`setLayoutMode`). The moment §4.8 ships,
+that assertion goes red and names this document — so the shell work in §6 cannot be
+forgotten behind a landed engine API, which is exactly the "built and unreachable"
+failure `SKILL.md` §9.4 calls the most expensive recurring pattern here.
+
+**That tripwire is RED now.** `setLayoutView` exists as of the engine half landing,
+and the engine lane deliberately did not silence it: the spec belongs to the shell
+lane, and editing it from here would have removed the one signal that says the API
+needs a consumer. The fix is §6, not a change to the test — and then deleting it,
+because at that point the outcome tripwire above is the one that matters. Note also
+that this spec's own prose cites `docs/149` where it means `docs/151`: two document
+numbers were in flight when it was written and the reflow design landed as 151.
+`docs/148` §9 and ADR-046 carried the same stale citation; ADR-046's is corrected,
+and the other two belong to lanes that own those files.
 
 When both fire, the fix is: implement §6, delete `DOCUMENT_SURFACE` from that spec,
 fold `#viewport` back into the general assertion, and strike the exception from
@@ -420,9 +532,15 @@ fold `#viewport` back into the general assertion, and strike the exception from
    the first version: a reflow that also changes the type size changes two things at
    once and cannot be evaluated. A reader font-size control is a separate,
    later question.
-3. **Tile height.** 11in is proposed (§4.4) with no source beyond "large relative to
-   a viewport, small relative to a canvas limit". Worth measuring rather than
-   settling by taste.
+3. **Tile height.** 11in shipped as `DEFAULT_TILE_HEIGHT`, and §4.4a **removed the
+   reason to care**: because every tile is trimmed to its own content, the painted
+   column is identical whatever the tile height is — `tests/reflow.rs` asserts that
+   over 2in, 3in and 11in. So the choice is now purely about how many rasters a
+   scroll costs, not about where the reader sees a break, and the validated range is
+   2in to 33in (33in is 12,672px at a 4x device ratio, inside the ~32,767px canvas
+   limit that rejected "one tall page"). A host passing `0` takes the default, so it
+   is not forced to have an opinion about rasterisation. **Closed**, in the sense
+   that mattered.
 4. **Whether `Paged` should also accept a viewport.** If `LayoutView` exists, the
    embedding playground's 750px frame and `FIT_ON_OPEN_FLOOR`'s refusal become the
    same question. Not in scope here; named so it is not rediscovered.
