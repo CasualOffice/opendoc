@@ -364,6 +364,13 @@ pub fn builtin_registry_with_format_limits(
     registry
         .register_exporter(Arc::new(crate::MarkdownAdapter::default()))
         .expect("built-in Markdown exporter registration is unique");
+    // Export only, built in for the same reason: `docs/153` `shell.export-html`.
+    // Theirs is a zip of markup plus sibling image files; ours is one file with
+    // the pictures inside it, which is the local-first argument applied to an
+    // export.
+    registry
+        .register_exporter(Arc::new(crate::HtmlAdapter::default()))
+        .expect("built-in HTML exporter registration is unique");
     registry
 }
 

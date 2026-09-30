@@ -84,6 +84,10 @@ pub mod formats {
     /// reading it needs a parser, and only the writer exists (`docs/153`
     /// `shell.export-markdown`).
     pub const MARKDOWN: &str = "text.markdown";
+    /// Single-file HTML5 (`.html`). Export only: writing HTML is a serializer,
+    /// reading it needs a parser and a sanitiser, and only the writer exists
+    /// (`docs/153` `shell.export-html`).
+    pub const HTML: &str = "text.html";
 }
 
 /// Public capabilities and aliases for one registered format.

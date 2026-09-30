@@ -27916,8 +27916,9 @@ mod tests {
                 formats::ODT,
                 formats::DOCX,
                 // Export-only for the same reason, and ordered here because the
-                // list is ascending by format id: `text.markdown` < `text.plain`
-                // (`docs/153` `shell.export-markdown`).
+                // list is ascending by format id (`docs/153`
+                // `shell.export-html` and `shell.export-markdown`).
+                formats::HTML,
                 formats::MARKDOWN,
                 formats::TEXT,
             ]

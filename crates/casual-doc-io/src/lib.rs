@@ -5,7 +5,8 @@
 //! This crate is the adapter boundary described by doc 94. It does not parse or
 //! write document formats itself: registered adapters map source bytes to the
 //! normalized v1 model and back. Built-in adapters cover DOCX, bounded ODT,
-//! normalized JSON, UTF-8 plain text and export-only CommonMark, each with an
+//! normalized JSON, UTF-8 plain text and export-only CommonMark and single-file
+//! HTML, each with an
 //! explicit capability descriptor, plus an opt-in export-only PDF adapter
 //! ([`register_pdf_exporter`]).
 
@@ -16,6 +17,7 @@ mod artifact;
 mod docx;
 mod error;
 mod format;
+mod html;
 mod markdown;
 mod normalized_json;
 mod odt;
@@ -35,6 +37,7 @@ pub use docx::{
 };
 pub use error::{AdapterError, IoError};
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
+pub use html::{HTML_MIME, HtmlAdapter, HtmlLimits};
 pub use markdown::{MARKDOWN_MIME, MarkdownAdapter, MarkdownLimits};
 pub use normalized_json::NormalizedJsonAdapter;
 pub use odt::OdtAdapter;

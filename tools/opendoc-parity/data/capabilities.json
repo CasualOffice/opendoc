@@ -4138,15 +4138,21 @@
       "area": "shell",
       "title": "Export as HTML",
       "ours": {
-        "absent": [
-          "file.export.html"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-io/src/html.rs",
+              "literal": "HtmlAdapter"
+            }
+          },
+          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.html`"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 3,
-      "note": "Their HTML (Zipped) row is FileMenuPanels.js:68. We register no HTML exporter in casual_doc_io::formats. Their grid also offers the pages as zipped JPG or PNG (FileMenuPanels.js:70-71), which we do not package either although the renderer already renders to pixels a page at any DPI."
+      "note": "Theirs is HTML (Zipped): the markup plus every picture as a sibling file, in an archive a reader unpacks first. Ours is ONE file - pictures as `data:` URLs, the stylesheet inline, nothing referenced off the disk - and it carries merged table cells as `colspan`/`rowspan`, underline, super/subscript, colour, bookmarks as anchors and tracked changes as `<ins>`/`<del>`. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs` for the selector's label, and a `file.export.*` contract row so a host can drive it."
     },
     {
       "id": "shell.export-json-snapshot",
