@@ -145,6 +145,9 @@ export const VIEW_FACES = Object.freeze([
   // visible ribbon control with no command id fails `ribbon-command-faces`, and
   // that is how a hand-bound button gets caught the moment it is added.
   face("#viewVersionsBtn", "file.versionHistory"),
+  // Reflow's ribbon face; `view.reflow` in the View menu and the palette is the
+  // other surface (`docs/151` §6.1).
+  face("#viewReflowBtn", "view.reflow"),
   face("#viewZoomOut", "view.zoomOut"),
   face("#viewZoomIn", "view.zoomIn"),
   face("#viewFitWidth", "view.zoom.fitWidth"),

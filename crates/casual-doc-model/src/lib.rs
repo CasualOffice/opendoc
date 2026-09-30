@@ -18,7 +18,7 @@ pub use body::{BlockNode, InlineNode, Mark, Paragraph, TextRun};
 pub use document::Document;
 pub use error::ModelError;
 pub use extension::ExtensionValue;
-pub use ids::{IdGenerator, NodeId};
+pub use ids::{IdGenerator, IdSpace, NodeId};
 pub use snapshot::{SnapshotError, SnapshotLimits};
 
 pub(crate) use snapshot::enforce_limit;

@@ -117,3 +117,89 @@ export function createViewZoom({ stepZoom, setZoom, setZoomMode, zoomState, root
     },
   };
 }
+
+/** The ladder the +/- steppers walk. */
+export const ZOOM_STEPS = Object.freeze([0.5, 0.75, 0.9, 1, 1.25, 1.5, 2, 3]);
+
+/** The step either side of `current` on that ladder, or a tenth beyond its ends.
+ *
+ *  Extracted from `main.js` by the reflow round (`docs/151` §6), which needed
+ *  lines in a file at its ratchet: a table and a search need no browser, and
+ *  `view_zoom.test.mjs` can now ask what the steppers do at the ends of it.
+ *  `clamp` is passed in because `ZOOM_MIN`/`ZOOM_MAX` belong to the shell rather
+ *  than to this band.
+ *
+ *  Complexity: O(steps) — eight comparisons, independent of document size.
+ *
+ * @param {number} current
+ * @param {number} direction above zero steps up, otherwise down
+ * @param {(z:number)=>number} clamp
+ */
+export function nextZoomStep(current, direction, clamp) {
+  return direction > 0
+    ? ZOOM_STEPS.find((s) => s > current + 1e-6) ?? clamp(current + 0.1)
+    : [...ZOOM_STEPS].reverse().find((s) => s < current - 1e-6) ?? clamp(current - 0.1);
+}
+
+/** The fit-to-viewport factor for one page box, before clamping.
+ *
+ *  The gutters (64px across, 48px down) are the breathing room the desk keeps
+ *  around the sheet; a fit that ran the page edge to edge would read as a page
+ *  that does not fit. The 120px floor keeps a viewport that has not been laid
+ *  out yet — or a pane dragged to nothing — from producing a zero or negative
+ *  factor that the clamp would then present as a deliberate choice.
+ *
+ *  Complexity: O(1).
+ *
+ * @param {"fit-width"|"fit-page"} mode
+ * @param {{widthTwip:number, heightTwip:number}} page the page box in twips
+ * @param {{width:number, height:number}} viewport the scroller's rect in CSS px
+ * @param {{dpi:number, twipsPerInch:number}} units
+ */
+export function fitZoomFactor(mode, page, viewport, { dpi, twipsPerInch }) {
+  const fitW = Math.max(120, viewport.width - 64) / ((page.widthTwip / twipsPerInch) * dpi);
+  if (mode !== "fit-page") return fitW;
+  const fitH = Math.max(120, viewport.height - 48) / ((page.heightTwip / twipsPerInch) * dpi);
+  return Math.min(fitW, fitH);
+}
+
+/** What a value typed into the status bar's zoom field asks for: a fit `mode`, a
+ *  `factor`, or neither (which the caller answers by restoring the last valid
+ *  display rather than by guessing).
+ *
+ *  Extracted with `nextZoomStep` and for the same reason. The tokens are matched
+ *  in English only, which is a known gap rather than an oversight: the field
+ *  DISPLAYS "Fit width" from the catalogue, so a reader in another locale can
+ *  read what they typed back but cannot type it. `docs/148` §9 has the row.
+ *
+ *  Complexity: O(1).
+ *
+ * @param {string} raw
+ * @returns {{mode?: "fit-width"|"fit-page", factor?: number}}
+ */
+export function parseZoomInput(raw) {
+  const text = String(raw ?? "").trim().toLowerCase();
+  if (text.startsWith("fit w") || text === "width") return { mode: "fit-width" };
+  if (text.startsWith("fit p") || text === "page") return { mode: "fit-page" };
+  const percent = parseFloat(text.replace("%", ""));
+  return Number.isFinite(percent) && percent > 0 ? { factor: percent / 100 } : {};
+}
+
+/** Ticks the status-bar zoom menu's presets and fit rows against the live state.
+ *
+ *  Came out of `main.js`'s `updateZoomDisplay` in the same round and for the same
+ *  reason. Two `querySelectorAll` loops over one popover: O(presets), and it
+ *  reads nothing about the document.
+ *
+ * @param {Element} menu the `#zoomMenu` popover
+ * @param {{mode:string, factor:number}} state
+ */
+export function reflectZoomMenu(menu, { mode, factor }) {
+  for (const b of menu.querySelectorAll(".zoom-preset")) {
+    const on = mode === "custom" && Math.abs(Number(b.dataset.zoom) - factor) < 1e-6;
+    b.setAttribute("aria-checked", String(on));
+  }
+  for (const b of menu.querySelectorAll(".zoom-fit")) {
+    b.setAttribute("aria-checked", String(mode === b.dataset.zoomMode));
+  }
+}

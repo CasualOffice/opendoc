@@ -58,10 +58,12 @@ use casual_doc_io::{
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::document_layout::{
-    LayoutUpdate, document_page_config, paginate_document, paginate_document_view,
-    paginate_document_view_after_edit,
-};
+use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config, paginate_document};
+// Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
+use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
+use casual_doc_layout::document_layout::LayoutView;
+use casual_doc_layout::document_layout::paginate_document_after_edit_in;
+use casual_doc_layout::document_layout::paginate_document_in;
 use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
@@ -111,7 +113,7 @@ use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
 use casual_doc_model::v1::{
     Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
 };
-use casual_doc_model::{IdGenerator, NodeId};
+use casual_doc_model::{IdGenerator, IdSpace, NodeId};
 #[cfg(test)]
 use casual_doc_ooxml::DocxPackage;
 use casual_doc_ooxml::PackageLimits;
@@ -478,8 +480,20 @@ pub struct WasmDocument {
     /// says which one. Ad-hoc host booleans could not supply that, which is why
     /// entering page 3's header put the caret on page 1 and scrolled there.
     edit_context: EditContext,
-    /// Mints run identities for edits, in a namespace distinct from the imported
-    /// ids so new runs never collide with existing nodes.
+    /// Mints every identity an edit introduces — runs, paragraphs, table nodes,
+    /// comments, bookmarks, notes, header/footer bodies, numbering, media — in a
+    /// namespace **partitioned per replica**, so two people editing one document
+    /// can never mint the same id.
+    ///
+    /// With no session it is [`IdSpace::local`], a space no participant number can
+    /// be handed; [`WasmDocument::adopt_participant_identity`] moves it into the
+    /// space a relay's participant number implies. Both are distinct from the
+    /// importer's space, so a new node never collides with an imported one.
+    ///
+    /// This used to be `(document.id() >> 64) ^ 0xED17…`, a constant every replica
+    /// of one document computed identically — so two replicas minted identical ids
+    /// for different nodes from the first edit, and a session had to refuse every
+    /// arrival that introduced one (`152` §4.4).
     edit_ids: IdGenerator,
     /// The document's own history, as an ordered append-only chain of committed
     /// transactions (doc 147 §3.3, ADR-043). Every mutation — a keystroke, an
@@ -551,6 +565,12 @@ pub struct WasmDocument {
     /// `author`/`initials` arguments are omitted. Never serialized itself; only
     /// its `name`/`initials` strings flow into authored comments/revisions.
     active_author: Option<ActiveAuthor>,
+    /// Which geometry the body is laid out in — the document's own paper, or a
+    /// reflowed column of the host's width (ADR-046, `docs/151`). A **view**, not
+    /// an edit: it issues no `Operation`, bumps no revision, and the export path
+    /// cannot observe it, which is the whole point of not driving reflow through
+    /// `setPageSetup`.
+    layout_view: LayoutView,
     /// docs/108 phase 2 (HF-131). While `Some`, paragraph formatting applied through
     /// `apply_paragraph_props_as` or `apply_indent_props` is recorded as a tracked
     /// `w:pPrChange`, dated with the inner value. The host scopes it to ONE command
@@ -767,6 +787,16 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         // section break the user inserted, and the undo label has to say so.
         Operation::SpliceSectionBoundary { .. } => HistoryKind::SectionBreak,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
+        // A definition write is never the FIRST operation of a user-visible action on its
+        // own: a list command writes its definition and re-points the paragraph in one
+        // transaction, and a picture insert registers its media and inserts the drawing. The
+        // label the user reads therefore comes from the action, and these arms exist so that
+        // a future command which leads with one still gets an honest label rather than a
+        // wildcard's "Edit".
+        Operation::SetAbstractNumbering { .. } | Operation::SetNumberingInstance { .. } => {
+            HistoryKind::ListFormatting
+        }
+        Operation::SetMediaReference { .. } => HistoryKind::Edit,
         Operation::InsertField { .. }
         | Operation::RemoveField { .. }
         | Operation::InsertFieldRange { .. }
@@ -979,6 +1009,93 @@ impl WasmDocument {
     #[must_use]
     pub fn showing_changes(&self) -> bool {
         self.markup_layout.is_some()
+    }
+
+    /// Lays the body out as a **reflowed column** of `content_width_twip` instead
+    /// of on the document's paper, cutting the result into tiles
+    /// `tile_height_twip` tall with `gutter_twip` of padding on each side
+    /// (ADR-046, `docs/151`). `contentWidthTwip <= 0` returns to `Paged`.
+    ///
+    /// A phone cannot show a 6.5in text column at 390px and stay readable, and
+    /// the two alternatives are a ~31% zoom (which `view_zoom.mjs` already
+    /// computes and refuses) or a sideways pan. This is the third answer. Pass
+    /// `0` for `tileHeightTwip` to take the engine's default (11in).
+    ///
+    /// **It is a view, never an edit.** No `Operation` is issued, the revision is
+    /// not bumped, nothing reaches the export path, and the document's own
+    /// `w:sectPr` is untouched. `setPageSetup` would produce a similar picture
+    /// today and must not be used for this: it would pollute undo, dirty
+    /// autosave, and persist a 390px-wide "page" into the user's DOCX.
+    ///
+    /// Returns a JSON object: `{ "reflow": bool, "approximations": [string] }`.
+    /// The approximations are **reported, not hidden** — a page- or
+    /// margin-anchored drawing keeps its paper-relative position (`docs/151` §8
+    /// item 1 is still open), a footnote lands at a tile bottom rather than a page
+    /// bottom, and a `PAGE`/`NUMPAGES` field prints a refusal because a tile index
+    /// is not a page number (`docs/151` §6.5).
+    ///
+    /// Complexity: `O(document)`. Entering or leaving reflow is a full re-shape —
+    /// the galley cache is width-scoped, so nothing in it survives a width change
+    /// — which makes this a **mode change, not an interaction**. A host must drive
+    /// it the way it drives an open (off the main thread where it can be,
+    /// cancellable, showing progress) and must never drive it straight off a
+    /// resize event: an un-quantised, un-debounced resize handler here is an
+    /// `O(document)` pass per animation frame on the slowest device we support
+    /// (`docs/151` §5).
+    ///
+    /// # Errors
+    ///
+    /// Throws, rather than silently doing nothing, for:
+    ///
+    /// - geometry that is not a reading column (a column under 1in or over 22in, a
+    ///   tile under 2in or over 33in, a gutter that is negative or wider than the
+    ///   column it pads). The bounds catch an unconverted CSS pixel value — 390
+    ///   twips is a quarter of an inch — and an inverted argument order, at the
+    ///   seam rather than in a layout nobody can read;
+    /// - a document laid out one page-window at a time. Reflow's defining promise
+    ///   is that the document stays EDITABLE in it, which is where we diverge from
+    ///   ONLYOFFICE's read-only reader mode — and a windowed body is already
+    ///   read-only (`apply_group` refuses every mutation on one). So reflow cannot
+    ///   keep its promise there, and `docs/151` §4.5 row 7's "make it a windowed
+    ///   variant" is answered as an honest refusal instead.
+    #[wasm_bindgen(js_name = setLayoutView)]
+    pub fn set_layout_view(
+        &mut self,
+        content_width_twip: i32,
+        tile_height_twip: i32,
+        gutter_twip: i32,
+    ) -> Result<String, JsValue> {
+        self.set_layout_view_inner(content_width_twip, tile_height_twip, gutter_twip)
+            .map_err(to_js)
+    }
+
+    /// The current layout view as JSON — `{ "reflow": bool, "contentWidthTwip":
+    /// n|null, "tileHeightTwip": n|null, "gutterTwip": n|null, "approximations":
+    /// [string] }` — so a host can render its own toggle state from the engine
+    /// rather than from a shadow copy that can drift out of step with it.
+    #[wasm_bindgen(getter, js_name = layoutView)]
+    #[must_use]
+    pub fn layout_view(&self) -> String {
+        let (width, height, gutter) = match self.layout_view {
+            LayoutView::Paged => (None, None, None),
+            LayoutView::Reflow {
+                content_width,
+                tile_height,
+                gutter,
+            } => (
+                Some(content_width.raw()),
+                Some(tile_height.raw()),
+                Some(gutter.raw()),
+            ),
+        };
+        serde_json::to_string(&LayoutViewJson {
+            reflow: self.layout_view.is_reflow(),
+            content_width_twip: width,
+            tile_height_twip: height,
+            gutter_twip: gutter,
+            approximations: self.layout_view.approximations(),
+        })
+        .unwrap_or_else(|_| "{\"reflow\":false,\"approximations\":[]}".to_owned())
     }
 
     /// Why this document cannot be edited, or the empty string when it can be.
@@ -2386,18 +2503,29 @@ impl WasmDocument {
         let media_id = MediaId::new(media_seq);
         // The resources map (and the model) reference media by PART NAME; use a
         // unique editor-authored name so it can never collide with an imported
-        // part. An orphaned entry left after undo is harmless (unreferenced media
-        // is valid — only a dangling drawing->media ref is not).
+        // part.
+        //
+        // **The registration is an operation, and it is in the SAME transaction as the
+        // drawing that references it.** It used to be a direct write into the media
+        // definition table, followed by a separate `InsertInlineObject` through the log — so
+        // the
+        // registration was not in the commit. Three consequences, and the comment that
+        // stood here only excused the first: undo removed the drawing and left the media
+        // entry behind; redo re-inserted a drawing whose media entry it had never removed,
+        // which happened to work; and a session would have fanned out a drawing pointing at
+        // media no other replica had, which is a dangling reference and not a harmless
+        // orphan. `147`/ADR-005 say every mutation is an operation.
+        //
+        // The BYTES are not in the operation: they live in the host resource map keyed by
+        // this part name, which is the same split import and export use — the model holds
+        // the reference, the package holds the stream.
         let part_name = format!("word/media/editor-{media_seq}.{ext}");
         self.resources.insert(part_name.clone(), bytes);
-        self.document.definitions_mut().media.insert(
-            media_id,
-            MediaReference {
-                relationship_id: format!("rIdEditorImg{media_seq}"),
-                media_type: media_type.to_owned(),
-                part_name,
-            },
-        );
+        let reference = MediaReference {
+            relationship_id: format!("rIdEditorImg{media_seq}"),
+            media_type: media_type.to_owned(),
+            part_name,
+        };
         let drawing = Drawing {
             // An inserted picture/shape is not linked; linking one is a
             // separate gesture (`docs/109` HF-179).
@@ -2417,10 +2545,18 @@ impl WasmDocument {
             rotation: None,
         };
         self.apply_action_as(
-            vec![Operation::InsertInlineObject {
-                at: Pos::new(owner, offset),
-                node: Box::new(InlineNode::Drawing(Box::new(drawing))),
-            }],
+            vec![
+                // Registration first: the drawing that follows names this media id, and an
+                // operation must never be ordered before the thing it references.
+                Operation::SetMediaReference {
+                    id: media_id,
+                    reference: Some(Box::new(reference)),
+                },
+                Operation::InsertInlineObject {
+                    at: Pos::new(owner, offset),
+                    node: Box::new(InlineNode::Drawing(Box::new(drawing))),
+                },
+            ],
             HistoryKind::ObjectInsert,
         )
         .map_err(to_js)
@@ -3116,10 +3252,17 @@ impl WasmDocument {
         }
         let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
 
-        // Build the real model blocks with fresh ids and resolved list instances.
+        // Build the real model blocks with fresh ids and resolved list instances. A pasted
+        // list paragraph may need a numbering definition installed; those operations are
+        // collected here and ordered FIRST in the transaction below, so undo removes the
+        // definition with the paste rather than leaving it behind (`147`, ADR-005).
+        let mut install = Vec::new();
         let mut blocks = Vec::with_capacity(fragment.blocks.len());
         for block in &fragment.blocks {
-            blocks.push(self.build_external_block(block).map_err(to_js)?);
+            blocks.push(
+                self.build_external_block(block, &mut install)
+                    .map_err(to_js)?,
+            );
         }
         if blocks.is_empty() {
             return Err(to_js(
@@ -3138,7 +3281,10 @@ impl WasmDocument {
         // Position the insertion between whole body blocks: before the caret block
         // (caret at its start), after it (caret at its end), or split it (mid-way) —
         // the same placement `paste_structured` uses.
-        let mut ops = Vec::new();
+        //
+        // The numbering definitions the pasted list paragraphs name come FIRST: an
+        // operation must never be ordered before the thing it references.
+        let mut ops = install;
         let insert_index = if start.offset == 0 {
             block_index as u32
         } else if start.offset >= paragraph_len {
@@ -3169,14 +3315,21 @@ impl WasmDocument {
     /// or a table (rectangular grid, bordered like
     /// [`insert_table`](Self::insert_table), each cell's blocks built recursively).
     /// Every node receives a fresh id.
-    fn build_external_block(&mut self, block: &ExternalBlock) -> Result<BlockNode, String> {
+    /// `install` collects the definition operations a list paragraph needs; the caller puts
+    /// them at the front of the same transaction as the blocks (`147`, ADR-005).
+    fn build_external_block(
+        &mut self,
+        block: &ExternalBlock,
+        install: &mut Vec<Operation>,
+    ) -> Result<BlockNode, String> {
         let exhausted = || "id space exhausted".to_string();
         match block {
             ExternalBlock::Paragraph { runs, list } => {
                 let inlines = self.external_run_inlines(runs)?;
                 let mut properties = ParagraphProperties::default();
                 if let Some(list) = list {
-                    let instance = self.ensure_list(list.ordered)?;
+                    let (instance, mut ops) = self.ensure_list(list.ordered)?;
+                    install.append(&mut ops);
                     properties.numbering = Some(NumberingRef {
                         instance,
                         level: list.level.min(8),
@@ -3189,7 +3342,7 @@ impl WasmDocument {
                     inlines,
                 }))
             }
-            ExternalBlock::Table { rows } => self.build_external_table(rows),
+            ExternalBlock::Table { rows } => self.build_external_table(rows, install),
         }
     }
 
@@ -3199,7 +3352,11 @@ impl WasmDocument {
     /// invalid grid; every cell holds recursively built blocks (at least one empty
     /// paragraph). Column widths and an all-edges border mirror
     /// [`insert_table`](Self::insert_table) so a pasted table looks native.
-    fn build_external_table(&mut self, rows: &[Vec<ExternalCell>]) -> Result<BlockNode, String> {
+    fn build_external_table(
+        &mut self,
+        rows: &[Vec<ExternalCell>],
+        install: &mut Vec<Operation>,
+    ) -> Result<BlockNode, String> {
         let exhausted = || "id space exhausted".to_string();
         if rows.is_empty() {
             return Err("table has no rows".into());
@@ -3223,7 +3380,7 @@ impl WasmDocument {
                 let mut blocks = Vec::new();
                 if let Some(cell) = row.get(col) {
                     for inner in &cell.blocks {
-                        blocks.push(self.build_external_block(inner)?);
+                        blocks.push(self.build_external_block(inner, install)?);
                     }
                 }
                 if blocks.is_empty() {
@@ -4457,12 +4614,15 @@ impl WasmDocument {
         // problem ("what should the NEXT paragraph be?"), but it cannot answer this
         // one: only this layer knows which instance means "checked".
         if kind == HistoryKind::ParagraphBreak
-            && let Some(unchecked) = self.unchecked_followup(start)
+            && let Some((unchecked, install)) = self.unchecked_followup(start)
             && let Some(new_id) = insert_ops.iter().rev().find_map(|op| match op {
                 Operation::SplitParagraph { new_id, .. } => Some(*new_id),
                 _ => None,
             })
         {
+            // The definition first, then the paragraph that names it.
+            let mut install = install;
+            ops.append(&mut install);
             insert_ops.push(Operation::SetParagraphProperties {
                 node: new_id,
                 properties: Box::new(unchecked),
@@ -5369,7 +5529,7 @@ impl WasmDocument {
         // A checklist is a bullet-style list whose marker is a checkbox; new items
         // start unchecked. `"numbered"` → numbered; anything else → plain bullet.
         let checklist = kind == "checklist";
-        let instance = if checklist {
+        let (instance, install) = if checklist {
             self.ensure_checklist(false).map_err(to_js)?
         } else {
             self.ensure_list(kind == "numbered").map_err(to_js)?
@@ -5388,7 +5548,8 @@ impl WasmDocument {
             current.is_some_and(|n| n.instance == instance)
         };
         let target = (!already).then_some(NumberingRef { instance, level: 0 });
-        self.apply_paragraph_props_as(
+        self.apply_paragraph_props_after(
+            install,
             start_node,
             start_offset,
             end_node,
@@ -5415,10 +5576,18 @@ impl WasmDocument {
             .checklist_state_of_instance(reference.instance)
             .ok_or_else(|| to_js("not a checklist item".into()))?;
         let level = reference.level;
-        let instance = self.ensure_checklist(!checked).map_err(to_js)?;
-        self.apply_paragraph_props_as(node, 0, node, 0, HistoryKind::ListFormatting, move |p| {
-            p.numbering = Some(NumberingRef { instance, level });
-        })
+        let (instance, install) = self.ensure_checklist(!checked).map_err(to_js)?;
+        self.apply_paragraph_props_after(
+            install,
+            node,
+            0,
+            node,
+            0,
+            HistoryKind::ListFormatting,
+            move |p| {
+                p.numbering = Some(NumberingRef { instance, level });
+            },
+        )
     }
 
     /// The form checkbox containing `node` — which may be the control itself or
@@ -5691,17 +5860,25 @@ impl WasmDocument {
                 .next_id()
                 .map_err(|_| to_js("id space exhausted".into()))?,
         );
-        self.document.definitions_mut().numbering.insert(
-            new_instance,
-            NumberingInstance {
+        // **The instance is an operation, carried in the same transaction as the paragraphs
+        // that point at it.** It used to be a direct write into the numbering instance table
+        // here, before the scan below, and that had two consequences beyond undo: the
+        // refusal path a few lines down ("There are no numbered items here to restart")
+        // returned an error having ALREADY installed a definition nothing referenced, and a
+        // session would have fanned out paragraphs pointing at an instance no other replica
+        // had. Built here, applied below, and if the scan finds nothing the operation is
+        // never applied at all.
+        let install = Operation::SetNumberingInstance {
+            id: new_instance,
+            instance: Some(Box::new(NumberingInstance {
                 abstract_ref,
                 overrides: vec![NumberingOverride {
                     level: current.level,
                     start: Some(1),
                     definition: None,
                 }],
-            },
-        );
+            })),
+        };
 
         // One index over every paragraph, built by a single walk: resolving each
         // id with `paragraph_properties` walks the whole document per node, so a
@@ -5741,6 +5918,8 @@ impl WasmDocument {
                 .into(),
             ));
         }
+        // Registration first: every paragraph operation that follows names this instance.
+        ops.insert(0, install);
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
     }
@@ -5947,15 +6126,24 @@ impl WasmDocument {
             AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let new_instance =
             NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let defs = self.document.definitions_mut();
-        defs.abstract_numbering.insert(new_abstract, abstract_def);
-        defs.numbering.insert(
-            new_instance,
-            NumberingInstance {
-                abstract_ref: new_abstract,
-                overrides: Vec::new(),
+        // **Both definitions are operations, in the same transaction as the paragraphs that
+        // point at them** (`147`, ADR-005). Written directly here they were outside the
+        // commit, so undo restored the paragraphs and left two definitions behind, the
+        // refusal path below returned an error having already installed them, and a session
+        // would have fanned out paragraphs naming definitions no other replica had.
+        let install = [
+            Operation::SetAbstractNumbering {
+                id: new_abstract,
+                definition: Some(Box::new(abstract_def)),
             },
-        );
+            Operation::SetNumberingInstance {
+                id: new_instance,
+                instance: Some(Box::new(NumberingInstance {
+                    abstract_ref: new_abstract,
+                    overrides: Vec::new(),
+                })),
+            },
+        ];
 
         // Repoint the contiguous run sharing the caret's list instance, keeping
         // each paragraph's own level.
@@ -6007,6 +6195,9 @@ impl WasmDocument {
                 .into(),
             ));
         }
+        // Registration first, and the abstract before the instance that names it: an
+        // operation must never be ordered before the thing it references.
+        let ops = install.into_iter().chain(ops).collect();
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
     }
@@ -8227,6 +8418,21 @@ impl WasmDocument {
             return Ok(self.ruler_geometry_of_config());
         }
         let page = self.render_page_of(index)?;
+        // Under reflow the section describes paper this layout is not on, so
+        // reading it here would report a 12,240-twip page with 1,440-twip margins
+        // for a 6,120-twip tile — and the ruler would be wrong rather than absent.
+        // `docs/151` §6.4 hides the ruler in reflow because there are no page
+        // margins to drag; until the shell does, the honest answer is the tile's.
+        if self.layout_view.is_reflow() {
+            return Ok(RulerGeometry {
+                width_twip: page.page_size.width.raw(),
+                margin_start_twip: page.content_area.origin.x.raw(),
+                margin_end_twip: (page.page_size.width
+                    - page.content_area.origin.x
+                    - page.content_area.size.width)
+                    .raw(),
+            });
+        }
         let section = page.section;
         Ok(self
             .document
@@ -12479,6 +12685,51 @@ impl WasmDocument {
             .map_err(|e| to_js(format!("export failed: {e:?}")))
     }
 
+    /// Moves this replica's minting into the space a relay's participant number implies.
+    ///
+    /// The host calls this **once**, with the participant number the room assigned it,
+    /// before the first edit it intends to share. Everything the editor mints afterwards —
+    /// runs, paragraphs, table nodes, comments, bookmarks, notes, header/footer bodies,
+    /// numbering, media — lands in a space no other participant can mint in, so two people
+    /// editing one document never produce the same id for two different nodes.
+    ///
+    /// **A document with no session must not call it, and does not need to.** Minting works
+    /// with no server and no participant number at all: until this is called the editor
+    /// mints in the reserved offline space, which is a space this function can never return.
+    /// Local-first is unchanged by the existence of this seam.
+    ///
+    /// # What it deliberately does not do
+    ///
+    /// It does **not** re-map ids already minted. An id *is* the identity here, so rewriting
+    /// one would leave two replicas disagreeing about the name of a node and make a
+    /// byte-comparable snapshot impossible for ever (`150` §9.3). Ids minted before the call
+    /// stay where they were; only future ones move.
+    ///
+    /// # Complexity
+    ///
+    /// One O(document) walk, to guarantee the counter starts above anything the document
+    /// already holds in the space being entered — which is what makes rejoining under a
+    /// number this replica held before safe. Called once per join, never per keystroke.
+    ///
+    /// # Errors
+    ///
+    /// The two participant numbers that would alias a reserved space (`u64::MAX` and
+    /// `u64::MAX - 1`) are refused rather than silently aliased.
+    #[wasm_bindgen(js_name = adoptParticipantIdentity)]
+    pub fn adopt_participant_identity(&mut self, participant: u64) -> Result<(), JsValue> {
+        self.adopt_participant_identity_internal(participant)
+            .map_err(to_js)
+    }
+
+    /// The namespace this replica currently mints in, as 16 lowercase hex digits.
+    ///
+    /// Host-visible so an integration can assert its replicas are partitioned rather than
+    /// assume it, and so a support report can say which space a node id came from.
+    #[wasm_bindgen(getter, js_name = identitySpace)]
+    pub fn identity_space(&self) -> String {
+        format!("{:016x}", self.edit_ids.namespace())
+    }
+
     /// Returns the stable format identifier detected for the open source.
     #[wasm_bindgen(getter, js_name = sourceFormat)]
     pub fn source_format(&self) -> String {
@@ -12577,6 +12828,26 @@ impl MediaSource for BorrowedMedia<'_> {
 /// these run under `cargo test` on native targets, where constructing a `JsValue`
 /// would panic ("cannot call wasm-bindgen imported functions on non-wasm targets").
 impl WasmDocument {
+    /// See [`WasmDocument::adopt_participant_identity`]. Plain `Result<_, String>` so the
+    /// two-replica guards run under `cargo test` on native targets.
+    fn adopt_participant_identity_internal(&mut self, participant: u64) -> Result<(), String> {
+        let base = IdSpace::of_document(self.document.id());
+        let space = IdSpace::participant(base, participant).ok_or_else(|| {
+            format!(
+                "participant number {participant} has no identity space of its own; \
+                 the two highest numbers alias the document's own space and the offline space"
+            )
+        })?;
+        // Rebase keeps the counter, and the reserve lifts it above anything the document
+        // already holds in the space being entered. Together they mean a replica rejoining
+        // under a number it held before — or joining a room whose document already carries
+        // that participant's work — cannot reissue an id.
+        self.edit_ids.rebase(space.get());
+        self.edit_ids
+            .reserve_through(self.document.highest_counter_in(space));
+        Ok(())
+    }
+
     /// See [`WasmDocument::comment_thread`]. Split out as a plain
     /// `Result<_, String>` helper (rather than `JsValue`) so it is callable
     /// from native (non-wasm) unit tests, matching `page_size_inner`.
@@ -12740,9 +13011,92 @@ impl WasmDocument {
         if on && self.layout.is_windowed() {
             return Err(windowed_not_available("The show-changes preview"));
         }
-        self.markup_layout =
-            on.then(|| paginate_document_view(&self.document, &self.shaper, ReviewView::Markup));
+        self.markup_layout = on.then(|| {
+            paginate_document_in(
+                &self.document,
+                &self.shaper,
+                ReviewView::Markup,
+                self.layout_view,
+            )
+        });
         Ok(())
+    }
+
+    /// See [`WasmDocument::set_layout_view`]. Split out so native tests take the
+    /// same path as the `#[wasm_bindgen]` boundary.
+    fn set_layout_view_inner(
+        &mut self,
+        content_width_twip: i32,
+        tile_height_twip: i32,
+        gutter_twip: i32,
+    ) -> Result<String, String> {
+        let requested = if content_width_twip <= 0 {
+            LayoutView::Paged
+        } else {
+            let tile = if tile_height_twip <= 0 {
+                DEFAULT_TILE_HEIGHT
+            } else {
+                Twip(tile_height_twip)
+            };
+            LayoutView::reflow(Twip(content_width_twip), tile, Twip(gutter_twip))
+                .map_err(|refused| refused.reason())?
+        };
+        // A windowed body is already read-only, so reflow cannot keep its own
+        // promise there. Refused with the reason, never a silent no-op: a host
+        // whose toggle read "Reflow: on" over an unchanged 794px-wide page would
+        // be lying about the one thing the reader can see.
+        if requested.is_reflow() && self.layout.is_windowed() {
+            return Err(windowed_not_available("Reflow"));
+        }
+        if requested == self.layout_view {
+            // Idempotent, and cheap: no re-shape for a host that calls this on
+            // every render with the width it already passed.
+            return Ok(self.layout_view());
+        }
+        self.layout_view = requested;
+        // The galley cache MUST go, for two independent reasons, and neither is an
+        // optimisation:
+        //
+        // - its entries are scoped to the width they were shaped at, so nothing in
+        //   it describes the new measure;
+        // - a reflow pass CLEARS the page-shaped break flags on the galley it
+        //   retains, so a paged rebuild served one of those fragments would
+        //   silently lose the author's `w:pageBreakBefore`.
+        //
+        // The width scoping in `GalleyCache::begin_build` already covers the second
+        // reason for every width EXCEPT one: a host asking for a column exactly as
+        // wide as the document's own text measure (an embedding frame, a tablet, a
+        // "reflow at the current measure" toggle) changes no width, so nothing there
+        // fires. That hole is what this line closes, and it is stated here because
+        // no test in this repository can demonstrate it: the galley-reuse fast path
+        // is gated behind `!cfg!(debug_assertions)` in `build_galley_cached`, so a
+        // debug build always re-derives the fragment and a release-only defect
+        // cannot be reproduced by `cargo test`. Recorded rather than hidden.
+        //
+        // And the layout is rebuilt WHOLE rather than resumed: a layout built in
+        // the other view has different geometry and different break decisions on
+        // every page, so offering it as a resume baseline would splice pages laid
+        // out to rules that no longer apply.
+        self.galley_cache = GalleyCache::new();
+        self.layout = BodyLayout::Whole(paginate_document_in(
+            &self.document,
+            &self.shaper,
+            ReviewView::Editing,
+            self.layout_view,
+        ));
+        if self.markup_layout.is_some() {
+            self.markup_layout = Some(paginate_document_in(
+                &self.document,
+                &self.shaper,
+                ReviewView::Markup,
+                self.layout_view,
+            ));
+        }
+        // A re-layout is a view change, not a document change: bump the view epoch
+        // the host re-rasters on, and leave `log.head()` — the DOCUMENT revision —
+        // exactly where it was.
+        self.revision += 1;
+        Ok(self.layout_view())
     }
 
     /// See [`WasmDocument::page_size`].
@@ -12840,14 +13194,20 @@ impl WasmDocument {
             self.layout.remeasure(&self.document, &self.shaper);
             return;
         }
-        self.layout = BodyLayout::Whole(paginate_document(&self.document, &self.shaper));
+        self.layout = BodyLayout::Whole(paginate_document_in(
+            &self.document,
+            &self.shaper,
+            ReviewView::Editing,
+            self.layout_view,
+        ));
         // A new face re-shapes the markup view as much as the editing one, and
         // the markup view is what is on screen while it exists.
         if self.markup_layout.is_some() {
-            self.markup_layout = Some(paginate_document_view(
+            self.markup_layout = Some(paginate_document_in(
                 &self.document,
                 &self.shaper,
                 ReviewView::Markup,
+                self.layout_view,
             ));
         }
     }
@@ -12899,7 +13259,9 @@ impl WasmDocument {
     /// of a CHECKED checklist item: the same paragraph, re-pointed at the unchecked
     /// checklist instance. `None` for every other case — including a split in the
     /// middle of an item, which is one item becoming two and must keep its state.
-    fn unchecked_followup(&mut self, at: Pos) -> Option<ParagraphProperties> {
+    /// Returns the properties AND the definition operations the unchecked instance needs,
+    /// which the caller puts at the front of the same transaction.
+    fn unchecked_followup(&mut self, at: Pos) -> Option<(ParagraphProperties, Vec<Operation>)> {
         let checked = self.checklist_checked?;
         // Everything that reads the document is resolved into owned values first,
         // because `ensure_checklist` below needs `&mut self`.
@@ -12914,12 +13276,12 @@ impl WasmDocument {
         if at.offset != self.paragraph_text(at.node).len() as u32 {
             return None;
         }
-        let unchecked = self.ensure_checklist(false).ok()?;
+        let (unchecked, install) = self.ensure_checklist(false).ok()?;
         properties.numbering = Some(NumberingRef {
             instance: unchecked,
             level,
         });
-        Some(properties)
+        Some((properties, install))
     }
 
     /// Builds the closed operation group for inserting normalized plain text at
@@ -13457,13 +13819,14 @@ impl WasmDocument {
         // edit rather than to the document (`docs/107` B1, `109` HF-182). With a
         // damage set that is not complete this still produces the identical
         // layout, by re-deriving and re-hashing every paragraph.
-        let update = paginate_document_view_after_edit(
+        let update = paginate_document_after_edit_in(
             &self.document,
             &self.shaper,
             &mut self.galley_cache,
             damage,
             ReviewView::Editing,
             previous,
+            self.layout_view,
         );
         // Dirty pages — and the page count the host compares against — must be
         // measured on the layout the RENDERER reads. While "show changes" is on
@@ -13483,13 +13846,14 @@ impl WasmDocument {
                 // per keystroke against the editing path's 2.5 ms on a 28-page
                 // document — a dropped frame from layout alone, paid by
                 // exactly the users the review features are for.
-                let markup = paginate_document_view_after_edit(
+                let markup = paginate_document_after_edit_in(
                     &self.document,
                     &self.shaper,
                     &mut self.galley_cache,
                     damage,
                     ReviewView::Markup,
                     Some(previous),
+                    self.layout_view,
                 );
                 let dirty = pages_to_repaint(&markup);
                 self.markup_layout = Some(markup.layout);
@@ -13829,10 +14193,40 @@ impl WasmDocument {
         kind: HistoryKind,
         f: impl Fn(&mut ParagraphProperties),
     ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props_after(
+            Vec::new(),
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            kind,
+            f,
+        )
+    }
+
+    /// [`WasmDocument::apply_paragraph_props_as`] with operations that must be ordered
+    /// BEFORE the paragraph writes in the same transaction — a list definition the
+    /// paragraphs are about to name. An operation must never be ordered before the thing it
+    /// references, and "the same transaction" is what makes undo remove both together.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the selection is four arguments; splitting it into a struct here and \
+                  nowhere else in this file would be the inconsistency"
+    )]
+    fn apply_paragraph_props_after(
+        &mut self,
+        leading: Vec<Operation>,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        kind: HistoryKind,
+        f: impl Fn(&mut ParagraphProperties),
+    ) -> Result<EditResult, JsValue> {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = Vec::new();
+        let mut ops = leading;
         // Read every selected paragraph's properties through ONE index first.
         // Select All makes this loop document-bounded, and `paragraph_properties`
         // walks the whole document per node; the index is also dropped before the
@@ -14412,40 +14806,60 @@ impl WasmDocument {
         out
     }
 
-    fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
+    /// Get-or-create the bullet/numbered list definition, returning its instance id and
+    /// **the operations that install it** — empty when it already existed.
+    ///
+    /// The caller must put those operations at the FRONT of the same transaction as the
+    /// paragraphs that will name the instance. They used to be direct
+    /// writes into the two tables here, which left them outside the commit: undo restored
+    /// the paragraphs and left two definitions behind, and a session would have fanned out
+    /// paragraphs naming definitions no other replica had (`147`, ADR-005).
+    ///
+    /// The memo (`self.numbered_list` / `self.bullet_list`) is set here rather than after
+    /// the transaction applies, which is deliberate and is the same contract `edit_ids`
+    /// keeps: an id is spent when it is handed out, never re-handed on a refusal, because an
+    /// id that comes back is an id two different things can mean. A refused transaction
+    /// therefore leaves a memo naming a definition the document does not hold — and the next
+    /// caller re-installs it, because the operation is idempotent by construction
+    /// (`Some(_)` inserts *or* replaces).
+    fn ensure_list(
+        &mut self,
+        numbered: bool,
+    ) -> Result<(NumberingInstanceId, Vec<Operation>), String> {
         if let Some(id) = if numbered {
             self.numbered_list
         } else {
             self.bullet_list
         } {
-            return Ok(id);
+            return Ok((id, Vec::new()));
         }
         let exhausted = || "id space exhausted".to_string();
         let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let defs = self.document.definitions_mut();
-        defs.abstract_numbering.insert(
-            abs_id,
-            AbstractNumbering {
-                levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
-                multi_level_type: None,
-                num_style_link: None,
-                style_link: None,
+        let install = vec![
+            Operation::SetAbstractNumbering {
+                id: abs_id,
+                definition: Some(Box::new(AbstractNumbering {
+                    levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
+                    multi_level_type: None,
+                    num_style_link: None,
+                    style_link: None,
+                })),
             },
-        );
-        defs.numbering.insert(
-            inst_id,
-            NumberingInstance {
-                abstract_ref: abs_id,
-                overrides: Vec::new(),
+            Operation::SetNumberingInstance {
+                id: inst_id,
+                instance: Some(Box::new(NumberingInstance {
+                    abstract_ref: abs_id,
+                    overrides: Vec::new(),
+                })),
             },
-        );
+        ];
         if numbered {
             self.numbered_list = Some(inst_id);
         } else {
             self.bullet_list = Some(inst_id);
         }
-        Ok(inst_id)
+        Ok((inst_id, install))
     }
 
     /// The number format of an imported list instance's first level, if it resolves —
@@ -14463,42 +14877,49 @@ impl WasmDocument {
     /// / `☑` checked) — so it renders through the ordinary bullet-marker path and
     /// round-trips to DOCX as a plain bullet list (Word shows checkbox bullets).
     /// The per-item checked state is which of the two definitions the item uses.
-    fn ensure_checklist(&mut self, checked: bool) -> Result<NumberingInstanceId, String> {
+    /// As [`WasmDocument::ensure_list`], for the two checklist definitions: the instance id
+    /// and the operations that install it, which the caller puts at the front of the same
+    /// transaction.
+    fn ensure_checklist(
+        &mut self,
+        checked: bool,
+    ) -> Result<(NumberingInstanceId, Vec<Operation>), String> {
         if let Some(id) = if checked {
             self.checklist_checked
         } else {
             self.checklist_unchecked
         } {
-            return Ok(id);
+            return Ok((id, Vec::new()));
         }
         let exhausted = || "id space exhausted".to_string();
         let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let defs = self.document.definitions_mut();
-        defs.abstract_numbering.insert(
-            abs_id,
-            AbstractNumbering {
-                levels: (0..=8)
-                    .map(|level| checklist_level(checked, level))
-                    .collect(),
-                multi_level_type: None,
-                num_style_link: None,
-                style_link: None,
+        let install = vec![
+            Operation::SetAbstractNumbering {
+                id: abs_id,
+                definition: Some(Box::new(AbstractNumbering {
+                    levels: (0..=8)
+                        .map(|level| checklist_level(checked, level))
+                        .collect(),
+                    multi_level_type: None,
+                    num_style_link: None,
+                    style_link: None,
+                })),
             },
-        );
-        defs.numbering.insert(
-            inst_id,
-            NumberingInstance {
-                abstract_ref: abs_id,
-                overrides: Vec::new(),
+            Operation::SetNumberingInstance {
+                id: inst_id,
+                instance: Some(Box::new(NumberingInstance {
+                    abstract_ref: abs_id,
+                    overrides: Vec::new(),
+                })),
             },
-        );
+        ];
         if checked {
             self.checklist_checked = Some(inst_id);
         } else {
             self.checklist_unchecked = Some(inst_id);
         }
-        Ok(inst_id)
+        Ok((inst_id, install))
     }
 
     /// Whether a numbering instance is a checklist and, if so, whether its items are
@@ -14947,6 +15368,14 @@ impl WasmDocument {
     /// The page box (width/height) for a page, from its own section geometry,
     /// falling back to the first-section config when the section id is unknown.
     fn page_box(&self, page: &Page) -> Size {
+        // A reflow tile's box is synthetic (`reflow_page_config`) and NO section
+        // describes it, so the page carries the only true answer. This is the one
+        // place that mattered: `page_size` and `render_page` both size themselves
+        // from here, so without this arm a reflowed tile would be measured — and
+        // rasterised — at Letter size, and every tile would be trimmed for nothing.
+        if self.layout_view.is_reflow() {
+            return page.page_size;
+        }
         self.document
             .definitions()
             .sections
@@ -15048,6 +15477,32 @@ impl WasmDocument {
 /// bridge payload, not a new engine type — so `copyRichRuns` and
 /// `pasteRichRuns` share exactly this shape with no separate wasm-bindgen
 /// struct to keep in sync. Field names match [`FormatDelta`]'s vocabulary.
+/// The bridge payload for [`layout_view`](WasmDocument::layout_view) and
+/// [`set_layout_view`](WasmDocument::set_layout_view) — which geometry the body is
+/// laid out in, and what that view knowingly approximates.
+///
+/// `approximations` is the part that is easy to leave out and must not be: each
+/// entry is something a reader can SEE, so a host that shows a reflow toggle has
+/// the sentences it needs rather than a boolean and a surprise.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LayoutViewJson {
+    /// Whether the body is reflowed (`false` = the document's own paper).
+    reflow: bool,
+    /// The reflow column width in twips; `null` under `Paged`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_width_twip: Option<i32>,
+    /// The tile height in twips; `null` under `Paged`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tile_height_twip: Option<i32>,
+    /// The side gutter in twips; `null` under `Paged`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gutter_twip: Option<i32>,
+    /// What this view approximates, as sentences a host can show. Empty under
+    /// `Paged`.
+    approximations: Vec<String>,
+}
+
 /// The "Page Setup" dialog's bridge payload — crosses the JS boundary as
 /// JSON, mirrors [`page_setup`](WasmDocument::page_setup)/
 /// [`set_page_setup`](WasmDocument::set_page_setup). `section` is the
@@ -17841,8 +18296,26 @@ fn update_review_operation(
     comments: Option<DefinitionMap<CommentId, Comment>>,
 ) -> Result<Operation, String> {
     let mut paragraphs = Vec::new();
-    let by_id = ParagraphIndex::build(document);
-    collect_changed_review_paragraphs(&by_id, body, &mut paragraphs)?;
+    // **A suggested keystroke edits ONE paragraph, and must not index the document to find
+    // it.** `review_paragraph_body` hands this exactly one top-level paragraph, and
+    // `ParagraphIndex::build` walks every surface AND allocates a hash entry per paragraph —
+    // 1.3 million of them per keystroke on the owner's file, to answer one lookup. The index
+    // is the right tool for the batch shape below (`update_review_operation_across`, where
+    // resolving each id separately would be quadratic) and the wrong one for this
+    // (`104` HF-111, `107` §4 B1).
+    if let [BlockNode::Paragraph(edited)] = body {
+        let previous = casual_doc_edit::find_paragraph_any(document, edited.id)
+            .ok_or_else(|| "review command introduced an unknown paragraph".to_owned())?;
+        if previous.inlines != edited.inlines {
+            paragraphs.push(ReviewParagraphState {
+                node: edited.id,
+                inlines: edited.inlines.clone(),
+            });
+        }
+    } else {
+        let by_id = ParagraphIndex::build(document);
+        collect_changed_review_paragraphs(&by_id, body, &mut paragraphs)?;
+    }
     if paragraphs.is_empty() && comments.is_none() {
         return Err("review command made no change".to_owned());
     }
@@ -23649,9 +24122,16 @@ fn open_document_bounded(
     };
     let default_config = document_page_config(&document);
 
-    // Edits allocate run ids in a namespace derived from — but distinct from —
-    // the document's own, so a new run can never collide with an imported node.
-    let edit_namespace = ((document.id().as_u128() >> 64) as u64) ^ 0xED17_ED17_ED17_ED17;
+    // Edits allocate ids in the OFFLINE space of this document's identity partition
+    // (`IdSpace::local`) — distinct from the importer's space, so a new node never collides
+    // with an imported one, and distinct from every space a session participant can be
+    // handed, so a document edited with no server can still join a room. Seeded above
+    // whatever that space already holds, because a normalized JSON snapshot preserves node
+    // ids verbatim: a reopened document carries the previous session's mints, and a counter
+    // restarting at one would reissue them. One O(document) walk at open; nothing per
+    // keystroke (`107` §4 B1).
+    let mut edit_ids = IdGenerator::new(IdSpace::local(IdSpace::of_document(document.id())).get());
+    edit_ids.reserve_through(document.highest_counter_in(IdSpace::new(edit_ids.namespace())));
     let revision_ids = RevisionIdAllocator::from_document(&document);
 
     Ok(WasmDocument {
@@ -23667,7 +24147,7 @@ fn open_document_bounded(
             import_report_json,
         },
         default_config,
-        edit_ids: IdGenerator::new(edit_namespace),
+        edit_ids,
         log: RevisionLog::default(),
         next_transaction: 0,
         typing_history: None,
@@ -23684,6 +24164,7 @@ fn open_document_bounded(
         checklist_checked: None,
         active_author: None,
         paragraph_tracking: None,
+        layout_view: LayoutView::Paged,
     })
 }
 
@@ -25282,7 +25763,10 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
-        Operation::SetStyleDefinition { .. } => Pos::new(doc_id, 0),
+        Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. } => Pos::new(doc_id, 0),
         // Creating a bookmark rests the caret at the range start (the wrapped
         // selection's anchor); delete/rename are definition edits routed through
         // `apply_action_caret` with the caller's own caret, so their natural
@@ -27731,6 +28215,389 @@ mod tests {
     }
 
     // ---- docs/113 §8: a viewer that holds a window, not every page ----------
+
+    // ---- ADR-046 / docs/151: reflow is a view the host sets, never an edit ----
+
+    /// A reflow column and tile that a phone would plausibly ask for: a 390px
+    /// viewport less its gutters, in twips (390px at 96dpi is 5,850 twips).
+    const PHONE_COLUMN: i32 = 5_400;
+    const PHONE_TILE: i32 = 2_880;
+    const PHONE_GUTTER: i32 = 360;
+
+    /// Turning reflow on re-lays the body at the host's width and reports what it
+    /// approximates; turning it off restores the document's own paper exactly.
+    ///
+    /// The last clause is the one worth having: the round trip has to be lossless,
+    /// or a reader who tried reflow once would be left with a subtly different
+    /// document afterwards.
+    #[test]
+    fn setting_and_clearing_the_reflow_view_round_trips_to_the_same_paged_layout() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let paged_pages = doc.page_count();
+        let paged_first = doc.page_size_inner(0).expect("page 0 has a size");
+        assert!(
+            paged_first.width_twip > PHONE_COLUMN * 2,
+            "the fixture is on paper wider than the phone column"
+        );
+
+        let reported = doc
+            .set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a 3.75in column in a 2in tile is a reading column");
+        let view: LayoutViewJson = serde_json::from_str(&reported).expect("the view serializes");
+        assert!(view.reflow);
+        assert_eq!(view.content_width_twip, Some(PHONE_COLUMN));
+        assert_eq!(view.tile_height_twip, Some(PHONE_TILE));
+        assert_eq!(view.gutter_twip, Some(PHONE_GUTTER));
+        assert_eq!(
+            view.approximations.len(),
+            3,
+            "the known approximations are reported, not hidden: {:?}",
+            view.approximations
+        );
+
+        // The tile, not the paper — and this is the assertion that would have
+        // caught `page_box` reading the section: a host sizes every wrapper from
+        // `pageSize`, so a tile reported at Letter size is a Letter-sized blank
+        // sheet with a narrow column of text in it.
+        let tile = doc.page_size_inner(0).expect("tile 0 has a size");
+        assert_eq!(tile.width_twip, PHONE_COLUMN + 2 * PHONE_GUTTER);
+        assert!(
+            tile.height_twip <= PHONE_TILE,
+            "tile 0 is {} twips tall against a {PHONE_TILE}-twip tile — it was not trimmed",
+            tile.height_twip
+        );
+        assert!(
+            doc.page_count() > paged_pages,
+            "a 2in tile makes more tiles ({}) than the paper made pages ({paged_pages})",
+            doc.page_count()
+        );
+
+        // The ruler reports the tile it is on, not paper this layout is not using.
+        let ruler = doc
+            .page_ruler_geometry_inner(0)
+            .expect("tile 0 has a ruler");
+        assert_eq!(ruler.width_twip, PHONE_COLUMN + 2 * PHONE_GUTTER);
+        assert_eq!(ruler.margin_start_twip, PHONE_GUTTER);
+        assert_eq!(ruler.margin_end_twip, PHONE_GUTTER);
+
+        // Back to paper, exactly.
+        let back = doc
+            .set_layout_view_inner(0, 0, 0)
+            .expect("clearing the view always succeeds");
+        let back: LayoutViewJson = serde_json::from_str(&back).expect("the view serializes");
+        assert!(!back.reflow);
+        assert!(back.approximations.is_empty());
+        assert_eq!(doc.page_count(), paged_pages);
+        assert_eq!(
+            doc.page_size_inner(0)
+                .expect("page 0 has a size")
+                .width_twip,
+            paged_first.width_twip
+        );
+    }
+
+    /// Reflow is a VIEW: it issues no operation, so the document revision — the
+    /// history head every replay and every export decision reads — does not move,
+    /// and the retained source stays byte-identical.
+    ///
+    /// This is ADR-046 §3.1 made into a test. `setPageSetup` would produce a
+    /// similar picture today by issuing a real section-geometry mutation, and doing
+    /// it that way would persist a 390px-wide "page" into the user's DOCX.
+    #[test]
+    fn setting_the_reflow_view_issues_no_operation_and_moves_no_document_revision() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let history_before = doc.log.head();
+        let setup_before = doc.page_setup();
+
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+
+        assert_eq!(
+            doc.log.head(),
+            history_before,
+            "reflow advanced the DOCUMENT revision, so it committed a transaction"
+        );
+        assert!(!doc.can_undo(), "reflow put something on the undo stack");
+        assert_eq!(
+            doc.page_setup(),
+            setup_before,
+            "reflow rewrote the section geometry, which a save would persist"
+        );
+        // The VIEW epoch does move, because the host has to re-raster.
+        assert!(doc.revision > 0, "the host was not told to re-raster");
+    }
+
+    /// Geometry that is not a reading column is refused with a sentence naming the
+    /// value and the bound, never silently substituted and never a silent no-op.
+    #[test]
+    fn a_reflow_view_that_is_not_a_reading_column_is_refused_with_its_reason() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let paged = doc.page_count();
+
+        // An unconverted CSS pixel value — the mistake the lower bound exists for.
+        let reason = doc
+            .set_layout_view_inner(390, PHONE_TILE, PHONE_GUTTER)
+            .expect_err("390 twips is a quarter of an inch");
+        assert!(reason.contains("390"), "{reason}");
+        assert!(reason.contains("1440"), "{reason}");
+        // And the refusal changed nothing.
+        assert_eq!(doc.page_count(), paged);
+        let view: LayoutViewJson =
+            serde_json::from_str(&doc.layout_view()).expect("the view serializes");
+        assert!(!view.reflow, "a refused view was applied anyway");
+
+        for (width, tile, gutter, needle) in [
+            (50_000, PHONE_TILE, PHONE_GUTTER, "22in"),
+            (PHONE_COLUMN, 1_000, PHONE_GUTTER, "2in"),
+            (PHONE_COLUMN, 60_000, PHONE_GUTTER, "canvas"),
+            (PHONE_COLUMN, PHONE_TILE, -1, "gutter"),
+        ] {
+            let reason = doc
+                .set_layout_view_inner(width, tile, gutter)
+                .expect_err("out-of-range geometry is refused");
+            assert!(
+                reason.contains(needle),
+                "{reason} does not mention {needle}"
+            );
+        }
+    }
+
+    /// A tile height of zero takes the engine's default rather than being refused,
+    /// so a host that has no opinion about rasterisation does not have to invent
+    /// one.
+    #[test]
+    fn a_zero_tile_height_takes_the_engine_default() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let reported = doc
+            .set_layout_view_inner(PHONE_COLUMN, 0, PHONE_GUTTER)
+            .expect("a zero tile height is a request for the default");
+        let view: LayoutViewJson = serde_json::from_str(&reported).expect("the view serializes");
+        assert_eq!(view.tile_height_twip, Some(DEFAULT_TILE_HEIGHT.raw()));
+    }
+
+    /// The break suspension never leaks out of reflow: a document that declares a
+    /// `w:pageBreakBefore` keeps the page that break creates, across a reflow round
+    /// trip and across typing in both views.
+    ///
+    /// Reflow clears the page-shaped break flags on the galley, and a leak of that
+    /// into a paged layout is the worst-shaped defect in this increment: the
+    /// document would silently re-paginate with every author page break gone, no
+    /// operation would have caused it, and undo could not reverse it.
+    ///
+    /// The reflow column here is the document's OWN text measure rather than a
+    /// phone width, deliberately: the galley cache is width-scoped, so at any other
+    /// width its own guard would stand in for this one and the test would pass
+    /// whatever the code did. This is the width where nothing else is protecting
+    /// the round trip.
+    ///
+    /// MUTATION PROOF: making the driver's `push_section_run` suspend in every view
+    /// rather than only under reflow fails this with `the fixture must gain a page
+    /// from the break (11 -> 11)`.
+    ///
+    /// NOT proven here, and said plainly rather than implied: the *other* half of
+    /// the hazard — a retained galley of suspended fragments being moved into the
+    /// next build — cannot be reproduced by any test in this repository, because
+    /// that reuse path is gated behind `!cfg!(debug_assertions)` in
+    /// `casual-doc-layout`'s `build_galley_cached`; a debug build always re-derives
+    /// the fragment and verifies its hash. The explicit `galley_cache` reset in
+    /// `set_layout_view_inner` is therefore defence whose justification is the code
+    /// path, not a red test, and it is documented there as such.
+    #[test]
+    fn the_break_suspension_never_leaks_out_of_reflow() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        // The one width at which the cache's own scoping does not save us.
+        let paper_column = doc.default_config.content_area().size.width.raw();
+        let paragraphs: Vec<String> = doc
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                    Some(paragraph.id.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let target = paragraphs.first().expect("a body paragraph").clone();
+        let broken = paragraphs.get(1).expect("a second body paragraph").clone();
+
+        // The document must actually DECLARE a page break, or losing the break
+        // flags would change nothing and this guard would prove nothing.
+        let flat = doc.page_count();
+        doc.set_page_break_before(&broken, 0, &broken, 0, true)
+            .expect("force a page break before the second paragraph");
+        let paged_pages = doc.page_count();
+        assert!(
+            paged_pages > flat,
+            "the fixture must gain a page from the break ({flat} -> {paged_pages})"
+        );
+
+        // A keystroke on paper, so the cache is warm with an UNsuspended galley.
+        doc.insert_text(&target, 0, "a".to_owned()).expect("type");
+        assert_eq!(
+            doc.page_count(),
+            paged_pages,
+            "typing changed the page count"
+        );
+
+        doc.set_layout_view_inner(paper_column, PHONE_TILE, 0)
+            .expect("a column the width of the document's own text measure");
+        // A keystroke IN reflow, which is what retains a SUSPENDED galley.
+        doc.insert_text(&target, 0, "b".to_owned())
+            .expect("type in reflow");
+        doc.set_layout_view_inner(0, 0, 0).expect("back to paper");
+        doc.insert_text(&target, 0, "c".to_owned())
+            .expect("type after returning to paper");
+
+        assert_eq!(
+            doc.page_count(),
+            paged_pages,
+            "typing after leaving reflow lost the document's page break — the suspended galley \
+             was reused across the view change"
+        );
+        assert!(
+            doc.paragraph_flags(&broken).page_break_before(),
+            "the MODEL still declares the break, so the layout losing it is a layout bug"
+        );
+    }
+
+    /// A windowed body is REFUSED reflow, with the reason, rather than given a
+    /// reflow it cannot keep the promise of.
+    ///
+    /// Reflow's defining difference from ONLYOFFICE's reader mode is that the
+    /// document stays editable in it. A windowed body is already read-only — every
+    /// mutation is refused at `apply_group` — so that promise cannot hold there,
+    /// and `docs/151` §4.5 row 7's "make it a windowed variant" is answered as an
+    /// honest refusal. A silent no-op would be the worst outcome: the host's toggle
+    /// would read "Reflow: on" over an unchanged, still-panning page.
+    #[test]
+    fn a_windowed_document_is_refused_reflow_with_the_reason() {
+        let mut doc = open_windowed(600);
+        let tiles_before = doc.page_count();
+
+        let reason = doc
+            .set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect_err("a windowed body cannot be reflowed");
+        assert_eq!(reason, windowed_not_available("Reflow"));
+        assert!(
+            reason.contains(&thousands(MAX_WHOLE_LAYOUT_BLOCKS)),
+            "the refusal names the limit it is about: {reason}"
+        );
+        assert!(
+            doc.layout.is_windowed() && doc.page_count() == tiles_before,
+            "a refused reflow changed the layout anyway"
+        );
+        let view: LayoutViewJson =
+            serde_json::from_str(&doc.layout_view()).expect("the view serializes");
+        assert!(!view.reflow, "the getter reported a view that was refused");
+
+        // And clearing the view is still allowed, so a host that persists the
+        // preference and reopens a large document is not stuck on an error.
+        doc.set_layout_view_inner(0, 0, 0)
+            .expect("returning to paper is always available");
+    }
+
+    /// Typing in reflow keeps the reflow geometry, and the caret lands where the
+    /// text went. The regression this pins is the one that would make reflow look
+    /// like it worked and then silently revert on the first keystroke.
+    #[test]
+    fn typing_in_reflow_stays_in_reflow() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+        let width = doc
+            .page_size_inner(0)
+            .expect("tile 0 has a size")
+            .width_twip;
+
+        let target = doc
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                    Some(paragraph.id.to_string())
+                }
+                _ => None,
+            })
+            .expect("a body paragraph");
+        doc.insert_text(&target, 0, "z".to_owned())
+            .expect("typing into the first body paragraph");
+
+        assert_eq!(
+            doc.page_size_inner(0)
+                .expect("tile 0 still has a size")
+                .width_twip,
+            width,
+            "a keystroke reverted the layout to paper"
+        );
+        let view: LayoutViewJson =
+            serde_json::from_str(&doc.layout_view()).expect("the view serializes");
+        assert!(view.reflow, "a keystroke cleared the reflow view");
+    }
+
+    /// Setting the view a second time with the same geometry is idempotent and
+    /// costs nothing, because a host calls this on every render with the width it
+    /// already passed — and an O(document) re-shape per frame is the trap
+    /// `docs/151` §5 names.
+    #[test]
+    fn setting_the_same_reflow_view_twice_re_lays_out_nothing() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+        let revision = doc.revision;
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("the same reading column");
+        assert_eq!(
+            doc.revision, revision,
+            "an unchanged view re-laid the document out and told the host to re-raster"
+        );
+    }
+
+    /// Every tile a reflow layout hands a host is reported at, and rasterised at,
+    /// the size the ENGINE laid it out at.
+    ///
+    /// The comparison is deliberately against `Page::page_size` — the layout's own
+    /// number — rather than between `pageSize` and `renderPage`, because both of
+    /// those read `page_box` and would agree with each other while both reported
+    /// the paper. That is the mistake this arm exists for: a host builds one
+    /// wrapper per page and sizes it from `pageSize`, and `renderPage` allocates
+    /// its surface the same way, so a tile measured as Letter is a Letter-sized
+    /// blank sheet with a narrow column of text at the top of it.
+    #[test]
+    fn every_reflow_tile_is_reported_and_rasterised_at_the_size_the_engine_laid_it_out_at() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        doc.set_layout_view_inner(PHONE_COLUMN, PHONE_TILE, PHONE_GUTTER)
+            .expect("a reading column");
+        let tiles = doc.page_count();
+        assert!(tiles > 1, "the fixture makes more than one tile");
+
+        for index in 0..tiles {
+            let laid_out = doc
+                .render_page_of(index)
+                .unwrap_or_else(|e| panic!("tile {index} exists: {e}"))
+                .page_size;
+            let reported = doc
+                .page_size_inner(index)
+                .unwrap_or_else(|e| panic!("tile {index} has a size: {e}"));
+            assert_eq!(
+                (reported.width_twip, reported.height_twip),
+                (laid_out.width.raw(), laid_out.height.raw()),
+                "tile {index} was reported at a different size than it was laid out at"
+            );
+            let bitmap = doc
+                .render_page_inner(index, 96.0)
+                .unwrap_or_else(|e| panic!("tile {index} rasterises: {e}"));
+            assert_eq!(
+                (bitmap.width_px, bitmap.height_px),
+                (
+                    laid_out.width.to_device_px(96.0).ceil() as u32,
+                    laid_out.height.to_device_px(96.0).ceil() as u32
+                ),
+                "tile {index} rasterised at a different size than it was laid out at"
+            );
+        }
+    }
 
     /// The whole-layout ceiling a windowing test runs at. Small enough that a
     /// few hundred paragraphs reach the windowed path, so the same document can
@@ -31437,6 +32304,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
         let node = paragraph.to_string();
 
@@ -31881,6 +32749,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
         let node = paragraph.to_string();
 
@@ -32180,6 +33049,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
 
         let summary: serde_json::Value =
@@ -36034,6 +36904,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         }
     }
 
@@ -38091,6 +38962,7 @@ mod tests {
             checklist_checked: None,
             active_author: None,
             paragraph_tracking: None,
+            layout_view: LayoutView::Paged,
         };
         (handle, source_id, target_id)
     }
@@ -39958,6 +40830,46 @@ mod tests {
             choke.contains(&built[0]),
             "the one `Transaction::new` must be the choke point's own"
         );
+
+        // 3a. **The facade never takes a mutable borrow of the definitions at all.**
+        //
+        //     The checks above count what goes THROUGH the envelope; they were structurally
+        //     blind to what never went near it, and said so in their own doc comment. Five
+        //     call sites wrote straight into the definition tables — one media registration
+        //     and four numbering definitions — and then sent only the paragraph re-pointing
+        //     or the drawing insert through the log. So the definition was not in the commit:
+        //     undo left it behind, a refusal after it left it behind, and a session would
+        //     have fanned out a paragraph or a drawing naming a definition no other replica
+        //     held. They are now `SetMediaReference`, `SetAbstractNumbering` and
+        //     `SetNumberingInstance`, ordered first in the same transaction.
+        //
+        //     **The forbidden thing is the mutable borrow, not any particular table.** A
+        //     first version of this check listed the table names, and a mutation proved it
+        //     worthless in one line: `let defs = self.document.definitions_mut();` followed
+        //     by `defs.numbering.insert(..)` matches none of them — which is exactly how
+        //     three of the original five were written. So the guard forbids
+        //     `definitions_mut(` outright. Nothing in the facade needs it: every definition
+        //     change is an operation, and that is the whole of `147`/ADR-005 rather than a
+        //     list a reviewer has to keep current.
+        const MUTABLE_DEFINITIONS: &str = "definitions_mut(";
+        assert!(
+            !engine.contains(MUTABLE_DEFINITIONS),
+            "the facade takes a mutable borrow of the definitions: a definition installed \
+             outside the transaction envelope is not in the commit, so undo cannot remove \
+             it and no other replica ever learns of it. Use `SetStyleDefinition`, \
+             `SetAbstractNumbering`, `SetNumberingInstance` or `SetMediaReference`"
+        );
+        // The scan can see both shapes it forbids — the direct one and the bound one that
+        // defeated the first version of this check.
+        for planted in [
+            "self.document.definitions_mut().media.insert(id, reference);",
+            "let defs = self.document.definitions_mut();",
+        ] {
+            assert!(
+                planted.contains(MUTABLE_DEFINITIONS),
+                "the scan cannot see the write it is supposed to forbid: {planted}"
+            );
+        }
 
         // 4. No parallel history. The flat `Vec<HistoryEntry>` stacks are what the
         //    log replaced; a field of that shape coming back is the migration
@@ -43101,5 +44013,642 @@ mod tests {
             "a cell holding a text box inside an inline content control handed back \
              a contiguous range straight across a separate editing surface"
         );
+    }
+
+    // ---- Replica-safe identity — doc 152 §4, ADR-047 ----------------------
+    //
+    // The editing path mints every identity through ONE allocator, `edit_ids`, so
+    // the partition is one change at one place. These guards are about what two
+    // replicas of one document produce, because that is the only place the defect
+    // was ever visible: each replica on its own was always self-consistent.
+
+    /// Every id `edit_ids` handed out while `script` ran, computed from the
+    /// allocator's own counter so nothing is missed — a mint that never reached
+    /// the document is still a mint, and would still collide.
+    fn ids_minted_by(d: &mut WasmDocument, script: impl FnOnce(&mut WasmDocument)) -> Vec<NodeId> {
+        let namespace = d.edit_ids.namespace();
+        let first = d.edit_ids.next_counter();
+        script(d);
+        assert_eq!(
+            namespace,
+            d.edit_ids.namespace(),
+            "the script moved the minting space; this helper assumes it is fixed"
+        );
+        (first..d.edit_ids.next_counter())
+            .map(|counter| NodeId::from_parts(namespace, counter).expect("a valid id"))
+            .collect()
+    }
+
+    /// The low half of a node id: its counter within a space.
+    fn counter_of(id: &NodeId) -> u64 {
+        (id.as_u128() & u128::from(u64::MAX)) as u64
+    }
+
+    /// The edits a person makes in the first minute of a document, chosen because
+    /// each one introduces a DIFFERENT id family: a bookmark and its two markers,
+    /// a note, a paragraph, and the run a mid-run format has to split off.
+    fn a_minute_of_editing(d: &mut WasmDocument) {
+        let node = d.first_position().node();
+        // `is_ok()` rather than `expect`: the error is a `JsValue`, and formatting one
+        // on a native target panics inside wasm-bindgen — which would replace a
+        // readable failure with "cannot call wasm-bindgen imported functions".
+        assert!(
+            d.create_bookmark(&node, 0, &node, 5, "anchor".to_owned())
+                .is_ok(),
+            "create bookmark was refused"
+        );
+        assert!(
+            d.insert_footnote(&node, 0).is_ok(),
+            "insert footnote was refused"
+        );
+        assert!(
+            d.split_paragraph(&node, 5).is_ok(),
+            "split paragraph was refused"
+        );
+        assert!(
+            d.format_text(&node, 1, 3, Some(true), None, None, None)
+                .is_ok(),
+            "formatting a slice of a run was refused"
+        );
+    }
+
+    #[test]
+    fn two_replicas_editing_one_document_never_mint_the_same_id() {
+        // Identical bytes, so both replicas compute the same document id and the
+        // same base space — which is the case the old derivation turned into two
+        // nodes with one name from the very first edit.
+        let bytes = text_of_lines(3);
+        let mut ada = open_document(&bytes).expect("must open");
+        let mut grace = open_document(&bytes).expect("must open");
+        assert_eq!(
+            ada.document.id(),
+            grace.document.id(),
+            "the two replicas are not of one document, so this proves nothing"
+        );
+
+        ada.adopt_participant_identity_internal(0).expect("a space");
+        grace
+            .adopt_participant_identity_internal(1)
+            .expect("a space");
+
+        let ada_ids = ids_minted_by(&mut ada, a_minute_of_editing);
+        let grace_ids = ids_minted_by(&mut grace, a_minute_of_editing);
+        assert!(
+            !ada_ids.is_empty() && ada_ids.len() == grace_ids.len(),
+            "the two replicas did not do the same work: {} against {}",
+            ada_ids.len(),
+            grace_ids.len()
+        );
+
+        // 1. Disjoint. The property under test.
+        let ada_set: BTreeSet<NodeId> = ada_ids.iter().copied().collect();
+        let shared: Vec<NodeId> = grace_ids
+            .iter()
+            .copied()
+            .filter(|id| ada_set.contains(id))
+            .collect();
+        assert!(
+            shared.is_empty(),
+            "two replicas minted {} identical ids for different nodes: {shared:?}",
+            shared.len()
+        );
+
+        // 2. Partitioned, not merely different. An id that failed to line up by
+        //    accident would satisfy (1); this says WHY each id is safe — it is in
+        //    the space its own participant number derives, and in no other.
+        let base = IdSpace::of_document(ada.document.id());
+        let ada_space = IdSpace::participant(base, 0).expect("a space");
+        let grace_space = IdSpace::participant(base, 1).expect("a space");
+        assert_ne!(ada_space, grace_space);
+        for id in &ada_ids {
+            assert!(
+                ada_space.holds(*id) && !grace_space.holds(*id),
+                "{id} is not in the space participant 0 mints in"
+            );
+        }
+        for id in &grace_ids {
+            assert!(
+                grace_space.holds(*id) && !ada_space.holds(*id),
+                "{id} is not in the space participant 1 mints in"
+            );
+        }
+
+        // 3. The ids reached the documents. Without this the test is arithmetic on
+        //    a counter and would hold even if the editor minted from somewhere else.
+        assert_eq!(
+            ada.document.highest_counter_in(ada_space),
+            ada_ids.iter().map(counter_of).max().expect("ids"),
+            "the ids this replica minted are not the ones in its document"
+        );
+        assert_eq!(
+            grace.document.highest_counter_in(grace_space),
+            grace_ids.iter().map(counter_of).max().expect("ids"),
+            "the ids this replica minted are not the ones in its document"
+        );
+    }
+
+    #[test]
+    fn a_replica_does_not_hold_the_id_the_other_replica_introduced() {
+        // The sibling's standing rule: a test where **the receiver already holds a
+        // different entry at that id** proves something, and an id that happens to
+        // agree proves nothing. So both replicas create a bookmark — the same
+        // action, with allocators in the same state — and the assertion is that
+        // each one's registered bookmark id is FREE in the other's table. Under a
+        // shared namespace both sat at one id, and `CreateBookmark` arriving there
+        // would have replaced a name the receiver had minted, silently.
+        let bytes = text_of_lines(3);
+        let mut ada = open_document(&bytes).expect("must open");
+        let mut grace = open_document(&bytes).expect("must open");
+        ada.adopt_participant_identity_internal(0).expect("a space");
+        grace
+            .adopt_participant_identity_internal(1)
+            .expect("a space");
+
+        fn named(d: &mut WasmDocument, name: &str) -> NodeId {
+            let node = d.first_position().node();
+            assert!(
+                d.create_bookmark(&node, 0, &node, 5, name.to_owned())
+                    .is_ok(),
+                "create bookmark was refused"
+            );
+            let entries = d.bookmark_entries();
+            assert_eq!(entries.len(), 1);
+            let (id, held) = entries[0].split_once('\t').expect("an id and a name");
+            assert_eq!(held, name);
+            id.parse::<NodeId>().expect("a node id")
+        }
+        let ada_bookmark = named(&mut ada, "ada's anchor");
+        let grace_bookmark = named(&mut grace, "grace's anchor");
+
+        assert_ne!(
+            ada_bookmark, grace_bookmark,
+            "two replicas registered two different bookmarks under one id"
+        );
+        assert!(
+            !grace
+                .document
+                .definitions()
+                .bookmarks
+                .contains_key(&BookmarkId::new(ada_bookmark)),
+            "the id ada introduced is already taken in grace's table, so an arrival \
+             carrying it would overwrite an entry grace minted"
+        );
+        assert!(
+            !ada.document
+                .definitions()
+                .bookmarks
+                .contains_key(&BookmarkId::new(grace_bookmark)),
+            "the id grace introduced is already taken in ada's table"
+        );
+    }
+
+    #[test]
+    fn a_document_with_no_session_still_mints_and_does_so_outside_every_participant_space() {
+        // Local-first, unchanged: no session, no server, no participant number, and
+        // the editor still mints. And the space it mints in is one no participant
+        // can be handed, so joining a room later cannot have somebody else re-mint
+        // over what was written offline.
+        let mut alone = open_document(&text_of_lines(3)).expect("must open");
+        let base = IdSpace::of_document(alone.document.id());
+        let offline = IdSpace::local(base);
+        assert_eq!(
+            alone.identity_space(),
+            format!("{:016x}", offline.get()),
+            "an editor with no session is not minting in the reserved offline space"
+        );
+
+        let minted = ids_minted_by(&mut alone, a_minute_of_editing);
+        assert!(!minted.is_empty(), "editing alone minted nothing");
+        for id in &minted {
+            assert!(offline.holds(*id), "{id} escaped the offline space");
+        }
+        for number in 0..512_u64 {
+            let space = IdSpace::participant(base, number).expect("a space");
+            assert_ne!(
+                space, offline,
+                "participant {number} would mint over an offline replica's ids"
+            );
+        }
+    }
+
+    #[test]
+    fn adopting_a_participant_number_never_reissues_an_id_already_minted() {
+        // A replica REJOINING under a number it held before — a reconnect — must not
+        // hand out an id it already handed out.
+        //
+        // **The condition this creates on purpose:** each phase is UNDONE, so the
+        // ids it minted are no longer anywhere in the document. That is what makes
+        // the guard able to fail. Scanning the document for the highest counter in
+        // a space is a second, weaker safety net, and it sees nothing here — the
+        // nodes are gone. Only the allocator's own counter, carried across the
+        // space change, keeps those ids spent. And they ARE still live: an undone
+        // commit's operations sit in the revision log holding them, and a redo or
+        // an already-submitted chunk would put them back.
+        let mut d = open_document(&text_of_lines(3)).expect("must open");
+
+        let phase = |d: &mut WasmDocument| -> Vec<NodeId> {
+            let minted = ids_minted_by(d, a_minute_of_editing);
+            while d.can_undo() {
+                assert!(d.undo().is_ok(), "undo was refused");
+            }
+            minted
+        };
+
+        let offline = phase(&mut d);
+        d.adopt_participant_identity_internal(4).expect("a space");
+        let first_join = phase(&mut d);
+        d.adopt_participant_identity_internal(9).expect("a space");
+        let elsewhere = phase(&mut d);
+        // Back to the number held before, the shape a reconnect takes.
+        d.adopt_participant_identity_internal(4).expect("a space");
+        let rejoin = phase(&mut d);
+
+        let space =
+            IdSpace::participant(IdSpace::of_document(d.document.id()), 4).expect("a space");
+        assert_eq!(
+            d.document.highest_counter_in(space),
+            0,
+            "the undone edits left ids in the document, so the document scan could \
+             carry this guard and the counter would not have to"
+        );
+
+        let mut seen = BTreeSet::new();
+        for id in offline
+            .iter()
+            .chain(&first_join)
+            .chain(&elsewhere)
+            .chain(&rejoin)
+        {
+            assert!(seen.insert(*id), "{id} was minted twice by one replica");
+        }
+        assert!(
+            rejoin.iter().all(|id| space.holds(*id)),
+            "a rejoin did not return to the space its participant number derives"
+        );
+        assert!(
+            first_join.iter().map(counter_of).max() < rejoin.iter().map(counter_of).min(),
+            "the counter went backwards on re-entering a space, which is how an id \
+             comes back"
+        );
+    }
+
+    #[test]
+    fn the_two_participant_numbers_that_alias_a_reserved_space_are_refused() {
+        let mut d = open_document(&text_of_lines(3)).expect("must open");
+        let before = d.identity_space();
+        for number in [u64::MAX, u64::MAX - 1] {
+            let error = d
+                .adopt_participant_identity_internal(number)
+                .expect_err("this number has no space of its own");
+            assert!(error.contains("no identity space"), "{error}");
+        }
+        assert_eq!(
+            d.identity_space(),
+            before,
+            "a refused participant number moved the minting space anyway"
+        );
+    }
+
+    #[test]
+    fn a_document_reopened_from_a_snapshot_does_not_reissue_the_ids_it_already_holds() {
+        // Backward compatibility, and the one format where it bites. DOCX/ODT/RTF
+        // re-mint every id on import, so a round trip through them cannot collide.
+        // A normalized JSON snapshot preserves node ids VERBATIM — so a document
+        // saved after editing comes back carrying the previous session's mints, and
+        // an allocator restarting its counter at one would hand them out again.
+        let mut first = open_document(&text_of_lines(3)).expect("must open");
+        let before = ids_minted_by(&mut first, a_minute_of_editing);
+        assert!(!before.is_empty());
+
+        let snapshot = first
+            .export_as_inner(formats::NORMALIZED_JSON, "semantic")
+            .expect("export the edited document as a snapshot");
+        let mut reopened = open_document(&snapshot.bytes).expect("reopen the snapshot");
+        assert_eq!(
+            reopened.document.id(),
+            first.document.id(),
+            "the snapshot did not preserve identity, so this proves nothing"
+        );
+
+        // Stated before the first edit, so the failure names the defect rather than
+        // arriving as a refused bookmark: the allocator has to start above whatever
+        // the reopened document already holds in the space it is about to mint in.
+        let space = IdSpace::new(reopened.edit_ids.namespace());
+        let held = reopened.document.highest_counter_in(space);
+        assert!(
+            reopened.edit_ids.next_counter() > held,
+            "the reopened allocator is at counter {}, at or below the highest ({held}) \
+             the document already holds in that space — its next mint is an id the \
+             document already carries",
+            reopened.edit_ids.next_counter()
+        );
+
+        let after = ids_minted_by(&mut reopened, a_minute_of_editing);
+        let carried: BTreeSet<NodeId> = before.iter().copied().collect();
+        let reissued: Vec<NodeId> = after
+            .iter()
+            .copied()
+            .filter(|id| carried.contains(id))
+            .collect();
+        assert!(
+            reissued.is_empty(),
+            "reopening a snapshot reissued {} ids the document already holds: {reissued:?}",
+            reissued.len()
+        );
+        reopened
+            .document
+            .validate()
+            .expect("a reopened-and-edited document must still have unique ids");
+    }
+
+    #[test]
+    fn joining_a_room_whose_document_already_holds_this_participant_s_work_does_not_reissue() {
+        // The other half of the same rule, on the join path rather than the open
+        // path: a replica handed participant number 4 for a document that ALREADY
+        // carries participant 4's earlier ids — a rejoin after a reload, or a room
+        // resumed from a stored snapshot. The counter has to clear what is there.
+        let mut d = open_document(&text_of_lines(3)).expect("must open");
+        let space =
+            IdSpace::participant(IdSpace::of_document(d.document.id()), 4).expect("a space");
+        let planted = BookmarkId::new(NodeId::from_parts(space.get(), 9_999).expect("an id"));
+        d.document.definitions_mut().bookmarks.insert(
+            planted,
+            casual_doc_model::v1::Bookmark {
+                name: "left behind by an earlier connection".to_owned(),
+            },
+        );
+
+        d.adopt_participant_identity_internal(4).expect("a space");
+        let minted = ids_minted_by(&mut d, a_minute_of_editing);
+        assert!(!minted.is_empty());
+        for id in &minted {
+            assert!(space.holds(*id));
+            assert!(
+                counter_of(id) > 9_999,
+                "{id} lands on or below an id this participant already left in the \
+                 document, so a rejoin reissues it"
+            );
+        }
+        d.document
+            .validate()
+            .expect("the document must still have unique ids");
+    }
+
+    // ---- HF-111: what a SUGGESTED keystroke costs ---------------------------
+    //
+    // `107` §4 B1 says per-keystroke work is O(1) in document size, and names
+    // HF-111 as the one place that is "directly violated today". The ordinary
+    // typing path already has two guards above; the suggesting path had none,
+    // which is how the defect stayed open while the tracker described it.
+
+    /// A plain-text document of `paragraphs` lines, in suggesting mode with an
+    /// author set, plus the id of its first paragraph.
+    fn suggesting_document(paragraphs: usize) -> (WasmDocument, String) {
+        let mut d = plain_text_document(paragraphs);
+        d.set_active_author("Reviewer", None, None)
+            .expect("set the review identity");
+        let (node, _len) = d.ordered_paragraphs()[0];
+        (d, node.to_string())
+    }
+
+    /// One suggested keystroke, and what it cost: block visits, and how many
+    /// WHOLE-DOCUMENT validations it ran.
+    fn suggested_keystroke_cost(d: &mut WasmDocument, node: &str, offset: u32) -> (u64, u64) {
+        casual_doc_edit::reset_block_visits();
+        casual_doc_edit::reset_indexed_paragraphs();
+        casual_doc_model::v1::reset_whole_document_validations();
+        assert!(
+            d.suggest_insert(node, offset, "x", None, None, None)
+                .is_ok(),
+            "the suggested keystroke was refused"
+        );
+        (
+            casual_doc_edit::block_visits(),
+            casual_doc_model::v1::whole_document_validations(),
+        )
+    }
+
+    /// **HF-111. A suggested keystroke must not validate the whole document.**
+    ///
+    /// `107` §4 B1 — per-keystroke work is O(1) in document size — names this as the one
+    /// place it is "directly violated today", and the tracker row said the same in prose for
+    /// months while nothing measured it. `Document::validate` runs 19 sub-validators, a full
+    /// node-id walk and a grapheme count per run; one call per keystroke is O(document) per
+    /// keystroke however fast it feels on a fixture.
+    ///
+    /// Counting CALLS rather than milliseconds is what makes this able to fail honestly: the
+    /// guarantee is "a keystroke runs none of these", and a clock cannot tell a
+    /// whole-document pass from a slow constant.
+    #[test]
+    fn a_suggested_keystroke_runs_no_whole_document_validation() {
+        let (mut d, node) = suggesting_document(200);
+
+        // The meter is live: opening and validating charges it, so a zero below is a
+        // measurement and not a counter nobody wired up.
+        casual_doc_model::v1::reset_whole_document_validations();
+        d.document.validate().expect("the fixture is valid");
+        assert_eq!(
+            casual_doc_model::v1::whole_document_validations(),
+            1,
+            "the validation meter is not counting"
+        );
+
+        let (_visits, validations) = suggested_keystroke_cost(&mut d, &node, 0);
+        assert_eq!(
+            casual_doc_edit::indexed_paragraphs(),
+            0,
+            "one suggested keystroke built a whole-document paragraph index to resolve the \
+             single paragraph it edits; that is a hash entry per paragraph per keystroke, \
+             which block visits cannot see"
+        );
+        assert_eq!(
+            validations, 0,
+            "one suggested keystroke ran {validations} whole-document validation(s); that is \
+             HF-111, and it makes review typing O(document) per character"
+        );
+
+        // The same for the ordinary typing path, so the guard says what the FLOOR is rather
+        // than only what review does. If plain typing ever acquires one, this catches it in
+        // the same place.
+        let (pnode, _len) = d.ordered_paragraphs()[0];
+        let pnode = pnode.to_string();
+        casual_doc_model::v1::reset_whole_document_validations();
+        d.type_text(&pnode, 0, &pnode, 0, "y".to_owned(), 3)
+            .expect("plain keystroke");
+        assert_eq!(
+            casual_doc_model::v1::whole_document_validations(),
+            0,
+            "an ordinary keystroke acquired a whole-document validation"
+        );
+    }
+
+    /// **A suggested keystroke must be linear in document length, not quadratic.**
+    ///
+    /// The doubling form `SKILL` §8 requires, in the shape the ordinary typing path already
+    /// has two guards for and the suggesting path had none — which is how HF-111 stayed open
+    /// while the tracker described it.
+    ///
+    /// Linear is the standard, not O(1): resolving a paragraph by id is a walk on every
+    /// path, review or not, and making that O(1) needs an index the document deliberately
+    /// does not cache. What this catches is the class one order worse — a per-node lookup
+    /// inside a loop over nodes — which a millisecond threshold could not tell from a slow
+    /// constant.
+    #[test]
+    fn a_suggested_keystroke_is_linear_in_document_length() {
+        let small_n = 200;
+        let (mut small, small_node) = suggesting_document(small_n);
+        let (mut large, large_node) = suggesting_document(small_n * 2);
+        let (small_visits, _) = suggested_keystroke_cost(&mut small, &small_node, 0);
+        let (large_visits, _) = suggested_keystroke_cost(&mut large, &large_node, 0);
+
+        assert!(small_visits > 0, "the meter must be measuring something");
+        assert!(
+            large_visits < small_visits * 3,
+            "one suggested keystroke cost {small_visits} block visits at {small_n} paragraphs \
+             and {large_visits} at {}: doubling the document more than doubled the work",
+            small_n * 2
+        );
+
+        // **The guarantee, not the circumstance: suggesting costs at most twice ordinary
+        // typing.** Both paths must resolve the paragraph, so review pays the facade's
+        // review projection on top — one extra resolve — and nothing else. Measured, that is
+        // 800 block visits against 400. The ceiling is stated as a RATIO so it survives any
+        // change to document size or fixture, and it is deliberately tight: a third
+        // whole-document pass on the review path is exactly the defect this is here to
+        // catch, and headroom for one would let it back in silently.
+        let (pnode, _len) = small.ordered_paragraphs()[0];
+        let pnode = pnode.to_string();
+        casual_doc_edit::reset_block_visits();
+        small
+            .type_text(&pnode, 0, &pnode, 0, "y".to_owned(), 3)
+            .expect("plain keystroke");
+        let plain_visits = casual_doc_edit::block_visits();
+        assert!(
+            plain_visits > 0 && small_visits <= plain_visits * 2,
+            "a suggested keystroke cost {small_visits} block visits against an ordinary \
+             keystroke's {plain_visits} — more than twice, so review typing has acquired \
+             another whole-document pass"
+        );
+    }
+
+    // ---- Definitions are in the commit — doc 147, ADR-005 ------------------
+    //
+    // The choke-point guard above is a source scan, and a source scan cannot say
+    // what undo DOES. These say it, through the public surface, because the defect
+    // was only ever visible as behaviour: the paragraph came back and the
+    // definition stayed.
+
+    /// How many numbering definitions the document holds, as a pair.
+    fn numbering_counts(d: &WasmDocument) -> (usize, usize) {
+        let definitions = d.document.definitions();
+        (
+            definitions.abstract_numbering.iter().count(),
+            definitions.numbering.iter().count(),
+        )
+    }
+
+    #[test]
+    fn undo_of_a_list_toggle_removes_the_definition_it_installed() {
+        // `toggle_list` mints an abstract numbering definition and an instance the
+        // first time it runs, then re-points the paragraph at the instance. The
+        // definitions used to be written outside the transaction, so this undo
+        // restored the paragraph and left both behind — invisible in the document,
+        // exported into the DOCX, and named by nothing.
+        let mut d = plain_text_document(3);
+        let (node, _len) = d.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let before = numbering_counts(&d);
+
+        assert!(
+            d.toggle_list(&node, 0, &node, 0, "numbered").is_ok(),
+            "toggling a numbered list was refused"
+        );
+        let after = numbering_counts(&d);
+        assert_eq!(
+            after,
+            (before.0 + 1, before.1 + 1),
+            "the toggle did not install exactly one abstract definition and one instance, \
+             so this guard is not watching what it thinks it is"
+        );
+
+        assert!(d.undo().is_ok(), "undo was refused");
+        assert_eq!(
+            numbering_counts(&d),
+            before,
+            "undo left the numbering definitions behind: they were installed outside the \
+             transaction, so the commit's inverse has nothing to remove"
+        );
+        d.document
+            .validate()
+            .expect("the document is valid after undo");
+
+        // And redo puts them back, which is the other half of being in the commit.
+        assert!(d.redo().is_ok(), "redo was refused");
+        assert_eq!(
+            numbering_counts(&d),
+            after,
+            "redo did not reinstall the definitions the undo removed"
+        );
+    }
+
+    // **A refusal-leaves-no-trace guard is missing here, and the reason is a testability
+    // limit rather than a decision.** `restart_list` used to mint its numbering instance and
+    // THEN scan for items to restart, so its refusal ("There are no numbered items here to
+    // restart") returned an error having already installed a definition nothing referenced.
+    // That is now structural — the operation is built and applied only if the scan found
+    // work, so no path installs and then refuses — but it is not held by a test, because a
+    // refusal cannot be observed from a native test at all: every `#[wasm_bindgen]` method
+    // returns `Result<_, JsValue>` and `to_js` panics on a non-wasm target
+    // ("cannot call wasm-bindgen imported functions on non-wasm targets"), inside the method,
+    // before the caller can look at the result. Writing this guard needs the
+    // `Result<_, String>` inner split this file already uses elsewhere for exactly this
+    // reason. Recorded in `147` rather than left as a silent gap.
+
+    #[test]
+    fn undo_of_a_picture_insert_removes_the_media_reference_with_it() {
+        // The media registration used to sit outside the transaction with a comment
+        // calling the leftover "harmless", because an unreferenced media entry is
+        // valid. It is not harmless in a session: the drawing crosses the wire and
+        // the registration does not, so the receiver holds a drawing pointing at
+        // media it has never heard of — a dangling reference, which the same comment
+        // named as the thing that is NOT valid.
+        let mut d = plain_text_document(3);
+        let (node, _len) = d.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let media_before = d.document.definitions().media.iter().count();
+
+        // A one-pixel PNG: the smallest input the image path accepts.
+        const PNG: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
+        ];
+        assert!(
+            d.insert_image(
+                &node,
+                0,
+                PNG.to_vec(),
+                914_400.0,
+                914_400.0,
+                "image/png".to_owned()
+            )
+            .is_ok(),
+            "inserting a picture was refused"
+        );
+        assert_eq!(
+            d.document.definitions().media.iter().count(),
+            media_before + 1,
+            "the insert did not register exactly one media reference"
+        );
+
+        assert!(d.undo().is_ok(), "undo was refused");
+        assert_eq!(
+            d.document.definitions().media.iter().count(),
+            media_before,
+            "undo left the media reference behind: it was registered outside the \
+             transaction, so the commit's inverse has nothing to remove"
+        );
+        d.document
+            .validate()
+            .expect("the document is valid after undo");
     }
 }

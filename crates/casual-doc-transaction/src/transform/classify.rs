@@ -89,6 +89,9 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionGeometry { .. }
         | Operation::SpliceSectionBoundary { .. }
         | Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
         | Operation::CreateHeaderFooterBody { .. }
@@ -143,6 +146,9 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetSectionGeometry { .. } => "SetSectionGeometry",
         Operation::SpliceSectionBoundary { .. } => "SpliceSectionBoundary",
         Operation::SetStyleDefinition { .. } => "SetStyleDefinition",
+        Operation::SetAbstractNumbering { .. } => "SetAbstractNumbering",
+        Operation::SetNumberingInstance { .. } => "SetNumberingInstance",
+        Operation::SetMediaReference { .. } => "SetMediaReference",
         Operation::CreateBookmark { .. } => "CreateBookmark",
         Operation::DeleteBookmark { .. } => "DeleteBookmark",
         Operation::RenameBookmark { .. } => "RenameBookmark",
@@ -291,6 +297,9 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetSectionGeometry { .. }
         | Operation::SpliceSectionBoundary { .. }
         | Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
         | Operation::RemoveField { .. }

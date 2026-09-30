@@ -1,10 +1,11 @@
 # 148 — The phone layout: competitive analysis and design
 
-**Status:** §1–§8 accepted. §7's foundation implemented; §9 six-of-nine closed
-by the lane after it (see §9's rewritten table), with reflow specified in
-`149-REFLOW-PAGELESS-LAYOUT-DESIGN.md` / ADR-045 rather than built, and the
-keyboard inset still unverified on hardware (§12). §5.3 and §8.4 are both
-answered by later sections rather than rewritten.
+**Status:** §1–§8 accepted. §7's foundation implemented; §9 seven-of-nine closed
+(see §9's rewritten table) — reflow landed on 2026-10-01 in both halves
+(`151-REFLOW-PAGELESS-LAYOUT-DESIGN.md` / ADR-046, not the `149`/ADR-045 this
+line cited while the document was being renumbered), which RETIRES `#viewport`'s
+exemption from §6's rule. The keyboard inset is still unverified on hardware
+(§12). §5.3 and §8.4 are both answered by later sections rather than rewritten.
 **Opened:** 2026-09-30. **Decision:** [ADR-044](08-ADR-REGISTER.md).
 **Advances:** `105` UX-019 (no breakpoint below 620px), partially `105` UX-018.
 **Depends on:** `105` UX-001 (the editable focus owner), **closed** — a phone can
@@ -349,9 +350,15 @@ and sheet it can reach, by measuring `scrollWidth` against `clientWidth` and
 also by measuring that nothing's bounding box crosses the window's edges. It is
 driven red by reintroducing an overflow (see §10).
 
-**The named exception is `#viewport` — the document itself — and it is not an
-oversight.** A Letter page's text column is 6.5in; at 96dpi that is 624 CSS px.
-It cannot be both 390px wide and readable. There are exactly three answers:
+**There is no longer an exception, and that is new (2026-10-01).** `#viewport`
+— the document itself — was the one named exemption in this document, in
+ADR-044, in `style.css`'s phone block and in the spec's own `DOCUMENT_SURFACE`.
+It is retired: `docs/151` §6's shell landed, reflow defaults on below the phone
+rung, and the document is now swept by the same assertion as everything else.
+The paragraphs below are kept because they are the reasoning that produced the
+answer, not a record of a gap. A Letter page's text column is 6.5in; at 96dpi
+that is 624 CSS px. It cannot be both 390px wide and readable. There were
+exactly three answers:
 
 1. **Shrink the page to fit.** `view_zoom.mjs` computes this and then refuses
    it: `FIT_ON_OPEN_FLOOR = 0.5`, with the reason recorded in the file — a
@@ -365,12 +372,26 @@ It cannot be both 390px wide and readable. There are exactly three answers:
    `ChangeReaderMode()` / `CReaderTouchManager`. Both offer it *alongside* the
    paginated view rather than instead of it.
 
-Answer 3 is the right one and **it is engine work** — a layout pass at a width
+Answer 3 was the right one and it was **engine work** — a layout pass at a width
 that is not the section's page width — in `crates/casual-doc-layout`, outside
-this change's lane. So this change does not pretend to solve it: the chrome is
-guarded, the document is named, and §9 carries the item. Silently lowering the
-zoom floor to make a guard pass would have made the editor worse and the guard
-meaningless, which is the failure `SKILL.md` §4 and §9 both describe.
+the lane that wrote this document. It is now built, in both halves: `LayoutView`
+and the `setLayoutView` seam in the engine, and `docs/151` §6's command, width
+feed, seamless tiles, withheld chrome and forced-paper printing in the shell.
+`#viewport` measures **384 into 390** at the phone rung where it measured 794
+into 326. `webapp/tests/e2e/reflow.spec.mjs` holds the positive claim and
+`phone-no-horizontal-scroll.spec.mjs` now has no hole in it.
+
+**One horizontal scroll survives on purpose and it is a different thing.** A
+reader who turns Reflow OFF on a phone is asking for pages, and a Letter page in
+a 390px window pans — that is answer 2, chosen deliberately rather than arrived
+at. And `docs/151` §6.3 keeps a table too wide for the column in a scroller of
+its own, which tells the reader something true about a table instead of
+something false about the document.
+
+Silently lowering the zoom floor to make a guard pass would have made the editor
+worse and the guard meaningless, which is the failure `SKILL.md` §4 and §9 both
+describe. That is not what happened: `FIT_ON_OPEN_FLOOR` is still 0.5 and still
+refuses the ~31%.
 
 ## 7. What is implemented
 
@@ -397,8 +418,12 @@ always did and no command loses a home.
    (`SKILL.md` §1), and a host embedding two bundles with two command registries
    and two sets of gating is not an embeddable library. ADR-044.
 2. **Pinch-zoom is not suppressed.** §5.5.
-3. **No reflow view yet, and it is said out loud.** Both references have one;
-   we have the honest paginated fallback and a named gap. §6, §9.
+3. ~~**No reflow view yet, and it is said out loud.**~~ **Closed 2026-10-01**,
+   and it closes as a DIFFERENCE rather than as parity: both references have a
+   reflow view and **both of the documented ones are read-only** — ONLYOFFICE's
+   sets `SelectEnabled = false`. Ours stays editable (ADR-046, `docs/151` §3.2),
+   because the browser is our whole mobile story and a reading mode you have to
+   leave in order to type is not an answer to that. §6, §9.
 4. **No Aa/+ split.** Google separates formatting (Aa) from insertion (+) into
    two sheets; ONLYOFFICE separates Edit from Add. Ours keeps one bar whose
    overflow is one sheet, because that bar already exists, already folds rather
@@ -424,7 +449,7 @@ that deletes its own entries cannot be audited.
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | **Reflow / pageless view** | **Specified, not built** — `149-REFLOW-PAGELESS-LAYOUT-DESIGN.md` and ADR-045. Every line of it is in `crates/**`, which that lane does not own, so it is reported precisely rather than half-built. The finding that changes the estimate: the flow engine is **already width-parametric end to end** (`flow::build_galley(document, shaper, content_width)` and eleven siblings take the width as an argument), so this is a *driver* change, not a line-breaking one. `#viewport` stays §6's named exception until it lands, and `phone-no-horizontal-scroll.spec.mjs` now carries **two** tripwires: the outcome one, and a new one that fails the day `setLayoutView` appears on the wasm surface — because an engine API with no consumer is `SKILL.md` §9.4's "built and unreachable" |
+| 1 | **Reflow / pageless view** | **Done, 2026-10-01, in both halves.** Designed in `151-REFLOW-PAGELESS-LAYOUT-DESIGN.md` under ADR-046 — this row said `149` and ADR-045 while the document was being renumbered, and those citations were wrong. The engine half is `LayoutView::{Paged, Reflow{..}}` threaded to the one place geometry is decided, plus the `setLayoutView` seam; the shell half is `view.reflow` on the View band and in the View menu, a quantised and debounced width feed, `gap: 0` tiles with no sheet shadow, the ruler and Pages panel withheld each with its own reason, and print forced back onto paper. The finding that made the estimate small held: the flow engine was **already width-parametric end to end**, so this was a *driver* change and not a line-breaking one. `#viewport`'s exemption is retired — 384 into 390 where it was 794 into 326 — and BOTH tripwires in `phone-no-horizontal-scroll.spec.mjs` fired and have been deleted, which is what a tripwire is for |
 | 2 | **Touch selection** | **Done** — `touch_selection.mjs`: long-press to select a word, two handles, a magnifier, caret drag. ONLYOFFICE's four tunables adopted by number and cited by line (`750`ms, `20`px, `20`px target, a `7`px dot). Arms on `pointerType === "touch"`, not on `phone-mode` (which would leave a tablet with nothing) and not on `(pointer: coarse)` (false on a touchscreen laptop). Pinch zoom is UX-018's other half and is still open |
 | 3 | **A command id for Pages** | **Done** — `view.pages`, in the View menu's Show band. The rail is withheld on a phone as a result; §5.3a |
 | 4 | **Aa / + as their own sheets** | **Done** — `PHONE_TOOLBAR`, a second roster for the same bar chosen at render time, over `APP_MENU_SECTIONS.format` and `.insert`. §8.4 records why the argument against it was wrong |

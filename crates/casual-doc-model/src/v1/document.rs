@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::*;
-use crate::{ModelError, NodeId, SnapshotError, SnapshotLimits, enforce_limit};
+use crate::{IdSpace, ModelError, NodeId, SnapshotError, SnapshotLimits, enforce_limit};
 
 /// The schema version stamped on authored and migrated v1 documents.
 pub const SCHEMA_VERSION_V1: u32 = 1;
@@ -54,6 +54,38 @@ pub struct Document {
     /// background is not modeled here and is reported at import instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     background: Option<RgbColor>,
+}
+
+/// How many **whole-document** validations have run on this thread since
+/// [`reset_whole_document_validations`].
+///
+/// This is instrumentation for a complexity guard, in the shape `SKILL` §8 asks for.
+/// [`Document::validate`] is O(document) by construction — 19 sub-validators, a full node-id
+/// walk and a grapheme count per run — so a per-keystroke path that calls it is O(document)
+/// per keystroke however fast it feels on a fixture. That is `104` HF-111.
+///
+/// Counting *calls* rather than milliseconds is what makes the guard able to fail honestly:
+/// the guarantee is "a keystroke runs none of these", and a clock cannot tell a
+/// whole-document pass from a slow constant.
+///
+/// Thread-local, so guards running in parallel do not observe each other's work.
+#[must_use]
+pub fn whole_document_validations() -> u64 {
+    VALIDATIONS.with(std::cell::Cell::get)
+}
+
+/// Zeroes the [`whole_document_validations`] counter for this thread.
+pub fn reset_whole_document_validations() {
+    VALIDATIONS.with(|count| count.set(0));
+}
+
+thread_local! {
+    static VALIDATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Charges one whole-document validation to this thread's counter.
+fn note_validation() {
+    VALIDATIONS.with(|count| count.set(count.get().saturating_add(1)));
 }
 
 impl Document {
@@ -181,8 +213,55 @@ impl Document {
         serde_json::to_vec(self).map_err(|_| SnapshotError::Serialization)
     }
 
+    /// Validates one paragraph's inline tree, and nothing else.
+    ///
+    /// Exactly the checks [`Document::validate`] makes for a top-level paragraph's inlines:
+    /// empty runs, adjacent equivalent runs, grapheme-count overflow, the wrapper rules for
+    /// hyperlinks and fields, nesting depth, and every run/paragraph property reference
+    /// against this document's definitions.
+    ///
+    /// # Why this exists
+    ///
+    /// An operation that replaces one paragraph's inlines can break exactly these, so this
+    /// is what it has to check. Calling `validate` instead makes a per-keystroke path
+    /// O(document) — `104` HF-111, the one violation `107` §4 B1 names by number.
+    ///
+    /// # What it deliberately does not check
+    ///
+    /// **Cross-document uniqueness of node ids.** An inline carrying an id that already
+    /// exists elsewhere is not visible from one paragraph, and finding out is O(document) by
+    /// construction. That is the same residual every other content-carrying operation has
+    /// (`147` §3.2 keeps whole-document validation off the apply path deliberately, and
+    /// `152` §10 Q2 records the residual); the identity partition is what makes it
+    /// unreachable in practice, because the ids an editor mints come from a space nobody
+    /// else mints in. It is caught at the next validation point — save, export, snapshot.
+    ///
+    /// # Complexity
+    ///
+    /// O(the inlines given). Never O(document).
+    ///
+    /// # Errors
+    ///
+    /// The first invariant the tree breaks.
+    pub fn validate_paragraph_inlines(
+        &self,
+        owner: NodeId,
+        inlines: &[InlineNode],
+    ) -> Result<(), ModelError> {
+        self.validate_inlines(inlines, owner, InlineWrapper::None, 0, 0, 0)
+    }
+
     /// Validates every schema v1 invariant, first-failure-wins.
+    ///
+    /// # Complexity
+    ///
+    /// **O(document), always** — 19 sub-validators, one of which walks every node id and
+    /// another of which counts the graphemes of every run. It is a document-scale check and
+    /// must never sit on a per-keystroke path (`107` §4 B1, `147` §3.2). Each call is
+    /// charged to [`whole_document_validations`] so a guard can assert a keystroke ran none,
+    /// which a millisecond threshold could not.
     pub fn validate(&self) -> Result<(), ModelError> {
+        note_validation();
         if self.schema_version != SCHEMA_VERSION_V1 {
             return Err(ModelError::UnsupportedSchemaVersion(self.schema_version));
         }
@@ -460,32 +539,85 @@ impl Document {
 
     fn validate_unique_ids(&self) -> Result<(), ModelError> {
         let mut ids = BTreeSet::new();
-        insert_id(&mut ids, self.document_id)?;
+        self.visit_node_ids(&mut |id| {
+            if ids.insert(id) {
+                Ok(())
+            } else {
+                Err(ModelError::DuplicateNodeId(id))
+            }
+        })
+    }
+
+    /// The highest counter any node id already in this document carries **in `space`**.
+    ///
+    /// Zero when the space is empty, so `highest + 1` is always a free counter.
+    ///
+    /// # Why this exists
+    ///
+    /// A normalized JSON snapshot preserves node ids verbatim, so a document reopened from
+    /// one already holds ids in whatever space its previous editing session minted in. A
+    /// generator that restarted its counter at one would reissue them. Seeding the generator
+    /// above this value is what makes a reopened snapshot — and a participant rejoining a
+    /// session under a number it held before — safe.
+    ///
+    /// # Complexity
+    ///
+    /// O(document): one walk of every node id, the same walk `validate` makes. Callers run
+    /// it **once, at open or at join**, never per keystroke (`107` §4 B1).
+    #[must_use]
+    pub fn highest_counter_in(&self, space: IdSpace) -> u64 {
+        /// The low half of a [`NodeId`] is its counter.
+        const COUNTER_MASK: u128 = u64::MAX as u128;
+
+        let mut highest = 0_u64;
+        // The closure never returns `Err`, so the walk is total and the `unwrap_or` is
+        // unreachable rather than a swallowed failure.
+        let () = self
+            .visit_node_ids(&mut |id| {
+                if space.holds(id) {
+                    highest = highest.max((id.as_u128() & COUNTER_MASK) as u64);
+                }
+                Ok(())
+            })
+            .unwrap_or(());
+        highest
+    }
+
+    /// Calls `visit` once for every node id this document contains, in a stable order.
+    ///
+    /// The one walk of the document's identities: `validate_unique_ids` and
+    /// [`Document::highest_counter_in`] are both readings of it, so a node kind added to the
+    /// model is enumerated for both or for neither.
+    fn visit_node_ids(
+        &self,
+        visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+    ) -> Result<(), ModelError> {
+        visit(self.document_id)?;
         for (id, _) in self.definitions.styles.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
         }
         for (id, _) in self.definitions.abstract_numbering.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
         }
         for (id, _) in self.definitions.numbering.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
         }
         for section in &self.definitions.sections {
-            insert_id(&mut ids, section.id.node_id())?;
+            visit(section.id.node_id())?;
         }
         for (id, _) in self.definitions.media.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
         }
         for (id, note) in self.definitions.footnotes.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
             for block in &note.blocks {
-                record_block_ids(block, &mut ids)?;
+                record_block_ids(block, visit)?;
             }
         }
         for (id, note) in self.definitions.endnotes.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
             for block in &note.blocks {
-                record_block_ids(block, &mut ids)?;
+                record_block_ids(block, visit)?;
             }
         }
         for (id, header_footer) in self
@@ -494,22 +626,29 @@ impl Document {
             .iter()
             .chain(self.definitions.footers.iter())
         {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
             for block in &header_footer.blocks {
-                record_block_ids(block, &mut ids)?;
+                record_block_ids(block, visit)?;
             }
         }
         for (id, comment) in self.definitions.comments.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
             for block in &comment.blocks {
-                record_block_ids(block, &mut ids)?;
+                record_block_ids(block, visit)?;
             }
         }
         for (id, _) in self.definitions.bookmarks.iter() {
-            insert_id(&mut ids, id.node_id())?;
+            visit(id.node_id())?;
+        }
+        // Field ranges were absent from this walk until the identity partition needed it:
+        // a `FieldRangeId` is a `NodeId` the editor mints, so leaving it out both hid a
+        // duplicate from `validate` and would have let a reopened snapshot's generator
+        // reissue one. Enumerating families, not successes (`SKILL` §9.3).
+        for (id, _) in self.definitions.field_ranges.iter() {
+            visit(id.node_id())?;
         }
         for block in &self.body {
-            record_block_ids(block, &mut ids)?;
+            record_block_ids(block, visit)?;
         }
         Ok(())
     }
@@ -1983,43 +2122,38 @@ fn accumulate_inline_limits(
     Ok(())
 }
 
-fn insert_id(ids: &mut BTreeSet<NodeId>, id: NodeId) -> Result<(), ModelError> {
-    if ids.insert(id) {
-        Ok(())
-    } else {
-        Err(ModelError::DuplicateNodeId(id))
-    }
-}
-
 /// Records a block's ids, recursing through table rows, cells, and nested blocks.
-fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(), ModelError> {
+fn record_block_ids(
+    block: &BlockNode,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
     match block {
         BlockNode::Paragraph(paragraph) => {
-            insert_id(ids, paragraph.id)?;
+            visit(paragraph.id)?;
             for inline in &paragraph.inlines {
-                record_inline_ids(inline, ids)?;
+                record_inline_ids(inline, visit)?;
             }
         }
         BlockNode::Table(table) => {
-            insert_id(ids, table.id)?;
+            visit(table.id)?;
             for row in &table.rows {
-                insert_id(ids, row.id)?;
+                visit(row.id)?;
                 for cell in &row.cells {
-                    insert_id(ids, cell.id)?;
+                    visit(cell.id)?;
                     for nested in &cell.blocks {
-                        record_block_ids(nested, ids)?;
+                        record_block_ids(nested, visit)?;
                     }
                 }
             }
         }
         BlockNode::Sdt(sdt) => {
-            insert_id(ids, sdt.id)?;
+            visit(sdt.id)?;
             for nested in &sdt.blocks {
-                record_block_ids(nested, ids)?;
+                record_block_ids(nested, visit)?;
             }
         }
         BlockNode::AltChunk(chunk) => {
-            insert_id(ids, chunk.id)?;
+            visit(chunk.id)?;
         }
     }
     Ok(())
@@ -2027,35 +2161,38 @@ fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(),
 
 /// Records an inline's id and, for a wrapper (hyperlink or field) or a text box,
 /// its children's ids recursively.
-fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<(), ModelError> {
-    insert_id(ids, inline.id())?;
+fn record_inline_ids(
+    inline: &InlineNode,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
+    visit(inline.id())?;
     match inline {
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                record_inline_ids(child, ids)?;
+                record_inline_ids(child, visit)?;
             }
         }
         InlineNode::Field(field) => {
             for child in &field.inlines {
-                record_inline_ids(child, ids)?;
+                record_inline_ids(child, visit)?;
             }
         }
         InlineNode::TextBox(text_box) => {
             for block in &text_box.blocks {
-                record_block_ids(block, ids)?;
+                record_block_ids(block, visit)?;
             }
         }
         InlineNode::Group(group) => {
-            record_group_ids(group, ids)?;
+            record_group_ids(group, visit)?;
         }
         InlineNode::Revision(revision) => {
             for child in &revision.inlines {
-                record_inline_ids(child, ids)?;
+                record_inline_ids(child, visit)?;
             }
         }
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
-                record_inline_ids(child, ids)?;
+                record_inline_ids(child, visit)?;
             }
         }
         _ => {}
@@ -2069,21 +2206,21 @@ fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<
 /// parent group for a nested one), so it is not re-inserted here.
 fn record_group_ids(
     group: &WordprocessingGroup,
-    ids: &mut BTreeSet<NodeId>,
+    visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
 ) -> Result<(), ModelError> {
     for child in &group.children {
         match child {
-            GroupChild::Picture(picture) => insert_id(ids, picture.id)?,
+            GroupChild::Picture(picture) => visit(picture.id)?,
             GroupChild::TextBox(text_box) => {
-                insert_id(ids, text_box.id)?;
+                visit(text_box.id)?;
                 for block in &text_box.blocks {
-                    record_block_ids(block, ids)?;
+                    record_block_ids(block, visit)?;
                 }
             }
-            GroupChild::Shape(shape) => insert_id(ids, shape.id)?,
+            GroupChild::Shape(shape) => visit(shape.id)?,
             GroupChild::Group(nested) => {
-                insert_id(ids, nested.id)?;
-                record_group_ids(nested, ids)?;
+                visit(nested.id)?;
+                record_group_ids(nested, visit)?;
             }
         }
     }

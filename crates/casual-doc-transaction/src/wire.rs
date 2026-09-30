@@ -35,7 +35,7 @@
 //! **An introduction needs a private space; a reference needs the order.**
 //!
 //! - *Introductions* — the ids an operation mints — must come from a space nobody else
-//!   mints in. [`IdSpace::of`] derives one per participant from the document's own space and
+//!   mints in. [`space_of`] derives one per participant from the document's own space and
 //!   the server-assigned [`ClientId`], and it is **injective in the client id**, so two
 //!   participants can never collide. It is derived rather than carried, so a receiver
 //!   computes the sender's space from the [`Arrival`](crate::protocol::Arrival)'s `client`
@@ -65,78 +65,39 @@ use casual_doc_model::v1::Document;
 
 use crate::protocol::ClientId;
 
-/// The 64-bit namespace a participant mints [`NodeId`]s in.
+/// The namespace partition that keeps two replicas from minting the same id.
 ///
-/// A [`NodeId`] is `(namespace, counter)`. Give every participant in a session a namespace
-/// of its own and two participants can never mint the same id, whatever order they edit in
-/// and whatever they name. That is the whole mechanism: no wire field, no re-mapping on
-/// receipt, and no quotient in the convergence comparison.
+/// **It lives in `casual-doc-model`, not here.** Identity is a property of the model, and
+/// the live editor has to mint in a partitioned space whether or not it is in a session —
+/// so putting the partition in this crate would have made single-user editing depend on the
+/// collaboration modules, which `the_live_editor_has_no_collaboration_dependency` forbids
+/// for good reason. Re-exported so `wire::IdSpace` keeps resolving.
 ///
-/// **Why not re-map on receipt instead.** Rewriting an arriving id into a local one is what
-/// the sibling does for an interned *value*, and it is wrong here: the id is the identity,
-/// so the two replicas would then disagree about the name of the same logical node, and a
-/// snapshot could never be compared byte for byte across replicas. Doc 150 §9.3 already
-/// names that as the blocker for persisted collaboration; re-mapping would make it
-/// permanent.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct IdSpace(u64);
-
-/// An odd multiplier, so multiplication by it is a bijection on `u64`.
+/// In a session the participant's space is [`IdSpace::participant`] applied to the
+/// relay-assigned [`ClientId`]; with no session it is [`IdSpace::local`], a space
+/// `IdSpace::participant` never returns.
 ///
-/// The golden-ratio constant, used for its oddness and its spread, not for any
-/// cryptographic property — this has to be collision-free, not unguessable.
-const ODD_MULTIPLIER: u64 = 0x9E37_79B9_7F4A_7C15;
+/// **Why not re-map on receipt**, which is what the sibling does for an interned value: the
+/// id *is* the identity here, so re-mapping would leave the two replicas disagreeing about
+/// the name of the same logical node, and a snapshot could never be compared byte for byte
+/// across replicas. Doc 150 §9.3 named that as the blocker for persisted collaboration;
+/// re-mapping would make it permanent.
+pub use casual_doc_model::IdSpace;
 
-impl IdSpace {
-    /// Wraps a raw namespace.
-    #[must_use]
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
+/// The space `client` mints in, given the document's own space.
+///
+/// A one-line adapter from this crate's participant number to the model's partition, so
+/// there is one derivation and not two. `None` for the two participant numbers that would
+/// alias a reserved space (see [`IdSpace::participant`]).
+#[must_use]
+pub fn space_of(base: IdSpace, client: ClientId) -> Option<IdSpace> {
+    IdSpace::participant(base, client.get())
+}
 
-    /// The raw namespace.
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-
-    /// The space a document's own nodes live in — the high half of its id.
-    ///
-    /// Every replica of one document computes the same value, which is exactly why it
-    /// cannot be a *participant's* space.
-    #[must_use]
-    pub fn for_document(document: &Document) -> Self {
-        Self((document.id().as_u128() >> 64) as u64)
-    }
-
-    /// The space `client` mints in, given the document's own space.
-    ///
-    /// Derived, not assigned, so no wire field carries it and a receiver can compute the
-    /// sender's space from an arrival's `client` alone.
-    ///
-    /// # The two properties this has to have, and why they hold
-    ///
-    /// `space(c) = base ^ (K * (c + 1))` with `K` odd.
-    ///
-    /// - **Distinct clients get distinct spaces.** `K` odd makes `c ↦ K * (c + 1)` a
-    ///   bijection on `u64`, and xor with a constant is a bijection, so the composition is
-    ///   injective. Not "unlikely to collide" — cannot.
-    /// - **No client gets the document's own space.** `space(c) == base` would need
-    ///   `K * (c + 1) == 0`, i.e. `c + 1 == 0`, i.e. `c == u64::MAX`. Refused by
-    ///   [`IdSpace::of`] returning `None` there rather than being left as a remark.
-    #[must_use]
-    pub const fn of(base: Self, client: ClientId) -> Option<Self> {
-        match client.get().checked_add(1) {
-            Some(offset) => Some(Self(base.0 ^ ODD_MULTIPLIER.wrapping_mul(offset))),
-            None => None,
-        }
-    }
-
-    /// Whether `id` was minted in this space.
-    #[must_use]
-    pub const fn holds(self, id: NodeId) -> bool {
-        ((id.as_u128() >> 64) as u64) == self.0
-    }
+/// The space a document's own nodes live in.
+#[must_use]
+pub fn document_space(document: &Document) -> IdSpace {
+    IdSpace::of_document(document.id())
 }
 
 /// One operation as it travels, together with the identities it introduces.
@@ -301,6 +262,19 @@ impl WireOperation {
                 paragraphs.len() * PER_ITEM
                     + comments.as_ref().map_or(0, |map| map.len() * PER_ITEM)
             }
+            Operation::SetAbstractNumbering { definition, .. } => definition
+                .as_ref()
+                .map_or(0, |definition| definition.levels.len() * PER_ITEM),
+            Operation::SetNumberingInstance { instance, .. } => instance
+                .as_ref()
+                .map_or(0, |instance| instance.overrides.len() * PER_ITEM),
+            Operation::SetMediaReference { reference, .. } => {
+                reference.as_ref().map_or(0, |reference| {
+                    reference.part_name.len()
+                        + reference.relationship_id.len()
+                        + reference.media_type.len()
+                })
+            }
             Operation::SetStyleDefinition { style, .. } => style.as_ref().map_or(0, |style| {
                 style.name.as_ref().map_or(0, String::len) + PER_ITEM
             }),
@@ -381,6 +355,18 @@ impl WireOperation {
             Operation::SetStyleDefinition { id, style } => {
                 style.as_ref().map_or_else(Vec::new, |_| vec![id.node_id()])
             }
+            // The same rule as the style table above, for the same reason: `Some(_)` inserts
+            // OR replaces, so declaring the id is what makes a silent replace reachable by
+            // `localise`'s already-held check.
+            Operation::SetAbstractNumbering { id, definition } => definition
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
+            Operation::SetNumberingInstance { id, instance } => instance
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
+            Operation::SetMediaReference { id, reference } => reference
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
             Operation::SpliceSectionBoundary { boundary, .. } => boundary
                 .as_ref()
                 .map_or_else(Vec::new, |boundary| vec![boundary.id.node_id()]),

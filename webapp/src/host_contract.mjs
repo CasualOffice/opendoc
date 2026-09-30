@@ -443,6 +443,15 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("view.pages", null),
   exact("view.settings", null),
   exact("view.showChanges", null),
+  // Reflow lays the body out at the reader's window width instead of on the
+  // document's paper (ADR-046). It requires NOTHING, and that is a claim worth
+  // making explicitly rather than by omission: it is a LAYOUT VIEW and not an
+  // edit — no operation, no revision bump, nothing on the export path — so a
+  // host that has granted no mutation capability at all can still offer it, and
+  // a host embedding the editor in a 400px column has a reason to. A capability
+  // the editor offers that this file does not name is invisible to a host, which
+  // is the one audience it has.
+  exact("view.reflow", null),
   exact("view.compactRibbon", null),
   exact("view.zoomIn", null),
   exact("view.zoomOut", null),

@@ -6791,6 +6791,27 @@ body.is-format-painting .page-wrap * {
   line-height: 0;
 }
 
+/* REFLOW (docs/151 §6.2, ADR-046): a tile is not a sheet.
+   -------------------------------------------------------------------------
+   In reflow the engine cuts the galley into fixed-height tiles at LINE
+   boundaries, so a tile edge falls wherever 11in of column happens to end —
+   usually in the middle of a paragraph. The paper affordances therefore have to
+   go, and each one is a separate lie if it stays:
+
+     box-shadow    draws a sheet edge across a sentence;
+     border-radius rounds a corner that is not a corner of anything;
+     gap           is the desk between two sheets, and there is no desk. It is
+                   `buildPageBand`'s `gap: 0` rather than CSS, because the tile
+                   positions have to be computable for tiles that are not in the
+                   DOM (see the note below).
+
+   What is left is one continuous column of paper-coloured raster, which is what
+   the reader should see. The class is written by `reflow_chrome.mjs`. */
+#viewport.is-reflow .page-wrap {
+  box-shadow: none;
+  border-radius: 0;
+}
+
 /* Inside the band a sheet is placed, not flowed: `main.js` writes `top`/`left`
    from the document-space page stack. The 22px pitch between pages lives in
    `PAGE_GAP_PX` (page_scroll.mjs) instead of in a flex `gap`, because the
@@ -8941,15 +8962,21 @@ body:not(.doc-loaded) .drop-title {
      #viewport      scrollWidth 794  clientWidth 326   ← the document itself
      .app-menu-bar  clips under a mask at 360px (responsive-shell.spec.mjs)
 
-   The first two are two different problems and only the first is solved here.
-   The tab strip is chrome and chrome must fit; the third is solved by letting
-   the bar wrap. `#viewport` is the DOCUMENT, and it is the named exception in
-   `docs/148` §8: a 6.5in text column cannot be both readable and 390px wide,
-   which is why every reference ships a reflow view (Google's Pageless,
-   ONLYOFFICE's `api.ChangeReaderMode()` / `CReaderTouchManager`) and why
-   `view_zoom.mjs`'s `FIT_ON_OPEN_FLOOR` deliberately refuses to shrink a page
-   to the 31% that would make it fit. Reflow is engine work and is not in this
-   change.
+   The first two were two different problems. The tab strip is chrome and chrome
+   must fit, which is solved here; the third is solved by letting the bar wrap.
+   `#viewport` is the DOCUMENT, and it WAS the named exception in `docs/148` §8:
+   a 6.5in text column cannot be both readable and 390px wide, which is why every
+   reference ships a reflow view (Google's Pageless, ONLYOFFICE's
+   `api.ChangeReaderMode()` / `CReaderTouchManager`) and why `view_zoom.mjs`'s
+   `FIT_ON_OPEN_FLOOR` deliberately refuses to shrink a page to the 31% that
+   would make it fit.
+
+   REFLOW LANDED 2026-10-01 (ADR-046, `docs/151`) AND THE EXCEPTION IS GONE.
+   Reflow defaults on below this same rung, lays the body out at the window's
+   width and cuts it into tiles, so `#viewport` now measures 384 into 390. The
+   tile styling is `#viewport.is-reflow` above; `FIT_ON_OPEN_FLOOR` is unchanged
+   and still refuses the 31%, because the fix was to stop needing it rather than
+   to lower it.
 
    WHAT MOVES, and why each:
      header   two rows, brand mark dropped; the menu bar WRAPS instead of

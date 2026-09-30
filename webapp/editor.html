@@ -879,6 +879,16 @@
                    `ribbon-width-budget.spec.mjs` measures as fitting far below
                    1280px, so no group is pushed anywhere. -->
               <button data-i18n-title="panelView.versionHistory.title" data-i18n-label="panelView.versionHistory.label" id="viewVersionsBtn" type="button" class="fmt" title="Version history" aria-label="Version history" aria-pressed="false" disabled><span class="ms" aria-hidden="true">history</span></button>
+              <!-- Reflow (`docs/151` §6.1, ADR-046). The View band is where all
+                   three references put their equivalent — Word's Web Layout,
+                   ONLYOFFICE's View-tab reader mode, Google's Pageless under
+                   View — and it sits in Show beside the other two view states
+                   rather than in Zoom, because it changes what is laid out and
+                   not how big it is drawn. `aria-pressed` because it is a STATE.
+                   Ribbon cost: one 32px button on a band that
+                   `ribbon-width-budget.spec.mjs` measures as fitting far below
+                   1280px. The palette and the View menu are its other faces. -->
+              <button data-i18n-title="panelView.reflow.title" data-i18n-label="panelView.reflow.label" id="viewReflowBtn" type="button" class="fmt" title="Reflow the document to the window width instead of showing pages" aria-label="Reflow" aria-pressed="false" disabled><span class="ms" aria-hidden="true">wrap_text</span></button>
             </div>
             <span data-i18n="panelView.show" class="rgroup-label">Show</span>
           </div>

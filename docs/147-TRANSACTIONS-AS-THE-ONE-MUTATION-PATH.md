@@ -316,6 +316,74 @@ Both guards are proven red by mutation before they are trusted (SKILL §4).
 **On the new path (the live editing path, and the one OT needs):** `casual-doc-wasm` — every
 mutation, every undo, every redo. One operation vocabulary, one envelope, one log.
 
+### 6a. Five writes were behind the envelope, and the guard could not see them — closed 2026-10-01
+
+When this document first said "every mutation", **five call sites in the facade wrote straight
+into a definition table** and then sent only the paragraph re-pointing (or the drawing insert)
+through the log: `insert_image` registered its media, and `set_list_format`, `restart_list`,
+`ensure_list` and `ensure_checklist` installed numbering definitions. §5's exhaustiveness guard
+counts what goes *through* the envelope and was structurally blind to what never went near it —
+it said so in its own doc comment, which is better than not saying it and is not the same as
+being covered.
+
+Three consequences, only the first of which had been noticed (and the note called it
+"harmless"):
+
+1. **Undo restored the paragraph and left the definition behind.** An unreferenced numbering
+   definition or media entry is valid, so nothing complained; it was exported into the DOCX.
+2. **A refusal left it behind too.** `restart_list` minted an instance and *then* scanned for
+   items to restart, so "There are no numbered items here to restart" returned an error having
+   already installed a definition nothing referenced. Same shape in `set_list_format`.
+3. **A session would have fanned out a dangling reference.** The paragraph or drawing crosses
+   the wire and the registration does not, so the receiver holds a paragraph naming a numbering
+   instance, or a drawing naming media, it has never heard of. The original comment named
+   exactly this as the case that is *not* valid, one line above the write that caused it.
+
+**The fix is three operations, and the shape is the one the op set already had.**
+`SetAbstractNumbering`, `SetNumberingInstance` and `SetMediaReference` are modelled on
+`SetStyleDefinition` deliberately: one definition table, one operation, the value carried
+beside the key, `None` removes, and the inverse is whatever was there before. Nothing about a
+list or a picture needed a different mechanism, and two mechanisms for one rule diverge. Each
+is ordered **first** in the same transaction as the nodes that name it, because an operation
+must never be ordered before the thing it references — and "the same transaction" is what makes
+undo remove both together.
+
+The media *bytes* are not in the operation. They live in the host's resource map keyed by the
+part name the reference names, which is the same split import and export already use: the model
+holds the reference, the package holds the stream. That is why a picture insert is a small
+operation rather than an image on the wire.
+
+Adding three variants to the op set is an ADR-030 I2 change, and the compiler found every place
+that had to decide: nine exhaustive matches in `casual-doc-transaction`
+(`classify`, `effect`, `transform`, `wire::introduces`, `wire::carried_bytes`) and two in the
+facade. They classify as **T3 document-scope** alongside `SetStyleDefinition`, get a `Key` for
+tombstoning a removal, and get one `Aspects` bit each so a concurrent write to a *different*
+definition is not treated as contention. `wire`'s standing rule for a new definition table
+(§4.3 of `152`) is satisfied in full, step 5 included: the arriving-at-an-id-the-receiver-holds
+test exists for all three.
+
+**The guard now forbids the borrow, not the table.** A first version listed the table names,
+and one mutation proved it worthless: `let defs = self.document.definitions_mut();` followed by
+`defs.numbering.insert(..)` matches none of them — which is exactly how three of the original
+five were written. So the rule is that **the facade never takes a mutable borrow of the
+definitions at all**, which is the whole of ADR-005 rather than a list a reviewer has to keep
+current. There are now zero such borrows outside tests.
+
+**What is not covered, named rather than admitted.** `definitions.settings` and
+`definitions.sections` are also written directly in places, and they are *not* keyed definition
+tables — no operation introduces an id into them, so the collision discipline `152` §4 governs
+does not reach them. Those writes are a separate finding and are open question 7 below rather
+than something this guard quietly permits.
+
+**And one guard could not be written.** A refusal-leaves-no-trace test for `restart_list` is
+absent, and the reason is a testability limit: every `#[wasm_bindgen]` method returns
+`Result<_, JsValue>`, and `to_js` **panics on a native target** — inside the method, before the
+caller can inspect the result. So no native test can observe any refusal from the facade's
+public surface. The property is structural now (the operation is built and applied only if the
+scan found work, so no path installs and then refuses), but holding it with a test needs the
+`Result<_, String>` inner split this file already uses elsewhere for exactly this reason. That
+is open question 8.
+
 **Still on the old path:** `casual-doc-sdk` and `casual-doc-selection::TextSelection`, through
 `casual_doc_transaction::v0`. They edit the schema-v0 model, which no product surface renders,
 opens or saves. Their code is moved into a `v0` module and is otherwise **unchanged** — same
@@ -361,3 +429,22 @@ Recorded rather than hidden, per `AGENTS.md`.
 6. **Two `PositionMap` types** exist while §6's boundary stands — byte-space at the root,
    grapheme-space in `v0`. They must not be allowed to drift into "the general one"; the v0 one
    is frozen and is deleted with the v0 path.
+7. **`definitions.settings` and `definitions.sections` are still written directly.** §6a closed
+   the five keyed-definition writes and the guard forbids the mutable borrow, so these are now
+   the only such writes and they live in tests and in section-level commands. They differ in
+   kind — no id is introduced, so nothing can collide across replicas — but they are still
+   mutation outside the commit, so undo does not restore them and a session does not carry
+   them. Closing them means an operation per settings field, or one `SetSettings` carrying the
+   whole block, and the second is the shape `SetCoreProperties` already uses.
+8. **No refusal from the facade can be tested on a native target.** `to_js` panics on
+   non-wasm, inside the method, so `assert!(call().is_err())` aborts in wasm-bindgen rather
+   than returning. Every refusal guard therefore needs a `Result<_, String>` inner split — the
+   pattern the file already uses in a handful of places and calls "a TESTABILITY fix, not a
+   refactor". Doing it systematically would make the whole refusal surface testable; at
+   present it is the reason §6a ships one fewer guard than it should.
+9. **The `PositionMap` the envelope builds has no consumer.** Measured 2026-10-01: every
+   `Commit` carries one, four of the 58 operations emit a step into it, and nothing outside
+   this crate's own tests ever reads it — the only position map the product consumes comes
+   from `v0`, through the SDK. So §3.6 is built and unreachable, which `SKILL` §9.4 names as
+   the most expensive recurring pattern here. It becomes reachable when selection rebasing
+   needs it, which is `107` P-4 and is open question 3 above.
