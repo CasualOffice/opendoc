@@ -10,6 +10,12 @@
 
 use casual_doc_edit::{Operation, RunningRegion};
 use casual_doc_model::NodeId;
+// Separate `use` lines for the three definition tables an editing command may now
+// introduce (`147`, ADR-005) — added apart from the shared sorted block so parallel lanes
+// do not conflict in it.
+use casual_doc_model::v1::AbstractNumberingId;
+use casual_doc_model::v1::MediaId;
+use casual_doc_model::v1::NumberingInstanceId;
 use casual_doc_model::v1::{
     BlockNode, BookmarkId, FieldRangeId, HeaderFooterId, InlineNode, NoteId, NoteKind, SectionId,
     StyleId, Table,
@@ -305,6 +311,9 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             | Operation::SetSectionGeometry { .. }
             | Operation::SpliceSectionBoundary { .. }
             | Operation::SetStyleDefinition { .. }
+            | Operation::SetAbstractNumbering { .. }
+            | Operation::SetNumberingInstance { .. }
+            | Operation::SetMediaReference { .. }
             | Operation::RenameBookmark { .. }
             | Operation::CreateHeaderFooterBody { .. }
             | Operation::RemoveHeaderFooterBody { .. }
@@ -328,6 +337,9 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
 pub(super) enum Key {
     Bookmark(BookmarkId),
     Style(StyleId),
+    AbstractNumbering(AbstractNumberingId),
+    NumberingInstance(NumberingInstanceId),
+    Media(MediaId),
     Section(SectionId),
     Note(NoteKind, NoteId),
     HeaderFooter(RunningRegion, HeaderFooterId),
@@ -447,6 +459,30 @@ pub(super) fn removed_by(change: Change<'_>) -> Removed {
         ) => removed.keys.push(Key::Section(*section)),
         (Operation::SetStyleDefinition { id, style: None }, _) => {
             removed.keys.push(Key::Style(*id));
+        }
+        // A definition removal destroys a key, exactly as a style removal does: an
+        // operation that arrives naming it has nothing to name, and that is a tombstone
+        // rather than a silent no-op.
+        (
+            Operation::SetAbstractNumbering {
+                id,
+                definition: None,
+            },
+            _,
+        ) => {
+            removed.keys.push(Key::AbstractNumbering(*id));
+        }
+        (Operation::SetNumberingInstance { id, instance: None }, _) => {
+            removed.keys.push(Key::NumberingInstance(*id));
+        }
+        (
+            Operation::SetMediaReference {
+                id,
+                reference: None,
+            },
+            _,
+        ) => {
+            removed.keys.push(Key::Media(*id));
         }
         // A whole-subtree rewrite destroys whatever the old tree held and the new one does
         // not. The inverse carries the old tree, which is what makes the difference

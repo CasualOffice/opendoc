@@ -779,6 +779,16 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         // section break the user inserted, and the undo label has to say so.
         Operation::SpliceSectionBoundary { .. } => HistoryKind::SectionBreak,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
+        // A definition write is never the FIRST operation of a user-visible action on its
+        // own: a list command writes its definition and re-points the paragraph in one
+        // transaction, and a picture insert registers its media and inserts the drawing. The
+        // label the user reads therefore comes from the action, and these arms exist so that
+        // a future command which leads with one still gets an honest label rather than a
+        // wildcard's "Edit".
+        Operation::SetAbstractNumbering { .. } | Operation::SetNumberingInstance { .. } => {
+            HistoryKind::ListFormatting
+        }
+        Operation::SetMediaReference { .. } => HistoryKind::Edit,
         Operation::InsertField { .. }
         | Operation::RemoveField { .. }
         | Operation::InsertFieldRange { .. }
@@ -2398,18 +2408,29 @@ impl WasmDocument {
         let media_id = MediaId::new(media_seq);
         // The resources map (and the model) reference media by PART NAME; use a
         // unique editor-authored name so it can never collide with an imported
-        // part. An orphaned entry left after undo is harmless (unreferenced media
-        // is valid — only a dangling drawing->media ref is not).
+        // part.
+        //
+        // **The registration is an operation, and it is in the SAME transaction as the
+        // drawing that references it.** It used to be a direct write into the media
+        // definition table, followed by a separate `InsertInlineObject` through the log — so
+        // the
+        // registration was not in the commit. Three consequences, and the comment that
+        // stood here only excused the first: undo removed the drawing and left the media
+        // entry behind; redo re-inserted a drawing whose media entry it had never removed,
+        // which happened to work; and a session would have fanned out a drawing pointing at
+        // media no other replica had, which is a dangling reference and not a harmless
+        // orphan. `147`/ADR-005 say every mutation is an operation.
+        //
+        // The BYTES are not in the operation: they live in the host resource map keyed by
+        // this part name, which is the same split import and export use — the model holds
+        // the reference, the package holds the stream.
         let part_name = format!("word/media/editor-{media_seq}.{ext}");
         self.resources.insert(part_name.clone(), bytes);
-        self.document.definitions_mut().media.insert(
-            media_id,
-            MediaReference {
-                relationship_id: format!("rIdEditorImg{media_seq}"),
-                media_type: media_type.to_owned(),
-                part_name,
-            },
-        );
+        let reference = MediaReference {
+            relationship_id: format!("rIdEditorImg{media_seq}"),
+            media_type: media_type.to_owned(),
+            part_name,
+        };
         let drawing = Drawing {
             // An inserted picture/shape is not linked; linking one is a
             // separate gesture (`docs/109` HF-179).
@@ -2429,10 +2450,18 @@ impl WasmDocument {
             rotation: None,
         };
         self.apply_action_as(
-            vec![Operation::InsertInlineObject {
-                at: Pos::new(owner, offset),
-                node: Box::new(InlineNode::Drawing(Box::new(drawing))),
-            }],
+            vec![
+                // Registration first: the drawing that follows names this media id, and an
+                // operation must never be ordered before the thing it references.
+                Operation::SetMediaReference {
+                    id: media_id,
+                    reference: Some(Box::new(reference)),
+                },
+                Operation::InsertInlineObject {
+                    at: Pos::new(owner, offset),
+                    node: Box::new(InlineNode::Drawing(Box::new(drawing))),
+                },
+            ],
             HistoryKind::ObjectInsert,
         )
         .map_err(to_js)
@@ -3128,10 +3157,17 @@ impl WasmDocument {
         }
         let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
 
-        // Build the real model blocks with fresh ids and resolved list instances.
+        // Build the real model blocks with fresh ids and resolved list instances. A pasted
+        // list paragraph may need a numbering definition installed; those operations are
+        // collected here and ordered FIRST in the transaction below, so undo removes the
+        // definition with the paste rather than leaving it behind (`147`, ADR-005).
+        let mut install = Vec::new();
         let mut blocks = Vec::with_capacity(fragment.blocks.len());
         for block in &fragment.blocks {
-            blocks.push(self.build_external_block(block).map_err(to_js)?);
+            blocks.push(
+                self.build_external_block(block, &mut install)
+                    .map_err(to_js)?,
+            );
         }
         if blocks.is_empty() {
             return Err(to_js(
@@ -3150,7 +3186,10 @@ impl WasmDocument {
         // Position the insertion between whole body blocks: before the caret block
         // (caret at its start), after it (caret at its end), or split it (mid-way) —
         // the same placement `paste_structured` uses.
-        let mut ops = Vec::new();
+        //
+        // The numbering definitions the pasted list paragraphs name come FIRST: an
+        // operation must never be ordered before the thing it references.
+        let mut ops = install;
         let insert_index = if start.offset == 0 {
             block_index as u32
         } else if start.offset >= paragraph_len {
@@ -3181,14 +3220,21 @@ impl WasmDocument {
     /// or a table (rectangular grid, bordered like
     /// [`insert_table`](Self::insert_table), each cell's blocks built recursively).
     /// Every node receives a fresh id.
-    fn build_external_block(&mut self, block: &ExternalBlock) -> Result<BlockNode, String> {
+    /// `install` collects the definition operations a list paragraph needs; the caller puts
+    /// them at the front of the same transaction as the blocks (`147`, ADR-005).
+    fn build_external_block(
+        &mut self,
+        block: &ExternalBlock,
+        install: &mut Vec<Operation>,
+    ) -> Result<BlockNode, String> {
         let exhausted = || "id space exhausted".to_string();
         match block {
             ExternalBlock::Paragraph { runs, list } => {
                 let inlines = self.external_run_inlines(runs)?;
                 let mut properties = ParagraphProperties::default();
                 if let Some(list) = list {
-                    let instance = self.ensure_list(list.ordered)?;
+                    let (instance, mut ops) = self.ensure_list(list.ordered)?;
+                    install.append(&mut ops);
                     properties.numbering = Some(NumberingRef {
                         instance,
                         level: list.level.min(8),
@@ -3201,7 +3247,7 @@ impl WasmDocument {
                     inlines,
                 }))
             }
-            ExternalBlock::Table { rows } => self.build_external_table(rows),
+            ExternalBlock::Table { rows } => self.build_external_table(rows, install),
         }
     }
 
@@ -3211,7 +3257,11 @@ impl WasmDocument {
     /// invalid grid; every cell holds recursively built blocks (at least one empty
     /// paragraph). Column widths and an all-edges border mirror
     /// [`insert_table`](Self::insert_table) so a pasted table looks native.
-    fn build_external_table(&mut self, rows: &[Vec<ExternalCell>]) -> Result<BlockNode, String> {
+    fn build_external_table(
+        &mut self,
+        rows: &[Vec<ExternalCell>],
+        install: &mut Vec<Operation>,
+    ) -> Result<BlockNode, String> {
         let exhausted = || "id space exhausted".to_string();
         if rows.is_empty() {
             return Err("table has no rows".into());
@@ -3235,7 +3285,7 @@ impl WasmDocument {
                 let mut blocks = Vec::new();
                 if let Some(cell) = row.get(col) {
                     for inner in &cell.blocks {
-                        blocks.push(self.build_external_block(inner)?);
+                        blocks.push(self.build_external_block(inner, install)?);
                     }
                 }
                 if blocks.is_empty() {
@@ -4469,12 +4519,15 @@ impl WasmDocument {
         // problem ("what should the NEXT paragraph be?"), but it cannot answer this
         // one: only this layer knows which instance means "checked".
         if kind == HistoryKind::ParagraphBreak
-            && let Some(unchecked) = self.unchecked_followup(start)
+            && let Some((unchecked, install)) = self.unchecked_followup(start)
             && let Some(new_id) = insert_ops.iter().rev().find_map(|op| match op {
                 Operation::SplitParagraph { new_id, .. } => Some(*new_id),
                 _ => None,
             })
         {
+            // The definition first, then the paragraph that names it.
+            let mut install = install;
+            ops.append(&mut install);
             insert_ops.push(Operation::SetParagraphProperties {
                 node: new_id,
                 properties: Box::new(unchecked),
@@ -5381,7 +5434,7 @@ impl WasmDocument {
         // A checklist is a bullet-style list whose marker is a checkbox; new items
         // start unchecked. `"numbered"` → numbered; anything else → plain bullet.
         let checklist = kind == "checklist";
-        let instance = if checklist {
+        let (instance, install) = if checklist {
             self.ensure_checklist(false).map_err(to_js)?
         } else {
             self.ensure_list(kind == "numbered").map_err(to_js)?
@@ -5400,7 +5453,8 @@ impl WasmDocument {
             current.is_some_and(|n| n.instance == instance)
         };
         let target = (!already).then_some(NumberingRef { instance, level: 0 });
-        self.apply_paragraph_props_as(
+        self.apply_paragraph_props_after(
+            install,
             start_node,
             start_offset,
             end_node,
@@ -5427,10 +5481,18 @@ impl WasmDocument {
             .checklist_state_of_instance(reference.instance)
             .ok_or_else(|| to_js("not a checklist item".into()))?;
         let level = reference.level;
-        let instance = self.ensure_checklist(!checked).map_err(to_js)?;
-        self.apply_paragraph_props_as(node, 0, node, 0, HistoryKind::ListFormatting, move |p| {
-            p.numbering = Some(NumberingRef { instance, level });
-        })
+        let (instance, install) = self.ensure_checklist(!checked).map_err(to_js)?;
+        self.apply_paragraph_props_after(
+            install,
+            node,
+            0,
+            node,
+            0,
+            HistoryKind::ListFormatting,
+            move |p| {
+                p.numbering = Some(NumberingRef { instance, level });
+            },
+        )
     }
 
     /// The form checkbox containing `node` — which may be the control itself or
@@ -5703,17 +5765,25 @@ impl WasmDocument {
                 .next_id()
                 .map_err(|_| to_js("id space exhausted".into()))?,
         );
-        self.document.definitions_mut().numbering.insert(
-            new_instance,
-            NumberingInstance {
+        // **The instance is an operation, carried in the same transaction as the paragraphs
+        // that point at it.** It used to be a direct write into the numbering instance table
+        // here, before the scan below, and that had two consequences beyond undo: the
+        // refusal path a few lines down ("There are no numbered items here to restart")
+        // returned an error having ALREADY installed a definition nothing referenced, and a
+        // session would have fanned out paragraphs pointing at an instance no other replica
+        // had. Built here, applied below, and if the scan finds nothing the operation is
+        // never applied at all.
+        let install = Operation::SetNumberingInstance {
+            id: new_instance,
+            instance: Some(Box::new(NumberingInstance {
                 abstract_ref,
                 overrides: vec![NumberingOverride {
                     level: current.level,
                     start: Some(1),
                     definition: None,
                 }],
-            },
-        );
+            })),
+        };
 
         // One index over every paragraph, built by a single walk: resolving each
         // id with `paragraph_properties` walks the whole document per node, so a
@@ -5753,6 +5823,8 @@ impl WasmDocument {
                 .into(),
             ));
         }
+        // Registration first: every paragraph operation that follows names this instance.
+        ops.insert(0, install);
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
     }
@@ -5959,15 +6031,24 @@ impl WasmDocument {
             AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let new_instance =
             NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let defs = self.document.definitions_mut();
-        defs.abstract_numbering.insert(new_abstract, abstract_def);
-        defs.numbering.insert(
-            new_instance,
-            NumberingInstance {
-                abstract_ref: new_abstract,
-                overrides: Vec::new(),
+        // **Both definitions are operations, in the same transaction as the paragraphs that
+        // point at them** (`147`, ADR-005). Written directly here they were outside the
+        // commit, so undo restored the paragraphs and left two definitions behind, the
+        // refusal path below returned an error having already installed them, and a session
+        // would have fanned out paragraphs naming definitions no other replica had.
+        let install = [
+            Operation::SetAbstractNumbering {
+                id: new_abstract,
+                definition: Some(Box::new(abstract_def)),
             },
-        );
+            Operation::SetNumberingInstance {
+                id: new_instance,
+                instance: Some(Box::new(NumberingInstance {
+                    abstract_ref: new_abstract,
+                    overrides: Vec::new(),
+                })),
+            },
+        ];
 
         // Repoint the contiguous run sharing the caret's list instance, keeping
         // each paragraph's own level.
@@ -6019,6 +6100,9 @@ impl WasmDocument {
                 .into(),
             ));
         }
+        // Registration first, and the abstract before the instance that names it: an
+        // operation must never be ordered before the thing it references.
+        let ops = install.into_iter().chain(ops).collect();
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
     }
@@ -12976,7 +13060,9 @@ impl WasmDocument {
     /// of a CHECKED checklist item: the same paragraph, re-pointed at the unchecked
     /// checklist instance. `None` for every other case — including a split in the
     /// middle of an item, which is one item becoming two and must keep its state.
-    fn unchecked_followup(&mut self, at: Pos) -> Option<ParagraphProperties> {
+    /// Returns the properties AND the definition operations the unchecked instance needs,
+    /// which the caller puts at the front of the same transaction.
+    fn unchecked_followup(&mut self, at: Pos) -> Option<(ParagraphProperties, Vec<Operation>)> {
         let checked = self.checklist_checked?;
         // Everything that reads the document is resolved into owned values first,
         // because `ensure_checklist` below needs `&mut self`.
@@ -12991,12 +13077,12 @@ impl WasmDocument {
         if at.offset != self.paragraph_text(at.node).len() as u32 {
             return None;
         }
-        let unchecked = self.ensure_checklist(false).ok()?;
+        let (unchecked, install) = self.ensure_checklist(false).ok()?;
         properties.numbering = Some(NumberingRef {
             instance: unchecked,
             level,
         });
-        Some(properties)
+        Some((properties, install))
     }
 
     /// Builds the closed operation group for inserting normalized plain text at
@@ -13906,10 +13992,40 @@ impl WasmDocument {
         kind: HistoryKind,
         f: impl Fn(&mut ParagraphProperties),
     ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props_after(
+            Vec::new(),
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            kind,
+            f,
+        )
+    }
+
+    /// [`WasmDocument::apply_paragraph_props_as`] with operations that must be ordered
+    /// BEFORE the paragraph writes in the same transaction — a list definition the
+    /// paragraphs are about to name. An operation must never be ordered before the thing it
+    /// references, and "the same transaction" is what makes undo remove both together.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the selection is four arguments; splitting it into a struct here and \
+                  nowhere else in this file would be the inconsistency"
+    )]
+    fn apply_paragraph_props_after(
+        &mut self,
+        leading: Vec<Operation>,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        kind: HistoryKind,
+        f: impl Fn(&mut ParagraphProperties),
+    ) -> Result<EditResult, JsValue> {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = Vec::new();
+        let mut ops = leading;
         // Read every selected paragraph's properties through ONE index first.
         // Select All makes this loop document-bounded, and `paragraph_properties`
         // walks the whole document per node; the index is also dropped before the
@@ -14489,40 +14605,60 @@ impl WasmDocument {
         out
     }
 
-    fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
+    /// Get-or-create the bullet/numbered list definition, returning its instance id and
+    /// **the operations that install it** — empty when it already existed.
+    ///
+    /// The caller must put those operations at the FRONT of the same transaction as the
+    /// paragraphs that will name the instance. They used to be direct
+    /// writes into the two tables here, which left them outside the commit: undo restored
+    /// the paragraphs and left two definitions behind, and a session would have fanned out
+    /// paragraphs naming definitions no other replica had (`147`, ADR-005).
+    ///
+    /// The memo (`self.numbered_list` / `self.bullet_list`) is set here rather than after
+    /// the transaction applies, which is deliberate and is the same contract `edit_ids`
+    /// keeps: an id is spent when it is handed out, never re-handed on a refusal, because an
+    /// id that comes back is an id two different things can mean. A refused transaction
+    /// therefore leaves a memo naming a definition the document does not hold — and the next
+    /// caller re-installs it, because the operation is idempotent by construction
+    /// (`Some(_)` inserts *or* replaces).
+    fn ensure_list(
+        &mut self,
+        numbered: bool,
+    ) -> Result<(NumberingInstanceId, Vec<Operation>), String> {
         if let Some(id) = if numbered {
             self.numbered_list
         } else {
             self.bullet_list
         } {
-            return Ok(id);
+            return Ok((id, Vec::new()));
         }
         let exhausted = || "id space exhausted".to_string();
         let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let defs = self.document.definitions_mut();
-        defs.abstract_numbering.insert(
-            abs_id,
-            AbstractNumbering {
-                levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
-                multi_level_type: None,
-                num_style_link: None,
-                style_link: None,
+        let install = vec![
+            Operation::SetAbstractNumbering {
+                id: abs_id,
+                definition: Some(Box::new(AbstractNumbering {
+                    levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
+                    multi_level_type: None,
+                    num_style_link: None,
+                    style_link: None,
+                })),
             },
-        );
-        defs.numbering.insert(
-            inst_id,
-            NumberingInstance {
-                abstract_ref: abs_id,
-                overrides: Vec::new(),
+            Operation::SetNumberingInstance {
+                id: inst_id,
+                instance: Some(Box::new(NumberingInstance {
+                    abstract_ref: abs_id,
+                    overrides: Vec::new(),
+                })),
             },
-        );
+        ];
         if numbered {
             self.numbered_list = Some(inst_id);
         } else {
             self.bullet_list = Some(inst_id);
         }
-        Ok(inst_id)
+        Ok((inst_id, install))
     }
 
     /// The number format of an imported list instance's first level, if it resolves —
@@ -14540,42 +14676,49 @@ impl WasmDocument {
     /// / `☑` checked) — so it renders through the ordinary bullet-marker path and
     /// round-trips to DOCX as a plain bullet list (Word shows checkbox bullets).
     /// The per-item checked state is which of the two definitions the item uses.
-    fn ensure_checklist(&mut self, checked: bool) -> Result<NumberingInstanceId, String> {
+    /// As [`WasmDocument::ensure_list`], for the two checklist definitions: the instance id
+    /// and the operations that install it, which the caller puts at the front of the same
+    /// transaction.
+    fn ensure_checklist(
+        &mut self,
+        checked: bool,
+    ) -> Result<(NumberingInstanceId, Vec<Operation>), String> {
         if let Some(id) = if checked {
             self.checklist_checked
         } else {
             self.checklist_unchecked
         } {
-            return Ok(id);
+            return Ok((id, Vec::new()));
         }
         let exhausted = || "id space exhausted".to_string();
         let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let defs = self.document.definitions_mut();
-        defs.abstract_numbering.insert(
-            abs_id,
-            AbstractNumbering {
-                levels: (0..=8)
-                    .map(|level| checklist_level(checked, level))
-                    .collect(),
-                multi_level_type: None,
-                num_style_link: None,
-                style_link: None,
+        let install = vec![
+            Operation::SetAbstractNumbering {
+                id: abs_id,
+                definition: Some(Box::new(AbstractNumbering {
+                    levels: (0..=8)
+                        .map(|level| checklist_level(checked, level))
+                        .collect(),
+                    multi_level_type: None,
+                    num_style_link: None,
+                    style_link: None,
+                })),
             },
-        );
-        defs.numbering.insert(
-            inst_id,
-            NumberingInstance {
-                abstract_ref: abs_id,
-                overrides: Vec::new(),
+            Operation::SetNumberingInstance {
+                id: inst_id,
+                instance: Some(Box::new(NumberingInstance {
+                    abstract_ref: abs_id,
+                    overrides: Vec::new(),
+                })),
             },
-        );
+        ];
         if checked {
             self.checklist_checked = Some(inst_id);
         } else {
             self.checklist_unchecked = Some(inst_id);
         }
-        Ok(inst_id)
+        Ok((inst_id, install))
     }
 
     /// Whether a numbering instance is a checklist and, if so, whether its items are
@@ -25384,7 +25527,10 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
-        Operation::SetStyleDefinition { .. } => Pos::new(doc_id, 0),
+        Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. } => Pos::new(doc_id, 0),
         // Creating a bookmark rests the caret at the range start (the wrapped
         // selection's anchor); delete/rename are definition edits routed through
         // `apply_action_caret` with the caller's own caret, so their natural
@@ -40061,6 +40207,46 @@ mod tests {
             "the one `Transaction::new` must be the choke point's own"
         );
 
+        // 3a. **The facade never takes a mutable borrow of the definitions at all.**
+        //
+        //     The checks above count what goes THROUGH the envelope; they were structurally
+        //     blind to what never went near it, and said so in their own doc comment. Five
+        //     call sites wrote straight into the definition tables — one media registration
+        //     and four numbering definitions — and then sent only the paragraph re-pointing
+        //     or the drawing insert through the log. So the definition was not in the commit:
+        //     undo left it behind, a refusal after it left it behind, and a session would
+        //     have fanned out a paragraph or a drawing naming a definition no other replica
+        //     held. They are now `SetMediaReference`, `SetAbstractNumbering` and
+        //     `SetNumberingInstance`, ordered first in the same transaction.
+        //
+        //     **The forbidden thing is the mutable borrow, not any particular table.** A
+        //     first version of this check listed the table names, and a mutation proved it
+        //     worthless in one line: `let defs = self.document.definitions_mut();` followed
+        //     by `defs.numbering.insert(..)` matches none of them — which is exactly how
+        //     three of the original five were written. So the guard forbids
+        //     `definitions_mut(` outright. Nothing in the facade needs it: every definition
+        //     change is an operation, and that is the whole of `147`/ADR-005 rather than a
+        //     list a reviewer has to keep current.
+        const MUTABLE_DEFINITIONS: &str = "definitions_mut(";
+        assert!(
+            !engine.contains(MUTABLE_DEFINITIONS),
+            "the facade takes a mutable borrow of the definitions: a definition installed \
+             outside the transaction envelope is not in the commit, so undo cannot remove \
+             it and no other replica ever learns of it. Use `SetStyleDefinition`, \
+             `SetAbstractNumbering`, `SetNumberingInstance` or `SetMediaReference`"
+        );
+        // The scan can see both shapes it forbids — the direct one and the bound one that
+        // defeated the first version of this check.
+        for planted in [
+            "self.document.definitions_mut().media.insert(id, reference);",
+            "let defs = self.document.definitions_mut();",
+        ] {
+            assert!(
+                planted.contains(MUTABLE_DEFINITIONS),
+                "the scan cannot see the write it is supposed to forbid: {planted}"
+            );
+        }
+
         // 4. No parallel history. The flat `Vec<HistoryEntry>` stacks are what the
         //    log replaced; a field of that shape coming back is the migration
         //    undone, and it would be invisible from the outside for exactly as long
@@ -43719,5 +43905,126 @@ mod tests {
              keystroke's {plain_visits} — more than twice, so review typing has acquired \
              another whole-document pass"
         );
+    }
+
+    // ---- Definitions are in the commit — doc 147, ADR-005 ------------------
+    //
+    // The choke-point guard above is a source scan, and a source scan cannot say
+    // what undo DOES. These say it, through the public surface, because the defect
+    // was only ever visible as behaviour: the paragraph came back and the
+    // definition stayed.
+
+    /// How many numbering definitions the document holds, as a pair.
+    fn numbering_counts(d: &WasmDocument) -> (usize, usize) {
+        let definitions = d.document.definitions();
+        (
+            definitions.abstract_numbering.iter().count(),
+            definitions.numbering.iter().count(),
+        )
+    }
+
+    #[test]
+    fn undo_of_a_list_toggle_removes_the_definition_it_installed() {
+        // `toggle_list` mints an abstract numbering definition and an instance the
+        // first time it runs, then re-points the paragraph at the instance. The
+        // definitions used to be written outside the transaction, so this undo
+        // restored the paragraph and left both behind — invisible in the document,
+        // exported into the DOCX, and named by nothing.
+        let mut d = plain_text_document(3);
+        let (node, _len) = d.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let before = numbering_counts(&d);
+
+        assert!(
+            d.toggle_list(&node, 0, &node, 0, "numbered").is_ok(),
+            "toggling a numbered list was refused"
+        );
+        let after = numbering_counts(&d);
+        assert_eq!(
+            after,
+            (before.0 + 1, before.1 + 1),
+            "the toggle did not install exactly one abstract definition and one instance, \
+             so this guard is not watching what it thinks it is"
+        );
+
+        assert!(d.undo().is_ok(), "undo was refused");
+        assert_eq!(
+            numbering_counts(&d),
+            before,
+            "undo left the numbering definitions behind: they were installed outside the \
+             transaction, so the commit's inverse has nothing to remove"
+        );
+        d.document
+            .validate()
+            .expect("the document is valid after undo");
+
+        // And redo puts them back, which is the other half of being in the commit.
+        assert!(d.redo().is_ok(), "redo was refused");
+        assert_eq!(
+            numbering_counts(&d),
+            after,
+            "redo did not reinstall the definitions the undo removed"
+        );
+    }
+
+    // **A refusal-leaves-no-trace guard is missing here, and the reason is a testability
+    // limit rather than a decision.** `restart_list` used to mint its numbering instance and
+    // THEN scan for items to restart, so its refusal ("There are no numbered items here to
+    // restart") returned an error having already installed a definition nothing referenced.
+    // That is now structural — the operation is built and applied only if the scan found
+    // work, so no path installs and then refuses — but it is not held by a test, because a
+    // refusal cannot be observed from a native test at all: every `#[wasm_bindgen]` method
+    // returns `Result<_, JsValue>` and `to_js` panics on a non-wasm target
+    // ("cannot call wasm-bindgen imported functions on non-wasm targets"), inside the method,
+    // before the caller can look at the result. Writing this guard needs the
+    // `Result<_, String>` inner split this file already uses elsewhere for exactly this
+    // reason. Recorded in `147` rather than left as a silent gap.
+
+    #[test]
+    fn undo_of_a_picture_insert_removes_the_media_reference_with_it() {
+        // The media registration used to sit outside the transaction with a comment
+        // calling the leftover "harmless", because an unreferenced media entry is
+        // valid. It is not harmless in a session: the drawing crosses the wire and
+        // the registration does not, so the receiver holds a drawing pointing at
+        // media it has never heard of — a dangling reference, which the same comment
+        // named as the thing that is NOT valid.
+        let mut d = plain_text_document(3);
+        let (node, _len) = d.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let media_before = d.document.definitions().media.iter().count();
+
+        // A one-pixel PNG: the smallest input the image path accepts.
+        const PNG: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
+        ];
+        assert!(
+            d.insert_image(
+                &node,
+                0,
+                PNG.to_vec(),
+                914_400.0,
+                914_400.0,
+                "image/png".to_owned()
+            )
+            .is_ok(),
+            "inserting a picture was refused"
+        );
+        assert_eq!(
+            d.document.definitions().media.iter().count(),
+            media_before + 1,
+            "the insert did not register exactly one media reference"
+        );
+
+        assert!(d.undo().is_ok(), "undo was refused");
+        assert_eq!(
+            d.document.definitions().media.iter().count(),
+            media_before,
+            "undo left the media reference behind: it was registered outside the \
+             transaction, so the commit's inverse has nothing to remove"
+        );
+        d.document
+            .validate()
+            .expect("the document is valid after undo");
     }
 }

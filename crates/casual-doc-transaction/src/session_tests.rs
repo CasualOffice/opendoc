@@ -489,6 +489,106 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
 }
 
 #[test]
+fn each_new_definition_table_refuses_an_arrival_at_an_id_the_receiver_already_holds() {
+    // `wire`'s standing rule for a new definition table, step 5, applied to the three added
+    // by `147`/ADR-005's completion: **the receiver must already hold a DIFFERENT entry at
+    // that id.** An id that lines up by accident proves nothing, and a test that merely
+    // round-trips a value proves less.
+    //
+    // It matters for exactly the reason it matters for styles: `Some(_)` is "insert or
+    // replace" by design, so without the already-held check the arrival silently overwrites
+    // a definition the receiver minted and the loss is invisible to everything.
+    for (table, build) in [
+        (
+            wire::Table::Media,
+            (|id: NodeId| Operation::SetMediaReference {
+                id: casual_doc_model::v1::MediaId::new(id),
+                reference: Some(Box::new(casual_doc_model::v1::MediaReference {
+                    relationship_id: "rIdTheSender".to_owned(),
+                    media_type: "image/png".to_owned(),
+                    part_name: "word/media/sender.png".to_owned(),
+                })),
+            }) as fn(NodeId) -> Operation,
+        ),
+        (
+            wire::Table::Numbering,
+            (|id: NodeId| Operation::SetAbstractNumbering {
+                id: casual_doc_model::v1::AbstractNumberingId::new(id),
+                definition: Some(Box::new(casual_doc_model::v1::AbstractNumbering {
+                    levels: Vec::new(),
+                    multi_level_type: None,
+                    num_style_link: None,
+                    style_link: None,
+                })),
+            }) as fn(NodeId) -> Operation,
+        ),
+        (
+            wire::Table::Numbering,
+            (|id: NodeId| Operation::SetNumberingInstance {
+                id: casual_doc_model::v1::NumberingInstanceId::new(id),
+                instance: Some(Box::new(casual_doc_model::v1::NumberingInstance {
+                    abstract_ref: casual_doc_model::v1::AbstractNumberingId::new(
+                        NodeId::from_parts(7, 9_000).expect("an id"),
+                    ),
+                    overrides: Vec::new(),
+                })),
+            }) as fn(NodeId) -> Operation,
+        ),
+    ] {
+        let (mut document, _) = seed();
+        let base = wire::document_space(&document);
+        let sender_space = wire::space_of(base, ClientId::new(0)).expect("a space");
+        let contested = IdGenerator::new(sender_space.get()).next_id().expect("id");
+
+        // The receiver's OWN entry, at the very id the sender is about to introduce.
+        {
+            let definitions = document.definitions_mut();
+            match table {
+                wire::Table::Media => {
+                    definitions.media.insert(
+                        casual_doc_model::v1::MediaId::new(contested),
+                        casual_doc_model::v1::MediaReference {
+                            relationship_id: "rIdTheReceiver".to_owned(),
+                            media_type: "image/png".to_owned(),
+                            part_name: "word/media/receiver.png".to_owned(),
+                        },
+                    );
+                }
+                wire::Table::Numbering => {
+                    definitions.abstract_numbering.insert(
+                        casual_doc_model::v1::AbstractNumberingId::new(contested),
+                        casual_doc_model::v1::AbstractNumbering {
+                            levels: Vec::new(),
+                            multi_level_type: None,
+                            num_style_link: None,
+                            style_link: None,
+                        },
+                    );
+                }
+                other => panic!("this test does not cover {other:?}"),
+            }
+        }
+
+        let operation = WireOperation::of(build(contested));
+        assert_eq!(
+            operation.declared(),
+            [contested],
+            "the operation must DECLARE the id it introduces, or `localise` has nothing to \
+             check and the silent replace is unreachable by a guard"
+        );
+        let clash = operation
+            .localise(&document, sender_space)
+            .expect_err("an arrival at an id this replica already holds must be refused")
+            .clash;
+        assert_eq!(
+            clash,
+            Clash::AlreadyHeld { table },
+            "the refusal must name the table the id was found in"
+        );
+    }
+}
+
+#[test]
 fn an_operation_that_under_declares_what_it_introduces_is_refused() {
     // A sender that declares nothing would otherwise skip both identity checks for the id it
     // left out — which is the one that matters. So the receiver recomputes rather than trusts.

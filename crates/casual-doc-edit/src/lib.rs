@@ -40,9 +40,15 @@ use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::PaginatedField;
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::Watermark;
+// The three definition tables an editing command used to write BEHIND the transaction
+// envelope (`147`, ADR-005). Separate `use` lines so a parallel lane adding one does not
+// conflict in the shared sorted block.
+use casual_doc_model::v1::{AbstractNumbering, AbstractNumberingId};
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
+use casual_doc_model::v1::{MediaId, MediaReference};
+use casual_doc_model::v1::{NumberingInstance, NumberingInstanceId};
 // The paragraph-spanning field range (`docs/128`): its definition payload, its id,
 // and the two body markers that delimit it.
 use casual_doc_model::v1::{FieldRange, FieldRangeId};
@@ -779,6 +785,57 @@ pub enum Operation {
         id: StyleId,
         /// The style to install (create/update), or `None` to remove `id`.
         style: Option<Box<Style>>,
+    },
+    /// Install, replace, or remove one **abstract numbering** definition.
+    ///
+    /// The same shape as [`Operation::SetStyleDefinition`], deliberately: one definition
+    /// table, one operation, the value carried beside the key, and the inverse is whatever
+    /// was there before. Nothing about a list needed a different mechanism, and two
+    /// mechanisms for one rule diverge.
+    ///
+    /// **Why it exists.** `set_list_format`, `restart_list`, `ensure_list` and
+    /// `ensure_checklist` used to write straight into `Definitions::abstract_numbering` and
+    /// `Definitions::numbering` and then send only the paragraph re-pointing through the
+    /// log. The definition was therefore not in the commit: undo put the paragraph back and
+    /// left the definition behind, and a session would have fanned out a paragraph pointing
+    /// at a definition no other replica had. `147`/ADR-005 say every mutation is an
+    /// operation; these three make that true rather than nearly true.
+    ///
+    /// Inverse: the same operation carrying the previous definition, or `None` where there
+    /// was none.
+    SetAbstractNumbering {
+        /// The abstract numbering id to install, replace, or remove.
+        id: AbstractNumberingId,
+        /// The definition to install, or `None` to remove `id`.
+        definition: Option<Box<AbstractNumbering>>,
+    },
+    /// Install, replace, or remove one **numbering instance** (`w:num`).
+    ///
+    /// See [`Operation::SetAbstractNumbering`] for why this exists. An instance names an
+    /// abstract definition, so an instance that arrives before its abstract is refused by
+    /// the model's own validation rather than landing half-formed.
+    ///
+    /// Inverse: the same operation carrying the previous instance, or `None`.
+    SetNumberingInstance {
+        /// The numbering instance id to install, replace, or remove.
+        id: NumberingInstanceId,
+        /// The instance to install, or `None` to remove `id`.
+        instance: Option<Box<NumberingInstance>>,
+    },
+    /// Install, replace, or remove one **media reference**.
+    ///
+    /// See [`Operation::SetAbstractNumbering`] for why this exists. The bytes themselves are
+    /// not carried: they live in the host's resource map beside the document, keyed by the
+    /// part name this reference names. That split is deliberate and is the same one export
+    /// and import use — the model holds the reference, the package holds the stream — and it
+    /// is why a media introduction is a small operation rather than an image on the wire.
+    ///
+    /// Inverse: the same operation carrying the previous reference, or `None`.
+    SetMediaReference {
+        /// The media id to install, replace, or remove.
+        id: MediaId,
+        /// The reference to install, or `None` to remove `id`.
+        reference: Option<Box<MediaReference>>,
     },
     /// Create a bookmark: register `name` under the fresh `bookmark` id in
     /// `Definitions::bookmarks` and insert its paired `BookmarkStart`/`BookmarkEnd`
@@ -2192,6 +2249,75 @@ pub fn apply(
             Ok(Operation::SetStyleDefinition {
                 id: *id,
                 style: previous.map(Box::new),
+            })
+        }
+        Operation::SetAbstractNumbering { id, definition } => {
+            let table = &mut doc.definitions_mut().abstract_numbering;
+            let previous = match definition {
+                Some(definition) => table.insert(*id, (**definition).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().abstract_numbering;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetAbstractNumbering {
+                id: *id,
+                definition: previous.map(Box::new),
+            })
+        }
+        Operation::SetNumberingInstance { id, instance } => {
+            let table = &mut doc.definitions_mut().numbering;
+            let previous = match instance {
+                Some(instance) => table.insert(*id, (**instance).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().numbering;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetNumberingInstance {
+                id: *id,
+                instance: previous.map(Box::new),
+            })
+        }
+        Operation::SetMediaReference { id, reference } => {
+            let table = &mut doc.definitions_mut().media;
+            let previous = match reference {
+                Some(reference) => table.insert(*id, (**reference).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().media;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetMediaReference {
+                id: *id,
+                reference: previous.map(Box::new),
             })
         }
         Operation::CreateBookmark {

@@ -1331,6 +1331,23 @@ unanswered rather than assumed.
 implements `107` §2.1 P-1…P-3 and is the prerequisite ADR-033 named. Supersedes nothing;
 it makes ADR-005 true in practice for the first time.
 
+**Amended 2026-10-01.** "Every change" was not true when this was accepted: five call sites in
+`casual-doc-wasm` wrote straight into a definition table — one media registration and four
+numbering definitions — and sent only the paragraph re-pointing through the log, so the
+definition was outside the commit. Undo left it behind, a refusal after it left it behind, and
+a session would have fanned out a paragraph or a drawing naming a definition no other replica
+held. The exhaustiveness guard counted what went THROUGH the envelope and was structurally
+blind to what never went near it.
+
+Closed by three operations modelled on `SetStyleDefinition` — `SetAbstractNumbering`,
+`SetNumberingInstance`, `SetMediaReference` — each ordered first in the same transaction as
+the nodes that name it (an ADR-030 I2 op-set change: 58 operations, and the compiler found all
+eleven exhaustive matches that had to decide). The guard now forbids the facade taking a
+**mutable borrow of the definitions at all**, because a first version listing table names was
+defeated in one line by `let defs = …definitions_mut();`. `147` §6a records the mechanism,
+the three consequences, and the two things it does not cover (`settings`/`sections`, and a
+refusal guard that cannot be written while `to_js` panics on a native target).
+
 **Decision:** Every change to a live (`v1`) document is a `casual_doc_transaction::Transaction`
 applied through one function, which appends one `Commit` to an ordered, append-only
 `RevisionLog` and advances the document's `RevisionId` by one. Undo and redo are **reads of

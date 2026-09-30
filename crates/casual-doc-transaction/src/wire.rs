@@ -262,6 +262,19 @@ impl WireOperation {
                 paragraphs.len() * PER_ITEM
                     + comments.as_ref().map_or(0, |map| map.len() * PER_ITEM)
             }
+            Operation::SetAbstractNumbering { definition, .. } => definition
+                .as_ref()
+                .map_or(0, |definition| definition.levels.len() * PER_ITEM),
+            Operation::SetNumberingInstance { instance, .. } => instance
+                .as_ref()
+                .map_or(0, |instance| instance.overrides.len() * PER_ITEM),
+            Operation::SetMediaReference { reference, .. } => {
+                reference.as_ref().map_or(0, |reference| {
+                    reference.part_name.len()
+                        + reference.relationship_id.len()
+                        + reference.media_type.len()
+                })
+            }
             Operation::SetStyleDefinition { style, .. } => style.as_ref().map_or(0, |style| {
                 style.name.as_ref().map_or(0, String::len) + PER_ITEM
             }),
@@ -342,6 +355,18 @@ impl WireOperation {
             Operation::SetStyleDefinition { id, style } => {
                 style.as_ref().map_or_else(Vec::new, |_| vec![id.node_id()])
             }
+            // The same rule as the style table above, for the same reason: `Some(_)` inserts
+            // OR replaces, so declaring the id is what makes a silent replace reachable by
+            // `localise`'s already-held check.
+            Operation::SetAbstractNumbering { id, definition } => definition
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
+            Operation::SetNumberingInstance { id, instance } => instance
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
+            Operation::SetMediaReference { id, reference } => reference
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
             Operation::SpliceSectionBoundary { boundary, .. } => boundary
                 .as_ref()
                 .map_or_else(Vec::new, |boundary| vec![boundary.id.node_id()]),

@@ -75,6 +75,12 @@ use std::collections::HashMap;
 
 use casual_doc_edit::{FormatDelta, Operation, Pos, Range as EditRange, RunningRegion};
 use casual_doc_model::NodeId;
+// Separate `use` lines for the three definition tables an editing command may now
+// introduce (`147`, ADR-005) — added apart from the shared sorted block so parallel lanes
+// do not conflict in it.
+use casual_doc_model::v1::AbstractNumberingId;
+use casual_doc_model::v1::MediaId;
+use casual_doc_model::v1::NumberingInstanceId;
 use casual_doc_model::v1::{
     BlockNode, BookmarkId, Document, HeaderFooterKind, InlineNode, SectionId, StyleId,
 };
@@ -663,6 +669,9 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionGeometry { .. }
         | Operation::SpliceSectionBoundary { .. }
         | Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
         | Operation::InsertFieldRange { .. }
@@ -732,6 +741,9 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetCoreProperties { .. }
         | Operation::UpdateReviewState { .. }
         | Operation::SetStyleDefinition { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. }
+        | Operation::SetMediaReference { .. }
         | Operation::CreateBookmark { .. }
         | Operation::InsertField { .. }
         | Operation::RemoveField { .. }
@@ -1469,6 +1481,9 @@ enum Target {
     Node(NodeId),
     Bookmark(BookmarkId),
     Style(StyleId),
+    AbstractNumbering(AbstractNumberingId),
+    NumberingInstance(NumberingInstanceId),
+    Media(MediaId),
     Section(SectionId),
     SectionRunning(SectionId, RunningRegion, HeaderFooterKind),
     CoreProperties,
@@ -1504,6 +1519,8 @@ impl Aspects {
     const SECTION_PAGE_NUMBERING: Self = Self(1 << 19);
     const SECTION_VERTICAL_ALIGNMENT: Self = Self(1 << 20);
     const EVEN_AND_ODD_HEADERS: Self = Self(1 << 21);
+    const NUMBERING_DEFINITION: Self = Self(1 << 22);
+    const MEDIA_REFERENCE: Self = Self(1 << 23);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1547,6 +1564,21 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
             Some((Target::CoreProperties, Aspects::CORE_PROPERTIES))
         }
         Operation::SetStyleDefinition { id, .. } => Some((Target::Style(*id), Aspects::STYLE)),
+        // One aspect per definition kind. The target already discriminates WHICH definition,
+        // so the aspect only has to say that the whole definition is the contested field —
+        // there are no independent sub-fields to preserve the way a shape's fill and its
+        // extent are independent.
+        Operation::SetAbstractNumbering { id, .. } => Some((
+            Target::AbstractNumbering(*id),
+            Aspects::NUMBERING_DEFINITION,
+        )),
+        Operation::SetNumberingInstance { id, .. } => Some((
+            Target::NumberingInstance(*id),
+            Aspects::NUMBERING_DEFINITION,
+        )),
+        Operation::SetMediaReference { id, .. } => {
+            Some((Target::Media(*id), Aspects::MEDIA_REFERENCE))
+        }
         Operation::RenameBookmark { bookmark, .. } => {
             Some((Target::Bookmark(*bookmark), Aspects::BOOKMARK_NAME))
         }
