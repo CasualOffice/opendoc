@@ -1,6 +1,6 @@
 [package]
 name = "opendoc-fidelity"
-description = "Differential text-fidelity harness comparing OpenDoc import against LibreOffice"
+description = "Differential fidelity harness comparing OpenDoc geometry and text against LibreOffice"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,8 +11,25 @@ publish = false
 
 [dependencies]
 casual-doc-import.workspace = true
+casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
+quick-xml.workspace = true
+serde_json.workspace = true
+
+# Match `casual-doc-render`'s native default: the OS system-font fallback is on,
+# so a run this engine has no bundled face for resolves an installed face through
+# the registry instead of painting tofu with a bundled one.
+#
+# This is not a detail. Without it, the harness measured a *different* engine from
+# the one the product ships: on the mixed-script corpus fixture, CJK text fell
+# back to a bundled Liberation face, which the font-parity filter counts as
+# PINNED, so the harness compared a line of `.notdef` boxes against LibreOffice's
+# real CJK face and reported a 521-twip "divergence" that is nothing of the kind.
+# Measuring with a narrower font set than the product uses produces findings that
+# are about the harness.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+casual-doc-layout = { workspace = true, features = ["system-fonts"] }
 
 [lints]
 workspace = true

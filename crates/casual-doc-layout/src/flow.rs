@@ -5698,11 +5698,17 @@ pub(crate) fn shape_field_run(
             node: anchor.node,
             font: style.font,
             size: style.size,
-            // Synthesized here rather than shaped, so there is no face to
-            // measure: zero means "use the line's metrics", which is exactly
-            // what a caret in this run drew before per-run metrics existed.
-            ascent: Twip(0),
-            descent: Twip(0),
+            // The value IS shaped, just not from model text — `layout` above is
+            // the shaped probe, and its first line's metrics are the face's at
+            // this run's size. Carry them: zero used to mean "use the line's",
+            // and on a mixed-size line the line's are the TALLEST thing sharing
+            // it, which is the very thing per-run metrics exist to stop (a 12pt
+            // PAGE field in a footer beside 28pt text drew a 28pt caret). It also
+            // left every field run unmeasurable to any consumer that reduces a
+            // page by run metrics — the oracle comparison excluded every footer
+            // carrying a page number on that account.
+            ascent,
+            descent,
             character_scale_percent: style.character_scale_percent,
             color: style.color,
             origin,

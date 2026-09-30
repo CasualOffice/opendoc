@@ -53,6 +53,7 @@ pub mod symbol_map;
 mod table_float;
 pub mod tabs;
 pub mod text;
+pub mod text_region;
 pub mod units;
 mod watermark;
 pub mod windowed;

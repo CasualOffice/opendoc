@@ -858,6 +858,33 @@
       "performanceClass": "small",
       "reviewer": "project maintainers",
       "lastReviewed": "2026-09-25"
+    },
+    {
+      "id": "docx-synthetic-declared-family-substitution",
+      "path": "corpus/synthetic-declared-family-substitution.docx",
+      "source": "authored by this repository to measure whole-face substitution against the LibreOffice oracle: one Latin-only paragraph per declared face, same text, same size, left-aligned so a line's right edge is its natural width",
+      "license": "Apache-2.0",
+      "generator": "fixtures/tools/make_declared_family_substitution.py",
+      "generatorVersion": "0.0.1",
+      "sha256": "ed029c43e9321819bcb0b0cd9ce7c77bf5868cc20a531447296962f93f2e6c89",
+      "featureTags": [
+        "docx",
+        "synthetic",
+        "font-table",
+        "font-substitution",
+        "declared-family",
+        "line-breaking",
+        "oracle-comparison"
+      ],
+      "compatibilityProfile": "phase1a-semantic",
+      "expectedError": null,
+      "limitProfile": "default",
+      "semanticSnapshot": null,
+      "roundTripAssertion": null,
+      "visualBaseline": null,
+      "performanceClass": "small",
+      "reviewer": "project maintainers",
+      "lastReviewed": "2026-10-01"
     }
   ]
 }

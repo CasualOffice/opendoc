@@ -1,18 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Differential text-fidelity harness.
+//! Fidelity harnesses comparing OpenDoc against an independent reference
+//! renderer.
 //!
-//! For each `.docx` argument, extracts the document text two ways — through the
-//! OpenDoc importer and through LibreOffice (`soffice --convert-to txt`) — and
-//! reports whether they agree after whitespace normalization. Until the Phase-2
-//! writer exists, text agreement is our round-trip-fidelity proxy: it measures
-//! whether import recovers the document's textual content that LibreOffice sees.
+//! Two modes, both shelling out to LibreOffice, both evaluation tools rather
+//! than CI unit tests:
 //!
-//! This is an evaluation tool, not a CI unit test: it shells out to `soffice`.
-//! Usage: `cargo run -p opendoc-fidelity -- <file.docx> [more.docx ...]`
+//! - `compare <file.docx>` — the **geometry** comparison (`docs/94` H2, backlog
+//!   rows FID-P-01/FID-L-21). Renders the document through our pipeline and
+//!   through LibreOffice and reports the differences as *measurements*: page
+//!   count, per-page text extents, per-line bottoms and right edges, line counts,
+//!   words per line, and the faces each side resolved. This exists because every
+//!   fidelity judgement in this project used to be made by rendering two PNGs and
+//!   looking at them, which cannot say by how much or where.
+//! - `text <file.docx> [more.docx ...]` — the original **content** differential:
+//!   extracts the text through the importer and through `soffice --convert-to
+//!   txt` and reports whether they agree as a word multiset. It measures whether
+//!   import recovers the document's textual content; it says nothing about where
+//!   anything is on the page.
+//!
+//! With no subcommand the arguments are treated as `text` targets, which is how
+//! this tool was invoked before `compare` existed.
+//!
+//! Usage:
+//! ```text
+//! cargo run -p opendoc-fidelity -- compare file.docx [--tolerance TWIPS] [--page N] [--keep DIR]
+//! cargo run -p opendoc-fidelity -- text file.docx [more.docx ...]
+//! ```
 
 // A CLI reporting tool legitimately writes to stdout/stderr.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
+
+mod compare;
+mod oracle;
 
 use std::error::Error;
 use std::fs;
@@ -24,15 +44,147 @@ use casual_doc_import::{ImportConfig, import_package};
 use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, WordprocessingGroup};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 
-fn main() {
-    let paths: Vec<String> = std::env::args().skip(1).collect();
-    if paths.is_empty() {
-        eprintln!("usage: opendoc-fidelity <file.docx> [more.docx ...]");
-        std::process::exit(2);
-    }
+/// The comparison band, in twips (2pt).
+///
+/// Sized to the *known* residual rather than to clear a case: PDF text origins
+/// round to 0.1pt (~2 twips), and `parley` splits a face's line gap around the
+/// text box where LibreOffice puts it all below the descent, which is `lineGap/2`
+/// — ≈4 twips at 12pt, 8 at 24pt. See `crates/casual-doc-render/tests/
+/// oracle_geometry.rs` for the full derivation; this harness deliberately uses
+/// the same number as the gate so a finding here means the same thing there.
+const DEFAULT_TOLERANCE_TWIPS: i32 = 40;
 
+const USAGE: &str = "\
+usage:
+  opendoc-fidelity compare <file.docx> [--tolerance TWIPS] [--page N] [--keep DIR]
+  opendoc-fidelity text <file.docx> [more.docx ...]
+
+  compare  geometry against LibreOffice: page count, text extents, line
+           positions, words per line, resolved fonts
+  text     content against LibreOffice: word-multiset agreement";
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let code = match args.first().map(String::as_str) {
+        None | Some("-h" | "--help") => {
+            eprintln!("{USAGE}");
+            2
+        }
+        Some("compare") => run_compare(&args[1..]),
+        Some("text") => run_text(&args[1..]),
+        // Back-compatible: bare paths mean the original text differential.
+        Some(_) => run_text(&args),
+    };
+    std::process::exit(code);
+}
+
+/// The geometry comparison. Returns the process exit code: 0 when the two
+/// renderings agree within tolerance, 1 when they do not, 2 on a usage or tool
+/// error. A finding is a *measurement*, so a non-zero code here means "they
+/// differ", not "this is a bug".
+fn run_compare(args: &[String]) -> i32 {
+    let mut input: Option<PathBuf> = None;
+    let mut tolerance = DEFAULT_TOLERANCE_TWIPS;
+    let mut keep: Option<PathBuf> = None;
+    let mut detail: Option<usize> = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--tolerance" => match rest.next().and_then(|v| v.parse::<i32>().ok()) {
+                Some(value) => tolerance = value,
+                None => {
+                    eprintln!("--tolerance needs a whole number of twips");
+                    return 2;
+                }
+            },
+            "--page" => match rest.next().and_then(|v| v.parse::<usize>().ok()) {
+                Some(value) if value >= 1 => detail = Some(value),
+                _ => {
+                    eprintln!("--page needs a 1-based page number");
+                    return 2;
+                }
+            },
+            "--keep" => match rest.next() {
+                Some(dir) => keep = Some(PathBuf::from(dir)),
+                None => {
+                    eprintln!("--keep needs a directory");
+                    return 2;
+                }
+            },
+            other if input.is_none() => input = Some(PathBuf::from(other)),
+            other => {
+                eprintln!("unexpected argument: {other}");
+                return 2;
+            }
+        }
+    }
+    let Some(input) = input else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+
+    let keeping = keep.is_some();
+    let workdir = keep.unwrap_or_else(|| {
+        std::env::temp_dir().join(format!(
+            "opendoc-fidelity-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ))
+    });
+
+    let outcome = compare_document(&input, &workdir, tolerance, detail);
+    if !keeping {
+        // A PDF per invocation adds up, and this harness is run in a loop while
+        // chasing a divergence. `--keep` is how you ask for the intermediates.
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+    match outcome {
+        Ok(findings) => findings,
+        Err(error) => {
+            eprintln!("ERROR {}: {error}", input.display());
+            2
+        }
+    }
+}
+
+/// Runs both renderers over `input`, prints the report, and answers with the
+/// process exit code.
+fn compare_document(
+    input: &Path,
+    workdir: &Path,
+    tolerance: i32,
+    detail: Option<usize>,
+) -> Result<i32, Box<dyn Error>> {
+    let bytes = fs::read(input)?;
+    let ours = compare::our_document(&bytes)?;
+    let reference = oracle::render(input, workdir)?;
+    let findings = compare::compare(&ours, &reference, tolerance);
+    print!(
+        "{}",
+        compare::report(input, &ours, &reference, &findings, tolerance)
+    );
+    if let Some(page) = detail {
+        match (ours.pages.get(page - 1), reference.pages.get(page - 1)) {
+            (Some(ours), Some(theirs)) => {
+                println!();
+                println!("page {page} lines:");
+                print!("{}", compare::page_detail(ours, theirs));
+            }
+            _ => eprintln!("no page {page} on both sides"),
+        }
+    }
+    Ok(i32::from(!findings.is_empty()))
+}
+
+/// The original text differential, over one or more documents.
+fn run_text(paths: &[String]) -> i32 {
+    if paths.is_empty() {
+        eprintln!("{USAGE}");
+        return 2;
+    }
     let mut failures = 0_usize;
-    for path in &paths {
+    for path in paths {
         match evaluate(Path::new(path)) {
             Ok(result) => {
                 let status = if result.matches { "PASS" } else { "DIFF" };
@@ -53,9 +205,7 @@ fn main() {
             }
         }
     }
-    if failures > 0 {
-        std::process::exit(1);
-    }
+    i32::from(failures > 0)
 }
 
 struct Evaluation {

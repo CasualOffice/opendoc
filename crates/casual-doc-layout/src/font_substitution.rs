@@ -283,10 +283,50 @@ pub fn substitute(family: &str, declared: Option<GenericFamily>) -> Option<Subst
     if key.is_empty() {
         return None;
     }
-    Some(known_family(&key).unwrap_or_else(|| Substitute {
-        family: declared.map_or_else(|| classify_generic(&key), GenericFamily::bundled),
-        kind: SubstituteKind::Generic,
-    }))
+    Some(
+        known_family(&key)
+            .or_else(|| known_family_variant(&key))
+            .unwrap_or_else(|| Substitute {
+                family: declared.map_or_else(|| classify_generic(&key), GenericFamily::bundled),
+                kind: SubstituteKind::Generic,
+            }),
+    )
+}
+
+/// The bundled family for a **named variant** of a family the table knows —
+/// `Calibri Light`, `Cambria Math`, `Arial Nova`, `Times New Roman PS` — found by
+/// trimming trailing words until the remainder is a known name.
+///
+/// This exists because the known-family table keys on exact names, so *every*
+/// variant of a partnered family fell through to [`classify_generic`], and the
+/// substring heuristic there reads only "mono"/"sans"/"serif". `Calibri Light`
+/// contains none of them, so it landed on the declared class or on sans — and
+/// with the real document's `<w:family w:val="roman"/>` that meant **Liberation
+/// Serif for a variant of a sans family**. Measured on
+/// `fixtures/corpus/synthetic-declared-family-substitution.docx`: LibreOffice
+/// wraps that paragraph in four lines and we wrapped it in three, while the
+/// `Calibri` and `Times New Roman` paragraphs beside it agreed to within 20
+/// twips over an 8,900-twip measure. It is a whole-family defect, not one name.
+///
+/// The result is [`SubstituteKind::Generic`], **not** `MetricCompatible`, and
+/// that distinction is the point: only the base name's metrics are known. A Light
+/// or Condensed cut of a family is a better guess than "some serif", and it is
+/// still a guess, so it is reported as a fallback loss like any other.
+///
+/// Complexity: O(w) known-name lookups for a name of `w` words, each an O(1)
+/// `match`. Family names are two or three words; nothing here is per glyph.
+fn known_family_variant(key: &str) -> Option<Substitute> {
+    let mut base = key;
+    while let Some((head, _)) = base.rsplit_once(' ') {
+        base = head.trim_end();
+        if let Some(known) = known_family(base) {
+            return Some(Substitute {
+                family: known.family,
+                kind: SubstituteKind::Generic,
+            });
+        }
+    }
+    None
 }
 
 /// The bundled family for a family name the table knows explicitly: the bundled
@@ -534,6 +574,52 @@ mod tests {
             declared("Unlisted Serif", GenericFamily::SansSerif).0,
             "Liberation Sans"
         );
+    }
+
+    #[test]
+    fn a_named_variant_follows_its_family_rather_than_the_declared_class() {
+        // The whole-family defect: the known-family table keys on exact names, so
+        // every variant of a partnered family fell through to the substring
+        // heuristic, which reads only "mono"/"sans"/"serif". `Calibri Light`
+        // contains none of them, and a real document declares it
+        // `<w:family w:val="roman"/>` — so a variant of a SANS family resolved to
+        // Liberation Serif and wrapped differently from every other renderer.
+        assert_eq!(
+            declared("Calibri Light", GenericFamily::Serif),
+            ("Carlito", SubstituteKind::Generic),
+            "a Calibri variant follows Calibri, not the document's `roman` class"
+        );
+        // The same rule, not the same special case: every partnered family.
+        assert_eq!(declared("Cambria Math", GenericFamily::Serif).0, "Caladea");
+        assert_eq!(
+            declared("Arial Nova", GenericFamily::Serif).0,
+            "Liberation Sans"
+        );
+        assert_eq!(
+            declared("Times New Roman PS MT", GenericFamily::SansSerif).0,
+            "Liberation Serif"
+        );
+        assert_eq!(
+            declared("Courier New Bold", GenericFamily::Serif).0,
+            "Liberation Mono"
+        );
+
+        // `Generic`, NOT `MetricCompatible`: only the BASE name's metrics are
+        // known, so a Light or Condensed cut is a better guess and still a guess,
+        // and it must keep reporting as a fallback loss.
+        assert_eq!(sub("Calibri Light").1, SubstituteKind::Generic);
+        assert_eq!(
+            sub("Calibri").1,
+            SubstituteKind::MetricCompatible,
+            "the base name keeps its stronger claim"
+        );
+
+        // An exact hit still wins, so a variant the table names explicitly keeps
+        // its own answer rather than being re-derived from the base.
+        assert_eq!(sub("Arial Narrow").1, SubstituteKind::MetricCompatible);
+        // And a name that merely starts with letters of a known one does not
+        // match: the boundary is a word, not a prefix of characters.
+        assert_eq!(sub("Calibrious").0, "Liberation Sans");
     }
 
     #[test]

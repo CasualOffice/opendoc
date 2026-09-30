@@ -1,6 +1,6 @@
 # 94 — Oracle-Based Visual Fidelity Harness
 
-**Status:** H1 landed. **H2 landed and armed** — the LibreOffice geometry references are committed under `fixtures/oracle/` and the comparison runs on every pull request (`.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate"); see §H2 concretely. H3 not started. Recommended before the remaining geometry-subtle rendering fixes (page-top spacing compat, numbering tab-suffix, `w:hideMark`, run shading), which cannot be verified safely without a visual oracle.
+**Status:** H1 landed. **H2 landed and armed** — the LibreOffice geometry references are committed under `fixtures/oracle/` and the comparison runs on every pull request (`.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate"); see §H2 concretely. **H2b landed** — `opendoc-fidelity compare` measures any document, not only the six gated fixtures, and reports the difference as numbers rather than as an impression; see §H2b. H3 not started. Recommended before the remaining geometry-subtle rendering fixes (page-top spacing compat, numbering tab-suffix, `w:hideMark`, run shading), which cannot be verified safely without a visual oracle.
 **Scope:** A new dev/CI-only crate (`casual-doc-oracle`, or a `tests/visual` harness) plus a pinned fixture corpus and a gated CI job. No change to the shipping crates' behavior; the harness only *reads* the existing deterministic CPU render path (`casual-doc-render::render` → `Surface::encode_png`).
 **Relates to:** doc 44 (rendering pipeline), doc 18 (support matrix — which the audit showed overstates coverage), doc 40 (font management — the bundled metric-compatible faces are what make oracle parity possible), the rendering-fidelity audit backlog.
 
@@ -116,6 +116,191 @@ Arming it measured three real divergences from LibreOffice and one comparability
 - **Hermetic main CI + reviewed re-bless:** the everyday gate is `.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate (docs/94 H2, FID-P-01)" — `cargo test -p casual-doc-render --test oracle_geometry`, no LibreOffice and no network, on every pull request. `.github/workflows/oracle-geometry.yml` is a manual (`workflow_dispatch`) job that installs a pinned LibreOffice and **only** the bundled metric-compatible faces (Liberation/Carlito/Caladea — the font-parity crux), regenerates the references, and opens a PR whose geometry diff a maintainer reviews. The everyday CI stays hermetic (no LibreOffice, no network) and just compares against the committed references.
 - **Where the references were blessed, stated plainly:** the committed set was produced with LibreOffice 26.2.4.2 on **macOS/arm64** (its app bundle ships the Liberation/Carlito/Caladea faces, and each reference's `fonts` records that those are what it embedded), because that is the pinned build that was actually available. The re-bless job regenerates them on Linux with the same pinned build and now prints the diff against the committed set, so its first run is also the first measurement of whether the oracle is platform-stable. If the two disagree beyond the band, the honest answer is to bless on one platform and say so in `fixtures/oracle/README.md` — or to generate references in CI per run — not to widen the tolerance. Our own side of the comparison is not platform-sensitive between Linux and macOS: it shapes with bundled faces and is already pinned identically on both by the H1 golden.
 - **Platform:** the geometry comparison is pinned to Linux/macOS and skipped on Windows, whose text stack shapes differently (the same reason H1 is Windows-gated — see the H1 test and PR #316).
+
+## H2b — the arbitrary-document comparison harness (`opendoc-fidelity compare`)
+
+H2 gates six fixtures. It cannot answer *"the customer says text boxes look
+wrong"* or *"our page 3 holds fewer words per line than LibreOffice's"*, because
+those are asked of documents that are not in the corpus and never will be. Until
+this existed, the only way to answer them was to render two PNGs and look at
+them, which cannot tell a regression from a taste difference and cannot say by
+how much.
+
+```sh
+cargo run -p opendoc-fidelity -- compare <file.docx> [--tolerance TWIPS] [--page N]
+```
+
+One command, two renderers, differences as **measurements**: page count, per-page
+text extents with a signed per-edge delta, comparable line counts, per-line bottom
+edges and right edges, words per line, and the faces each side actually resolved.
+`--page N` adds a side-by-side dump of that page's lines so the first line at
+which the two orders stop describing the same text is visible.
+
+**One mechanism, two consumers.** Our side of the reduction lives in
+`casual_doc_layout::text_region` and is used *both* by this harness and by the H2
+gate (`crates/casual-doc-render/tests/oracle_geometry.rs`, whose `page_geometry`
+is now a three-field projection of it). Two implementations of one rule diverge
+invisibly — the gate would keep passing while the harness reported different
+numbers for the same page.
+
+**Two implementations of the oracle reduction, pinned to each other.** The
+blessing path stays `scripts/oracle/extract-geometry.sh` (Python, page-level, what
+`fixtures/oracle/*.geom.json` holds). The investigation path is
+`tools/opendoc-fidelity/src/oracle.rs` (Rust, line-level, no committed reference).
+They are held together by `the_rust_reduction_reproduces_the_blessing_scripts_numbers`,
+which runs the Rust reducer over a committed sample of the script's own inputs
+(`fixtures/oracle/samples/real-producer-hyperlinks.{bbox.html,fonts.txt}`) and
+asserts it reproduces the script's committed output
+(`…reduced.json`). It needs neither LibreOffice nor Python, so it runs in ordinary
+CI, and it goes red the moment either reduction's semantics move.
+
+### ONLYOFFICE: what is and is not possible
+
+The obvious third column cannot be automated the way LibreOffice is. Their web
+client cannot open a file at all without a server — format I/O is the native `x2t`
+binary and `core/X2tConverter/build/` ships only `Android/` and `Qt/`, so there is
+**no WASM build** and nothing in a browser converts a `.docx`. Automating them
+means standing up Document Server (AGPL-3.0, Docker, a conversion API), which is a
+different kind of dependency from "run a binary over a file".
+
+What *is* possible: that server's conversion endpoint produces a PDF, and the
+reducer takes `pdftotext -bbox` output rather than LibreOffice specifically — so
+adding ONLYOFFICE is a matter of supplying the PDF, not of rewriting the
+comparison. Until somebody stands that server up, this harness has **one**
+reference and says so rather than implying three.
+
+### What arming it measured, immediately
+
+- **FID-L-21 is reproducible from the repository.** `real-producer-rich` `y1`
+  +263 and `real-producer-table-merges` `y1` −55, identical to the deltas
+  registered in `KNOWN_DIVERGENCES`. The tracker row said this signal was "not
+  reproducible from the repo"; it is, twice over — by the gate and by this
+  command.
+- **`rich`'s +263 has a shape, not just a size.** The first two lines agree to
+  within 8 twips on every edge; everything after the nested table does not. The
+  oracle's third band is 585 twips tall (`1165..3855 / 2270..2855`) against our
+  266, so its word grouping merged content we report as two lines — the "5 vs 4"
+  comparable-line count is partly that, and is **not** by itself evidence of an
+  extra line. What the dump does establish is that the divergence begins at the
+  nested table and that our content below it ends 263 twips lower. The page-level
+  bbox could only ever report the +263.
+- **Two engine defects of the same kind, found by the instrument measuring
+  itself.** A `GlyphRun` built with `ascent`/`descent` of zero means "use the
+  line's" — and the line's are the metrics of the *tallest* run sharing it, which
+  is the exact thing per-run metrics exist to prevent. Two run kinds were built
+  that way:
+  - a **tab leader** (`tabs.rs`), deliberately and correctly, because a leader has
+    no shaped face of its own. The reduction now treats a leader as pinned by its
+    face and vertically neutral instead of unmeasurable. Before that, every line
+    carrying one dropped out of the comparison: on a real 15-page agreement, that
+    was all **14 lines of its table of contents** — a whole page invisible while
+    the harness reported nothing wrong.
+  - a **recomputed field** (`flow.rs`, `shape_field_run`), where the metrics were
+    *already computed two statements above* and simply not carried onto the run.
+    Fixed: an 8pt `PAGE` field beside 28pt text now reports its own extent rather
+    than its neighbour's — which is also a latent caret-height defect, since
+    `GlyphRun::ascent` exists precisely so a caret is as tall as the text at the
+    insertion point. Guarded by
+    `a_recomputed_field_run_carries_the_faces_metrics_not_zero`.
+
+  Together these took a real document's per-page bottom-edge disagreement from
+  **−869…−2268 twips to +10** (the footer), because the footer is what the
+  excluded field run had been hiding.
+
+- **A word count that was wrong on every multi-run line.** A box's `x0`/`x1` are
+  the pen positions of its first and last *non-space* glyphs, so the whitespace
+  between two runs survives in neither box's flags, and concatenating them fused
+  the last word of one to the first of the next. On the footnote corpus fixture
+  that was every single line, each reporting one word fewer than the oracle. A
+  finding that fires constantly is noise, and noise is how a gate gets ignored.
+  The discriminator is exact rather than tuned: whitespace (or a tab, or a cell
+  boundary) advances the pen past `x1`, so the next box starts strictly to its
+  right, whereas a run split for formatting mid-word leaves it starting exactly at
+  `x1`. Findings dropped from 6 to 2 on `footnotes`, 4 to 1 on `table-merges` and
+  4 to 1 on `table-list` — and what is left on the last two is exactly FID-L-21's
+  −55 and −60.
+
+### The first engine defect the instrument settled: `Calibri Light`
+
+The open question this lane was pointed at was a customer document whose
+paragraphs wrapped differently from LibreOffice's rendering of the same file, with
+font substitution as the working hypothesis. The document is under NDA and neither
+it nor anything derived from it is in the repository;
+`fixtures/corpus/synthetic-declared-family-substitution.docx` reproduces its
+*shape* instead — one Latin-only paragraph per declared face, same text, same
+size, **left-aligned**, with `word/fontTable.xml` declaring each face's
+`w:family`. Left-aligned matters: the real document's `Normal` style is
+`w:jc="both"`, and justification erases the natural width, leaving only the word
+count to differ.
+
+Measured on that fixture, before and after (the "before" figure re-measured from
+the final fixture by removing the fix, not carried forward from an earlier one):
+
+| | comparable lines ours/reference | worst line right-edge Δ | findings |
+| --- | --- | --- | --- |
+| before | 9 / 10 | 965 twips | 10 |
+| after | 10 / 10 | **21 twips** over an 8,900-twip measure | 2 |
+
+Every line's word count now matches, line for line, and the two remaining
+findings are the *same* offset on `y0` and `y1` (+44 each) — the whole text block
+sits 44 twips low with its internal geometry identical, which is the page-top
+spacing signal below and nothing else. The `Calibri` and `Carlito` control
+paragraphs agreed to within 21 twips *before* the fix as well — metric
+substitution works — which is what isolated the cause to one paragraph.
+
+The fixture deliberately carries **no** Times New Roman paragraph even though the
+real document declares one. Every face in it must be absent from both renderers'
+hosts or the comparison stops measuring substitution: macOS has the real Times New
+Roman, so this engine (OS font fallback on, as the native build ships it)
+correctly uses it, those lines then leave the comparison for want of font parity
+while LibreOffice keeps them, and the report fills with findings about the
+measuring machine. A face the host happens to own is not a control.
+
+**The harness must measure the engine the product ships.** `opendoc-fidelity`
+takes `casual-doc-layout` with `system-fonts` on for exactly that reason. Without
+it, the mixed-script corpus fixture's CJK fell back to a *bundled* Liberation
+face, which the font-parity filter counts as pinned, so the harness compared a
+line of `.notdef` boxes against LibreOffice's real CJK face and reported a
+521-twip "divergence" that was nothing of the kind. With it, that fixture reports
+**no differences beyond 40 twips** and names the interned faces as
+`dynamic(#…)` so they are visibly not bundled.
+
+**The cause.** `known_family` keys on exact names, so every *variant* of a
+partnered family fell through to `classify_generic`, whose substring heuristic
+reads only `mono`/`sans`/`serif`. `Calibri Light` contains none of them, and the
+document declares it `<w:family w:val="roman"/>` — so a variant of a **sans**
+family resolved to **Liberation Serif**, and the paragraph wrapped in three lines
+where LibreOffice (which substitutes Carlito) took four.
+
+This corrects the scope of the earlier fix, not its direction. Classifying a
+missing face from `w:family` rather than from its name was right, and is what
+made the page count match at 15; it simply must not outrank knowledge of the
+*family* a name belongs to. `known_family_variant` now trims trailing words until
+the remainder is a known name, so `Calibri Light`, `Cambria Math`, `Arial Nova`
+and `Times New Roman PS MT` all follow their family. The result is
+`SubstituteKind::Generic`, **not** `MetricCompatible`: only the base name's
+metrics are known, so a Light or Condensed cut is a better guess and still a
+guess, and it keeps reporting as a fallback loss.
+
+### Signals this instrument has measured and not yet closed
+
+Each is reproducible with one command; none is a judgement by eye.
+
+1. **Page-top spacing, +44 twips on the synthetic fixture and +132 on the
+   customer document** (13 of its 15 pages, the same value on each). On the
+   fixture it is the *whole* of what is left: `y0` and `y1` are both +44, so the
+   block is translated down with its internal geometry identical. Isolated,
+   reproducible in one command, and cheap to chase. Long deferred as
+   "page-top-spacing"; it now has a number and a minimal reproduction.
+2. **Table-of-contents line pitch, −36 twips per row.** Ours 499, LibreOffice's
+   535, accumulating to 471 twips over 14 rows. Visible only because the leader
+   fix above unblinded those lines.
+3. **Left indent, −290 and −362 twips**, on five pages of the customer document:
+   two paragraph shapes where our text starts left of LibreOffice's, one of them
+   left of the body margin entirely (a hanging list marker LibreOffice does not
+   hang).
+4. **Comparable line count**, ours short by 1–3 on five pages. Remains after the
+   substitution fix, so it is not that; the per-line dump localises it.
 
 ## Open questions
 

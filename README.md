@@ -209,7 +209,10 @@ Details: [what is still missing](docs/99-REMAINING-WORK-AUDIT.md) ·
 
 Supporting tooling lives outside `crates/`: `tools/opendoc-benchmark`
 (reproducible workloads and baselines), `tools/opendoc-fidelity` (LibreOffice
-differential fidelity harness), and `fuzz/` (`opendoc-fuzz`, independently locked
+differential fidelity harness: `compare` reports geometry differences as
+measurements — page count, text extents, line positions, words per line, resolved
+fonts — and `text` reports word-multiset content agreement; see
+`docs/94` §H2b), and `fuzz/` (`opendoc-fuzz`, independently locked
 package-reader fuzz targets). Internal crates are deliberately unpublished while
 the architecture and public API contracts evolve.
 
