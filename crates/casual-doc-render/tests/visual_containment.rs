@@ -13,7 +13,32 @@ use casual_doc_render::{BundledFontSource, MapMediaSource, Surface, render};
 const VISUAL_CONTAINMENT_DOCX: &[u8] =
     include_bytes!("../../../fixtures/generated/visual-containment.docx");
 const DPI: f32 = 96.0;
-const EXPECTED_RGBA_FNV1A64: u64 = 0x5230_4861_4c81_39a9;
+/// The rendered-pixel baseline.
+///
+/// # Re-blessed 2026-10-01 for the cell border reserve (FID-L-21)
+///
+/// Was `0x5230_4861_4c81_39a9`. A cell's horizontal borders used to occupy no
+/// vertical space at all, so every bordered row was short by its borders'
+/// thickness; this fixture's table declares `w:tblBorders` top/bottom/insideH as
+/// `single w:sz="8"` — 20 twips — and its rows moved by exactly that:
+///
+/// ```text
+/// row            height before -> after
+/// page 2              4010 -> 4030   +20   its own top edge
+/// page 3              5750 -> 5770   +20
+/// page 4              5750 -> 5770   +20
+/// page 5, first       2850 -> 2870   +20
+/// page 5, second       530 ->  550   +20
+/// page 5, third        530 ->  570   +40   top edge + the table's bottom perimeter
+/// ```
+///
+/// Nothing else about the fixture changed: still five pages, and every
+/// containment and split-row-ordering assertion below still holds — those are the
+/// properties this test exists for, and they passed unchanged while only the hash
+/// moved. A pixel hash cannot show *what* moved, which is why the twip figures
+/// are written out here; they are reproducible by removing the reserve from
+/// `CellFragment::occupied_height` and re-running.
+const EXPECTED_RGBA_FNV1A64: u64 = 0xb368_c649_ad5b_235e;
 
 #[derive(Clone, Copy, Debug)]
 struct InkLine {
