@@ -1181,7 +1181,8 @@ pub fn paginate_document_view(
 /// ([`crate::flow::build_galley`] and its siblings take `content_width` as an
 /// argument), so reflow is a question of *where the width comes from* and of
 /// nothing else. Under [`LayoutView::Reflow`] the driver substitutes a synthetic
-/// [`PageConfig`] ([`reflow_page_config`]) for the section's own, forces one
+/// [`PageConfig`] (built by the private `reflow_page_config`, named here rather
+/// than linked because this comment is public) for the section's own, forces one
 /// column, suspends the page-shaped break constraints, suppresses the page-shaped
 /// furniture, refuses to print a tile index as a page number, and trims each tile
 /// to its content. Not one line of [`crate::flow`], [`crate::columns`] or

@@ -430,6 +430,7 @@ overridable
 pPr
 pageBreakBefore
 paginator
+paginators
 para
 parsers
 passthrough
