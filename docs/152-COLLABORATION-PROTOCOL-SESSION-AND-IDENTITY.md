@@ -651,6 +651,12 @@ Each is out for a reason, not for lack of time.
 5. **Access enforcement at the operation.** The sibling enforces read-only *at the operation*
    rather than by hiding a toolbar, including inside a batch. `Refusal::ReadOnlyAccess` exists
    and nothing sends it yet, because there is no token to read an access level from.
+   **Half answered, from the other direction** (ADR-049): the *document's own*
+   `w:documentProtection` is now enforced at the operation, in `casual-doc-edit`, and a batch
+   is judged whole — so the shape the relay needs exists and is reusable by it. What is still
+   missing is the **session's** access level, which needs the token of Q4; a document that
+   asks not to be edited and a participant who is not allowed to edit it are two different
+   questions with one enforcement point.
 6. **Durability.** The relay's retained tail is in memory and bounded by count. A durable
    ordered log, snapshots and compaction are `107` 6.1, and the sibling's warning transfers
    directly: retained/unmodelled bytes are inert, so store them **once** with the document and

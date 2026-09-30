@@ -469,7 +469,7 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 | **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set. **The rebase and the `Tombstoned` outcome landed with 6.3**; what remains is the *reporting* — routing a tombstone into the disposition taxonomy (`35`), which has no caller until 6.6 |
 | **6.5** | Compare and combine documents | **Yes** — closes OO-007 |
 | **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction` and all with no transport. What remains is the byte codec, the relay binary, presence, the host-signed grant, and durability — plus the one prerequisite `152` §4.4 names, which is a live editor that mints in a session-supplied identity space instead of a document-derived one |
-| **6.7** | Roles and permission enforcement, against the Phase 4 permissions object | Closes OO-018 |
+| **6.7** | Roles and permission enforcement, against the Phase 4 permissions object. **The document's own `w:documentProtection` is enforced as of 2026-10-01** — `readOnly`, `comments` and `trackedChanges` at the operation, by projection equality, ADR-049. Still open: the *session's* access level, which needs `152` §10 Q4's token, and an operation that lets a reader set protection at all | Closes OO-018 |
 
 Note 6.0–6.5 deliver four tracker rows and **no** networking. If collaboration were cancelled
 tomorrow, everything through 6.5 would still be the right work.

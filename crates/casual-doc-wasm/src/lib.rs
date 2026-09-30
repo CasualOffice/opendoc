@@ -98,14 +98,14 @@ use casual_doc_model::v1::{
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{
-    DocumentProtectionEdit, FormCheckBox, FormFieldKind, GroupChild, HeaderFooterId,
-    HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
-};
-use casual_doc_model::v1::{
     DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
     FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap,
 };
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
+use casual_doc_model::v1::{
+    FormCheckBox, FormFieldKind, GroupChild, HeaderFooterId, HeaderFooterKind, PointEmu,
+    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
+};
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
@@ -13666,16 +13666,19 @@ impl WasmDocument {
         if self.editing_a_form_field {
             return Ok(());
         }
-        let Some(protection) = self
-            .document
-            .definitions()
-            .settings
-            .document_protection
-            .as_ref()
-        else {
-            return Ok(());
-        };
-        if protection.edit != DocumentProtectionEdit::Forms || !protection.enforcement {
+        // `readOnly`, `comments` and `trackedChanges` are decided by the engine, at the
+        // operation, because that is the only place a 59th operation cannot arrive exempt
+        // and the only rule an arriving remote operation could reuse (`107` 6.7,
+        // `casual_doc_edit::protection`). All three were modelled and exported and enforced
+        // nowhere until that module existed: a document a reader could see was protected was
+        // fully editable.
+        casual_doc_edit::protection::refuse_if_protected(&self.document, ops)
+            .map_err(|refusal| refusal.reason().to_owned())?;
+        // `forms` stays here, and only `forms`, because it is the one level whose answer
+        // needs state the engine cannot see: whether the reader is inside an enabled text
+        // form field right now. `protection::forms` decides "is a restriction in force" so
+        // that question is answered in one place.
+        if !casual_doc_edit::protection::forms(&self.document) {
             return Ok(());
         }
         for op in ops {
@@ -40600,7 +40603,7 @@ mod tests {
         use casual_doc_model::v1::DocumentProtection;
 
         doc.document.definitions_mut().settings.document_protection = Some(DocumentProtection {
-            edit: DocumentProtectionEdit::Forms,
+            edit: casual_doc_model::v1::DocumentProtectionEdit::Forms,
             enforcement: true,
             formatting: false,
         });

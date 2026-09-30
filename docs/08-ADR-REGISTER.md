@@ -1800,6 +1800,89 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
 - **Not decided here:** identities inside a carried subtree (`152` §10 Q2) are still covered by
   the id-space rule at the mint and by `Document::validate`, not by an enumerating walk.
 
+## ADR-049 — Document protection is enforced at the operation, by projection equality, and it is policy rather than security
+
+- **Status:** Accepted, implemented for `readOnly`, `comments` and `trackedChanges`.
+- **Date:** 2026-10-01.
+- **Context:** `107` 6.7. The model has carried `DocumentProtection` with all four editing
+  levels since Layer 1, and import and export round-trip `w:documentProtection`'s three policy
+  attributes. Exactly one level was ever *enforced*: `w:edit="forms"`, at the facade's mutation
+  choke point. `readOnly`, `comments` and `trackedChanges` were modelled, exported, and
+  **ignored** — so a document a reader could see was protected was fully editable. That is the
+  "modeled is not shipped" failure the working contract calls this repository's most expensive
+  recurring pattern. (`153` reports the whole feature as missing, which overstates it in the
+  other direction.)
+- **Decision:** Enforce at the **operation**, in `casual-doc-edit`, not in the facade.
+  - An operation is the only thing that can be judged; a toolbar says what a host offered.
+  - The relay will need the same judgement on an *arriving* operation (`152` §10 Q5), and a
+    rule written in the facade could not be reused by it.
+  - `Operation` lives in that crate, so the classification is an **exhaustive match**: a 59th
+    operation is a compile error rather than a permission hole. A `_ =>` arm is exactly how one
+    would arrive exempt from every restriction.
+  - `w:edit="forms"` stays in the facade, alone, because its answer needs state the engine
+    cannot see — whether the reader is inside an enabled text form field *right now*.
+    `protection::forms` decides "is a restriction in force" so that half is not duplicated.
+- **The hard part: `comments` and `trackedChanges` are not variant-level questions.**
+  Commenting, suggesting a change, and accepting one **all travel as
+  `Operation::UpdateReviewState`**, whose payload is a replacement inline list per paragraph
+  plus an optional comments table. No rule that looks at *which* operation arrived can tell
+  them apart, so it would have to allow or forbid all three.
+- **Answered by projection equality — exact, with no heuristic and no tolerance:**
+  - **`comments`**: strip every comment marker from the current inlines and from the
+    replacement; allow it if the remainders are equal. A comment anchor adds markers and
+    nothing else; a character left behind in the remainder is refused.
+  - **`trackedChanges`**: project both to *the text as it stood before the change* — content
+    outside a revision, plus content inside a `Deletion`/`MoveFrom` (still present, struck
+    through), and not content inside an `Insertion`/`MoveTo` — and require equality **plus**
+    that no revision now in the document is missing from the replacement.
+
+    The second condition is what catches a **rejection**, and it is not redundant: rejecting an
+    insertion restores the before-state, so the projection alone is satisfied, and only the
+    vanished revision distinguishes it from nothing having happened. A mutation removing that
+    condition reddens exactly the reject case and nothing else. Accepting, in either direction,
+    changes the projection; so does untracked typing. Four review decisions and one untracked
+    edit, refused by two conditions rather than five special cases.
+  - Word's tracked-changes restriction permits comments, so that level is a **superset** of the
+    comments level and the projection drops comment markers too.
+- **A batch is judged whole**, on its worst operation and not its first — the sibling's rule,
+  so a permitted comment cannot carry an edit in behind it.
+- **An operation naming a paragraph that is not there is refused**, not waved through: the rule
+  the forms check already followed, because an unplaceable write into a locked document is
+  exactly where guessing is wrong.
+- **Complexity:** O(the inlines the operation names). `readOnly` resolves nothing, and an
+  **unprotected** document costs no document walk at all — asserted with `block_visits`, because
+  this runs on the keystroke path and `107` §4 B1 forbids a document walk there.
+- **This is policy, not security, and that must be said out loud.** Nothing here authenticates
+  anybody. It stops a *host* and a *user* doing what the document asks not to be done; it does
+  not stop a program that edits the model directly, and it never could — a local-first engine
+  hands the reader the bytes. Access control against an untrusted client belongs to the relay
+  and to a host-signed grant (`152` §10 Q4/Q5), and this ADR is not it.
+- **Password material: deliberately not modelled, and the decision is recorded rather than
+  deferred silently.** `w:documentProtection` can carry `w:cryptProviderType`, `w:hash`,
+  `w:salt`, `w:cryptAlgorithmSid` and `w:cryptSpinCount`. Verifying one would let a host offer
+  "unprotect", and would invite the claim that the restriction is enforced against an
+  adversary. It is not: the legacy hash is trivially removable by editing one attribute in the
+  XML, and Word documents it as a deterrent. So opendoc **will not** implement password
+  verification as a security boundary. What it may implement is the *shape* Word has — prompt,
+  compare, lift — labelled as a deterrent, and only once a host asks for it.
+- **A loss to report, in another lane's crates.** Derived from the code rather than from a
+  fixture run: `casual-doc-import`'s settings parser builds `DocumentProtection` from `w:edit`,
+  `w:enforcement` and `w:formatting` and returns *handled*, so the five crypto attributes are
+  neither modelled nor reported; `casual-doc-export`'s semantic writer emits those same three.
+  A **semantic** round trip therefore returns a password-protected restriction as a
+  password-less one — the protection survives and becomes liftable in Word with no password,
+  silently. Retention mode keeps the original part bytes, so the loss is semantic-mode only.
+  That is `AGENTS.md`'s no-silent-data-loss rule, and it belongs to the import/export lane.
+- **Also not built here:** there is no operation that *sets* protection, so a reader cannot
+  restrict or unrestrict editing from the product at all — protection can only arrive from a
+  file. Closing that means a new definitions operation (ADR-030 I2), which is a decision and
+  not an oversight.
+- **Mutation proofs.** (1) `readOnly` falls through with `none` — the behaviour before this
+  module — and the read-only guard fails on `InsertText`. (2) The revision-id condition is
+  removed and **only** the reject case fails, proving it is load-bearing. (3) Only the first
+  operation of a batch is judged and the batch guard fails. (4) A `Revision`'s children are
+  cloned instead of projected and the container-set equivalence guard fails.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

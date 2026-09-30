@@ -106,6 +106,12 @@ pub mod refusal;
 // crate creates is one the operation declared, and two replicas name it the same way.
 pub mod mint;
 
+// `w:documentProtection` enforced at the operation (`107` 6.7). Its own module because the
+// rule is an exhaustive match over the op set — a `_ =>` arm here is how a 59th operation
+// would arrive exempt from every restriction — and because the relay will need the same
+// judgement on an arriving operation, which a rule written in the facade could not give it.
+pub mod protection;
+
 pub use mint::{Mint, MintedIds};
 
 // The inline container set, declared once (`docs/109` HF-212). An `InlineNode` can
