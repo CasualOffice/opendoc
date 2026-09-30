@@ -45,9 +45,10 @@ function fakeIndexedDB({ abortTouching = "" } = {}) {
     return rq;
   }
 
-  function storeHandle(state, keyPath) {
+  function storeHandle(state, keyPath, onWrite = () => {}) {
     return {
       put(value, key) {
+        onWrite();
         state.set(key ?? value[keyPath], value);
       },
       get(key) {
@@ -60,9 +61,11 @@ function fakeIndexedDB({ abortTouching = "" } = {}) {
         return fakeRequest([...state.keys()]);
       },
       delete(key) {
+        onWrite();
         state.delete(key);
       },
       clear() {
+        onWrite();
         state.clear();
       },
     };
@@ -81,7 +84,17 @@ function fakeIndexedDB({ abortTouching = "" } = {}) {
       transaction(names, mode = "readonly") {
         const list = Array.isArray(names) ? names : [names];
         const tx = {};
-        const aborting = mode === "readwrite" && abortTouching && list.includes(abortTouching);
+        // Which stores this transaction actually WROTE to. The lever is keyed on
+        // that rather than on the transaction's scope, and the difference is a
+        // mutation that would otherwise escape: split `activate` so the pack
+        // record commits in a transaction that still DECLARES the pointer store
+        // (it reads the previous version from it) and moves the pointer in a
+        // second one. A scope-keyed lever aborts that first transaction too, so
+        // the record never commits and the split looks atomic — the guard passes
+        // on a store carrying the very defect it exists to catch. Keyed on
+        // writes, the read-only use commits, the pointer write aborts, and the
+        // inconsistency the test asserts against is real.
+        const wrote = new Set();
         // A MACROTASK, not a microtask chain: this store's transactions `await`
         // reads before they write, so a fake that settled on the microtask queue
         // could settle before the caller had attached `oncomplete` — and a
@@ -90,6 +103,7 @@ function fakeIndexedDB({ abortTouching = "" } = {}) {
         // failure anybody can read. `word_store.test.mjs`'s fake gets away with
         // two microtask hops because its transactions await nothing first.
         setTimeout(() => {
+          const aborting = mode === "readwrite" && abortTouching && wrote.has(abortTouching);
           if (aborting) {
             tx.error = new Error("aborted");
             // A real abort rolls the writes back. The fake keeps a snapshot per
@@ -105,7 +119,9 @@ function fakeIndexedDB({ abortTouching = "" } = {}) {
         );
         tx.objectStore = (name) => {
           assert.ok(list.includes(name), `${name} is not in this transaction`);
-          return storeHandle(db.stores.get(name), db.keyPaths.get(name));
+          return storeHandle(db.stores.get(name), db.keyPaths.get(name), () =>
+            wrote.add(name),
+          );
         };
         return tx;
       },
