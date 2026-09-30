@@ -82,8 +82,9 @@ fn the_committed_document_is_what_the_inventories_produce() {
     // raw string comparison fails on every line for a reason that has nothing to
     // do with the document being stale — which is precisely what it reported on
     // `platform (Windows-x64)` while every POSIX runner was green.
-    let committed =
-        fs::read_to_string(repo.join(DOC)).expect("read docs/153").replace("\r\n", "\n");
+    let committed = fs::read_to_string(repo.join(DOC))
+        .expect("read docs/153")
+        .replace("\r\n", "\n");
     let fresh = splice(&committed, &regions(&rows, &map, &surface, &inventory))
         .expect("splice the generated regions");
     // Not `assert_eq!`: the document is over a quarter of a megabyte, and a
