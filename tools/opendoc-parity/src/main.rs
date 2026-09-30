@@ -111,16 +111,24 @@ fn run_extract(repo: &Path, args: &[String]) -> Result<(), String> {
          Their source is not vendored here: only identifiers extracted from it are.",
     )?;
 
-    let committed: Surface = serde_json::from_str(&read(repo, SURFACE_JSON)?)
-        .map_err(|e| format!("{SURFACE_JSON}: {e}"))?;
-    let taken_at = if check {
-        committed.taken_at.clone()
+    // Only `--check` needs the committed snapshot. A plain extraction must work
+    // when the snapshot's SHAPE has changed — that is exactly when it is being
+    // re-run — so parsing it first would make the tool unable to produce the
+    // artifact that would have fixed it.
+    let committed: Option<Surface> = if check {
+        Some(
+            serde_json::from_str(&read(repo, SURFACE_JSON)?)
+                .map_err(|e| format!("{SURFACE_JSON}: {e}"))?,
+        )
     } else {
-        today()
+        None
     };
+    let taken_at = committed
+        .as_ref()
+        .map_or_else(today, |snapshot| snapshot.taken_at.clone());
     let fresh = extract(&reference, &taken_at).map_err(|e| e.to_string())?;
 
-    if check {
+    if let Some(committed) = committed {
         if fresh == committed {
             println!(
                 "{SURFACE_JSON} matches {} ({} controls, {} locale keys, {} API methods).",

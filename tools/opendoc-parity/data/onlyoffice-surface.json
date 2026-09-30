@@ -9370,798 +9370,912 @@
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1738,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canAnalytics",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 463,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canBack",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 506,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canBranding",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1809,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canBrandingExt",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1803,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canChangeCoAuthoring",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1840,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canChat",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1728,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canCloseEditor",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 490,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canCoAuthoring",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1707,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canComments",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1725,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canCopy",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1767,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canCreateNew",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 450,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canDeleteComments",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1742,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canDownload",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1764,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canDownloadForms",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1799,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canDownloadOrigin",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1763,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canEdit",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1714,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canEditComments",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1741,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canEditContentControl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1758,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canEditStyles",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1733,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canFavorite",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1813,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canFeatureComparison",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 479,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canFeatureContentControl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 480,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canFeatureForms",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 481,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canFillForms",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1760,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canForcesave",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1739,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canHelp",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1759,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canHistoryClose",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1721,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canHistoryRestore",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1722,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canLicense",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1704,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canLiveView",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 974,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canMakeActionLink",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 465,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canOpenRecent",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 451,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canPlugins",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 464,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canPreviewPrint",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1735,
       "licence": false,
-      "desktop": true
+      "desktop": true,
+      "host": false
     },
     {
       "name": "canPrint",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1734,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canProtect",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1757,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canQuickPrint",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1736,
       "licence": false,
-      "desktop": true
+      "desktop": true,
+      "host": false
     },
     {
       "name": "canRename",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1737,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRenameAnonymous",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 412,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canRequestClose",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 489,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestCompareFile",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 470,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestCreateNew",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 455,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestEditRights",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1713,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestFillingStatus",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 487,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestInsertImage",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 469,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestMailMergeRecipients",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 471,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestOpen",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 476,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestReferenceData",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 475,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestReferenceSource",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 477,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestSaveAs",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 468,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestSelectDocument",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 473,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestSelectSpreadsheet",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 474,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestSendNotify",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 467,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestSharingSettings",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 472,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestStartFilling",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1781,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canRequestUsers",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 466,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canReview",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1718,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canSaveDocumentToBinary",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 485,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canSaveToFile",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1762,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canSendEmailAddresses",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1724,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canStartFilling",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1780,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canSubmitForms",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1778,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canSuggest",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1766,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canSwitchMode",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1777,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canSwitchToMobile",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 491,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canUseCommentPermissions",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1818,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canUseHistory",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1720,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canUseMailMerge",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1723,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canUseReviewPermissions",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1816,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canUseSelectHandTools",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1798,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "canUseUserInfoPermissions",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1819,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canViewComments",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1727,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "canViewReview",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1719,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "compactHeader",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1784,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "compatibleFeatures",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 478,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "createUrl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 454,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "customization",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 411,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "disableNetworkFunctionality",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 483,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "fileChoiceUrl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 460,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "fileKey",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1801,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "forcesave",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1480,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "guestName",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 413,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isAnonymousSupport",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1842,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isBeta",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1753,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isCrypted",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1711,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isDesktopApp",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 445,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "isEdit",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1717,
       "licence": true,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "isFormCreator",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 602,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isLightVersion",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1705,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isOForm",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 603,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isOffline",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1709,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isPDFForm",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 482,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isPDFSignatureSupport",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1755,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isPasswordSupport",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1756,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "isRestrictedEdit",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1761,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "isReviewOnly",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1712,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "isSignatureSupport",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1754,
       "licence": false,
-      "desktop": true
+      "desktop": true,
+      "host": true
     },
     {
       "name": "lang",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 456,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "location",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 457,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "mentionShare",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 484,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "mergeFolderUrl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 461,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "permissionsLicense",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1702,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "recent",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 453,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "region",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 458,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "saveAsUrl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 462,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "sharingSettingsUrl",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 459,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "showSaveButton",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1765,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "showStartFillingButton",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1782,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "templates",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 452,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "trialMode",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1752,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "twoLevelHeader",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 1785,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": false
     },
     {
       "name": "user",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 441,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     },
     {
       "name": "wopi",
       "file": "web-apps/apps/documenteditor/main/app/controller/Main.js",
       "line": 528,
       "licence": false,
-      "desktop": false
+      "desktop": false,
+      "host": true
     }
   ]
 }

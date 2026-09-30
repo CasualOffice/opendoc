@@ -75,6 +75,10 @@ pub enum Theirs {
     /// A public engine API method: evidence about the ENGINE rather than the
     /// chrome.
     Api(String),
+    /// A boot flag from their `Main.js` — the evidence for a capability their
+    /// editor does not draw itself but takes from the integrator or from the
+    /// handshake, such as the template list or the interface language.
+    AppOption(String),
     /// They have it, and a server-issued licence result or the desktop shell
     /// decides whether a browser session sees it. `option` names the
     /// `appOptions` flag, which the extractor records with the gates its
@@ -145,9 +149,14 @@ pub enum Verdict {
     Partial,
     /// They ship it; we do not.
     Gap,
-    /// A server licence result or the desktop shell decides whether their
-    /// browser session may, and we do not ship it either.
-    ServerGated,
+    /// Something outside their editor decides whether a browser session sees
+    /// it, and we do not ship it either.
+    TheirsGated,
+    /// Neither product ships it. Recorded rather than dropped, because the
+    /// search that established it is worth keeping: a shared absence is the
+    /// answer to "why is this not on the gap list", and deleting the row would
+    /// mean somebody repeats the search next quarter.
+    Neither,
 }
 
 impl Verdict {
@@ -160,7 +169,8 @@ impl Verdict {
             Self::Ahead => "Ours only",
             Self::Partial => "Partial",
             Self::Gap => "Gap",
-            Self::ServerGated => "Theirs, server-gated",
+            Self::TheirsGated => "Theirs, gated",
+            Self::Neither => "Neither",
         }
     }
 
@@ -170,14 +180,18 @@ impl Verdict {
         match self {
             Self::Parity => "both products ship it, and both anchors resolve",
             Self::Ungated => {
-                "we ship it with no server in the loop; theirs is behind `canLicense` \
-                 (a licence result the document server issues) or the desktop shell"
+                "we ship it in the editor itself; theirs is behind a licence result the \
+                 document server issues, the desktop shell, or the integrator's own config"
             }
             Self::Ahead => "we ship it and their tree has no such surface",
             Self::Partial => "we ship part of it; the row says what is missing",
             Self::Gap => "their standalone browser session ships it and we do not",
-            Self::ServerGated => {
-                "their side needs a server or the desktop shell, and we lack it too"
+            Self::TheirsGated => {
+                "theirs needs a licence result, the desktop shell or the integrator, \
+                 and we lack it too"
+            }
+            Self::Neither => {
+                "neither product ships it, and the row records the search that established that"
             }
         }
     }
@@ -269,14 +283,8 @@ pub fn grade(
             (Have::Yes, They::No) => Verdict::Ahead,
             (Have::Part, _) => Verdict::Partial,
             (Have::No, They::Yes) => Verdict::Gap,
-            (Have::No, They::Gated) => Verdict::ServerGated,
-            (Have::No, They::No) => {
-                problems.push(Problem {
-                    capability: capability.id.clone(),
-                    detail: "neither product has it, so it is not a parity row".to_string(),
-                });
-                Verdict::ServerGated
-            }
+            (Have::No, They::Gated) => Verdict::TheirsGated,
+            (Have::No, They::No) => Verdict::Neither,
         };
 
         if verdict == Verdict::Gap && capability.rank.is_none() {
@@ -454,6 +462,17 @@ fn check_theirs(theirs: &Theirs, surface: &Surface, id: &str, problems: &mut Vec
                 They::No
             }
         }
+        Theirs::AppOption(name) => {
+            if surface.app_option(name).is_some() {
+                They::Yes
+            } else {
+                problems.push(Problem {
+                    capability: id.to_string(),
+                    detail: format!("cites their boot flag `{name}`, which the snapshot has not"),
+                });
+                They::No
+            }
+        }
         Theirs::Gated { evidence, option } => {
             let present = check_theirs(evidence, surface, id, problems);
             match surface.app_option(option) {
@@ -466,13 +485,22 @@ fn check_theirs(theirs: &Theirs, surface: &Surface, id: &str, problems: &mut Vec
                     });
                     present
                 }
-                Some(flag) if flag.licence || flag.desktop => They::Gated,
+                Some(flag)
+                    if flag.licence
+                        || flag.desktop
+                        || flag.host
+                        || flag.name == "canLicense"
+                        || flag.name == "isDesktopApp" =>
+                {
+                    They::Gated
+                }
                 Some(_) => {
                     problems.push(Problem {
                         capability: id.to_string(),
                         detail: format!(
-                            "grades `{option}` as gated, but its expression mentions neither \
-                             `canLicense` nor `isDesktopApp`"
+                            "grades `{option}` as gated, but its expression mentions none of \
+                             `canLicense`, `isDesktopApp`, `editorConfig` or `permissions`, so \
+                             nothing outside the editor decides it"
                         ),
                     });
                     present
@@ -512,7 +540,8 @@ fn tally(rows: &[Row]) -> String {
         Verdict::Ahead,
         Verdict::Partial,
         Verdict::Gap,
-        Verdict::ServerGated,
+        Verdict::TheirsGated,
+        Verdict::Neither,
     ];
     let mut text = String::from("| Verdict | Rows | What it means |\n| --- | --- | --- |\n");
     for verdict in order {
@@ -553,7 +582,7 @@ fn gaps(rows: &[Row]) -> String {
                 .map_or_else(|| "—".to_string(), |r| r.to_string()),
             row.capability.title,
             row.capability.id,
-            cite_theirs(&row.capability.theirs),
+            cell(&cite_theirs(&row.capability.theirs)),
             dash(&row.capability.note),
         );
     }
@@ -578,10 +607,10 @@ fn full(rows: &[Row], map: &Map) -> String {
             let _ = writeln!(
                 text,
                 "| {} | {} | {} | {} | {} |",
-                row.capability.title,
+                cell(&row.capability.title),
                 row.verdict.label(),
-                cite_ours(&row.capability.ours),
-                cite_theirs(&row.capability.theirs),
+                cell(&cite_ours(&row.capability.ours)),
+                cell(&cite_theirs(&row.capability.theirs)),
                 dash(&row.capability.note),
             );
         }
@@ -644,15 +673,42 @@ fn cite_theirs(theirs: &Theirs) -> String {
         Theirs::Control(c) => format!("`{c}`"),
         Theirs::LocaleKey(k) => format!("`{k}`"),
         Theirs::Api(m) => format!("`{m}`"),
+        Theirs::AppOption(n) => format!("boot flag `{n}`"),
         Theirs::Gated { evidence, option } => {
             format!("{} behind `{option}`", cite_theirs(evidence))
         }
-        Theirs::Absent { searched } => format!("none (searched {searched})"),
+        // Inside a code span, always. A `searched` clause is a grep line: paths,
+        // flags and identifiers, none of it English. Left bare it would feed
+        // `documenteditor`, `put_TextPrUnderline` and `asc_docs_api` into
+        // `webapp/tools/build-glossary.mjs`, whose whole rule is that code spans
+        // are excluded so the spell checker's vocabulary cannot fill up with
+        // identifiers — and a document that stales another lane's generated
+        // artifact is how `main` goes red (`SKILL` §5a).
+        Theirs::Absent { searched } => {
+            format!("none (searched `{}`)", searched.replace('`', "'"))
+        }
     }
 }
 
-fn dash(note: &str) -> &str {
-    if note.is_empty() { "—" } else { note }
+/// Any value, made safe to print inside a Markdown table cell.
+fn cell(value: &str) -> String {
+    value
+        .replace('|', "\\|")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A note, made safe to print inside a Markdown table cell.
+///
+/// A `|` in a note would end the cell and silently shift every column after it,
+/// which is a generated document quietly rendering wrong — the failure mode this
+/// whole tool exists to prevent. Newlines collapse for the same reason.
+fn dash(note: &str) -> String {
+    if note.is_empty() {
+        return "—".to_string();
+    }
+    cell(note)
 }
 
 #[cfg(test)]
@@ -677,6 +733,7 @@ mod tests {
                 line: 1,
                 licence: true,
                 desktop: false,
+                host: false,
             }],
         }
     }

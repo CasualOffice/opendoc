@@ -74,6 +74,12 @@ pub struct AppOption {
     pub licence: bool,
     /// The assignment mentions `isDesktopApp` — the browser never sees it.
     pub desktop: bool,
+    /// The assignment reads `editorConfig` or `permissions` — the INTEGRATOR
+    /// decides, not the editor. Their recent-files list, template gallery and
+    /// plugin registry are all of this kind: the chrome is theirs, the content
+    /// is the host's, so a plain browser session opening a document sees
+    /// nothing there at all.
+    pub host: bool,
 }
 
 /// Everything extracted from their tree, in one committed artifact.
@@ -382,6 +388,7 @@ fn app_options_in(text: &str, rel: &str) -> Vec<AppOption> {
             line: index as u32 + 1,
             licence: tail.contains("canLicense"),
             desktop: tail.contains("isDesktopApp"),
+            host: tail.contains("editorConfig") || tail.contains("permissions."),
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -458,6 +465,17 @@ mod tests {
             .find(|o| o.name == "canQuickPrint")
             .expect("quick print flag");
         assert!(quick.desktop);
+    }
+
+    #[test]
+    fn a_flag_the_integrator_supplies_is_marked_as_the_host_s() {
+        // Their recent-files list, template gallery and plugin registry are all
+        // of this kind: the chrome is theirs and the content is the host's, so a
+        // plain browser session opening a document finds nothing there.
+        let text = "this.appOptions.canOpenRecent = this.editorConfig.recent !== undefined;\n";
+        let found = app_options_in(text, "Main.js");
+        assert!(found[0].host);
+        assert!(!found[0].licence);
     }
 
     #[test]

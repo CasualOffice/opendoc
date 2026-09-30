@@ -80,10 +80,36 @@ fn the_committed_document_is_what_the_inventories_produce() {
     let committed = fs::read_to_string(repo.join(DOC)).expect("read docs/153");
     let fresh = splice(&committed, &regions(&rows, &map, &surface, &inventory))
         .expect("splice the generated regions");
-    assert_eq!(
-        fresh, committed,
-        "docs/153 is stale. Run `cargo run -p opendoc-parity -- write` and commit the result."
-    );
+    // Not `assert_eq!`: the document is over a quarter of a megabyte, and a
+    // guard whose failure buries the one changed line under both copies of it
+    // is a guard people learn to skim. Report the first divergence instead.
+    if fresh != committed {
+        let at = fresh
+            .lines()
+            .zip(committed.lines())
+            .position(|(a, b)| a != b);
+        let detail = at.map_or_else(
+            || {
+                format!(
+                    "the committed file is {} lines and a fresh run is {}",
+                    committed.lines().count(),
+                    fresh.lines().count()
+                )
+            },
+            |line| {
+                format!(
+                    "first difference at line {}:\n  committed: {}\n  fresh:     {}",
+                    line + 1,
+                    committed.lines().nth(line).unwrap_or_default(),
+                    fresh.lines().nth(line).unwrap_or_default()
+                )
+            },
+        );
+        panic!(
+            "docs/153 is stale. Run `cargo run -p opendoc-parity -- write` and commit the \
+             result.\n{detail}"
+        );
+    }
 }
 
 #[test]
