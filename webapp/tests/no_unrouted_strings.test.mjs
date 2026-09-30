@@ -199,7 +199,16 @@ const CEILINGS = new Map([
   // chip came out of `main.js` (`object_inspector.mjs`, `object_bar.mjs`), and
   // the wrap table's six English labels went through the seam when "In line"
   // joined them as a seventh. MEASURED from the file, never calculated.
-  ["src/main.js", 304],
+  // 304 -> 302 with proofing Increment B. The two proofing switches' four
+  // announcements ("Spell check on/off", "Grammar check on/off") went through the
+  // seam as `proofing.*` keys when the wiring moved to `proofing_chrome.mjs`, and
+  // the new module therefore carries ZERO unrouted strings and needs no entry here
+  // — which is the direction this table is for, and the reason the debt did not
+  // simply relocate. Only two of the four were COUNTED before (the scanner sees a
+  // literal adjacent to a sink, and two of them sat behind a conditional inside
+  // `setStatus(…)`), so the measured fall is two rather than four. MEASURED from the
+  // file, never calculated.
+  ["src/main.js", 302],
   // The nine `label:`/`disabledReason:` literals that moved out of `main.js` with
   // the `table.*` command tree. Same debt in a new place, not a new debt: `main.js`
   // came down by more than nine in the same commit. They stay English because this

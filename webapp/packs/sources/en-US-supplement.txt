@@ -1,0 +1,324 @@
+# The en-US supplement pack's CANDIDATE list (`docs/146` §6, ADR-042, Increment B).
+#
+# This file is the pack's source, and `tools/build-pack.mjs` is what turns it into
+# the artifact under `packs/en-US-supplement/`. It is reviewed by hand and
+# generated from nothing: that is deliberate, and it is the opposite of how
+# `dict/glossary.txt` is built, so the reason is worth writing down.
+#
+# WHY A CURATED SOURCE AND NOT A DERIVED ONE. `tools/build-glossary.mjs` derives
+# the product glossary from files already in the repository, because the question
+# it answers — "what does this project call things?" — is a fact about the
+# repository. This pack answers a different question: "what contemporary English
+# does a 2010-era word list not know?" Deriving that from our own documentation was
+# tried and rejected: the harvest is dominated by identifiers that survive the code
+# strip (`preventDefault`, `numFmt`, `rFonts`, `attrs`, `const`) plus prose
+# artefacts (`dont`, `ish`, `abs`), and admitting those would make the pack a
+# mechanism for accepting typos — the exact failure `build-glossary.mjs`'s own
+# header warns about. A pack is a mechanism for accepting words, so its source has
+# to be words.
+#
+# THE RULE FOR ADDING ONE. A line belongs here when all four hold:
+#
+#   1. it is a word an English speaker would write in a document, not an
+#      identifier, an abbreviation of an identifier, or a fragment;
+#   2. it is contemporary technical or business vocabulary — the class SCOWL's
+#      published lists predate;
+#   3. it passes `packWordAdmissible` (letters, 3-40 characters, not a token the
+#      checker skips by rule anyway);
+#   4. it is not already known to the base tier. This one is NOT checked by hand:
+#      the generator filters every candidate against `dict/en-US.txt`,
+#      `dict/en-GB.txt` and `dict/glossary.txt`, so a word SCOWL already has is
+#      silently dropped rather than shipped twice. About four in ten of the lines
+#      below are dropped that way, and that is the filter working.
+#
+# Both spellings are listed where the -ize/-ise pair is real, because the pack is
+# installed per locale and en-GB readers get the same file; `isKnownWord`'s
+# capitalization rule then covers the cased forms, so no line needs a capital
+# unless the word itself carries one.
+#
+# PROVENANCE. Every line is original to this repository and ships under its
+# Apache-2.0 licence. Nothing is copied from a third-party word list, corpus or
+# grammar, which is why this pack can ship while ADR-042's open question — which
+# source corpus is legally suitable for a REDISTRIBUTED CONTEXT pack (Increment D)
+# — stays open. A dataset's licence is not inferable from an engine's, and
+# LanguageTool's rules carry an LGPL notice; neither is relied on here.
+#
+# Blank lines and `#` comments are ignored. Order does not matter: the artifact is
+# sorted.
+
+# ---- Software delivery and operations --------------------------------------
+webhook
+webhooks
+microservice
+microservices
+serverless
+containerize
+containerise
+containerized
+containerised
+containerization
+containerisation
+monorepo
+codebase
+codebases
+changelog
+changelogs
+changeset
+changesets
+patchset
+hotfix
+hotfixes
+rebase
+rebasing
+refactor
+refactored
+refactoring
+linting
+toolchain
+toolchains
+observability
+telemetry
+instrumentation
+runbook
+rollback
+idempotent
+idempotency
+sharding
+backpressure
+pipelining
+upsert
+denormalize
+denormalise
+denormalization
+denormalisation
+prefetch
+prefetching
+preload
+preloading
+memoize
+memoise
+memoization
+memoisation
+debounce
+debounced
+coroutine
+coroutines
+iterable
+nullable
+tokenizer
+tokeniser
+tokenizers
+bitmask
+bitmasks
+hashmap
+endianness
+codepoint
+codepoints
+grapheme
+graphemes
+newline
+newlines
+whitespace
+plaintext
+frontmatter
+namespace
+namespaces
+middleware
+runtime
+runtimes
+subclass
+superclass
+metadata
+timestamp
+timestamps
+timezone
+timezones
+datastore
+datastores
+keystore
+keypair
+passphrase
+allowlist
+denylist
+blocklist
+multifactor
+ransomware
+cybersecurity
+reproducibility
+deterministically
+benchmarked
+benchmarking
+profiler
+profilers
+flamegraph
+throughput
+percentile
+percentiles
+backoff
+retryable
+retriable
+cancelable
+cancellable
+abortable
+interruptible
+resumable
+replayable
+snapshotting
+checkpointing
+journaling
+journalling
+compaction
+defragmentation
+streamable
+chunked
+chunking
+batching
+coalescing
+transactional
+atomicity
+serializable
+serialisable
+serialization
+serialisation
+deserialization
+deserialisation
+marshalling
+unmarshalling
+diffing
+
+# ---- Interface and document vocabulary -------------------------------------
+autocomplete
+autocompletion
+autosave
+autosaves
+autosaving
+pagination
+paginate
+paginated
+paginator
+scrollable
+scrollbar
+scrollbars
+clickable
+draggable
+droppable
+focusable
+selectable
+resizable
+sortable
+filterable
+searchable
+translatable
+localizable
+localisable
+internationalization
+internationalisation
+localization
+localisation
+themeable
+dropdown
+dropdowns
+tooltip
+tooltips
+viewport
+viewports
+breakpoint
+breakpoints
+subpixel
+rasterize
+rasterise
+rasterization
+rasterisation
+antialiasing
+pixelate
+reflow
+wireframe
+wireframes
+mockup
+mockups
+wayfinding
+skeuomorphic
+affordance
+affordances
+pluggable
+extensibility
+reusability
+traceability
+auditability
+discoverability
+learnability
+unbundle
+
+# ---- Business, workplace and market vocabulary ------------------------------
+onboarding
+onboarded
+offboarding
+upsell
+upselling
+workstream
+workstreams
+reprioritize
+reprioritise
+deprioritize
+deprioritise
+upskill
+upskilling
+reskilling
+coworking
+videoconference
+videoconferencing
+webinar
+webinars
+livestream
+livestreaming
+unsubscribe
+geolocation
+geotag
+crowdsource
+crowdsourcing
+crowdfunding
+freemium
+paywall
+paywalls
+clickthrough
+influencer
+influencers
+clickbait
+hashtag
+hashtags
+gamification
+tokenization
+tokenisation
+productize
+productise
+monetize
+monetise
+ecommerce
+omnichannel
+dropshipping
+fintech
+insurtech
+regtech
+proptech
+edtech
+telehealth
+wearable
+wearables
+chatbot
+chatbots
+cryptocurrency
+cryptocurrencies
+blockchain
+metaverse
+upcycle
+upcycling
+decarbonize
+decarbonise
+decarbonization
+decarbonisation
+circularity
+reshoring
+nearshoring
+outsourcer
+bootcamp
+bootcamps

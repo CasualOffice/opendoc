@@ -273,11 +273,40 @@ function possessiveStem(word) {
 
 /**
  * Whether `word` is spelled correctly against `dictionary` (a `Set`), the
- * user's `personal` words and the session `ignored` set.
+ * user's `personal` words, the session `ignored` set, the shipped `glossary` and
+ * an installed language pack's `supplement`.
+ *
+ * ## The four tiers, and why `supplement` is a FOURTH rather than more glossary
+ *
+ * `docs/114` §12 keeps the tiers apart deliberately, and the docstring above
+ * `parseGlossary` says what each one is: the dictionary is a language, the
+ * glossary ships with the product and is the same for everyone, the personal
+ * dictionary is the user's and lives only in their browser. A language pack
+ * (`docs/146` §6, ADR-042, Increment B) is none of those three:
+ *
+ *   * it is **per locale**, where the glossary is language-independent;
+ *   * it is **installable and removable**, where the glossary is part of the
+ *     build — so "which tier accepted this word" is the difference between a
+ *     word that stops being accepted when a pack is removed and one that never
+ *     will;
+ *   * it is **versioned**, and its version is in the result cache key
+ *     (`proof_packs.mjs` `activePackVersion`), where the glossary's is not.
+ *
+ * Unioning pack words into `glossary` would have been two fewer arguments and
+ * would have made all three of those facts unanswerable — a pack term would
+ * appear to the rest of the system as something the product shipped, removing a
+ * pack could not invalidate anything, and `suggestionsFor`'s glossary ranking
+ * (which exists so a mistyped PRODUCT name suggests the product name) would be
+ * scoring a general vocabulary. So it is its own set, matched with the same
+ * capitalization rule the others get.
  *
  * O(1) in the document and O(1) in the dictionary — a handful of `Set` lookups.
  */
-export function isKnownWord(rawWord, dictionary, { personal, ignored, glossary } = {}) {
+export function isKnownWord(
+  rawWord,
+  dictionary,
+  { personal, ignored, glossary, supplement } = {},
+) {
   if (!rawWord) return true;
   // NORMALIZE BEFORE COMPARING. SCOWL, the glossary and anything a user types
   // into a dialog are NFC; a `.docx` can carry NFD, where `café` is `cafe` plus
@@ -295,10 +324,16 @@ export function isKnownWord(rawWord, dictionary, { personal, ignored, glossary }
   // gets, so `OpenDoc` accepts `OPENDOC` and `opendoc` accepts `Opendoc`, and
   // a term recorded in Title case still carries that information.
   if (glossary && matchesWithCase(word, glossary)) return true;
+  // The installed language pack. AFTER the dictionary's own tiers and before the
+  // hyphen rule, so a pack cannot change what any other tier answers — it only
+  // ever adds — and so a compound of pack words is accepted the same way a
+  // compound of dictionary words is.
+  if (supplement && matchesWithCase(word, supplement)) return true;
   if (matchesWithCase(word, dictionary)) return true;
   const stem = possessiveStem(word);
   if (stem && matchesWithCase(stem, dictionary)) return true;
   if (stem && glossary && matchesWithCase(stem, glossary)) return true;
+  if (stem && supplement && matchesWithCase(stem, supplement)) return true;
   if (stem && personal && personal.has(stem)) return true;
   // A hyphenated compound is correct when every part is (`e-mail`, `well-known`,
   // and `casual-doc-layout`, which is how the glossary covers a crate name
@@ -307,7 +342,9 @@ export function isKnownWord(rawWord, dictionary, { personal, ignored, glossary }
     const parts = word.split("-").filter((part) => part.length > 0);
     if (
       parts.length > 1 &&
-      parts.every((part) => isKnownWord(part, dictionary, { personal, ignored, glossary }))
+      parts.every((part) =>
+        isKnownWord(part, dictionary, { personal, ignored, glossary, supplement }),
+      )
     )
       return true;
   }
@@ -326,7 +363,7 @@ export function isKnownWord(rawWord, dictionary, { personal, ignored, glossary }
  * page window (`docs/114` §5.2).
  */
 export function findMisspellings(text, dictionary, options = {}) {
-  const { caretOffset = null, personal, ignored, glossary, ...skipOptions } = options;
+  const { caretOffset = null, personal, ignored, glossary, supplement, ...skipOptions } = options;
   const spans = addressSpans(text);
   const inAddress = (token) =>
     spans.some(([from, to]) => token.start < to && token.end > from);
@@ -335,7 +372,7 @@ export function findMisspellings(text, dictionary, options = {}) {
     if (caretOffset !== null && caretOffset >= token.start && caretOffset <= token.end) continue;
     if (skipReason(token.word, skipOptions)) continue;
     if (inAddress(token)) continue;
-    if (isKnownWord(token.word, dictionary, { personal, ignored, glossary })) continue;
+    if (isKnownWord(token.word, dictionary, { personal, ignored, glossary, supplement })) continue;
     found.push(token);
   }
   return found;
@@ -500,7 +537,7 @@ export function boundedEditDistance(a, b, max) {
 export function suggestionsFor(
   word,
   { common, all },
-  { limit = 5, personal, glossary, deepScan = true } = {},
+  { limit = 5, personal, glossary, supplement, deepScan = true } = {},
 ) {
   const lower = String(word ?? "").toLowerCase();
   if (!lower) return [];
@@ -514,6 +551,12 @@ export function suggestionsFor(
     if (all.has(title)) return title;
     if (glossary?.has(candidate)) return candidate;
     if (glossary?.has(title)) return title;
+    // An installed pack's words are offerable, which is most of what installing
+    // one is for: a reader who typed `microservics` should be offered
+    // `microservices` once the pack that knows the word is there, and before it
+    // is there the honest answer is that nothing close to it is known.
+    if (supplement?.has(candidate)) return candidate;
+    if (supplement?.has(title)) return title;
     if (personal?.has(candidate)) return candidate;
     return null;
   };
@@ -559,7 +602,7 @@ export function suggestionsFor(
       const distance = boundedEditDistance(lower, candidate, 2);
       if (distance <= 2) consider(candidate, distance);
     }
-    for (const extra of [personal, glossary]) {
+    for (const extra of [personal, glossary, supplement]) {
       if (!extra) continue;
       for (const entry of extra) {
         const candidate = entry.toLowerCase();

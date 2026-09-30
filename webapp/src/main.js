@@ -36,7 +36,8 @@ import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
-import { createSpellChecker, spellingContextCommands } from "./spell_check.mjs";
+import { spellingContextCommands } from "./spell_check.mjs";
+import { createProofingChrome } from "./proofing_chrome.mjs";
 import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
@@ -92,7 +93,7 @@ import { galleryRowStarts, nextGalleryIndex, renderShapeGallery } from "./shape_
 import { createShapeDrawMode } from "./shape_draw_mode.mjs";
 import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_state.mjs";
 import { pageSnapTargets, snapBox } from "./object_snap.mjs";
-import { t } from "./i18n.mjs";
+import { activeLocale, t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator } from "./status_counts.mjs";
 import { startLocalisation } from "./locale_boot.mjs";
@@ -430,6 +431,7 @@ const reviewPanelBtn = document.getElementById("reviewPanelBtn");
 const reviewSpellCheckBtn = document.getElementById("reviewSpellCheckBtn");
 const reviewGrammarCheckBtn = document.getElementById("reviewGrammarCheckBtn");
 const reviewSmartQuotesBtn = document.getElementById("reviewSmartQuotesBtn");
+const reviewProofLanguagesBtn = document.getElementById("reviewProofLanguagesBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
@@ -4099,41 +4101,40 @@ function paintReviewMarkers() {
   }
 }
 
-// ---- Spelling (docs/114, `109` HF-035) --------------------------------------
-// Everything but the wiring is in `spell_check.mjs` / `spelling.mjs`; what is
-// here is this application's answers to the questions that module asks. The
-// three hooks below are the whole of its contact with the editor: `paint()`
-// from the overlay repaint, `noteEdited()` from the edit choke point (O(1) —
-// it re-arms a timer and nothing else), and `noteWindowChanged()` from the
-// scroll that moves the page window.
-const spellChecker = createSpellChecker({
+// ---- Proofing (docs/114, docs/146, `109` HF-035) -----------------------------
+// The coordinator, the two switches, the one replacement path and the language
+// packs are all `proofing_chrome.mjs`; what is here is this application's answers
+// to the questions it asks. The three hooks are the whole of proofing's contact
+// with the editor: `paint()` from the overlay repaint, `noteEdited()` from the
+// edit choke point (O(1) — it re-arms a timer and nothing else), and
+// `noteWindowChanged()` from the scroll that moves the page window.
+const proofing = createProofingChrome({
   getDoc: () => doc,
-  windowPages: () => {
-    const inWindow = [];
-    for (let i = pageWindow.first; i <= pageWindow.last; i++) {
-      const page = pages[i];
-      if (page?.overlay) inWindow.push(page);
-    }
-    return inWindow;
-  },
+  pages: () => pages,
+  pageWindow: () => pageWindow,
   place,
   caret: () => (selection ? selection.focus : null),
-  enabled: () => settings.spellCheck !== false,
-  grammarEnabled: () => settings.grammarCheck !== false,
-  defaultLanguage: () => settings.spellLanguage || "en-US",
+  preference: (key) => settings[key],
+  setPreference: (key, value) => {
+    settings[key] = value;
+    saveSettings();
+  },
+  toggles: () => ({ spell: spellCheckToggle, grammar: grammarCheckToggle }),
   status: (text, kind) => setStatus(text, kind),
   repaint: () => paintOverlayLayer(),
+  redraw: () => drawSelection(),
+  reflect: () => updateToolbar(),
   openWords: () => openWordStore({}),
+  runEdit,
+  registerModal,
+  fallbackFocus: () => pagesEl,
+  activeLocale: () => activeLocale(),
+  indexedDB: globalThis.indexedDB,
+  stamp: new URL(import.meta.url).search,
+  origin: () => location.origin,
 });
-
-/** Replaces a flagged word with a suggestion through the SAME path Replace All
- *  uses — one undoable action, closed in Viewing, tracked in Suggesting. */
-function replaceMisspelling(flagged, word) {
-  void runEdit(
-    () => doc.replaceRanges([flagged.node], [flagged.start], [flagged.node], [flagged.end], word),
-    { gate: true },
-  );
-}
+const spellChecker = proofing.checker;
+const { replaceMisspelling, setSpellCheckEnabled, setGrammarCheckEnabled } = proofing;
 
 /** Draws the current selection from engine geometry: a highlight for a real
  *  range, else a caret at the focus (so a click — or a range with no visible
@@ -7975,6 +7976,7 @@ const REVIEW_SURFACE = [
   { command: "tools.spellCheck", buttons: () => [reviewSpellCheckBtn], requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
   { command: "tools.grammarCheck", buttons: () => [reviewGrammarCheckBtn], requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
   { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => smartQuotesEnabled, run: () => setSmartQuotes(!smartQuotesEnabled) },
+  { command: "tools.languages", buttons: () => [reviewProofLanguagesBtn], requires: "always", run: () => proofing.openLanguages() },
 ];
 
 function insertCommandEnabled(commandId, context = {}) {
@@ -11879,6 +11881,7 @@ function editorCommands(context = { surface: "palette" }) {
     // from the same place it was set (SKILL.md §10).
     { id: "tools.spellCheck", label: `Spell check: ${settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
     { id: "tools.grammarCheck", label: `Grammar check: ${settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
+    { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => proofing.openLanguages() },
     { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => toggleReview() },
     // ⌘⇧E worked before this row and was advertised NOWHERE — no palette row, no
     // menu row, no reference entry — because the binding was a hand-written
@@ -14328,27 +14331,6 @@ function setSmartQuotes(enabled) {
   // not move when you flip it is worse than no switch. `updateToolbar` is this
   // file's one "state changed, re-reflect every surface" call, so the reflection
   // stays in one place rather than gaining a second copy here.
-  updateToolbar();
-}
-
-/** Spelling on or off, remembered with the other preferences. */
-function setSpellCheckEnabled(enabled) {
-  settings.spellCheck = enabled;
-  saveSettings();
-  if (spellCheckToggle) spellCheckToggle.checked = enabled;
-  spellChecker.setEnabled(enabled);
-  setStatus(enabled ? "Spell check on" : "Spell check off");
-  updateToolbar();
-}
-
-/** Grammar on or off, remembered beside spelling and independent of it. */
-function setGrammarCheckEnabled(enabled) {
-  settings.grammarCheck = enabled;
-  saveSettings();
-  if (grammarCheckToggle) grammarCheckToggle.checked = enabled;
-  spellChecker.refresh();
-  drawSelection();
-  setStatus(enabled ? "Grammar check on" : "Grammar check off");
   updateToolbar();
 }
 

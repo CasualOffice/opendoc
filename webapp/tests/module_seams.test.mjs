@@ -338,8 +338,23 @@ const SRC = new URL("../src/", import.meta.url);
  *  RE-MEASURED AGAIN on the rotation branch. The phone work lowered it to
  *  16,336 underneath, and rotation extracted its own gesture controller, so
  *  the merged file counts 16,208 — lower than either side, because both
- *  extractions landed together. Measured, not carried. */
-const MAIN_JS_LINE_CEILING = 16208;
+ *  extractions landed together. Measured, not carried.
+ *
+ *  Lowered to 16,190 by proofing Increment B (`docs/146` §6, ADR-042). The file was
+ *  AT its ceiling with zero slack and the round needed four lines of it — a
+ *  Review-band button binding, a surface row, a palette row and an import — so it
+ *  paid the way the 16,446 note above describes: by extracting the thing the round
+ *  needed a seam on. What came out is the whole of proofing's WIRING —
+ *  `createSpellChecker`'s `io` block, `replaceMisspelling`, and the two remembered
+ *  switches `setSpellCheckEnabled`/`setGrammarCheckEnabled` — now
+ *  `proofing_chrome.mjs`, which also hosts the pack lifecycle, the host providers
+ *  the SDK boundary needs (ADR-042 §6) and the "Proofing languages" dialog's
+ *  opener. Nothing about proofing is decided in `main.js` any more.
+ *
+ *  MEASURED from this tree after the extraction, not calculated: the io block came
+ *  out and a shorter io block went back in, so the arithmetic on either half would
+ *  have been wrong in both directions. */
+const MAIN_JS_LINE_CEILING = 16190;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -386,6 +401,15 @@ const PURE_MODULES = [
   // proofing be a separate optional package whose network and storage the HOST
   // injects — a module that reached for `fetch` could not be given to one.
   "proof_protocol.mjs",
+  // The pack system's decisions (`docs/146` §6, ADR-042 §6): the manifest schema,
+  // the URL policy, the 50 MB ceiling, the quota plan, the refusal codes and the
+  // eight-step installer as a state machine over INJECTED effects. Purity is what
+  // makes the failure cases testable at all — a corrupted download, an over-quota
+  // origin and a host that refuses the download are three lines of node here and
+  // three fixtures nobody writes otherwise. It is also why `digest` is injected
+  // rather than reached through a crypto global: that would trip this guard, and it
+  // would make a checksum MISMATCH undrivable without corrupting a real file.
+  "proof_packs.mjs",
   // The caption / cross-reference VOCABULARY: which "Insert reference to"
   // options a reference type offers, when Word offers "Include above/below",
   // and what a caption will read as. Word's own rules, with no widget attached,

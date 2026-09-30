@@ -684,6 +684,69 @@ export const EN_STRINGS = Object.freeze({
   // once it is the selection — the moment it becomes a handle — and the two
   // announcements name both ends of the move, because the live region is the
   // only channel a pointer gesture has and "moved" alone does not say where to.
+  // ---- Proofing (docs/114, docs/146, ADR-042) --------------------------------
+  //
+  // The two switches' announcements moved here from `main.js` when the wiring was
+  // extracted into `proofing_chrome.mjs`: they were four English literals against
+  // that file's unrouted-string ceiling and are now four keys, so the ceiling came
+  // down by four rather than the debt moving to a new file.
+  "proofing.spellCheckOn": "Spell check on",
+  "proofing.spellCheckOff": "Spell check off",
+  "proofing.grammarCheckOn": "Grammar check on",
+  "proofing.grammarCheckOff": "Grammar check off",
+  // "Proofing languages" — Word's File ▸ Options ▸ Language table, which is the
+  // surface this was designed from (`proof_languages.mjs` carries the comparison
+  // and the three places it deliberately differs). The STATE strings read as facts
+  // about the language rather than as instructions, because the first question a
+  // reader has is "does this language get checked".
+  "proofLanguages.command": "Proofing languages…",
+  "proofLanguages.builtIn": "Built in",
+  "proofLanguages.installedWords": "Installed · {count} extra words",
+  "proofLanguages.notInstalled": "Not installed",
+  "proofLanguages.installing": "Installing… {percent}%",
+  "proofLanguages.install": "Install",
+  "proofLanguages.remove": "Remove",
+  "proofLanguages.cancel": "Cancel",
+  "proofLanguages.installLanguage": "Install proofing for {language}",
+  "proofLanguages.removeLanguage": "Remove proofing for {language}",
+  "proofLanguages.cancelLanguage": "Cancel the {language} download",
+  "proofLanguages.megabytes": "{size} MB",
+  "proofLanguages.installedLanguage": "Proofing for {language} is installed",
+  "proofLanguages.removedLanguage": "Proofing for {language} was removed",
+  "proofLanguages.storageUnavailable":
+    "This browser is not storing data for this page, so a language pack cannot be kept for next time.",
+  // Every refusal `proof_packs.mjs` can return, as a sentence. The map from code
+  // to key is in `proof_languages.mjs` and a guard asserts it is total: a refusal
+  // with no sentence is a dialog that closes having said nothing (SKILL.md §10).
+  "proofPack.refusal.hostRefused":
+    "The site that provides this editor does not allow language packs to be downloaded.",
+  "proofPack.refusal.manifest": "The pack's description could not be read, so nothing was installed.",
+  "proofPack.refusal.schema": "That pack was built for a different version of this editor.",
+  "proofPack.refusal.locale": "That pack is for a different language.",
+  "proofPack.refusal.assetUrl":
+    "The pack is hosted somewhere this editor is not allowed to download from.",
+  "proofPack.refusal.tooLarge": "That pack is larger than the {limit} MB one language may use.",
+  "proofPack.refusal.quota": "There is not enough room left in this browser to store the pack.",
+  "proofPack.refusal.network": "The pack could not be downloaded. Check the connection and try again.",
+  "proofPack.refusal.cancelled": "The download was cancelled, and nothing changed.",
+  "proofPack.refusal.digest": "The download did not match its checksum, so it was discarded.",
+  "proofPack.refusal.bounds": "The download was not the size it declared, so it was discarded.",
+  "proofPack.refusal.format": "The pack holds data this editor cannot read.",
+  "proofPack.refusal.selfTest": "The pack failed its own check, so it was not switched on.",
+  "proofPack.refusal.storage":
+    "This browser refused to store the pack. Whatever was installed before is still in use.",
+  "proofPack.refusal.notPublished": "There is no proofing pack for this language yet.",
+  "proofPack.refusal.notInstalled": "There is no installed pack to remove for that language.",
+  // The SDK's own refusals. `checkDocument` has no honest implementation today —
+  // the scan is windowed and body-only, and whole-document enumeration is an engine
+  // export that does not exist — so it refuses BY NAME rather than resolving to an
+  // empty result, which would report a clean document by not looking at it.
+  "proofDocument.notAvailable":
+    "Checking the whole document at once is not available yet. Proofing checks the pages you are looking at, so scroll through the document to check all of it.",
+  "proofDocument.outsideWindow":
+    "That part of the document is not on screen, so it has not been checked yet.",
+  "proofDocument.notConfigured": "Proofing is not set up for this document.",
+  "proofDocument.disposed": "Proofing has been shut down for this document.",
   "table.moveSubmenu": "Move",
   "table.dragToMoveRow": "Drag to move this row",
   "table.dragToMoveColumn": "Drag to move this column",
