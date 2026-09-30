@@ -443,6 +443,39 @@ fn block_id(block: &BlockNode) -> NodeId {
     }
 }
 
+/// How many pair transforms have run on this thread since [`reset_transforms`].
+///
+/// Instrumentation for `107` §4's **B2**: the cost of receiving one remote operation must be
+/// O(the operations concurrent with it), never O(the log) and never O(the document). That is a
+/// claim about *how much work happens*, and a guard proves it by building sessions with `k`
+/// and `2k` unacknowledged commits and asserting this count roughly doubles — and by doubling
+/// the **document** and asserting it does not move at all.
+///
+/// A millisecond threshold could do neither: it cannot tell a quadratic from a slow constant,
+/// it needs a machine-specific baseline, and it is flaky under load. This counts work, runs in
+/// the ordinary test job, and cannot be made green by a faster machine. `casual-doc-edit`'s
+/// `block_visits` is the same instrument for the same reason.
+///
+/// Thread-local, so guards running in parallel do not observe each other.
+#[must_use]
+pub fn transforms() -> u64 {
+    TRANSFORMS.with(std::cell::Cell::get)
+}
+
+/// Zeroes the [`transforms`] counter for this thread.
+pub fn reset_transforms() {
+    TRANSFORMS.with(|count| count.set(0));
+}
+
+std::thread_local! {
+    static TRANSFORMS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Charges one pair transform to this thread's counter.
+fn note_transform() {
+    TRANSFORMS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
 /// Rebase `subject` so it can be applied after `against` already has been.
 ///
 /// Both must have been written against the same state. Returns the operation with the same
@@ -475,6 +508,7 @@ pub fn transform_placed(
     side: Side,
     placement: &dyn BlockPlacement,
 ) -> Result<Rebase, TransformError> {
+    note_transform();
     let names = (variant_name(subject), variant_name(against.operation));
     let refuse = |reason: &'static str| TransformError::Unsupported {
         subject: names.0,

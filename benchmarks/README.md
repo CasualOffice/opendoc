@@ -41,6 +41,23 @@ cargo run -p opendoc-benchmark --release --locked -- \
 Output files must not already exist. This prevents an interrupted or mistaken
 run from overwriting reviewed evidence.
 
+## What a comparison does when the sets differ
+
+A baseline older than a workload no longer refuses the whole comparison. Each
+case the baseline does not cover is printed as `not covered`, the covered ones
+are still gated, and a coverage line says how many of how many. A baseline
+holding a case the harness no longer defines is still a hard error: that is a
+stale baseline, and comparing against evidence for retired work is worse than
+comparing against nothing. `docs/107` §4.2 records why this direction was chosen.
+
+## Run on a quiet machine, and repeat
+
+Medians here move by **3.5x** on one binary and one machine when another build is
+running — measured, in `docs/107` §4.2, against `uptime`'s load average. Check the
+load first, and repeat a surprising result before believing it. This is also why
+the suite holds no timing-ratio gate: a clock-bound check cannot be rescued by a
+retry.
+
 ## Baseline Review
 
 The current named environment is:

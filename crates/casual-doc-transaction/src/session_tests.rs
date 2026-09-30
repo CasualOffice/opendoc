@@ -53,14 +53,19 @@ fn sender_mint(space: IdSpace) -> Mint {
 /// A document of three one-run paragraphs, each carrying the same text so an offset tie is
 /// hit on purpose rather than by luck.
 fn seed() -> (Document, Vec<NodeId>) {
+    seed_sized(3)
+}
+
+/// [`seed`] with `paragraphs` paragraphs, for the guards that double the document.
+fn seed_sized(paragraphs: usize) -> (Document, Vec<NodeId>) {
     let mut ids = IdGenerator::new(7);
     let document_id = ids.next_id().expect("id");
     let mut blocks = Vec::new();
-    let mut paragraphs = Vec::new();
-    for _ in 0..3 {
+    let mut ids_out = Vec::new();
+    for _ in 0..paragraphs {
         let id = ids.next_id().expect("id");
         let run = ids.next_id().expect("id");
-        paragraphs.push(id);
+        ids_out.push(id);
         blocks.push(BlockNode::Paragraph(Paragraph {
             id,
             properties: ParagraphProperties::default().into(),
@@ -73,7 +78,7 @@ fn seed() -> (Document, Vec<NodeId>) {
     }
     let document =
         Document::new(document_id, blocks, Definitions::default()).expect("a valid document");
-    (document, paragraphs)
+    (document, ids_out)
 }
 
 /// One participant: its own copy of the document, its own id allocator, its own log.
@@ -915,6 +920,87 @@ fn a_probe_leaves_the_document_exactly_as_it_found_it() {
     assert_eq!(
         actual, expected,
         "the probe left the document changed, so every inverse it produced is suspect"
+    );
+}
+
+/// The pair transforms one arrival costs a replica holding `unordered` unacknowledged
+/// commits, in a document of `paragraphs` paragraphs.
+///
+/// Set up and measured here once so the two B2 guards below vary exactly one thing each.
+fn transforms_for_one_arrival(unordered: usize, paragraphs: usize) -> u64 {
+    let (document, ids) = seed_sized(paragraphs);
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    // Ada's one edit is what arrives. Grace's `unordered` edits are the concurrency.
+    ada.edit(
+        "Typing",
+        vec![Operation::InsertText {
+            at: Pos::new(ids[0], 0),
+            text: "A".to_owned(),
+        }],
+    );
+    for step in 0..unordered {
+        grace.edit(
+            "Typing",
+            vec![Operation::InsertText {
+                at: Pos::new(ids[1], step as u32),
+                text: "g".to_owned(),
+            }],
+        );
+    }
+    assert_eq!(grace.log.unordered_commits(), unordered);
+
+    let from_ada = ada.exchange(&mut server);
+    assert_eq!(from_ada.len(), 1);
+    crate::transform::reset_transforms();
+    grace.receive(&from_ada[0]).expect("the arrival merges");
+    crate::transform::transforms()
+}
+
+#[test]
+fn receiving_one_arrival_transforms_once_per_concurrent_commit_and_not_once_per_log_entry() {
+    // `107` §4 B2: the cost of one incoming remote operation is O(the operations concurrent
+    // with it) — never O(the log). Asserted as a RATIO at `k` and `2k`, because that is the
+    // only shape that separates linear from quadratic. A threshold in milliseconds cannot,
+    // and would need a machine to be believed.
+    let four = transforms_for_one_arrival(4, 3);
+    let eight = transforms_for_one_arrival(8, 3);
+    assert!(
+        four > 0,
+        "the meter read zero, so this guard is measuring nothing"
+    );
+    // Doubling the concurrency doubles the work: the driver rebases the arrival forward to
+    // each commit's base and each commit back over the arrival, so it is two passes over `k`.
+    assert!(
+        (eight as f64) < 2.5 * (four as f64),
+        "transform work grew faster than the concurrency: {four} at k=4, {eight} at k=8 — a \
+         super-linear term here is O(log) or worse, which is what B2 forbids"
+    );
+    assert!(
+        (eight as f64) > 1.5 * (four as f64),
+        "transform work did not grow with the concurrency at all ({four} at k=4, {eight} at \
+         k=8), so the arrival is not being rebased over every concurrent commit and this \
+         guard would pass over a driver that skipped them"
+    );
+}
+
+#[test]
+fn receiving_one_arrival_transforms_the_same_amount_in_a_document_twice_the_size() {
+    // The other half of B2, and the half a keystroke guard cannot state: the work must not
+    // grow with the DOCUMENT. `transform` is documented as O(1) in document size; this is
+    // what holds the whole receive path to it.
+    //
+    // What it deliberately does not claim: `ClientSession::receive` still has two O(document)
+    // terms — one document clone and one `BlockIndex` build, both on the contended path only
+    // (doc 152 §10 Q1). This guard is about the transform count, and says so.
+    let small = transforms_for_one_arrival(4, 3);
+    let large = transforms_for_one_arrival(4, 6);
+    assert_eq!(
+        small, large,
+        "doubling the document changed the transform count from {small} to {large}: the \
+         rebase is reading the document where it should read only the two operations"
     );
 }
 

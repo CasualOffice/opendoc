@@ -557,6 +557,14 @@ pub struct RevisionLog {
     /// this replica's own unacknowledged work, and they are the only commits
     /// [`session`] ever rewrites — see [`RevisionLog::horizon`].
     horizon: RevisionId,
+    /// Whether a session has ever [`settled`](RevisionLog::settle) this log.
+    ///
+    /// A joining client settles the log at join, so this is exactly "a session is attached".
+    /// Without it the horizon cannot be read as a boundary: a single-user log never settles,
+    /// so its horizon stays at revision zero while `head` climbs, and every commit would look
+    /// unordered — which would switch the whole bound off for the case that has no session at
+    /// all.
+    settled: bool,
     next_group: u64,
     max_groups: usize,
 }
@@ -572,6 +580,36 @@ pub struct RevisionLog {
 /// ceiling on the settled groups that accumulate behind them.
 pub const DEFAULT_MAX_UNDO_GROUPS: usize = 256;
 
+/// Commits one undo group may hold before a coalescing transaction opens a new group instead.
+///
+/// # Why a cap on the group and not on the log
+///
+/// `107` §4 **B7** requires the log to be bounded, explicitly, like `21`'s `HARD_MAX_*`
+/// package limits. [`DEFAULT_MAX_UNDO_GROUPS`] bounds *steps*, and deliberately so — a
+/// 60-character word is one step and sixty commits — which left the **commit** count
+/// unbounded: one coalescing gesture is one group and one commit per keystroke, so a long
+/// dictation or a paste-driven macro grew the log without limit while the group bound looked
+/// satisfied.
+///
+/// Capping the log directly would be worse than the disease. A group is dropped *whole* (so
+/// undo never sees half a step), so a cap the current group itself exceeded would evict that
+/// group — deleting the very gesture the reader is in the middle of making.
+///
+/// So the cap is on the group, and eviction stays exactly where it was. A run longer than this
+/// **splits into a second undo step**, which is what Word and Google Docs both do with a long
+/// typing run, and the existing group bound then evicts as it always has. One mechanism, not
+/// two.
+///
+/// # The bound this yields
+///
+/// `group_count` is already capped at `2 × max_groups` by the log's own bound enforcement, so
+/// the log holds at most `2 × max_groups × MAX_COMMITS_PER_GROUP` commits —
+/// `2 × 256 × 200 = 102,400` at the defaults, which at roughly 200 bytes for a one-character
+/// `InsertText` and its inverse is about 20 MB of worst case.
+/// [`RevisionLog::commit_ceiling`] computes it rather than restating it, so the number in this
+/// comment cannot drift away from the code.
+pub const MAX_COMMITS_PER_GROUP: usize = 200;
+
 impl Default for RevisionLog {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_UNDO_GROUPS)
@@ -586,6 +624,7 @@ impl RevisionLog {
             commits: VecDeque::new(),
             head: RevisionId::default(),
             horizon: RevisionId::default(),
+            settled: false,
             next_group: 0,
             max_groups: max_groups.max(1),
         }
@@ -628,6 +667,7 @@ impl RevisionLog {
     /// a rebase.
     pub(crate) fn settle(&mut self, revision: RevisionId) {
         self.horizon = revision.min(self.head).max(self.horizon);
+        self.settled = true;
     }
 
     /// How many commits no relay has ordered yet.
@@ -809,16 +849,48 @@ impl RevisionLog {
     }
 
     /// The group a transaction joins: the newest one when coalescing, otherwise a fresh one.
+    ///
+    /// A coalescing transaction opens a **new** group once the newest one holds
+    /// [`MAX_COMMITS_PER_GROUP`] commits. That is what bounds the log in commits as well as in
+    /// steps (B7); see that constant for why the cap is on the group rather than on the log.
+    /// The promotion is to `Coalesce::New`'s behaviour in every respect, including keeping the
+    /// new group's first inverse — a group whose first commit recorded none could not be
+    /// rolled back at all, so promoting is strictly the safer of the two.
     fn group_for(&mut self, coalesce: Coalesce) -> GroupId {
         match coalesce {
             Coalesce::Continue | Coalesce::ContinueKeepingFirstInverse => {
-                if let Some(last) = self.commits.back() {
-                    return last.group;
+                if let Some(last) = self.commits.back().map(|commit| commit.group)
+                    && self.commits_in_group(last) < MAX_COMMITS_PER_GROUP
+                {
+                    return last;
                 }
                 self.allocate_group()
             }
             Coalesce::New => self.allocate_group(),
         }
+    }
+
+    /// Commits the log retains for `group`.
+    ///
+    /// O(retained commits), which the bounds cap, so O(1) in document size. Called once per
+    /// coalescing transaction.
+    fn commits_in_group(&self, group: GroupId) -> usize {
+        self.commits
+            .iter()
+            .filter(|commit| commit.group == group)
+            .count()
+    }
+
+    /// The most commits this log can hold, derived from its own bounds.
+    ///
+    /// B7's explicit bound. Derived rather than declared: `enforce_bounds` caps the log at
+    /// `2 × max_groups` groups and [`MAX_COMMITS_PER_GROUP`] caps each group, so this is the
+    /// product — and it cannot drift from the two rules that produce it.
+    #[must_use]
+    pub const fn commit_ceiling(&self) -> usize {
+        self.max_groups
+            .saturating_mul(2)
+            .saturating_mul(MAX_COMMITS_PER_GROUP)
     }
 
     fn allocate_group(&mut self) -> GroupId {
@@ -862,9 +934,24 @@ impl RevisionLog {
     ///
     /// Returns whether anything was dropped, so the caller cannot spin on an empty log.
     fn drop_oldest_group(&mut self) -> bool {
-        let Some(oldest) = self.commits.front().map(|commit| commit.group) else {
+        let Some(front) = self.commits.front() else {
             return false;
         };
+        // Never evict what nobody has ordered yet. A commit above the horizon is this
+        // replica's own unacknowledged work and is the exact input `session`'s rollback and
+        // replay reads; dropping it would leave the driver unable to roll back to the state an
+        // arrival has to be applied at, which is divergence rather than a shorter history.
+        // Refusing here means the bound yields to correctness, and `enforce_bounds` stops
+        // rather than spinning.
+        //
+        // Only once a session has settled the log: a single-user log never settles, so its
+        // horizon sits at revision zero and reading it as a boundary would switch the bound
+        // off entirely for the case with no session — which two existing guards caught the
+        // moment this was written without the condition.
+        if self.settled && front.revision > self.horizon {
+            return false;
+        }
+        let oldest = front.group;
         self.drop_front_group(oldest);
         while let Some(front) = self.commits.front() {
             if matches!(front.origin, Origin::Edit) {
@@ -1399,6 +1486,96 @@ mod tests {
                 .sum::<usize>(),
             2,
             "both forward operations are still in the log for OT"
+        );
+    }
+
+    #[test]
+    fn a_long_coalescing_run_is_bounded_in_commits_and_not_only_in_undo_steps() {
+        // `107` §4 B7: the log is bounded, explicitly. The group bound never was a bound on
+        // commits — one coalescing gesture is one group and one commit per keystroke — so a
+        // run long enough grew the log without limit while the group cap looked satisfied.
+        //
+        // The condition is created rather than inherited: every transaction below asks to
+        // COALESCE, so under the old rule all of them would land in one group and the log
+        // would hold every one of them.
+        let (mut doc, nodes, _ids) = document(1);
+        let mut log = RevisionLog::new(2);
+        let ceiling = log.commit_ceiling();
+        assert_eq!(
+            ceiling,
+            2 * 2 * MAX_COMMITS_PER_GROUP,
+            "the ceiling must be derived from the two rules that produce it"
+        );
+
+        let keystrokes = MAX_COMMITS_PER_GROUP * 3;
+        for step in 0..keystrokes {
+            let tx = typing(step as u128 + 1, log.head(), nodes[0], step as u32, "x");
+            log.apply(&mut doc, tx.coalescing(Coalesce::Continue))
+                .expect("a keystroke applies");
+        }
+
+        assert!(
+            log.commits().len() <= ceiling,
+            "the log holds {} commits, above its own ceiling of {ceiling}",
+            log.commits().len()
+        );
+        let groups: std::collections::BTreeSet<_> =
+            log.commits().map(super::Commit::group).collect();
+        assert!(
+            groups.len() > 1,
+            "{keystrokes} coalescing keystrokes stayed in one group, so nothing capped the \
+             commits and this guard is measuring the old rule"
+        );
+        assert!(
+            groups
+                .iter()
+                .all(|group| log.commits().filter(|c| c.group == *group).count()
+                    <= MAX_COMMITS_PER_GROUP),
+            "a group exceeded the per-group cap, so the split is not where it claims to be"
+        );
+        // And the reader can still undo: splitting a run into steps must not cost the ability
+        // to revert one.
+        assert!(
+            log.undo_target().is_some(),
+            "the split left nothing undoable, which is a worse outcome than an unbounded log"
+        );
+    }
+
+    #[test]
+    fn the_bound_never_evicts_a_commit_no_relay_has_ordered() {
+        // The correctness side of the same rule. `session`'s rollback reads exactly the
+        // commits above the horizon; evicting one to satisfy a memory cap would leave the
+        // driver unable to reach the state an arrival has to be applied at. So the bound
+        // yields, and a log that cannot shrink stays large rather than becoming wrong.
+        let (mut doc, nodes, _ids) = document(1);
+        let mut log = RevisionLog::new(1);
+        // Settle an empty log, which is what a client does at join: from here the horizon is
+        // a boundary rather than a coincidence.
+        log.settle(log.head());
+        for step in 0..6_u32 {
+            let tx = typing(u128::from(step) + 1, log.head(), nodes[0], step, "x");
+            log.apply(&mut doc, tx).expect("a keystroke applies");
+        }
+        assert_eq!(
+            log.unordered_commits(),
+            6,
+            "nothing was acknowledged, so every commit is this replica's own in-flight work"
+        );
+        assert_eq!(
+            log.commits().len(),
+            6,
+            "the group bound evicted work no relay has ordered, which is what makes a rebase \
+             unable to roll back"
+        );
+        // Once they are ordered, the bound applies again — the yield is to the horizon, not a
+        // licence to grow for ever.
+        log.settle(log.head());
+        let tx = typing(7, log.head(), nodes[0], 6, "x");
+        log.apply(&mut doc, tx).expect("a keystroke applies");
+        assert!(
+            log.commits().len() < 7,
+            "the bound did not resume once the work was ordered: {} commits retained",
+            log.commits().len()
         );
     }
 
