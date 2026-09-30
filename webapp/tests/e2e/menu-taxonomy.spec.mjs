@@ -14,6 +14,7 @@ import {
   runAppMenuCommand,
   runFilePageCommand,
   useCompactChrome,
+  revealMenuRow,
 } from "./fixtures.mjs";
 import { APP_MENU_SECTIONS } from "../../src/command_taxonomy.mjs";
 
@@ -83,7 +84,7 @@ test("the Table menu lists its commands with the caret outside a table, greyed",
   }
 
   await openAppMenu(page, "table");
-  const row = page.locator('#appMenuPopover .app-menu-item[data-command="table.insert.rowAbove"]');
+  const row = await revealMenuRow(page, "table.insert.rowAbove");
   await expect(row).toBeDisabled();
   // Disabled without a reason is a dead end; the row must say what to do.
   await expect(row).toHaveAttribute("title", /caret in a table/i);
@@ -106,9 +107,7 @@ test("a Table menu row runs the real engine action on a real table", async ({
 
   // With the caret in the table the same row must now be live...
   await openAppMenu(page, "table");
-  await expect(
-    page.locator('#appMenuPopover .app-menu-item[data-command="table.insert.rowAbove"]'),
-  ).toBeEnabled();
+  await expect(await revealMenuRow(page, "table.insert.rowAbove")).toBeEnabled();
   await page.keyboard.press("Escape");
 
   // ...and running it must change the DOCUMENT, not merely close the menu.

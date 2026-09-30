@@ -18,6 +18,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   openAppMenu,
+  revealMenuRow,
 } from "./fixtures.mjs";
 
 const MARKER = "CRASHRECOVERYMARKER";
@@ -90,7 +91,7 @@ test("work typed before a renderer crash is offered back, and comes back", async
   // restored document now asks first, because `documentIsDirty()` says the
   // work is still unsaved.
   await openAppMenu(recovered, "file");
-  await recovered.locator('#appMenuPopover .app-menu-item[data-command="file.new"]').click();
+  await (await revealMenuRow(recovered, "file.new")).click();
   await expect(recovered.locator("#confirmDialog")).toBeVisible();
   await recovered.locator("#confirmCancel").click();
 
@@ -144,7 +145,7 @@ test("saving clears the draft, so the next load offers nothing", async ({ page }
   // Save through the real File ▸ Save route; the bytes leave the editor.
   const download = page.waitForEvent("download");
   await openAppMenu(page, "file");
-  await page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]').click();
+  await (await revealMenuRow(page, "file.save")).click();
   await download;
   await expect(page.locator("#documentStateText")).toHaveText("Downloaded");
   await expect(page.locator("#draftStatus")).toBeHidden();

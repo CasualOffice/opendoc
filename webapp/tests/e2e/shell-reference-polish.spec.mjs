@@ -8,6 +8,7 @@ import {
   openAppMenu,
   openFilePage,
   expectEditorFocused,
+  revealMenuRow,
 } from "./fixtures.mjs";
 
 test("the reference typography and icons load locally", async ({ page, consoleErrors }) => {
@@ -98,9 +99,7 @@ test("the no-document state keeps only useful top-bar actions", async ({ page, c
   // The capabilities are still reachable, which is the half that matters: the
   // File menu is present and offers Open even with no document loaded.
   await openAppMenu(page, "file");
-  await expect(
-    page.locator('#appMenuPopover .app-menu-item[data-command="file.open"]'),
-  ).toBeEnabled();
+  await expect(await revealMenuRow(page, "file.open")).toBeEnabled();
   await page.keyboard.press("Escape");
   expect(consoleErrors).toEqual([]);
 });

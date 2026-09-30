@@ -16,6 +16,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   openAppMenu,
+  revealMenuRow,
 } from "./fixtures.mjs";
 
 /** What the tab reads with no document open — the static fallback in the HTML,
@@ -53,7 +54,7 @@ test("unsaved changes are marked in the tab, and saving clears the mark", async 
 
   const download = page.waitForEvent("download");
   await openAppMenu(page, "file");
-  await page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]').click();
+  await (await revealMenuRow(page, "file.save")).click();
   await download;
   await expect(page).toHaveTitle("opendoc-demo.docx — OpenDoc");
 });
@@ -73,7 +74,7 @@ test("renaming the document renames the tab", async ({ page }) => {
 test("a new blank document names itself in the tab", async ({ page }) => {
   await gotoEditor(page);
   await openAppMenu(page, "file");
-  await page.locator('#appMenuPopover .app-menu-item[data-command="file.new"]').click();
+  await (await revealMenuRow(page, "file.new")).click();
   await expect(page.locator("#docTitle")).toHaveValue("Untitled document.docx");
   await expect(page).toHaveTitle("Untitled document.docx — OpenDoc");
 });
