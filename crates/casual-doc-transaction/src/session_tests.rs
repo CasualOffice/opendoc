@@ -29,7 +29,7 @@ use crate::protocol::{
     Base, ClientId, ClientMessage, Identity, Join, MAX_OUTSTANDING, Outcome, PROTOCOL_VERSION,
     Refusal, Resume, ResumeKey, Revision, Seq, ServerMessage,
 };
-use crate::wire::{Clash, IdSpace, WireOperation};
+use crate::wire::{self, Clash, Collision, IdSpace, WireOperation};
 use crate::{Coalesce, RevisionLog, Transaction, TransactionId};
 
 use super::{ClientSession, ServerSession, SessionError};
@@ -375,10 +375,10 @@ fn every_refusal_code_has_a_row_in_the_register() {
 #[test]
 fn two_participants_never_share_an_identity_space() {
     let (document, _) = seed();
-    let base = IdSpace::for_document(&document);
+    let base = wire::document_space(&document);
     let mut seen = std::collections::BTreeSet::new();
     for number in 0..2048_u64 {
-        let space = IdSpace::of(base, ClientId::new(number)).expect("a space");
+        let space = wire::space_of(base, ClientId::new(number)).expect("a space");
         assert!(
             seen.insert(space.get()),
             "participant {number} was given a space another already had"
@@ -389,22 +389,25 @@ fn two_participants_never_share_an_identity_space() {
             "participant {number} was given the document's own space, where imported nodes live"
         );
     }
-    // The one participant number the function refuses, rather than leaving as a remark.
-    assert!(IdSpace::of(base, ClientId::new(u64::MAX)).is_none());
+    // The two participant numbers the function refuses, rather than leaving as a remark:
+    // one would alias the document's own space, the other the reserved offline space.
+    assert!(wire::space_of(base, ClientId::new(u64::MAX - 1)).is_none());
+    assert!(wire::space_of(base, ClientId::new(u64::MAX)).is_none());
 }
 
 #[test]
 fn an_identity_minted_in_the_document_s_own_space_is_refused() {
-    // THIS IS TODAY'S LIVE EDITOR. `casual-doc-wasm` derives its minting namespace from the
-    // document — `(document.id() >> 64) ^ 0xED17_ED17_ED17_ED17` — and starts its counter at
-    // one, so two replicas of one document mint identical ids for different nodes from the
-    // first edit. Not an id that means something else on the receiver: two nodes with one
-    // name.
+    // The document's own space is where the IMPORTER mints, identically on every replica, so
+    // nobody may introduce into it. Until the identity partition landed this was also the
+    // live editor's space — `(document.id() >> 64) ^ 0xED17_ED17_ED17_ED17`, a document-
+    // derived constant — which is why a session could refuse every arrival an editor made
+    // and collaboration could not run. The editor now mints through `IdSpace`; this guard
+    // keeps the importer's space closed.
     let (document, paragraphs) = seed();
     let mut server = ServerSession::default();
     let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
 
-    let document_space = IdSpace::for_document(&document);
+    let document_space = wire::document_space(&document);
     let mut as_the_editor_does = IdGenerator::new(document_space.get());
     let colliding = as_the_editor_does.next_id().expect("id");
     let operation = Operation::SplitParagraph {
@@ -440,8 +443,8 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
     // "insert OR replace" by design, so without this check the arrival silently overwrites
     // the receiver's own style and the loss is invisible to everything.
     let (mut document, _) = seed();
-    let base = IdSpace::for_document(&document);
-    let sender_space = IdSpace::of(base, ClientId::new(0)).expect("a space");
+    let base = wire::document_space(&document);
+    let sender_space = wire::space_of(base, ClientId::new(0)).expect("a space");
     let contested = StyleId::new(IdGenerator::new(sender_space.get()).next_id().expect("id"));
     document
         .definitions_mut()
@@ -492,7 +495,7 @@ fn an_operation_that_under_declares_what_it_introduces_is_refused() {
     let (document, paragraphs) = seed();
     let mut server = ServerSession::default();
     let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
-    let space = IdSpace::of(IdSpace::for_document(&document), ClientId::new(0)).expect("a space");
+    let space = wire::space_of(wire::document_space(&document), ClientId::new(0)).expect("a space");
     let minted = IdGenerator::new(space.get()).next_id().expect("id");
 
     // An operation prepared honestly, then stripped of its declaration.
@@ -523,6 +526,122 @@ fn an_operation_that_under_declares_what_it_introduces_is_refused() {
         }
         other => panic!("expected an undeclared identity, got {other:?}"),
     }
+}
+
+#[test]
+fn the_space_a_replica_mints_in_offline_is_no_participant_s_space() {
+    // The reserved third space. A replica with no session still has to mint — local-first is
+    // not negotiable — so it mints in `IdSpace::local`. If a participant could ever be handed
+    // that space, a document edited offline and then shared into a room would have its ids
+    // re-minted underneath it by whoever drew that number.
+    let (document, _) = seed();
+    let base = wire::document_space(&document);
+    let offline = IdSpace::local(base);
+    assert_ne!(offline, base, "the offline space is the importer's space");
+
+    for number in 0..4096_u64 {
+        let space = wire::space_of(base, ClientId::new(number)).expect("a space");
+        assert_ne!(
+            space, offline,
+            "participant {number} was handed the space an offline replica mints in"
+        );
+    }
+    // The property, not the sample: `space(c) == local` needs `K * (c + 2) == K * 1`, and `K`
+    // odd makes that `c == u64::MAX` — the number the derivation refuses.
+    assert!(wire::space_of(base, ClientId::new(u64::MAX)).is_none());
+}
+
+#[test]
+fn an_identity_minted_in_the_offline_space_is_refused_from_a_session() {
+    // The offline space is private to a replica, so nothing may introduce into it over the
+    // wire: two participants sending from it would be the very collision this partition
+    // exists to make impossible.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
+
+    let offline = IdSpace::local(wire::document_space(&document));
+    let minted = IdGenerator::new(offline.get()).next_id().expect("id");
+    let arrival = crate::protocol::Arrival {
+        revision: Revision::new(1),
+        client: ClientId::new(0),
+        operations: vec![WireOperation::of(Operation::SplitParagraph {
+            at: Pos::new(paragraphs[0], 4),
+            new_id: minted,
+            properties: None,
+        })],
+    };
+    let error = receiver
+        .receive(&arrival)
+        .expect_err("an id from the offline space cannot be accepted");
+    assert!(matches!(
+        error,
+        SessionError::IdCollision(Collision {
+            clash: Clash::ForeignSpace { .. },
+            ..
+        })
+    ));
+    assert_eq!(error.refusal().code(), "ODC-7008");
+}
+
+#[test]
+fn two_replicas_introducing_a_definition_at_once_do_not_contend_for_one_id() {
+    // The decisive shape, and the sibling's standing rule for it: **the receiver already
+    // holds a different entry at the id its own mint produced.** Both replicas perform the
+    // *same* action — define a style — with allocators in the same state, which is exactly
+    // the case a document-derived namespace turned into a silent overwrite.
+    //
+    // What makes this able to fail: the receiver's own style is already in its table under
+    // the id ITS allocator minted, and the assertion at the end reads that entry back by
+    // name. A partition that did not partition would put the sender's style at that id and
+    // `SetStyleDefinition`'s "insert or replace" would swallow it without an error.
+    let (document, _) = seed();
+    let mut server = ServerSession::default();
+    let mut sender = Replica::join(&document, &mut server, "sender", "ada");
+    let mut receiver = Replica::join(&document, &mut server, "receiver", "grace");
+    assert_ne!(
+        sender.session.id_space(),
+        receiver.session.id_space(),
+        "the relay handed two participants one space"
+    );
+
+    let senders_id = StyleId::new(sender.ids.next_id().expect("id"));
+    let receivers_id = StyleId::new(receiver.ids.next_id().expect("id"));
+    assert_ne!(
+        senders_id, receivers_id,
+        "two replicas minted one id for two different styles"
+    );
+
+    receiver
+        .document
+        .definitions_mut()
+        .styles
+        .insert(receivers_id, style("the receiver's own"));
+
+    sender.edit(
+        "Define a style",
+        vec![Operation::SetStyleDefinition {
+            id: senders_id,
+            style: Some(Box::new(style("the sender's"))),
+        }],
+    );
+    let fanned = sender.exchange(&mut server);
+    assert_eq!(fanned.len(), 1);
+    receiver
+        .receive(&fanned[0])
+        .expect("a concurrently introduced definition arrives");
+
+    let styles = &receiver.document.definitions().styles;
+    assert_eq!(
+        styles.get(&receivers_id).and_then(|held| held.name.clone()),
+        Some("the receiver's own".to_owned()),
+        "the arrival overwrote the definition this replica minted"
+    );
+    assert_eq!(
+        styles.get(&senders_id).and_then(|held| held.name.clone()),
+        Some("the sender's".to_owned()),
+        "the arrival's own definition is not in the receiver's table"
+    );
 }
 
 // ---------------------------------------------------------------------------------------

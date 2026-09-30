@@ -181,13 +181,23 @@ loss, from ordinary typing, on the first edit.
 > **An introduction needs a private space; a reference needs the order.**
 
 - *Introductions* — the ids an operation mints — must come from a space nobody else mints in.
-  `wire::IdSpace::of(document_space, client)` derives one per participant and is **injective
-  in the participant number**: `space(c) = base ^ (K · (c + 1))` with `K` odd, so `c ↦ K·(c+1)`
-  is a bijection on `u64` and xor with a constant is a bijection. Not "unlikely to collide" —
-  cannot. It is also never the document's own space, which would need `c = u64::MAX`, and that
-  participant number is refused rather than left as a remark.
+  `IdSpace::participant(document_space, number)` derives one per participant and is
+  **injective in the participant number**: `space(c) = base ^ (K · (c + 2))` with `K` odd, so
+  `c ↦ K·(c+2)` is a bijection on `u64` and xor with a constant is a bijection. Not "unlikely
+  to collide" — cannot.
+- Two values are **reserved** and no participant number can be handed either: `base` itself,
+  where the importer mints, and `base ^ K`, where a replica with **no session** mints
+  (`IdSpace::local`, §4.4). Reaching them would need `c + 2 == 0` and `c + 2 == 1`; both
+  overflow, and `IdSpace::participant` returns `None` for those two numbers rather than
+  leaving it as a remark.
 - It is **derived, not carried**: a receiver computes the sender's space from the arrival's
   `client` field, so there is no wire field to forge and no table to keep in step.
+- **It lives in `casual-doc-model`, not in this crate.** Identity is a property of the model,
+  and the live editor has to mint in a partitioned space whether or not it is in a session —
+  so hosting the partition here would have made single-user editing depend on the
+  collaboration modules, which `the_live_editor_has_no_collaboration_dependency` forbids.
+  `wire` re-exports `IdSpace` and adds `wire::space_of`, the one-line adapter from this
+  crate's `ClientId` to the model's derivation, so there is one derivation and not two.
 - *References* — ids an operation names but did not mint — are safe because the session is
   **totally ordered** and everyone starts from one snapshot: the operation that created a
   definition is ordered before any operation that names it.
@@ -208,7 +218,7 @@ would make it permanent.
 Any new definition table added to `v1::Definitions` must, **in the same change**:
 
 1. have the operation that creates an entry **carry the value**, not just the key;
-2. mint its key through the session's `IdSpace`, never through a document-derived one;
+2. mint its key through `IdSpace::participant` (or `IdSpace::local` with no session), never through a document-derived one;
 3. add its variant to `wire::WireOperation::introduces` — an exhaustive match with no wildcard
    arm, so this one is a compile error rather than a review comment;
 4. add its table to `wire::Table` and to `localise`'s collision check;
@@ -216,14 +226,82 @@ Any new definition table added to `v1::Definitions` must, **in the same change**
    An id that lines up by accident proves nothing, and a test that merely round-trips a value
    proves less.
 
-### 4.4 What this does not fix, and who owns it
+### 4.4 The live editor mints in the partition — closed 2026-10-01
 
-The live editor still derives its minting namespace from the document. **This increment does
-not change `casual-doc-wasm`** (§9), so the fix — an editor that mints in a session-supplied
-space — is the next increment's first item. Until then a session refuses every arrival that
-introduces an id, loudly and with a code, which is the right failure: the alternative is the
-silent overwrite. `an_identity_minted_in_the_document_s_own_space_is_refused` pins exactly
-that, against exactly today's derivation.
+The previous revision of this section recorded the live editor as unfixed: it derived its
+minting namespace from the document — `(document.id() >> 64) ^ 0xED17_ED17_ED17_ED17` — so two
+replicas minted identical ids for different nodes from the first edit, and a session refused
+every arrival that introduced one with `ODC-7008`. That refusal was honest and it meant
+**collaboration could not run at all**. It is now closed.
+
+**The established pattern, named before the code.** This is a namespace-partitioning problem
+and the prior art is **participant-prefixed identifiers** — the *site id* of Jupiter/Wave OT,
+and of every CRDT that mints identity (Yjs's `(client, clock)`, Automerge's
+`(actor, counter)`). A `NodeId` is already `(namespace, counter)`, so the partition costs no
+new field and no new type. The alternative prior art, a **minted-range allocator** where a
+coordinator hands each replica a block of ids to spend, is rejected for one reason: a replica
+with no block cannot mint, so the first keystroke of a local-first document would have to wait
+for a server. Site-id partitioning needs no round trip.
+
+**Three spaces, provably disjoint.** With `base` the document's own space and `K` odd:
+
+| Space | Value | Who mints in it | When |
+| --- | --- | --- | --- |
+| document | `base` | the importer | once, at open |
+| offline | `base ^ K` | a replica with **no session** | every keystroke until a room is joined |
+| participant `c` | `base ^ (K · (c + 2))` | one session participant | after `adoptParticipantIdentity(c)` |
+
+**Which id families this covers, enumerated from the code rather than from a list.** Every one
+of `StyleId`, `AbstractNumberingId`, `NumberingInstanceId`, `MediaId`, `SectionId`, `NoteId`,
+`HeaderFooterId`, `CommentId`, `BookmarkId`, `FieldRangeId` and the bare `NodeId`s of
+paragraphs, runs, tables, rows, cells, drawings, groups, text boxes, fields and content
+controls is minted in `casual-doc-wasm` through **one allocator**, `WasmDocument::edit_ids`
+(109 call sites, no second source: the only other `NodeId::from_parts` calls in the editing
+crates are inside `#[cfg(test)]` fixtures). `casual-doc-edit`'s `RunIds` trait is implemented
+for `IdGenerator`, so the run ids `apply` mints come from the same allocator. **One choke
+point, so the partition is one change at one place** — which is why this was a small change
+and not a sweep.
+
+**Where the participant number comes from, and what happens before a session exists.** The
+relay assigns it in `Welcome`; the host passes it to the engine through
+`WasmDocument::adoptParticipantIdentity(number)`. Before that call — and for a document that
+never joins anything — the editor mints in the **offline** space, which no participant number
+can be handed. So a single-user document works with no session, no server and no round trip,
+exactly as before, and minting stays one increment of a `u64`: **O(1) per keystroke**
+(`107` §4 B1). `a_document_with_no_session_still_mints_and_does_so_outside_every_participant_space`
+is what proves the local-first half rather than assuming it.
+
+Every offline replica of one document uses the *same* offline space, which is sound rather
+than lax: the protocol's precondition is that participants start from one snapshot, and an
+offline replica's own unshared edits never travel (joining settles the log at its head, §5.3).
+A per-replica random offline space would have been the Yjs/Automerge answer and would have
+traded a *provable* disjointness for a 2⁻⁶⁴ one; it is not needed here.
+
+**Backward compatibility, and the one format where it bites.** DOCX, ODT and RTF re-mint every
+id on import (`IdGenerator::new(config.id_namespace)`), so a document saved and reopened
+through them carries no old ids at all. A **normalized JSON snapshot preserves node ids
+verbatim** — so a document saved after editing comes back carrying the previous session's
+mints, and an allocator restarting its counter at one would hand them out again. That was
+already true before this change and is now fixed: `Document::highest_counter_in(space)` (one
+O(document) walk, at open and at join, never per keystroke) seeds the allocator above whatever
+the document already holds in the space it is about to mint in, and `IdGenerator::rebase`
+carries the counter across a space change so a replica **rejoining under a number it held
+before** cannot reissue. Ids already minted are never re-mapped: the id *is* the identity, so
+rewriting one would leave two replicas disagreeing about the name of a node for ever.
+
+That walk is the model's own — `validate_unique_ids` and `highest_counter_in` are two readings
+of one `visit_node_ids`, so a node kind added to the model is enumerated for both or for
+neither. Writing it exposed a gap: **`FieldRangeId` was in no walk at all**, so a duplicate
+field-range id was invisible to `validate`. It is enumerated now.
+
+**The wire consequence: none.** The sibling's hardest-won rule is *an interned id is
+replica-local — the value crosses the wire, the id never does*, and this change was checked
+against it. The space is **derived** from the `client` field a message already carries, so no
+field was added, no field was removed, and no payload changed shape. What *did* change is the
+derivation itself, and that is exactly why `PROTOCOL_VERSION` goes **1 → 2**: a version-1 peer
+and a version-2 peer compute different spaces for the same participant number and would refuse
+each other's every introduction with `ODC-7008` while both believed the message well formed. A
+silent disagreement about a derived value is the case the equality check exists for.
 
 ---
 
@@ -412,6 +490,25 @@ both invisible to every test that *constructed* a message instead of parsing one
 | Give `IdCollision` a code `docs/20` does not list | `every_refusal_code_has_a_row_in_the_register` — "*IdCollision sends ODC-7099, which docs/20 does not list*" |
 | Add an `ODC-7010` row to `docs/20` that no variant carries | the same guard, the other way — "*docs/20 lists ODC-7010, which no refusal in this crate sends*" |
 
+**The identity partition (§4.4), driven red the same way.** Four mutations, each of a
+different production line, with the failure each produced:
+
+| Mutation | What went red, and what it said |
+| --- | --- |
+| `adopt_participant_identity_internal` no longer calls `edit_ids.rebase` — the editor keeps minting where it was | `two_replicas_editing_one_document_never_mint_the_same_id`: "*two replicas minted **10** identical ids for different nodes*", listing all ten. Also `a_replica_does_not_hold_the_id_the_other_replica_introduced` ("*two replicas registered two different bookmarks under one id*"), and both rejoin guards |
+| `IdSpace::participant` back to `checked_add(1)` — the offline space stops being reserved | `a_document_with_no_session_still_mints_and_does_so_outside_every_participant_space`: "*participant 0 would mint over an offline replica's ids*", and in the transaction crate `the_space_a_replica_mints_in_offline_is_no_participant_s_space` and `an_identity_minted_in_the_offline_space_is_refused_from_a_session` |
+| `IdGenerator::rebase` resets the counter to one | `adopting_a_participant_number_never_reissues_an_id_already_minted`: "*b6f8da3d188d5c820000000000000001 was minted twice by one replica*" |
+| The open path drops `reserve_through` | `a_document_reopened_from_a_snapshot_does_not_reissue_the_ids_it_already_holds`: "*the reopened allocator is at counter 1, at or below the highest (10) the document already holds in that space*" |
+
+The third of those **passed on its first writing**, and the reason is worth recording because
+it is the shape `SKILL` §4 warns about. The rejoin guard's replica still had its earlier ids
+*in the document*, so `reserve_through`'s document scan — a second, weaker safety net — carried
+the guard and the counter never had to. The guard was rewritten to **create the condition**:
+each phase is undone, so the ids it minted are nowhere in the document, and the test asserts
+`highest_counter_in(space) == 0` before relying on anything. Those ids are still live — an
+undone commit's operations sit in the revision log holding them, and a redo or an
+already-submitted chunk would put them back — so only the carried counter keeps them spent.
+
 The convergence test is the one that matters most: two replicas typing into one paragraph at
 the same offset, one of them twice, so the rebase is of a **sequence** and not of a single
 operation — the case the probe exists for.
@@ -486,7 +583,7 @@ Each is out for a reason, not for lack of time.
 | **The relay binary** | It is a workspace member under `server/`, not a crate, and it needs the codec and a transport first. The state machine it will drive is here and is testable without it, which is the point of a state machine over supplied bytes. |
 | **Presence and cursors** | Yjs's awareness protocol, adopted not invented: one entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed. It needs no transform and no order, so it is genuinely separable — and it needs the anchor mapping `107` P-4 owes before a remote cursor can survive a structural edit. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
-| **Any `casual-doc-wasm` change** | Another lane owns that crate, and §4.4's fix belongs there. `the_live_editor_has_no_collaboration_dependency` is what stops the next increment reaching into it by accident rather than on purpose. |
+| ~~**Any `casual-doc-wasm` change**~~ | **Done 2026-10-01** (§4.4). The editor mints through the model's `IdSpace`, not through the collaboration modules, so `the_live_editor_has_no_collaboration_dependency` still holds unchanged — which is the reason the partition was put in `casual-doc-model` rather than in `wire`. |
 
 ---
 
@@ -521,7 +618,32 @@ Each is out for a reason, not for lack of time.
    have periodic snapshots carry only the mutable model and refer to them — `serde_json` writes
    a `Vec<u8>` as an array of decimal numbers, which they measured at about **four times** the
    size. That lands squarely on our verbatim-OOXML retention advantage.
-7. **Tracked changes and the order of wrapping.** `107` §8 Q3 and `150` §10 Q4 are untouched
+7. **`w:id`, the OOXML revision serial, is *not* partitioned — the one identity family this
+   change deliberately left alone.** `RevisionIdAllocator` in `casual-doc-wasm` seeds from the
+   values a document already carries and mints the lowest free integer, so two replicas
+   editing in suggesting mode mint the **same `w:id` for two different revisions**. It is a
+   real defect and it is a *different* family: a `w:id` is a document-format serial, not a
+   model identity — no operation addresses one, nothing resolves one, and it exists for OOXML
+   round-trip and for Word's "accept all by this author" grouping. Partitioning it the way
+   `NodeId` is partitioned would need a high-half participant prefix, and the value is written
+   into `w:ins`/`w:del` as a decimal string that Word reads as a 32-bit integer — so the fix
+   is a **bounded** stride (participant `c` mints values ≡ `c` mod `S`), and choosing `S`
+   trades a participant ceiling against a revision ceiling inside `i32`. That is a decision
+   with a compatibility constraint, not a mechanical change, so it is recorded here rather
+   than made silently. Until it is made, **two replicas in suggesting mode can produce
+   colliding revision serials**, and §5.3 already blocks suggesting mode from a session for an
+   unrelated reason (a commit that kept no inverse cannot be rolled back), so nothing ships
+   on top of it meanwhile.
+8. **Snapshot verification by replay across replicas is still not possible**, and this change
+   narrowed the blocker rather than removing it. `150` §9.3 named two causes: colliding ids
+   (fixed here — two replicas can no longer mint the same id) and **operations that do not
+   carry the identities they cause to be minted**. The second stands: a `FormatText` that
+   splits a run mints the tail run's id from the local `RunIds`, so two replicas replaying one
+   ordered log still produce *different* ids for the same run and the snapshots still differ
+   byte for byte. `WireOperation::introduces` already enumerates the ids an operation declares
+   in its own fields; closing this means the undeclared mints inside `apply` becoming declared
+   ones, the way `SplitParagraph` already carries `new_id`. See `150` §9.3, updated in place.
+9. **Tracked changes and the order of wrapping.** `107` §8 Q3 and `150` §10 Q4 are untouched
    here, and §5.3's suggesting-mode blocker is now a second reason they have to be settled
    before collaboration ships.
 
@@ -535,4 +657,6 @@ Each is out for a reason, not for lack of time.
 | `150` §6 last row, §10 Q2 | A `Coalesce::ContinueKeepingFirstInverse` commit "cannot say what it destroyed" — recorded as an open question | Not a question: it also cannot be **rolled back**, which makes suggesting mode unable to take part in a session at all. A blocker with a stable refusal code. |
 | `150` §10 Q1 | Base-state placement is "the sharpest edge in this design"; callers should pass `NoPlacement` and take the refusal | Closed. The rollback driver *is* at the base state when the placement is needed, so it builds one there and nowhere else. |
 | `147` §3.3 | The log has one position, `head` | Two: `head` and `horizon`. A commit above the horizon is provisional and may be re-expressed; "nothing rewrites a commit" holds for everything below it, which is everything anybody else has seen. |
-| `107` §8 Q6 | "`site_id` allocation without a mandatory server, and collision behaviour" — open | Answered by §4.2 and by a property rather than by a probability: the participant number the relay assigns *is* the site id, and `IdSpace::of` is injective in it. |
+| `107` §8 Q6 | "`site_id` allocation without a mandatory server, and collision behaviour" — open | Answered by §4.2 and by a property rather than by a probability: the participant number the relay assigns *is* the site id, and `IdSpace::participant` is injective in it. **And answered for the no-server case too** (§4.4): with no relay there is no site id, so a replica mints in a reserved offline space no participant number can be handed. |
+| `152` §4.4 (this document, previous revision) | "The live editor still derives its minting namespace from the document… the fix is the next increment's first item" | Done, 2026-10-01. §4.4 records the mechanism, the id families, the backward-compatibility case, and the four mutation proofs (§7). |
+| `152` §4.2 (this document, previous revision) | `space(c) = base ^ (K · (c + 1))`, one refused participant number | `space(c) = base ^ (K · (c + 2))`, two refused participant numbers, `base ^ K` reserved for an offline replica. `PROTOCOL_VERSION` 1 → 2, because the space is derived and two versions would disagree about it silently. |

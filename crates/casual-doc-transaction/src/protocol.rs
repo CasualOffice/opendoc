@@ -40,9 +40,16 @@ use crate::wire::WireOperation;
 /// The version both ends must agree on, checked for equality before anything else.
 ///
 /// Bump only when two peers would read one message *differently* (see the module docs).
-/// Version 1 is the first: this module has never been deployed, so there is no history to
-/// record yet.
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// - **1** — the first. Participant spaces were `base ^ (K * (client + 1))`.
+/// - **2** — participant spaces became `base ^ (K * (client + 2))`, reserving `base ^ K` for
+///   a replica minting with **no session** ([`IdSpace::local`](crate::wire::IdSpace::local)).
+///   No field changed, which is exactly why this needs a bump: the space is *derived*, so a
+///   version-1 peer and a version-2 peer compute different spaces for the same participant
+///   number and would refuse each other's every introduction with `ODC-7008` while both
+///   believed the message well formed. A silent disagreement about a derived value is the
+///   case the equality check exists for.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
 ///

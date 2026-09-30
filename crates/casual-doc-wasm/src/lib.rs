@@ -111,7 +111,7 @@ use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
 use casual_doc_model::v1::{
     Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
 };
-use casual_doc_model::{IdGenerator, NodeId};
+use casual_doc_model::{IdGenerator, IdSpace, NodeId};
 #[cfg(test)]
 use casual_doc_ooxml::DocxPackage;
 use casual_doc_ooxml::PackageLimits;
@@ -478,8 +478,20 @@ pub struct WasmDocument {
     /// says which one. Ad-hoc host booleans could not supply that, which is why
     /// entering page 3's header put the caret on page 1 and scrolled there.
     edit_context: EditContext,
-    /// Mints run identities for edits, in a namespace distinct from the imported
-    /// ids so new runs never collide with existing nodes.
+    /// Mints every identity an edit introduces — runs, paragraphs, table nodes,
+    /// comments, bookmarks, notes, header/footer bodies, numbering, media — in a
+    /// namespace **partitioned per replica**, so two people editing one document
+    /// can never mint the same id.
+    ///
+    /// With no session it is [`IdSpace::local`], a space no participant number can
+    /// be handed; [`WasmDocument::adopt_participant_identity`] moves it into the
+    /// space a relay's participant number implies. Both are distinct from the
+    /// importer's space, so a new node never collides with an imported one.
+    ///
+    /// This used to be `(document.id() >> 64) ^ 0xED17…`, a constant every replica
+    /// of one document computed identically — so two replicas minted identical ids
+    /// for different nodes from the first edit, and a session had to refuse every
+    /// arrival that introduced one (`152` §4.4).
     edit_ids: IdGenerator,
     /// The document's own history, as an ordered append-only chain of committed
     /// transactions (doc 147 §3.3, ADR-043). Every mutation — a keystroke, an
@@ -12479,6 +12491,51 @@ impl WasmDocument {
             .map_err(|e| to_js(format!("export failed: {e:?}")))
     }
 
+    /// Moves this replica's minting into the space a relay's participant number implies.
+    ///
+    /// The host calls this **once**, with the participant number the room assigned it,
+    /// before the first edit it intends to share. Everything the editor mints afterwards —
+    /// runs, paragraphs, table nodes, comments, bookmarks, notes, header/footer bodies,
+    /// numbering, media — lands in a space no other participant can mint in, so two people
+    /// editing one document never produce the same id for two different nodes.
+    ///
+    /// **A document with no session must not call it, and does not need to.** Minting works
+    /// with no server and no participant number at all: until this is called the editor
+    /// mints in the reserved offline space, which is a space this function can never return.
+    /// Local-first is unchanged by the existence of this seam.
+    ///
+    /// # What it deliberately does not do
+    ///
+    /// It does **not** re-map ids already minted. An id *is* the identity here, so rewriting
+    /// one would leave two replicas disagreeing about the name of a node and make a
+    /// byte-comparable snapshot impossible for ever (`150` §9.3). Ids minted before the call
+    /// stay where they were; only future ones move.
+    ///
+    /// # Complexity
+    ///
+    /// One O(document) walk, to guarantee the counter starts above anything the document
+    /// already holds in the space being entered — which is what makes rejoining under a
+    /// number this replica held before safe. Called once per join, never per keystroke.
+    ///
+    /// # Errors
+    ///
+    /// The two participant numbers that would alias a reserved space (`u64::MAX` and
+    /// `u64::MAX - 1`) are refused rather than silently aliased.
+    #[wasm_bindgen(js_name = adoptParticipantIdentity)]
+    pub fn adopt_participant_identity(&mut self, participant: u64) -> Result<(), JsValue> {
+        self.adopt_participant_identity_internal(participant)
+            .map_err(to_js)
+    }
+
+    /// The namespace this replica currently mints in, as 16 lowercase hex digits.
+    ///
+    /// Host-visible so an integration can assert its replicas are partitioned rather than
+    /// assume it, and so a support report can say which space a node id came from.
+    #[wasm_bindgen(getter, js_name = identitySpace)]
+    pub fn identity_space(&self) -> String {
+        format!("{:016x}", self.edit_ids.namespace())
+    }
+
     /// Returns the stable format identifier detected for the open source.
     #[wasm_bindgen(getter, js_name = sourceFormat)]
     pub fn source_format(&self) -> String {
@@ -12577,6 +12634,26 @@ impl MediaSource for BorrowedMedia<'_> {
 /// these run under `cargo test` on native targets, where constructing a `JsValue`
 /// would panic ("cannot call wasm-bindgen imported functions on non-wasm targets").
 impl WasmDocument {
+    /// See [`WasmDocument::adopt_participant_identity`]. Plain `Result<_, String>` so the
+    /// two-replica guards run under `cargo test` on native targets.
+    fn adopt_participant_identity_internal(&mut self, participant: u64) -> Result<(), String> {
+        let base = IdSpace::of_document(self.document.id());
+        let space = IdSpace::participant(base, participant).ok_or_else(|| {
+            format!(
+                "participant number {participant} has no identity space of its own; \
+                 the two highest numbers alias the document's own space and the offline space"
+            )
+        })?;
+        // Rebase keeps the counter, and the reserve lifts it above anything the document
+        // already holds in the space being entered. Together they mean a replica rejoining
+        // under a number it held before — or joining a room whose document already carries
+        // that participant's work — cannot reissue an id.
+        self.edit_ids.rebase(space.get());
+        self.edit_ids
+            .reserve_through(self.document.highest_counter_in(space));
+        Ok(())
+    }
+
     /// See [`WasmDocument::comment_thread`]. Split out as a plain
     /// `Result<_, String>` helper (rather than `JsValue`) so it is callable
     /// from native (non-wasm) unit tests, matching `page_size_inner`.
@@ -23649,9 +23726,16 @@ fn open_document_bounded(
     };
     let default_config = document_page_config(&document);
 
-    // Edits allocate run ids in a namespace derived from — but distinct from —
-    // the document's own, so a new run can never collide with an imported node.
-    let edit_namespace = ((document.id().as_u128() >> 64) as u64) ^ 0xED17_ED17_ED17_ED17;
+    // Edits allocate ids in the OFFLINE space of this document's identity partition
+    // (`IdSpace::local`) — distinct from the importer's space, so a new node never collides
+    // with an imported one, and distinct from every space a session participant can be
+    // handed, so a document edited with no server can still join a room. Seeded above
+    // whatever that space already holds, because a normalized JSON snapshot preserves node
+    // ids verbatim: a reopened document carries the previous session's mints, and a counter
+    // restarting at one would reissue them. One O(document) walk at open; nothing per
+    // keystroke (`107` §4 B1).
+    let mut edit_ids = IdGenerator::new(IdSpace::local(IdSpace::of_document(document.id())).get());
+    edit_ids.reserve_through(document.highest_counter_in(IdSpace::new(edit_ids.namespace())));
     let revision_ids = RevisionIdAllocator::from_document(&document);
 
     Ok(WasmDocument {
@@ -23667,7 +23751,7 @@ fn open_document_bounded(
             import_report_json,
         },
         default_config,
-        edit_ids: IdGenerator::new(edit_namespace),
+        edit_ids,
         log: RevisionLog::default(),
         next_transaction: 0,
         typing_history: None,
@@ -43101,5 +43185,384 @@ mod tests {
             "a cell holding a text box inside an inline content control handed back \
              a contiguous range straight across a separate editing surface"
         );
+    }
+
+    // ---- Replica-safe identity — doc 152 §4, ADR-047 ----------------------
+    //
+    // The editing path mints every identity through ONE allocator, `edit_ids`, so
+    // the partition is one change at one place. These guards are about what two
+    // replicas of one document produce, because that is the only place the defect
+    // was ever visible: each replica on its own was always self-consistent.
+
+    /// Every id `edit_ids` handed out while `script` ran, computed from the
+    /// allocator's own counter so nothing is missed — a mint that never reached
+    /// the document is still a mint, and would still collide.
+    fn ids_minted_by(d: &mut WasmDocument, script: impl FnOnce(&mut WasmDocument)) -> Vec<NodeId> {
+        let namespace = d.edit_ids.namespace();
+        let first = d.edit_ids.next_counter();
+        script(d);
+        assert_eq!(
+            namespace,
+            d.edit_ids.namespace(),
+            "the script moved the minting space; this helper assumes it is fixed"
+        );
+        (first..d.edit_ids.next_counter())
+            .map(|counter| NodeId::from_parts(namespace, counter).expect("a valid id"))
+            .collect()
+    }
+
+    /// The low half of a node id: its counter within a space.
+    fn counter_of(id: &NodeId) -> u64 {
+        (id.as_u128() & u128::from(u64::MAX)) as u64
+    }
+
+    /// The edits a person makes in the first minute of a document, chosen because
+    /// each one introduces a DIFFERENT id family: a bookmark and its two markers,
+    /// a note, a paragraph, and the run a mid-run format has to split off.
+    fn a_minute_of_editing(d: &mut WasmDocument) {
+        let node = d.first_position().node();
+        // `is_ok()` rather than `expect`: the error is a `JsValue`, and formatting one
+        // on a native target panics inside wasm-bindgen — which would replace a
+        // readable failure with "cannot call wasm-bindgen imported functions".
+        assert!(
+            d.create_bookmark(&node, 0, &node, 5, "anchor".to_owned())
+                .is_ok(),
+            "create bookmark was refused"
+        );
+        assert!(
+            d.insert_footnote(&node, 0).is_ok(),
+            "insert footnote was refused"
+        );
+        assert!(
+            d.split_paragraph(&node, 5).is_ok(),
+            "split paragraph was refused"
+        );
+        assert!(
+            d.format_text(&node, 1, 3, Some(true), None, None, None)
+                .is_ok(),
+            "formatting a slice of a run was refused"
+        );
+    }
+
+    #[test]
+    fn two_replicas_editing_one_document_never_mint_the_same_id() {
+        // Identical bytes, so both replicas compute the same document id and the
+        // same base space — which is the case the old derivation turned into two
+        // nodes with one name from the very first edit.
+        let bytes = text_of_lines(3);
+        let mut ada = open_document(&bytes).expect("must open");
+        let mut grace = open_document(&bytes).expect("must open");
+        assert_eq!(
+            ada.document.id(),
+            grace.document.id(),
+            "the two replicas are not of one document, so this proves nothing"
+        );
+
+        ada.adopt_participant_identity_internal(0).expect("a space");
+        grace
+            .adopt_participant_identity_internal(1)
+            .expect("a space");
+
+        let ada_ids = ids_minted_by(&mut ada, a_minute_of_editing);
+        let grace_ids = ids_minted_by(&mut grace, a_minute_of_editing);
+        assert!(
+            !ada_ids.is_empty() && ada_ids.len() == grace_ids.len(),
+            "the two replicas did not do the same work: {} against {}",
+            ada_ids.len(),
+            grace_ids.len()
+        );
+
+        // 1. Disjoint. The property under test.
+        let ada_set: BTreeSet<NodeId> = ada_ids.iter().copied().collect();
+        let shared: Vec<NodeId> = grace_ids
+            .iter()
+            .copied()
+            .filter(|id| ada_set.contains(id))
+            .collect();
+        assert!(
+            shared.is_empty(),
+            "two replicas minted {} identical ids for different nodes: {shared:?}",
+            shared.len()
+        );
+
+        // 2. Partitioned, not merely different. An id that failed to line up by
+        //    accident would satisfy (1); this says WHY each id is safe — it is in
+        //    the space its own participant number derives, and in no other.
+        let base = IdSpace::of_document(ada.document.id());
+        let ada_space = IdSpace::participant(base, 0).expect("a space");
+        let grace_space = IdSpace::participant(base, 1).expect("a space");
+        assert_ne!(ada_space, grace_space);
+        for id in &ada_ids {
+            assert!(
+                ada_space.holds(*id) && !grace_space.holds(*id),
+                "{id} is not in the space participant 0 mints in"
+            );
+        }
+        for id in &grace_ids {
+            assert!(
+                grace_space.holds(*id) && !ada_space.holds(*id),
+                "{id} is not in the space participant 1 mints in"
+            );
+        }
+
+        // 3. The ids reached the documents. Without this the test is arithmetic on
+        //    a counter and would hold even if the editor minted from somewhere else.
+        assert_eq!(
+            ada.document.highest_counter_in(ada_space),
+            ada_ids.iter().map(counter_of).max().expect("ids"),
+            "the ids this replica minted are not the ones in its document"
+        );
+        assert_eq!(
+            grace.document.highest_counter_in(grace_space),
+            grace_ids.iter().map(counter_of).max().expect("ids"),
+            "the ids this replica minted are not the ones in its document"
+        );
+    }
+
+    #[test]
+    fn a_replica_does_not_hold_the_id_the_other_replica_introduced() {
+        // The sibling's standing rule: a test where **the receiver already holds a
+        // different entry at that id** proves something, and an id that happens to
+        // agree proves nothing. So both replicas create a bookmark — the same
+        // action, with allocators in the same state — and the assertion is that
+        // each one's registered bookmark id is FREE in the other's table. Under a
+        // shared namespace both sat at one id, and `CreateBookmark` arriving there
+        // would have replaced a name the receiver had minted, silently.
+        let bytes = text_of_lines(3);
+        let mut ada = open_document(&bytes).expect("must open");
+        let mut grace = open_document(&bytes).expect("must open");
+        ada.adopt_participant_identity_internal(0).expect("a space");
+        grace
+            .adopt_participant_identity_internal(1)
+            .expect("a space");
+
+        fn named(d: &mut WasmDocument, name: &str) -> NodeId {
+            let node = d.first_position().node();
+            assert!(
+                d.create_bookmark(&node, 0, &node, 5, name.to_owned())
+                    .is_ok(),
+                "create bookmark was refused"
+            );
+            let entries = d.bookmark_entries();
+            assert_eq!(entries.len(), 1);
+            let (id, held) = entries[0].split_once('\t').expect("an id and a name");
+            assert_eq!(held, name);
+            id.parse::<NodeId>().expect("a node id")
+        }
+        let ada_bookmark = named(&mut ada, "ada's anchor");
+        let grace_bookmark = named(&mut grace, "grace's anchor");
+
+        assert_ne!(
+            ada_bookmark, grace_bookmark,
+            "two replicas registered two different bookmarks under one id"
+        );
+        assert!(
+            !grace
+                .document
+                .definitions()
+                .bookmarks
+                .contains_key(&BookmarkId::new(ada_bookmark)),
+            "the id ada introduced is already taken in grace's table, so an arrival \
+             carrying it would overwrite an entry grace minted"
+        );
+        assert!(
+            !ada.document
+                .definitions()
+                .bookmarks
+                .contains_key(&BookmarkId::new(grace_bookmark)),
+            "the id grace introduced is already taken in ada's table"
+        );
+    }
+
+    #[test]
+    fn a_document_with_no_session_still_mints_and_does_so_outside_every_participant_space() {
+        // Local-first, unchanged: no session, no server, no participant number, and
+        // the editor still mints. And the space it mints in is one no participant
+        // can be handed, so joining a room later cannot have somebody else re-mint
+        // over what was written offline.
+        let mut alone = open_document(&text_of_lines(3)).expect("must open");
+        let base = IdSpace::of_document(alone.document.id());
+        let offline = IdSpace::local(base);
+        assert_eq!(
+            alone.identity_space(),
+            format!("{:016x}", offline.get()),
+            "an editor with no session is not minting in the reserved offline space"
+        );
+
+        let minted = ids_minted_by(&mut alone, a_minute_of_editing);
+        assert!(!minted.is_empty(), "editing alone minted nothing");
+        for id in &minted {
+            assert!(offline.holds(*id), "{id} escaped the offline space");
+        }
+        for number in 0..512_u64 {
+            let space = IdSpace::participant(base, number).expect("a space");
+            assert_ne!(
+                space, offline,
+                "participant {number} would mint over an offline replica's ids"
+            );
+        }
+    }
+
+    #[test]
+    fn adopting_a_participant_number_never_reissues_an_id_already_minted() {
+        // A replica REJOINING under a number it held before — a reconnect — must not
+        // hand out an id it already handed out.
+        //
+        // **The condition this creates on purpose:** each phase is UNDONE, so the
+        // ids it minted are no longer anywhere in the document. That is what makes
+        // the guard able to fail. Scanning the document for the highest counter in
+        // a space is a second, weaker safety net, and it sees nothing here — the
+        // nodes are gone. Only the allocator's own counter, carried across the
+        // space change, keeps those ids spent. And they ARE still live: an undone
+        // commit's operations sit in the revision log holding them, and a redo or
+        // an already-submitted chunk would put them back.
+        let mut d = open_document(&text_of_lines(3)).expect("must open");
+
+        let phase = |d: &mut WasmDocument| -> Vec<NodeId> {
+            let minted = ids_minted_by(d, a_minute_of_editing);
+            while d.can_undo() {
+                assert!(d.undo().is_ok(), "undo was refused");
+            }
+            minted
+        };
+
+        let offline = phase(&mut d);
+        d.adopt_participant_identity_internal(4).expect("a space");
+        let first_join = phase(&mut d);
+        d.adopt_participant_identity_internal(9).expect("a space");
+        let elsewhere = phase(&mut d);
+        // Back to the number held before, the shape a reconnect takes.
+        d.adopt_participant_identity_internal(4).expect("a space");
+        let rejoin = phase(&mut d);
+
+        let space =
+            IdSpace::participant(IdSpace::of_document(d.document.id()), 4).expect("a space");
+        assert_eq!(
+            d.document.highest_counter_in(space),
+            0,
+            "the undone edits left ids in the document, so the document scan could \
+             carry this guard and the counter would not have to"
+        );
+
+        let mut seen = BTreeSet::new();
+        for id in offline
+            .iter()
+            .chain(&first_join)
+            .chain(&elsewhere)
+            .chain(&rejoin)
+        {
+            assert!(seen.insert(*id), "{id} was minted twice by one replica");
+        }
+        assert!(
+            rejoin.iter().all(|id| space.holds(*id)),
+            "a rejoin did not return to the space its participant number derives"
+        );
+        assert!(
+            first_join.iter().map(counter_of).max() < rejoin.iter().map(counter_of).min(),
+            "the counter went backwards on re-entering a space, which is how an id \
+             comes back"
+        );
+    }
+
+    #[test]
+    fn the_two_participant_numbers_that_alias_a_reserved_space_are_refused() {
+        let mut d = open_document(&text_of_lines(3)).expect("must open");
+        let before = d.identity_space();
+        for number in [u64::MAX, u64::MAX - 1] {
+            let error = d
+                .adopt_participant_identity_internal(number)
+                .expect_err("this number has no space of its own");
+            assert!(error.contains("no identity space"), "{error}");
+        }
+        assert_eq!(
+            d.identity_space(),
+            before,
+            "a refused participant number moved the minting space anyway"
+        );
+    }
+
+    #[test]
+    fn a_document_reopened_from_a_snapshot_does_not_reissue_the_ids_it_already_holds() {
+        // Backward compatibility, and the one format where it bites. DOCX/ODT/RTF
+        // re-mint every id on import, so a round trip through them cannot collide.
+        // A normalized JSON snapshot preserves node ids VERBATIM — so a document
+        // saved after editing comes back carrying the previous session's mints, and
+        // an allocator restarting its counter at one would hand them out again.
+        let mut first = open_document(&text_of_lines(3)).expect("must open");
+        let before = ids_minted_by(&mut first, a_minute_of_editing);
+        assert!(!before.is_empty());
+
+        let snapshot = first
+            .export_as_inner(formats::NORMALIZED_JSON, "semantic")
+            .expect("export the edited document as a snapshot");
+        let mut reopened = open_document(&snapshot.bytes).expect("reopen the snapshot");
+        assert_eq!(
+            reopened.document.id(),
+            first.document.id(),
+            "the snapshot did not preserve identity, so this proves nothing"
+        );
+
+        // Stated before the first edit, so the failure names the defect rather than
+        // arriving as a refused bookmark: the allocator has to start above whatever
+        // the reopened document already holds in the space it is about to mint in.
+        let space = IdSpace::new(reopened.edit_ids.namespace());
+        let held = reopened.document.highest_counter_in(space);
+        assert!(
+            reopened.edit_ids.next_counter() > held,
+            "the reopened allocator is at counter {}, at or below the highest ({held}) \
+             the document already holds in that space — its next mint is an id the \
+             document already carries",
+            reopened.edit_ids.next_counter()
+        );
+
+        let after = ids_minted_by(&mut reopened, a_minute_of_editing);
+        let carried: BTreeSet<NodeId> = before.iter().copied().collect();
+        let reissued: Vec<NodeId> = after
+            .iter()
+            .copied()
+            .filter(|id| carried.contains(id))
+            .collect();
+        assert!(
+            reissued.is_empty(),
+            "reopening a snapshot reissued {} ids the document already holds: {reissued:?}",
+            reissued.len()
+        );
+        reopened
+            .document
+            .validate()
+            .expect("a reopened-and-edited document must still have unique ids");
+    }
+
+    #[test]
+    fn joining_a_room_whose_document_already_holds_this_participant_s_work_does_not_reissue() {
+        // The other half of the same rule, on the join path rather than the open
+        // path: a replica handed participant number 4 for a document that ALREADY
+        // carries participant 4's earlier ids — a rejoin after a reload, or a room
+        // resumed from a stored snapshot. The counter has to clear what is there.
+        let mut d = open_document(&text_of_lines(3)).expect("must open");
+        let space =
+            IdSpace::participant(IdSpace::of_document(d.document.id()), 4).expect("a space");
+        let planted = BookmarkId::new(NodeId::from_parts(space.get(), 9_999).expect("an id"));
+        d.document.definitions_mut().bookmarks.insert(
+            planted,
+            casual_doc_model::v1::Bookmark {
+                name: "left behind by an earlier connection".to_owned(),
+            },
+        );
+
+        d.adopt_participant_identity_internal(4).expect("a space");
+        let minted = ids_minted_by(&mut d, a_minute_of_editing);
+        assert!(!minted.is_empty());
+        for id in &minted {
+            assert!(space.holds(*id));
+            assert!(
+                counter_of(id) > 9_999,
+                "{id} lands on or below an id this participant already left in the \
+                 document, so a rejoin reissues it"
+            );
+        }
+        d.document
+            .validate()
+            .expect("the document must still have unique ids");
     }
 }

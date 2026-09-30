@@ -527,6 +527,20 @@ change (ADR-030 I2) to close. They are reported, not taken.
    is persisted. Closing it means the operation carrying the new run's id, as
    `SplitParagraph` already carries `new_id`.
 
+   **Updated 2026-10-01 — narrowed, not closed.** This section had two causes tangled
+   together, and one of them is gone. Until the identity partition landed (`152` §4.4,
+   ADR-047) the live editor minted in a **document-derived** namespace, so two replicas did
+   not merely assign different ids to the same run — they assigned the **same** id to two
+   different nodes, from the first edit. That is fixed: every identity the editing path mints
+   now comes from a per-participant `IdSpace`, so a collision is impossible rather than
+   unlikely.
+   What remains is exactly the sentence above, and it is now the *whole* blocker: an
+   operation that mints without declaring what it minted leaves two replicas replaying one
+   ordered log with different ids for the same run, so **snapshot verification by replay
+   across replicas is still not possible**. `WireOperation::introduces` already enumerates
+   the ids an operation declares in its own fields; what is missing is the undeclared mints
+   inside `apply`. Recorded as `152` §10 Q8.
+
 ---
 
 ## 10. Open questions — recorded, not hidden
