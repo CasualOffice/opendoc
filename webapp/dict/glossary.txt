@@ -486,6 +486,7 @@ renderers
 repaginate
 repagination
 repo
+reportable
 representable
 resizable
 restorable
@@ -520,6 +521,7 @@ struct
 structs
 stylesheet
 submenu
+subpaths
 subsetter
 subsetting
 subtree
@@ -538,6 +540,7 @@ tombstoning
 toolchain
 tooltip
 tooltips
+trendline
 tri
 twip
 twips
@@ -564,11 +567,13 @@ unrouted
 unstyled
 untracked
 untrusted
+uri
 url
 vAlign
 vMerge
 val
 validator
+var
 vertAlign
 viewport
 virtualised
