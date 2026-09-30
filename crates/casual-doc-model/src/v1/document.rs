@@ -56,6 +56,38 @@ pub struct Document {
     background: Option<RgbColor>,
 }
 
+/// How many **whole-document** validations have run on this thread since
+/// [`reset_whole_document_validations`].
+///
+/// This is instrumentation for a complexity guard, in the shape `SKILL` §8 asks for.
+/// [`Document::validate`] is O(document) by construction — 19 sub-validators, a full node-id
+/// walk and a grapheme count per run — so a per-keystroke path that calls it is O(document)
+/// per keystroke however fast it feels on a fixture. That is `104` HF-111.
+///
+/// Counting *calls* rather than milliseconds is what makes the guard able to fail honestly:
+/// the guarantee is "a keystroke runs none of these", and a clock cannot tell a
+/// whole-document pass from a slow constant.
+///
+/// Thread-local, so guards running in parallel do not observe each other's work.
+#[must_use]
+pub fn whole_document_validations() -> u64 {
+    VALIDATIONS.with(std::cell::Cell::get)
+}
+
+/// Zeroes the [`whole_document_validations`] counter for this thread.
+pub fn reset_whole_document_validations() {
+    VALIDATIONS.with(|count| count.set(0));
+}
+
+thread_local! {
+    static VALIDATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Charges one whole-document validation to this thread's counter.
+fn note_validation() {
+    VALIDATIONS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
 impl Document {
     /// Builds and validates a v1 document from constructed parts. The document
     /// carries no metadata; attach it with [`Document::with_properties`].
@@ -181,8 +213,55 @@ impl Document {
         serde_json::to_vec(self).map_err(|_| SnapshotError::Serialization)
     }
 
+    /// Validates one paragraph's inline tree, and nothing else.
+    ///
+    /// Exactly the checks [`Document::validate`] makes for a top-level paragraph's inlines:
+    /// empty runs, adjacent equivalent runs, grapheme-count overflow, the wrapper rules for
+    /// hyperlinks and fields, nesting depth, and every run/paragraph property reference
+    /// against this document's definitions.
+    ///
+    /// # Why this exists
+    ///
+    /// An operation that replaces one paragraph's inlines can break exactly these, so this
+    /// is what it has to check. Calling `validate` instead makes a per-keystroke path
+    /// O(document) — `104` HF-111, the one violation `107` §4 B1 names by number.
+    ///
+    /// # What it deliberately does not check
+    ///
+    /// **Cross-document uniqueness of node ids.** An inline carrying an id that already
+    /// exists elsewhere is not visible from one paragraph, and finding out is O(document) by
+    /// construction. That is the same residual every other content-carrying operation has
+    /// (`147` §3.2 keeps whole-document validation off the apply path deliberately, and
+    /// `152` §10 Q2 records the residual); the identity partition is what makes it
+    /// unreachable in practice, because the ids an editor mints come from a space nobody
+    /// else mints in. It is caught at the next validation point — save, export, snapshot.
+    ///
+    /// # Complexity
+    ///
+    /// O(the inlines given). Never O(document).
+    ///
+    /// # Errors
+    ///
+    /// The first invariant the tree breaks.
+    pub fn validate_paragraph_inlines(
+        &self,
+        owner: NodeId,
+        inlines: &[InlineNode],
+    ) -> Result<(), ModelError> {
+        self.validate_inlines(inlines, owner, InlineWrapper::None, 0, 0, 0)
+    }
+
     /// Validates every schema v1 invariant, first-failure-wins.
+    ///
+    /// # Complexity
+    ///
+    /// **O(document), always** — 19 sub-validators, one of which walks every node id and
+    /// another of which counts the graphemes of every run. It is a document-scale check and
+    /// must never sit on a per-keystroke path (`107` §4 B1, `147` §3.2). Each call is
+    /// charged to [`whole_document_validations`] so a guard can assert a keystroke ran none,
+    /// which a millisecond threshold could not.
     pub fn validate(&self) -> Result<(), ModelError> {
+        note_validation();
         if self.schema_version != SCHEMA_VERSION_V1 {
             return Err(ModelError::UnsupportedSchemaVersion(self.schema_version));
         }

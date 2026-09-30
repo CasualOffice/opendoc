@@ -222,7 +222,7 @@ The owner constraint, made measurable. These are exit gates for Phase 6, not gui
 
 | Budget | Rule | Why |
 | --- | --- | --- |
-| **B1** | Per-keystroke work is **O(1) in document size**. No whole-document validation, re-layout, or re-projection per keystroke | Directly violated today by `HF-111` (every suggested keystroke re-validates the whole document) — a **prerequisite fix**, not a follow-up |
+| **B1** | Per-keystroke work is **O(1) in document size**. No whole-document validation, re-layout, or re-projection per keystroke | `HF-111`'s named half is **closed 2026-10-01** — see §4.1, which also measures what is left |
 | **B2** | Transform cost per incoming remote operation is **O(concurrent ops since its base revision)**, never O(log length) and never O(document) | Bounded by the relay's ordering plus snapshot compaction (§5.2) |
 | **B3** | Typing **coalesces** into one transaction per run, split on caret discontinuity, ~500 ms idle, or a structural op | Partly built: `typing_history` already requires exact caret continuity to coalesce. One commit per character would make the log, undo, and the network all quadratic in felt cost |
 | **B4** | No operation on the typing path rewrites a paragraph. `SetInlines` is a paragraph-rewrite vehicle and must stay off that path — it is an undo/inverse mechanism, not an edit primitive | A rewrite op defeats both OT granularity and B1 |
@@ -234,6 +234,78 @@ Benchmarks to add to the existing harness (`29`), since none of the four committ
 cases covers layout, render, or repaint (`105` EV-002): local keystroke latency, remote-op
 apply latency at several concurrency depths, transform cost vs concurrent-op count, snapshot
 write cost, and cold replay from snapshot + N operations.
+
+### 4.1 What a keystroke actually costs, measured — B1
+
+Prose said B1 was violated "by `HF-111`" for months and nothing measured it, which is how a
+row stays open while everyone agrees about it. These numbers come from guards in
+`casual-doc-wasm`, on a plain-text document, with two meters that count **work** rather than
+milliseconds — a clock cannot tell a whole-document pass from a slow constant, and is flaky
+under load besides.
+
+| Path | Block visits (200 ¶) | Block visits (400 ¶) | Whole-document validations | Paragraphs indexed |
+| --- | ---: | ---: | ---: | ---: |
+| Ordinary keystroke | 400 | — | 0 | 0 |
+| Suggested keystroke, **before** | 1000 | 2000 | **1** | 200 |
+| Suggested keystroke, **after** | 800 | 1600 | **0** | **0** |
+
+Three costs were removed, and each is now held by a guard that was driven red:
+
+1. **The whole-document validation.** `UpdateReviewState` validated the entire model after
+   swapping a paragraph's inlines, and rolled back on failure. It now validates *before* the
+   swap and scoped to the inlines being written — `Document::validate_paragraph_inlines`,
+   O(the inlines given). Checking first also means a refusal never mutated anything, which is
+   a stronger guarantee than the rollback it replaces. The whole-document check is kept for
+   the one shape that needs it: a **comments-table** replacement, whose invariants are
+   cross-document, and which is a deliberate accept/reject command rather than a keystroke.
+2. **A whole-document paragraph index, built to resolve one paragraph** — in
+   `casual-doc-edit`'s duplicate/unknown-node prevalidation, which only has work to do when
+   the list has more than one entry.
+3. **A second whole-document index, in the facade's review projection**, for the same one
+   lookup. `block_visits` is blind to this — it charges a whole block list whether a walk
+   returned early or not — so a second meter, `indexed_paragraphs`, was added rather than
+   shipping the change unproven. On the owner's 1.3-million-paragraph file this was 1.3
+   million hash inserts per character.
+
+**What is left, stated rather than implied.**
+
+- **A suggested keystroke still costs twice an ordinary one** (800 against 400): the facade
+  resolves the paragraph to build the review projection, then the edit crate resolves it
+  again to mutate it. Removing that means the facade carrying the resolved paragraph into
+  the operation. The guard holds the ratio at 2× exactly, so a third pass cannot come back.
+- **Resolution is O(document) on *every* keystroke, review or not.** `blocks_owning_mut` and
+  `find_paragraph_mut` walk the surfaces to find a paragraph by id, so B1's "O(1) in document
+  size" is not met by any editing path — HF-111 was the *review-specific* part of a general
+  fact. Making it O(1) needs a node index the document deliberately does not cache
+  (`ParagraphIndex` borrows the paragraphs it points at, so storing it beside them would be
+  self-referential, and a stale index is a correctness bug where a rebuilt one is merely
+  O(n)). That is a design question, not an optimisation, and it is the honest next item for
+  B1. Both existing guards therefore hold **linearity**, not O(1), and say so.
+- **Accepting every change is quadratic.** `UpdateReviewState` with N paragraphs resolves
+  each one separately — a lookup-by-id inside a loop over ids, the exact shape that made
+  `documentOutline` never return. The index built for that path prevents the *prevalidation*
+  from being quadratic; the mutation loop after it is not fixed. Closing it means one walk
+  that swaps every target paragraph, keyed by a set.
+
+### 4.2 The benchmark gate does not exist, and the baseline cannot run
+
+Measured 2026-10-01, because §4 says "each gets a benchmark" and that had never been checked:
+
+- The harness (`tools/opendoc-benchmark`) defines **6 cases**; the committed baseline
+  (`benchmarks/baselines/mac16-12-m4-10c-16gb.json`, source revision `7581d68`) holds **4**.
+  `compare_reports` errors when the key sets differ, so the documented `--compare` invocation
+  **fails outright today** and there is no regression gate for anything.
+- **Zero of B1–B7 has a benchmark.** The closest, `sdk.typing.100_graphemes`, types into a
+  *blank* document and the two layout cases run at one fixed size — so none of them varies
+  document size, which is the only thing that could test an O(1)-in-document-size claim. No
+  case touches `transform`, coalescing, snapshot cost or replay.
+- None of the five benchmarks this section names exists.
+
+The guards in §4.1 are the interim answer and are deliberately of a different kind: they
+count work (block visits, validations, index entries) and assert **ratios at n and 2n**, so
+they run in the ordinary test job, need no baseline file, and cannot be made green by a faster
+machine. A benchmark gate measures how long something takes; these measure what it does, and
+for B1–B7 that is the property being claimed.
 
 ---
 

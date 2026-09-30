@@ -17918,8 +17918,26 @@ fn update_review_operation(
     comments: Option<DefinitionMap<CommentId, Comment>>,
 ) -> Result<Operation, String> {
     let mut paragraphs = Vec::new();
-    let by_id = ParagraphIndex::build(document);
-    collect_changed_review_paragraphs(&by_id, body, &mut paragraphs)?;
+    // **A suggested keystroke edits ONE paragraph, and must not index the document to find
+    // it.** `review_paragraph_body` hands this exactly one top-level paragraph, and
+    // `ParagraphIndex::build` walks every surface AND allocates a hash entry per paragraph —
+    // 1.3 million of them per keystroke on the owner's file, to answer one lookup. The index
+    // is the right tool for the batch shape below (`update_review_operation_across`, where
+    // resolving each id separately would be quadratic) and the wrong one for this
+    // (`104` HF-111, `107` §4 B1).
+    if let [BlockNode::Paragraph(edited)] = body {
+        let previous = casual_doc_edit::find_paragraph_any(document, edited.id)
+            .ok_or_else(|| "review command introduced an unknown paragraph".to_owned())?;
+        if previous.inlines != edited.inlines {
+            paragraphs.push(ReviewParagraphState {
+                node: edited.id,
+                inlines: edited.inlines.clone(),
+            });
+        }
+    } else {
+        let by_id = ParagraphIndex::build(document);
+        collect_changed_review_paragraphs(&by_id, body, &mut paragraphs)?;
+    }
     if paragraphs.is_empty() && comments.is_none() {
         return Err("review command made no change".to_owned());
     }
@@ -43564,5 +43582,142 @@ mod tests {
         d.document
             .validate()
             .expect("the document must still have unique ids");
+    }
+
+    // ---- HF-111: what a SUGGESTED keystroke costs ---------------------------
+    //
+    // `107` §4 B1 says per-keystroke work is O(1) in document size, and names
+    // HF-111 as the one place that is "directly violated today". The ordinary
+    // typing path already has two guards above; the suggesting path had none,
+    // which is how the defect stayed open while the tracker described it.
+
+    /// A plain-text document of `paragraphs` lines, in suggesting mode with an
+    /// author set, plus the id of its first paragraph.
+    fn suggesting_document(paragraphs: usize) -> (WasmDocument, String) {
+        let mut d = plain_text_document(paragraphs);
+        d.set_active_author("Reviewer", None, None)
+            .expect("set the review identity");
+        let (node, _len) = d.ordered_paragraphs()[0];
+        (d, node.to_string())
+    }
+
+    /// One suggested keystroke, and what it cost: block visits, and how many
+    /// WHOLE-DOCUMENT validations it ran.
+    fn suggested_keystroke_cost(d: &mut WasmDocument, node: &str, offset: u32) -> (u64, u64) {
+        casual_doc_edit::reset_block_visits();
+        casual_doc_edit::reset_indexed_paragraphs();
+        casual_doc_model::v1::reset_whole_document_validations();
+        assert!(
+            d.suggest_insert(node, offset, "x", None, None, None)
+                .is_ok(),
+            "the suggested keystroke was refused"
+        );
+        (
+            casual_doc_edit::block_visits(),
+            casual_doc_model::v1::whole_document_validations(),
+        )
+    }
+
+    /// **HF-111. A suggested keystroke must not validate the whole document.**
+    ///
+    /// `107` §4 B1 — per-keystroke work is O(1) in document size — names this as the one
+    /// place it is "directly violated today", and the tracker row said the same in prose for
+    /// months while nothing measured it. `Document::validate` runs 19 sub-validators, a full
+    /// node-id walk and a grapheme count per run; one call per keystroke is O(document) per
+    /// keystroke however fast it feels on a fixture.
+    ///
+    /// Counting CALLS rather than milliseconds is what makes this able to fail honestly: the
+    /// guarantee is "a keystroke runs none of these", and a clock cannot tell a
+    /// whole-document pass from a slow constant.
+    #[test]
+    fn a_suggested_keystroke_runs_no_whole_document_validation() {
+        let (mut d, node) = suggesting_document(200);
+
+        // The meter is live: opening and validating charges it, so a zero below is a
+        // measurement and not a counter nobody wired up.
+        casual_doc_model::v1::reset_whole_document_validations();
+        d.document.validate().expect("the fixture is valid");
+        assert_eq!(
+            casual_doc_model::v1::whole_document_validations(),
+            1,
+            "the validation meter is not counting"
+        );
+
+        let (_visits, validations) = suggested_keystroke_cost(&mut d, &node, 0);
+        assert_eq!(
+            casual_doc_edit::indexed_paragraphs(),
+            0,
+            "one suggested keystroke built a whole-document paragraph index to resolve the \
+             single paragraph it edits; that is a hash entry per paragraph per keystroke, \
+             which block visits cannot see"
+        );
+        assert_eq!(
+            validations, 0,
+            "one suggested keystroke ran {validations} whole-document validation(s); that is \
+             HF-111, and it makes review typing O(document) per character"
+        );
+
+        // The same for the ordinary typing path, so the guard says what the FLOOR is rather
+        // than only what review does. If plain typing ever acquires one, this catches it in
+        // the same place.
+        let (pnode, _len) = d.ordered_paragraphs()[0];
+        let pnode = pnode.to_string();
+        casual_doc_model::v1::reset_whole_document_validations();
+        d.type_text(&pnode, 0, &pnode, 0, "y".to_owned(), 3)
+            .expect("plain keystroke");
+        assert_eq!(
+            casual_doc_model::v1::whole_document_validations(),
+            0,
+            "an ordinary keystroke acquired a whole-document validation"
+        );
+    }
+
+    /// **A suggested keystroke must be linear in document length, not quadratic.**
+    ///
+    /// The doubling form `SKILL` §8 requires, in the shape the ordinary typing path already
+    /// has two guards for and the suggesting path had none — which is how HF-111 stayed open
+    /// while the tracker described it.
+    ///
+    /// Linear is the standard, not O(1): resolving a paragraph by id is a walk on every
+    /// path, review or not, and making that O(1) needs an index the document deliberately
+    /// does not cache. What this catches is the class one order worse — a per-node lookup
+    /// inside a loop over nodes — which a millisecond threshold could not tell from a slow
+    /// constant.
+    #[test]
+    fn a_suggested_keystroke_is_linear_in_document_length() {
+        let small_n = 200;
+        let (mut small, small_node) = suggesting_document(small_n);
+        let (mut large, large_node) = suggesting_document(small_n * 2);
+        let (small_visits, _) = suggested_keystroke_cost(&mut small, &small_node, 0);
+        let (large_visits, _) = suggested_keystroke_cost(&mut large, &large_node, 0);
+
+        assert!(small_visits > 0, "the meter must be measuring something");
+        assert!(
+            large_visits < small_visits * 3,
+            "one suggested keystroke cost {small_visits} block visits at {small_n} paragraphs \
+             and {large_visits} at {}: doubling the document more than doubled the work",
+            small_n * 2
+        );
+
+        // **The guarantee, not the circumstance: suggesting costs at most twice ordinary
+        // typing.** Both paths must resolve the paragraph, so review pays the facade's
+        // review projection on top — one extra resolve — and nothing else. Measured, that is
+        // 800 block visits against 400. The ceiling is stated as a RATIO so it survives any
+        // change to document size or fixture, and it is deliberately tight: a third
+        // whole-document pass on the review path is exactly the defect this is here to
+        // catch, and headroom for one would let it back in silently.
+        let (pnode, _len) = small.ordered_paragraphs()[0];
+        let pnode = pnode.to_string();
+        casual_doc_edit::reset_block_visits();
+        small
+            .type_text(&pnode, 0, &pnode, 0, "y".to_owned(), 3)
+            .expect("plain keystroke");
+        let plain_visits = casual_doc_edit::block_visits();
+        assert!(
+            plain_visits > 0 && small_visits <= plain_visits * 2,
+            "a suggested keystroke cost {small_visits} block visits against an ordinary \
+             keystroke's {plain_visits} — more than twice, so review typing has acquired \
+             another whole-document pass"
+        );
     }
 }
