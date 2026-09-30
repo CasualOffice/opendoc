@@ -59,7 +59,7 @@
 //!    id**. An id that lines up by accident proves nothing, and a test that merely round
 //!    trips a value proves less.
 
-use casual_doc_edit::Operation;
+use casual_doc_edit::{Mint, Operation};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
@@ -109,16 +109,23 @@ pub fn document_space(document: &Document) -> IdSpace {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WireOperation {
     operation: Operation,
+    mint: Mint,
     introduces: Vec<NodeId>,
 }
 
 impl WireOperation {
-    /// An operation prepared for the wire.
+    /// An operation prepared for the wire, with the space it mints in.
+    ///
+    /// `mint` is not decoration: applying an operation can create nodes (a `FormatText`
+    /// splits a run and the tail is a new one), and a receiver that minted those from its
+    /// own generator would end up with the same document under different node names. The
+    /// space travels so the names do not diverge — doc 150 §9.3.
     #[must_use]
-    pub fn of(operation: Operation) -> Self {
+    pub fn of(operation: Operation, mint: Mint) -> Self {
         let introduces = Self::introduces(&operation);
         Self {
             operation,
+            mint,
             introduces,
         }
     }
@@ -136,11 +143,18 @@ impl WireOperation {
     /// point — so without this the recomputation in [`WireOperation::localise`] would be
     /// unreachable code that nothing could prove necessary.
     #[cfg(test)]
-    pub(crate) fn forged(operation: Operation, introduces: Vec<NodeId>) -> Self {
+    pub(crate) fn forged(operation: Operation, mint: Mint, introduces: Vec<NodeId>) -> Self {
         Self {
             operation,
+            mint,
             introduces,
         }
+    }
+
+    /// The space this operation mints in, as its sender declared it.
+    #[must_use]
+    pub const fn mint(&self) -> Mint {
+        self.mint
     }
 
     /// The identities this operation brings into existence, as its sender declared them.
@@ -199,6 +213,15 @@ impl WireOperation {
                 clash: Clash::Undeclared,
             });
         }
+        // The mint is checked exactly as a declared id is, and for the same reason: every
+        // identity `apply` creates comes out of this space, so a sender that mints outside
+        // its own namespace would name nodes a third participant is entitled to name.
+        if !sender.holds(self.mint.base()) {
+            return Err(Collision {
+                id: self.mint.base(),
+                clash: Clash::ForeignSpace { sender },
+            });
+        }
         for id in actual {
             if !sender.holds(id) {
                 return Err(Collision {
@@ -236,7 +259,8 @@ impl WireOperation {
         /// payload that carries no text.
         const PER_ITEM: usize = 32;
 
-        let ids = self.introduces.len() * PER_ITEM;
+        // The mint is one identity's worth of bytes, and it is on every operation.
+        let ids = (self.introduces.len() + 1) * PER_ITEM;
         let payload = match &self.operation {
             Operation::InsertText { text, .. } => text.len(),
             Operation::RenameBookmark { name, .. } => name.len(),

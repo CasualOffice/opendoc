@@ -292,6 +292,7 @@ mod tests {
             ("references.rs", include_str!("references.rs")),
             ("breaks.rs", include_str!("breaks.rs")),
             ("refusal.rs", include_str!("refusal.rs")),
+            ("mint.rs", include_str!("mint.rs")),
         ]
     }
 

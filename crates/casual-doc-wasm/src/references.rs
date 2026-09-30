@@ -2176,7 +2176,7 @@ mod tests {
             .expect("the caption is a top-level body paragraph");
         casual_doc_edit::apply(
             &mut document.document,
-            &mut document.edit_ids,
+            casual_doc_edit::Mint::reserve(&mut document.edit_ids, 1).expect("an identity space"),
             &Operation::DeleteBlocks {
                 container: None,
                 index: index as u32,

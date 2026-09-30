@@ -1729,6 +1729,77 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
 - Deliberately not decided or built here: the byte codec, the relay binary, presence,
   collaborative undo, the host-signed grant, and durability. `152` §9 and §10 say why for each.
 
+## ADR-048 — An operation carries the identity *space* it mints in, and `apply` holds no generator
+
+- **Status:** Accepted, implemented.
+- **Date:** 2026-10-01.
+- **Context:** `150` §9.3 / `152` §10 Q8. `casual_doc_edit::apply` does not only move bytes:
+  some operations **create nodes**. A `FormatText` whose range starts mid-run splits that run
+  and the tail half is a new `Run`; so do `DeleteText`, `SplitParagraph`, `CreateBookmark`,
+  `InsertField`, `InsertInlineObject`, `InsertFieldRange` and `InsertNote`. Those identities
+  came from the *applier's* generator, so two replicas produced the same document under
+  **different names for the same run**. Nothing broke at once, because no operation in the set
+  addresses a run — but `25`'s deterministic snapshot was then not byte-identical across
+  replicas, which defeats *"a snapshot can be verified rather than trusted"*; every convergence
+  assertion in `casual-doc-transaction` had to normalise run ids away before comparing; and it
+  is the reason `152` §9 refused to freeze a byte codec.
+- **Decision:** An operation travels with a **`Mint`** — a private, aligned run of `NodeId`
+  counters — and `apply(document, mint, operation)` derives every identity it creates from it.
+  `apply` takes **no** `RunIds`, so it cannot name a node the operation did not pay for, and it
+  is a pure function of `(document, mint, operation)`: replayable, and therefore verifiable.
+- **Prior art, named:** deterministic identity derived from the creating operation — Yjs's
+  `(client, clock)`, Automerge's `(actor, counter)`. `casual_doc_model::IdSpace` (ADR-047)
+  partitions the namespace half of a `NodeId` per participant; this partitions the counter half
+  per operation. They compose: an id minted in a lane is still in its author's `IdSpace`, so
+  `WireOperation::localise` checks an arriving mint with the same rule it already applied to a
+  declared id.
+- **Rejected: enumeration.** `150` §9.3 proposed the operation carrying the new run's id, as
+  `SplitParagraph` carries `new_id`. It cannot work. The *number* of identities an operation
+  mints depends on the document it lands on, and an operation is **transformed** before a remote
+  replica applies it, so the state it lands on there is not the state its author saw. An
+  enumeration is a count fixed at authoring time; the truth is discovered at application time. A
+  *space* is the only declaration that survives a transform. A consequence worth stating: **no
+  `Operation` variant changed**, so the codec's remaining blockers are `150` §9.1 and §9.2 alone.
+- **Rejected: re-mapping on receipt.** Rewriting an arriving id into a local one is what the
+  sibling does for an interned *value*. Here the id **is** the identity, so the two replicas
+  would disagree about the name of one logical node permanently — the very thing this closes.
+- **Shape.** Three nested levels, all bit fields rather than hashes, so distinctness is by
+  construction:
+
+  | Level | Width | Separates |
+  | --- | --- | --- |
+  | namespace (`IdSpace`) | 2⁶⁴ | participants, plus the document's own and offline spaces |
+  | block | 1024 counters | one operation from the next |
+  | lane | 128 counters | an operation from its inverse, and a `Rebase::KeepMany`'s pieces from each other |
+
+  `Mint::inverse` flips one bit and is therefore an **involution**: undo followed by redo
+  re-mints exactly the identities the original edit created, so an anchor into a destroyed run
+  finds that run again when the redo restores it. A lane is a **bound**: an operation wanting
+  more than 128 identities — about thirty times the worst case in the set — earns
+  `EditError::IdExhausted` rather than wrapping into the next lane.
+- **Consequences.**
+  - `Transaction` and `Commit` carry one `Mint` per operation; `Transaction::reserve` is the one
+    place an author's generator is touched on the edit path, and it is inside the facade's single
+    choke point, pinned by `every_document_mutation_is_a_transaction`. `RevisionLog::apply` lost
+    its `ids` parameter: **the log cannot mint.**
+  - `WireOperation::of` takes the mint, and `localise` refuses a mint outside the sender's space.
+  - A rebased commit declares the spaces the **replay** used, not the template's — proved by
+    mutation, because declaring the template's is exactly the plausible mistake.
+  - `Document::node_ids` is public, because "what identities does this document hold" stopped
+    being inferable from "what did the allocator advance past" — a reserved block is 1024
+    counters and an operation spends two or three. Two wasm guards were reading the allocator
+    and now read the document, which is the guarantee they were always about.
+  - Unchanged: the TP1 diamond still compares modulo run ids, correctly — its two sides apply
+    *different* operation sequences. Convergence *with* identity is a protocol property and is
+    where it is now asserted, with no quotient.
+- **Mutation proofs.** (1) Receiver mints from its own generator instead of the carried mint →
+  `a_run_an_edit_split_off_carries_the_same_identity_on_both_replicas` fails with the two split
+  ids differing while the three pre-existing ids match. (2) A rebased commit stores
+  `template.mints` → `a_replay_over_a_remote_edit_leaves_both_replicas_naming_every_node_alike`
+  fails with Ada naming Grace's replayed runs one block away from Grace's own.
+- **Not decided here:** identities inside a carried subtree (`152` §10 Q2) are still covered by
+  the id-space rule at the mint and by `Document::validate`, not by an enumerating walk.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

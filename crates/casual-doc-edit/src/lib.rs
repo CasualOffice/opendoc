@@ -100,6 +100,14 @@ pub mod breaks;
 // decide it is how the fifteen table refusals came to lose their reason.
 pub mod refusal;
 
+// The identity space one operation mints in (doc 150 §9.3). Its own module because it is
+// the thing that makes `apply` a pure function of (document, operation): with a `Mint`
+// carried by the operation there is no generator in `apply` at all, so an identity this
+// crate creates is one the operation declared, and two replicas name it the same way.
+pub mod mint;
+
+pub use mint::{Mint, MintedIds};
+
 // The inline container set, declared once (`docs/109` HF-212). An `InlineNode` can
 // contain other inlines (`Hyperlink`, `Field`, `Revision`, `Sdt`) or block content
 // of its own (`TextBox`, `Group`), and until this module existed every walk in this
@@ -1338,14 +1346,28 @@ fn field_result_refusal(field: &Field) -> FieldRefusal {
     }
 }
 
-/// Applies `op` to `doc`, returning the inverse operation (for undo). `ids` mints
-/// new run identities when an edit must create a run (e.g. typing into an empty
-/// paragraph). On `Err`, `doc` is unchanged.
-pub fn apply(
-    doc: &mut Document,
-    ids: &mut dyn RunIds,
-    op: &Operation,
-) -> Result<Operation, EditError> {
+/// Applies `op` to `doc`, returning the inverse operation (for undo). On `Err`, `doc` is
+/// unchanged.
+///
+/// # Identity: `mint`, not a generator
+///
+/// Some operations create nodes — a `FormatText` starting mid-run splits that run, and the
+/// tail half is a new [`Run`]. Those identities come from
+/// `mint`, the space the **operation** declared, and from nowhere else: this function holds
+/// no id generator, so it cannot name a node the operation did not pay for. That is what
+/// makes it a pure function of `(doc, mint, op)` and therefore replayable — two replicas
+/// applying the same operation to the same state produce byte-identical documents, node
+/// names included (doc 150 §9.3).
+///
+/// The returned inverse must be applied with [`Mint::inverse`] of the same mint, which is
+/// an involution, so undoing and redoing an edit restores the identities it first minted
+/// rather than fresh strangers.
+///
+/// An operation needing more than [`Mint::LANE`] identities — thirty times the worst case
+/// in the set — earns [`EditError::IdExhausted`] rather than spilling into the next lane.
+pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation, EditError> {
+    let mut minted = mint.ids();
+    let ids: &mut dyn RunIds = &mut minted;
     match op {
         Operation::InsertText { at, text } => {
             // The single choke point for text entering the model. Characters XML
@@ -7047,6 +7069,22 @@ mod tests {
         Definitions, DocGrid, NoteProperties, PageBorders, PageNumbering, PaperSource,
         ParagraphProperties, Revision, RevisionKind, SectionBoundary, SectionColumns, StyleKind,
     };
+
+    /// `apply`, with the mint taken from the generator the test already holds.
+    ///
+    /// Shadows [`super::apply`] for the test module only. The tests below are about what an
+    /// operation *does*, not about where its identities come from, and the production
+    /// contract — one fresh [`Mint`] per operation, reserved by whoever authors it — is
+    /// exactly what this does. `Mint::reserve` advances the generator past the block, so
+    /// two operations in one test never share a lane, which is the property the real
+    /// envelope has too.
+    fn apply(
+        doc: &mut Document,
+        ids: &mut IdGenerator,
+        op: &Operation,
+    ) -> Result<Operation, EditError> {
+        super::apply(doc, Mint::reserve(ids, 1).expect("a mint"), op)
+    }
 
     fn n(counter: u64) -> NodeId {
         NodeId::from_parts(7, counter).unwrap()

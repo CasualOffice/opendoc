@@ -13732,35 +13732,42 @@ impl WasmDocument {
         // and keeps every id in a session unique (the same rule `revision_ids`
         // and `next_transaction` already follow).
         self.next_transaction = self.next_transaction.saturating_add(1);
-        let transaction = Transaction::new(
+        // The identity spaces are reserved HERE, once, from this replica's own generator, and
+        // travel with the transaction. Everything downstream — `apply`, the log, an undo, a
+        // remote replica replaying this step — works from them, which is what makes the same
+        // edit name the same nodes everywhere (doc 150 §9.3). `edit_ids` is still the one
+        // allocator, so a reserved block can never meet a payload id.
+        let transaction = Transaction::reserve(
             TransactionId::new(self.next_transaction),
             self.log.head(),
             label,
+            &mut self.edit_ids,
             ops.to_vec(),
         )
+        .ok_or_else(|| "id space exhausted".to_owned())?
         .coalescing(coalesce)
         .with_origin(origin);
-        let commit = self
-            .log
-            .apply(&mut self.document, &mut self.edit_ids, transaction)
-            .map_err(|error| match error {
-                // A refusal the OPERATION has already written as a sentence passes
-                // through verbatim (it carries the host's `refused: ` marker);
-                // everything else is internal vocabulary the host translates.
-                // Without this, a Backspace inside a footer's page-count field
-                // arrived as the debug name `FieldResult(…)` and the host showed
-                // its one generic sentence, which blames the selection for a
-                // calculated value.
-                //
-                // The envelope is unwrapped rather than printed, so the debug name
-                // the host branches on stays the operation's — `OffsetOutOfRange`,
-                // not `Edit(OffsetOutOfRange)`. An existing guard caught the
-                // difference, which is the whole point of having one.
-                casual_doc_transaction::TransactionError::Edit(error) => error
-                    .reason()
-                    .map_or_else(|| format!("{error:?}"), str::to_owned),
-                envelope => envelope.to_string(),
-            })?;
+        let commit =
+            self.log
+                .apply(&mut self.document, transaction)
+                .map_err(|error| match error {
+                    // A refusal the OPERATION has already written as a sentence passes
+                    // through verbatim (it carries the host's `refused: ` marker);
+                    // everything else is internal vocabulary the host translates.
+                    // Without this, a Backspace inside a footer's page-count field
+                    // arrived as the debug name `FieldResult(…)` and the host showed
+                    // its one generic sentence, which blames the selection for a
+                    // calculated value.
+                    //
+                    // The envelope is unwrapped rather than printed, so the debug name
+                    // the host branches on stays the operation's — `OffsetOutOfRange`,
+                    // not `Edit(OffsetOutOfRange)`. An existing guard caught the
+                    // difference, which is the whole point of having one.
+                    casual_doc_transaction::TransactionError::Edit(error) => error
+                        .reason()
+                        .map_or_else(|| format!("{error:?}"), str::to_owned),
+                    envelope => envelope.to_string(),
+                })?;
         // The caret rests where the LAST op leaves it. The commit stores inverses
         // in undo order — last op first — so its head is that op's inverse, and
         // `None` is the review-typing case, where the group keeps only its first
@@ -40801,8 +40808,10 @@ mod tests {
         }
 
         // 2. The envelope has exactly one call site, and it is the choke point.
+        // The envelope no longer takes an id generator — an operation declares the space it
+        // mints in — so the needle is the two-argument call it is now.
         let applies: Vec<usize> = engine
-            .match_indices(".apply(&mut self.document, &mut self.edit_ids,")
+            .match_indices(".apply(&mut self.document, transaction)")
             .map(|(index, _)| index)
             .collect();
         assert_eq!(
@@ -40821,8 +40830,11 @@ mod tests {
         //    caller could construct its own transaction, apply it through the
         //    envelope, and skip `refuse_if_protected` and the windowed-body
         //    refusal that only the choke point performs.
+        // `Transaction::reserve`, not `Transaction::new`: the choke point is also where this
+        // replica's identity spaces are reserved, so a second construction site would be a
+        // second place identities enter the document as well as a second mutation path.
         let built: Vec<usize> = engine
-            .match_indices("Transaction::new(")
+            .match_indices("Transaction::reserve(")
             .map(|(index, _)| index)
             .collect();
         assert_eq!(
@@ -40834,7 +40846,7 @@ mod tests {
         );
         assert!(
             choke.contains(&built[0]),
-            "the one `Transaction::new` must be the choke point's own"
+            "the one `Transaction::reserve` must be the choke point's own"
         );
 
         // 3a. **The facade never takes a mutable borrow of the definitions at all.**
@@ -44032,16 +44044,24 @@ mod tests {
     /// allocator's own counter so nothing is missed — a mint that never reached
     /// the document is still a mint, and would still collide.
     fn ids_minted_by(d: &mut WasmDocument, script: impl FnOnce(&mut WasmDocument)) -> Vec<NodeId> {
+        // Read off the DOCUMENT, not off the allocator's counter. Since an operation declares
+        // the space it mints in (doc 150 §9.3) a transaction reserves a block of counters and
+        // spends two or three of them, so "every counter the allocator advanced past" is no
+        // longer "every id that became a node" — it is a thousand times larger. Diffing the
+        // document says what the edits actually named, which is the guarantee every caller of
+        // this helper is really about, and it cannot drift with the allocator again.
         let namespace = d.edit_ids.namespace();
-        let first = d.edit_ids.next_counter();
+        let before = d.document.node_ids();
         script(d);
         assert_eq!(
             namespace,
             d.edit_ids.namespace(),
             "the script moved the minting space; this helper assumes it is fixed"
         );
-        (first..d.edit_ids.next_counter())
-            .map(|counter| NodeId::from_parts(namespace, counter).expect("a valid id"))
+        d.document
+            .node_ids()
+            .into_iter()
+            .filter(|id| !before.contains(id))
             .collect()
     }
 

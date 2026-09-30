@@ -69,7 +69,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
-use casual_doc_edit::{EditError, RunIds};
+use casual_doc_edit::{EditError, Mint};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
@@ -326,16 +326,30 @@ pub struct Transaction {
     label: Label,
     coalesce: Coalesce,
     origin: Origin,
+    mints: Vec<Mint>,
     operations: Vec<Operation>,
 }
 
 impl Transaction {
     /// A user edit, opening a new undo group.
+    ///
+    /// `mints` is one identity space per operation, in the same order. Carrying them here
+    /// rather than handing the applier a generator is what makes an application replayable:
+    /// two replicas applying this transaction to one state name every node they create
+    /// identically. See [`casual_doc_edit::apply`] and doc 150 §9.3.
+    ///
+    /// [`Transaction::reserve`] is the way to build them locally; an arrival builds them
+    /// from what its sender declared on the wire.
+    ///
+    /// A transaction whose `mints` is shorter than its `operations` is refused at
+    /// application with [`TransactionError::Edit`]`(`[`EditError::IdExhausted`]`)` rather
+    /// than being quietly applied with borrowed identities.
     #[must_use]
     pub fn new(
         id: TransactionId,
         base_revision: RevisionId,
         label: Label,
+        mints: Vec<Mint>,
         operations: Vec<Operation>,
     ) -> Self {
         Self {
@@ -344,8 +358,34 @@ impl Transaction {
             label,
             coalesce: Coalesce::New,
             origin: Origin::Edit,
+            mints,
             operations,
         }
+    }
+
+    /// Reserves an identity region wide enough for `operations`, and builds the transaction.
+    ///
+    /// The one place an author's generator is touched on the edit path. Everything after
+    /// this point — the log, `apply`, an undo, a rebase, a remote replica — works from the
+    /// region this reserved, which is why the same edit names the same nodes everywhere.
+    ///
+    /// `None` only when the id space is exhausted.
+    #[must_use]
+    pub fn reserve(
+        id: TransactionId,
+        base_revision: RevisionId,
+        label: Label,
+        ids: &mut casual_doc_model::IdGenerator,
+        operations: Vec<Operation>,
+    ) -> Option<Self> {
+        let mints = Mint::reserve_each(ids, operations.len())?;
+        Some(Self::new(id, base_revision, label, mints, operations))
+    }
+
+    /// The identity space each operation mints in, in application order.
+    #[must_use]
+    pub fn mints(&self) -> &[Mint] {
+        &self.mints
     }
 
     /// The same transaction, joining the newest undo group instead of opening one.
@@ -400,6 +440,7 @@ pub struct Commit {
     group: GroupId,
     label: Label,
     origin: Origin,
+    mints: Vec<Mint>,
     operations: Vec<Operation>,
     inverse_operations: Vec<Operation>,
     position_map: PositionMap,
@@ -410,6 +451,16 @@ impl Commit {
     #[must_use]
     pub const fn id(&self) -> TransactionId {
         self.id
+    }
+
+    /// The identity space each operation minted in, in application order.
+    ///
+    /// A roll-back applies operation `i`'s inverse in `mints()[i].inverse()`, which is an
+    /// involution, so rolling back and replaying restores the very nodes the commit first
+    /// created rather than renaming them.
+    #[must_use]
+    pub fn mints(&self) -> &[Mint] {
+        &self.mints
     }
 
     /// The revision this commit was applied against.
@@ -621,7 +672,7 @@ impl RevisionLog {
     pub(crate) fn append_rebased(
         &mut self,
         document: &mut Document,
-        ids: &mut dyn RunIds,
+        mints: Vec<Mint>,
         template: &Commit,
         operations: Vec<Operation>,
     ) -> Result<RevisionId, TransactionError> {
@@ -635,8 +686,11 @@ impl RevisionLog {
         let snapshot = (operations.len() > 1).then(|| document.clone());
         let mut map = PositionMap::default();
         let mut inverse_operations = Vec::with_capacity(operations.len());
-        for operation in &operations {
-            match casual_doc_edit::apply(document, ids, operation) {
+        for (index, operation) in operations.iter().enumerate() {
+            let step = *mints
+                .get(index)
+                .ok_or(TransactionError::Edit(EditError::IdExhausted))?;
+            match casual_doc_edit::apply(document, step, operation) {
                 Ok(inverse) => {
                     push_mapping_step(&mut map, operation, &inverse);
                     inverse_operations.push(inverse);
@@ -658,6 +712,7 @@ impl RevisionLog {
             group: template.group,
             label: template.label,
             origin: template.origin,
+            mints,
             operations,
             inverse_operations,
             position_map: map,
@@ -688,7 +743,6 @@ impl RevisionLog {
     pub fn apply(
         &mut self,
         document: &mut Document,
-        ids: &mut dyn RunIds,
         transaction: Transaction,
     ) -> Result<&Commit, TransactionError> {
         if transaction.base_revision != self.head {
@@ -712,8 +766,12 @@ impl RevisionLog {
         let snapshot = (transaction.operations.len() > 1).then(|| document.clone());
         let mut map = PositionMap::default();
         let mut inverse_operations = Vec::with_capacity(transaction.operations.len());
-        for operation in &transaction.operations {
-            match casual_doc_edit::apply(document, ids, operation) {
+        for (index, operation) in transaction.operations.iter().enumerate() {
+            let step = *transaction
+                .mints
+                .get(index)
+                .ok_or(TransactionError::Edit(EditError::IdExhausted))?;
+            match casual_doc_edit::apply(document, step, operation) {
                 Ok(inverse) => {
                     push_mapping_step(&mut map, operation, &inverse);
                     inverse_operations.push(inverse);
@@ -736,6 +794,7 @@ impl RevisionLog {
             group,
             label: transaction.label,
             origin: transaction.origin,
+            mints: transaction.mints,
             operations: transaction.operations,
             inverse_operations: match transaction.coalesce {
                 Coalesce::ContinueKeepingFirstInverse => Vec::new(),
@@ -1057,6 +1116,27 @@ impl fmt::Display for TransactionError {
 
 impl Error for TransactionError {}
 
+/// Distinct identity spaces for a test, without threading a generator through every helper.
+///
+/// Monotonic across the whole test binary, so two transactions in one test never share a
+/// block and a node minted by one can never be named by another — the property production
+/// gets from one generator per replica.
+#[cfg(test)]
+pub(crate) fn test_mints(count: usize) -> Vec<casual_doc_edit::Mint> {
+    use casual_doc_edit::Mint;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A namespace no test document mints in.
+    const NAMESPACE: u64 = 0x0FED_0000;
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let count = count.max(1);
+    let first = NEXT.fetch_add(count as u64, Ordering::Relaxed);
+    let mut ids = casual_doc_model::IdGenerator::new(NAMESPACE);
+    ids.reserve_through(first.saturating_mul(Mint::BLOCK));
+    Mint::reserve_each(&mut ids, count).expect("a test mint")
+}
+
 #[cfg(test)]
 mod tests {
     use casual_doc_edit::{Pos, Range as EditRange};
@@ -1064,6 +1144,18 @@ mod tests {
     use casual_doc_model::v1::{BlockNode, Definitions, Paragraph, ParagraphProperties};
 
     use super::*;
+
+    /// `Transaction::new` with a fresh identity space per operation, which is what the
+    /// author's generator gives it in production.
+    fn transaction(
+        id: TransactionId,
+        base_revision: RevisionId,
+        label: Label,
+        operations: Vec<Operation>,
+    ) -> Transaction {
+        let mints = test_mints(operations.len());
+        Transaction::new(id, base_revision, label, mints, operations)
+    }
 
     /// A document of `paragraphs` empty paragraphs, and their ids in order.
     fn document(paragraphs: usize) -> (Document, Vec<NodeId>, IdGenerator) {
@@ -1085,7 +1177,7 @@ mod tests {
     }
 
     fn typing(id: u128, base: RevisionId, node: NodeId, offset: u32, text: &str) -> Transaction {
-        Transaction::new(
+        transaction(
             TransactionId::new(id),
             base,
             "Typing",
@@ -1110,7 +1202,7 @@ mod tests {
 
     #[test]
     fn every_applied_transaction_advances_the_revision_by_one() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
         assert_eq!(log.head().get(), 0);
         for step in 0..4_u64 {
@@ -1121,10 +1213,7 @@ mod tests {
                 u32::try_from(step).expect("small"),
                 "x",
             );
-            let revision = log
-                .apply(&mut doc, &mut ids, tx)
-                .expect("applies")
-                .revision();
+            let revision = log.apply(&mut doc, tx).expect("applies").revision();
             assert_eq!(revision.get(), step + 1);
             assert_eq!(log.head(), revision);
         }
@@ -1133,17 +1222,13 @@ mod tests {
 
     #[test]
     fn a_stale_base_revision_is_refused_and_changes_nothing() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(&mut doc, &mut ids, typing(1, log.head(), nodes[0], 0, "a"))
+        log.apply(&mut doc, typing(1, log.head(), nodes[0], 0, "a"))
             .expect("first applies");
         let before = text_of(&doc, nodes[0]);
         let error = log
-            .apply(
-                &mut doc,
-                &mut ids,
-                typing(2, RevisionId::new(0), nodes[0], 0, "b"),
-            )
+            .apply(&mut doc, typing(2, RevisionId::new(0), nodes[0], 0, "b"))
             .expect_err("stale base revision");
         assert!(matches!(error, TransactionError::StaleRevision { .. }));
         assert_eq!(text_of(&doc, nodes[0]), before);
@@ -1153,18 +1238,14 @@ mod tests {
 
     #[test]
     fn a_refused_group_rolls_the_document_back_and_appends_nothing() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(
-            &mut doc,
-            &mut ids,
-            typing(1, log.head(), nodes[0], 0, "seed"),
-        )
-        .expect("seed applies");
+        log.apply(&mut doc, typing(1, log.head(), nodes[0], 0, "seed"))
+            .expect("seed applies");
         let before = text_of(&doc, nodes[0]);
         let head = log.head();
         // The first operation lands, the second cannot: the group must leave no trace.
-        let bad = Transaction::new(
+        let bad = transaction(
             TransactionId::new(2),
             head,
             "Edit",
@@ -1181,7 +1262,7 @@ mod tests {
                 },
             ],
         );
-        let error = log.apply(&mut doc, &mut ids, bad).expect_err("refused");
+        let error = log.apply(&mut doc, bad).expect_err("refused");
         assert!(matches!(error, TransactionError::Edit(_)));
         assert_eq!(
             text_of(&doc, nodes[0]),
@@ -1194,34 +1275,30 @@ mod tests {
 
     #[test]
     fn undo_and_redo_are_read_from_the_log() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(
-            &mut doc,
-            &mut ids,
-            typing(1, log.head(), nodes[0], 0, "one"),
-        )
-        .expect("first");
+        log.apply(&mut doc, typing(1, log.head(), nodes[0], 0, "one"))
+            .expect("first");
         let first = log.undo_target().expect("something to undo");
         assert_eq!(log.label_of(first), Some("Typing"));
         assert_eq!(log.redo_target(), None, "nothing undone yet");
 
         let inverse = log.inverse_of(first);
-        let undo = Transaction::new(TransactionId::new(2), log.head(), "Typing", inverse)
+        let undo = transaction(TransactionId::new(2), log.head(), "Typing", inverse)
             .with_origin(Origin::Undo { group: first });
-        log.apply(&mut doc, &mut ids, undo).expect("undo applies");
+        log.apply(&mut doc, undo).expect("undo applies");
         assert_eq!(text_of(&doc, nodes[0]), "");
         assert_eq!(log.undo_target(), None, "the only edit is undone");
         let undone = log.redo_target().expect("redo available");
 
-        let redo = Transaction::new(
+        let redo = transaction(
             TransactionId::new(3),
             log.head(),
             "Typing",
             log.inverse_of(undone),
         )
         .with_origin(Origin::Redo { group: undone });
-        log.apply(&mut doc, &mut ids, redo).expect("redo applies");
+        log.apply(&mut doc, redo).expect("redo applies");
         assert_eq!(text_of(&doc, nodes[0]), "one");
         assert_eq!(log.redo_target(), None, "the redo is consumed");
         assert!(log.undo_target().is_some(), "the redone edit is undoable");
@@ -1229,22 +1306,22 @@ mod tests {
 
     #[test]
     fn a_fresh_edit_clears_redo_without_clearing_anything() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(&mut doc, &mut ids, typing(1, log.head(), nodes[0], 0, "a"))
+        log.apply(&mut doc, typing(1, log.head(), nodes[0], 0, "a"))
             .expect("edit");
         let group = log.undo_target().expect("undoable");
-        let undo = Transaction::new(
+        let undo = transaction(
             TransactionId::new(2),
             log.head(),
             "Typing",
             log.inverse_of(group),
         )
         .with_origin(Origin::Undo { group });
-        log.apply(&mut doc, &mut ids, undo).expect("undo");
+        log.apply(&mut doc, undo).expect("undo");
         assert!(log.redo_target().is_some());
 
-        log.apply(&mut doc, &mut ids, typing(3, log.head(), nodes[0], 0, "b"))
+        log.apply(&mut doc, typing(3, log.head(), nodes[0], 0, "b"))
             .expect("fresh edit");
         assert_eq!(
             log.redo_target(),
@@ -1256,7 +1333,7 @@ mod tests {
 
     #[test]
     fn a_coalesced_run_is_many_commits_and_one_undo_step() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
         for (index, ch) in "word".chars().enumerate() {
             let offset = u32::try_from(index).expect("small");
@@ -1272,7 +1349,7 @@ mod tests {
             } else {
                 tx.coalescing(Coalesce::Continue)
             };
-            log.apply(&mut doc, &mut ids, tx).expect("keystroke");
+            log.apply(&mut doc, tx).expect("keystroke");
         }
         assert_eq!(text_of(&doc, nodes[0]), "word");
         assert_eq!(
@@ -1286,26 +1363,25 @@ mod tests {
             4,
             "one user action is one group"
         );
-        let undo = Transaction::new(
+        let undo = transaction(
             TransactionId::new(99),
             log.head(),
             "Typing",
             log.inverse_of(group),
         )
         .with_origin(Origin::Undo { group });
-        log.apply(&mut doc, &mut ids, undo).expect("undo");
+        log.apply(&mut doc, undo).expect("undo");
         assert_eq!(text_of(&doc, nodes[0]), "", "one Undo takes the whole word");
     }
 
     #[test]
     fn keeping_the_first_inverse_records_the_forward_ops_and_no_more_inverses() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(&mut doc, &mut ids, typing(1, log.head(), nodes[0], 0, "a"))
+        log.apply(&mut doc, typing(1, log.head(), nodes[0], 0, "a"))
             .expect("first");
         log.apply(
             &mut doc,
-            &mut ids,
             typing(2, log.head(), nodes[0], 1, "b")
                 .coalescing(Coalesce::ContinueKeepingFirstInverse),
         )
@@ -1328,24 +1404,24 @@ mod tests {
 
     #[test]
     fn the_bound_counts_undo_steps_not_commits() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::new(2);
         // Three separate actions, the middle one a coalesced run of five keystrokes.
         let mut id = 0_u128;
         let mut offset = 0_u32;
-        let mut push = |log: &mut RevisionLog, doc: &mut Document, ids: &mut IdGenerator, c| {
+        let mut push = |log: &mut RevisionLog, doc: &mut Document, c| {
             id += 1;
             let tx = typing(id, log.head(), nodes[0], offset, "x");
             offset += 1;
-            log.apply(doc, ids, tx.coalescing(c)).expect("applies");
+            log.apply(doc, tx.coalescing(c)).expect("applies");
         };
-        push(&mut log, &mut doc, &mut ids, Coalesce::New);
-        push(&mut log, &mut doc, &mut ids, Coalesce::New);
+        push(&mut log, &mut doc, Coalesce::New);
+        push(&mut log, &mut doc, Coalesce::New);
         for _ in 0..4 {
-            push(&mut log, &mut doc, &mut ids, Coalesce::Continue);
+            push(&mut log, &mut doc, Coalesce::Continue);
         }
         assert_eq!(log.commits().len(), 6, "no group was truncated mid-run");
-        push(&mut log, &mut doc, &mut ids, Coalesce::New);
+        push(&mut log, &mut doc, Coalesce::New);
         let groups: std::collections::BTreeSet<_> =
             log.commits().map(super::Commit::group).collect();
         assert_eq!(groups.len(), 2, "the oldest group is dropped whole");
@@ -1365,18 +1441,14 @@ mod tests {
     /// separately (see `enforce_bounds`).
     #[test]
     fn every_retained_step_still_undoes_at_the_bound() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let bound = 3;
         let mut log = RevisionLog::new(bound);
         for index in 0..=bound {
             let id = u128::try_from(index).expect("small");
             let offset = u32::try_from(index).expect("small");
-            log.apply(
-                &mut doc,
-                &mut ids,
-                typing(id, log.head(), nodes[0], offset, "x"),
-            )
-            .expect("edit applies");
+            log.apply(&mut doc, typing(id, log.head(), nodes[0], offset, "x"))
+                .expect("edit applies");
         }
         assert_eq!(
             log.undo_depth(),
@@ -1387,14 +1459,14 @@ mod tests {
             let group = log
                 .undo_target()
                 .unwrap_or_else(|| panic!("step {step} of {bound} must still be undoable"));
-            let undo = Transaction::new(
+            let undo = transaction(
                 TransactionId::new(1_000 + u128::try_from(step).expect("small")),
                 log.head(),
                 "Typing",
                 log.inverse_of(group),
             )
             .with_origin(Origin::Undo { group });
-            log.apply(&mut doc, &mut ids, undo).expect("undo applies");
+            log.apply(&mut doc, undo).expect("undo applies");
         }
         assert_eq!(log.undo_depth(), 0, "every retained step was undone");
         // One character survives: the action the bound evicted. That is the bound
@@ -1409,17 +1481,13 @@ mod tests {
 
     #[test]
     fn the_position_map_moves_a_caret_through_an_insertion() {
-        let (mut doc, nodes, mut ids) = document(1);
+        let (mut doc, nodes, _ids) = document(1);
         let mut log = RevisionLog::default();
-        log.apply(
-            &mut doc,
-            &mut ids,
-            typing(1, log.head(), nodes[0], 0, "hello"),
-        )
-        .expect("seed");
+        log.apply(&mut doc, typing(1, log.head(), nodes[0], 0, "hello"))
+            .expect("seed");
         let head = log.head();
         let commit = log
-            .apply(&mut doc, &mut ids, typing(2, head, nodes[0], 0, "ab"))
+            .apply(&mut doc, typing(2, head, nodes[0], 0, "ab"))
             .expect("insert");
         let map = commit.position_map().clone();
         assert_eq!(

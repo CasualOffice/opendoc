@@ -29,7 +29,7 @@
 use std::str::FromStr as _;
 
 use casual_doc_edit::{
-    EditError, FieldRefusal, Operation, Pos, Range, apply, caret_format, find_paragraph_any,
+    EditError, FieldRefusal, Mint, Operation, Pos, Range, caret_format, find_paragraph_any,
     format_state,
 };
 use casual_doc_import::ImportConfig;
@@ -127,6 +127,19 @@ fn ids() -> IdGenerator {
     // A namespace no node in `sample.docx` occupies, so a minted run id cannot
     // collide with an imported one.
     IdGenerator::new(0x5150)
+}
+
+/// `casual_doc_edit::apply`, with the mint taken from the generator the caller supplies.
+///
+/// Production reserves one [`Mint`] per operation from the author's generator; this does
+/// the same thing, so these tests keep saying what an operation *does* without also
+/// restating where its identities come from.
+fn apply(
+    document: &mut Document,
+    ids: &mut IdGenerator,
+    op: &Operation,
+) -> Result<Operation, EditError> {
+    casual_doc_edit::apply(document, Mint::reserve(ids, 1).expect("a mint"), op)
 }
 
 /// The footer paragraph carrying `PAGE of NUMPAGES`, and the byte range its

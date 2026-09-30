@@ -60,13 +60,14 @@
 //! uncontended path. Doc 152 §10 Q1 records maintaining it incrementally as the way to pay
 //! less.
 
+use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::Document;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
-use casual_doc_edit::RunIds;
+use casual_doc_edit::{EditError, Mint};
 
 use crate::protocol::{
     Arrival, Base, CHUNK_BUDGET_BYTES, ClientId, ClientMessage, Identity, Join, MAX_OUTSTANDING,
@@ -389,11 +390,14 @@ impl ClientSession {
         let mut spent = 0_usize;
         let mut upto = floor;
         for commit in log.commits().filter(|c| c.revision() > floor) {
+            // Each operation travels with the space it minted in, so the receiver creates
+            // the same nodes under the same names rather than under its own.
             let carried: Vec<WireOperation> = commit
                 .operations()
                 .iter()
                 .cloned()
-                .map(WireOperation::of)
+                .zip(commit.mints().iter().copied())
+                .map(|(operation, mint)| WireOperation::of(operation, mint))
                 .collect();
             let cost: usize = carried.iter().map(WireOperation::carried_bytes).sum();
             if !operations.is_empty() && spent + cost > CHUNK_BUDGET_BYTES {
@@ -534,7 +538,7 @@ impl ClientSession {
         &mut self,
         arrival: &Arrival,
         document: &mut Document,
-        ids: &mut dyn RunIds,
+        ids: &mut IdGenerator,
         log: &mut RevisionLog,
     ) -> Result<Reception, SessionError> {
         if let Some(reason) = self.stopped {
@@ -553,6 +557,7 @@ impl ClientSession {
         let sender =
             wire::space_of(self.document_space, arrival.client).ok_or(SessionError::NoIdSpace)?;
         let mut remote = Vec::with_capacity(arrival.operations.len());
+        let mut remote_mints = Vec::with_capacity(arrival.operations.len());
         for carried in &arrival.operations {
             remote.push(
                 carried
@@ -560,10 +565,11 @@ impl ClientSession {
                     .map_err(SessionError::IdCollision)?
                     .clone(),
             );
+            remote_mints.push(carried.mint());
         }
 
         if log.unordered_commits() == 0 {
-            let revision = apply_remote(document, ids, log, remote)?;
+            let revision = apply_remote(document, remote_mints, log, remote)?;
             log.settle(revision);
             self.revision = self.revision.max(arrival.revision);
             return Ok(Reception {
@@ -588,7 +594,7 @@ impl ClientSession {
         // never per keystroke and never when nothing is in flight. Doc 152 §10 Q1.
         let restore_document = document.clone();
         let restore_log = log.clone();
-        match self.rebase(arrival, document, ids, log, remote) {
+        match self.rebase(arrival, document, ids, log, remote, remote_mints) {
             Ok(reception) => Ok(reception),
             Err(error) => {
                 *document = restore_document;
@@ -604,9 +610,10 @@ impl ClientSession {
         &mut self,
         arrival: &Arrival,
         document: &mut Document,
-        ids: &mut dyn RunIds,
+        ids: &mut IdGenerator,
         log: &mut RevisionLog,
         remote: Vec<Operation>,
+        remote_mints: Vec<Mint>,
     ) -> Result<Reception, SessionError> {
         let mut tombstones = Vec::new();
         let unordered = log.detach_unordered();
@@ -629,8 +636,19 @@ impl ClientSession {
         // probe happens on the way past.
         let mut probed: Vec<Vec<(Operation, Operation)>> = Vec::with_capacity(unordered.len());
         for (commit, image) in unordered.iter().zip(images).rev() {
-            for operation in commit.inverse_operations() {
-                casual_doc_edit::apply(document, ids, operation)
+            // `inverse_operations` is stored newest-first, so position `p` undoes operation
+            // `len - 1 - p` and mints in *that* operation's inverse lane. Anything else would
+            // give the rollback identities the replay could not agree with.
+            let count = commit.inverse_operations().len();
+            for (position, operation) in commit.inverse_operations().iter().enumerate() {
+                let lane = commit
+                    .mints()
+                    .get(count - 1 - position)
+                    .ok_or(SessionError::Refused(TransactionError::Edit(
+                        EditError::IdExhausted,
+                    )))?
+                    .inverse();
+                casual_doc_edit::apply(document, lane, operation)
                     .map_err(|error| SessionError::Refused(TransactionError::Edit(error)))?;
             }
             probed.push(probe(document, ids, image)?);
@@ -646,7 +664,10 @@ impl ClientSession {
                 .map(|(operation, _)| operation.clone())
                 .collect()
         });
-        let ordered_at = apply_remote(document, ids, log, at_horizon)?;
+        // The arrival's image at the horizon *is* the arrival — `images[0]` is `remote`
+        // before any transform — so it lands under the spaces its sender declared, and not
+        // under spaces of this replica's own. That is the whole point of carrying them.
+        let ordered_at = apply_remote(document, remote_mints, log, at_horizon)?;
         log.settle(ordered_at);
 
         // Phase 3: replay each step rebased, keeping its identity so undo is untouched. The
@@ -671,8 +692,11 @@ impl ClientSession {
                 moved.push((commit.revision(), None));
                 continue;
             }
+            let mints = Mint::reserve_each(ids, rebased.len()).ok_or(SessionError::Refused(
+                TransactionError::Edit(EditError::IdExhausted),
+            ))?;
             let landed = log
-                .append_rebased(document, ids, commit, rebased)
+                .append_rebased(document, mints, commit, rebased)
                 .map_err(SessionError::Refused)?;
             moved.push((commit.revision(), Some(landed)));
             replayed += 1;
@@ -708,7 +732,7 @@ impl ClientSession {
 /// somebody else's edit, and given a group of its own so a user's Undo can never reach it.
 fn apply_remote(
     document: &mut Document,
-    ids: &mut dyn RunIds,
+    mints: Vec<Mint>,
     log: &mut RevisionLog,
     operations: Vec<Operation>,
 ) -> Result<RevisionId, SessionError> {
@@ -719,9 +743,10 @@ fn apply_remote(
         crate::TransactionId::new(0),
         log.head(),
         "Remote change",
+        mints,
         operations,
     );
-    log.apply(document, ids, transaction)
+    log.apply(document, transaction)
         .map(Commit::revision)
         .map_err(SessionError::Refused)
 }
@@ -745,24 +770,30 @@ fn changes_of(commit: &Commit) -> Result<Vec<(Operation, Operation)>, SessionErr
 /// rather than assuming it.
 fn probe(
     document: &mut Document,
-    ids: &mut dyn RunIds,
+    ids: &mut IdGenerator,
     operations: Vec<Operation>,
 ) -> Result<Vec<(Operation, Operation)>, SessionError> {
+    let exhausted = || SessionError::Refused(TransactionError::Edit(EditError::IdExhausted));
+    // Spaces of this replica's own, because a probe is this replica's own work: it applies
+    // the arrival to read its inverse and puts the document straight back, so the identities
+    // it mints exist only for the length of the probe and never reach the wire.
+    let region = Mint::reserve_each(ids, operations.len()).ok_or_else(exhausted)?;
+    let lane = |index: usize| region.get(index).copied().ok_or_else(exhausted);
     let mut inverses = Vec::with_capacity(operations.len());
-    for operation in &operations {
-        match casual_doc_edit::apply(document, ids, operation) {
+    for (index, operation) in operations.iter().enumerate() {
+        match casual_doc_edit::apply(document, lane(index)?, operation) {
             Ok(inverse) => inverses.push(inverse),
             Err(error) => {
                 // Undo what the probe did so far, so a refusal costs nothing.
-                for inverse in inverses.iter().rev() {
-                    let _ = casual_doc_edit::apply(document, ids, inverse);
+                for (undone, inverse) in inverses.iter().enumerate().rev() {
+                    let _ = casual_doc_edit::apply(document, lane(undone)?.inverse(), inverse);
                 }
                 return Err(SessionError::Refused(TransactionError::Edit(error)));
             }
         }
     }
-    for inverse in inverses.iter().rev() {
-        casual_doc_edit::apply(document, ids, inverse)
+    for (undone, inverse) in inverses.iter().enumerate().rev() {
+        casual_doc_edit::apply(document, lane(undone)?.inverse(), inverse)
             .map_err(|error| SessionError::Refused(TransactionError::Edit(error)))?;
     }
     Ok(operations.into_iter().zip(inverses).collect())

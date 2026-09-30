@@ -548,6 +548,33 @@ impl Document {
         })
     }
 
+    /// Every node id this document holds, in a stable order.
+    ///
+    /// The set [`Document::validate`] checks for duplicates, exposed because "what identities
+    /// does this document actually hold" is a different question from "what did an allocator
+    /// hand out", and a caller that infers the first from the second is reading the
+    /// allocator's bookkeeping rather than the document. They stopped agreeing when
+    /// operations began declaring the space they mint in: a declaration reserves a block and
+    /// an operation spends two or three of it, so a burned counter is no longer evidence of a
+    /// node.
+    ///
+    /// # Complexity
+    ///
+    /// O(document): the same single walk `validate` makes. Not for a keystroke.
+    #[must_use]
+    pub fn node_ids(&self) -> BTreeSet<NodeId> {
+        let mut ids = BTreeSet::new();
+        // The closure never returns `Err`, so the walk is total and the `unwrap_or` is
+        // unreachable rather than a swallowed failure.
+        let () = self
+            .visit_node_ids(&mut |id| {
+                ids.insert(id);
+                Ok(())
+            })
+            .unwrap_or(());
+        ids
+    }
+
     /// The highest counter any node id already in this document carries **in `space`**.
     ///
     /// Zero when the space is empty, so `highest + 1` is always a free counter.

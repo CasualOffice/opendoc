@@ -365,7 +365,7 @@ editing continues against a local log and reconciles on reconnect.
 | 6.0 | Unify on one operation set; route every WASM mutation through `Transaction` + `Commit`; commit-log undo; emit mapping steps for structural ops. Plus the B1 prerequisite: `HF-111`, which re-validates the whole document per keystroke | **Yes** — closes ADR-005 and a perf defect | CQ-002, HF-111 |
 | 6.1 | Durable log, snapshot, compaction; autosave and crash recovery | **Yes** — closes the oldest P1 data-safety row | **HF-011** |
 | 6.2 | Version history: list, restore, per-author colouring | **Yes** | **OO-004**, HF-068 |
-| 6.3 | T1 transform, tie-break by `(revision, site_id)`, TP1 property tests, the §4-budget benchmarks. **No network yet** | Yes | — |
+| 6.3 | T1 transform, tie-break by the relay's total order (`Side::Earlier`/`Later` — there is no `site_id` in the transform and never was), TP1 property tests, the §4-budget benchmarks. **No network yet** | Yes | — |
 | 6.4 | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes | FID-R-02 reuse |
 | 6.5 | Compare and combine documents — *the transform applied offline* | **Yes** | **OO-007** |
 | 6.6 | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships | OO-018 |

@@ -18,7 +18,7 @@
 //! round-tripping through a real encoded string — with populated payloads — as the codec
 //! lane's first obligation rather than an afterthought.
 
-use casual_doc_edit::{Operation, Pos, Range as EditRange};
+use casual_doc_edit::{FormatDelta, Mint, Operation, Pos, Range as EditRange};
 use casual_doc_model::v1::{
     BlockNode, Definitions, Document, InlineNode, Paragraph, ParagraphProperties, Run,
     RunProperties, Style, StyleId, StyleKind,
@@ -33,6 +33,22 @@ use crate::wire::{self, Clash, Collision, IdSpace, WireOperation};
 use crate::{Coalesce, RevisionLog, Transaction, TransactionId};
 
 use super::{ClientSession, ServerSession, SessionError};
+
+/// An identity space, where the test is about something other than identity.
+///
+/// The relay does not inspect a mint — only a receiving client does — so a server-side test
+/// needs a well-formed one and nothing more.
+fn any_mint() -> Mint {
+    Mint::reserve(&mut IdGenerator::new(0x0A11_0000), 1).expect("a mint")
+}
+
+/// The identity space a sender in `space` would have reserved for one operation.
+///
+/// Every well-formed arrival carries one, so a test that is about a *payload* collision has
+/// to supply a valid one or it would be refused for the wrong reason.
+fn sender_mint(space: IdSpace) -> Mint {
+    Mint::reserve(&mut IdGenerator::new(space.get()), 1).expect("a mint")
+}
 
 /// A document of three one-run paragraphs, each carrying the same text so an offset tie is
 /// hit on purpose rather than by luck.
@@ -106,15 +122,20 @@ impl Replica {
         coalesce: Coalesce,
     ) {
         self.next_transaction += 1;
-        let transaction = Transaction::new(
+        // `reserve`, not `new`: the identity spaces come out of *this replica's* generator,
+        // which is in this replica's own `IdSpace`, so what it mints travels and nobody
+        // else's replica re-mints it.
+        let transaction = Transaction::reserve(
             TransactionId::new(self.next_transaction),
             self.log.head(),
             label,
+            &mut self.ids,
             operations,
         )
+        .expect("identity spaces")
         .coalescing(coalesce);
         self.log
-            .apply(&mut self.document, &mut self.ids, transaction)
+            .apply(&mut self.document, transaction)
             .expect("the edit applies");
     }
 
@@ -178,6 +199,24 @@ fn canonicalise(document: &mut Document) {
             }
         }
     }
+}
+
+/// Every run identity in the body, in document order.
+///
+/// Node identities are what this file's identity guards are about, so they are read straight
+/// rather than through a comparison that has already normalised them away.
+fn run_ids(document: &Document) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for block in document.body() {
+        if let BlockNode::Paragraph(paragraph) = block {
+            for inline in &paragraph.inlines {
+                if let InlineNode::Run(run) = inline {
+                    out.push(run.id);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn plain_text(document: &Document) -> String {
@@ -419,7 +458,10 @@ fn an_identity_minted_in_the_document_s_own_space_is_refused() {
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
         client: ClientId::new(0),
-        operations: vec![WireOperation::of(operation)],
+        operations: vec![WireOperation::of(
+            operation,
+            sender_mint(wire::space_of(document_space, ClientId::new(0)).expect("a space")),
+        )],
     };
     let error = receiver
         .receive(&arrival)
@@ -456,10 +498,13 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
         client: ClientId::new(0),
-        operations: vec![WireOperation::of(Operation::SetStyleDefinition {
-            id: contested,
-            style: Some(Box::new(style("the sender's"))),
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetStyleDefinition {
+                id: contested,
+                style: Some(Box::new(style("the sender's"))),
+            },
+            sender_mint(sender_space),
+        )],
     };
 
     let error = receiver
@@ -569,7 +614,7 @@ fn each_new_definition_table_refuses_an_arrival_at_an_id_the_receiver_already_ho
             }
         }
 
-        let operation = WireOperation::of(build(contested));
+        let operation = WireOperation::of(build(contested), sender_mint(sender_space));
         assert_eq!(
             operation.declared(),
             [contested],
@@ -599,20 +644,26 @@ fn an_operation_that_under_declares_what_it_introduces_is_refused() {
     let minted = IdGenerator::new(space.get()).next_id().expect("id");
 
     // An operation prepared honestly, then stripped of its declaration.
-    let honest = WireOperation::of(Operation::SplitParagraph {
-        at: Pos::new(paragraphs[0], 4),
-        new_id: minted,
-        properties: None,
-    });
-    assert_eq!(honest.declared(), [minted]);
-    let stripped = WireOperation::of(Operation::DeleteText {
-        range: EditRange {
-            start: Pos::new(paragraphs[0], 0),
-            end: Pos::new(paragraphs[0], 1),
+    let honest = WireOperation::of(
+        Operation::SplitParagraph {
+            at: Pos::new(paragraphs[0], 4),
+            new_id: minted,
+            properties: None,
         },
-    });
+        sender_mint(space),
+    );
+    assert_eq!(honest.declared(), [minted]);
+    let stripped = WireOperation::of(
+        Operation::DeleteText {
+            range: EditRange {
+                start: Pos::new(paragraphs[0], 0),
+                end: Pos::new(paragraphs[0], 1),
+            },
+        },
+        sender_mint(space),
+    );
     assert!(stripped.declared().is_empty());
-    let liar = WireOperation::forged(honest.operation().clone(), Vec::new());
+    let liar = WireOperation::forged(honest.operation().clone(), honest.mint(), Vec::new());
 
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
@@ -665,11 +716,14 @@ fn an_identity_minted_in_the_offline_space_is_refused_from_a_session() {
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
         client: ClientId::new(0),
-        operations: vec![WireOperation::of(Operation::SplitParagraph {
-            at: Pos::new(paragraphs[0], 4),
-            new_id: minted,
-            properties: None,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SplitParagraph {
+                at: Pos::new(paragraphs[0], 4),
+                new_id: minted,
+                properties: None,
+            },
+            any_mint(),
+        )],
     };
     let error = receiver
         .receive(&arrival)
@@ -941,6 +995,124 @@ fn two_replicas_editing_one_paragraph_converge() {
 }
 
 #[test]
+fn a_replay_over_a_remote_edit_leaves_both_replicas_naming_every_node_alike() {
+    // The contended path, where the identity discipline is hardest: Grace's own commit is
+    // rolled BACK (destroying the runs it split off), the arrival lands, and the commit is
+    // REPLAYED as a rebased expression of the same step. The replay mints again, so the
+    // identities Grace's own runs carry after it are not the ones she first gave them — and
+    // the only way Ada can agree is if what Grace *resubmits* declares the spaces the replay
+    // actually used, not the ones the original commit had.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    let bold = |paragraph: NodeId| Operation::FormatText {
+        range: EditRange {
+            start: Pos::new(paragraph, 2),
+            end: Pos::new(paragraph, 6),
+        },
+        delta: FormatDelta {
+            bold: Some(true),
+            ..FormatDelta::default()
+        },
+    };
+
+    // Different paragraphs, so the transform keeps both intentions whole and the test is
+    // about identity rather than about the transform.
+    ada.edit("Formatting", vec![bold(paragraphs[0])]);
+    grace.edit("Formatting", vec![bold(paragraphs[1])]);
+    let graces_first_names = run_ids(&grace.document);
+
+    let from_ada = ada.exchange(&mut server);
+    assert_eq!(from_ada.len(), 1);
+    let reception = grace.receive(&from_ada[0]).expect("the arrival merges");
+    assert_eq!(reception.replayed, 1, "Grace's own step must be replayed");
+    assert_ne!(
+        run_ids(&grace.document),
+        graces_first_names,
+        "the precondition: the rollback destroyed the runs the split created and the replay \
+         minted them again, so this guard is about identities that really did move"
+    );
+
+    for arrival in grace.exchange(&mut server) {
+        ada.receive(&arrival).expect("the arrival merges");
+    }
+
+    assert_eq!(
+        run_ids(&ada.document),
+        run_ids(&grace.document),
+        "the replay renamed Grace's own nodes and Ada did not follow"
+    );
+    assert_eq!(
+        ada.document, grace.document,
+        "identical INCLUDING node identities, with no quotient"
+    );
+}
+
+#[test]
+fn a_run_an_edit_split_off_carries_the_same_identity_on_both_replicas() {
+    // Doc 150 §9.3. `apply` MINTS identities: bolding the middle of a run splits it into
+    // three, and two of those three are nodes that did not exist before. While those came
+    // from whoever *applied* the operation, the two replicas ended up with the same document
+    // under different node names — which is why every convergence assertion in this crate
+    // had to normalise run ids away before comparing, and why doc 25's "a snapshot can be
+    // verified rather than trusted" was not true across replicas.
+    //
+    // The condition is created on purpose rather than inherited: an `InsertText` inside a run
+    // mints nothing at all, so a guard written on typing would pass under either mechanism
+    // and prove nothing. The precondition below asserts the split really happened.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    let before = run_ids(&ada.document);
+    ada.edit(
+        "Formatting",
+        vec![Operation::FormatText {
+            range: EditRange {
+                start: Pos::new(paragraphs[0], 2),
+                end: Pos::new(paragraphs[0], 6),
+            },
+            delta: FormatDelta {
+                bold: Some(true),
+                ..FormatDelta::default()
+            },
+        }],
+    );
+    let after = run_ids(&ada.document);
+    let minted: Vec<NodeId> = after
+        .iter()
+        .copied()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert_eq!(
+        minted.len(),
+        2,
+        "the precondition: this edit has to create two run identities, or the guard is          testing nothing. Before: {before:?}, after: {after:?}"
+    );
+    assert!(
+        minted.iter().all(|id| ada.session.id_space().holds(*id)),
+        "a minted identity must be in the author's own space, so the check `localise` makes          on an arriving mint is the same check it makes on a declared id"
+    );
+
+    for arrival in ada.exchange(&mut server) {
+        grace.receive(&arrival).expect("the arrival merges");
+    }
+
+    assert_eq!(
+        run_ids(&grace.document),
+        after,
+        "the receiver named the nodes the operation created differently from its author"
+    );
+    assert_eq!(
+        ada.document, grace.document,
+        "the two replicas must be identical INCLUDING node identities, with no quotient"
+    );
+}
+
+#[test]
 fn a_rebase_keeps_the_user_s_own_undo_steps() {
     // A rebased commit is the same user step expressed against a document that has moved. If
     // a rebase renamed the step, Undo would either skip it or merge it with another.
@@ -1208,9 +1380,10 @@ fn a_chained_chunk_from_a_client_with_nothing_accepted_is_refused_not_guessed_at
         client: ClientId::new(3),
         seq: Seq::new(1),
         base: Base::Chained,
-        operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-            enabled: true,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: true },
+            any_mint(),
+        )],
     });
     assert_eq!(
         outcome,
@@ -1229,9 +1402,10 @@ fn a_resend_of_an_ordered_chunk_answers_where_it_landed_the_first_time() {
         client: ClientId::new(1),
         seq: Seq::new(1),
         base: Base::Revision(Revision::new(0)),
-        operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-            enabled: true,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: true },
+            any_mint(),
+        )],
     };
     assert_eq!(
         server.commit(&submission),
@@ -1244,9 +1418,10 @@ fn a_resend_of_an_ordered_chunk_answers_where_it_landed_the_first_time() {
         client: ClientId::new(2),
         seq: Seq::new(1),
         base: Base::Revision(Revision::new(1)),
-        operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-            enabled: false,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: false },
+            any_mint(),
+        )],
     });
     assert_eq!(
         server.commit(&submission),
@@ -1435,9 +1610,12 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
             } else {
                 Base::Chained
             },
-            operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-                enabled: seq % 2 == 0,
-            })],
+            operations: vec![WireOperation::of(
+                Operation::SetEvenAndOddHeaders {
+                    enabled: seq % 2 == 0,
+                },
+                any_mint(),
+            )],
         });
         assert!(matches!(outcome, Outcome::Ordered { .. }), "{outcome:?}");
     }
