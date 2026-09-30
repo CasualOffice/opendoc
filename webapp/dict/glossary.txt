@@ -490,6 +490,7 @@ resumable
 reviewable
 revisioned
 roadmap
+rsid
 rtf
 rustdoc
 sandboxed

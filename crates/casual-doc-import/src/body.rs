@@ -8284,6 +8284,18 @@ fn fold_color(color: &PendingColor) -> Rgba {
     }
 }
 
+/// Whether a local element name is DrawingML scaffolding the drawing arms consume
+/// themselves, so it raises no finding.
+///
+/// `O(1)`. Membership here is **unconditional**: an element listed is silent
+/// whatever it contains. That is only sound for a name whose every form carries no
+/// document meaning, and FID-P-03's coverage guard found three that did not qualify
+/// — `wp:effectExtent`, `a:graphicFrameLocks` and `a:picLocks`, which were silent
+/// even when they carried a real effect bleed or a real lock. They now live in
+/// `noop`, with the conditional arms the rest of that class has — and `noop` is the
+/// only silencing the coverage guard can see, so a name silenced *here* that the
+/// writer does not re-emit looks to that guard like an unreported loss. That is the
+/// pressure which keeps this list to names the writer really does emit again.
 fn is_drawing_scaffolding(local: &[u8]) -> bool {
     matches!(
         local,
@@ -8302,10 +8314,7 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"wrapPolygon"
             | b"start"
             | b"lineTo"
-            | b"effectExtent"
             | b"docPr"
-            | b"cNvGraphicFramePr"
-            | b"graphicFrameLocks"
             | b"graphic"
             | b"graphicData"
             | b"pic"
@@ -8327,7 +8336,6 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             // the text-box arm imports in full. The wrapper itself carries
             // nothing.
             | b"txbx"
-            | b"picLocks"
             | b"hlinkClick"
             | b"spPr"
             | b"xfrm"

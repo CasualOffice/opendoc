@@ -37,6 +37,7 @@
 mod body;
 mod comments_ext;
 mod config;
+mod coverage;
 mod error;
 mod font_table;
 mod math;
@@ -56,6 +57,8 @@ mod vml;
 mod watermark;
 
 pub use config::{ImportConfig, ImportMode};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+pub use coverage::{MeaningfulMarkup, meaningful_markup};
 pub use error::ImportError;
 pub use opaque::{
     RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
@@ -1138,7 +1141,7 @@ pub(crate) fn import_with_sources(
     let mut styles = styles;
     styles.resolve_numbering(&numbering, &mut reporter);
     let font_table = match font_table_xml {
-        Some(xml) => font_table::parse(xml, font_table_rels, config)?,
+        Some(xml) => font_table::parse(xml, font_table_rels, config, &mut reporter)?,
         None => Vec::new(),
     };
     let theme = match theme_xml {

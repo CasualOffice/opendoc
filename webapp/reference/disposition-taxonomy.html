@@ -335,9 +335,9 @@
         <td>Zero means relative sizing is <strong>off</strong>, and Word writes the element anyway. A non-zero percentage is a size the model (which sizes in EMU) does not carry, and it is reported.</td>
         </tr>
         <tr>
-        <td><code>wps:cNvSpPr</code>, <code>wps:cNvCnPr</code>, <code>wpg:cNvGrpSpPr</code>, <code>wps:txbx</code></td>
+        <td><code>wps:cNvSpPr</code>, <code>wps:cNvCnPr</code>, <code>wpg:cNvGrpSpPr</code>, <code>wp:cNvGraphicFramePr</code>, <code>wps:txbx</code></td>
         <td>always</td>
-        <td>Non-visual property wrappers and the text-box wrapper, beside <code>pic:cNvPr</code>/<code>pic:cNvPicPr</code> which were already excluded. Their children (<code>a:spLocks</code>, <code>w:txbxContent</code>) are judged, or imported, on their own.</td>
+        <td>Non-visual property wrappers and the text-box wrapper, beside <code>pic:cNvPr</code>/<code>pic:cNvPicPr</code> which were already excluded. Their children (<code>a:spLocks</code>, <code>a:graphicFrameLocks</code>, <code>w:txbxContent</code>) are judged, or imported, on their own.</td>
         </tr>
         <tr>
         <td><code>a:effectLst</code></td>
@@ -345,9 +345,14 @@
         <td>An empty effect list is DrawingML for &quot;no effects&quot;. A populated one is a lost shadow or glow, and is reported.</td>
         </tr>
         <tr>
-        <td><code>a:spLocks</code></td>
+        <td><code>a:spLocks</code>, <code>a:graphicFrameLocks</code>, <code>a:picLocks</code></td>
         <td>no attributes</td>
-        <td>Locks nothing. A lock that locks something is a restriction the document asked for and did not get, and is reported.</td>
+        <td>Locks nothing. A lock that locks something is a restriction the document asked for and did not get, and is reported. The frame and picture flavours were <strong>unconditionally</strong> silent until FID-P-03's coverage guard measured them, so a <code>noChangeAspect=&quot;1&quot;</code> was dropped with exactly as little noise as an empty element.</td>
+        </tr>
+        <tr>
+        <td><code>wp:effectExtent</code></td>
+        <td>every edge zero or absent</td>
+        <td>How far a drawing's shadow, glow or reflection bleeds past its <code>wp:extent</code>, in EMU per edge. All-zero — which is also what an absent edge means — says the ink stops at the frame, which is what this engine assumes. A non-zero extent makes the drawing occupy more room than its extent claims, so text wraps in the wrong place; that is reported. Also unconditionally silent until FID-P-03.</td>
         </tr>
         <tr>
         <td><code>a14:useLocalDpi</code></td>
@@ -412,6 +417,19 @@
         </ul>
         <p class="doc-body">The class entry's disposition is per-mode-honest, not constant: <code>omitted</code> + <code>preserved</code> under a retention byte floor (the bytes really are kept), <code>omitted</code> + <code>not-retained</code> on a semantic save (they really are dropped).</p>
         <p class="doc-body">Durable identities are deliberately <strong>not</strong> in this class. <code>w14:paraId</code> and <code>w14:textId</code> have real consumers — <code>commentsExtended.xml</code> and <code>commentsIds.xml</code> join a comment through its anchor paragraph's <code>paraId</code>, and Word's co-authoring recognizes a paragraph across saves by it — so they are dispositioned as located attribute findings on the elements that carry them. The element is modeled, so the model outcome is <code>degraded</code>.</p>
+        <h2 class="doc-h2" id="how-the-no-op-class-is-kept-honest-the-loss-coverage-gate">How the no-op class is kept honest: the loss-coverage gate</h2>
+        <p class="doc-body">Added 2026-09-30 with <code>105</code> FID-P-03. Every table above is a decision that something carries no meaning, and nothing was checking those decisions: the suite's round-trip tests assert a <strong>fixed point</strong> (<code>reopen(source) == reopen(write(reopen(source)))</code>), whose left side is the importer's own output, so anything dropped on first import is a perfect fixed point and passes. Roughly two hundred <code>*_survive_the_semantic_round_trip</code> tests share that blind spot and none of them compared output against the source XML.</p>
+        <p class="doc-body">The gate is <code>crates/casual-doc-export/tests/source_element_coverage.rs</code>: <strong>no element local name present in a source package may be absent from the written package without a compatibility-report entry naming it.</strong> Its shape is standard — coverage instrumentation plus a suppression list that requires a reason per entry, with the staleness rule that makes such a list survive contact with time (an exception no fixture exercises is itself a failure, the analogue of <code>--report-unused-disable-directives</code>). It reads the source through <code>casual_doc_import::meaningful_markup</code>, so the no-op class above is <strong>consulted, not copied</strong>: a second copy in a test would drift, and would drift invisibly in the direction that matters.</p>
+        <p class="doc-body">Two consequences are load-bearing:</p>
+        <ul class="doc-list">
+        <li><strong>A member of the no-op class must live in <code>casual-doc-import</code>'s <code>noop</code> module</strong>, not in a parser's private &quot;consumed silently&quot; list, because the gate can only see the former. Three names moved for that reason and all three turned out to be unconditionally silent when they should have been conditional (the <code>wp:effectExtent</code> and lock rows above).</li>
+        <li><strong>A whole-subtree loss reported on its outermost element covers its descendants</strong>, which this document already permits. The gate implements it by ancestry rather than by listing the descendants: a bézier <code>a:cubicBezTo</code> is accounted for by the one <code>custGeom</code> finding that says the geometry left the modeled subset.</li>
+        </ul>
+        <h3 class="doc-h3" id="the-attribute-axis-of-the-gate-is-deliberately-deferred">The attribute axis of the gate is deliberately deferred</h3>
+        <p class="doc-body">The same diff run over attribute names rather than element names yields <strong>52 names</strong> across the fixture corpus, falling to <strong>19</strong> once attributes whose element is itself reported (subsumed) or absent from the output (already gated) are removed. <strong>Those two figures are a one-off measurement taken 2026-09-30 against the fixture corpus of that day, not a generated artifact</strong>, because the axis they describe is not gated — nothing recomputes them, so they will go stale as the corpus and the writer move, and the working contract's evidence rule (§9 rule 1 — a published number is generated from a committed artifact, or it is not published) means they must not be requoted as current. They are recorded to give the next lane a starting point and a method, and whoever arms the axis re-measures first. Arming it was not done here, and the reason is measured rather than budgetary: the remaining 19 are dominated by <strong>spelling equivalence, not loss</strong> — <code>w:keepNext w:val=&quot;true&quot;</code> against the bare <code>&lt;w:keepNext/&gt;</code> that means the same thing, <code>w:tab w:leader=&quot;none&quot;</code> against an omitted default, <code>w:ind w:left</code> against the logical <code>w:start</code>, <code>wp:docPr w:descr=&quot;&quot;</code> (an empty alt text), and <code>mc:Ignorable</code>, which this document already places outside the taxonomy. A name-level attribute gate would therefore mostly assert <em>the writer's spelling conventions</em>, and each exception's justification would be a claim about a schema default that has to be checked one at a time against ECMA-376. Gating it on the evidence available today would produce a table of eleven weakly-justified rows, which is the failure mode the staleness rule exists to prevent.</p>
+        <p class="doc-body">One item from that list is recorded here because it is a real question and not a spelling one: the writer emits <code>&lt;w:u/&gt;</code> for single underline on the theory that <code>single</code> is <code>w:u@w:val</code>'s implicit default. <code>CT_Underline/@w:val</code> is optional with <strong>no</strong> schema default, so whether a consumer reads a bare <code>w:u</code> as single or as none is a compatibility question this document cannot settle. The round trip is self-consistent (the importer reads a bare <code>w:u</code> as single too), so no test sees it; it is written down rather than left in a diff.</p>
+        <h3 class="doc-h3" id="corpus-gap-recorded-rather-than-worked-around">Corpus gap, recorded rather than worked around</h3>
+        <p class="doc-body"><strong>No <code>.docx</code> under <code>fixtures/</code> carries a single <code>w:rsid*</code> or <code>w14:paraId</code>.</strong> The corpus is LibreOffice output plus repository-generated packages, so the highest-volume attribute in WordprocessingML and the durable identities <code>commentsExtended.xml</code> joins on were exercised only by synthetic reporter unit tests, never through a package. The gate builds a Word-shaped package in the test to cover them. A committed fixture would be better and belongs with the fixture generator, which this lane does not own.</p>
         <h2 class="doc-h2" id="relationship-to-the-fidelity-vocabulary">Relationship to the fidelity vocabulary</h2>
         <p class="doc-body">This taxonomy is per-construct disposition. It is distinct from, and feeds, the eight fidelity <strong>dimensions</strong> in <code>34-OOXML-FIDELITY-ARCHITECTURE.md</code>:</p>
         <ul class="doc-list">
@@ -498,7 +516,7 @@
         </tr>
         <tr>
         <td><code>degraded</code></td>
-        <td>An attribute of a modeled element whose meaning is not carried (<code>a:theme/@name</code>, <code>a:fontScheme/@name</code>, <code>w:p/@w14:paraId</code>, <code>w:p/@w14:textId</code>, <code>w:tr/@w14:paraId</code>), and a modeled value clamped to the model's bounds (<code>wp:anchor/@distT</code> and its siblings).</td>
+        <td>An attribute of a modeled element whose meaning is not carried (<code>a:theme/@name</code>, <code>a:fontScheme/@name</code>, <code>w:p/@w14:paraId</code>, <code>w:p/@w14:textId</code>, <code>w:tr/@w14:paraId</code>), a modeled value clamped to the model's bounds (<code>wp:anchor/@distT</code> and its siblings), and a font-table value the model cannot hold (<code>w:family/@val</code>, <code>w:pitch/@val</code>, <code>w:altName/@val</code>, <code>w:panose1/@val</code>, <code>w:charset/@val</code>, <code>w:sig/@usb0…csb1</code>) — added with FID-R-04, since <code>word/fontTable.xml</code> is regenerated on every semantic save and had no report sites at all.</td>
         </tr>
         <tr>
         <td><code>mapped</code></td>
@@ -518,7 +536,7 @@
         </tr>
         <tr>
         <td><code>rejected</code></td>
-        <td>A structurally unusable construct: a <code>w15:commentEx</code> with no <code>paraId</code> to join on, a <code>w16cid:commentId</code> missing half its pair, a <code>w15:person</code> with no author, a <code>w15:presenceInfo</code> with no person.</td>
+        <td>A structurally unusable construct: a <code>w15:commentEx</code> with no <code>paraId</code> to join on, a <code>w16cid:commentId</code> missing half its pair, a <code>w15:person</code> with no author, a <code>w15:presenceInfo</code> with no person, a <code>w:font</code> with no usable <code>@w:name</code> (a table keyed by name has nothing to key it by), and a <code>w:embed*</code> face whose <code>r:id</code> or <code>w:fontKey</code> resolves to nothing to decrypt.</td>
         </tr>
         <tr>
         <td><code>not-applicable</code></td>
@@ -573,6 +591,7 @@
             <li><a href="#legal-combinations">Legal combinations</a></li>
             <li><a href="#what-the-report-enumerates-and-what-it-does-not">What the report enumerates (and what it does not)</a></li>
             <li><a href="#non-content-markup-what-is-outside-the-taxonomy">Non-content markup: what is outside the taxonomy</a></li>
+            <li><a href="#how-the-no-op-class-is-kept-honest-the-loss-coverage-gate">How the no-op class is kept honest: the loss-coverage gate</a></li>
             <li><a href="#relationship-to-the-fidelity-vocabulary">Relationship to the fidelity vocabulary</a></li>
             <li><a href="#compatibility-report-and-ledger-encoding">Compatibility-report and ledger encoding</a></li>
             <li><a href="#migration-from-the-previous-single-enum-wording">Migration from the previous single-enum wording</a></li>

@@ -453,12 +453,20 @@ fn font_table_descriptors_are_parsed() {
             <w:sig w:usb0="E4002EFF" w:csb0="0000019F"/><w:notTrueType/></w:font>
         <w:font w:name="Symbol"/>
     </w:fonts>"#;
+    let mut reporter = crate::report::Reporter::new(crate::report::SourceRetention::Regenerated);
     let fonts = crate::font_table::parse(
         xml,
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
+        &mut reporter,
     )
     .unwrap();
+    assert!(
+        reporter
+            .into_report(&mut crate::PreservationLedger::default())
+            .is_empty(),
+        "a font table the parser fully understands raises nothing"
+    );
     assert_eq!(fonts.len(), 2);
     assert_eq!(fonts[0].name, "Calibri");
     assert_eq!(fonts[0].alt_name.as_deref(), Some("Carlito"));
@@ -471,6 +479,83 @@ fn font_table_descriptors_are_parsed() {
     assert!(fonts[0].not_true_type);
     assert_eq!(fonts[1].name, "Symbol");
     assert!(fonts[1].alt_name.is_none() && !fonts[1].not_true_type);
+}
+
+/// FID-R-04: `word/fontTable.xml` is regenerated on every semantic save, so a
+/// construct this parser skips is gone for good. It used to skip them in silence —
+/// the file had zero report sites and was not even handed a reporter — which made
+/// the one part every document carries the quietest place in the importer.
+#[test]
+fn what_the_font_table_cannot_carry_is_reported() {
+    let xml = br#"<w:fonts xmlns:w="urn:w" xmlns:r="urn:r">
+        <w:font w:name="Calibri">
+            <w:family w:val="handwritten"/>
+            <w:pitch w:val="elastic"/>
+            <w:sig w:usb0="E4002EFF" w:usb1="000000000000000000000000000000000000000000000000"/>
+            <w:embedRegular r:id="rIdMissing" w:fontKey="{0}"/>
+            <w:futureFontDetail w:val="1"/>
+        </w:font>
+        <w:font w:name=""><w:family w:val="swiss"/></w:font>
+    </w:fonts>"#;
+    let mut reporter = crate::report::Reporter::new(crate::report::SourceRetention::Regenerated);
+    let fonts = crate::font_table::parse(
+        xml,
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+        &mut reporter,
+    )
+    .unwrap();
+    // The nameless font cannot be entered in a table keyed by name.
+    assert_eq!(fonts.len(), 1);
+    let report = reporter.into_report(&mut crate::PreservationLedger::default());
+    let features: Vec<(&str, ModelOutcome, RetentionOutcome)> = report
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.feature.as_str(),
+                entry.model_outcome(),
+                entry.retention_outcome(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        features,
+        vec![
+            // A declared embedded face whose relationship resolves to nothing.
+            (
+                "embedRegular",
+                ModelOutcome::Omitted,
+                RetentionOutcome::Rejected
+            ),
+            // `w:family`/`w:pitch` are modeled elements carrying a token this model
+            // has no variant for: degraded, and the finding names the attribute.
+            (
+                "family/@val",
+                ModelOutcome::Degraded,
+                RetentionOutcome::NotRetained
+            ),
+            // A font with no usable name: nothing to key it by.
+            ("font", ModelOutcome::Omitted, RetentionOutcome::Rejected),
+            (
+                "futureFontDetail",
+                ModelOutcome::Omitted,
+                RetentionOutcome::NotRetained
+            ),
+            (
+                "pitch/@val",
+                ModelOutcome::Degraded,
+                RetentionOutcome::NotRetained
+            ),
+            // One OS/2 coverage word over the model's bound; `usb0` is kept, so the
+            // finding has to name the slot rather than the element.
+            (
+                "sig/@usb1",
+                ModelOutcome::Degraded,
+                RetentionOutcome::NotRetained
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -9008,10 +9093,19 @@ fn the_corpus_reports_exactly_these_findings() {
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
             2,
         ),
+        // 2 before FID-P-03's coverage guard, then 4. The two new ones are REAL
+        // losses that were silent: `a:graphicFrameLocks noChangeAspect="1"` and
+        // `a:picLocks noChangeAspect="1" noChangeArrowheads="1"` — restrictions the
+        // document asked for and this engine does not honour. They were in `body`'s
+        // unconditional drawing-scaffolding list, so a lock that locked something
+        // was dropped with exactly as little noise as one that locked nothing; they
+        // are in the no-op class's CONDITIONAL half now, beside `a:spLocks`, which
+        // had always had the rule they were missing. This is the count moving
+        // because the importer's honesty moved, which is what the test is for.
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            2,
+            4,
         ),
         (
             "real-producer-table-list",

@@ -979,24 +979,12 @@ pub fn export_document_with_retained_parts(
             }
         }
     }
-    // The page background (`w:background`) has no writer: it is imported into the
-    // model and then dropped on every save. Emitting it is a fidelity fix owned by
-    // FID-R-04; until then the loss is at least named rather than silent, exactly
-    // as the ODT writer names its own (`odt.export.background`).
-    //
-    // The datum dropped is the background's sRGB colour, which the source carries
-    // as `w:background/@w:color`, so the finding names that element and attribute
-    // (FID-R-03) instead of leaving the stable id to imply it. The id itself is
-    // unchanged: a caller keying off `docx.export.background` keeps working.
-    if document.background().is_some() {
-        reporter.record_construct(
-            "docx.export.background",
-            "word/document.xml",
-            "background",
-            Some("color"),
-            Disposition::OmittedNotRetained,
-        );
-    }
+    // The page background is no longer a finding: `document_xml` emits
+    // `w:background` as the first child of `w:document` (FID-R-04). #541 only
+    // NAMED this loss as `docx.export.background`, which is a report entry where a
+    // writer was wanted; the stable id is retired rather than kept describing
+    // something that no longer happens, because a report that names losses the
+    // writer does not have is the same noise as one that names none of them.
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default()
@@ -3588,6 +3576,21 @@ fn document_xml(
     doc.push_attribute(("xmlns:v", V_NS));
     doc.push_attribute(("xmlns:o", O_NS));
     w.write_event(Event::Start(doc)).map_err(pkg)?;
+    // The page background (`w:background`), which ECMA-376 puts BEFORE `w:body` as
+    // the first child of `w:document` — a `w:background` after the body is
+    // schema-invalid and Word refuses the part. It was imported and then dropped on
+    // every save until FID-R-04; #541 named the loss (`docx.export.background`),
+    // which converts a silent loss into a reported one rather than fixing it.
+    // Word only PAINTS it when `w:displayBackgroundShape` is on, and that setting
+    // travels through the model's own settings, so the two halves stay independent.
+    if let Some(color) = document.background() {
+        let mut background = start("w:background");
+        background.push_attribute((
+            "w:color",
+            format!("{:02X}{:02X}{:02X}", color.r, color.g, color.b).as_str(),
+        ));
+        w.write_event(Event::Empty(background)).map_err(pkg)?;
+    }
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
     let mut ctx = Ctx {

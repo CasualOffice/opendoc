@@ -949,19 +949,8 @@ mod tests {
             (ModelOutcome::Omitted, RetentionOutcome::Blocked),
             (ModelOutcome::Omitted, RetentionOutcome::Rejected),
         ];
-        let all = [
-            Disposition::MappedComplete,
-            Disposition::MappedPreserved,
-            Disposition::DegradedPreserved,
-            Disposition::DegradedNotRetained,
-            Disposition::DegradedBlocked,
-            Disposition::OmittedPreserved,
-            Disposition::OmittedNotRetained,
-            Disposition::OmittedBlocked,
-            Disposition::OmittedRejected,
-        ];
         let mut projected: Vec<(ModelOutcome, RetentionOutcome)> = Vec::new();
-        for disposition in all {
+        for &disposition in ALL_DISPOSITIONS {
             let pair = (disposition.model_outcome(), disposition.retention_outcome());
             assert!(
                 legal.contains(&pair),
@@ -980,20 +969,97 @@ mod tests {
         );
     }
 
+    /// Every [`Disposition`] variant, for the exhaustiveness assertions below.
+    /// A new variant added without a home here fails to compile.
+    const ALL_DISPOSITIONS: &[Disposition] = &[
+        Disposition::MappedComplete,
+        Disposition::MappedPreserved,
+        Disposition::DegradedPreserved,
+        Disposition::DegradedNotRetained,
+        Disposition::DegradedBlocked,
+        Disposition::OmittedPreserved,
+        Disposition::OmittedNotRetained,
+        Disposition::OmittedBlocked,
+        Disposition::OmittedRejected,
+    ];
+
+    /// The same nine pairs, **read out of `35-DISPOSITION-TAXONOMY.md` itself**
+    /// rather than transcribed into this file.
+    ///
+    /// The test above is a transcription, and a transcription is a second copy of
+    /// the contract: edit the doc's "Legal combinations" table and the enum keeps
+    /// agreeing with a table that no longer exists. This repository has already
+    /// published false numbers twice by hand-maintaining what should have been
+    /// derived, so the doc is parsed and the two are required to agree exactly — in
+    /// both directions, because a pair dropped from the doc and a pair dropped from
+    /// the enum are equally wrong.
+    #[test]
+    fn the_legal_pairs_are_exactly_the_ones_doc_35_lists() {
+        const TAXONOMY: &str = include_str!("../../../docs/35-DISPOSITION-TAXONOMY.md");
+        let table = TAXONOMY
+            .split_once("## Legal combinations")
+            .expect("doc 35 states the legal combinations")
+            .1
+            .split_once("\n##")
+            .expect("the section ends")
+            .0;
+        let mut documented: Vec<(String, String)> = table
+            .lines()
+            .filter_map(|line| {
+                let mut cells = line.split('|').map(str::trim);
+                cells.next()?; // the empty cell before the leading `|`
+                let model = cells.next()?.trim_matches('`');
+                let retention = cells.next()?.trim_matches('`');
+                // Skip the header row and its `---` rule; a value row's first cell
+                // is one of the three model outcomes.
+                ["mapped", "degraded", "omitted"]
+                    .contains(&model)
+                    .then(|| (model.to_owned(), retention.to_owned()))
+            })
+            .collect();
+        documented.sort();
+        documented.dedup();
+        assert_eq!(
+            documented.len(),
+            9,
+            "doc 35's table parsed as {documented:?}, which is not nine pairs — \
+             either the doc changed shape or this parser is reading it wrongly, and \
+             both mean the guard is not checking what it claims"
+        );
+
+        let spelling = |model: ModelOutcome, retention: RetentionOutcome| {
+            let model = match model {
+                ModelOutcome::Mapped => "mapped",
+                ModelOutcome::Degraded => "degraded",
+                ModelOutcome::Omitted => "omitted",
+            };
+            let retention = match retention {
+                RetentionOutcome::Preserved => "preserved",
+                RetentionOutcome::NotRetained => "not-retained",
+                RetentionOutcome::Blocked => "blocked",
+                RetentionOutcome::Rejected => "rejected",
+                RetentionOutcome::NotApplicable => "not-applicable",
+            };
+            (model.to_owned(), retention.to_owned())
+        };
+        let mut implemented: Vec<(String, String)> = ALL_DISPOSITIONS
+            .iter()
+            .map(|disposition| {
+                spelling(disposition.model_outcome(), disposition.retention_outcome())
+            })
+            .collect();
+        implemented.sort();
+        assert_eq!(
+            implemented, documented,
+            "the Disposition enum and doc 35's legal-combination table disagree; \
+             the taxonomy has one source of truth and this is it"
+        );
+    }
+
     /// Only `preserved` may cite a ledger record, and every `preserved` must.
     #[test]
     fn claims_preservation_matches_the_retention_axis() {
-        for disposition in [
-            Disposition::MappedComplete,
-            Disposition::MappedPreserved,
-            Disposition::DegradedPreserved,
-            Disposition::DegradedNotRetained,
-            Disposition::DegradedBlocked,
-            Disposition::OmittedPreserved,
-            Disposition::OmittedNotRetained,
-            Disposition::OmittedBlocked,
-            Disposition::OmittedRejected,
-        ] {
+        for &disposition in ALL_DISPOSITIONS {
             assert_eq!(
                 disposition.claims_preservation(),
                 disposition.retention_outcome() == RetentionOutcome::Preserved,
