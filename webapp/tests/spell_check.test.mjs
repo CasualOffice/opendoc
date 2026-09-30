@@ -14,6 +14,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import { createSpellChecker, spellingContextCommands } from "../src/spell_check.mjs";
 import { createProofResponder } from "../src/proof_protocol.mjs";
@@ -29,14 +30,20 @@ const GLOSSARY = ["OpenDoc", "opendoc", "qzxbrand"].join("\n").concat("\n");
 /** `1 -> "aa"`, `2 -> "bb"`, … — a per-page invented word with no digits. */
 const letter = (page) => String.fromCharCode(96 + page).repeat(2);
 
-/** A document of `pagesCount` pages, two paragraphs each, one of them wrong. */
-function fakeEngine(pagesCount = 6, { language = "" } = {}) {
+/** A document of `pagesCount` pages, two paragraphs each, one of them wrong.
+ *
+ *  `unknownWord(page)` overrides the word the second paragraph carries. The pack
+ *  guard uses it to put a REAL word there — one the shipped dictionary genuinely
+ *  lacks — instead of an invented one, which is the only way to ask whether a pack
+ *  changes what is underlined. */
+function fakeEngine(pagesCount = 6, { language = "", unknownWord = null } = {}) {
   const paragraphs = [];
   for (let page = 1; page <= pagesCount; page += 1) {
     paragraphs.push({ node: `p${page}a`, page, text: "This page is one line of correct prose" });
     // No digit in the invented word: a token containing one is skipped by rule,
     // so a fixture that numbered its typos would test nothing.
-    paragraphs.push({ node: `p${page}b`, page, text: `This word qzx${letter(page)} is wrong` });
+    const word = unknownWord ? unknownWord(page) : `qzx${letter(page)}`;
+    paragraphs.push({ node: `p${page}b`, page, text: `This word ${word} is wrong` });
   }
   const index = new Map(paragraphs.map((p, i) => [p.node, i]));
   const asked = { copyText: [], languageAt: [] };
@@ -749,4 +756,190 @@ test("a reply that predates the word list does not poison the cache", async () =
       "naming which resources produced the answer, and this goes red with the " +
       "grammar mark alone — a document that is silently never spell-checked.",
   );
+});
+
+// ── THE GUARD FOR INCREMENT B: a word stops being underlined ─────────────────
+//
+// `docs/146` §6 / ADR-042's installation increment makes exactly one promise a
+// reader can see: install a pack, and words that were squiggled stop being
+// squiggled. Everything else — the manifest schema, the digest, the atomic
+// activation, the cache key — exists to make that true without lying about it.
+//
+// So it is asserted AT THE PAINT TIER, through the real `paint()` pass, against the
+// real shipped dictionary, the real shipped glossary and the real generated pack
+// artifact. A model-level assertion (`isKnownWord(word, …) === true`) has passed
+// through every real defect in this repository: the tier can be right while the
+// coordinator never asks it, while the cache serves the pre-install answer, or
+// while the resources message never reaches the worker. Only the painted marker
+// says the reader's experience changed.
+//
+// The word is FILTERED, not chosen: `pack_artifact.test.mjs` asserts every word in
+// the pack is absent from `dict/en-US.txt`, `dict/en-GB.txt` and
+// `dict/glossary.txt`, and these tests take their words FROM the artifact — so the
+// premise "the base tier really lacks it" cannot rot into a test that was always
+// going to pass.
+
+const REAL_EN_US = readFileSync(new URL("../dict/en-US.txt", import.meta.url), "utf8");
+const REAL_GLOSSARY = readFileSync(new URL("../dict/glossary.txt", import.meta.url), "utf8");
+const PACK_MANIFEST = JSON.parse(
+  readFileSync(new URL("../packs/index.json", import.meta.url), "utf8"),
+).packs.find((pack) => pack.locale === "en-US");
+const PACK_WORDS = readFileSync(
+  new URL("../packs/en-US-supplement/words.txt", import.meta.url),
+  "utf8",
+)
+  .split("\n")
+  .filter(Boolean);
+
+/** The pack as `setPack` takes it. */
+const PACK = {
+  packId: PACK_MANIFEST.packId,
+  locale: "en-US",
+  packVersion: PACK_MANIFEST.packVersion,
+  words: PACK_WORDS,
+};
+
+/** A checker wired to the REAL shipped word lists rather than the fixture's twenty
+ *  words. Slower — an 83,775-entry `Set` — and it is the only way to ask whether
+ *  the base tier lacks a word. */
+function realHarness(engine) {
+  return harness(engine, {
+    fetchText: async (url) => (url === "fake://glossary" ? REAL_GLOSSARY : REAL_EN_US),
+  });
+}
+
+test("a pack word is underlined before the pack installs and not after", async () => {
+  // The first word of the artifact, whichever it is. Read from the file so a change
+  // to the candidate list cannot leave this pinned to a word the pack dropped.
+  const word = PACK_WORDS[0];
+  const engine = fakeEngine(1, { unknownWord: () => word });
+  const h = realHarness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.deepEqual(
+    h.flags(),
+    [word],
+    `“${word}” must be flagged by the BASE tier, or this test proves nothing about ` +
+      "the pack. If this fails, the shipped dictionary has caught up with the " +
+      "candidate list and `tools/build-pack.mjs` would have filtered the word out.",
+  );
+
+  const before = h.checker.packVersion();
+  h.checker.setPack(PACK);
+  await settle(h);
+
+  assert.deepEqual(
+    h.flags(),
+    [],
+    `“${word}” must stop being underlined once the pack that knows it is active. ` +
+      "MUTATION: delete the `supplement` line from `isKnownWord` in spelling.mjs " +
+      "and this goes red with the word still flagged.",
+  );
+  assert.notEqual(
+    h.checker.packVersion(),
+    before,
+    "and the cache key's pack token must MOVE, or every already-checked paragraph " +
+      "would go on being served its pre-install answer. MUTATION: make " +
+      "`activePackVersion` ignore its `packs` argument and this goes red.",
+  );
+});
+
+test("removing the pack puts the underline back", async () => {
+  // The other direction, and it is not symmetric by construction: the worker
+  // applies a resources message PARTIALLY, so "this locale no longer has a pack"
+  // has to be something the message can SAY. A removal that simply stopped
+  // mentioning the locale would leave the pack live in the worker for the rest of
+  // the session, and the reader would watch a pack they removed go on accepting
+  // words.
+  const word = PACK_WORDS.at(-1);
+  const engine = fakeEngine(1, { unknownWord: () => word });
+  const h = realHarness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  h.checker.setPack(PACK);
+  await settle(h);
+  assert.deepEqual(h.flags(), [], `“${word}” is accepted while the pack is active`);
+
+  assert.equal(h.checker.removePack("en-US"), true);
+  // A DIFFERENT paragraph text, and it is the whole reason this guard means
+  // anything. WITHOUT it the test passed while the removal message was broken:
+  // removing the pack puts the cache key back to exactly its pre-install value,
+  // whose entry is still in the bounded cache and still says "flagged", so the
+  // underline returned from the CACHE and the resources message was never
+  // exercised. Measured — the mutation that omits a removed locale from the
+  // message instead of sending `words: null` left the earlier version of this test
+  // GREEN. Changing the text bumps the paragraph revision, so the key has never
+  // been seen and the answer has to come from the worker.
+  engine.paragraphs[1].text = `Both words ${word} are fine here`;
+  await settle(h);
+  assert.deepEqual(
+    h.flags(),
+    [word],
+    `“${word}” must be underlined again once the pack is removed. MUTATION: make ` +
+      "`sendResources` omit a removed locale instead of sending `words: null` and " +
+      "this goes red with the word still accepted.",
+  );
+  assert.equal(h.checker.removePack("en-US"), false, "and a second removal says so");
+});
+
+test("a pack word is offered as a correction for a typo of it, and not before", async () => {
+  // The suggestion half. Installing a pack that knows `microservices` and then
+  // being told there is nothing close to a typo of it would be the pack half
+  // working and the ranking half not — and the per-word memo would make that
+  // permanent for the life of the worker, which is why the active pack version is
+  // in the memo key as well as in the result cache key.
+  const target = PACK_WORDS.find((entry) => entry.length > 7 && /^[a-z]+$/.test(entry));
+  const typo = `${target.slice(0, -1)}x`;
+  const engine = fakeEngine(1, { unknownWord: () => typo });
+  const h = realHarness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  const first = h.checker.misspellingAt({ node: "p1b", offset: 11 });
+  assert.ok(first, `“${typo}” is flagged before the pack arrives`);
+  assert.equal(
+    first.replacements.includes(target),
+    false,
+    `nothing can offer “${target}” before the pack that knows it is installed`,
+  );
+
+  h.checker.setPack(PACK);
+  await settle(h);
+  const after = h.checker.misspellingAt({ node: "p1b", offset: 11 });
+  assert.ok(after, `“${typo}” is still flagged — it is still a typo`);
+  assert.ok(
+    after.replacements.includes(target),
+    `and “${target}” is now offered. Got ${JSON.stringify(after.replacements)}. ` +
+      "MUTATION: drop `supplement` from `suggestionsFor`'s `canonical` and this " +
+      "goes red.",
+  );
+});
+
+test("the SDK read side reports what was scanned, and says nothing about what was not", async () => {
+  const engine = fakeEngine(4);
+  const h = realHarness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.deepEqual(h.checker.scannedNodes(), ["p1a", "p1b"]);
+  assert.equal(h.checker.findings("p4b").length, 0, "a paragraph outside the window");
+  assert.ok(
+    h.checker.findings(null).length > 0,
+    "while the window's own findings ARE reported — which is what makes the empty " +
+      "answer above mean 'not checked' rather than 'nothing wrong'. The SDK turns " +
+      "the first into a named refusal for exactly that reason.",
+  );
+});
+
+test("a findings subscriber hears about a scan, and stops when it unsubscribes", async () => {
+  const engine = fakeEngine(1);
+  const h = realHarness(engine);
+  h.setWindow(1, 1);
+  const heard = [];
+  const off = h.checker.subscribe((findings) => heard.push(findings.length));
+  await settle(h);
+  assert.ok(heard.length > 0, "the subscriber heard the scan");
+  off();
+  const seen = heard.length;
+  h.checker.setPack(PACK);
+  await settle(h);
+  assert.equal(heard.length, seen, "and nothing after unsubscribing");
 });

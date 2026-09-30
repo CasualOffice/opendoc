@@ -1,0 +1,43 @@
+{
+  "packs": [
+    {
+      "schemaVersion": 1,
+      "packId": "casual-proof-en-US-supplement",
+      "locale": "en-US",
+      "packVersion": "1.f75850c63398",
+      "engineApiRange": "1",
+      "capabilities": [
+        "spelling"
+      ],
+      "assets": [
+        {
+          "id": "words",
+          "url": "packs/en-US-supplement/words.txt",
+          "bytes": 1793,
+          "sha256": "f75850c6339842ffbda5a12611abf9f15dd6fed09c730246c6b03727fe7e9158",
+          "format": "words-plain-1"
+        }
+      ],
+      "provenance": [
+        {
+          "name": "OpenDoc contemporary English supplement",
+          "version": "1.f75850c63398",
+          "license": "Apache-2.0",
+          "url": "https://github.com/CasualOffice/opendoc/blob/main/webapp/packs/sources/en-US-supplement.txt"
+        }
+      ],
+      "selfTest": {
+        "known": [
+          "abortable",
+          "metaverse",
+          "workstreams"
+        ],
+        "unknown": [
+          "qzxbletch",
+          "qzxfrumious",
+          "qzxwoggle"
+        ]
+      }
+    }
+  ]
+}

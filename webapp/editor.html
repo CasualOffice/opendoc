@@ -963,6 +963,14 @@
               <button data-i18n-title="panelReview.checkSpellingAsYou.title" data-i18n-label="panelReview.spellCheck.label" id="reviewSpellCheckBtn" type="button" class="fmt" title="Check spelling as you type" aria-label="Spell check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span></button>
               <button data-i18n-title="panelReview.checkGrammarAsYou.title" data-i18n-label="panelReview.grammarCheck.label" id="reviewGrammarCheckBtn" type="button" class="fmt" title="Check grammar as you type" aria-label="Grammar check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span><span class="table-command-badge" aria-hidden="true">G</span></button>
               <button data-i18n-title="panelReview.replaceStraightQuotesTypographic.title" data-i18n-label="panelReview.smartQuotes.label" id="reviewSmartQuotesBtn" type="button" class="fmt" title="Replace straight quotes with typographic quotes as you type" aria-label="Smart quotes" aria-pressed="false"><span class="ms" aria-hidden="true">format_quote</span></button>
+              <!-- Proofing languages (docs/146 §3/§10, ADR-042). Word's own
+                   install surface is File ▸ Options ▸ Language, but its Review tab
+                   carries a Language group beside Proofing, and this editor has no
+                   Options backstage — so the Review band is where the two proofing
+                   switches already live and where the third proofing control
+                   belongs. Its other two surfaces are the Review menu's Proofing
+                   band and the command palette (`105` UX-004). -->
+              <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -1731,6 +1739,42 @@
           <p data-i18n="bookmarkDialog.noBookmarksYetSelect" id="bookmarkEmpty" class="bookmark-empty" hidden>No bookmarks yet. Select text and add one above.</p>
         </div>
         <footer class="dialog-foot"><span data-i18n="bookmarkDialog.eachChangeOneUndoable" class="dialog-note">Each change is one undoable action.</span><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="bookmarkDone" type="button" class="dialog-button">Done</button></div></footer>
+      </section>
+    </div>
+    <!-- Proofing languages. Word's File ▸ Options ▸ Language table, which is the
+         surface this is designed from: one row per language, the proofing STATE as
+         a column, and the action the state admits. `proof_languages.mjs` carries
+         the full competitive comparison and the three places this deliberately
+         differs from Word. The table is authored here with its real headers so the
+         row/column semantics a screen reader needs are markup rather than
+         something script has to reconstruct. -->
+    <div id="proofLanguagesDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="proofLanguagesTitle" aria-describedby="proofLanguagesDescription">
+      <section class="dialog-card proof-lang-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="proofLanguagesDialog.title" id="proofLanguagesTitle">Proofing languages</h2>
+              <p data-i18n="proofLanguagesDialog.description" id="proofLanguagesDescription">Install a language's proofing data to check spelling in it, offline, in this browser.</p>
+            </div>
+          </div>
+          <button data-i18n-title="bookmarkDialog.close.title" data-i18n-label="proofLanguagesDialog.close.label" id="proofLanguagesClose" type="button" class="dialog-close" title="Close" aria-label="Close proofing languages"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body proof-lang-body">
+          <table class="proof-lang-table">
+            <thead>
+              <tr>
+                <th data-i18n="proofLanguagesDialog.columnLanguage" scope="col">Language</th>
+                <th data-i18n="proofLanguagesDialog.columnProofing" scope="col">Proofing</th>
+                <th data-i18n="proofLanguagesDialog.columnSize" scope="col">Download</th>
+                <th data-i18n="proofLanguagesDialog.columnAction" scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody id="proofLanguageRows"></tbody>
+          </table>
+          <p data-i18n="proofLanguagesDialog.storedHere" id="proofLanguagesStored" class="dialog-field-note">Packs are stored in this browser only. Removing one frees the space it used and never touches your own words.</p>
+          <p id="proofLanguagesNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-foot"><span data-i18n="proofLanguagesDialog.windowNote" class="dialog-note">Proofing checks the pages you are looking at, so scroll through a long document to check all of it.</span><div class="dialog-actions"><button data-i18n="proofLanguagesDialog.done" id="proofLanguagesDone" type="button" class="dialog-button">Done</button></div></footer>
       </section>
     </div>
     <div id="dropCapDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="dropCapTitle" aria-describedby="dropCapDescription">

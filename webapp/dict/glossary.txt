@@ -165,6 +165,7 @@ RSS
 RTF
 RTL
 Reachability
+Rebasing
 Reflow
 Roadmap
 Roboto
@@ -259,6 +260,7 @@ backpressure
 basedOn
 bbox
 bidi
+bijection
 bindgen
 blit
 blits
@@ -297,6 +299,7 @@ customizable
 debounce
 debounced
 decodable
+dedupe
 deduplication
 del
 deployable
@@ -372,6 +375,7 @@ idempotent
 iframe
 impl
 incl
+injective
 inlines
 inspectable
 integrators
@@ -400,6 +404,7 @@ memoized
 meta
 metafile
 metafiles
+midrange
 min
 mis
 mjs
@@ -467,6 +472,7 @@ rects
 recurse
 recurses
 recursing
+redistributable
 reflow
 reflowed
 reflows
@@ -534,6 +540,7 @@ twips
 unauthorable
 uncached
 unclipped
+uncontended
 undecodable
 undoable
 undos

@@ -238,6 +238,18 @@ same versioned schema rather than inventing a third iframe protocol.
 
 ## 6. Ownership boundaries
 
+> **Confirmed and now argued, 2026-09-30, by `152` / ADR-047.** The row below saying the
+> provider must **never** own the OT transform was asserted here rather than argued, and the
+> sibling engine `opencalc` does the opposite — its relay transforms and holds the model. That
+> made it a real decision rather than a restatement, and `152` §3 settles it: our `transform`
+> reads the concurrent operation's **inverse**, which only `apply` produces, so a transforming
+> relay must be a full document replica running the whole engine — strictly heavier than a
+> spreadsheet's self-describing operations, and the end of a substitutable provider (§7 P3).
+> The decision stands, the cost of standing by it is written down (ping-pong and possible
+> starvation under sustained contention), and the protocol still *permits* a provider that
+> links `casual-doc-transaction` and transforms, so the choice is reversible. `143` §16 Q1 is
+> answered by ADR-047.
+
 | Concern | Core/runtime | Editor/embed | Host | Collaboration provider |
 | --- | --- | --- | --- | --- |
 | Parse/save DOCX/ODT | Own | Expose | Supply/persist bytes | Never |
@@ -569,8 +581,13 @@ execution evidence, not a support claim; doc 18 remains authoritative for suppor
 
 ## 16. Open decisions
 
-1. Accept ADR-033 and this provider/host split, or revise the OT choice before API
-   names or persisted operation schemas are frozen.
+1. ~~Accept ADR-033 and this provider/host split, or revise the OT choice before API
+   names or persisted operation schemas are frozen.~~ **Answered 2026-09-30 by ADR-047
+   (`152`):** the split is accepted, with the relay ordering and fanning out and owning
+   neither the document nor the transform. §6 above carries the argument and the cost. Nothing
+   is frozen: the byte codec is deliberately still unbuilt, because the op-set lane is about to
+   move the operation shapes and a compatibility surface must not be frozen over shapes that
+   are about to change.
 2. Decide whether the first reference relay stores a bounded log itself or calls a
    required host `OperationStore` port. The latter better preserves host ownership;
    the former is easier to operate.

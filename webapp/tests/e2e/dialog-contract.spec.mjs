@@ -181,6 +181,32 @@ const MODALS = [
     },
   },
   {
+    id: "proofLanguagesDialog",
+    name: "Proofing languages",
+    // The language-pack install surface (`docs/146` §3/§10, ADR-042 Increment B),
+    // designed from Word's File ▸ Options ▸ Language table. Reached from the Review
+    // band here; its other two surfaces are the Review menu's Proofing band and the
+    // command palette (`105` UX-004 forbids a capability with only one).
+    //
+    // No surviving opener, for the same reason as Watermark, Drop cap and Insert
+    // caption: the button is bound from the surface table through `onButton`, which
+    // preventDefaults mousedown so the band never takes the keyboard off the
+    // document. So the requirement is that Escape puts it back on the editing
+    // surface.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The first enabled row action — Install for a language with a pack published,
+    // and the dialog asks for focus there because installing is what it is for.
+    // Named by state rather than by id: the rows are built on open from what is
+    // actually installed, so no id is stable across a run that installed something.
+    focus: "#proofLanguageRows button:not(:disabled)",
+    async open(page) {
+      await gotoEditor(page);
+      await page.locator('[data-tab="review"]').click();
+      await page.locator("#reviewProofLanguagesBtn").click();
+    },
+  },
+  {
     id: "captionDialog",
     name: "Insert caption",
     // Same as Drop cap and Watermark: the ribbon button is bound through

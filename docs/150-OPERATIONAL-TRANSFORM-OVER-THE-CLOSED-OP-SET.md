@@ -12,6 +12,10 @@
 machine, presence or cursors; any change to the operation set; anything in `webapp/`. This
 lane writes the rule and proves it converges. Everything that *calls* the rule is `107` 6.6.
 
+> **The caller now exists.** `152` / ADR-047 builds the protocol, the two session state
+> machines and the rollback/replay driver that invokes `transform`. It corrects §6's last row
+> and §10 Q1/Q2 in place, and adds §10 Q2a. Read it with §6 and §10 below.
+
 **The sibling is the reference.** `opencalc` (`/services/opencalc`) accepted the same
 decision in its ADR-011 / `docs/56` and has a working `transform` over a closed op set. The
 shape, the vocabulary (`Side`, `subject`/`against`, refuse-rather-than-guess, TP1 as a
@@ -399,7 +403,7 @@ refusal outside the list reaches a caller.
 | **U7** | A whole-paragraph rewrite meeting a concurrent split or join of that paragraph | §5.6. |
 | **U8** | A whole-paragraph rewrite meeting a concurrent edit inside that paragraph | §5.6. |
 | **U9** | `InsertRow`/`InsertColumn` meeting a concurrent insertion on the other axis of the same table | §5.9 — it would need a cell the operation does not carry, and a transform may not mint identities. |
-| — | A `Change` whose inverse does not describe what its operation did | `Coalesce::ContinueKeepingFirstInverse` records no inverse (`147` §3.4), so such a commit cannot say what it destroyed. §10 Q2. |
+| — | A `Change` whose inverse does not describe what its operation did | `Coalesce::ContinueKeepingFirstInverse` records no inverse (`147` §3.4), so such a commit cannot say what it destroyed. **Corrected 2026-09-30 by `152` (ADR-047): this is a blocker, not an open question.** Such a commit also cannot be *rolled back*, so suggesting mode cannot take part in a session at all. §10 Q2. |
 
 U2 and U6 are the document's analogue of the sibling's "two concurrent line moves whose source
 bands overlap" — the refusals a user reaches by ordinary work. Naming that plainly is the
@@ -527,16 +531,32 @@ change (ADR-030 I2) to close. They are reported, not taken.
 
 ## 10. Open questions — recorded, not hidden
 
-1. **Base-state placement.** §4's precondition is the sharpest edge in this design: a session
-   must supply a placement resolved against the *base* state, and neither replica holds that
-   state when it transforms. Until `107` 6.6 designs the session, callers should pass
-   `NoPlacement` and take the refusal. A placement maintained incrementally alongside the log
-   would also close the B2 concern in §7.
-2. **Commits without inverses.** `Coalesce::ContinueKeepingFirstInverse` (`147` §3.4) drops a
-   commit's inverse operations to keep review typing bounded. Such a commit cannot serve as
-   `against`; `Commit::changes()` returns `None` for it rather than guessing. The fix is to
-   retain inverses on the commit and drop them at undo-read time instead — a change to `147`'s
-   envelope, so it is not taken here.
+1. ~~**Base-state placement.**~~ **Closed 2026-09-30 by `152` §5.3 (ADR-047).** The question
+   was how a session supplies a placement resolved against the *base* state when "neither
+   replica holds that state at the moment it transforms". A **rollback** driver does: rolling
+   its unordered commits back to the horizon *is* arriving at that state, so
+   `BlockIndex::of` is built there and nowhere else and the precondition is met by
+   construction rather than by a caller's promise. The cost is one O(document) walk per
+   **contended** arrival — never per keystroke, never on an uncontended one — and `152`
+   §10 Q1 records maintaining it incrementally as the way to pay less. Callers that are not
+   the driver still pass `NoPlacement` and take the refusal.
+2. ~~**Commits without inverses.**~~ **Not an open question — a blocker, recorded 2026-09-30
+   by `152` §5.3 (ADR-047).** `Coalesce::ContinueKeepingFirstInverse` (`147` §3.4) drops a
+   commit's inverse operations to keep review typing bounded. This section said such a commit
+   "cannot serve as `against`", which understates it: it also **cannot be rolled back**, and
+   rollback is how a replica rebases its own unacknowledged work. So **suggesting mode cannot
+   take part in a session at all** until `147`'s envelope retains inverses and drops them at
+   undo-read time instead. The session refuses with a stable code
+   (`SessionError::NotRollbackable` → `ODC-7001`) rather than diverging, and
+   `an_unordered_commit_that_kept_no_inverse_cannot_be_rolled_back` is proven red against the
+   envelope change that would close it.
+2a. **Rebasing a sequence needs more than one inverse.** Found while building `152`: to rebase
+   the *second* unordered commit, the arrival has to be seen as it would be after the first,
+   and its inverse there is the composition `p₁'⁻¹ ∘ R⁻¹ ∘ p₁` — three operations, where
+   `Change` carries one. Rollback supplies the inverse for one step, not for a sequence. The
+   driver therefore **probes**: it applies the arrival's image at each base state the rollback
+   reveals, keeps the inverses, and applies them straight back, which rests only on the
+   invariant undo already rests on. `152` §5.3.
 3. **Collaborative undo.** §11.
 4. **Tracked changes.** `107` §8 Q3 — whether operations are transformed before or after
    revision wrapping — is untouched by this lane and still open. `transform` sees whatever

@@ -2,10 +2,12 @@
 // what decides a finding.
 //
 // Designed in `docs/146` §4/§5 (the owner's architecture of 2026-09-28),
-// decided in **ADR-042**. This is Increment A — stability — and nothing here
-// knows about packs, installation or a document profile; those are Increments B
-// and C, and the shapes below leave room for them rather than pretending to
-// carry them.
+// decided in **ADR-042**. It shipped as Increment A — stability — and Increment B
+// (installation) added exactly one thing to it: a per-locale SUPPLEMENT tier,
+// which is what an installed language pack's words arrive as. Nothing here knows
+// how a pack is fetched, verified or stored (`proof_packs.mjs`, `proof_store.mjs`)
+// and nothing here knows about a document profile, which is Increment C; the
+// shapes below leave room for it rather than pretending to carry it.
 //
 // ## Why this file is pure, and stays pure
 //
@@ -61,8 +63,9 @@ export const PROOF_PROTOCOL_VERSION = 1;
 /** Message kinds. Namespaced, because a worker's `message` event is shared with
  *  anything else the host may post to it. */
 export const PROOF_MESSAGE = Object.freeze({
-  /** page → worker: resources changed (word list, glossary, user's words, the
-   *  session's ignore sets). Partial: only the fields present are applied. */
+  /** page → worker: resources changed (word list, glossary, an installed
+   *  language pack's supplement, user's words, the session's ignore sets).
+   *  Partial: only the fields present are applied. */
   resources: "proof:resources",
   /** page → worker: check these paragraphs. */
   check: "proof:check",
@@ -78,11 +81,15 @@ export const PROOF_MESSAGE = Object.freeze({
  *  collapsing two of them is what flagged every word in the document. */
 export const UNAVAILABLE = "unavailable";
 
-/** The version of the shipped word lists and rules. Increment A has exactly one
- *  pack — the basic tier `docs/146` §6 describes, which is the data already in
- *  `webapp/dict/` — so this is a constant rather than a lookup. It is in the
- *  cache key from the start so that installing a pack in Increment B
- *  invalidates results instead of serving answers from the previous data. */
+/** The version of the shipped word lists and rules — the BASIC tier `docs/146`
+ *  §6 describes, which is the data already in `webapp/dict/`.
+ *
+ *  It is one half of the cache key's `activePackVersion`: Increment B's
+ *  `proof_packs.mjs` composes this constant, how much of the basic tier has
+ *  arrived, and every installed pack's immutable version into the token the key
+ *  actually carries (`activePackVersion`). Installing or removing a pack
+ *  therefore invalidates results rather than serving the previous data's
+ *  answers, which is what §4 asks the key to do. */
 export const BASIC_PACK_VERSION = "basic-1";
 
 /** How many distinct unknown words one `check` may spend the DEEP suggestion
@@ -102,8 +109,8 @@ export const DEEP_SUGGESTION_BUDGET = 24;
 export const MAX_SUGGESTIONS = 5;
 
 /** How many words the per-worker suggestion memo holds. Suggestions depend only
- *  on (word, locale, resources revision), so the same typo repeated down a
- *  document costs once. */
+ *  on (word, locale, settings revision, active pack version), so the same typo
+ *  repeated down a document costs once. */
 const SUGGESTION_MEMO_LIMIT = 500;
 
 /**
@@ -205,12 +212,19 @@ export function proofParagraph(input, resources) {
   // Decided from the dictionary ALONE. A locale with no list, or one whose list
   // failed to arrive, contributes no spelling findings — never every word.
   const words = resources.dictionaries.get(locale);
+  // The installed language pack for this locale, if one is active (`docs/146`
+  // §6, ADR-042). A FOURTH tier, never folded into the glossary — `isKnownWord`'s
+  // docstring says why, and it is a difference in lifetime rather than in taste.
+  // Absent is `null`, and `null` accepts nothing extra; there is no "empty pack"
+  // state, for the same reason there is no empty dictionary.
+  const supplement = resources.supplements?.get(locale) ?? null;
   const spellable = input.spelling && words && words !== UNAVAILABLE && resources.glossary;
   if (spellable) {
     for (const token of findMisspellings(text, words.all, {
       personal: resources.personal,
       ignored: resources.ignoredWords,
       glossary: resources.glossary,
+      supplement,
     })) {
       const { suggestions, complete } = resources.suggest(token.word, locale, words);
       findings.push({
@@ -270,10 +284,15 @@ export function proofParagraph(input, resources) {
 export function createProofResponder() {
   /** locale → parsed dictionary, or `UNAVAILABLE`. Never an empty dictionary. */
   const dictionaries = new Map();
-  /** word|locale|revision → `{ suggestions, complete }`, bounded LRU. */
+  /** locale → the installed pack's word `Set`. Absent means no pack, which is
+   *  not the same as an empty one and is why a locale with no entry has none
+   *  rather than an empty `Set`. */
+  const supplements = new Map();
+  /** word|locale|revision|pack → `{ suggestions, complete }`, bounded LRU. */
   const memo = new Map();
   const resources = {
     dictionaries,
+    supplements,
     glossary: null,
     personal: new Set(),
     ignoredWords: new Set(),
@@ -283,7 +302,13 @@ export function createProofResponder() {
     /** Deep-scan budget for the check currently running. Reset per `check`. */
     deepBudget: DEEP_SUGGESTION_BUDGET,
     suggest(word, locale, dictionary) {
-      const key = `${locale}\u0000${resources.settingsRevision}\u0000${word}`;
+      // `packVersion` is in the key because an installed pack CHANGES the answer:
+      // before it arrives `microservics` has no close neighbour, after it does. A
+      // memo keyed only by the word and the settings would serve the pre-install
+      // answer for the life of the worker, which is the same defect the result
+      // cache had — an answer that was correct when it was computed being served
+      // after the resources moved (`docs/146` §2, finding 2).
+      const key = `${resources.packVersion}\u0000${locale}\u0000${resources.settingsRevision}\u0000${word}`;
       const hit = memo.get(key);
       if (hit) {
         memo.delete(key);
@@ -297,6 +322,7 @@ export function createProofResponder() {
         limit: MAX_SUGGESTIONS,
         personal: resources.personal,
         glossary: resources.glossary,
+        supplement: supplements.get(locale) ?? null,
         deepScan: deep,
       });
       // "Complete" means the answer is the one a full search would give. A
@@ -322,6 +348,20 @@ export function createProofResponder() {
           entry.locale,
           entry.unavailable ? UNAVAILABLE : parseDictionary(entry.text),
         );
+      }
+    }
+    // An installed pack's words, per locale. They cross the boundary as an ARRAY
+    // and become a `Set` here, for the same reason the dictionary crosses as text
+    // and is parsed here: building the set is the work, and the work belongs off
+    // the main thread. `words: null` REMOVES the locale's supplement, which is
+    // what uninstalling a pack sends — and removal has to be representable, or a
+    // pack could be removed from storage and stay live in the worker for the rest
+    // of the session.
+    if (Array.isArray(message.supplements)) {
+      for (const entry of message.supplements) {
+        if (!entry || typeof entry.locale !== "string") continue;
+        if (entry.words === null) supplements.delete(entry.locale);
+        else supplements.set(entry.locale, new Set(entry.words));
       }
     }
     if (message.glossaryText !== undefined) {

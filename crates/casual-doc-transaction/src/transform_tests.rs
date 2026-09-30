@@ -942,23 +942,148 @@ fn transform_cost_does_not_scale_with_the_document() {
     );
 }
 
-#[test]
-fn single_user_editing_does_not_call_transform() {
-    // `107` exit gate 7 and the sibling's own commitment: OT is dormant at one editor. A
-    // transform reachable from the edit path would make every lone editor pay for a
-    // feature they are not using, so the engine may not call it at all.
-    // CRLF-normalised, because two Windows-only CI failures came from literals containing
-    // `\n` not matching a CRLF checkout (doc 147 §5).
-    let engine = include_str!("lib.rs").replace("\r\n", "\n");
-    let calls = engine.matches("transform::transform(").count()
-        + engine.matches("transform::transform_placed(").count()
-        + engine.matches("transform::BlockIndex::of(").count();
-    assert_eq!(
-        calls, 0,
-        "the transaction engine now calls `transform`; single-user editing must contact \
-         nothing and run no transform"
+/// Every `.rs` file under `root`, sorted, with CRLF normalised.
+///
+/// CRLF-normalised because two Windows-only CI failures came from literals containing `\n`
+/// not matching a CRLF checkout (doc 147 §5).
+fn sources(root: &std::path::Path) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("{} is not readable: {error}", directory.display()));
+        for entry in entries {
+            let path = entry.expect("a directory entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{} is not readable: {error}", path.display()));
+                found.push((
+                    path.file_name()
+                        .expect("a file name")
+                        .to_string_lossy()
+                        .into_owned(),
+                    text.replace("\r\n", "\n"),
+                ));
+            }
+        }
+    }
+    assert!(
+        !found.is_empty(),
+        "no sources found under {} — a guard that reads nothing proves nothing",
+        root.display()
     );
+    found.sort();
+    found
+}
+
+#[test]
+fn the_keystroke_path_runs_no_transform() {
+    // `107` exit gate 7 and the sibling's own commitment: OT is dormant at one editor, so a
+    // lone editor pays nothing for a feature it is not using.
+    //
+    // WHY THIS IS NOT THE GUARD IT REPLACES. `single_user_editing_does_not_call_transform`
+    // scanned `lib.rs` and only `lib.rs`. That asserted a *circumstance* — that one file
+    // happened to hold no call — and it went blind the moment a sibling module in this crate
+    // called `transform`, which `session.rs` now does on purpose. Re-run unchanged it would
+    // have stayed green while saying nothing at all about the keystroke path.
+    //
+    // So this asserts the guarantee, in two halves:
+    //
+    //   1. inside this crate, `session` is the ONLY module that reaches transform's entry
+    //      points, and no file on the keystroke path names `session`;
+    //   2. the live editor (`casual-doc-wasm`) does not reach the collaboration modules at
+    //      all, so nothing a lone editor executes can run a line of them even by accident.
+    const ENTRY_POINTS: [&str; 3] = ["transform(", "transform_placed(", "BlockIndex::of("];
+    // `transform` is allowed to call itself and to be tested; `session` is the one consumer
+    // ADR-047 sanctions, and it is unreachable without a host having joined a room.
+    const MAY_TRANSFORM: [&str; 6] = [
+        "transform.rs",
+        "classify.rs",
+        "effect.rs",
+        "transform_tests.rs",
+        "session.rs",
+        "session_tests.rs",
+    ];
+    // The collaboration modules themselves, which may of course name each other.
+    const COLLABORATION: [&str; 3] = ["protocol.rs", "wire.rs", "session.rs"];
+
+    let engine = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for (name, text) in sources(&engine) {
+        if !MAY_TRANSFORM.contains(&name.as_str()) {
+            for entry in ENTRY_POINTS {
+                if text.contains(entry) {
+                    offenders.push(format!("{name} reaches `{entry}`"));
+                }
+            }
+        }
+        // The other half of the same rule: a file on the keystroke path must not reach the
+        // module that does transform, or the keystroke path acquires one a call deeper.
+        // Test files are excluded because a test is not a keystroke path — and because THIS
+        // file has to name the forbidden strings in order to forbid them, which is the
+        // shape of self-reference every source-scanning guard hits sooner or later.
+        if !COLLABORATION.contains(&name.as_str()) && !name.ends_with("_tests.rs") {
+            for collab in ["session::", "ClientSession", "ServerSession"] {
+                if text.contains(collab) {
+                    offenders.push(format!("{name} reaches `{collab}`"));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the keystroke path now reaches the collaboration machinery: {offenders:?}. \
+         Single-user editing must contact nothing and run no transform."
+    );
+
     // The guard is only worth having if it can see the thing it forbids.
-    let planted = format!("{engine}\n// transform::transform(a, b, side)\n");
-    assert_eq!(planted.matches("transform::transform(").count(), 1);
+    let planted = "let _ = transform::transform(a, b, side);\n".replace("\r\n", "\n");
+    assert!(
+        ENTRY_POINTS.iter().any(|entry| planted.contains(entry)),
+        "the scan cannot see a call it is supposed to forbid"
+    );
+}
+
+#[test]
+fn the_live_editor_has_no_collaboration_dependency() {
+    // The second half of `107` exit gate 7, and the half a source scan of THIS crate can
+    // never see: `casual-doc-wasm` is the live editing path, and it must not reach the
+    // collaboration modules at all. A lone editor then cannot execute one line of them, which
+    // is a stronger statement than "the keystroke path does not call transform" — it is
+    // "collaboration is something a session acquires, not a mode the engine is built in".
+    //
+    // Doc 152 §9 states the scope this pins: `casual-doc-wasm` is deliberately unchanged by
+    // that increment, so this guard is what stops the next one changing it by accident.
+    const FORBIDDEN: [&str; 6] = [
+        "casual_doc_transaction::session",
+        "casual_doc_transaction::protocol",
+        "casual_doc_transaction::wire",
+        "ClientSession",
+        "ServerSession",
+        "WireOperation",
+    ];
+
+    let editor = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("casual-doc-wasm")
+        .join("src");
+    let mut offenders = Vec::new();
+    for (name, text) in sources(&editor) {
+        for forbidden in FORBIDDEN {
+            if text.contains(forbidden) {
+                offenders.push(format!("{name} reaches `{forbidden}`"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the live editor now reaches the collaboration modules: {offenders:?}"
+    );
+    let planted = "use casual_doc_transaction::session::ClientSession;";
+    assert!(
+        FORBIDDEN.iter().any(|item| planted.contains(item)),
+        "the scan cannot see a dependency it is supposed to forbid"
+    );
 }

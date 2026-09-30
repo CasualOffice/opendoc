@@ -28,6 +28,13 @@ release, but code meaning may not.
 
 Cancellation is an expected non-fatal error, not a warning or panic.
 
+**Severity is a property of the code; terminality is a property of the message carrying
+it.** The `ODC-7xxx` collaboration family makes that visible: the same code can arrive in a
+message that ends the session or in one the connection survives, and
+`casual_doc_transaction::protocol::Refusal` answers `is_terminal` and `is_retryable`
+separately for exactly that reason. Collapsing the two is how a client comes to retry
+something it must never send again. See `152` §5.6.
+
 ## Initial Registry
 
 | Code | Name | Severity | Meaning |
@@ -52,7 +59,15 @@ Cancellation is an expected non-fatal error, not a warning or panic.
 | `ODC-5001` | `render_failed` | error | A renderer failed without invalidating document state. |
 | `ODC-6001` | `import_failed` | error | Format import failed after input passed initial sniffing. |
 | `ODC-6002` | `export_failed` | error | Format export failed; existing session state remains valid. |
-| `ODC-7001` | `collaboration_conflict` | error | A remote operation cannot be safely applied or rebased. |
+| `ODC-7001` | `collaboration_conflict` | error | A remote operation cannot be safely applied or rebased. *That one action did not take; redo it.* |
+| `ODC-7002` | `collaboration_protocol_version` | fatal | The two ends do not speak the same protocol version. Terminal, and **never retried** — a client that retries a version mismatch loops for ever. |
+| `ODC-7003` | `collaboration_not_authorised` | fatal | The session is not authorised. Deliberately undetailed: detail is useful to an operator in a log and useful to an attacker in a response. |
+| `ODC-7004` | `collaboration_read_only` | error | This participant may read but not write. Enforced at the operation, not by hiding a control. |
+| `ODC-7005` | `collaboration_not_saving` | error | The ordered session cannot persist work. *Copy it out.* Distinct from `ODC-7001` because the two ask the user for opposite things. |
+| `ODC-7006` | `collaboration_too_far_behind` | error | The participant is behind the retained history and cannot be caught up by replay. Work it had not had acknowledged is lost, and saying so is the point of the code. |
+| `ODC-7007` | `collaboration_malformed` | error | The message could not be read. The sender must **not** send the same bytes again. |
+| `ODC-7008` | `collaboration_id_collision` | error | An arriving operation introduces an identity this replica already holds, or one minted outside the sender's own identity space. Refused rather than applied, because applying it overwrites a node somebody else minted. |
+| `ODC-7009` | `collaboration_stale_base` | error | The submission was written against an ordered position the document has moved past. Nothing is lost: the client rebases it and resubmits with the same sequence number. |
 | `ODC-8001` | `plugin_failed` | error | A plugin returned an error or violated its declared contract. |
 | `ODC-9001` | `internal` | fatal | An unexpected internal failure occurred. |
 

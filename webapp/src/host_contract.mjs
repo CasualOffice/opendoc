@@ -311,6 +311,11 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.columns", "mutate"),
   exact("layout.indent", "mutate"),
   exact("layout.spacing", "mutate"),
+  // Tab stops mutate the paragraph, so they need the same grant the rest of this
+  // group needs — declared here because a capability the editor offers and the
+  // contract does not name is invisible to a host, which is the one audience
+  // this file exists for.
+  exact("layout.tabStops", "mutate"),
   exact("layout.lineNumbers", "mutate"),
   exact("layout.watermark", "mutate"),
   exact("layout.firstPageVariant", "mutate"),
@@ -423,9 +428,19 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Proofing and chrome preferences. None of them touches the document, and all
   // three tools rows are `noDoc` commands in the registry for the same reason.
   exact("tools.spellCheck", null),
+  // Manage languages installs and removes proofing packs. That is application
+  // state, not document state — it changes nothing a host would need to grant a
+  // mutation for — so it requires nothing, like the proofing switches beside it.
+  // Declared because a capability the editor offers and this file does not name
+  // is invisible to a host, which is the one audience this file has.
+  exact("tools.languages", null),
   exact("tools.grammarCheck", null),
   exact("tools.smartQuotes", null),
   exact("view.outline", null),
+  // `view.pages` is a panel toggle and changes no document state, so it requires
+  // nothing — the same shape as `view.outline`, which the taxonomy already puts
+  // beside it because the two are the same kind of thing.
+  exact("view.pages", null),
   exact("view.settings", null),
   exact("view.showChanges", null),
   exact("view.compactRibbon", null),

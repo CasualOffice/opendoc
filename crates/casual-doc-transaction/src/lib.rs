@@ -44,11 +44,23 @@
 //!
 //! [`transform`] rebases one operation over a concurrent one (doc 150, ADR-045). It is a
 //! pure function over a [`Change`](transform::Change) — an operation together with the
-//! inverse recorded for it — and **nothing in this crate calls it**: OT is dormant at one
-//! editor, and a source guard fails the build if that stops being true.
+//! inverse recorded for it.
 //!
-//! Still absent: the node-addressed mapping steps (`107` P-4), and everything above
-//! transform — session, relay, presence (`107` 6.6).
+//! [`protocol`], [`wire`] and [`session`] are the collaboration foundation (doc 152,
+//! ADR-047): the wire vocabulary, the identity discipline that keeps two replicas from
+//! minting one id twice, and the two session state machines — including the rollback/replay
+//! rebase driver, which is here because this is the one place that holds the log, the
+//! document and [`transform`] together.
+//!
+//! **OT stays dormant at one editor**, and that is guarded rather than intended. The
+//! keystroke path — [`RevisionLog::apply`] and everything it calls — contains no transform
+//! and no rebase, and `the_keystroke_path_runs_no_transform` fails the build if one appears.
+//! [`session`] is the only module here that calls [`transform`], and nothing calls
+//! [`session`] unless a host has joined a room.
+//!
+//! Still absent: the byte codec (the operation set has no `serde` and the op-set lane will
+//! move its shapes), the node-addressed mapping steps (`107` P-4), and the relay binary,
+//! presence and collaborative undo (`107` 6.6, doc 152 §9).
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -61,8 +73,11 @@ use casual_doc_edit::{EditError, RunIds};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
+pub mod protocol;
+pub mod session;
 pub mod transform;
 pub mod v0;
+pub mod wire;
 
 /// The live operation vocabulary. One set, re-exported rather than re-declared: a second
 /// enum over the same document is the defect doc 147 exists to remove.
@@ -484,6 +499,13 @@ impl Commit {
 pub struct RevisionLog {
     commits: VecDeque<Commit>,
     head: RevisionId,
+    /// The revision up to which commits have been **ordered** by a session.
+    ///
+    /// Equal to `head` whenever nothing is in flight, which is every single-user session and
+    /// every collaborative one between a flush and its acknowledgement. Commits above it are
+    /// this replica's own unacknowledged work, and they are the only commits
+    /// [`session`] ever rewrites — see [`RevisionLog::horizon`].
+    horizon: RevisionId,
     next_group: u64,
     max_groups: usize,
 }
@@ -512,6 +534,7 @@ impl RevisionLog {
         Self {
             commits: VecDeque::new(),
             head: RevisionId::default(),
+            horizon: RevisionId::default(),
             next_group: 0,
             max_groups: max_groups.max(1),
         }
@@ -521,6 +544,125 @@ impl RevisionLog {
     #[must_use]
     pub const fn head(&self) -> RevisionId {
         self.head
+    }
+
+    /// The revision up to which this log's commits have been **ordered** by a session.
+    ///
+    /// # Why the log needs this at all
+    ///
+    /// Doc 147 gave the log one position, `head`, because a single-user document has one:
+    /// every commit is final the moment it is applied. A collaborative one has two. A commit
+    /// this replica has applied but that no relay has ordered yet is *provisional* — it may
+    /// have to be re-expressed in coordinates that include somebody else's edit — and a
+    /// commit below the horizon is settled and must never move.
+    ///
+    /// That distinction is what makes rollback/replay compatible with "nothing rewrites a
+    /// commit": [`session`] rewrites only commits **above** the horizon,
+    /// which are by construction this replica's own unacknowledged work, seen by nobody. A
+    /// rewritten commit keeps its [`TransactionId`], [`GroupId`], [`Label`] and
+    /// [`Origin`], so undo is untouched by a rebase — the user's steps are the same steps,
+    /// expressed against a document that has moved.
+    ///
+    /// Equal to [`head`](Self::head) in every single-user session, which is why single-user
+    /// editing pays nothing for any of this.
+    #[must_use]
+    pub const fn horizon(&self) -> RevisionId {
+        self.horizon
+    }
+
+    /// Marks every commit up to and including `revision` as ordered.
+    ///
+    /// Called when a relay acknowledges a chunk. Never moves backwards, and never past
+    /// `head` — a horizon ahead of the log would make the log's own commits unreachable to
+    /// a rebase.
+    pub(crate) fn settle(&mut self, revision: RevisionId) {
+        self.horizon = revision.min(self.head).max(self.horizon);
+    }
+
+    /// How many commits no relay has ordered yet.
+    ///
+    /// **Zero in every single-user session**, and the cheapest possible way for a caller to
+    /// know that an arriving edit needs no rollback at all.
+    #[must_use]
+    pub fn unordered_commits(&self) -> usize {
+        self.commits
+            .iter()
+            .filter(|commit| commit.revision > self.horizon)
+            .count()
+    }
+
+    /// Takes the unordered commits off the back, oldest first, and rewinds `head` to the
+    /// horizon.
+    ///
+    /// The document is **not** touched: the caller applies each returned commit's
+    /// `inverse_operations` itself, because it is the caller that holds the document and the
+    /// id allocator. Returned in application order so the caller rolls back in reverse.
+    pub(crate) fn detach_unordered(&mut self) -> Vec<Commit> {
+        let mut taken = Vec::new();
+        while self
+            .commits
+            .back()
+            .is_some_and(|commit| commit.revision > self.horizon)
+        {
+            taken.push(self.commits.pop_back().expect("just checked"));
+        }
+        taken.reverse();
+        self.head = self.horizon;
+        taken
+    }
+
+    /// Appends a commit built from `template`'s identity and `operations`'s effect.
+    ///
+    /// This is how a rebased commit keeps being the *same user step* while saying something
+    /// different about the document. It does not resolve a coalesce group — the group comes
+    /// from the template — so a rebase cannot silently merge two of the user's steps.
+    ///
+    /// On `Err` the document is unchanged and nothing is appended.
+    pub(crate) fn append_rebased(
+        &mut self,
+        document: &mut Document,
+        ids: &mut dyn RunIds,
+        template: &Commit,
+        operations: Vec<Operation>,
+    ) -> Result<RevisionId, TransactionError> {
+        if operations.is_empty() {
+            return Err(TransactionError::EmptyTransaction);
+        }
+        let base_revision = self.head;
+        let revision = base_revision
+            .next()
+            .ok_or(TransactionError::RevisionExhausted)?;
+        let snapshot = (operations.len() > 1).then(|| document.clone());
+        let mut map = PositionMap::default();
+        let mut inverse_operations = Vec::with_capacity(operations.len());
+        for operation in &operations {
+            match casual_doc_edit::apply(document, ids, operation) {
+                Ok(inverse) => {
+                    push_mapping_step(&mut map, operation, &inverse);
+                    inverse_operations.push(inverse);
+                }
+                Err(error) => {
+                    if let Some(snapshot) = snapshot {
+                        *document = snapshot;
+                    }
+                    return Err(TransactionError::Edit(error));
+                }
+            }
+        }
+        inverse_operations.reverse();
+        self.head = revision;
+        self.commits.push_back(Commit {
+            id: template.id,
+            base_revision,
+            revision,
+            group: template.group,
+            label: template.label,
+            origin: template.origin,
+            operations,
+            inverse_operations,
+            position_map: map,
+        });
+        Ok(revision)
     }
 
     /// Commits in application order, oldest retained first.

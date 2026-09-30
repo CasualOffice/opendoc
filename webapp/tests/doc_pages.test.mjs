@@ -460,21 +460,28 @@ test("how much English the reference pages put on the site, measured and publish
   // it is here to notice unrouted prose arriving in the shared chrome, and this
   // is what it looks like when prose arrives routed.
   //
-  // 2005 -> 2067 when `35-DISPOSITION-TAXONOMY.md` gained the loss-coverage-gate
-  // section (`105` FID-P-03). Sixty-two strings, all of them ARTICLE body prose in
-  // one published design document, which is the region this figure deliberately
-  // does not route: the per-page breakdown in the failure message confirms the
-  // whole movement is `reference/disposition-taxonomy.html` (290 -> 352) and that
-  // the eleven other pages and the shared chrome are unchanged. Re-measured after
-  // regenerating the pages, not calculated from the diff.
+  // 2005 -> 2090 on the merge of two lanes that each moved it from 2005 on their
+  // own tree: the collaboration lane to 2028 when `20` gained nine `ODC-7xxx`
+  // codes (`error-code-registry.html`, 108 -> 131), and this one to 2067 when
+  // `35-DISPOSITION-TAXONOMY.md` gained the loss-coverage-gate section
+  // (`reference/disposition-taxonomy.html`, 290 -> 352). NEITHER branch's number
+  // is this tree's — that is the whole trap this figure sets, and carrying either
+  // side of the merge forward would publish a count the pages never had.
+  // Re-measured from the regenerated pages on the merged tree.
+  //
+  // Both movements are ARTICLE BODY in published design documents, which is the
+  // region this figure deliberately does not route: routing a design document's
+  // prose through the string table, or machine translating it, would be a worse
+  // lie than leaving it in English. The shared chrome cost nothing on either
+  // side, which is the direction this figure actually watches.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2067,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2067). That ` +
+    2090,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2090). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),
