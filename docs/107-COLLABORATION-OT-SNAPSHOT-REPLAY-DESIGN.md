@@ -276,11 +276,20 @@ Three costs were removed, and each is now held by a guard that was driven red:
 - **Resolution is O(document) on *every* keystroke, review or not.** `blocks_owning_mut` and
   `find_paragraph_mut` walk the surfaces to find a paragraph by id, so B1's "O(1) in document
   size" is not met by any editing path — HF-111 was the *review-specific* part of a general
-  fact. Making it O(1) needs a node index the document deliberately does not cache
-  (`ParagraphIndex` borrows the paragraphs it points at, so storing it beside them would be
-  self-referential, and a stale index is a correctness bug where a rebuilt one is merely
-  O(n)). That is a design question, not an optimisation, and it is the honest next item for
-  B1. Both existing guards therefore hold **linearity**, not O(1), and say so.
+  fact. Both existing guards therefore hold **linearity**, not O(1), and say so.
+  **Decided, not built: ADR-050.** A session-owned id→location index, maintained at the one
+  mutation choke point rather than rebuilt, verified against a `ParagraphIndex` rebuild. The
+  four rejected candidates are listed there with reasons, including the two that look obvious
+  — a positional index (it reintroduces the coordinate arithmetic `150` §2 chose identity to
+  escape) and a dirty-flag cache (a keystroke is a mutation, so it invalidates the cache it
+  was about to use, and the hit rate on the typing path is zero).
+
+  **How much is masked, and why it inverts the priority.** Editing is refused above
+  `MAX_WHOLE_LAYOUT_BLOCKS` = 262,144 top-level blocks, because a windowed body cannot
+  re-paginate after a mutation. So the worst *editable* document costs about **524,000 block
+  visits per character**, and the 1.3-million-paragraph case is masked by a refusal rather
+  than served. Windowed editing (`113`) therefore cannot be built on top of O(document)
+  resolution: this is its prerequisite, not its optimisation.
 - ~~**Accepting every change is quadratic.**~~ **Closed 2026-10-01.** `UpdateReviewState`
   resolved each of its N paragraphs separately — a lookup-by-id inside a loop over ids, the
   exact shape that made `documentOutline` never return — so on the owner's 1.3-million-

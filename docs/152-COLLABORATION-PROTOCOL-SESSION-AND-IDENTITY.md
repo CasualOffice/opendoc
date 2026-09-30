@@ -691,6 +691,15 @@ Each is out for a reason, not for lack of time.
 9. **Tracked changes and the order of wrapping.** `107` §8 Q3 and `150` §10 Q4 are untouched
    here, and §5.3's suggesting-mode blocker is now a second reason they have to be settled
    before collaboration ships.
+10. **§5.3's blocker has a diagnosis, and it is not in the session** (ADR-051, proposed).
+    Review typing is an `UpdateReviewState` — a whole-paragraph rewrite — so its inverse is a
+    paragraph snapshot per character, which is the only reason the coalescing mode that
+    *drops* inverses exists. `107` §4 **B4** already forbids a paragraph rewrite on the typing
+    path, so the violation and the blocker are one thing rather than two. Expressed granularly,
+    every commit can afford to keep its inverse and the rollback driver needs no change at all.
+    The **second** reason suggesting mode cannot join — colliding revision `w:id` strings
+    across replicas, Q7 above — is genuinely separate: ADR-048's partition covers `NodeId`
+    and not a producer string.
 
 ---
 

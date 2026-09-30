@@ -1883,6 +1883,97 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
   operation of a batch is judged and the batch guard fails. (4) A `Revision`'s children are
   cloned instead of projected and the container-set equivalence guard fails.
 
+## ADR-050 — O(1) paragraph resolution is a session-owned identity index maintained at the choke point, not a cache on the document
+
+- **Status:** **Proposed.** The decision is recorded; the work is not done here.
+- **Date:** 2026-10-01.
+- **Context:** `107` §4 **B1** requires per-keystroke work to be O(1) in document size, and
+  §4.1 records that **no editing path meets it** — `blocks_owning_mut` and
+  `find_paragraph_mut` walk the surfaces to find a paragraph by id, so every keystroke is
+  O(document). HF-111 was the *review-specific* part of that general fact. Measured: an
+  ordinary keystroke on 200 paragraphs costs 400 block visits, i.e. two full walks, so
+  resolution is essentially the whole per-keystroke document cost.
+- **How large the masked cost is, stated rather than implied.** Editing is refused above
+  `MAX_WHOLE_LAYOUT_BLOCKS` = 262,144 top-level blocks, because a windowed body cannot
+  re-paginate after a mutation. So the worst editable document today costs about **524,000
+  block visits per character**, and the 1.3-million-paragraph case is masked by a refusal
+  rather than served. **That inverts the priority order**: windowed *editing* (`113`) cannot
+  be built on O(document) resolution, so this is a prerequisite for it and not an
+  optimisation of it.
+- **Named prior art, and why four of five candidates are rejected.**
+
+  | Candidate | Verdict |
+  | --- | --- |
+  | **Positional index** — store `(Surface, path of child indices)` per id | **Rejected.** Every block insert or delete shifts its later siblings' indices, so the index needs the band arithmetic that `150` §2 says `NodeId` anchors were chosen to escape. It reintroduces coordinate fragility to fix an identity lookup. |
+  | **Rebuild-on-demand cache with a dirty flag** | **Rejected, and worth recording because it is the obvious idea.** A keystroke *is* a mutation, so it invalidates the cache it was about to use: the hit rate on the typing path is zero. |
+  | **Reference index on the document** (`ParagraphIndex` stored beside the paragraphs) | **Rejected.** It borrows the paragraphs it points at, so storing it in the document is self-referential. This is the obstacle §4.1 already names. |
+  | **Generational arena plus handle map** — the model's nodes move into an arena, the tree holds handles (Yjs's `StructStore`, and every ECS) | **Right end state, wrong increment.** It is the textbook answer and it makes staleness structurally impossible, because a handle is not a position. It also re-founds `casual-doc-model`, touches import, export, layout and render, and is not a change one lane can make safely. |
+  | **Session-owned id→location index, maintained at the mutation choke point** | **Chosen.** |
+
+- **Decision.** The index is owned by the **editing session**, not by the document, and it is
+  **maintained incrementally at the one mutation choke point** rather than rebuilt.
+  - The self-reference disappears: the index lives beside the document, not inside it.
+  - Staleness is structurally bounded by ADR-030 **I1**: every mutation goes through
+    `casual_doc_edit::apply`, so an index updated there cannot miss a change without a
+    compile-visible change to the choke point.
+  - The deltas it needs are **already produced**. `apply` returns the inverse and the envelope
+    already derives `MappingStep`/`PositionMap` from the pair to move *positions* across a
+    commit; an id→location index consumes the same structural facts. One mechanism extended,
+    not a second one added — which is the rule the windowed paginator followed.
+  - It carries a **verification mode**: rebuild with `ParagraphIndex` and compare. A stale
+    index is a correctness bug where a rebuilt one is merely O(n), so the guard has to be able
+    to see disagreement rather than trust the maintenance.
+- **What it does not fix.** Resolution becomes O(1); the *rest* of a keystroke does not. §4.1's
+  remaining 2× on a suggested keystroke (the facade resolves the paragraph to build the review
+  projection, then the edit crate resolves it again) is a separate item, and it becomes
+  cheaper rather than moot.
+- **Owner decision needed:** whether to take this increment at all before windowed editing is
+  wanted. B1 is an owner constraint and is currently met by nothing, so the alternative is to
+  restate B1 as "O(1) above the windowing threshold, linear below it" — which is a weaker
+  promise honestly kept, and is the only other coherent position.
+
+## ADR-051 — A tracked keystroke must be a granular operation, and that — not the session — is what unblocks suggesting mode
+
+- **Status:** **Proposed.** It changes the operation set, which ADR-030 I2 reserves to the
+  owner.
+- **Date:** 2026-10-01.
+- **Context:** `150` §6 and `152` §11 record a blocker: a `Coalesce::ContinueKeepingFirstInverse`
+  commit records **no inverse**, so `Commit::changes()` is `None`, so it cannot be rolled back
+  — and `152` §5.3 concludes that **suggesting mode cannot take part in a session at all**,
+  because the rollback-and-replay driver needs every unacknowledged commit's inverse.
+- **The finding: this is a symptom, not an independent problem.** Review typing is expressed as
+  `Operation::UpdateReviewState` — a **whole-paragraph rewrite**. Its inverse is therefore a
+  whole-paragraph snapshot, one per character, which is the only reason the coalescing mode
+  that *drops* inverses exists. And `107` §4 **B4** already forbids exactly this: *"No
+  operation on the typing path rewrites a paragraph. `SetInlines` is a paragraph-rewrite
+  vehicle and must stay off that path."* Review typing violates B4, and the session blocker is
+  that violation's consequence.
+- **Decision (proposed).** Express a tracked keystroke granularly — text inserted *inside* a
+  revision wrapper — so its inverse is a `DeleteText`-sized delta rather than a paragraph
+  snapshot. Then:
+  - every commit can afford to keep its inverse, so `ContinueKeepingFirstInverse` is not needed
+    on the typing path and the rollback driver has what it needs;
+  - **`152` §5.3's blocker closes without any change to the session**, which is the strongest
+    argument that this is the right place to fix it;
+  - B4 holds for the review path as it already does for the plain one;
+  - the transform gets a granular subject to rebase instead of a paragraph rewrite, which
+    `150` §5 refuses against a concurrent split or join — so it also removes refusals.
+- **Rejected alternative: group-granular rollback.** Roll the whole undo group back using its
+  first commit's snapshot. It restores the paragraph correctly, but the driver needs the state
+  at *each* commit's own base to compute the arrival's image there, and a group-granular
+  rollback cannot produce those intermediate states. It would trade a refusal for a
+  divergence.
+- **Rejected alternative: keep the snapshots.** Correct, and it costs one whole-paragraph copy
+  per character — the memory the coalescing mode was invented to avoid. On a long paragraph
+  that is the quadratic-feeling cost `147` records the flat history stacks having had.
+- **The second reason suggesting mode cannot join is separate and still open**: `w:id`
+  collisions between replicas (`152` §10 Q7). Two replicas minting revision `w:id`s
+  independently produce colliding opaque ids on export. ADR-048's identity partition covers
+  `NodeId`s and **not** `w:id`, which is a producer string. Recorded here so the two reasons are
+  not mistaken for one.
+- **Owner decision needed:** whether to add the operation. Until then suggesting mode stays
+  out of a session, with the refusal code `152` §5.3 gives it.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
