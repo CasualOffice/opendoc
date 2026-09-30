@@ -1,15 +1,16 @@
 # 151 — Reflow (pageless) layout: what the engine owes, and what the shell does with it
 
-**Status:** **Engine half implemented** (`casual-doc-layout`'s `LayoutView` +
-`casual-doc-wasm`'s `setLayoutView`); the shell half (§6) is specified here and
-still waits on nobody. **Opened:** 2026-09-30. **Decision:**
+**Status:** **Implemented, both halves.** The engine half
+(`casual-doc-layout`'s `LayoutView` + `casual-doc-wasm`'s `setLayoutView`) landed
+first; the shell half (§6) landed 2026-10-01 and retired `#viewport`'s exemption
+from the no-horizontal-scroll rule (§7). **Opened:** 2026-09-30. **Decision:**
 [ADR-046](08-ADR-REGISTER.md).
 **Advances:** `148` §6 and §9 item 1, `105` UX-019, `01-ORD.md` §137
 ("continuous layout as a host option").
-**Depends on:** nothing. Blocks: the retirement of `#viewport`'s exemption from the
-no-horizontal-scroll rule (`148` §6).
+**Depends on:** nothing. Blocked, and has now released: the retirement of
+`#viewport`'s exemption from the no-horizontal-scroll rule (`148` §6).
 
-> **Read this first.** §4 is built; §6 is not. The engine work landed as specified
+> **Read this first.** §4 and §6 are both built. The engine work landed as specified
 > except in **four** places, all corrected in place below and each marked
 > **CORRECTED** with the evidence: §4.5 row 1's vertical metrics, §4.5 row 2's
 > `columns.rs`/`paginate.rs` edits, §4.5 row 3's flag, and §4.5 row 7's windowed
@@ -17,12 +18,13 @@ no-horizontal-scroll rule (`148` §6).
 > still showing a blank band at every cut — is §4.4a. Every claim about existing
 > code below carries a file and a symbol so it can be checked rather than believed.
 >
-> **The shell half is now the whole of what is left, and it is load-bearing.**
-> `webapp/tests/e2e/phone-no-horizontal-scroll.spec.mjs`'s second tripwire ("the
-> reflow seam has not landed without the shell that spends it") is RED as of the
-> engine landing, by design: it fires on the day `setLayoutView` exists precisely
-> so a landed engine API cannot sit unreachable. Implementing §6 and deleting that
-> test is what turns it green.
+> **The shell half landed 2026-10-01 and §6 records what it corrected.** Two
+> tripwires in `webapp/tests/e2e/phone-no-horizontal-scroll.spec.mjs` fired and
+> have been deleted: the outcome one, and the one that fired the day
+> `setLayoutView` existed so that a landed engine API could not sit unreachable.
+> §6.2 records where this document's proposed quantisation was wrong and why, and
+> §7 records the before-and-after measurement and two things §7 did not
+> anticipate.
 
 ## 1. The problem, stated as a measurement
 
@@ -427,16 +429,48 @@ anything O(document) must be off the main thread, cancellable, and show progress
 
 ## 6. What the shell does with it
 
-All of this is `webapp/` and waits on §4.8's setter. It is specified now so the
-engine lane knows what shape its API is being consumed in.
+All of this is `webapp/` and consumes §4.8's setter. **Built 2026-10-01**, in
+`reflow_view.mjs` (the decisions — which widths are the same width, how long to
+wait, when the engine will refuse) and `reflow_chrome.mjs` (the wiring), the split
+`spelling.mjs` / `spell_check.mjs` already established here. Each subsection below
+now says what shipped and, where the specification was wrong, what was corrected.
 
 ### 6.1 The toggle
 
-A command `view.reflow` — label carrying its state, the shape `view.compactRibbon`
-already uses ("Reflow: on" / "Reflow: off"), filed in
+**Shipped as specified.** A command `view.reflow` — label carrying its state, the
+shape `view.compactRibbon` already uses ("Reflow: on" / "Reflow: off"), filed in
 `APP_MENU_SECTIONS.view`'s `menuGroup.show` band beside `view.outline` and
-`view.showChanges`, plus a View-band ribbon face. Persisted in `prefs.mjs`.
-Default on below `PHONE_MAX_WIDTH`, off above it (§3.4).
+`view.showChanges`, plus a View-band ribbon face (`#viewReflowBtn`, declared in
+`ribbon_faces.mjs`). Persisted in `prefs.mjs` under `docReflow`. Default on below
+`PHONE_MAX_WIDTH`, off above it (§3.4) — evaluated from the rung on every
+question rather than resolved once at boot, so a rotation across the rung answers
+correctly and there is no second copy of the state to go stale.
+
+**Two surfaces, and `ribbon-command-faces.spec.mjs` compares them**: the ribbon
+face is driven with a pointer and the id is run from the palette, and the two are
+required to have the same observable effect. That guard needed one change to
+accept a toggle whose state PERSISTS — it reloads the editor between the two
+halves on the premise that neither can decide the other's answer, and a
+`localStorage` preference survives a reload by design, so the second half started
+from the opposite state. It now forgets preferences between halves, which closes
+the same hole for every future persisted toggle.
+
+**Declared in `COMMAND_CONTRACT`** (`host_contract.mjs`) as requiring nothing,
+and that is a claim worth making explicitly rather than by omission: reflow is a
+layout VIEW and not an edit, so a host that has granted no mutation capability at
+all can still offer it — and a host embedding the editor in a 400px column has a
+reason to.
+
+**When the engine refuses, the control is disabled WITH the reason.** The one
+refusal today is a body laid out one page-window at a time, which the engine
+refuses because reflow's promise is that the document stays editable and a
+windowed body is already read-only. There is no `reflowUnavailableReason` getter,
+so the shell reads `editingUnavailableReason`, which is non-empty under exactly
+the same predicate (`self.layout.is_windowed()` in both) — and the call site also
+catches the throw and shows the engine's own words, so if the two ever diverge
+the failure is a late honest message rather than a dead control. **An engine-side
+`reflowUnavailableReason` getter would be strictly better and is reported as
+engine work rather than reached for from this lane.**
 
 Naming: Google says "Pageless", ONLYOFFICE says "Reader mode", Word says "Web
 Layout". Ours is **"Reflow"** because it is the only one of the three that is
@@ -445,13 +479,64 @@ accurate for a mode that is still editable and still cut into tiles — and beca
 
 ### 6.2 Feeding the width back
 
-`renderAll()` (`main.js:3665`) calls `doc.setLayoutView(...)` before `pageCount` /
-`pageSize` when reflow is on. The width it passes is the viewport's client width
-minus the gutters, converted to twips — and it is **quantised** (proposed: to the
-nearest 8px) and **debounced** so that a drag or a rotation does not run an
-O(document) pass per frame (§5). `buildPageBand` already takes `options.gap`
-(`page_scroll.mjs:95`), so tiles at `gap: 0` are a call-site change, not a new
-mechanism.
+**Built 2026-10-01.** `renderAll()` calls `reflowView.sync(cssPerTwip)` after the
+zoom is resolved and before `pageCount` / `pageSize`; that lives in
+`reflow_chrome.mjs` and it is what talks to `doc.setLayoutView(...)`. The width it
+passes is the viewport's `clientWidth`, quantised, converted to twips at the
+current zoom, with the gutters taken OUT of the bucket rather than added on top —
+the tile's TOTAL width is what gets painted, so it is the total that has to fit,
+and getting that the other way round is how a gutter becomes an overflow.
+`buildPageBand` already took `options.gap` (`page_scroll.mjs`), so tiles at
+`gap: 0` were a call-site change as predicted, and `#viewport.is-reflow` in
+`style.css` removes the sheet shadow and corner radius that would otherwise draw
+a paper edge across a sentence.
+
+**Two numbers, and this section proposed one of them wrongly.** It said "the
+nearest 8px". What shipped is **16px, floored** (`REFLOW_QUANTUM_PX`), and both
+halves of that are corrections rather than preferences:
+
+- *Floored, not nearest.* Rounding to the NEAREST bucket rounds up half the time,
+  which makes the column wider than the space it was measured against — and a
+  column wider than the viewport is a horizontal scroll on `#viewport`, the exact
+  defect §7 exists to retire. A rounding rule that can reintroduce the defect it
+  is part of the fix for is the wrong rounding rule. Driven red: rounding to the
+  nearest reports `8 -> 16 is wider than the space it has`.
+- *16, not 8.* Because it is floored, the quantum **is** the safety margin: the
+  column is between zero and one quantum narrower than the space available, and
+  that margin has to absorb a scrollbar appearing mid-gesture (15px on Windows,
+  17px on a desktop GTK theme), sub-pixel rects from a fractional device pixel
+  ratio, and the twip rounding. 8px does not cover a scrollbar; 16px does. It
+  costs at most 16px of text, which is under two characters at 11pt.
+
+**The debounce is 150ms, trailing, with no leading call** (`REFLOW_DEBOUNCE_MS`):
+under the ~200ms at which an interface stops feeling attached to the gesture, and
+an order of magnitude above the frame budget, so a burst of `resize` events
+collapses into one pass. No leading call, because the first event of a drag is
+the least likely to be the width the reader wants — acting on it guarantees two
+O(document) passes for one gesture.
+
+**The ORDER of the two is the design, and quantisation is the half that matters.**
+Quantising first is what makes the common case cost nothing at all: a resize
+inside the bucket the engine already holds is one division and one comparison and
+no document work, which is the `docs/107` §4 guarantee. The debounce only bounds
+the worst case, a drag that crosses many buckets. `tests/reflow_view.test.mjs`
+asserts both against a fake clock — sixty events inside one bucket schedule
+nothing at all, and a 390→1280px drag is one pass at the width the reader stopped
+on.
+
+**A drag out and back costs nothing**, and that was a real defect found by writing
+the test rather than by reasoning: the first version left a pass scheduled by an
+earlier width standing when the reader came back to the width already in effect,
+so the document relaid out to a width the window no longer was. The last width
+wins, including when the last width is the current one.
+
+**At a large enough zoom the column stops shrinking** rather than the view being
+refused. `LayoutView::reflow` refuses a column under an inch at the seam, and at
+400% a 390px window is under that — so the measure clamps to the engine's floor,
+and the tile is then wider than the window. That is the same arbitration §6.3
+gives a table too wide to fit, and honest for the same reason. The
+no-horizontal-scroll guarantee is stated at the zoom a phone actually opens at,
+which `FIT_ON_OPEN_FLOOR` pins at 100%.
 
 ### 6.3 Wide tables keep their own scroller
 
@@ -465,60 +550,116 @@ is a lie about the document.
 
 ### 6.4 What the chrome does differently
 
-- The **ruler** is meaningless (there are no page margins to drag) and is hidden.
-  This is the second reason to give tab stops a command home, beside the phone one.
-- The **Pages panel** thumbnails are tiles, not pages; it is withheld in reflow
-  rather than shown lying.
+**Shipped, with one correction and one finding.**
+
+- The **ruler** is withheld — there are no page margins to drag — and it carries
+  its own sentence rather than merely disappearing: `createRuler` takes a
+  `withheldReason` and writes it to `data-withheld` on the strip, so "withheld"
+  is distinguishable from "no document open", which is the same hidden strip for
+  a completely different reason. This is the second reason to give tab stops a
+  command home, beside the phone one, and the sentence says where they went.
+- The **Pages panel** thumbnails are tiles, not pages; it is withheld rather than
+  shown lying. Entering reflow closes it if it is open, disables the rail tile
+  and puts the reason on its tooltip, and `view.pages` is disabled with the same
+  reason in the palette and the View menu. **Never a dead control.**
+- **CORRECTED: two withholdings need two sentences.** The first implementation
+  gave the ruler and the Pages panel one shared string. A reader who reached for
+  the ruler was then told about a panel they were not reaching for. Each control
+  now says what IT is and why reflow has nothing for it; the e2e guard asserts
+  the ruler's sentence is the ruler's.
 - **Page setup** and **header/footer settings** still edit the document and still
-  work; they simply have no visible effect until reflow is off. They must say so.
-- **Print and PDF export force `Paged`**, unconditionally and regardless of the view
-  preference. This is a correctness requirement, not a nicety: printing what is on
-  screen would print tiles.
-- `--page-width` (`main.js:3722`) still drives the review gutter and still works,
-  because a tile has a width.
+  work; they simply have no visible effect until reflow is off. **Still open** —
+  they do not yet say so. Recorded in §8 rather than claimed.
+- **Print forces `Paged`**, unconditionally and regardless of the view
+  preference, in `print.mjs`'s `withPagedLayout` — beside the two printers rather
+  than in the shell, because `printDocument` already has two entry points and a
+  rule enforced next to the thing it is a rule about cannot be forgotten by the
+  next caller. The restore is in a `finally`, so a printer error cannot strand a
+  phone reader on paper they did not ask for.
+- **FINDING: PDF export was already `Paged` by construction**, and this section
+  asked for something that did not need doing. `export_as_inner`
+  (`casual-doc-wasm`) takes `&self.document` and never touches `self.layout` or
+  `self.layout_view`: the writer re-paginates from the document's own sections.
+  So "PDF export forces `Paged`" is true, and is true because reflow never
+  reaches the export path at all — which is ADR-046 §3.1 holding, not a shell
+  guard. Verified rather than assumed, and left unwrapped.
+- `--page-width` still drives the review gutter and still works, because a tile
+  has a width.
 
 ### 6.5 The honest bit about page numbers
 
 In reflow a `PAGE` field resolves to a tile index and the status bar's "Page 3 of
 12" counts tiles. Both are **wrong as page numbers** and must not be printed as
-though they were right. The shell shows neither in reflow: the page counter is
-replaced by the reader's position (Word and Docs both do something like this), and
-a `PAGE` field renders with the paginated value carried over from the last `Paged`
-layout if one is available, or as a refusal if not. **Where behaviour deliberately
-differs from Word, say so in the code** (`SKILL.md` §8) — this paragraph is that
-statement and the implementation must cite it.
+though they were right. **Where behaviour deliberately differs from Word, say so
+in the code** (`SKILL.md` §8) — this paragraph is that statement, and
+`status_counts.mjs`'s `pageIndicator` cites it.
 
-## 7. How the exemption retires
+**The `PAGE` field half is the engine's and shipped with it**: the driver refuses
+to print a tile index as a page number. **The status-bar half is the shell's and
+shipped here**: `pageIndicator` takes the reader's position instead of a page
+count, and renders `status.readingPosition` — a proportion, which the tile index
+CAN answer truthfully.
 
-`webapp/tests/e2e/phone-no-horizontal-scroll.spec.mjs` ends with a test whose whole
-job is to fail when this lands:
+**CORRECTED, and the correction is the interesting part.** The first
+implementation computed the proportion as `tile / tiles`. A document that reflows
+to less than one 11in tile has exactly ONE — the `rich` fixture is 232px tall at
+390px — so a reader at the very top of it was told "100% through". A position
+that is wrong in the obvious case is not an improvement on a page number that is
+wrong in the subtle one. `readerPosition` now computes it from the BAND, which
+already carries every tile's top and height in document space, so the honest
+answer costs one array lookup and is O(1). The same document now reads "7%".
 
-> `the document surface is still the only exemption, and still needs to be`
+We differ from Word here deliberately: Word shows a count in its equivalent view,
+and a count invites being read as a page count.
 
-It asserts `#viewport`'s `scrollWidth > clientWidth` at 390px. That is the *outcome*
-tripwire and it fires on the day reflow is on by default at the phone rung.
+## 7. How the exemption retired
 
-A second tripwire is added by the lane that wrote this document, because the outcome
-one fires too late to be useful to the engine lane: the same spec now also asserts
-the **engine seam is still absent** (it reads the wasm binding's own prototype and
-expects no `setLayoutView`/`setReflowWidth`/`setLayoutMode`). The moment §4.8 ships,
-that assertion goes red and names this document — so the shell work in §6 cannot be
-forgotten behind a landed engine API, which is exactly the "built and unreachable"
-failure `SKILL.md` §9.4 calls the most expensive recurring pattern here.
+**Done, 2026-10-01.** Both tripwires in
+`webapp/tests/e2e/phone-no-horizontal-scroll.spec.mjs` fired and have been
+deleted, which is what a tripwire is for.
 
-**That tripwire is RED now.** `setLayoutView` exists as of the engine half landing,
-and the engine lane deliberately did not silence it: the spec belongs to the shell
-lane, and editing it from here would have removed the one signal that says the API
-needs a consumer. The fix is §6, not a change to the test — and then deleting it,
-because at that point the outcome tripwire above is the one that matters. Note also
-that this spec's own prose cites `docs/149` where it means `docs/151`: two document
-numbers were in flight when it was written and the reflow design landed as 151.
-`docs/148` §9 and ADR-046 carried the same stale citation; ADR-046's is corrected,
-and the other two belong to lanes that own those files.
+The first was the OUTCOME one — *the document surface is still the only
+exemption, and still needs to be* — asserting `#viewport`'s
+`scrollWidth > clientWidth` at 390px. The second was added by the lane that wrote
+this document, because the outcome one fires too late to be useful to the engine
+lane: it asserted the engine seam was still ABSENT
+(`typeof doc.setLayoutView !== "function"`), so the shell work in §6 could not be
+forgotten behind a landed engine API. That is `SKILL.md` §9.4's "built and
+unreachable" caught by construction; it went red the day `setLayoutView` landed,
+and the engine branch correctly could not merge until §6 was done.
 
-When both fire, the fix is: implement §6, delete `DOCUMENT_SURFACE` from that spec,
-fold `#viewport` back into the general assertion, and strike the exception from
-`148` §6, ADR-044 and `webapp/src/style.css`'s phone block.
+What was then done is exactly what this section prescribed: implement §6, delete
+`DOCUMENT_SURFACE` from that spec, fold `#viewport` into the general assertion,
+and strike the exception from `148` §6, `148` §8 item 3, `148` §9 row 1 and
+`webapp/src/style.css`'s phone block.
+
+**The measurement, before and after, at 390×844 with the `rich` fixture open:**
+
+| | `#viewport` `scrollWidth` | `clientWidth` |
+| --- | --- | --- |
+| Before | 794 | 326 |
+| After | 384 | 390 |
+
+`webapp/tests/e2e/reflow.spec.mjs` now holds the positive claims — no horizontal
+scroll at 390px, the document still editable in reflow, and Paged → Reflow →
+Paged returning identical layout geometry — and each has been driven red by a
+mutation recorded in the landing commit.
+
+**Two things this section did not anticipate, recorded rather than smoothed over.**
+
+1. Folding `#viewport` into the general sweep also pulled in the accessibility
+   mirror: a 1px clipped box holding the whole document as text, in which every
+   paragraph reports hundreds of pixels of `scrollWidth` inside a 1px client box.
+   That is a scroll no reader can perform and no scrollbar exists for. It is
+   skipped by CONTAINER now, through the `OFFSCREEN_BY_DESIGN` list the spec
+   already kept for its bounding-box pass.
+2. The Pages panel is withheld in reflow (§6.4), and a phone defaults to reflow —
+   so on a phone the navigator arrives disabled, with its reason, and the reader
+   turns Reflow off to use it. `phone-no-horizontal-scroll.spec.mjs` measures the
+   panel in that configuration and excludes the document while doing so, because
+   a reader who has explicitly asked for pages on a phone has explicitly asked
+   for the pan. That is a narrow, stated consequence of a deliberate choice, not
+   the blanket exemption coming back.
 
 ## 8. Open questions, recorded rather than hidden
 
@@ -544,3 +685,28 @@ fold `#viewport` back into the general assertion, and strike the exception from
 4. **Whether `Paged` should also accept a viewport.** If `LayoutView` exists, the
    embedding playground's 750px frame and `FIT_ON_OPEN_FLOOR`'s refusal become the
    same question. Not in scope here; named so it is not rediscovered.
+
+Opened by the shell half, 2026-10-01:
+
+5. **Page setup and header/footer settings do not yet say that their effect is
+   invisible in reflow** (§6.4 asks them to). They still edit the document and
+   still work; what is missing is the sentence. Left open rather than claimed.
+6. **Entering and leaving reflow is O(document) and is not yet cancellable, and
+   shows no progress.** ADR-046's consequence says a mode change goes through the
+   background/progress path. What ships is a synchronous `setLayoutView` inside
+   the render pass with a status line — acceptable on every fixture and on a
+   phone-sized document, and honest to name as a gap for a large one. The
+   quantisation and debounce mean it is not reached from a resize per frame,
+   which was the acute risk; the remaining one is a very large document toggled
+   deliberately.
+7. **`reflowUnavailableReason` should be an engine getter.** The shell derives
+   the refusal from `editingUnavailableReason`, which today is non-empty under
+   exactly the same predicate. That is faithful, not a guess, and the call site
+   still catches the throw — but the engine owning its own sentence is better,
+   and this lane does not own `crates/**`. Reported rather than made.
+8. **The engine's `approximations` list is collected and not yet surfaced.**
+   `setLayoutView` returns what reflow approximates — a page-anchored drawing
+   keeping its paper-relative position, a footnote at a tile bottom, a `PAGE`
+   field refusing — and `reflow_chrome.mjs` holds them. They are not yet shown to
+   the reader anywhere. Recorded so that "the engine reports its approximations"
+   is not read as "the product does".

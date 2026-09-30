@@ -16,16 +16,22 @@
 //      the scrollbar suppressed and is how an `overflow: hidden` "fix" hides a
 //      control rather than fitting it.
 //
-// WHAT IS DELIBERATELY EXEMPT, and it is one thing: `#viewport`, the document.
-// A Letter page's text column is 6.5in — 624 CSS px at 96dpi — and it cannot be
-// both 390px wide and readable. `view_zoom.mjs`'s `FIT_ON_OPEN_FLOOR` already
-// refuses to shrink a page to the ~31% that would make it fit, with the reason
-// recorded in that file. The real answer is a reflow view, which Google ship as
-// Pageless and ONLYOFFICE as `api.ChangeReaderMode()`, and which is layout
-// engine work (docs/148 §9 item 1). So the paper is declared here rather than
-// quietly excluded: `DOCUMENT_SURFACE` names it, and a second test asserts the
-// exemption is still NEEDED, so that when reflow lands and the document stops
-// overflowing, this file fails and the exemption comes out.
+// NOTHING IS EXEMPT ANY MORE, AND THAT IS NEW. Until reflow landed this file
+// carried one declared exception — `#viewport`, the document — because a Letter
+// page's text column is 6.5in (624 CSS px at 96dpi) and cannot be both 390px
+// wide and readable, and because `view_zoom.mjs`'s `FIT_ON_OPEN_FLOOR` refuses
+// to shrink it to the ~31% that would make it fit. It measured `scrollWidth 794`
+// against `clientWidth 326`, it was named in `docs/148` §8 and ADR-044, and two
+// tests here existed to say so: one asserting the exemption was still NEEDED,
+// one asserting the engine seam had not landed without the shell that spends it.
+//
+// `docs/151` §6 built that shell. Reflow defaults on below the phone rung, lays
+// the body out at the window's width and cuts it into tiles, so the document no
+// longer overflows — and both tripwires fired, which is exactly what they were
+// for (`SKILL.md` §9.4: "built" is not "reachable"). The exemption is gone, the
+// two tests with it, and `#viewport` is now swept by the general assertion below
+// like every other element. `tests/e2e/reflow.spec.mjs` holds the positive
+// claim; this file holds the property that no longer has a hole in it.
 import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow, openCommandPalette } from "./fixtures.mjs";
 
 /** Two real phones. 390 is an iPhone 14/15 and a Pixel 7 in portrait; 320 is
@@ -36,19 +42,20 @@ const PHONES = [
   { name: "320px", width: 320, height: 568 },
 ];
 
-/** The document canvas. See the header: named, not hidden. */
-const DOCUMENT_SURFACE = "#viewport";
-
 /**
  * Every element on the page that scrolls horizontally, or paints outside the
- * window, excluding the document surface and anything inside it.
+ * window. The document surface included, since reflow landed — see the header.
  *
- * Runs in the page. O(nodes in the CHROME) — the document's pages are canvas
- * elements, so this does not walk the document (docs/107 §4).
+ * Runs in the page. O(nodes in the CHROME plus the materialized sheets) — the
+ * document's pages are canvas elements and only the ones near the viewport
+ * exist, so this does not walk the document (docs/107 §4).
  */
-async function overflowReport(page) {
-  return page.evaluate((documentSurface) => {
-    const doc = document.querySelector(documentSurface);
+async function overflowReport(page, { skipDocument = false } = {}) {
+  return page.evaluate(([offscreen, skip]) => {
+    const document_ = skip ? document.getElementById("viewport") : null;
+    const inOffscreenChrome = (el) =>
+      offscreen.some((selector) => el.closest(selector)) ||
+      (document_ !== null && (el === document_ || document_.contains(el)));
     const scrollers = [];
     const painted = [];
     const name = (el) =>
@@ -62,7 +69,13 @@ async function overflowReport(page) {
     }
 
     for (const el of document.querySelectorAll("body *")) {
-      if (doc && (el === doc || doc.contains(el))) continue;
+      // Inside a deliberately off-screen region there is nothing to measure. The
+      // accessibility mirror is the case that matters: it is a 1px clipped box
+      // holding the whole document as text, so every paragraph in it "scrolls"
+      // by hundreds of pixels inside a 1px client box — a scroll no reader can
+      // perform and no scrollbar exists for. Skipped by CONTAINER rather than by
+      // element, because the mirror's children carry no class of their own.
+      if (inOffscreenChrome(el)) continue;
       const box = el.getBoundingClientRect();
       // Nothing is measured about an element that is not on screen: `hidden`
       // dialogs are most of this document and they have no geometry yet.
@@ -85,7 +98,7 @@ async function overflowReport(page) {
       }
     }
     return { width: window.innerWidth, scrollers, painted };
-  }, DOCUMENT_SURFACE);
+  }, [OFFSCREEN_BY_DESIGN, skipDocument]);
 }
 
 /** `painted` catches deliberately off-screen chrome too — the screen-reader
@@ -143,6 +156,21 @@ for (const phone of PHONES) {
     const menuItem = (menu, command) => async () => {
       await (await menuCommandRow(page, menu, command)).click();
     };
+    /** Flips reflow and waits for the relayout to land.
+     *
+     *  Needed because reflow is ON by default at this rung — that is what
+     *  retired this file's exemption — and it WITHHOLDS the Pages navigator,
+     *  whose thumbnails would be tiles rather than pages (`docs/151` §6.4). The
+     *  panel is one toggle away and the disabled row says so; `reflow.spec.mjs`
+     *  asserts that refusal, and this lets the panel it refuses still be
+     *  measured here. */
+    const reflowing = () =>
+      page.evaluate(() => document.getElementById("viewport").classList.contains("is-reflow"));
+    const toggleReflow = async () => {
+      const before = await reflowing();
+      await (await menuCommandRow(page, "view", "view.reflow")).click();
+      await expect.poll(reflowing).toBe(!before);
+    };
     const surfaces = [
       { what: "the File menu", open: () => page.locator('.app-menu-button[data-menu="file"]').click(), shown: "#appMenuPopover" },
       { what: "the Format menu", open: () => page.locator('.app-menu-button[data-menu="format"]').click(), shown: "#appMenuPopover" },
@@ -150,20 +178,29 @@ for (const phone of PHONES) {
       { what: "the + sheet", open: () => page.locator("#compactInsertBtn").click(), shown: "#compactInsertMenu" },
       { what: "Settings", open: () => page.locator("#settingsBtn").click(), shown: "#settingsPanel" },
       { what: "the outline panel", open: menuItem("view", "view.outline"), shown: "#outlinePanel" },
-      { what: "the Pages panel", open: menuItem("view", "view.pages"), shown: "#pagesPanel" },
+      // The one row that measures the PANEL and not the document behind it, and
+      // it is not the old exemption coming back. To reach a page navigator on a
+      // phone the reader has to turn reflow OFF, and a document laid out on
+      // Letter paper in a 390px window pans — which is what it was always going
+      // to do, and is now a state nobody arrives in by default. This test is
+      // about whether a panel fits the window; `reflow.spec.mjs` holds the
+      // claim about the document, at the tier a reader actually opens.
+      { what: "the Pages panel", prepare: toggleReflow, open: menuItem("view", "view.pages"), shown: "#pagesPanel", restore: toggleReflow, skipDocument: true },
       { what: "the comment sheet", open: menuItem("review", "review.toggle"), shown: "#reviewSidebar" },
       { what: "the command palette", open: () => openCommandPalette(page), shown: "#cmdPalette" },
     ];
 
     for (const surface of surfaces) {
+      await surface.prepare?.();
       await surface.open();
       await expect(page.locator(surface.shown).first()).toBeVisible();
 
-      const report = await overflowReport(page);
+      const report = await overflowReport(page, { skipDocument: surface.skipDocument });
       expect(report.scrollers, `sideways scrollers with ${surface.what} open`).toEqual([]);
       expect(real(report.painted), `painted outside the window with ${surface.what} open`).toEqual([]);
 
       await page.keyboard.press("Escape");
+      await surface.restore?.();
     }
 
     expect(consoleErrors).toEqual([]);
@@ -273,62 +310,4 @@ test("the status toast does not land on the docked command bar", async ({ page, 
   ).toBeLessThanOrEqual(bar.y + 1);
 
   expect(consoleErrors).toEqual([]);
-});
-
-test("the document surface is still the only exemption, and still needs to be", async ({
-  page,
-  consoleErrors,
-}) => {
-  // The other half of an exemption list: an exemption that is no longer needed
-  // is cover, and `one-axis-navigation.spec.mjs` already carries this rule for
-  // its PALETTE_ONLY list. When reflow lands (docs/149) the document will stop
-  // overflowing at 390px and THIS test fails — which is the prompt to delete
-  // the exemption rather than to leave it sitting there being true.
-  await page.setViewportSize({ width: 390, height: 844 });
-  await gotoEditor(page);
-
-  const overflows = await page.evaluate(() => {
-    const v = document.getElementById("viewport");
-    return { scrollWidth: v.scrollWidth, clientWidth: v.clientWidth };
-  });
-  expect(
-    overflows.scrollWidth,
-    "the document no longer overflows at 390px — remove DOCUMENT_SURFACE from this spec " +
-      "and fold #viewport back into the general assertion (docs/148 §6, docs/149 §7)",
-  ).toBeGreaterThan(overflows.clientWidth);
-
-  expect(consoleErrors).toEqual([]);
-});
-
-test("the reflow seam has not landed without the shell that spends it", async ({ page }) => {
-  // The OUTCOME tripwire above fires on the day reflow is on by default at this
-  // rung. That is too late to be useful to the lane building the engine:
-  // `setLayoutView` could ship, sit unused for a month, and nothing anywhere
-  // would say so — which is exactly "built and unreachable", the failure
-  // `SKILL.md` §9.4 calls the most expensive recurring pattern in this
-  // repository. This one fires on the day the API EXISTS instead.
-  //
-  // Read off the generated binding rather than off a live editor, because
-  // `main.js` has zero exports and the document handle is a module local: what
-  // the engine offers is a property of the wasm surface, not of this session.
-  // The import is the same URL `main.js` already loaded, so it is the cached
-  // module and costs nothing.
-  //
-  // WHEN THIS GOES RED: the engine has landed `docs/149` §4.8. Implement
-  // `docs/149` §6 — the `view.reflow` command, `renderAll`'s width feed with
-  // its quantisation and debounce, `gap: 0` tiles, the ruler and Pages panel
-  // withholding, print forcing `Paged`, and §6.5's honesty about page numbers —
-  // and then delete this test, because at that point the assertion above is the
-  // one that matters.
-  await gotoEditor(page);
-  const surface = await page.evaluate(async () => {
-    const module = await import("/pkg/casual_doc_wasm.js");
-    const proto = module.WasmDocument?.prototype;
-    return proto ? Object.getOwnPropertyNames(proto) : null;
-  });
-  expect(surface, "the wasm binding no longer exports WasmDocument").not.toBeNull();
-  expect(
-    surface.filter((name) => /^(setLayoutView|setReflowWidth|setLayoutMode)$/.test(name)),
-    "the reflow seam exists — build docs/149 §6 and retire this test",
-  ).toEqual([]);
 });

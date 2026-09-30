@@ -451,6 +451,7 @@ preedit
 premultiplied
 preprocessing
 prev
+quantised
 quiesce
 rAF
 rPr

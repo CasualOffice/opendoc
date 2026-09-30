@@ -9,7 +9,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { ZOOM_ACTIONS, zoomActionActive } from "../src/view_zoom.mjs";
+import {
+  ZOOM_ACTIONS,
+  ZOOM_STEPS,
+  fitZoomFactor,
+  nextZoomStep,
+  parseZoomInput,
+  zoomActionActive,
+} from "../src/view_zoom.mjs";
 
 const html = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
 
@@ -82,5 +89,63 @@ test("the steppers never report a pressed state", () => {
   for (const state of [{ mode: "custom", factor: 1 }, { mode: "fit-page", factor: 0.5 }]) {
     assert.equal(zoomActionActive("in", state), false);
     assert.equal(zoomActionActive("out", state), false);
+  }
+});
+
+// ---- The arithmetic that came out of `main.js` -------------------------------
+//
+// Extracted by the reflow round (`docs/151` §6), which needed lines in a file at
+// its ratchet. It is worth more than the lines: a ladder, a fit and a parse are
+// three things a browser was previously the only way to ask about.
+
+test("stepping walks the ladder and does not stall at either end", () => {
+  const clamp = (z) => Math.min(5, Math.max(0.1, z));
+  assert.equal(nextZoomStep(1, 1, clamp), 1.25);
+  assert.equal(nextZoomStep(1, -1, clamp), 0.9);
+  // A zoom BETWEEN two rungs steps to the next rung, not by a fixed amount —
+  // which is what makes the ladder a ladder rather than a list of presets.
+  assert.equal(nextZoomStep(1.1, 1, clamp), 1.25);
+  assert.equal(nextZoomStep(1.1, -1, clamp), 1);
+  // Past the ends it keeps moving by a tenth rather than sticking, and the
+  // caller's clamp is what stops it. A stepper that stops responding at the top
+  // of the ladder is a dead control at the one moment someone is pressing it.
+  const top = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  assert.ok(nextZoomStep(top, 1, clamp) > top);
+  assert.ok(nextZoomStep(ZOOM_STEPS[0], -1, clamp) < ZOOM_STEPS[0]);
+});
+
+test("fit-width fits the width, and fit-page never exceeds it", () => {
+  const units = { dpi: 96, twipsPerInch: 1440 };
+  const letter = { widthTwip: 12240, heightTwip: 15840 }; // 8.5in x 11in
+  const viewport = { width: 880, height: 600 };
+  const width = fitZoomFactor("fit-width", letter, viewport, units);
+  const page = fitZoomFactor("fit-page", letter, viewport, units);
+  // (880 - 64) px of desk over (8.5in * 96dpi) = 816 px of paper: exactly 100%,
+  // which is the one factor a wrong gutter or a wrong dpi cannot also produce.
+  assert.ok(Math.abs(width - 1) < 1e-9, `fit-width gave ${width}`);
+  assert.ok(page < width, "fit-page must also satisfy the height, so it is never larger");
+});
+
+test("a viewport with no size yet produces a usable factor rather than zero", () => {
+  // Otherwise the clamp turns "not laid out yet" into "the user chose 10%".
+  const factor = fitZoomFactor(
+    "fit-page",
+    { widthTwip: 12240, heightTwip: 15840 },
+    { width: 0, height: 0 },
+    { dpi: 96, twipsPerInch: 1440 },
+  );
+  assert.ok(factor > 0);
+});
+
+test("the typed zoom value is read as a mode, a factor, or neither", () => {
+  assert.deepEqual(parseZoomInput("fit width"), { mode: "fit-width" });
+  assert.deepEqual(parseZoomInput("  FIT Page "), { mode: "fit-page" });
+  assert.deepEqual(parseZoomInput("width"), { mode: "fit-width" });
+  assert.deepEqual(parseZoomInput("150%"), { factor: 1.5 });
+  assert.deepEqual(parseZoomInput("150"), { factor: 1.5 });
+  // Neither, so the caller restores the last valid display instead of guessing.
+  // A zero or a negative is nonsense rather than a small zoom.
+  for (const bad of ["", "abc", "0", "-50%", null, undefined]) {
+    assert.deepEqual(parseZoomInput(bad), {}, `${String(bad)} should be rejected`);
   }
 });

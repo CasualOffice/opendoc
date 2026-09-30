@@ -59,6 +59,13 @@ export function createRuler({
   getSelection,
   getPages,
   getBandModel,
+  // "" when the ruler may be drawn, the reason when it may not. Reflow is the
+  // one caller today (`docs/151` §6.4): a tile has no page margins to drag, so a
+  // ruler over one would be a scale for a page that is not there. It is a
+  // REASON rather than a boolean because the withholding has to be sayable —
+  // the toggle that caused it carries this sentence, so the reader is told what
+  // reflow costs rather than watching a strip vanish.
+  withheldReason = () => "",
   runToolbarEdit,
   twipsPerInch,
   labels,
@@ -117,11 +124,18 @@ export function createRuler({
     const doc = getDoc();
     const pages = getPages();
     const band = getBandModel();
-    if (!doc || !pages.length || !band) {
+    const withheld = withheldReason();
+    if (!doc || !pages.length || !band || withheld) {
       element.hidden = true;
+      // Recorded on the element so the withholding is assertable rather than
+      // indistinguishable from "no document yet", which is the same strip in
+      // the same state for a completely different reason.
+      if (withheld) element.dataset.withheld = withheld;
+      else delete element.dataset.withheld;
       builtFor = -1;
       return;
     }
+    delete element.dataset.withheld;
     const index = Math.min(Math.max(pageIndex, 0), pages.length - 1);
     const next = geometryOf(index);
     // The band model is the source for the RENDERED width: page 1 has no sheet at

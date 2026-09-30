@@ -177,6 +177,14 @@ export function createPagesPanel({
   bandTop,
   onExclusive,
   onJumped,
+  // "" when the navigator may be opened, the reason when it may not. Reflow is
+  // the one caller today: its thumbnails would be TILES, and a navigator whose
+  // cards read "7" about a rasterisation unit is a lie the reader cannot see
+  // through (`docs/151` §6.4). A reason rather than a boolean because the rail
+  // tile and the `view.pages` command both have to be able to SAY it — a
+  // control that silently does nothing is the failure this repo keeps making.
+  withheldReason = () => "",
+  onWithheld = () => {},
 }) {
   /** The range of pages currently carded. Its own, because the navigator
    *  windows separately from the page band. */
@@ -217,7 +225,12 @@ export function createPagesPanel({
 
   /** Rebuilds the navigator around one page — by default the one being read. */
   function build(centre = null) {
-    if (!getDoc() || panel.hidden) return;
+    if (!getDoc()) return;
+    // Every render passes through here, so this is where a mode change is
+    // noticed: entering reflow closes an open navigator and disables its tile
+    // rather than leaving a panel of page thumbnails standing over a document
+    // that no longer has pages.
+    if (reflectWithheld() || panel.hidden) return;
     const focus = focusPage();
     shown = renderPagesPanel({
       doc: getDoc(),
@@ -238,7 +251,24 @@ export function createPagesPanel({
     if (visible < shown.start || visible > shown.end) build(visible);
   }
 
+  /** Closes the panel and disables the rail tile when the navigator is withheld,
+   *  so a mode change cannot leave a panel of tile thumbnails standing open.
+   *  Returns the reason, or "". */
+  const railTitle = railButton.title;
+  function reflectWithheld() {
+    const reason = withheldReason();
+    railButton.disabled = !!reason;
+    railButton.title = reason || railTitle;
+    if (reason && !panel.hidden) {
+      panel.hidden = true;
+      railButton.setAttribute("aria-pressed", "false");
+    }
+    return reason;
+  }
+
   function toggle() {
+    const reason = reflectWithheld();
+    if (reason) return onWithheld(reason);
     panel.hidden = !panel.hidden;
     // Pages, Outline (left) and the review sidebar (right) are mutually
     // exclusive, so the canvas is never squeezed from both sides at once.

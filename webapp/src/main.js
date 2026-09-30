@@ -95,7 +95,7 @@ import { reflectObjectSelection, reflectShapeFormat } from "./object_selection_s
 import { pageSnapTargets, snapBox } from "./object_snap.mjs";
 import { activeLocale, t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
-import { countLabels, pageIndicator } from "./status_counts.mjs";
+import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs";
 import { startLocalisation } from "./locale_boot.mjs";
 import { isShortcutLike, localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import {
@@ -119,7 +119,7 @@ import { bindRadioGroup } from "./radio_group.mjs";
 import { closeAllPopovers, configurePopovers, onButton, openPopover } from "./popover_manager.mjs";
 import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_manager.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
-import { createViewZoom, openingZoomMode } from "./view_zoom.mjs";
+import { createViewZoom, fitZoomFactor, nextZoomStep, openingZoomMode, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
@@ -210,6 +210,7 @@ import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { createTableRange } from "./table_range.mjs";
 import { bindCellFormatMenu, bindSplitCellDialog } from "./table_cell_chrome.mjs";
+import { createReflowChrome } from "./reflow_chrome.mjs";
 import { createRuler } from "./ruler.mjs";
 import { createTabStopsDialog } from "./tab_stops_dialog.mjs";
 import { createObjectPresence } from "./object_presence.mjs";
@@ -2963,13 +2964,10 @@ function armBackgroundMeasure() {
 /** Cheap current-page update (caret's page / total), for caret moves. */
 function updatePageNumber() {
   if (!doc || !pages.length) return;
-  let cur = 1;
-  if (selection) {
-    const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
-    if (flat.length) cur = flat[0];
-  }
+  const flat = selection ? doc.caretRect(selection.focus.node, selection.focus.offset) : [];
+  const cur = flat.length ? flat[0] : 1;
   const total = pageTotalLabel(pages.length, doc.estimatedPageCount, doc.pageCountIsExact);
-  statPages.textContent = pageIndicator(cur, total);
+  statPages.textContent = pageIndicator(cur, total, reflowView.isOn() ? readerPosition(flat, pageBandModel, pages) : null);
   pagesPanelView.reflect(cur);
 }
 
@@ -3232,6 +3230,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // the condition under which verbatim retention is an advantage at all.
     showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
     railOutline.disabled = railPages.disabled = false;
+    reflowView.setEnabled();
     versionHistory.reflect();
     populateStyles();
     populateTableStyles();
@@ -3680,10 +3679,14 @@ async function renderAll() {
   if (zoomMode !== "custom") zoomFactor = computeFitZoom(zoomMode);
   const zoom = zoomFactor;
   updateZoomDisplay();
-  const count = doc.pageCount;
   // Logical CSS px per twip at this zoom — independent of devicePixelRatio, so
   // the page box geometry (hence scroll height and hit-test scale) is stable.
   const cssPerTwip = (BASE_DPI * zoom) / TWIPS_PER_INCH;
+  // The width feed (`docs/151` §6.2). AFTER the zoom, which the measure depends
+  // on; BEFORE `pageCount`, which in reflow it decides. O(1) unless the
+  // quantised width actually moved — `reflow_view.mjs` says why.
+  const reflowing = reflowView.sync(cssPerTwip);
+  const count = doc.pageCount;
 
   // Build the replacement page set off-DOM and publish it atomically. NO sheet
   // elements are created here — only the page records and the band geometry
@@ -3720,7 +3723,9 @@ async function renderAll() {
 
   if (token !== renderToken) return;
   pages = nextPages;
-  pageBandModel = buildPageBand(sizes, cssPerTwip, { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
+  // `gap: 0` in reflow: the 22px pitch is the desk between two SHEETS, and a tile
+  // is cut mid-paragraph, so the same gap there is a band across a sentence.
+  pageBandModel = buildPageBand(sizes, cssPerTwip, { gap: reflowing ? 0 : PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
   // Publish the sheet's rendered width so the stylesheet can size the review
   // gutter against the space that is ACTUALLY spare. CSS cannot know this —
   // it depends on paper size and zoom — and a gutter reserved from space that
@@ -7617,6 +7622,17 @@ document.addEventListener("keydown", (event) => {
 viewportEl.addEventListener("scroll", () => hideContextMenu(), { passive: true });
 window.addEventListener("resize", () => hideContextMenu());
 
+// The engine seam for reflow is one setter; everything the shell owes it, and
+// why each number is that number, is `reflow_chrome.mjs` (`docs/151` §6).
+const reflowView = createReflowChrome({
+  button: document.getElementById("viewReflowBtn"),
+  viewport: viewportEl,
+  getDoc: () => doc,
+  unavailableReason: () => readOnlyReason,
+  onChanged: () => renderAll(),
+  setStatus,
+});
+
 // ---- Horizontal ruler ---------------------------------------------------------
 // The strip itself lives in `ruler.mjs`. It is bound to the live `doc`,
 // `selection`, `pages` and `pageBandModel` through getters rather than values,
@@ -7627,6 +7643,7 @@ const rulerView = createRuler({
   getSelection: () => selection,
   getPages: () => pages,
   getBandModel: () => pageBandModel,
+  withheldReason: () => reflowView.rulerWithheldReason(),
   runToolbarEdit,
   twipsPerInch: TWIPS_PER_INCH,
   labels: {
@@ -10959,6 +10976,10 @@ const pagesPanelView = createPagesPanel({
   railButton: railPages,
   closeButton: pagesClose,
   viewport: viewportEl,
+  // Withheld in reflow, WITH the reason: a navigator that says "page 7" about a
+  // rasterisation unit is a lie the reader cannot see through (`151` §6.4).
+  withheldReason: () => reflowView.withheldReason(),
+  onWithheld: (reason) => setStatus(reason),
   getDoc: () => doc,
   getSelection: () => selection,
   getPages: () => pages,
@@ -11809,10 +11830,14 @@ function editorCommands(context = { surface: "palette" }) {
     ...(HOST_CHROME.editing.has("rail")
       ? [
           { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
-          { id: "view.pages", label: t("pagesPanel.pages"), group: "View", kw: "pages panel thumbnails navigator go to page jump browse", run: () => pagesPanelView.toggle() },
+          { id: "view.pages", label: t("pagesPanel.pages"), group: "View", kw: "pages panel thumbnails navigator go to page jump browse", enabled: !reflowView.withheldReason(), disabledReason: reflowView.withheldReason(), run: () => pagesPanelView.toggle() },
         ]
       : []),
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
+    // Reflow (`docs/151` §6.1, ADR-046). The label carries the state, the shape
+    // `view.compactRibbon` below already uses; the second face is the View
+    // band's `#viewReflowBtn`. Not "Reader mode" — ours stays editable.
+    { id: "view.reflow", label: t(reflowView.isOn() ? "reflow.commandOn" : "reflow.commandOff"), group: "View", kw: "reflow pageless continuous column mobile phone reader web layout wrap width", enabled: !readOnlyReason, disabledReason: t("reflow.unavailable"), run: () => reflowView.toggle() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     // Ribbon density (docs/104 HF-094). The choice was already real and already
@@ -14936,28 +14961,16 @@ const zoomMenu = document.getElementById("zoomMenu");
 const zoomMenuBtn = document.getElementById("zoomMenuBtn");
 const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 
-/** Fit-to-viewport factor: constrain the caret page's width (fit-width) or both
- *  width and height (fit-page) to the viewport, minus comfortable gutters.
- *
- *  The CARET's page, not page 0. Fitting page 0 on a document whose later section
- *  turns landscape sized the view to the portrait page and let every landscape
- *  page overflow the viewport sideways — a "Fit width" that does not fit. This is
- *  the same page-1-is-the-document assumption the ruler carried; the page index
- *  comes from the ruler so the two cannot disagree about which page the user is
- *  on. It deliberately re-fits when the caret crosses a section break, because
- *  the alternative is a fit that is wrong for the page being read. */
+/** Fit-to-viewport factor for the CARET's page, not page 0. Fitting page 0 on a
+ *  document whose later section turns landscape sized the view to the portrait
+ *  page and let every landscape page overflow sideways — a "Fit width" that does
+ *  not fit. The page index comes from the ruler, so the two cannot disagree
+ *  about which page the user is on. The arithmetic is `view_zoom.mjs`. */
 function computeFitZoom(mode) {
   if (!doc) return zoomFactor;
-  const page = Math.max(0, Math.min(rulerView.builtForPage(), pages.length - 1));
-  const size = doc.pageSize(page);
-  const wIn = size.widthTwip / TWIPS_PER_INCH;
-  const hIn = size.heightTwip / TWIPS_PER_INCH;
+  const size = doc.pageSize(Math.max(0, Math.min(rulerView.builtForPage(), pages.length - 1)));
+  const factor = fitZoomFactor(mode, size, viewportEl.getBoundingClientRect(), { dpi: BASE_DPI, twipsPerInch: TWIPS_PER_INCH });
   size.free();
-  const rect = viewportEl.getBoundingClientRect();
-  const availW = Math.max(120, rect.width - 64);
-  const availH = Math.max(120, rect.height - 48);
-  const fitW = availW / (wIn * BASE_DPI);
-  const factor = mode === "fit-page" ? Math.min(fitW, availH / (hIn * BASE_DPI)) : fitW;
   return clampZoom(factor);
 }
 
@@ -14969,12 +14982,7 @@ function updateZoomDisplay() {
         : zoomMode === "fit-page" ? "Fit page"
           : `${Math.round(zoomFactor * 100)}%`;
   }
-  for (const b of zoomMenu.querySelectorAll(".zoom-preset")) {
-    b.setAttribute("aria-checked", String(zoomMode === "custom" && Math.abs(Number(b.dataset.zoom) - zoomFactor) < 1e-6));
-  }
-  for (const b of zoomMenu.querySelectorAll(".zoom-fit")) {
-    b.setAttribute("aria-checked", String(zoomMode === b.dataset.zoomMode));
-  }
+  reflectZoomMenu(zoomMenu, { mode: zoomMode, factor: zoomFactor });
   viewZoom.reflect();
 }
 
@@ -14994,22 +15002,14 @@ function setZoomMode(mode, restoreFocus = true) {
   if (restoreFocus) focusEditorSurface();
 }
 function stepZoom(dir) {
-  const steps = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
-  const cur = zoomFactor;
-  const next = dir > 0
-    ? steps.find((s) => s > cur + 1e-6) ?? clampZoom(cur + 0.1)
-    : [...steps].reverse().find((s) => s < cur - 1e-6) ?? clampZoom(cur - 0.1);
-  setZoom(next);
+  setZoom(nextZoomStep(zoomFactor, dir, clampZoom));
 }
 
-/** Commit the typed zoom value: a number (with optional %) sets a fixed zoom;
- *  "fit width"/"fit page" enter the matching fit mode; anything else reverts. */
+/** Commit the typed zoom value. The parse is `view_zoom.mjs`'s. */
 function commitZoomInput({ restoreFocus = false } = {}) {
-  const raw = zoomEl.value.trim().toLowerCase();
-  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width", restoreFocus);
-  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page", restoreFocus);
-  const pct = parseFloat(raw.replace("%", ""));
-  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100, restoreFocus);
+  const asked = parseZoomInput(zoomEl.value);
+  if (asked.mode) setZoomMode(asked.mode, restoreFocus);
+  else if (asked.factor) setZoom(asked.factor, restoreFocus);
   else updateZoomDisplay(); // reject: restore the last valid display
 }
 zoomEl.addEventListener("change", () => commitZoomInput());

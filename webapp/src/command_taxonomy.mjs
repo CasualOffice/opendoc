@@ -234,7 +234,11 @@ export const APP_MENU_SECTIONS = {
     // control" seen from the other side, and it is why `docs/148` §5.3 kept the
     // rail on a phone against all three references. With an id here the rail is
     // a convenience rather than a life-support system. `docs/148` §9 item 3.
-    band("menuGroup.show", "view.outline", "view.pages", "view.showChanges", "view.compactRibbon"),
+    // `view.reflow` sits in Show with the other view STATES rather than in Zoom:
+    // it changes what is laid out, not how large it is drawn. All three
+    // references file their equivalent under View for the same reason
+    // (`docs/151` §6.1).
+    band("menuGroup.show", "view.outline", "view.pages", "view.showChanges", "view.reflow", "view.compactRibbon"),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),
   ],
   // Word's Insert TAB group order, which ONLYOFFICE's Insert tab also follows:
