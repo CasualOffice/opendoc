@@ -142,6 +142,49 @@ export function movedPastThreshold(from, to, slop = MOVE_MIN_DIST_PX) {
   return Math.abs(to.x - from.x) > slop || Math.abs(to.y - from.y) > slop;
 }
 
+/** May a pointer-move from this pointer EXTEND a text drag-selection?
+ *
+ *  True for a mouse, a pen and anything else; false for a finger. This is the
+ *  boundary between the shell's drag-selection machine (`main.js`'s
+ *  `updateDragSelection`: press, then every move extends the range, no slop and
+ *  no timer, because a held mouse button means exactly one thing) and this
+ *  module (which owns the touch gesture and only calls it a selection after a
+ *  750ms press or a grab on a handle — ONLYOFFICE's `Scroll` vs `Select` modes,
+ *  `docs/148` §3, and the same split iOS, Android, Word mobile and Docs mobile
+ *  all ship).
+ *
+ *  ## Why this exists, measured
+ *
+ *  Both machines were reading the same `pointermove` stream, so a finger drove
+ *  two selection machines and the slop-free one won every race: **a phone
+ *  scroll selected text.** The slop here and the window's `pointercancel` ->
+ *  `abortPointerGestures` were both firing correctly and both firing too late.
+ *  Chromium serves one or two `pointermove`s before it decides the touch is a
+ *  pan; on a 390x844 phone, a 160px upward scroll of `sample.docx` moved the
+ *  selection's focus into another paragraph on the SECOND `pointermove` at
+ *  t+164ms — 4ms before `pointercancel` and 25ms before the first scroll event.
+ *  The 750ms press timer never fired at all, and `touchmove` reached this
+ *  module's surface listener 11 times with the press already correctly
+ *  cancelled, which is why adding a second cancel path changed nothing.
+ *
+ *  And the symptom was nearly invisible: `selectionRects` returned nothing for
+ *  that range, so `paintSelection` fell through to painting a CARET. No
+ *  highlight rectangle existed anywhere. The only trace on the glass was this
+ *  module's two handles — painted from the MODEL selection — so "scrolling
+ *  selects text" looked like two dots floating over unhighlighted text. That is
+ *  why `phone-touch-selection.spec.mjs` asserts the handle count and a
+ *  range-requiring command's enabled state rather than trusting the highlight.
+ *
+ *  ## Keyed on the POINTER, not the device
+ *
+ *  Same reason as "Where it arms" above: a touchscreen laptop must keep its
+ *  mouse drag-selection and a tablet must lose its finger one, and neither
+ *  `body.phone-mode` nor `(any-pointer: coarse)` can tell those apart.
+ */
+export function pointerDragSelects(event) {
+  return event?.pointerType !== "touch";
+}
+
 /** Which handle a point grabs, or `null`.
  *
  *  NEAREST wins, not first — see the "deliberately not followed" note above.
@@ -537,11 +580,16 @@ export function createTouchSelection(io) {
     // one and select a word out from under a moving finger. That is the whole
     // job of `MoveMinDist` and it is why ONLYOFFICE measured it.
     //
-    // Nothing else is done here, deliberately. The mouse drag machine lets go
-    // by itself: Chromium fires `pointercancel` the moment it takes the gesture
-    // for a pan, and `main.js`'s `abortPointerGestures` already listens for it.
-    // Adding a second release here would be a second mechanism for one rule —
-    // and, measured, it changed no outcome.
+    // Nothing else is done here, and this note used to say why in terms that
+    // were WRONG. It read: the mouse drag machine lets go by itself, because
+    // Chromium fires `pointercancel` the moment it takes the gesture for a pan
+    // and `main.js`'s `abortPointerGestures` listens for it. It does fire, and
+    // that listener does run — but both happen AFTER the shell has already
+    // served one or two `pointermove`s and moved the selection with them. On a
+    // 390x844 phone the focus had crossed into another paragraph 4ms before
+    // `pointercancel` arrived. A release here would have been too late for the
+    // same reason. What the shell needed was not a second release but never to
+    // have extended a range under a finger at all: `pointerDragSelects`.
     if (movedPastThreshold(press, { x: event.clientX, y: event.clientY })) clear();
   }
 
