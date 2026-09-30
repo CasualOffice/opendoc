@@ -6037,9 +6037,10 @@ fn layout_fielded_line(
     }
 
     let natural = ascent + descent;
-    let (ascent, descent, height) =
+    let line_box =
         crate::shape::apply_line_rule(ascent, descent, natural, &constraints, Twip::ZERO);
-    let baseline_delta = ascent - baseline;
+    let (ascent, descent, height) = (line_box.ascent, line_box.descent, line_box.height);
+    let baseline_delta = line_box.baseline - baseline;
     if baseline_delta != Twip::ZERO {
         for run in &mut runs {
             run.origin.y = run.origin.y + baseline_delta;

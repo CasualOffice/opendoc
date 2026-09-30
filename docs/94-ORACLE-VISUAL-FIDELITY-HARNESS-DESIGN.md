@@ -110,7 +110,7 @@ Arming it measured three real divergences from LibreOffice and one comparability
   - **PDF coordinate rounding, ≈2 twips** — LibreOffice writes text origins at 0.1pt.
   - **Half the face's line gap** — `parley` splits a face's line gap around the text box (half above the ascent) where LibreOffice puts all of it below the descent, so our baselines sit `lineGap/2` lower. For the bundled faces `lineGap ≈ 0.0327 em`, i.e. ≈0.016 em: 4 twips at 12pt, 8 at 24pt, 16 at 48pt, scaling linearly with the largest font on the page.
 
-  40 twips therefore holds for any bundled face up to ≈115pt with ~5× headroom over the observed worst edge, while staying far below the errors worth catching (a one-line vertical slip at body size is 276 twips). A fixture that needs more must record *why* here — raising the number to turn a red edge green is not a fix. The `lineGap/2` term is a real, if small, fidelity difference from LibreOffice/Word; closing it belongs in the shaper, not in this tolerance.
+  40 twips therefore holds for any bundled face up to ≈115pt with ~5× headroom over the edges observed when it was set (the `lineGap/2` term is now fixed, so the real headroom is larger), while staying far below the errors worth catching (a one-line vertical slip at body size is 276 twips). A fixture that needs more must record *why* here — raising the number to turn a red edge green is not a fix. The `lineGap/2` term **was** a real fidelity difference and has been closed in the box model (§H2b) rather than absorbed here, which is what "belongs in the shaper, not in this tolerance" meant.
 
 - **Armed, and asserted to be armed:** all six references are committed, so the content comparison is live. A fixture with no committed reference is still **skipped** — that is what let the harness land before the oracle had run — but `the_oracle_gate_is_armed` now fails the build if any fixture in `ORACLE_FIXTURES` lacks a trustworthy, current-schema reference, and if `.github/workflows/ci.yml` stops running the gate by name on pull requests. The skip path can no longer become the normal path without someone noticing. A reference at an *older* schema is compared only on page count and page size — the quantities no schema bump has changed — and the test prints the re-bless instruction, so a semantics change degrades the gate loudly instead of reddening main or being quietly hand-patched.
 - **Hermetic main CI + reviewed re-bless:** the everyday gate is `.github/workflows/ci.yml`, job `test`, step "Oracle geometry gate (docs/94 H2, FID-P-01)" — `cargo test -p casual-doc-render --test oracle_geometry`, no LibreOffice and no network, on every pull request. `.github/workflows/oracle-geometry.yml` is a manual (`workflow_dispatch`) job that installs a pinned LibreOffice and **only** the bundled metric-compatible faces (Liberation/Carlito/Caladea — the font-parity crux), regenerates the references, and opens a PR whose geometry diff a maintainer reviews. The everyday CI stays hermetic (no LibreOffice, no network) and just compares against the committed references.
@@ -321,11 +321,60 @@ nested table precedes it). Matching the oracle here would cost Word fidelity and
 an editing anchor, so the entry stays registered with that cause rather than being
 "fixed".
 
+### Closed with it: leading was centred (CSS) instead of below the baseline (OOXML)
+
+The largest single difference on the owner's real document, and the same defect as
+the "4–8 twip `lineGap/2` residual" this document already described and deferred —
+which turned out not to be a curiosity but the 1× case of a rule that scales with
+line spacing.
+
+`parley` places a line's baseline by the CSS half-leading rule: extra height split
+evenly above and below. OOXML does not — Word and LibreOffice put leading
+**below** the baseline. The box heights and the line-to-line pitch were already
+right; only the baseline's position inside the box was wrong, so the error was
+invisible in any gate that pins block rects (which is why the H1 golden did not
+move — a real coverage gap in H1).
+
+Measured on two-line paragraphs at 12pt Liberation Serif, natural box 276 twips:
+
+| `w:spacing` | first line's top should be | before | after |
+| --- | --- | --- | --- |
+| (none) | margin | +5 | **0** |
+| `auto` `w:line="240"` (1×) | margin | +5 | **0** |
+| `auto` `w:line="360"` (1.5×) | margin | +74 | **0** |
+| `auto` `w:line="480"` (2×) | margin | +143 | **0** |
+| `atLeast` `w:line="480"` | margin + 204 | −199 | **0** |
+
+Every line of every probe now agrees to the twip. The rule the measurements
+support: leading goes below the baseline, and **only an `atLeast` floor's own
+share goes above** it — `atLeast`'s extra is exactly the offset LibreOffice puts
+the text at (480 − 276 = 204). `apply_line_rule` now returns a `LineBox` that says
+where the baseline sits, so one function owns the whole box model instead of the
+height coming from us and the baseline from the shaper.
+
+On the owner's 15-page agreement (1.5-spaced `Normal` style): `y0` went from
+**+132 on 13 of 15 pages to +53**, page 2 to **0**, and findings from 556 to 496.
+On the corpus, `real-producer-hyperlinks` went from `y0 +6 / y1 +5` to
+`−1 / 0`. It also removed an accumulating rounding error: on
+`visual-containment` the first baseline of pages 3, 4 and 5 used to drift
+972 → 975 → 978 and is now exactly 971 on every page, with a uniform pitch.
+
+`exact` is deliberately **unchanged and still divergent** (−170 at `w:line="480"`).
+LibreOffice appears to scale the natural ascent into the exact box proportionally,
+but that is one measurement at one value — not enough to implement without
+fitting, so it is recorded rather than guessed at.
+
+The residual +53 on the real document is the **separate** Carlito question below:
+LibreOffice uses `sTypoAscender` for faces whose `hhea` line gap is 0, we use
+`hhea`, and none of the bundled faces sets `USE_TYPO_METRICS` to ask for it.
+
 ### Signals this instrument has measured and not yet closed
 
 Each is reproducible with one command; none is a judgement by eye.
 
-1. **First-baseline placement: `hhea` ascent versus `sTypoAscender`, +44 twips.**
+1. **`hhea` ascent versus `sTypoAscender` for a zero-line-gap face, +44 twips at
+   11pt, +53 at 13pt.** All that is left on the synthetic fixture, and all that is
+   left of the real document's per-page header offset.
    On the synthetic fixture this is the *whole* of what is left: `y0` and `y1` are
    both +44, so the text block is translated down with its internal geometry
    identical — same 268-twip box height on both sides, same 269-twip line pitch.
