@@ -2019,3 +2019,51 @@ fn a_single_writer_is_never_refused_by_the_ordering_rule() {
     );
     assert_eq!(run.worst_attempts, 1, "a lone writer had to retry");
 }
+
+#[test]
+fn the_session_suite_count_in_the_design_doc_is_derived() {
+    // `SKILL` §8: counts in docs must be derived, not hand-maintained. Doc 152 §7 opens with
+    // the size of this suite, and a hand-kept number in a published document has drifted into
+    // a false public claim here before (`104` read 114/47 against an actual 146/54). So the
+    // document carries a machine-readable marker and this test is what keeps it true.
+    //
+    // The count is of `#[test]` in THIS file, which is exactly "the session suite" the
+    // sentence is about — the transform suite and the log suite are counted nowhere and
+    // claimed nowhere.
+    const MARKER: &str = "<!-- session-suite-count: ";
+
+    // `\r\n` normalised before anything is matched: a committed file read on a machine with
+    // `core.autocrlf` would otherwise make the marker's line end part of the number.
+    let suite = include_str!("session_tests.rs").replace("\r\n", "\n");
+    let design = include_str!("../../../docs/152-COLLABORATION-PROTOCOL-SESSION-AND-IDENTITY.md")
+        .replace("\r\n", "\n");
+
+    let actual = suite
+        .lines()
+        .filter(|line| line.trim() == "#[test]")
+        .count();
+    assert!(
+        actual > 20,
+        "only {actual} tests found, so the counter is not seeing this file"
+    );
+
+    let claimed: usize = design
+        .split_once(MARKER)
+        .and_then(|(_, rest)| rest.split_once(" -->"))
+        .map(|(value, _)| value.trim())
+        .unwrap_or_else(|| panic!("doc 152 §7 has no `{MARKER}…  -->` marker to derive from"))
+        .parse()
+        .expect("the marker holds a decimal count");
+
+    assert_eq!(
+        claimed, actual,
+        "doc 152 §7 claims {claimed} tests over the state machines and this file holds \
+         {actual}. Update the marker AND the sentence beside it — a published count that \
+         drifts is how `104` came to read 114/47 against an actual 146/54"
+    );
+    assert!(
+        design.contains(&format!("**{actual} tests** over the state machines")),
+        "the marker and the prose disagree: the sentence must read \"**{actual} tests** over \
+         the state machines\", or a reader sees one number and the guard checks another"
+    );
+}

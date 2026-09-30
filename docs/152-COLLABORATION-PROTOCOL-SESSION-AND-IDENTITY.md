@@ -473,7 +473,12 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-25 tests over the state machines, driving **two replicas and a relay in one process**. The
+<!-- session-suite-count: 36 -->
+**36 tests** over the state machines, driving **two replicas and a relay in one process**. The
+number is **derived, not maintained**: `the_session_suite_count_in_the_design_doc_is_derived`
+counts the suite and fails if this line disagrees, because a hand-kept count in a published
+document has twice drifted into a false public claim here (`104` read 114/47 against an actual
+146/54). The
 sibling's recorded lesson about where its own collaboration bugs were is *"both sides were
 individually correct and no test put them in a room together"* — a WASM binding that sent a
 bare submission instead of a tagged message, and integer-keyed maps that were undeliverable,
