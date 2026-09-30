@@ -55,6 +55,17 @@ function hitTestPage(page, limitY = null) {
     const right = Math.min(rect.right, window.innerWidth);
     const top = Math.max(rect.top, 0);
     const bottom = Math.min(rect.bottom, limit ?? window.innerHeight);
+    // Where the document AREA starts: the top of `#viewport`'s content box.
+    // Everything above it is chrome, and chrome is the only thing that can push
+    // the reader's band down, because the sheet is pinned to the bottom edge.
+    // Read off the scroll container and not off the page: the page's own top
+    // moves with the scroll offset, and the band the reader gets does not.
+    const viewport = document.getElementById("viewport");
+    const vpStyle = getComputedStyle(viewport);
+    const readingTop =
+      viewport.getBoundingClientRect().top +
+      parseFloat(vpStyle.borderTopWidth) +
+      parseFloat(vpStyle.paddingTop);
     const result = {
       document: 0,
       review: 0,
@@ -62,6 +73,8 @@ function hitTestPage(page, limitY = null) {
       samples: 0,
       reviewPoints: [],
       band: Math.round(bottom - top),
+      pageHeight: Math.round(rect.height),
+      readingTop: Math.round(readingTop),
       windowHeight: window.innerHeight,
       windowWidth: window.innerWidth,
       leftmostReviewX: Infinity,
@@ -202,8 +215,38 @@ for (const [name, size] of [
       `the comments covered the document at ${hits.reviewPoints.join(" ")}`,
     ).toBe(0);
     expect(hits.document).toBe(hits.samples);
+
     // …and that unoccluded band is a usable share of the screen, not a sliver.
-    expect(hits.band).toBeGreaterThan(hits.windowHeight * 0.35);
+    //
+    // Two claims, because "a usable share of the SCREEN" is not a claim about
+    // how much the document happens to say. This was one line —
+    // `hits.band > windowHeight * 0.35` — and `hits.band` is the visible extent
+    // of the PAGE ELEMENT, clamped at both ends. In paper mode that clamp never
+    // bit: a page is 11in of sheet whatever is written on it, so the element was
+    // always taller than the window and `band` could only ever mean "the screen
+    // the sheet left over". Reflow (ADR-046, `docs/151` §6) stops padding a short
+    // document out to a sheet — a tile is trimmed to its content — so at 390x844
+    // the whole `rich` fixture is 269px of text with 271px of empty desk between
+    // its foot and the sheet's head, and the old line read that 269 as a sliver.
+    // It was measuring the fixture, not the reader's room. Nothing in the product
+    // could have satisfied it either: the only way to make a 269px document 296px
+    // tall is to print blank paper under it, which is the thing reflow exists to
+    // stop doing.
+    //
+    // So: the ROOM is chrome-and-sheet geometry, and the document must occupy all
+    // of that room it is long enough to reach.
+    const readingRoom = box.top - hits.readingTop;
+    expect(
+      readingRoom,
+      "the chrome above the document and the sheet below it must leave a readable band",
+    ).toBeGreaterThan(hits.windowHeight * 0.35);
+    // Nothing may sit in that room but the document: either the page fills it, or
+    // the page is shorter and every line of it is on screen. The -1 absorbs the
+    // subpixel rounding `band` and `pageHeight` each carry.
+    expect(
+      hits.band,
+      "the document must occupy the band the sheet leaves it, not be pushed out of it",
+    ).toBeGreaterThanOrEqual(Math.min(hits.pageHeight, readingRoom) - 1);
 
     // The comment is still readable, in the sheet, on screen.
     const cardBox = await card(page).boundingBox();
