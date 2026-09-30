@@ -2792,6 +2792,67 @@ body.modal-open {
   gap: var(--space-4);
 }
 
+/* Proofing languages (docs/146 §3, ADR-042): Word's Options ▸ Language table,
+   one row per language. A real `<table>` rather than a list of flex rows, because
+   the columns are headed and a screen reader reads "Proofing, Installed" from the
+   header association rather than from a guess. */
+.proof-lang-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 60ch);
+}
+
+.proof-lang-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.proof-lang-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-body);
+}
+
+.proof-lang-table th,
+.proof-lang-table td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.proof-lang-table thead th {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.proof-lang-row + .proof-lang-row th,
+.proof-lang-row + .proof-lang-row td {
+  border-top: 1px solid var(--line);
+}
+
+.proof-lang-name {
+  font-weight: 550;
+}
+
+.proof-lang-state,
+.proof-lang-size,
+.proof-lang-words {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.proof-lang-actions {
+  text-align: right;
+}
+
+.proof-lang-action {
+  white-space: nowrap;
+}
+
 /* Insert-field picker: a compact list of field kinds, styled to match the
    bookmark manager's rows and the graphite dialog chrome. */
 .field-body {

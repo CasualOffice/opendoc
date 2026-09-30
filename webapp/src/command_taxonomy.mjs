@@ -451,7 +451,18 @@ export const APP_MENU_SECTIONS = {
     // Proofing. Word's Review tab opens with a Proofing group, and these three
     // are the only proofing switches this editor has. They were the content of
     // a `Tools` menu that existed for them alone.
-    sub("menuGroup.proofing", "tools.spellCheck", "tools.grammarCheck", "tools.smartQuotes"),
+    // Increment B adds a fourth row: the language-pack install surface
+    // (`docs/146` §3/§10, ADR-042). Word keeps its install table in File ▸ Options
+    // ▸ Language and this editor has no Options backstage, so the Proofing band —
+    // where the switches already are — is the menu home, and the Review band and
+    // the palette are its other two surfaces (`105` UX-004 forbids one).
+    sub(
+      "menuGroup.proofing",
+      "tools.spellCheck",
+      "tools.grammarCheck",
+      "tools.smartQuotes",
+      "tools.languages",
+    ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),
     sub(

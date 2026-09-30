@@ -52,7 +52,6 @@ import {
   unsupportedLanguageMessage,
 } from "./spelling.mjs";
 import {
-  BASIC_PACK_VERSION,
   MAX_SUGGESTIONS,
   PROOF_MESSAGE,
   PROOF_PROTOCOL_VERSION,
@@ -60,6 +59,7 @@ import {
   isFreshResult,
   proofCacheKey,
 } from "./proof_protocol.mjs";
+import { activePackVersion } from "./proof_packs.mjs";
 import { stringIndexToByteOffset } from "./text_rules.mjs";
 
 /** The class the squiggle is painted with. `pointer-events: none` in the
@@ -175,6 +175,26 @@ export function createSpellChecker(io) {
    *  the resources does, and it is what `docs/146` §4 asks for — a pack change
    *  invalidates rather than serves. */
   let assetsCounter = 0;
+  /**
+   * locale → the installed pack for it, or `null` once one has been REMOVED.
+   *
+   * Null is a state and not an absence, and that distinction is load-bearing
+   * twice. The worker applies a resources message PARTIALLY — only the fields
+   * present — so "this locale no longer has a pack" has to be something the
+   * message can say; a locale simply left out of the list would keep its pack
+   * alive in the worker for the rest of the session, and the reader would see a
+   * pack they had removed still accepting words. And a replay after the worker is
+   * replaced has to carry the removal too, which it does because the whole map is
+   * rebuilt into every message rather than patched.
+   */
+  const packs = new Map();
+
+  /** The ACTIVE packs, in `packId` order — what the cache key names and what the
+   *  dialog counts. Removals are not in it. */
+  function installedPackList() {
+    return [...packs.values()].filter(Boolean);
+  }
+
   /** Grammar rules the user has switched off for this session, by rule id. */
   let ignoredRules = new Set();
   /** Words the user asked to ignore for this session only. Word's behaviour:
@@ -190,6 +210,9 @@ export function createSpellChecker(io) {
   let personalStore = null;
   /** The nodes the last scan covered, in document order, with their text. */
   let scanned = [];
+  /** `onFindings` subscribers, held for the SDK boundary (ADR-042 §6). A Set, so
+   *  the same listener cannot be added twice and `dispose` drops them at once. */
+  const findingsListeners = new Set();
   /** Tags reported as having no dictionary at all, so the status line says it
    *  once per language instead of on every scroll. */
   let reportedUnsupported = new Set();
@@ -222,11 +245,16 @@ export function createSpellChecker(io) {
    *  every scan — so they are folded in here rather than given a hook each.
    *  Without them a paragraph checked with grammar off is served straight back
    *  from the cache when grammar is switched on, and the marks never appear. */
-  /** The `activePackVersion` of `docs/146` §4. Increment A ships one pack, so
-   *  the constant identifies the DATA and the counter identifies how much of it
-   *  has arrived. Increment B replaces the whole string with a real version. */
+  /** The `activePackVersion` of `docs/146` §4 — the real one.
+   *
+   *  Increment A's seam named the basic tier and how much of it had arrived. That
+   *  was correct for a build with one pack and became wrong the moment a pack
+   *  could be installed: installing one changes the ANSWER for text that has not
+   *  changed, which is precisely what this part of the key exists to notice. The
+   *  composition lives in `proof_packs.mjs` (pure) so the key and the installer
+   *  cannot disagree about what identifies a pack. */
   function packVersionNow() {
-    return `${BASIC_PACK_VERSION}.${assetsCounter}`;
+    return activePackVersion({ assets: assetsCounter, packs: installedPackList() });
   }
 
   function settingsRevisionFor(spelling, grammar) {
@@ -355,6 +383,13 @@ export function createSpellChecker(io) {
         ),
         ...(patch.dictionaries ?? []),
       ],
+      // Rebuilt from the map, never patched, for the reason `packs` records: a
+      // replay has to carry every installation AND every removal, and a list
+      // assembled from the current state carries both by construction.
+      supplements: [...packs.entries()].map(([locale, pack]) => ({
+        locale,
+        words: pack ? pack.words : null,
+      })),
     };
     post(lastResources);
   }
@@ -739,11 +774,48 @@ export function createSpellChecker(io) {
     // The scan runs on a timer and the reply lands later still — always AFTER
     // whatever repaint the scroll or the edit already did. Without a repaint of
     // its own its results never reach the screen.
-    if (changed) io.repaint?.();
+    if (changed) {
+      io.repaint?.();
+      // The SDK's `onFindings` (ADR-042 §6). Notified from the one place findings
+      // actually change, which is also the one place they are known to be fresh:
+      // a listener called from the scan would hear about the previous reply.
+      if (findingsListeners.size) {
+        const snapshot = currentFindings(null);
+        for (const listener of findingsListeners) {
+          try {
+            listener(snapshot);
+          } catch (error) {
+            console.warn("proofing findings listener", error?.message ?? error);
+          }
+        }
+      }
+    }
     if (!outstanding && rescanPending) {
       rescanPending = false;
       scheduler.flush();
     }
+  }
+
+  /** Every finding the last scan holds, for `node` or for the whole window.
+   *
+   *  The SDK's read side. It reports what was SCANNED, so a caller that asks
+   *  about a paragraph outside the window is told that by `scannedNodes` rather
+   *  than handed an empty list it would read as "nothing wrong". */
+  function currentFindings(node) {
+    const rows = node === null ? scanned : scanned.filter((row) => row.node === node);
+    return rows.flatMap((row) =>
+      row.misspellings.map((entry) => ({
+        node: row.node,
+        kind: entry.kind,
+        ruleId: entry.ruleId,
+        word: entry.word,
+        message: entry.message,
+        start: entry.byteStart,
+        end: entry.byteEnd,
+        locale: row.language,
+        replacements: entry.replacements ?? [],
+      })),
+    );
   }
 
   /** A cheap identity for what `paint` would draw. */
@@ -864,6 +936,73 @@ export function createSpellChecker(io) {
     paint,
     misspellingAt,
     suggestions,
+
+    /**
+     * A language pack became active: its words are now a fourth tier for that
+     * locale (`docs/146` §6, ADR-042).
+     *
+     * Nothing is cleared. The pack's version is in `activePackVersion`, which is
+     * in the cache key, so every cached answer for that locale is addressed by a
+     * key no live scan computes any more — they age out of the bounded cache on
+     * their own. Clearing would throw away every OTHER locale's work to express
+     * that one locale changed, which is the same mistake the settings counter was
+     * introduced to stop.
+     */
+    setPack({ packId, locale, packVersion, words }) {
+      packs.set(locale, { packId, locale, packVersion, words: [...words] });
+      sendResources({});
+      scheduler.flush();
+    },
+
+    /** A pack was removed. The locale keeps a `null` entry rather than losing its
+     *  key, so the removal is carried in the message and in any replay. */
+    removePack(locale) {
+      // `get`, not `has`: a locale that has already been removed keeps a `null`
+      // entry so the removal stays in every replayed message, and answering "yes,
+      // removed" a second time would report a removal that did not happen.
+      if (!packs.get(locale)) return false;
+      packs.set(locale, null);
+      sendResources({});
+      scheduler.flush();
+      return true;
+    },
+
+    /** Which packs are active, for the cache key and for the dialog's count. */
+    activePacks() {
+      return installedPackList().map((pack) => ({
+        packId: pack.packId,
+        locale: pack.locale,
+        packVersion: pack.packVersion,
+        words: pack.words.length,
+      }));
+    },
+
+    /** The token `docs/146` §4 calls `activePackVersion`. Exposed so a guard can
+     *  assert it MOVES when a pack is installed — a cache key that did not would
+     *  serve the pre-install answers for ever. */
+    packVersion() {
+      return packVersionNow();
+    },
+
+    /** The paragraphs the last scan covered. The SDK's honesty boundary: a range
+     *  that is not in here was not checked, and saying so is not the same as
+     *  saying there is nothing wrong with it. */
+    scannedNodes() {
+      return scanned.map((row) => row.node);
+    },
+
+    /** The findings for one paragraph, or for the whole window when `node` is
+     *  null. */
+    findings(node = null) {
+      return currentFindings(node);
+    },
+
+    /** Subscribes to finding changes; returns the unsubscribe. */
+    subscribe(listener) {
+      if (typeof listener !== "function") return () => {};
+      findingsListeners.add(listener);
+      return () => findingsListeners.delete(listener);
+    },
 
     /** Dismisses this occurrence. It comes back if the paragraph changes,
      *  which is Word's "Ignore Once". */

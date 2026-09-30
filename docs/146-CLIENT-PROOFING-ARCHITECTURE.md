@@ -10,19 +10,60 @@ stays the record of **what shipped**, and this is the plan for what comes next.
 
 ## What is being built, and what is not
 
-§10 sequences the work as five increments. **Only Increment A — stability — is being built**,
-and this is what that means concretely (§8's own ordering):
+§10 sequences the work as five increments. **Increments A (stability) and B (installation)
+are built**, and this is what that means concretely (§8's own ordering):
 
-| §8 row | In this increment | State |
+| §8 row | Built | State |
 | --- | --- | --- |
 | P0 — review the design, add an ADR and a tracker item | yes | this document + **ADR-042** |
 | P1 — decouple grammar-only scanning from dictionary loading | yes | built; the §2 claim is corrected below |
-| P1 — pure contracts, move checking to a worker | yes | `proof_protocol.mjs` (pure) + `proof_worker.mjs` |
-| P1 — pack manifest, install manager, proofing store | **no** | Increment B; several open decisions |
+| P1 — pure contracts, move checking to a worker | yes | `proof_protocol.mjs` (pure) + `proof_worker.js` |
+| P1 — pack manifest, install manager, proofing store | yes | Increment B: `proof_packs.mjs` (pure), `proof_store.mjs`, `proof_sdk.mjs`, `proof_languages.mjs`, `tools/build-pack.mjs`, `packs/` |
 | P2 — document terminology profile | **no** | Increment C |
 | P2 — curated rules and confusion pairs | **no** | Increment C/D; corpus licence still open |
 | P3 — mixed-language spans and non-body stories | **no** | Increment E; see the note below |
 | P3 — `w:noProof`, tracked changes and exclusions | **no** | Increment E |
+
+### What Increment B ships, and the four things it deliberately does not
+
+Built per §6 and §9, and recorded here rather than only in a commit message (SKILL.md §8):
+
+- **A fourth `supplement` tier**, per locale, beside the dictionary, the shipped glossary and
+  the user's own words. Not folded into the glossary: the tiers differ in LIFETIME, and
+  `isKnownWord`'s docstring carries the argument.
+- **`activePackVersion`** replaces the `` `${BASIC_PACK_VERSION}.${assetsCounter}` `` seam, so
+  installing or removing a pack invalidates the result cache and the per-word suggestion memo
+  rather than serving the previous data's answers. §4's tuple finally holds a real value here.
+- **The eight-step installer as a state machine over injected effects**, in a pure module —
+  `digest` included, which is what makes a corrupted download (§9, "corrupted hash"), an
+  over-quota origin and a host that refuses the download three lines of node each.
+- **A separate `opendoc-proofing` database** per §6, whose activation is one transaction and
+  which retains the prior version's words for rollback.
+- **A "Proofing languages" screen** designed from Word's File ▸ Options ▸ Language table, with
+  a sentence for every refusal code, reachable from the Review band, the Review menu and the
+  command palette.
+- **Generated artifacts.** `webapp/packs/` comes from `tools/build-pack.mjs --check` over a
+  committed candidate list, filtered against `dict/en-US.txt`, `dict/en-GB.txt` and
+  `dict/glossary.txt`, so every word shipped is one the base tier really lacks — which is also
+  the premise the "a word stops being underlined" guard rests on.
+
+Not shipped, and said so rather than implied:
+
+1. **`checkDocument` has no honest implementation**, so it is a NAMED REFUSAL with a
+   translatable reason. The scan is windowed and body-only and whole-document enumeration
+   needs the engine export §8 ranks P3; a `checkDocument` resolving to an empty finding list
+   would report a clean document by not looking at it. `checkRange` refuses the same way for a
+   range outside the scanned window.
+2. **Increment D's redistributable context corpus is untouched** and ADR-042's open question
+   about its licence stays open. The shipped pack's words are original to this repository and
+   carry its Apache-2.0 licence, which is the only reason a pack could ship before that
+   question is answered.
+3. **No `crates/**` change**, so non-body stories, `w:noProof` and mixed-language spans are
+   exactly where §8 left them.
+4. **Per-pack cold-load and worker-memory figures are not published yet.** ADR-042 §8 requires
+   them per pack on desktop and on a midrange phone; the shipped supplement is ~1.8 KB, which
+   is below the point where either measurement means anything, and the obligation stands for
+   the first pack that is not.
 
 Increment A also carries §9's first correctness bullet — stale-finding rejection during
 edits, and UTF-16 ↔ UTF-8 offset round-trips over combining characters, emoji, RTL and mixed

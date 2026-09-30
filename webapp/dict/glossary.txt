@@ -400,6 +400,7 @@ memoized
 meta
 metafile
 metafiles
+midrange
 min
 mis
 mjs
@@ -467,6 +468,7 @@ rects
 recurse
 recurses
 recursing
+redistributable
 reflow
 reflowed
 reflows

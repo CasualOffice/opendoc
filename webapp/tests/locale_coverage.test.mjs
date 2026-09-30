@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1391],
-  ["de", 1391],
-  ["es", 1391],
-  ["fr", 1391],
-  ["hi", 1391],
-  ["id", 1391],
-  ["it", 1391],
-  ["ja", 1391],
-  ["ko", 1391],
-  ["nl", 1391],
-  ["pl", 1391],
-  ["pt-BR", 1391],
-  ["ru", 1391],
-  ["tr", 1391],
-  ["uk", 1391],
-  ["vi", 1391],
-  ["zh-Hans", 1391],
-  ["zh-Hant", 1391],
+  ["ar", 1464],
+  ["de", 1464],
+  ["es", 1464],
+  ["fr", 1464],
+  ["hi", 1464],
+  ["id", 1464],
+  ["it", 1464],
+  ["ja", 1464],
+  ["ko", 1464],
+  ["nl", 1464],
+  ["pl", 1464],
+  ["pt-BR", 1464],
+  ["ru", 1464],
+  ["tr", 1464],
+  ["uk", 1464],
+  ["vi", 1464],
+  ["zh-Hans", 1464],
+  ["zh-Hant", 1464],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -240,6 +240,20 @@ const COVERAGE = new Map([
  *  them. Logical names in every locale — "start" is the start in reading order,
  *  which in Arabic is the handle on the right — so none of the eighteen says
  *  "left" or "right". MEASURED from the merged catalogues. */
+/** 1,391 -> 1,464 is proofing Increment B (`docs/146` §6, ADR-042): the "Proofing
+ *  languages" dialog, its four table headers, the two notes it carries, the four
+ *  states a language row can be in, the three row actions, the two announcements,
+ *  the sixteen sentences `proof_packs.mjs` can refuse with, the four the SDK
+ *  boundary can, and the two proofing switches' announcements, which moved out of
+ *  `main.js` and through the seam in the same commit. Every one of the sixteen
+ *  refusals has a sentence in every locale, and `proof_languages.test.mjs` asserts
+ *  the code-to-key map is total — a refusal with no sentence is a dialog that closes
+ *  having said nothing.
+ *
+ *  RE-MEASURED from the merged catalogues rather than added to the previous figure.
+ *  The old number was measured on 2026-09-25 and the catalogues had gained keys
+ *  since without it moving, so 1,391 + 51 would have been wrong and would have
+ *  published a floor no locale had ever sat at. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];
