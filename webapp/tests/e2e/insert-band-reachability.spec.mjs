@@ -35,6 +35,7 @@ import {
   openCommandPalette,
   expectNothingToUndo,
   runAppMenuCommand,
+  revealMenuRow,
 } from "./fixtures.mjs";
 
 /** The collapsed caret's rounded on-screen x, from the overlay the editor draws
@@ -303,7 +304,12 @@ test("the Insert menu offers the same two field rows, enabled", async ({
 
   await openAppMenu(page, "insert");
   for (const id of ["insert.field.page", "insert.field.date"]) {
-    const row = page.locator(`#appMenuPopover .app-menu-item[data-command="${id}"]`);
+    // Reached the way a reader reaches it: both rows now live inside the Insert
+    // menu's folded Fields band, so the claim this test makes — "offers the same
+    // two rows, enabled" — is about a row a submenu click away, not a row at the
+    // top level. Asserting visibility on the raw locator asserted the OLD shape
+    // of the menu and reddened the moment the band folded.
+    const row = await revealMenuRow(page, id);
     await expect(row).toBeVisible();
     await expect(row).toBeEnabled();
   }

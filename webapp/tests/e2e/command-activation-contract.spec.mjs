@@ -36,6 +36,7 @@ import {
   clickIntoFirstPage,
   openAppMenu,
   openFilePage,
+  revealMenuRow,
 } from "./fixtures.mjs";
 
 const MENUS = ["file", "edit", "view", "insert", "format", "table", "references", "review"];
@@ -234,8 +235,13 @@ test.describe("every menu-bar command acts or explains itself", () => {
         await openAppMenu(page, menu);
         thrown.length = 0;
 
-        const { dead } = await activate(page, `${menu} ▸ ${row.id}`, () =>
-          page.locator(`#appMenuPopover .app-menu-item[data-command="${row.id}"]`).click(),
+        // The row may be one level in: eighteen bands fold into submenus, and a
+        // folded row is present-but-`hidden`, so clicking it raw waits out the
+        // test rather than failing fast. Sweeping the folded rows is the point —
+        // most of the bar is folded now, so skipping them would quietly shrink
+        // this contract to the handful of rows that stayed at the top level.
+        const { dead } = await activate(page, `${menu} ▸ ${row.id}`, async () =>
+          (await revealMenuRow(page, row.id)).click(),
         );
         expect(dead, `${menu} ▸ ${row.id} is a dead control`).toEqual([]);
         expect(thrown, `${menu} ▸ ${row.id} threw`).toEqual([]);
@@ -278,8 +284,8 @@ test.describe("every menu-bar command acts or explains itself", () => {
       }
       expect(opened, `${id} should still be in the bar`).toBe(true);
       thrown.length = 0;
-      const { dead } = await activate(page, `selection ▸ ${id}`, () =>
-        page.locator(`#appMenuPopover .app-menu-item[data-command="${id}"]`).click(),
+      const { dead } = await activate(page, `selection ▸ ${id}`, async () =>
+        (await revealMenuRow(page, id)).click(),
       );
       expect(dead, `${id} is a dead control when a selection enables it`).toEqual([]);
       expect(thrown, `${id} threw when activated with a selection`).toEqual([]);
