@@ -258,11 +258,26 @@ for (const width of [720, 390]) {
     expect(metrics.footer.scroll).toBeLessThanOrEqual(metrics.footer.client);
     expect(metrics.footRight.scroll).toBeLessThanOrEqual(metrics.footRight.client);
     expect(metrics.footRight.right).toBeLessThanOrEqual(metrics.viewport);
-    // The header must still offer its essential affordance at this width. That
-    // used to be the Search box; it is now the menu bar, which is the only route
-    // to Open, Save and the palette, so dropping it at a narrow width would
-    // strand the user completely.
-    await expect(page.locator("#tabFile")).toBeVisible();
+    // The header must still offer its essential affordance at this width: a
+    // route to Open, Save and the palette, without which the user is stranded.
+    //
+    // This asserts the GUARANTEE and not the mechanism, because the mechanism
+    // has already moved once. It named `#tabFile`, the ribbon's File tab — and
+    // the phone tier (`docs/148`, ADR-044) deliberately removes the ribbon at or
+    // below 620px and forces the compact chrome, so at 390px that tab is hidden
+    // BY DESIGN and the guard reddened `main` on a change that removed nothing.
+    // The File surface is still there at that width; it is the menu bar's File
+    // button, which is what the compact chrome offers instead.
+    //
+    // The precondition is asserted rather than assumed, so the branch below
+    // cannot silently take the wrong arm and pass by testing the other rung.
+    const phoneRung = await page.evaluate(() => document.body.classList.contains("phone-mode"));
+    expect(phoneRung, `phone chrome is on at ${width}px exactly when the rung says so`).toBe(
+      width <= 620,
+    );
+    await expect(
+      phoneRung ? page.locator('.app-menu-button[data-menu="file"]') : page.locator("#tabFile"),
+    ).toBeVisible();
     await expect(page.locator("#railOutline")).toContainText("Outline");
     expect(consoleErrors).toEqual([]);
   });

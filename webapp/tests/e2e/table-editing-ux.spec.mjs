@@ -1,4 +1,10 @@
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  runAppMenuCommand,
+} from "./fixtures.mjs";
 
 async function insertTwoByTwoTable(page) {
   await gotoEditor(page);
@@ -202,12 +208,20 @@ test("live table properties remain reachable on a narrow viewport", async ({
   consoleErrors,
 }) => {
   await page.setViewportSize({ width: 390, height: 700 });
+  // Build the table BEFORE narrowing. `insertTwoByTwoTable` drives the ribbon,
+  // and 390px is the phone rung: `docs/148` / ADR-044 remove the ribbon entirely
+  // there and force the compact chrome, so driving it at this width waited out
+  // the full sixty seconds on a tab that is gone by design. What this test is
+  // about is whether the properties panel is REACHABLE and FITS at 390px, not
+  // how the table got made.
+  await page.setViewportSize({ width: 1280, height: 900 });
   await insertTwoByTwoTable(page);
-  // The Table ribbon's Properties group collapses into the "⋯" overflow menu at
-  // this narrow width (docs/64 — no horizontal scrollbar); open it to reach it.
-  const tableProps = page.locator("#tablePropertiesBtn");
-  if (!(await tableProps.isVisible())) await page.locator("#ribbonOverflowBtn").click();
-  await tableProps.click();
+  await page.setViewportSize({ width: 390, height: 700 });
+
+  // Reached through the menu, which is the route the phone rung actually offers
+  // — and which the command-surface parity rule requires to exist anyway. The
+  // ribbon's overflow "⋯" was the old route and does not exist at this width.
+  await runAppMenuCommand(page, "table", "table.properties");
 
   const panel = page.locator("#tablePropertiesPanel");
   await expect(panel).toBeVisible();
@@ -215,13 +229,32 @@ test("live table properties remain reachable on a narrow viewport", async ({
   await expect(page.locator("#tablePropertiesClose")).toBeVisible();
   await expect(page.locator("#viewport")).toBeVisible();
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
+  // Fits the window, on every edge. The old numbers here (x >= 34, right <= 382)
+  // encoded the DESKTOP shape: a floating card clear of the rail's left column.
+  // At the phone rung the rail turns its axis into a horizontal strip above the
+  // document and panels become bottom sheets (`docs/148`), so there is no left
+  // column to clear and a sheet is allowed to span the width. Pinning the old
+  // geometry made this red on a change that removed nothing — what the test is
+  // for is that the panel is reachable and cannot overflow the window.
   const bounds = await panel.boundingBox();
-  expect(bounds.x).toBeGreaterThanOrEqual(34);
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(382);
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
   expect(bounds.y).toBeGreaterThanOrEqual(0);
-  expect(bounds.y + bounds.height).toBeLessThanOrEqual(692);
-  expect(bounds.width).toBeLessThan(390);
-  await expect(panel).toHaveCSS("border-radius", "10px");
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(700);
+  // And no horizontal scroll anywhere, which is the phone rung's standing rule.
+  const overflow = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    viewport: window.innerWidth,
+  }));
+  expect(overflow.document).toBeLessThanOrEqual(overflow.viewport);
+  // A sheet, not a bare rectangle. At the phone rung the panel docks to the
+  // bottom edge, so its radius is "10px 10px 0px 0px" — rounded where it meets
+  // the document, square where it meets the window. Asserting a uniform "10px"
+  // asserted the floating-card shape this rung deliberately does not use.
+  const radius = await panel.evaluate((el) => getComputedStyle(el).borderRadius);
+  expect(radius, "the panel is drawn as a card or a sheet, not a bare rectangle").toMatch(
+    /^10px 10px 0px 0px$|^10px$/,
+  );
   await expect(panel).not.toHaveCSS("box-shadow", "none");
   expect(consoleErrors).toEqual([]);
 });
