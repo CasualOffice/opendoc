@@ -288,8 +288,15 @@ Two consequences are load-bearing:
 The same diff run over attribute names rather than element names yields **52
 names** across the fixture corpus, falling to **19** once attributes whose element
 is itself reported (subsumed) or absent from the output (already gated) are
-removed. Arming it was not done here, and the reason is measured rather than
-budgetary: the remaining 19 are dominated by **spelling equivalence, not loss** —
+removed. **Those two figures are a one-off measurement taken 2026-09-30 against the
+fixture corpus of that day, not a generated artifact**, because the axis they
+describe is not gated — nothing recomputes them, so they will go stale as the corpus
+and the writer move, and the working contract's evidence rule (§9 rule 1 — a published
+number is generated from a committed artifact, or it is not published) means they must
+not be requoted as current.
+They are recorded to give the next lane a starting point and a method, and whoever
+arms the axis re-measures first. Arming it was not done here, and the reason is
+measured rather than budgetary: the remaining 19 are dominated by **spelling equivalence, not loss** —
 `w:keepNext w:val="true"` against the bare `<w:keepNext/>` that means the same
 thing, `w:tab w:leader="none"` against an omitted default, `w:ind w:left` against
 the logical `w:start`, `wp:docPr w:descr=""` (an empty alt text), and
