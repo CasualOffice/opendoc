@@ -149,6 +149,21 @@ current revision; every applied transaction — forward, undo or redo — append
 commit and advances `head` by one. Nothing rewrites or pops a commit; the only removal is
 compaction from the **front** (§3.5), behind the undo horizon.
 
+> **Corrected 2026-09-30 by `152` (ADR-047): the log has two positions, not one.** A
+> single-user document has one, because every commit is final the moment it is applied. A
+> collaborative one has two, so `RevisionLog` gains a **`horizon`** — the revision up to which
+> commits have been *ordered* by a relay. A commit above it is **provisional**: it is this
+> replica's own unacknowledged work, seen by nobody, and a rebase may have to re-express it in
+> coordinates that include somebody else's edit.
+>
+> "Nothing rewrites a commit" therefore holds **below the horizon**, which is everything
+> anybody else has seen — and that is the property the rule was protecting. A rewritten commit
+> keeps its `TransactionId`, `GroupId`, `Label` and `Origin`, so **undo is untouched by a
+> rebase**: the user's steps are the same steps, expressed against a document that has moved.
+>
+> `horizon() == head()` in every single-user session and between every flush and its
+> acknowledgement, so nothing about a document with no relay changes at all.
+
 This is the artifact `107` §5 needs: `Snapshot(r0) ─ op(r1) ─ … ─ op(rN)`. Durability,
 compaction and replay are `107` 6.1 and are not built here; the in-memory chain is.
 
@@ -189,6 +204,15 @@ code spelled as "keep only the first paragraph inverse": a `SetInlines` inverse 
 paragraph snapshot, and one word must not retain one snapshot per character. The forward
 operations are still logged in full, so nothing OT needs is lost — strictly more is kept than
 before.
+
+> **Corrected 2026-09-30 by `152` (ADR-047): "nothing OT needs is lost" is wrong.** The
+> *transform* needs the concurrent operation's inverse to know what it destroyed (`150` §2.3),
+> and the *rollback* driver needs a commit's inverse to take the document back to the ordered
+> position. A commit with no inverse can do neither, so **suggesting mode cannot take part in a
+> collaborative session** while this rule stands. The fix is to retain the inverses on the
+> commit and drop them at undo-read time instead — a change to this envelope, and the
+> prerequisite for collaborative suggesting. Until then the session refuses with
+> `ODC-7001` rather than diverging.
 
 ### 3.5 Bounds
 

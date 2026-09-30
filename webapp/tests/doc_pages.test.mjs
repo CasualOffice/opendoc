@@ -459,14 +459,25 @@ test("how much English the reference pages put on the site, measured and publish
   // them. That is the figure earning its keep in the direction nobody watches —
   // it is here to notice unrouted prose arriving in the shared chrome, and this
   // is what it looks like when prose arrives routed.
+  //
+  // 2005 -> 2028 when `20` gained the nine `ODC-7xxx` collaboration codes and the
+  // paragraph separating a code's SEVERITY from the TERMINALITY of the message
+  // carrying it (`152` §5.6). The whole +23 lands on one page —
+  // `error-code-registry.html`, 108 -> 131 — and every one of those strings is
+  // ARTICLE BODY, which is out of scope for `t()` for the reason given above:
+  // routing a design document's prose through the string table, or machine
+  // translating it, would be a worse lie than leaving it in English. The shared
+  // chrome cost nothing, which is the direction this figure actually watches.
+  // Measured from the page regenerated in this same commit, not calculated from
+  // the diff.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2005,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2005). That ` +
+    2028,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2028). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),
