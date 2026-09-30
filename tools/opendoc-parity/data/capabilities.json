@@ -1,1 +1,23 @@
-{"areas":[],"capabilities":[]}
+{
+  "areas": [
+    { "id": "text", "title": "Character formatting, clipboard and symbols" },
+    { "id": "review", "title": "Review, proofing and collaboration" }
+  ],
+  "capabilities": [
+    {
+      "id": "text.bold",
+      "area": "text",
+      "title": "Bold",
+      "ours": { "command": "format.bold" },
+      "theirs": { "control": "btnBold" }
+    },
+    {
+      "id": "review.versionHistory",
+      "area": "review",
+      "title": "Version history",
+      "ours": { "command": "file.versionHistory" },
+      "theirs": { "gated": { "evidence": { "control": "btnHistory" }, "option": "canUseHistory" } },
+      "note": "Ours is written by the autosave path (ADR-038) and needs no server."
+    }
+  ]
+}

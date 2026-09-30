@@ -89,60 +89,106 @@ pub const CONTRACT_MODULE: &str = "webapp/src/host_contract.mjs";
 /// shape described above.
 pub fn read_inventory(repo_root: &Path) -> Result<Inventory, OursError> {
     let path = repo_root.join(CONTRACT_MODULE);
-    let text = fs::read_to_string(&path)
-        .map_err(|e| OursError::Io(format!("{}: {e}", path.display())))?;
+    let text =
+        fs::read_to_string(&path).map_err(|e| OursError::Io(format!("{}: {e}", path.display())))?;
 
-    let commands = parse_block(&text, "export const COMMAND_CONTRACT = Object.freeze([", "exact(")?;
-    let families = parse_block(&text, "export const COMMAND_FAMILIES = Object.freeze([", "family(")?;
+    let commands = parse_block(
+        &text,
+        "export const COMMAND_CONTRACT = Object.freeze([",
+        "exact(",
+    )?;
+    let families = parse_block(
+        &text,
+        "export const COMMAND_FAMILIES = Object.freeze([",
+        "family(",
+    )?;
     if commands.is_empty() {
-        return Err(OursError::Shape("COMMAND_CONTRACT parsed to nothing".to_string()));
+        return Err(OursError::Shape(
+            "COMMAND_CONTRACT parsed to nothing".to_string(),
+        ));
     }
     if families.is_empty() {
-        return Err(OursError::Shape("COMMAND_FAMILIES parsed to nothing".to_string()));
+        return Err(OursError::Shape(
+            "COMMAND_FAMILIES parsed to nothing".to_string(),
+        ));
     }
     Ok(Inventory { commands, families })
 }
 
 /// Pulls the first string argument of every `call(` inside the block that opens
 /// with `header` and closes with a line that is exactly `]);`.
-fn parse_block(
-    text: &str,
-    header: &str,
-    call: &str,
-) -> Result<BTreeSet<String>, OursError> {
+///
+/// Entries may span several lines — `exact("view.zoom", null, [ … ])` declares
+/// its argument list over three — so the scan tracks parenthesis depth and
+/// treats a line as a continuation exactly while the depth is above zero. At
+/// depth zero every non-comment line must open with `call`, which is what makes
+/// a new declaration shape an error instead of a silently dropped command.
+fn parse_block(text: &str, header: &str, call: &str) -> Result<BTreeSet<String>, OursError> {
     let start = text
         .find(header)
         .ok_or_else(|| OursError::Shape(format!("no `{header}`")))?;
     let body = &text[start + header.len()..];
     let mut out = BTreeSet::new();
     let mut closed = false;
+    let mut depth: i32 = 0;
     for line in body.lines() {
         let trimmed = line.trim();
-        if trimmed == "]);" {
-            closed = true;
-            break;
+        if depth == 0 {
+            if trimmed == "]);" {
+                closed = true;
+                break;
+            }
+            if trimmed.is_empty()
+                || trimmed.starts_with("//")
+                || trimmed.starts_with('*')
+                || trimmed.starts_with("/*")
+            {
+                continue;
+            }
+            let Some(rest) = trimmed.strip_prefix(call) else {
+                return Err(OursError::Shape(format!(
+                    "unrecognised line inside the `{call}` block, so the parse would \
+                     under-report our surface: {trimmed}"
+                )));
+            };
+            let value = first_string(rest)
+                .ok_or_else(|| OursError::Shape(format!("no quoted id in: {trimmed}")))?;
+            out.insert(value);
         }
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('*') {
-            continue;
-        }
-        if trimmed.starts_with("/*") {
-            continue;
-        }
-        let Some(rest) = trimmed.strip_prefix(call) else {
+        depth += paren_balance(trimmed);
+        if depth < 0 {
             return Err(OursError::Shape(format!(
-                "unrecognised line inside the `{call}` block, so the parse would \
-                 under-report our surface: {trimmed}"
+                "parentheses close below the block's own level at: {trimmed}"
             )));
-        };
-        let value = first_string(rest).ok_or_else(|| {
-            OursError::Shape(format!("no quoted id in: {trimmed}"))
-        })?;
-        out.insert(value);
+        }
     }
     if !closed {
-        return Err(OursError::Shape(format!("`{header}` is never closed by `]);`")));
+        return Err(OursError::Shape(format!(
+            "`{header}` is never closed by `]);`"
+        )));
     }
     Ok(out)
+}
+
+/// Open parentheses minus closing ones, ignoring anything inside a double-quoted
+/// string and anything after a `//` comment.
+fn paren_balance(line: &str) -> i32 {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if in_string => {
+                chars.next();
+            }
+            '"' => in_string = !in_string,
+            '/' if !in_string && chars.peek() == Some(&'/') => break,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
 }
 
 /// The contents of the first `"…"` in `text`.
@@ -167,8 +213,8 @@ fn first_string(text: &str) -> Option<String> {
 /// Returns [`OursError`] when the file cannot be read.
 pub fn anchor_resolves(repo_root: &Path, file: &str, literal: &str) -> Result<bool, OursError> {
     let path: PathBuf = repo_root.join(file);
-    let text = fs::read_to_string(&path)
-        .map_err(|e| OursError::Io(format!("{}: {e}", path.display())))?;
+    let text =
+        fs::read_to_string(&path).map_err(|e| OursError::Io(format!("{}: {e}", path.display())))?;
     Ok(text.contains(literal))
 }
 
@@ -204,7 +250,10 @@ export const COMMAND_FAMILIES = Object.freeze([
 
     #[test]
     fn an_unrecognised_declaration_shape_is_an_error_not_a_skip() {
-        let text = SAMPLE.replace(r#"exact("file.open", "open"),"#, r#"whatever("file.open"),"#);
+        let text = SAMPLE.replace(
+            r#"exact("file.open", "open"),"#,
+            r#"whatever("file.open"),"#,
+        );
         let err = parse_block(
             &text,
             "export const COMMAND_CONTRACT = Object.freeze([",
@@ -212,6 +261,34 @@ export const COMMAND_FAMILIES = Object.freeze([
         )
         .expect_err("an unknown shape must fail the parse");
         assert!(format!("{err}").contains("under-report"), "{err}");
+    }
+
+    #[test]
+    fn an_entry_spanning_several_lines_is_one_command_not_a_parse_error() {
+        // The real module declares `exact("view.zoom", null, [ … ])` over three
+        // lines, and a line-at-a-time parse rejected it.
+        let text = "export const COMMAND_CONTRACT = Object.freeze([\n\
+                    \x20 exact(\"view.zoom\", null, [\n\
+                    \x20   Object.freeze({ name: \"percent\", type: \"number\" }),\n\
+                    \x20 ]),\n\
+                    \x20 exact(\"help.about\", null),\n\
+                    ]);\n";
+        let commands = parse_block(
+            text,
+            "export const COMMAND_CONTRACT = Object.freeze([",
+            "exact(",
+        )
+        .expect("parse");
+        assert_eq!(
+            commands.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["help.about", "view.zoom"]
+        );
+    }
+
+    #[test]
+    fn a_parenthesis_inside_a_string_does_not_open_a_continuation() {
+        assert_eq!(paren_balance(r#"exact("a(b", null),"#), 0);
+        assert_eq!(paren_balance("exact(\"a\", null, [ // a ) in a comment"), 1);
     }
 
     #[test]

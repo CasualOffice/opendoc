@@ -53,7 +53,10 @@ pub enum Ours {
     Anchor(Anchor),
     /// We have part of it. The evidence must still resolve, and `missing` says
     /// what is not there in the same sentence a reader would want.
-    Partial { evidence: Box<Ours>, missing: String },
+    Partial {
+        evidence: Box<Ours>,
+        missing: String,
+    },
     /// We do not have it, asserted rather than stated: none of these command
     /// ids may appear in `COMMAND_CONTRACT`. The day one does, the guard fails
     /// and this row must be re-graded.
@@ -76,7 +79,10 @@ pub enum Theirs {
     /// decides whether a browser session sees it. `option` names the
     /// `appOptions` flag, which the extractor records with the gates its
     /// expression mentions.
-    Gated { evidence: Box<Theirs>, option: String },
+    Gated {
+        evidence: Box<Theirs>,
+        option: String,
+    },
     /// They do not have it. `docs/153` names the search that establishes that,
     /// because an absence cannot be cited to a line.
     Absent { searched: String },
@@ -170,7 +176,9 @@ impl Verdict {
             Self::Ahead => "we ship it and their tree has no such surface",
             Self::Partial => "we ship part of it; the row says what is missing",
             Self::Gap => "their standalone browser session ships it and we do not",
-            Self::ServerGated => "their side needs a server or the desktop shell, and we lack it too",
+            Self::ServerGated => {
+                "their side needs a server or the desktop shell, and we lack it too"
+            }
         }
     }
 }
@@ -246,7 +254,13 @@ pub fn grade(
             });
         }
 
-        let have = check_ours(&capability.ours, ours, repo_root, &capability.id, &mut problems);
+        let have = check_ours(
+            &capability.ours,
+            ours,
+            repo_root,
+            &capability.id,
+            &mut problems,
+        );
         let they = check_theirs(&capability.theirs, theirs, &capability.id, &mut problems);
 
         let verdict = match (have, they) {
@@ -285,7 +299,10 @@ pub fn grade(
             });
         }
 
-        rows.push(Row { capability: capability.clone(), verdict });
+        rows.push(Row {
+            capability: capability.clone(),
+            verdict,
+        });
     }
 
     rows.sort_by(|a, b| a.capability.id.cmp(&b.capability.id));
@@ -347,15 +364,15 @@ fn check_ours(
             Ok(false) => {
                 problems.push(Problem {
                     capability: id.to_string(),
-                    detail: format!(
-                        "`{}` no longer contains `{}`",
-                        anchor.file, anchor.literal
-                    ),
+                    detail: format!("`{}` no longer contains `{}`", anchor.file, anchor.literal),
                 });
                 Have::No
             }
             Err(e) => {
-                problems.push(Problem { capability: id.to_string(), detail: e.to_string() });
+                problems.push(Problem {
+                    capability: id.to_string(),
+                    detail: e.to_string(),
+                });
                 Have::No
             }
         },
@@ -443,7 +460,9 @@ fn check_theirs(theirs: &Theirs, surface: &Surface, id: &str, problems: &mut Vec
                 None => {
                     problems.push(Problem {
                         capability: id.to_string(),
-                        detail: format!("cites their boot flag `{option}`, which the snapshot has not"),
+                        detail: format!(
+                            "cites their boot flag `{option}`, which the snapshot has not"
+                        ),
                     });
                     present
                 }
@@ -469,12 +488,20 @@ fn check_theirs(theirs: &Theirs, surface: &Surface, id: &str, problems: &mut Vec
 /// The caller splices each one between its `<!-- @generated NAME -->` and
 /// `<!-- @end NAME -->` markers, the same convention `docs/149` already uses.
 #[must_use]
-pub fn regions(rows: &[Row], map: &Map, theirs: &Surface, ours: &Inventory) -> BTreeMap<String, String> {
+pub fn regions(
+    rows: &[Row],
+    map: &Map,
+    theirs: &Surface,
+    ours: &Inventory,
+) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     out.insert("parity-tally".to_string(), tally(rows));
     out.insert("parity-gaps".to_string(), gaps(rows));
     out.insert("parity-matrix".to_string(), full(rows, map));
-    out.insert("parity-provenance".to_string(), provenance(theirs, ours, rows));
+    out.insert(
+        "parity-provenance".to_string(),
+        provenance(theirs, ours, rows),
+    );
     out
 }
 
@@ -490,9 +517,19 @@ fn tally(rows: &[Row]) -> String {
     let mut text = String::from("| Verdict | Rows | What it means |\n| --- | --- | --- |\n");
     for verdict in order {
         let count = rows.iter().filter(|r| r.verdict == verdict).count();
-        let _ = writeln!(text, "| {} | {} | {} |", verdict.label(), count, verdict.meaning());
+        let _ = writeln!(
+            text,
+            "| {} | {} | {} |",
+            verdict.label(),
+            count,
+            verdict.meaning()
+        );
     }
-    let _ = writeln!(text, "| **Total graded** | **{}** | every row below |", rows.len());
+    let _ = writeln!(
+        text,
+        "| **Total graded** | **{}** | every row below |",
+        rows.len()
+    );
     text
 }
 
@@ -504,12 +541,16 @@ fn gaps(rows: &[Row]) -> String {
     if open.is_empty() {
         return "_No open gaps._\n".to_string();
     }
-    let mut text = String::from("| Rank | Capability | Id | Theirs | Note |\n| --- | --- | --- | --- | --- |\n");
+    let mut text = String::from(
+        "| Rank | Capability | Id | Theirs | Note |\n| --- | --- | --- | --- | --- |\n",
+    );
     for row in open {
         let _ = writeln!(
             text,
             "| {} | {} | `{}` | {} | {} |",
-            row.capability.rank.map_or_else(|| "—".to_string(), |r| r.to_string()),
+            row.capability
+                .rank
+                .map_or_else(|| "—".to_string(), |r| r.to_string()),
             row.capability.title,
             row.capability.id,
             cite_theirs(&row.capability.theirs),
@@ -522,13 +563,17 @@ fn gaps(rows: &[Row]) -> String {
 fn full(rows: &[Row], map: &Map) -> String {
     let mut text = String::new();
     for area in &map.areas {
-        let in_area: Vec<&Row> =
-            rows.iter().filter(|r| r.capability.area == area.id).collect();
+        let in_area: Vec<&Row> = rows
+            .iter()
+            .filter(|r| r.capability.area == area.id)
+            .collect();
         if in_area.is_empty() {
             continue;
         }
         let _ = writeln!(text, "### {} ({} rows)\n", area.title, in_area.len());
-        text.push_str("| Capability | Verdict | Ours | Theirs | Note |\n| --- | --- | --- | --- | --- |\n");
+        text.push_str(
+            "| Capability | Verdict | Ours | Theirs | Note |\n| --- | --- | --- | --- | --- |\n",
+        );
         for row in in_area {
             let _ = writeln!(
                 text,
@@ -567,7 +612,11 @@ fn provenance(theirs: &Surface, ours: &Inventory, rows: &[Row]) -> String {
         theirs.app_options.iter().filter(|o| o.licence).count(),
         theirs.app_options.iter().filter(|o| o.desktop).count(),
     );
-    let _ = writeln!(text, "| Matrix | `tools/opendoc-parity/data/capabilities.json` | {} graded rows |", rows.len());
+    let _ = writeln!(
+        text,
+        "| Matrix | `tools/opendoc-parity/data/capabilities.json` | {} graded rows |",
+        rows.len()
+    );
     text
 }
 
@@ -576,9 +625,15 @@ fn cite_ours(ours: &Ours) -> String {
         Ours::Command(c) => format!("`{c}`"),
         Ours::Family(f) => format!("family `{f}`"),
         Ours::Anchor(a) => format!("`{}` · `{}`", a.file, a.literal),
-        Ours::Partial { evidence, missing } => format!("{} — missing: {missing}", cite_ours(evidence)),
+        Ours::Partial { evidence, missing } => {
+            format!("{} — missing: {missing}", cite_ours(evidence))
+        }
         Ours::Absent(ids) => {
-            let list = ids.iter().map(|i| format!("`{i}`")).collect::<Vec<_>>().join(", ");
+            let list = ids
+                .iter()
+                .map(|i| format!("`{i}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("none ({list} undeclared)")
         }
     }
@@ -635,7 +690,10 @@ mod tests {
 
     fn map_with(capability: Capability) -> Map {
         Map {
-            areas: vec![Area { id: "text".to_string(), title: "Text".to_string() }],
+            areas: vec![Area {
+                id: "text".to_string(),
+                title: "Text".to_string(),
+            }],
             capabilities: vec![capability],
         }
     }
@@ -692,7 +750,9 @@ mod tests {
         let (rows, problems) = grade(&map, &inventory(), &surface(), Path::new("."));
         assert_eq!(rows[0].verdict, Verdict::Parity);
         assert!(
-            problems.iter().any(|p| p.detail.contains("understating us")),
+            problems
+                .iter()
+                .any(|p| p.detail.contains("understating us")),
             "{problems:?}"
         );
     }
@@ -705,7 +765,10 @@ mod tests {
             None,
         ));
         let (_, problems) = grade(&map, &inventory(), &surface(), Path::new("."));
-        assert!(problems.iter().any(|p| p.detail.contains("ranked")), "{problems:?}");
+        assert!(
+            problems.iter().any(|p| p.detail.contains("ranked")),
+            "{problems:?}"
+        );
     }
 
     #[test]

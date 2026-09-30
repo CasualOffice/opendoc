@@ -96,7 +96,9 @@ pub fn splice(doc: &str, regions: &BTreeMap<String, String>) -> Result<String, S
     }
     for line in out.lines() {
         let trimmed = line.trim();
-        let Some(rest) = trimmed.strip_prefix("<!-- @generated ") else { continue };
+        let Some(rest) = trimmed.strip_prefix("<!-- @generated ") else {
+            continue;
+        };
         let name = rest.trim_end_matches("-->").trim();
         if !regions.contains_key(name) {
             return Err(format!(
@@ -114,15 +116,20 @@ mod tests {
     #[test]
     fn a_region_is_replaced_between_its_markers() {
         let doc = "before\n<!-- @generated a -->\nstale\n<!-- @end a -->\nafter\n";
-        let regions: BTreeMap<String, String> =
-            [("a".to_string(), "fresh\n".to_string())].into_iter().collect();
+        let regions: BTreeMap<String, String> = [("a".to_string(), "fresh\n".to_string())]
+            .into_iter()
+            .collect();
         let out = splice(doc, &regions).expect("splice");
-        assert_eq!(out, "before\n<!-- @generated a -->\nfresh\n<!-- @end a -->\nafter\n");
+        assert_eq!(
+            out,
+            "before\n<!-- @generated a -->\nfresh\n<!-- @end a -->\nafter\n"
+        );
     }
 
     #[test]
     fn a_generated_region_this_tool_does_not_fill_is_refused() {
-        let doc = "<!-- @generated a -->\n<!-- @end a -->\n<!-- @generated b -->\n<!-- @end b -->\n";
+        let doc =
+            "<!-- @generated a -->\n<!-- @end a -->\n<!-- @generated b -->\n<!-- @end b -->\n";
         let regions: BTreeMap<String, String> =
             [("a".to_string(), "x\n".to_string())].into_iter().collect();
         let err = splice(doc, &regions).expect_err("an unfilled region must fail");

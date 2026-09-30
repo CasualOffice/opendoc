@@ -101,19 +101,25 @@ impl Surface {
     /// binary search over it.
     #[must_use]
     pub fn has_control(&self, id: &str) -> bool {
-        self.controls.binary_search_by(|c| c.id.as_str().cmp(id)).is_ok()
+        self.controls
+            .binary_search_by(|c| c.id.as_str().cmp(id))
+            .is_ok()
     }
 
     /// True when `key` is a locale key they declare.
     #[must_use]
     pub fn has_locale_key(&self, key: &str) -> bool {
-        self.locale_keys.binary_search_by(|k| k.as_str().cmp(key)).is_ok()
+        self.locale_keys
+            .binary_search_by(|k| k.as_str().cmp(key))
+            .is_ok()
     }
 
     /// True when `name` is a public engine API method they declare.
     #[must_use]
     pub fn has_api_method(&self, name: &str) -> bool {
-        self.api_methods.binary_search_by(|m| m.as_str().cmp(name)).is_ok()
+        self.api_methods
+            .binary_search_by(|m| m.as_str().cmp(name))
+            .is_ok()
     }
 
     /// The boot flag called `name`, if they declare one.
@@ -288,7 +294,9 @@ fn js_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, ExtractError> {
 fn controls_in(text: &str, rel: &str) -> Vec<Control> {
     let mut out = Vec::new();
     for (index, line) in text.lines().enumerate() {
-        let Some(rest) = after_any(line, &["this.", "me."]) else { continue };
+        let Some(rest) = after_any(line, &["this.", "me."]) else {
+            continue;
+        };
         let name: String = rest
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -296,7 +304,9 @@ fn controls_in(text: &str, rel: &str) -> Vec<Control> {
         if name.len() < 4 {
             continue;
         }
-        let prefix_ok = ["btn", "mni", "chk", "cmb"].iter().any(|p| name.starts_with(p));
+        let prefix_ok = ["btn", "mni", "chk", "cmb"]
+            .iter()
+            .any(|p| name.starts_with(p));
         if !prefix_ok {
             continue;
         }
@@ -348,7 +358,9 @@ fn locale_keys_in(text: &str) -> Result<Vec<String>, ExtractError> {
 fn app_options_in(text: &str, rel: &str) -> Vec<AppOption> {
     let mut out: Vec<AppOption> = Vec::new();
     for (index, line) in text.lines().enumerate() {
-        let Some(rest) = line.split_once("appOptions.") else { continue };
+        let Some(rest) = line.split_once("appOptions.") else {
+            continue;
+        };
         let rest = rest.1;
         let name: String = rest
             .chars()
@@ -382,7 +394,9 @@ fn api_methods_in(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for line in text.lines() {
         let trimmed = line.trim_start();
-        let Some((head, tail)) = trimmed.split_once(".prototype.") else { continue };
+        let Some((head, tail)) = trimmed.split_once(".prototype.") else {
+            continue;
+        };
         if head.is_empty() || !head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             continue;
         }
@@ -410,7 +424,10 @@ mod tests {
         let text = "                    this.btnBold = new Common.UI.Button({\n\
                     \x20                   me.cmbFontName = new Common.UI.ComboBox({\n";
         let found = controls_in(text, "x.js");
-        assert_eq!(found.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["btnBold", "cmbFontName"]);
+        assert_eq!(
+            found.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["btnBold", "cmbFontName"]
+        );
         assert_eq!(found[0].line, 1);
         assert_eq!(found[1].line, 2);
     }
@@ -430,10 +447,16 @@ mod tests {
                     if (this.appOptions.canUseHistory == true) {}\n";
         let found = app_options_in(text, "Main.js");
         assert_eq!(found.len(), 2);
-        let history = found.iter().find(|o| o.name == "canUseHistory").expect("history flag");
+        let history = found
+            .iter()
+            .find(|o| o.name == "canUseHistory")
+            .expect("history flag");
         assert!(history.licence);
         assert!(!history.desktop);
-        let quick = found.iter().find(|o| o.name == "canQuickPrint").expect("quick print flag");
+        let quick = found
+            .iter()
+            .find(|o| o.name == "canQuickPrint")
+            .expect("quick print flag");
         assert!(quick.desktop);
     }
 

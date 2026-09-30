@@ -55,15 +55,18 @@ fn repo_root() -> PathBuf {
 }
 
 fn run(repo: &Path, write: bool) -> Result<(), String> {
-    let map: Map = serde_json::from_str(&read(repo, MAP_JSON)?)
-        .map_err(|e| format!("{MAP_JSON}: {e}"))?;
+    let map: Map =
+        serde_json::from_str(&read(repo, MAP_JSON)?).map_err(|e| format!("{MAP_JSON}: {e}"))?;
     let surface: Surface = serde_json::from_str(&read(repo, SURFACE_JSON)?)
         .map_err(|e| format!("{SURFACE_JSON}: {e}"))?;
     let inventory = read_inventory(repo).map_err(|e| e.to_string())?;
 
     let (rows, problems) = grade(&map, &inventory, &surface, repo);
     if !problems.is_empty() {
-        let mut message = format!("{} contradictions between the matrix and the two inventories:\n", problems.len());
+        let mut message = format!(
+            "{} contradictions between the matrix and the two inventories:\n",
+            problems.len()
+        );
         for problem in &problems {
             message.push_str(&format!("  {problem}\n"));
         }
@@ -110,7 +113,11 @@ fn run_extract(repo: &Path, args: &[String]) -> Result<(), String> {
 
     let committed: Surface = serde_json::from_str(&read(repo, SURFACE_JSON)?)
         .map_err(|e| format!("{SURFACE_JSON}: {e}"))?;
-    let taken_at = if check { committed.taken_at.clone() } else { today() };
+    let taken_at = if check {
+        committed.taken_at.clone()
+    } else {
+        today()
+    };
     let fresh = extract(&reference, &taken_at).map_err(|e| e.to_string())?;
 
     if check {
