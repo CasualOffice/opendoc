@@ -286,15 +286,45 @@ guess, and it keeps reporting as a fallback loss.
 
 Each is reproducible with one command; none is a judgement by eye.
 
-1. **Page-top spacing, +44 twips on the synthetic fixture and +132 on the
-   customer document** (13 of its 15 pages, the same value on each). On the
-   fixture it is the *whole* of what is left: `y0` and `y1` are both +44, so the
-   block is translated down with its internal geometry identical. Isolated,
-   reproducible in one command, and cheap to chase. Long deferred as
-   "page-top-spacing"; it now has a number and a minimal reproduction.
+1. **First-baseline placement: `hhea` ascent versus `sTypoAscender`, +44 twips.**
+   On the synthetic fixture this is the *whole* of what is left: `y0` and `y1` are
+   both +44, so the text block is translated down with its internal geometry
+   identical — same 268-twip box height on both sides, same 269-twip line pitch.
+   Only where the first baseline sits differs.
+
+   The cause is measurable to the twip and was measured. Carlito (UPM 2048) has
+   `hhea.ascender` 1950 and `OS/2.sTypoAscender` 1536; the difference is 414
+   units, which at 11pt is **44.5 twips** against an observed **44**. Liberation
+   Serif gives 405 units, 43.5 twips. Both sides' word boxes are
+   `baseline ± win/hhea` metrics (268.6 twips predicted, 268 observed on each
+   side), so the fonts agree; what differs is that we set the first baseline at
+   `top margin + hhea ascent` while LibreOffice sets it at roughly
+   `top margin + typo ascent`, which puts its word-box top 44 twips *above* the
+   margin.
+
+   **This one must not be "fixed" toward the oracle without deciding what is
+   right.** LibreOffice is a layout *proxy* chosen in `docs/46`; Word is the
+   compatibility reference, and Word's line layout is conventionally described as
+   `hhea`/`usWin`-based — the metric we already use. So this may be a case where
+   we are closer to Word than the proxy is, and matching LibreOffice would make
+   us *less* compatible while making this report greener. It also moves
+   `geometry_snapshot.golden` and every page of every document. Open as a
+   question with its evidence, not as a defect.
+
+   The customer document's **+132** is recorded separately and is *not* this: its
+   first text on those pages is running-header content at a different size, and
+   132 twips does not fall out of the same ratio there. It needs its own
+   reproduction before anything is claimed about it.
 2. **Table-of-contents line pitch, −36 twips per row.** Ours 499, LibreOffice's
-   535, accumulating to 471 twips over 14 rows. Visible only because the leader
-   fix above unblinded those lines.
+   535, accumulating to 471 twips over 14 rows on the customer document's
+   contents page. Visible only because the leader fix above unblinded those
+   lines, and measured from their tops: ours 1834 → 2333, the oracle's
+   1837 → 2372, with identical 266-twip line boxes on both sides.
+
+   Read the *positions* on a contents row, not the word count. The two renderers
+   tokenise a run of leader dots differently, so a leader line's word count
+   differs by construction — we report one more than the oracle there — and that
+   is a property of the instrument, not a fidelity gap.
 3. **Left indent, −290 and −362 twips**, on five pages of the customer document:
    two paragraph shapes where our text starts left of LibreOffice's, one of them
    left of the body margin entirely (a hanging list marker LibreOffice does not
