@@ -564,6 +564,110 @@ fn what_the_font_table_cannot_carry_is_reported() {
 }
 
 #[test]
+fn a_real_themed_package_resolves_its_shape_styles_end_to_end() {
+    use casual_doc_model::v1::{FillStyle, GroupChild, Rgba, StyleColor};
+
+    // Until this fixture existed, NO `.docx` in the repository carried a theme part at
+    // all, so every assertion about the format scheme and about `wps:style` ran on
+    // hand-written XML strings. This one goes through the real package path: content
+    // types, the document relationship, the theme part, the shape.
+    let bytes = include_bytes!("../../../fixtures/generated/themed-shape.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let definitions = import.document.definitions();
+
+    // The theme part was found through its relationship and its content-type override.
+    let scheme = definitions
+        .format_scheme
+        .as_ref()
+        .expect("the theme's format scheme is parsed");
+    assert_eq!(
+        scheme.fill_styles.len(),
+        3,
+        "three authored fill entries, the gradient included"
+    );
+    assert_eq!(
+        scheme.fill_style(1),
+        Some(FillStyle {
+            color: StyleColor::Placeholder
+        })
+    );
+    assert_eq!(scheme.fill_style(2), None, "the gradient is not modeled");
+    assert_eq!(
+        scheme.fill_style(3),
+        Some(FillStyle {
+            color: StyleColor::Fixed(Rgba {
+                r: 0xC0,
+                g: 0xFF,
+                b: 0xEE,
+                a: 255
+            })
+        }),
+        "entry 3 keeps its index despite the unmodeled gradient before it"
+    );
+
+    // Three shapes, each with a style reference and none with an spPr fill.
+    let shapes: Vec<_> = import
+        .document
+        .body()
+        .iter()
+        .filter_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => Some(paragraph),
+            _ => None,
+        })
+        .flat_map(|paragraph| paragraph.inlines.iter())
+        .filter_map(|inline| match inline {
+            InlineNode::Group(group) => Some(group),
+            _ => None,
+        })
+        .flat_map(|group| group.children.iter())
+        .filter_map(|child| match child {
+            GroupChild::Shape(shape) => Some(shape),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shapes.len(), 3, "three anchored shapes");
+    for shape in &shapes {
+        assert!(shape.fill.is_none(), "no shape declares an spPr fill");
+        assert!(shape.stroke.is_none(), "nor an outline");
+    }
+
+    let reference = |index: usize| {
+        definitions
+            .shape_styles
+            .get(&shapes[index].id)
+            .copied()
+            .unwrap_or_else(|| panic!("shape {index} carries a style reference"))
+    };
+    // Shape 1 names accent2 — orange. A wrong palette index would give accent1's blue,
+    // which is why the fixture does not use accent1 here.
+    assert_eq!(reference(0).fill_idx, Some(1));
+    assert_eq!(
+        reference(0).fill_color,
+        Some(Rgba {
+            r: 0xED,
+            g: 0x7D,
+            b: 0x31,
+            a: 255
+        }),
+        "a:schemeClr val=accent2 resolves through the theme palette"
+    );
+    // Shape 2 points at the gradient entry: the reference is captured, and resolution
+    // must find nothing rather than a neighbouring solid.
+    assert_eq!(reference(1).fill_idx, Some(2));
+    assert_eq!(scheme.fill_style(reference(1).fill_idx.unwrap()), None);
+    // Shape 3 points at the theme-fixed entry, whose colour wins over the shape's own.
+    assert_eq!(reference(2).fill_idx, Some(3));
+    // `a:effectRef idx="0"` is not captured at all.
+    for index in 0..3 {
+        assert!(
+            reference(index).line_idx.is_some(),
+            "shape {index} keeps its lnRef"
+        );
+    }
+}
+
+#[test]
 fn the_format_scheme_is_parsed_into_resolvable_styles_beside_the_retained_xml() {
     use casual_doc_model::v1::{DashStyle, FillStyle, LineStyle, Rgba, StyleColor};
 
