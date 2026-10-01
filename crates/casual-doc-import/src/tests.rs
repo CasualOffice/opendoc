@@ -33,6 +33,7 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -55,6 +56,7 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -75,6 +77,7 @@ fn import_with_settings(document: &[u8], settings: &[u8]) -> Import {
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -108,6 +111,7 @@ fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -129,6 +133,7 @@ fn import_with_comments(document: &[u8], comments: &[u8]) -> Import {
         &[],
         Some(&comments),
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -2067,6 +2072,7 @@ fn import_with_styles_and_numbering(document: &[u8], styles: &[u8], numbering: &
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -2287,6 +2293,7 @@ fn style_inherited_numbering_is_resolved_not_dropped() {
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -4916,6 +4923,7 @@ fn import_with_comment_companions(
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -5173,6 +5181,7 @@ fn revision_wrapping_a_hyperlink_is_modeled() {
         &[],
         &hyperlinks,
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -5211,6 +5220,7 @@ fn revision_inside_a_hyperlink_is_modeled() {
         None,
         &[],
         &hyperlinks,
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
@@ -5582,6 +5592,7 @@ fn import_with_header_footer(
         &footers,
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -6147,6 +6158,7 @@ fn a_picture_watermark_is_lifted_with_its_media_and_washout() {
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -6221,6 +6233,7 @@ fn a_washed_out_picture_that_is_not_a_watermark_stays_a_picture() {
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -6409,6 +6422,7 @@ fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -6464,6 +6478,7 @@ fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationshi
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -7755,6 +7770,7 @@ fn import_with_theme(document: &[u8], theme: &[u8]) -> Import {
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -7788,6 +7804,7 @@ fn import_with_comment_parts(
         &[],
         Some(&comments),
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -8395,6 +8412,7 @@ fn an_unusable_comment_companion_entry_is_rejected_not_merely_dropped() {
         &[],
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -8833,6 +8851,7 @@ fn import_every_part(
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),

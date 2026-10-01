@@ -327,6 +327,28 @@ impl PreservationLedger {
         )
     }
 
+    /// The opaque-part record covering `part_name`, when one was created.
+    ///
+    /// A lookup rather than a returned id because the two halves are decided in
+    /// different passes: the record is minted while the side-table is built, and
+    /// the findings that cite it are built from the chart reader's outcomes. A
+    /// finding with no record would fail `CompatibilityReport::validate`, which is
+    /// the intended outcome if these two ever disagree — the claim is audited, not
+    /// trusted (`35`).
+    ///
+    /// Complexity: O(records). Called once per chart part, never in a loop over
+    /// constructs.
+    #[must_use]
+    pub(crate) fn opaque_part_record(&self, part_name: &str) -> Option<LedgerId> {
+        self.records
+            .iter()
+            .find(|record| {
+                record.kind == PreservationKind::OpaquePart
+                    && record.covers.as_deref() == Some(part_name)
+            })
+            .map(|record| record.id)
+    }
+
     /// Records a source subtree retained inside the model and re-emitted on save.
     pub(crate) fn record_model_subtree(&mut self, covers: &str, retained_bytes: usize) -> LedgerId {
         self.push(
@@ -916,6 +938,37 @@ impl CompatibilityReport {
                 location: FeatureLocation {
                     part_name: Some(part.part_name.clone()),
                     element: None,
+                    attribute: None,
+                },
+                disposition,
+                ledger_id,
+                part: Some(part),
+            });
+        }
+        self.sort();
+    }
+}
+
+impl CompatibilityReport {
+    /// Appends one finding per construct a chart projection did not represent,
+    /// charged to the chart part it was found in (`docs/155` §6.2).
+    ///
+    /// The feature name is `chart.<local name>` — a class name in the same shape
+    /// as [`RSID_CLASS_FEATURE`] and [`WATERMARK_CLASS_FEATURE`], not a namespace
+    /// prefix. It has to be qualified: `spPr` and `marker` name constructs in the
+    /// WordprocessingML drawing vocabulary too, and a finding that aggregated a
+    /// chart's unmodeled series fill with a shape's would describe neither.
+    pub(crate) fn add_chart_constructs(
+        &mut self,
+        constructs: impl IntoIterator<Item = (PartDisposition, String, Disposition, Option<LedgerId>)>,
+    ) {
+        for (part, construct, disposition, ledger_id) in constructs {
+            self.entries.push(CompatibilityEntry {
+                feature: format!("chart.{construct}"),
+                occurrences: 1,
+                location: FeatureLocation {
+                    part_name: Some(part.part_name.clone()),
+                    element: Some(construct),
                     attribute: None,
                 },
                 disposition,
