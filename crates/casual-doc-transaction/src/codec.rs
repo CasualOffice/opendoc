@@ -68,13 +68,19 @@ pub const FRAME_MAGIC: [u8; 4] = *b"ODC1";
 /// what the payload encoding's own additive rule covers. Nothing has superseded version 1.
 pub const FRAME_VERSION: u16 = 1;
 
-/// The largest frame this codec will decode, in bytes.
+/// The largest frame this codec will decode **off an untrusted stream**, in bytes.
 ///
 /// Sized from the protocol's own chunk budget rather than guessed: a submission is already
 /// capped at [`CHUNK_BUDGET_BYTES`](crate::protocol::CHUNK_BUDGET_BYTES) of carried payload,
 /// and this allows an order of magnitude over it for the framing, the declarations and the
 /// encoding's own overhead. A frame above it is refused from the header, before anything is
 /// allocated.
+///
+/// **It is a backstop against a hostile peer, not the protocol's bound.** A local file is a
+/// different threat model and a legitimately larger record — a relay's checkpoint holds its whole
+/// retained history — so a reader with its own bound uses [`frame_len_within`] and
+/// [`decode_frame_within`] rather than raising this one. Raising this one would let a socket
+/// buffer what only a file is allowed to.
 pub const MAX_FRAME_BYTES: usize = 10 * crate::protocol::CHUNK_BUDGET_BYTES;
 
 /// The fixed header: magic, frame version, payload encoding, payload length.
@@ -253,6 +259,18 @@ pub fn encode_frame<T: Serialize>(record: &T) -> Vec<u8> {
 /// attacker-controlled length from being allocated: magic, version, encoding, declared length
 /// against [`MAX_FRAME_BYTES`], then the bytes actually present.
 pub fn decode_frame<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, CodecError> {
+    decode_frame_within(bytes, MAX_FRAME_BYTES)
+}
+
+/// [`decode_frame`] against a caller's own size bound.
+///
+/// # Errors
+///
+/// As [`decode_frame`], with [`CodecError::TooLarge`] measured against `limit`.
+pub fn decode_frame_within<T: DeserializeOwned>(
+    bytes: &[u8],
+    limit: usize,
+) -> Result<T, CodecError> {
     if bytes.len() < HEADER_BYTES {
         return Err(CodecError::TooShort {
             got: bytes.len(),
@@ -276,11 +294,8 @@ pub fn decode_frame<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, CodecError> 
     };
     let declared = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize;
     // Before the length is used for anything at all, including a comparison with `rest`.
-    if declared > MAX_FRAME_BYTES {
-        return Err(CodecError::TooLarge {
-            declared,
-            limit: MAX_FRAME_BYTES,
-        });
+    if declared > limit {
+        return Err(CodecError::TooLarge { declared, limit });
     }
     if rest.len() < declared {
         return Err(CodecError::Truncated {
@@ -364,6 +379,15 @@ pub fn decode_ordered(bytes: &[u8]) -> Result<Ordered, CodecError> {
 /// *wait for more bytes*, not as a failure. Every other error is a real refusal and means the
 /// stream or the file cannot be read on.
 pub fn frame_len(bytes: &[u8]) -> Result<usize, CodecError> {
+    frame_len_within(bytes, MAX_FRAME_BYTES)
+}
+
+/// [`frame_len`] against a caller's own size bound.
+///
+/// # Errors
+///
+/// As [`frame_len`], with [`CodecError::TooLarge`] measured against `limit`.
+pub fn frame_len_within(bytes: &[u8], limit: usize) -> Result<usize, CodecError> {
     if bytes.len() < HEADER_BYTES {
         return Err(CodecError::Truncated {
             declared: HEADER_BYTES,
@@ -381,11 +405,8 @@ pub fn frame_len(bytes: &[u8]) -> Result<usize, CodecError> {
         });
     }
     let declared = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
-    if declared > MAX_FRAME_BYTES {
-        return Err(CodecError::TooLarge {
-            declared,
-            limit: MAX_FRAME_BYTES,
-        });
+    if declared > limit {
+        return Err(CodecError::TooLarge { declared, limit });
     }
     let total = HEADER_BYTES + declared;
     if bytes.len() < total {

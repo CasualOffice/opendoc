@@ -2525,6 +2525,22 @@ costed against a fallback that does not exist.
   replayed: None })` — the damage surfacing later and in the wrong vocabulary, which is the point.
   (4) Add `opendoc-relay` to `casual-doc-edit`'s dev-dependencies →
   `nothing_under_crates_depends_on_the_relay` names the manifest and both strings.
+- **A defect found by arithmetic, and the bound it needed.** A checkpoint embeds the relay's whole
+  retained history — `DEFAULT_RETAINED_REVISIONS` (400) entries of up to `CHUNK_BUDGET_BYTES`
+  (3 MB), about **1.2 GB** — while the codec's `MAX_FRAME_BYTES` is **30 MB**, because that one is a
+  backstop against a hostile *socket*. Reading the journal with the socket's bound meant a busy
+  relay writing a checkpoint it could never read back: `compact` succeeds and the next `open`
+  refuses its own file, taking the order with it. No test would ever have seen it, because no test
+  writes a 30 MB checkpoint — it was found by reading two constants against each other. The journal
+  therefore reads with its own derived bound, and
+  `the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold` guards the **arithmetic**,
+  which is the only thing that can be guarded here. Raising the codec's constant instead would have
+  been the wrong fix — a socket is not a file — and the guard asserts that too.
+  **The underlying shape is still wrong and is recorded rather than hidden:** a frame is only that
+  large because a checkpoint *embeds* the history. Writing the history as one bounded frame per
+  entry, which is what every other record already is, removes the special bound entirely; it needs
+  `ServerSession` to be reconstructible from its state plus a replay of its entries, an API it does
+  not have, so it is the next increment.
 - **Stated rather than implied:** the durability guard proves the **ordering** of the write
   against the answer, not the `fsync`. A second `open` in the same process reads the page cache,
   so removing `sync_data` leaves it green. Durability against power loss is not observable from a

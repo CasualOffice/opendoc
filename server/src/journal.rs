@@ -49,9 +49,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use casual_doc_transaction::codec::{CodecError, decode_frame, encode_frame, frame_len};
-use casual_doc_transaction::protocol::{Outcome, Revision, Submission};
-use casual_doc_transaction::session::ServerSession;
+use casual_doc_transaction::codec::{
+    CodecError, decode_frame_within, encode_frame, frame_len_within,
+};
+use casual_doc_transaction::protocol::{CHUNK_BUDGET_BYTES, Outcome, Revision, Submission};
+use casual_doc_transaction::session::{DEFAULT_RETAINED_REVISIONS, ServerSession};
 use serde::{Deserialize, Serialize};
 
 /// One durable record.
@@ -171,6 +173,31 @@ pub struct Journal {
 /// one order of magnitude above the relay's own retained-history bound, so a compaction never
 /// happens more often than the history it rewrites turns over.
 pub const CHECKPOINT_EVERY: usize = 1024;
+
+/// The largest frame this journal will read, in bytes.
+///
+/// **This is not the codec's wire bound, and the difference is a found defect rather than a
+/// preference.** A checkpoint carries the relay's *whole retained history*, which is
+/// [`DEFAULT_RETAINED_REVISIONS`] entries of up to [`CHUNK_BUDGET_BYTES`] each — about 1.2 GB at
+/// the limit. The codec's `MAX_FRAME_BYTES` is 30 MB, because it is a backstop against a hostile
+/// *socket*. Reading the journal with the socket's bound would have meant a busy relay writing a
+/// checkpoint it could never read back: `compact` would succeed and the next `open` would refuse
+/// its own file. Nothing had noticed, because no test writes a 30 MB checkpoint — which is why
+/// `the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold` guards the **arithmetic**
+/// rather than the bytes.
+///
+/// A local file is a different threat model from a socket: it is written by this process and is as
+/// trustworthy as the disk. Raising the codec's own constant instead would have let a peer buffer
+/// what only a file is allowed to.
+///
+/// **The underlying shape is still wrong and is recorded rather than hidden.** A frame this large
+/// exists only because a checkpoint *embeds* the history. Writing the history as one bounded frame
+/// per entry — which is what every other record here already is — would make every frame
+/// chunk-sized and remove the special bound entirely. That needs `ServerSession` to be
+/// reconstructible from its state plus a replay of its retained entries, which is an API it does
+/// not have yet, so it is the next increment rather than this one.
+pub const MAX_JOURNAL_FRAME_BYTES: usize =
+    DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES + 16 * 1024 * 1024;
 
 impl Journal {
     /// Creates a journal for a **new** room, writing the opening checkpoint.
@@ -341,7 +368,7 @@ impl Journal {
         let mut at = 0_usize;
         while at < bytes.len() {
             let rest = &bytes[at..];
-            let length = match frame_len(rest) {
+            let length = match frame_len_within(rest, MAX_JOURNAL_FRAME_BYTES) {
                 Ok(length) => length,
                 // The expected shape of a crash between appends: the file ends mid-frame.
                 // Everything before it is intact and is kept.
@@ -355,7 +382,7 @@ impl Journal {
                     });
                 }
             };
-            match decode_frame::<Record>(&rest[..length]) {
+            match decode_frame_within::<Record>(&rest[..length], MAX_JOURNAL_FRAME_BYTES) {
                 Ok(record) => records.push(record),
                 Err(cause) => {
                     return Err(JournalError::Corrupt {

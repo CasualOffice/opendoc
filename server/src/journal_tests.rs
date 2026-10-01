@@ -8,11 +8,12 @@
 
 use casual_doc_edit::{Mint, Operation, Pos};
 use casual_doc_model::{IdGenerator, NodeId};
+use casual_doc_transaction::protocol::CHUNK_BUDGET_BYTES;
 use casual_doc_transaction::protocol::{
     Base, ClientId, ClientMessage, Identity, Join, Outcome, PROTOCOL_VERSION, Revision, Seq,
     ServerMessage, Submission,
 };
-use casual_doc_transaction::session::ServerSession;
+use casual_doc_transaction::session::{DEFAULT_RETAINED_REVISIONS, ServerSession};
 use casual_doc_transaction::wire::WireOperation;
 
 use super::{Journal, JournalError};
@@ -292,4 +293,32 @@ fn compaction_leaves_one_checkpoint_and_nothing_to_replay() {
         "a compaction that grows the file is not a compaction"
     );
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold() {
+    // A guard on the ARITHMETIC, because the bytes cannot be guarded: the condition is a 1.2 GB
+    // checkpoint, and a test that allocated one would be a test nobody runs.
+    //
+    // The defect this exists for was real and was found by reading the two constants against each
+    // other rather than by any test. A checkpoint embeds the relay's whole retained history —
+    // `DEFAULT_RETAINED_REVISIONS` entries of up to `CHUNK_BUDGET_BYTES` — and the codec's wire
+    // bound is 30 MB, so reading the journal with the wire bound meant a busy relay writing a
+    // checkpoint it could never read back: `compact` succeeds, the next `open` refuses its own
+    // file, and the order is gone.
+    let worst_checkpoint = DEFAULT_RETAINED_REVISIONS * CHUNK_BUDGET_BYTES;
+    assert!(
+        super::MAX_JOURNAL_FRAME_BYTES >= worst_checkpoint,
+        "the journal's frame bound ({}) is below the largest checkpoint the relay can hold ({}), \
+         so a busy relay would write a file it cannot read back",
+        super::MAX_JOURNAL_FRAME_BYTES,
+        worst_checkpoint
+    );
+    // And the wire bound must stay where it is: raising it to cover a checkpoint would let a
+    // hostile socket buffer what only a local file is allowed to.
+    assert!(
+        casual_doc_transaction::codec::MAX_FRAME_BYTES < worst_checkpoint,
+        "the wire bound has been raised to cover a checkpoint, which is the wrong fix: a socket \
+         is not a file"
+    );
 }
