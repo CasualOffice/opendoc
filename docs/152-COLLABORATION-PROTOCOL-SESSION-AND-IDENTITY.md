@@ -19,6 +19,12 @@ and why, and §3 records the one place its answer is wrong for us.
 binary, presence and cursors, collaborative undo, and any change to `casual-doc-wasm`. §9
 says why each is out and what it is waiting for.
 
+**Two modes, not one mode with an optional extra.** §2a records the owner's decision of
+2026-10-01: standalone editing needs no server and never will, and a **shared** document joins
+a room from its first open even with one participant — "one doc, one room". Wherever
+collaboration is called *optional* in these documents, it is optional in the standalone mode
+and structural in the shared one.
+
 ---
 
 ## 1. The established pattern, named before any code
@@ -59,6 +65,98 @@ The relay, when it exists, is a workspace member under `server/`, and **nothing 
 "no mandatory server" — the other half being that `casual-doc-wasm` does not reach these
 modules at all, which `the_live_editor_has_no_collaboration_dependency` now fails the build
 over.
+
+---
+
+## 2a. Two modes, and why "optional" was the wrong word
+
+Owner decision, 2026-10-01. This closes a hole in what the earlier wording *claimed*, not in
+what is built — §4.4's identity partition already had the right shape, and §7's new lifecycle
+guard is what proves it rather than asserting it.
+
+### The hole
+
+The design said collaboration is "additive and optional" and that no server is required. The
+owner asked the question that breaks that phrasing: **if a replica is not connected, how does
+it ever learn that a second person started editing?**
+
+It cannot, and no mechanism could give it that. Presence requires a connection by construction.
+If a room came into being when the *second* participant appeared, the transition would be
+unobservable from the first participant's side: they hold no socket, so nothing can reach them.
+"Optional collaboration" therefore described a lifecycle that cannot work — a shared document
+sitting outside a room, discovering company somehow.
+
+### The decision: two modes, not one mode with an extra
+
+| | **1 — standalone / serverless** | **2 — deployed, embedded, or shared: one doc, one room** |
+| --- | --- | --- |
+| How it is reached | Open a file | A link, or a host embedding the document |
+| Room | None | **From the first open, even with one participant** |
+| Presence, sharing, co-editing | None | Available |
+| Server | **Never required** — the local-first guarantee stays absolute | The relay is part of what a shared document *is* |
+| Minting space | `IdSpace::local` — reserved, no participant number can be handed it | `IdSpace::participant(base, number)` |
+
+The owner's framing: *"one user doesn't connect to server is the case of just editing and saving
+one user's edit. And one creates a document and shares a link, creates a room — but for real
+editing even a single user gets a room. It's one doc, one room."*
+
+So "optional" is true of **mode 1 only**, and every place the documents say collaboration is
+optional now has to say which mode it means. A room is not an upgrade a document acquires when
+a second person arrives; it is where a shared document lives from the first open.
+
+### What this does not change, verified rather than assumed
+
+The identity partition already drew exactly this line, and it was checked in the code before
+this section was written:
+
+- `open_document` builds its generator as `IdGenerator::new(IdSpace::local(IdSpace::of_document(id)).get())` — **mode 1 mints in the offline space**;
+- `adopt_participant_identity(number)` rebases it to `IdSpace::participant(base, number)`, keeping the counter — **mode 2, and that call is the mode-1-to-mode-2 transition**;
+- `IdSpace::participant` can never return the offline space (the participant number that would alias it is refused), so a participant can never mint over an offline replica's ids.
+
+So this is a **lifecycle and wording change, not a rework**.
+
+### What it opens, and the answers
+
+**Who creates the room.** The **host**, at embed or share time, and not the first client. A
+client cannot: `protocol::Join` carries an opaque `Identity` and the relay assigns the
+participant number, so a client has no way to name a room it has not been told about, and
+letting it invent one would make the room id a client-controlled value — which §10 Q4's
+host-signed grant exists to prevent. `143` §5 already puts access with the host; this makes
+creation explicit rather than implied.
+
+**What a room costs a lone writer.** Measured, in the terms `107` §4 uses:
+
+| Cost | A room with one participant |
+| --- | --- |
+| Transforms per keystroke | **0.** `transform` is never called with nothing concurrent — §5.3's uncontended path goes straight down `RevisionLog::apply`, the same call a keystroke makes |
+| Document clones per keystroke | **0.** The one clone is on the *contended* path — a remote edit arriving while this replica has unacknowledged work |
+| Round trips before an edit is visible locally | **0.** Editing is optimistic; the relay orders, it does not admit |
+| Extra bytes per operation | One `Mint` (ADR-048) and the ids the operation declares, both charged in `carried_bytes` |
+| Startup | One `Join`, one `Welcome`, and `ClientSession::joined` settling the log — no document walk |
+
+`a_replica_with_nothing_pending_does_not_roll_back` is the guard that keeps the first two at
+zero, and it was driven red. **The common case does not pay for the rare one**, which is the
+condition the owner attached to this decision.
+
+**A standalone document that is later shared.** Its work travels as the **snapshot the room is
+created from**, never as operations, and this is forced rather than chosen: an operation
+introducing an offline-space id is refused by every receiver
+(`an_identity_minted_in_the_offline_space_is_refused_from_a_session`), so if a join could flush
+pre-join work the two rules would contradict each other and a shared document's first exchange
+would fail.
+
+They do not contradict, and the whole lifecycle answer rests on one line:
+`ClientSession::joined` calls `log.settle(log.head())`, and `flush`'s floor is
+`max(flushed, horizon)`. Every pre-join commit is therefore below the horizon and is never
+offered. The pre-join commits **stay in the log**, so the reader does not lose undo history by
+sharing, and `IdGenerator::rebase` keeps the counter, so nothing minted offline is handed out
+again under a participant number.
+`work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operations` asserts all
+four of those, and goes red on removing that one `settle` call — with three pre-room commits
+left above the horizon, which is exactly the shape that would have sent them.
+
+**What is still open.** How the host is *told* a room exists — the grant of §10 Q4 — and what a
+relay does with a room nobody is in. Neither is decided here, and neither blocks the wording.
 
 ---
 
@@ -473,8 +571,8 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-<!-- session-suite-count: 36 -->
-**36 tests** over the state machines, driving **two replicas and a relay in one process**. The
+<!-- session-suite-count: 37 -->
+**37 tests** over the state machines, driving **two replicas and a relay in one process**. The
 number is **derived, not maintained**: `the_session_suite_count_in_the_design_doc_is_derived`
 counts the suite and fails if this line disagrees, because a hand-kept count in a published
 document has twice drifted into a false public claim here (`104` read 114/47 against an actual

@@ -1650,6 +1650,26 @@ ADR-033's decision and ADR-045's transform. Answers `143` §16 Q1 and `107` §8 
    replicas cannot mint the same id. Ids an operation merely *names* are safe because the
    session is totally ordered.
 
+**Amended 2026-10-01 (owner), and it changes what this ADR claims rather than what it built.**
+The relay is substitutable and a standalone document needs none — but "collaboration is
+optional" was the wrong phrasing for the lifecycle. A replica with no connection cannot learn
+that a second person began editing, so a room that came into being on the *second* participant
+would make that transition unobservable from the first participant's side. There are therefore
+**two modes**: standalone editing with no room at all, where no server is required and never
+will be; and a **shared** document — reached by a link, or embedded by a host — which **joins a
+room from its first open even with one participant**. One doc, one room.
+
+The room is created by the **host**, not by the first client: a client cannot name a room it
+has not been told about, and letting it invent one would make the room id client-controlled,
+which the host-signed grant exists to prevent. A lone writer in a room pays **no** transform,
+**no** document clone and **no** round trip before its own edit is visible, so the common case
+does not pay for the rare one. Work done standalone travels as the **snapshot the room is
+created from** and never as operations, which is forced rather than chosen: the offline mint
+space is reserved, so an operation introducing an offline-minted id is refused by every
+receiver — and `ClientSession::joined` settling the log at `head` is the single line that keeps
+those two rules from contradicting each other. `152` §2a records the measurements, the open
+questions and the guard.
+
 **Why a dumb relay, given the sibling engine transforms server-side.** Our `transform` takes
 its concurrent operation as a `Change` — the operation *and the inverse `apply` returned for
 it* (ADR-045, `150` §2.3) — because our deletes name their victims by identity rather than by

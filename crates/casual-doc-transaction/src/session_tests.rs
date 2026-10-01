@@ -2067,3 +2067,98 @@ fn the_session_suite_count_in_the_design_doc_is_derived() {
          the state machines\", or a reader sees one number and the guard checks another"
     );
 }
+
+#[test]
+fn work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operations() {
+    // The owner's two modes (`152` §2a): standalone editing with no room, and a shared
+    // document that joins a room from its first open. The question that closes the hole is
+    // what happens to work done in mode 1 when the document later enters mode 2.
+    //
+    // It must travel as the SNAPSHOT the room is created from, never as operations — because
+    // `IdSpace::local` is a reserved space no participant number can be handed, so an
+    // operation introducing an offline-minted id is refused by every receiver
+    // (`an_identity_minted_in_the_offline_space_is_refused_from_a_session`). If a join could
+    // flush pre-join work, those two rules would contradict each other and a shared document's
+    // first exchange would fail.
+    //
+    // They do not, and this is the line that makes it so: `ClientSession::joined` settles the
+    // log at `head`, and `flush`'s floor is `max(flushed, horizon)`. Asserted rather than
+    // assumed, because it is the whole lifecycle answer resting on one call.
+    let (document, paragraphs) = seed();
+
+    // Mode 1. No session, no room, no server. The generator is the one `open_document` builds:
+    // the document's own space reserved for the importer, the offline space for this replica.
+    let offline = IdSpace::local(wire::document_space(&document));
+    let mut ids = IdGenerator::new(offline.get());
+    let mut standalone = document.clone();
+    let mut log = RevisionLog::default();
+    for step in 0..3_u32 {
+        let transaction = Transaction::reserve(
+            TransactionId::new(u128::from(step) + 1),
+            log.head(),
+            "Typing",
+            &mut ids,
+            vec![Operation::InsertText {
+                at: Pos::new(paragraphs[0], step),
+                text: "x".to_owned(),
+            }],
+        )
+        .expect("identity spaces");
+        log.apply(&mut standalone, transaction)
+            .expect("standalone editing needs no session");
+    }
+    assert_eq!(
+        log.commits().len(),
+        3,
+        "the standalone edits are in the log"
+    );
+    assert!(
+        run_ids(&standalone)
+            .iter()
+            .any(|id| offline.holds(*id) || wire::document_space(&standalone).holds(*id)),
+        "the standalone replica minted somewhere; this fixes which space that was"
+    );
+
+    // Mode 2. The document is shared, so it joins a room — even though nobody else is in it.
+    let mut server = ServerSession::default();
+    let message = server.join(&ClientMessage::Join(Join {
+        protocol: PROTOCOL_VERSION,
+        identity: Identity::new("ada").expect("an identity"),
+        resume: None,
+    }));
+    let mut session =
+        ClientSession::joined(&standalone, &message, &mut log).expect("the join lands");
+
+    assert_eq!(
+        log.unordered_commits(),
+        0,
+        "joining left pre-room commits above the horizon, so the next flush would offer \
+         offline-space ids the receiver is required to refuse"
+    );
+    assert!(
+        session.flush(&log).is_none(),
+        "the join flushed work done before the room existed; it must travel in the snapshot \
+         the room was created from, not as operations"
+    );
+    assert_eq!(
+        log.commits().len(),
+        3,
+        "the pre-room commits were discarded, so the reader lost their undo history on sharing"
+    );
+
+    // And the transition re-points the generator without reissuing anything: the counter is
+    // kept, so an id minted offline can never be minted again under a participant number.
+    let before = ids.next_counter();
+    ids.rebase(session.id_space().get());
+    assert_eq!(
+        ids.next_counter(),
+        before,
+        "re-pointing the generator at the participant space rewound the counter, so the \
+         standalone work's ids are handed out a second time"
+    );
+    assert_ne!(
+        session.id_space(),
+        offline,
+        "a participant was handed the reserved offline space"
+    );
+}
