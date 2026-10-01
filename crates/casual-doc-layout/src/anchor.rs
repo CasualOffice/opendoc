@@ -38,6 +38,7 @@ use casual_doc_model::v1::{Fill, ShapeAdjustment};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
+use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
@@ -1443,8 +1444,8 @@ fn preset_geometry_content(
     stroke: Option<ShapeStroke>,
 ) -> AnchorContent {
     if let Some(points) = preset_polygon(geometry, adjustments, rect) {
-        return AnchorContent::Polygon {
-            points,
+        return AnchorContent::Path {
+            commands: polyline_commands(&points),
             closed: true,
             fill: fill.cloned(),
             stroke: shape_stroke(stroke),
@@ -1897,17 +1898,8 @@ fn custom_path_content(
         }
     };
 
-    let mut points = Vec::with_capacity(path.commands.len());
-    let mut closed = false;
-    for command in &path.commands {
-        let point = match command {
-            ShapePathCommand::MoveTo { point } | ShapePathCommand::LineTo { point } => *point,
-            ShapePathCommand::Close => {
-                closed = true;
-                continue;
-            }
-        };
-        points.push(Point::new(
+    let resolve_point = |point: casual_doc_model::v1::PointEmu| {
+        Point::new(
             resolve(point.x_emu, path.width_emu, rect.origin.x, rect.size.width),
             resolve(
                 point.y_emu,
@@ -1915,15 +1907,64 @@ fn custom_path_content(
                 rect.origin.y,
                 rect.size.height,
             ),
-        ));
+        )
+    };
+
+    let mut commands = Vec::with_capacity(path.commands.len());
+    let mut closed = false;
+    for command in &path.commands {
+        // Each arm resolves EVERY coordinate the command names, controls included:
+        // a control point left in the path's own space would bend the curve toward
+        // the page origin instead of toward where it was authored.
+        commands.push(match *command {
+            ShapePathCommand::MoveTo { point } => PathCommand::MoveTo {
+                point: resolve_point(point),
+            },
+            ShapePathCommand::LineTo { point } => PathCommand::LineTo {
+                point: resolve_point(point),
+            },
+            ShapePathCommand::CubicBezTo {
+                control1,
+                control2,
+                point,
+            } => PathCommand::CubicTo {
+                control1: resolve_point(control1),
+                control2: resolve_point(control2),
+                point: resolve_point(point),
+            },
+            ShapePathCommand::QuadBezTo { control, point } => PathCommand::QuadTo {
+                control: resolve_point(control),
+                point: resolve_point(point),
+            },
+            ShapePathCommand::Close => {
+                closed = true;
+                continue;
+            }
+        });
     }
 
-    AnchorContent::Polygon {
-        points,
+    AnchorContent::Path {
+        commands,
         closed,
         fill: shape.fill.clone(),
         stroke: shape_stroke(shape.stroke),
     }
+}
+
+/// A resolved vertex list as path commands: a leading move, then straight
+/// segments.
+///
+/// The typed presets still resolve to vertices, so this is the one place lifting
+/// them into the path primitive. It goes away when they become table entries
+/// (`109` FID-L-04).
+fn polyline_commands(points: &[Point]) -> Vec<PathCommand> {
+    let mut commands = Vec::with_capacity(points.len());
+    let mut rest = points.iter();
+    if let Some(first) = rest.next() {
+        commands.push(PathCommand::MoveTo { point: *first });
+    }
+    commands.extend(rest.map(|point| PathCommand::LineTo { point: *point }));
+    commands
 }
 
 fn ratio(numerator: i64, denominator: i64) -> f64 {

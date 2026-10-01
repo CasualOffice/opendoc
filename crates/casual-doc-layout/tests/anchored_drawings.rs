@@ -36,6 +36,15 @@ use casual_doc_model::v1::{
     TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition, WrapDistances, WrapMode,
 };
 
+/// The vertices a resolved path arrives at, in order.
+///
+/// The typed presets emit only moves and lines, so for them this is exactly the
+/// vertex list the tests asserted before the path primitive replaced it — which is
+/// what keeps those assertions comparable across the change.
+fn endpoints(commands: &[casual_doc_layout::display::PathCommand]) -> Vec<Point> {
+    commands.iter().map(|command| command.endpoint()).collect()
+}
+
 fn node(id: u64) -> NodeId {
     NodeId::from_parts(id, 1).unwrap()
 }
@@ -1984,18 +1993,18 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     let mut layout = paginate(&galley, &cfg);
     place_floats(&mut layout, &document, &shaper, &cfg);
 
-    let polygons: Vec<&Vec<Point>> = layout.pages[0]
+    let polygons: Vec<Vec<Point>> = layout.pages[0]
         .anchored
         .iter()
         .filter_map(|anchor| match &anchor.content {
-            AnchorContent::Polygon { points, .. } => Some(points),
+            AnchorContent::Path { commands, .. } => Some(endpoints(commands)),
             _ => None,
         })
         .collect();
     assert_eq!(polygons.len(), 3);
     assert_eq!(
         polygons[0],
-        &vec![
+        vec![
             Point::new(Twip(2_160), Twip(1_440)),
             Point::new(Twip(2_880), Twip(2_880)),
             Point::new(Twip(1_440), Twip(2_880)),
@@ -2003,7 +2012,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     );
     assert_eq!(
         polygons[1],
-        &vec![
+        vec![
             Point::new(Twip(2_880), Twip(1_440)),
             Point::new(Twip(4_320), Twip(2_880)),
             Point::new(Twip(2_880), Twip(2_880)),
@@ -2011,7 +2020,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     );
     assert_eq!(
         polygons[2],
-        &vec![
+        vec![
             Point::new(Twip(5_040), Twip(1_440)),
             Point::new(Twip(5_760), Twip(2_160)),
             Point::new(Twip(5_040), Twip(2_880)),
@@ -2038,6 +2047,85 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 // --- Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01 --------
 
 /// A custom path resolves to a polyline inside the shape's box, and the two
+/// A curve's CONTROL points are resolved into page space, not just its endpoints
+/// (`109` FID-G-02).
+///
+/// This is the specific way a curve goes wrong while still looking like a curve: if
+/// only endpoints were mapped, the controls would stay in the path's own coordinate
+/// space — tiny numbers near the page origin — and the curve would whip off toward
+/// the top-left instead of bulging where it was authored. Every number below is
+/// arithmetic on a 1" box at a known page position, not a snapshot.
+#[test]
+fn a_curves_control_points_are_resolved_into_page_space() {
+    use casual_doc_layout::display::PathCommand;
+    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: node(91),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Other,
+        preset: None,
+        adjustments: Vec::new(),
+        path: Some(ShapePath {
+            width_emu: 100,
+            height_emu: 100,
+            commands: vec![
+                ShapePathCommand::MoveTo {
+                    point: PointEmu { x_emu: 0, y_emu: 0 },
+                },
+                ShapePathCommand::CubicBezTo {
+                    control1: PointEmu {
+                        x_emu: 30,
+                        y_emu: 80,
+                    },
+                    control2: PointEmu {
+                        x_emu: 70,
+                        y_emu: 80,
+                    },
+                    point: PointEmu {
+                        x_emu: 100,
+                        y_emu: 0,
+                    },
+                },
+            ],
+        }),
+        fill: None,
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+
+    let content = only_anchor_content(&single_child_group_document(child));
+    let AnchorContent::Path {
+        commands, closed, ..
+    } = content
+    else {
+        panic!("expected a path, got {content:?}");
+    };
+    assert!(!closed, "no a:close was authored");
+    // The box is 1440 twips square at (1440, 1440), and `@w`/`@h` are 100, so a
+    // coordinate maps to 1440 + round(1440 * value / 100).
+    assert_eq!(
+        commands,
+        vec![
+            PathCommand::MoveTo {
+                point: Point::new(Twip(1_440), Twip(1_440)),
+            },
+            PathCommand::CubicTo {
+                control1: Point::new(Twip(1_872), Twip(2_592)),
+                control2: Point::new(Twip(2_448), Twip(2_592)),
+                point: Point::new(Twip(2_880), Twip(1_440)),
+            },
+        ],
+    );
+}
+
 /// `a:path` coordinate-space rules are applied per axis: a POSITIVE `@w`/`@h`
 /// scales the coordinate to the box, and a ZERO one (an absent attribute) is an
 /// absolute EMU offset that does not scale (docs/119 §3).
@@ -2137,11 +2225,13 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     let mut layout = paginate(&galley, &cfg);
     place_floats(&mut layout, &document, &shaper, &cfg);
 
-    let polygons: Vec<(&Vec<Point>, bool)> = layout.pages[0]
+    let polygons: Vec<(Vec<Point>, bool)> = layout.pages[0]
         .anchored
         .iter()
         .filter_map(|anchor| match &anchor.content {
-            AnchorContent::Polygon { points, closed, .. } => Some((points, *closed)),
+            AnchorContent::Path {
+                commands, closed, ..
+            } => Some((endpoints(commands), *closed)),
             _ => None,
         })
         .collect();
@@ -2157,7 +2247,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     assert_eq!(
         polygons[0],
         (
-            &vec![
+            vec![
                 Point::new(Twip(1_440), Twip(1_440)),
                 Point::new(Twip(2_880), Twip(1_440)),
             ],
@@ -2168,7 +2258,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     assert_eq!(
         polygons[1],
         (
-            &vec![
+            vec![
                 Point::new(Twip(3_600), Twip(1_440)),
                 Point::new(Twip(4_320), Twip(2_880)),
                 Point::new(Twip(2_880), Twip(2_880)),
@@ -2514,7 +2604,13 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
         let document = single_child_group_document(preset_shape_child(geometry, Vec::new()));
         let content = only_anchor_content(&document);
         match (expected(geometry), &content) {
-            (Expected::Polygon(count), AnchorContent::Polygon { points, closed, .. }) => {
+            (
+                Expected::Polygon(count),
+                AnchorContent::Path {
+                    commands, closed, ..
+                },
+            ) => {
+                let points = endpoints(commands);
                 assert_eq!(points.len(), count, "{geometry:?} vertex count");
                 assert!(*closed, "{geometry:?} is a closed outline");
                 for point in points {
@@ -2546,8 +2642,8 @@ fn new_presets_resolve_to_their_documented_outlines() {
     let outline = |geometry, adjustments| {
         let document = single_child_group_document(preset_shape_child(geometry, adjustments));
         match only_anchor_content(&document) {
-            AnchorContent::Polygon { points, .. } => points,
-            other => panic!("expected a polygon, got {other:?}"),
+            AnchorContent::Path { commands, .. } => endpoints(&commands),
+            other => panic!("expected a path, got {other:?}"),
         }
     };
     let at = |x, y| Point::new(Twip(x), Twip(y));

@@ -117,7 +117,7 @@ pub struct ShapeOutline {
 /// Curves live here because both `a:custGeom` and DrawingML's preset table need
 /// them (`119` §6, `109` FID-G-02); a straight polyline is just a command list that
 /// happens to contain none.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum PathCommand {
     /// Start a subpath at a point (`a:moveTo`).
     MoveTo {

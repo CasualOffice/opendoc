@@ -10,7 +10,6 @@ use crate::block::{
     BlockFragment, BorderPattern, CellBorders, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
-use crate::display::PathCommand;
 use crate::display::{
     Color, DisplayList, Fill, Gradient, GradientKind, GradientStop, PaintItem, ShapeGeometry,
     ShapeOutline, Stroke,
@@ -764,7 +763,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
         AnchorContent::Rectangle { .. }
         | AnchorContent::Ellipse { .. }
         | AnchorContent::RoundedRectangle { .. }
-        | AnchorContent::Polygon { .. }
+        | AnchorContent::Path { .. }
         | AnchorContent::Line { .. } => {
             if let Some(item) = shape_paint_item(&anchor.content, anchor.rect, anchor.transform) {
                 list.push(item);
@@ -838,21 +837,6 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
     }
 }
 
-/// A vertex list as path commands: a leading move, then straight segments.
-///
-/// The preset geometries still resolve to vertices, so this is the one place that
-/// lifts them into the path primitive. When the presets become table entries
-/// (`109` FID-L-04) they will emit commands directly and this goes away.
-fn polyline_commands(points: &[Point]) -> Vec<PathCommand> {
-    let mut commands = Vec::with_capacity(points.len());
-    let mut rest = points.iter();
-    if let Some(first) = rest.next() {
-        commands.push(PathCommand::MoveTo { point: *first });
-    }
-    commands.extend(rest.map(|point| PathCommand::LineTo { point: *point }));
-    commands
-}
-
 /// The single [`PaintItem`] a geometric float paints, or `None` for the content
 /// kinds that are not one shape (an image, a text box, a positioned table).
 ///
@@ -897,14 +881,14 @@ fn shape_paint_item(
             None,
             None,
         ),
-        AnchorContent::Polygon {
-            points,
+        AnchorContent::Path {
+            commands,
             closed,
             fill,
             stroke,
         } => (
             ShapeGeometry::Path {
-                commands: polyline_commands(points),
+                commands: commands.clone(),
                 closed: *closed,
             },
             fill.as_ref(),

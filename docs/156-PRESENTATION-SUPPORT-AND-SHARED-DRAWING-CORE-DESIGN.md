@@ -309,7 +309,7 @@ deck requires.
 
 | # | Defect today | What DOCX loses now | The fix, with its prior art |
 |---|---|---|---|
-| 0.1 | 22 typed presets; ~165 paint as bounding rectangles. No curve commands; multi-subpath `custGeom` rejected outright (`import/body.rs:5157`) | Every Word arrow, callout, banner, flowchart shape and curved connector renders as a rectangle | **Interpreter over a data table**: a guide-formula evaluator (ECMA-376 §20.1.9) + presets generated from `presetShapeDefinitions.xml`; add `CubicBezTo`/`QuadBezTo`/`ArcTo` and a path primitive to the display list. *Not* 165 hand-written arms |
+| 0.1 **part done** | 22 typed presets; the other ~165 paint as bounding rectangles. ~~No curve commands; multi-subpath `custGeom` rejected~~ | Every Word arrow, callout, banner, flowchart shape and curved connector still renders as a rectangle | **Landed:** the display list's outline is now a curve-capable path and `a:cubicBezTo`/`a:quadBezTo` work end to end (`119` "Landed since", `109` FID-G-02). **Remaining, and it is the bigger half:** the `a:gdLst` guide-formula evaluator plus the preset table (`109` FID-L-04). Named prior art holds — an interpreter over a data table, ~200 lines of evaluator against ~9,000 lines of hand transcription if the definitions are typed out instead of generated. §11 Q6 is the provenance question that gates it |
 | 0.2 | `fmtScheme` opaque; `*Ref` suppressed; `phClr` → `None` | Word's built-in shape styles lose their themed appearance | Parse the style matrix; resolve `phClr` by substitution; honour `*Ref@idx` |
 | 0.3 | `Fill` has two variants. No shape `blipFill`, no `pattFill`/`grpFill`/`tile`. No line cap/join/compound, no `custDash`. Radial gradients collapsed to concentric | Picture-filled and patterned Word shapes lose their fill | Complete the fill/line model |
 | 0.4 | `a:effectLst`: **zero** implementation at any layer; a populated list is reported as loss (`import/noop.rs:134-137`) | Word shape shadows and glows dropped on semantic save | Outer shadow + glow + soft edge is most of the value; 3-D is not. ONLYOFFICE round-trips glow/reflection/soft-edge with **no authoring UI in any editor** — parity here is cheap |
@@ -320,7 +320,7 @@ deck requires.
 | ~~0.9~~ **DONE on `main`, not here** | ~~Group children carried `node: None`~~ | ~~A UX gap in the shipped DOCX editor~~ | Closed by another lane while this branch was in flight: `anchor.rs` now sets `node: Some(child.id)` for every group child, its comment recording that `None` was why grouped content rendered but could not be selected, entered or edited at all. Verified in the tree, not assumed |
 | 0.10 | `Disposition`/ledger/`validate` live inside `casual-doc-import`; `casual-doc-io` sees a lossy projection (`io/src/docx.rs:448`) | **ODT already cannot make ledger-validated preservation claims** | Lift the taxonomy into a shared crate |
 
-Rows **0.5, 0.6 and 0.9** are now closed — 0.6 in two commits (collect, then converge), 0.5 in one, and 0.9 by another lane. 0.5 turned out **not** to be structural: the placed output already had everything needed, because `ShapeTransform`'s centre is a free parameter. The remaining Tier 0 rows are 0.1 (the preset-geometry evaluator, the largest), 0.2, 0.3, 0.4, 0.7, 0.8 and 0.10.
+Rows **0.5, 0.6 and 0.9** are now closed — 0.6 in two commits (collect, then converge), 0.5 in one, and 0.9 by another lane. 0.5 turned out **not** to be structural: the placed output already had everything needed, because `ShapeTransform`'s centre is a free parameter. The remaining Tier 0 rows are 0.1 (the preset-geometry evaluator, the largest), 0.2, 0.3, 0.4, 0.7, 0.8 and 0.10. Row 0.1 is **part done**: the path primitive and curves landed; the guide-formula evaluator and preset table remain and are gated on §11 Q6.
 
 ## 7. Tier 1 — seams, still DOCX-first
 
@@ -452,6 +452,7 @@ Required by the skill before designing anything structural.
   non-destructive affordance. Preservation is trivial; silent loss would end an
   evaluation and is already forbidden by `AGENTS.md`.
 - **Q5.** `107` says the op set is 47 in one place and 55 in another; it is 58.
+- **Q6.** **Where do the 187 preset shape definitions come from?** The evaluator is ~200 lines; the definitions are data. ONLYOFFICE hand-transcribed theirs into ~9,000 lines of imperative builder calls, which is the expensive way. ECMA-376 ships `presetShapeDefinitions.xml`, and **Apache POI redistributes it under Apache-2.0** — licence-compatible here in a way ONLYOFFICE's AGPL copy is not. This is a provenance and rights decision of the same kind as Q2's corpus, so it is the owner's, not this branch's. It gates `109` FID-L-04.
   Correct `107` separately.
 
 ## 12. What this document does not claim
