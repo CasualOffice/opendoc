@@ -11,7 +11,7 @@
 //! # The role argument is required, and that is the point
 //!
 //! `serve` will not start without it. It is the room's
-//! [`Access::Open`](opendoc_relay::Access::Open) ceiling — every participant gets exactly that
+//! [`Access::Open`] ceiling — every participant gets exactly that
 //! and the relay refuses anything outside it at the operation (ADR-060) — and an operator has to
 //! name it, because a default would be a permission nobody chose. `viewer` is a read-only
 //! broadcast room; `commenter` is a review link; `owner` is what an unauthenticated relay used to
@@ -20,7 +20,7 @@
 //! **This binary verifies no grants**, so it cannot tell two participants apart. A deployment
 //! that needs per-participant access implements
 //! [`GrantVerifier`](opendoc_relay::GrantVerifier) and passes
-//! [`Access::Granted`](opendoc_relay::Access::Granted); `143` §16 Q5 is why no signature profile
+//! [`Access::Granted`]; `143` §16 Q5 is why no signature profile
 //! is built in.
 //!
 //! `create` is separate from `serve` on purpose: `152` records that **the host creates the
@@ -111,7 +111,7 @@ fn report(recovered: &Recovered) {
 /// The room's ceiling, by name. One role per capability preset and no way to spell a
 /// combination: an operator choosing a room's policy from a command line should be choosing
 /// between understood roles, and a host that needs an unusual set has
-/// [`Access`](opendoc_relay::Access) and the library.
+/// [`Access`] and the library.
 fn open_room_role(role: &str) -> Option<Access> {
     let capabilities = match role {
         "viewer" => Capabilities::viewer(),

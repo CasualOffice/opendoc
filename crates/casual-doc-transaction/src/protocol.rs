@@ -212,7 +212,7 @@ impl ResumeKey {
 /// the provider does not trust a client-supplied role label, and `152` §2b made the same rule
 /// structural for presence by giving the message no field to put an identity in. This is that
 /// rule again: the claims travel *inside* the signed blob, and
-/// [`Capabilities`](casual_doc_edit::access::Capabilities) appears on the wire only in the
+/// [`Capabilities`] appears on the wire only in the
 /// **server-to-client** direction, where the relay is the one saying it.
 ///
 /// # What the engine does with it: nothing

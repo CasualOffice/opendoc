@@ -16,7 +16,7 @@
 //! (`protocol`'s module docs). A signature check in the engine would also put a cryptographic
 //! dependency in every embedder's bundle, including the ones that already have an identity
 //! system and a signing key and want to use them. So the engine takes
-//! [`Capabilities`](casual_doc_edit::access::Capabilities) as an argument and this crate decides
+//! [`Capabilities`] as an argument and this crate decides
 //! where they came from.
 //!
 //! # Why there is no built-in signature profile, and what that does and does not mean

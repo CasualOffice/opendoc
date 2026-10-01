@@ -106,11 +106,11 @@ use crate::protection::{is_comment_only, is_tracked_only};
 /// names:
 ///
 /// - **`review`** (accept/reject a tracked change) would need a *positive* classifier for an
-///   accept or a reject. [`is_tracked_only`] is the negative one: it says an operation only
-///   *added* tracked marks. Accepting and rejecting both fail it, and so does untracked typing,
-///   so there is no exact test that separates a reviewer's gesture from an editor's. ADR-052
-///   built the two projections it could make exact and no third; inventing a heuristic here
-///   would break that rule for a flag no caller has asked for. A reviewer is therefore granted
+///   accept or a reject. `protection::is_tracked_only` is the negative one: it says an operation
+///   only *added* tracked marks. Accepting and rejecting both fail it, and so does untracked
+///   typing, so there is no exact test that separates a reviewer's gesture from an editor's.
+///   ADR-052 built the two projections it could make exact and no third; inventing a heuristic
+///   here would break that rule for a flag no caller has asked for. A reviewer is therefore granted
 ///   [`Capabilities::editor`] today, which is **wider** than the role, and that is recorded
 ///   rather than hidden.
 /// - **`history.read` / `history.restore` / `share.admin`** are host-side and version-history
@@ -331,9 +331,9 @@ impl AccessRefusal {
 ///
 /// # Why a catch-all arm here, when `protection`'s matches are exhaustive
 ///
-/// Because the default runs the other way. In [`is_comment_only`] a `_ =>` arm would **exempt**
-/// a 59th operation from every restriction, so exhaustiveness is the guard. Here the catch-all
-/// answers "this needs `edit`", which is the **strictest** answer available and the one a
+/// Because the default runs the other way. In `protection::is_comment_only` a `_ =>` arm would
+/// **exempt** a 59th operation from every restriction, so exhaustiveness is the guard. Here the
+/// catch-all answers "this needs `edit`", which is the **strictest** answer available and the one a
 /// content-changing operation deserves; a new operation therefore arrives governed, and an
 /// exhaustive list would buy fifty-six arms and no safety. The two operations that are not
 /// plain content changes are named explicitly, and they are the only two the op set has.
