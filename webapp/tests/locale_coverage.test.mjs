@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1501],
-  ["de", 1501],
-  ["es", 1501],
-  ["fr", 1501],
-  ["hi", 1501],
-  ["id", 1501],
-  ["it", 1501],
-  ["ja", 1501],
-  ["ko", 1501],
-  ["nl", 1501],
-  ["pl", 1501],
-  ["pt-BR", 1501],
-  ["ru", 1501],
-  ["tr", 1501],
-  ["uk", 1501],
-  ["vi", 1501],
-  ["zh-Hans", 1501],
-  ["zh-Hant", 1501],
+  ["ar", 1559],
+  ["de", 1559],
+  ["es", 1559],
+  ["fr", 1559],
+  ["hi", 1559],
+  ["id", 1559],
+  ["it", 1559],
+  ["ja", 1559],
+  ["ko", 1559],
+  ["nl", 1559],
+  ["pl", 1559],
+  ["pt-BR", 1559],
+  ["ru", 1559],
+  ["tr", 1559],
+  ["uk", 1559],
+  ["vi", 1559],
+  ["zh-Hans", 1559],
+  ["zh-Hant", 1559],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -274,6 +274,27 @@ const COVERAGE = new Map([
  *  that was done, so it drifts downwards away from the truth every time a surface
  *  lands translated without the row being moved — which is why this is MEASURED
  *  from the merged catalogues and not 1,464 + 11.
+ *
+ *  1,501 -> 1,559 is COMPARE DOCUMENTS (`docs/153` `review.compare-documents`,
+ *  rank 2): the whole Compare panel — its intro, its file chooser, the sentence
+ *  that says the differences are a LIST and not tracked changes, the progress and
+ *  cancellation states, the twelve construct families, the six change kinds, the
+ *  six story names, both refusals, and the Review band's and the rail's labels —
+ *  plus the four LOSS REPORTS the engine aggregates (`FindingCode`) and the
+ *  narrower "no differences in what could be compared", which is what the panel
+ *  says instead of "No differences" when something could not be read. Fifty-eight
+ *  keys, translated into all eighteen languages in the commit that routed them.
+ *
+ *  Forty-eight of the fifty-eight are SCRIPT-side and therefore forced by this gate:
+ *  the panel is built entirely in script and has no English in the markup to fall
+ *  back on, so a locale that could not answer `compare.family.text` would print
+ *  the dotted key where a change count belongs.
+ *
+ *  The twelve family sentences are twelve keys and not one template with a family
+ *  name interpolated, and that is a translation decision rather than a
+ *  convenience: a language that inflects the noun after a number cannot be served
+ *  by "{family}: {count}", and twelve short keys are cheaper than one sentence
+ *  that is wrong in half the catalogues.
  *
  *  1,488 -> 1,501 is BREAKS (`docs/153` `page.break.page` rank 1,
  *  `page.break.section` rank 2): the six break names, the three sentences a

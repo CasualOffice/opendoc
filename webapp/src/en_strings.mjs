@@ -37,6 +37,9 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.clearFormatting": "Clear formatting",
   "menuGroup.clipboard": "Clipboard",
   "menuGroup.comments": "Comments",
+  // Word's Review tab reads Proofing | Comments | Tracking | Changes | Compare,
+  // and Compare is its own rightmost group there.
+  "menuGroup.compare": "Compare",
   "menuGroup.delete": "Delete",
   "menuGroup.document": "Document",
   "menuGroup.fields": "Fields",
@@ -248,6 +251,93 @@ export const EN_STRINGS = Object.freeze({
   // English literal in `file_pane.mjs`, so the one full-window surface in the
   // product stayed in English in all eighteen languages — the rest of the
   // chrome localises from `data-i18n`, but this page builds its rows in script.
+  // ---- Compare documents ----------------------------------------------------
+  //
+  // `docs/153` `review.compare-documents`. The whole surface is script-built, so
+  // every sentence here is one a catalogue has to answer or the panel prints a
+  // dotted key.
+  "compare.command": "Compare with another document…",
+  "compare.needsDocument": "Open a document to compare another one with",
+  "compare.intro": "Pick a document to compare this one with. Nothing is uploaded.",
+  "compare.chooseFile": "Choose a document…",
+  // Said BEFORE a file is picked, not discovered after. Word's Review ▸ Compare
+  // makes a third document whose differences are real tracked changes you can
+  // accept and reject; this makes a list you can read. A reader who expects to
+  // accept a change deserves to know which product they are using.
+  "compare.notTrackedChanges":
+    "The differences are listed here, not written into a document — they cannot be accepted or rejected.",
+  "compare.parsing": "Reading both documents…",
+  "compare.comparing": "Comparing…",
+  "compare.cancel": "Cancel",
+  "compare.cancelled": "Comparison cancelled.",
+  "compare.against": "Compared with {name}",
+  "compare.identical": "No differences.",
+  // NOT "No differences". A document whose drawings this build has no typed
+  // comparison for can produce zero changes AND a loss report, and claiming the
+  // two files agree about something the engine never looked at is the silent loss
+  // `SKILL` §12 forbids. The finding wins and the sentence narrows.
+  "compare.identicalPartly": "No differences in what could be compared.",
+  // What the comparison could NOT compare, aggregated by the engine — one row per
+  // construct with a count, so forty thousand drawings are one line. Shown before
+  // the changes themselves: a reader deciding whether to trust the list needs its
+  // limits first.
+  "compare.findingsTitle": "Not fully compared:",
+  "compare.finding.notCompared":
+    "{construct} changed, and this build has no detailed comparison for it ({count})",
+  "compare.finding.ambiguousMatch":
+    "{construct} had two equally good matches, so it is reported as a removal and an addition ({count})",
+  "compare.finding.missingResource":
+    "{construct} is absent on one side, so it could not be compared by content ({count})",
+  "compare.finding.truncated":
+    "{construct} reached a limit, so the comparison of it stopped being exhaustive ({count})",
+  // Deliberately NOT a plural family, the same decision the version-history
+  // findings sentence records: it reports a labelled number, which reads the same
+  // in every language and needs one form per locale instead of Arabic's six.
+  "compare.changeCount": "Differences: {count}",
+  "compare.partial":
+    "This comparison did not finish, so the list below is incomplete.",
+  "compare.cannotExport":
+    "This document could not be written out, so there is nothing to compare.",
+  // The engine's own sentence about this document — an admission limit, a corrupt
+  // package — passed through, because "the comparison failed" without naming the
+  // cause sends a reader looking for a problem with the wrong file. The same split
+  // `editRefusalMessage` makes.
+  "compare.failed": "The comparison failed: {reason}",
+  // …and this is what the module's OWN internal outcomes say instead. "The
+  // comparison failed: budget" would be the raw-token-in-the-status-bar defect.
+  "compare.noAnswer": "The comparison stopped before it had an answer.",
+  // The construct families `casual-doc-diff` reports, each with its count. One
+  // key per family rather than one sentence with a family name interpolated: a
+  // language that inflects the noun after a number cannot be served by a
+  // template, and twelve short keys are cheaper than one wrong sentence.
+  "compare.family.block": "Blocks added, removed or moved: {count}",
+  "compare.family.text": "Text edits: {count}",
+  "compare.family.formatting": "Formatting changes: {count}",
+  "compare.family.style": "Style and list changes: {count}",
+  "compare.family.table": "Table changes: {count}",
+  "compare.family.object": "Object changes: {count}",
+  "compare.family.section": "Section and page setup changes: {count}",
+  "compare.family.definition": "Definition changes: {count}",
+  "compare.family.resource": "Resource changes: {count}",
+  "compare.family.comment": "Comment changes: {count}",
+  "compare.family.review": "Tracked-change differences: {count}",
+  "compare.family.metadata": "Metadata changes: {count}",
+  // The kinds, in review's own vocabulary — the engine says so explicitly, and
+  // reusing review's words is what stops a reader having to learn a second set.
+  "compare.kind.insertion": "Added",
+  "compare.kind.deletion": "Removed",
+  "compare.kind.move_from": "Moved from here",
+  "compare.kind.move_to": "Moved to here",
+  "compare.kind.formatting": "Reformatted",
+  "compare.kind.property": "Property changed",
+  // Where a change is, when it is not in the body. Saying "in the body" on every
+  // row of a body-only comparison would be noise, so the body says nothing.
+  "compare.story.header": "in the header of section {section}",
+  "compare.story.footer": "in the footer of section {section}",
+  "compare.story.footnote": "in footnote {number}",
+  "compare.story.endnote": "in endnote {number}",
+  "compare.story.comment": "in a comment",
+  "compare.story.definitions": "in the document's definitions",
   // ---- Breaks ---------------------------------------------------------------
   //
   // The six NAMES are not here, and that is deliberate. They live beside their
@@ -500,10 +590,18 @@ export const EN_STRINGS = Object.freeze({
   "versionHistory.headNotRestorable": "This is the current version — there is nothing to restore",
   "versionHistory.headNotDeletable":
     "This is the current version — it is the only one that still describes the document",
-  // Present, disabled, and honest. Comparing two versions is docs/140's H3 and
-  // is not built; a button that silently did nothing would be worse than this.
+  // CORRECTED 2026-10-01. This read "Comparing one version with another is not
+  // built yet", and the comment above it said the structural diff was `docs/140`
+  // H3 and not built. The diff was built the whole time — `casual-doc-diff` plus
+  // `casual-doc-wasm/src/diff.rs` — and the PANEL was not, which `docs/140`
+  // §8-13 already said. Show changes is live now, and this sentence is what it
+  // says when the surface that shows a comparison is not available at all: an
+  // embedded editor composed without the Compare panel, where the capability
+  // genuinely is not there. `headNotComparable` is the other refusal.
   "versionHistory.action.showChangesUnavailable":
-    "Comparing one version with another is not built yet",
+    "Comparing versions is not available in this editor",
+  "versionHistory.headNotComparable":
+    "This is the current version — comparing it with itself would show nothing",
 
   // The counts and the policy, under the list. A person who cannot see the bound
   // cannot trust the promise (docs/139 §12).

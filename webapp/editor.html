@@ -1000,6 +1000,18 @@
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
+          <!-- Compare, last on the Review band, which is where Word keeps it:
+               their Review tab reads Proofing | Comments | Tracking | Changes |
+               Compare, with Compare rightmost. ONLYOFFICE puts theirs on
+               Collaboration behind `canReview`. It opens the side panel the
+               comparison is read in, so the rail's own Compare entry and this
+               button are two faces of ONE command. -->
+          <div class="rgroup" data-group="review-compare">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelReview.compareDocuments.title" data-i18n-label="panelReview.compare.label" id="reviewCompareBtn" type="button" class="fmt" title="Compare this document with another one" aria-label="Compare" aria-pressed="false" disabled><span class="ms" aria-hidden="true">difference</span></button>
+            </div>
+            <span data-i18n="panelReview.compare" class="rgroup-label">Compare</span>
+          </div>
         </div>
         <!-- Overflow: groups that don't fit the current width move here instead
              of the ribbon ever showing a horizontal scrollbar (docs/64). -->
@@ -2435,6 +2447,13 @@
              button's, so the two entry points cannot drift into saying different
              things about why version history is unavailable. -->
         <button data-i18n-title="ui.versionHistory.title" data-i18n-label="ui.versionHistory.label" id="railVersions" type="button" class="rail-btn" title="Version history" aria-label="Version history" aria-pressed="false" disabled><span class="ms" aria-hidden="true">history</span><span data-i18n="railVersions.versions">Versions</span></button>
+        <!-- Compare, below Versions, because a comparison is read beside the
+             document the way the outline and the comments are — Google Docs puts
+             its change list in a side panel for the same reason. It is the same
+             `review.compare` command the Review band and the Review menu run, so
+             the glyph is the same one: two faces of one command must not look
+             like two commands. -->
+        <button data-i18n-title="ui.compareDocuments.title" data-i18n-label="ui.compareDocuments.label" id="railCompare" type="button" class="rail-btn" title="Compare with another document" aria-label="Compare documents" aria-pressed="false" disabled><span class="ms" aria-hidden="true">difference</span><span data-i18n="railCompare.compare">Compare</span></button>
       </nav>
       <aside data-i18n-label="ui.outline.label2" id="outlinePanel" class="side-panel" hidden aria-label="Outline">
         <div class="panel-head">
@@ -2449,6 +2468,20 @@
           <button data-i18n-title="pagesPanel.closePages.title" data-i18n-label="pagesPanel.closePages.label" id="pagesClose" type="button" class="panel-close" title="Close pages" aria-label="Close pages"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         <div id="pagesBody" class="panel-body pages-grid"></div>
+      </aside>
+      <!-- The comparison's change list. A SIDE PANEL and not a modal, for the
+           reason the outline is one: a reader comparing two documents is looking
+           at both the list and the page, and a dialog over the page hides half
+           of what they came for. The file input is the Word route — Review ▸
+           Compare picks a document off the disk — and its `accept` list is the
+           importers' own, because a comparison has to PARSE the other side. -->
+      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel" hidden aria-label="Compare documents">
+        <div class="panel-head">
+          <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
+          <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="compareBody" class="panel-body compare-body"></div>
+        <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
       </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">

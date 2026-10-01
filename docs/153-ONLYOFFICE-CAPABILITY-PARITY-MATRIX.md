@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 150 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 151 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -142,9 +142,9 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | Parity | 177 | both products ship it, and both anchors resolve |
 | Ours, ungated | 26 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 63 | we ship part of it; the row says what is missing |
+| Partial | 64 | we ship part of it; the row says what is missing |
 | Gap | 102 | their standalone browser session ships it and we do not |
-| Theirs, gated | 17 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
+| Theirs, gated | 16 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
 <!-- @end parity-tally -->
@@ -614,7 +614,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Reply to a comment | Ours, ungated | `webapp/src/main.js` · `replyToComment` | `Common.Views.ReviewPopover.textAddReply` behind `canComments` | Ours is an always-ready multi-line composer on the card, but it is not declared in the host contract, so a host cannot drive it. |
 | Resolve a comment thread | Ours, ungated | `review.comment.resolve` | `btnCommentResolve` behind `canComments` | — |
 | Resolve all comments, or all of mine | Theirs, gated | none (`review.comment.resolveAll` undeclared) | `asc_docs_api.asc_ResolveAllComments` behind `canComments` | Their btnCommentResolve is a split button with All / My / Current; ours resolves one thread at a time. |
-| Compare two documents | Theirs, gated | none (`review.compare` undeclared) | `btnCompare` behind `canReview` | The engine half exists: crates/casual-doc-diff plus the diffVersions binding in crates/casual-doc-wasm/src/diff.rs. Nothing in the editor calls it, so there is no compare command and no result view. |
+| Compare two documents | Partial | `webapp/src/compare_documents.mjs` · `runComparison` — missing: the merged THIRD DOCUMENT. Theirs, and Word's, write the differences into a new document as real tracked changes that can be accepted and rejected; `casual-doc-diff` returns a typed sidecar, so ours is a change LIST in a side panel - Google Docs' answer - and the panel says so before a file is picked rather than leaving a reader to discover it. Turning a sidecar into a merged document is a construction with its own questions (who authors a change, what happens to a move) and is not started. | `btnCompare` behind `canReview` | The engine half was never the gap: `crates/casual-doc-diff` plus `beginVersionDiff` / `step` / `cancel` / `blocksProjected` in `crates/casual-doc-wasm/src/diff.rs` were complete and `webapp/` called none of them, while the version panel disabled Show changes saying the structural diff was not built. `review.compare` now reaches it from the Review band, the Review menu and the left rail, and the version panel's Show changes compares a stored checkpoint with the open document - Word's route and Google Docs' route over one engine call. It runs in slices on the main thread with real progress and a Cancel, because there is no Worker in this tree yet and `diff.rs` says why. Guarded on the EFFECT and on the DIRECTION: a paragraph only this document has must be reported as an addition, which a count cannot check and a swapped comparison would get exactly wrong. |
 | Digital signature | Theirs, gated | none (`review.signature` undeclared) | `btnSignature` behind `isSignatureSupport` | Theirs is desktop-only: isSignatureSupport is set from the desktop shell, so their browser client cannot sign either. |
 | Display mode: final (changes applied, markup hidden) | Partial | `view.showChanges` — missing: a named Final mode - turning the markup toggle off is the only way to reach it | `Common.Views.ReviewChanges.txtFinal` | — |
 | Display mode: markup (show changes inline) | Parity | `view.showChanges` | `Common.Views.ReviewChanges.txtMarkup` | Theirs is a four-way picker on btnReviewView; ours is a two-state toggle. |

@@ -507,6 +507,11 @@ export const APP_MENU_SECTIONS = {
       "review.rejectNext",
     ),
     band("menuGroup.allChanges", "review.acceptAll", "review.rejectAll"),
+    // Compare, last on the Review menu, which is where Word keeps it: their
+    // Review tab reads Proofing | Comments | Tracking | Changes | Compare, and
+    // Compare is the rightmost group. ONLYOFFICE files theirs under
+    // Collaboration ▸ Compare behind `canReview`.
+    band("menuGroup.compare", "review.compare"),
   ],
 };
 

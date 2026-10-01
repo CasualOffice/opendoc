@@ -5,7 +5,7 @@
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
-import init, { open, engineVersion } from "../pkg/casual_doc_wasm.js";
+import init, { open, beginVersionDiff, defaultDiffSlice, engineVersion } from "../pkg/casual_doc_wasm.js";
 import {
   NAMED_WEB_FONT_FACES,
   SCRIPT_FALLBACK_FONTS,
@@ -16,6 +16,7 @@ import {
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
 import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
+import { bindComparePanel, comparableBytes } from "./compare_documents.mjs";
 import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
@@ -262,7 +263,6 @@ const pagesEl = document.getElementById("pages");
  *  truth: the engine owns the text, keydown still does the inserting, and this
  *  element's value is cleared on every input so it can never accumulate. */
 const editorTextInputEl = document.getElementById("editorTextInput");
-const dropEl = document.getElementById("drop");
 const viewportEl = document.getElementById("viewport");
 const fmtButtons = {
   bold: document.getElementById("bold"),
@@ -328,9 +328,8 @@ const indentSpecialSel = document.getElementById("indentSpecial");
 const indentSpecialByInput = document.getElementById("indentSpecialBy");
 const tableBtn = document.getElementById("tableBtn");
 const tableFmtMenu = document.getElementById("tableMenu");
-// Every control the cell-format popover owns is looked up where it is PASSED to
-// `bindCellFormatMenu`, which is its only reader: six module-level names in the
-// widest scope in the product, for one consumer, bought nothing.
+// The cell-format popover's six controls are looked up where they are PASSED to
+// `bindCellFormatMenu`, their only reader.
 const tableAlign = document.getElementById("tableAlign");
 const tableContext = document.getElementById("tableContext");
 const tableRibbon = document.querySelector(".table-ribbon");
@@ -446,16 +445,11 @@ const findBtn = document.getElementById("findBtn");
 const findPanel = document.getElementById("findPanel");
 const findInput = document.getElementById("findInput");
 const replaceInput = document.getElementById("replaceInput");
-const findPrevBtn = document.getElementById("findPrev");
-const findNextBtn = document.getElementById("findNext");
 const findStatus = document.getElementById("findStatus");
 const findCase = document.getElementById("findCase");
 const findWholeWord = document.getElementById("findWholeWord");
 const findSelection = document.getElementById("findSelection");
 let findScope = null;
-const replaceOneBtn = document.getElementById("replaceOne");
-const replaceAllBtn = document.getElementById("replaceAll");
-const findCloseBtn = document.getElementById("findClose");
 
 /** Shows the named ribbon tab's panel and marks its tab selected.
  *
@@ -890,7 +884,6 @@ async function createStyleFromSelection() {
 
 // --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
 const ribbonBodyEl = document.querySelector(".ribbon-body");
-const ribbonEl = document.querySelector(".ribbon");
 const ribbonOverflowBtn = document.getElementById("ribbonOverflowBtn");
 const ribbonOverflowMenu = document.getElementById("ribbonOverflowMenu");
 // Canonical group order per panel, captured before any group is relocated.
@@ -1260,7 +1253,7 @@ function bindRibbonTooltipSurface(surface) {
   });
 }
 
-bindRibbonTooltipSurface(ribbonEl);
+bindRibbonTooltipSurface(document.querySelector(".ribbon"));
 bindRibbonTooltipSurface(ribbonOverflowMenu);
 window.addEventListener("scroll", () => { if (tipTarget) disarmTip(tipTarget); }, true);
 
@@ -2550,8 +2543,8 @@ const paraControls = [
 const saveBtn = document.getElementById("save");
 const saveFormatEl = document.getElementById("saveFormat");
 const compatibilityStatusEl = document.getElementById("compatibilityStatus");
-const zoomInBtn = document.getElementById("zoomIn");
-const zoomOutBtn = document.getElementById("zoomOut");
+// The two zoom steppers are looked up where they are USED, below: one reader
+// each, and a name in the widest scope in the product for it.
 const documentChrome = document.getElementById("documentChrome");
 // The menu bar is the ONLY entry point now that Open has left the header, so it
 // can no longer wait for a document — a fresh editor would otherwise have no
@@ -2560,7 +2553,6 @@ const documentChrome = document.getElementById("documentChrome");
 // renders disabled, which is the honest state rather than a hidden one.
 if (documentChrome) documentChrome.hidden = false;
 const docTitleEl = document.getElementById("docTitle");
-const documentStateEl = document.getElementById("documentState");
 const documentStateText = document.getElementById("documentStateText");
 const statsEl = document.getElementById("stats");
 const statWords = document.getElementById("statWords");
@@ -2813,7 +2805,7 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
 }
 
 function setDocumentState(state) {
-  paintDocumentState(documentStateBadge(state), documentStateEl, documentStateText);
+  paintDocumentState(documentStateBadge(state), document.getElementById("documentState"), documentStateText);
   // Every path that changes document identity or saved-ness passes through
   // here — open, edit, rename, save, restore — so the browser tab is refreshed
   // from one place rather than from five call sites that will drift.
@@ -3230,7 +3222,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     versionHistory.reflect();
     populateStyles();
     populateTableStyles();
-    dropEl.hidden = true;
+    document.getElementById("drop").hidden = true;
     document.body.classList.add("doc-loaded");
     hostSession?.noteReady();
     // The compact bar is built from the command registry, and at import time
@@ -7981,6 +7973,10 @@ const REVIEW_SURFACE = [
   { command: "review.comment.resolve", buttons: () => [reviewResolveBtn], requires: "comment", run: () => void reviewCommentActions.resolve() },
   { command: "review.comment.delete", buttons: () => [reviewDeleteBtn], requires: "comment", run: () => void reviewCommentActions.remove() },
   { command: "review.toggle", buttons: () => [reviewPanelBtn], run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
+  // TWO faces, one command. This table owns their DISABLED state;
+  // `compare_documents.mjs` owns the clicks and the pressed states, hence
+  // `ownsClick`. Listing one face only shipped the rail entry dead (`105` UX-004).
+  { command: "review.compare", buttons: () => [document.getElementById("reviewCompareBtn"), document.getElementById("railCompare")].filter(Boolean), requires: "doc", reasonKey: "compare.needsDocument", ownsClick: true, run: () => comparePanel.open() },
   // Proofing. Both switches were the whole content of a `Tools` menu, which is
   // one top-level name for two toggles — and one of the two names that scrolled
   // off the end of the menu bar (`109` HF-097). Word's Review tab opens with a
@@ -9165,7 +9161,9 @@ function editSelectionLink() {
 for (const entry of REVIEW_SURFACE) {
   for (const button of entry.buttons()) {
     if (!button) continue;
-    onButton(button, entry.run);
+    // `ownsClick` as on the Layout table: the module that renders the surface binds
+    // the click, and a second handler would run a toggle twice — i.e. not at all.
+    if (!entry.ownsClick) onButton(button, entry.run);
     button.dataset.command = entry.command;
   }
 }
@@ -10551,6 +10549,7 @@ const cellFormatMenu = bindCellFormatMenu({
 });
 const tablePopover = registerPopover(tableBtn, tableFmtMenu, () => cellFormatMenu.reflect());
 bindBreaksMenu(BREAK_IO);
+const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted") });
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -11908,6 +11907,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "tools.grammarCheck", label: `Grammar check: ${settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
     { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => proofing.openLanguages() },
     { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => toggleReview() },
+    { id: "review.compare", label: t("compare.command"), group: "Review", kw: "compare diff difference changes two documents review merge", enabled: !!doc, disabledReason: t("compare.needsDocument"), run: () => comparePanel.open() },
     // ⌘⇧E worked before this row and was advertised NOWHERE — no palette row, no
     // menu row, no reference entry — because the binding was a hand-written
     // keydown branch and only descriptors carry labels (`109` UX-007). It exists
@@ -13494,11 +13494,13 @@ replaceInput.addEventListener("keydown", (e) => {
   }
 });
 findCase.addEventListener("change", () => findFromSelection(true));
-findPrevBtn.addEventListener("click", () => findFromSelection(false));
-findNextBtn.addEventListener("click", () => findFromSelection(true));
-replaceOneBtn.addEventListener("click", replaceCurrentMatch);
-replaceAllBtn.addEventListener("click", replaceAllMatches);
-findCloseBtn.addEventListener("click", closeFind);
+// The find bar's five buttons, looked up where they are USED: one listener each,
+// and five names in the widest scope in the product for them.
+document.getElementById("findPrev").addEventListener("click", () => findFromSelection(false));
+document.getElementById("findNext").addEventListener("click", () => findFromSelection(true));
+document.getElementById("replaceOne").addEventListener("click", replaceCurrentMatch);
+document.getElementById("replaceAll").addEventListener("click", replaceAllMatches);
+document.getElementById("findClose").addEventListener("click", closeFind);
 findBtn.addEventListener("click", () => openFind());
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
@@ -14102,9 +14104,7 @@ async function pasteAsText() {
 // After a rich paste, a small chip near the caret lets the user switch that
 // paste to text-only (undo the rich insertion, re-paste as plain text).
 const pasteOptionsEl = document.getElementById("pasteOptions");
-const pasteOptionsTextOnlyBtn = document.getElementById("pasteOptionsTextOnly");
 const pasteOptionsMergeBtn = document.getElementById("pasteOptionsMerge");
-const pasteOptionsCloseBtn = document.getElementById("pasteOptionsClose");
 let pasteOptionsPlain = null;
 let pasteOptionsRuns = null;
 // The document revision the chip's own paste produced. Both chip actions work by
@@ -14223,9 +14223,9 @@ async function switchPasteToMergeFormatting() {
   await pasteRichRunsJson(JSON.stringify(merged));
   focusEditorSurface();
 }
-onButton(pasteOptionsTextOnlyBtn, () => void switchPasteToTextOnly());
+onButton(document.getElementById("pasteOptionsTextOnly"), () => void switchPasteToTextOnly());
 onButton(pasteOptionsMergeBtn, () => void switchPasteToMergeFormatting());
-onButton(pasteOptionsCloseBtn, hidePasteOptions);
+onButton(document.getElementById("pasteOptionsClose"), hidePasteOptions);
 pasteOptionsEl.addEventListener("mousedown", (e) => {
   if (e.target.tagName !== "BUTTON") e.preventDefault();
 });
@@ -15035,7 +15035,7 @@ zoomMenu.addEventListener("click", (e) => {
   else return;
   closePopover(zoomPopover);
 });
-for (const [button, dir] of [[zoomInBtn, 1], [zoomOutBtn, -1]]) button.addEventListener("click", () => stepZoom(dir));
+for (const [id, dir] of [["zoomIn", 1], ["zoomOut", -1]]) document.getElementById(id).addEventListener("click", () => stepZoom(dir));
 
 // Ctrl/⌘+scroll over the document zooms (a fixed % centered on the pointer's
 // intent), the desktop-editor convention. Passive:false so we can preventDefault
@@ -15105,7 +15105,6 @@ const settingsBtn = document.getElementById("settingsBtn");
 const draftRecoveryBar = document.getElementById("draftRecoveryBar");
 const draftRecoveryList = document.getElementById("draftRecoveryList");
 const draftRecoveryTitle = document.getElementById("draftRecoveryTitle");
-const draftRecoveryDismissBtn = document.getElementById("draftRecoveryDismiss");
 const draftStatusEl = document.getElementById("draftStatus");
 const autosaveToggle = document.getElementById("autosaveToggle");
 const spellCheckToggle = document.getElementById("spellCheckToggle");
@@ -15688,7 +15687,7 @@ draftRecoveryBar?.addEventListener("click", (event) => {
   const remove = event.target.closest?.("button[data-draft-delete]");
   if (remove) void deleteDraftWithConfirmation(remove.dataset.draftDelete);
 });
-draftRecoveryDismissBtn?.addEventListener("click", () => {
+document.getElementById("draftRecoveryDismiss")?.addEventListener("click", () => {
   // Dismiss keeps the draft. Nothing in this bar may lose work by being closed.
   draftBarDismissed = true;
   renderDraftRecovery();
@@ -15866,6 +15865,7 @@ const versionHistory = createVersionHistory({
     // never squeezed from both sides at once.
     if (isOpen && !reviewSidebar.hidden) toggleReview(false);
   },
+  showChanges: (bytes, name) => void comparePanel.compareWith(bytes, name),
 });
 
 /**

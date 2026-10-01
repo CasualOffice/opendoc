@@ -433,6 +433,18 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("review.next", null),
   exact("review.previous", null),
   exact("review.toggle", null),
+  // Comparing changes NOTHING. It opens a panel, reads the document out through
+  // the export path it already has, parses a second document in a throwaway
+  // engine job and lists the differences — `casual-doc-diff`'s facade
+  // "references nothing in the live editing session" and produces a sidecar, not
+  // a merged document. So `null`, for the same reason `file.properties` is null:
+  // the document is already on screen and nothing is being written.
+  //
+  // The FILE route inside the panel is a different question and is gated where it
+  // belongs: the button that opens a file picker is disabled with its reason when
+  // the host withheld `open`, so a host that wanted review without file access
+  // still gets the version-history comparison rather than losing the capability.
+  exact("review.compare", null),
 
   // ---- style --------------------------------------------------------------
   // Both write to the document's style table, so both are mutations. Declared

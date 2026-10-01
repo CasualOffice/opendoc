@@ -3323,9 +3323,15 @@
       "area": "review",
       "title": "Compare two documents",
       "ours": {
-        "absent": [
-          "review.compare"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/compare_documents.mjs",
+              "literal": "runComparison"
+            }
+          },
+          "missing": "the merged THIRD DOCUMENT. Theirs, and Word's, write the differences into a new document as real tracked changes that can be accepted and rejected; `casual-doc-diff` returns a typed sidecar, so ours is a change LIST in a side panel - Google Docs' answer - and the panel says so before a file is picked rather than leaving a reader to discover it. Turning a sidecar into a merged document is a construction with its own questions (who authors a change, what happens to a move) and is not started."
+        }
       },
       "theirs": {
         "gated": {
@@ -3336,7 +3342,7 @@
         }
       },
       "rank": 2,
-      "note": "The engine half exists: crates/casual-doc-diff plus the diffVersions binding in crates/casual-doc-wasm/src/diff.rs. Nothing in the editor calls it, so there is no compare command and no result view."
+      "note": "The engine half was never the gap: `crates/casual-doc-diff` plus `beginVersionDiff` / `step` / `cancel` / `blocksProjected` in `crates/casual-doc-wasm/src/diff.rs` were complete and `webapp/` called none of them, while the version panel disabled Show changes saying the structural diff was not built. `review.compare` now reaches it from the Review band, the Review menu and the left rail, and the version panel's Show changes compares a stored checkpoint with the open document - Word's route and Google Docs' route over one engine call. It runs in slices on the main thread with real progress and a Cancel, because there is no Worker in this tree yet and `diff.rs` says why. Guarded on the EFFECT and on the DIRECTION: a paragraph only this document has must be reported as an addition, which a count cannot check and a swapped comparison would get exactly wrong."
     },
     {
       "id": "review.digital-signature",
