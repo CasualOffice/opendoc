@@ -42,9 +42,7 @@
 //! Every function here is O(1) in document size and O(input) in the text typed.
 //! Nothing touches a document; nothing allocates per page.
 
-use casual_doc_layout::quantity::{
-    DecimalSeparator, MeasurementUnit, format_twips, parse_twips,
-};
+use casual_doc_layout::quantity::{DecimalSeparator, MeasurementUnit, format_twips, parse_twips};
 use casual_doc_layout::units::Twip;
 use wasm_bindgen::prelude::*;
 
@@ -228,7 +226,10 @@ mod tests {
         assert_eq!(format_measurement_inner(1440, "cm", "."), Ok("2.54".into()));
         // The display precision is always written out, so a field does not change
         // width as the user types: an inch is `1.00`, not `1`.
-        assert_eq!(format_measurement_inner(1440, "inch", "."), Ok("1.00".into()));
+        assert_eq!(
+            format_measurement_inner(1440, "inch", "."),
+            Ok("1.00".into())
+        );
         assert_eq!(format_measurement_inner(1440, "mm", ","), Ok("25,4".into()));
     }
 
@@ -271,7 +272,10 @@ mod tests {
         assert!(unit.contains("unknown unit"), "{unit}");
         assert!(unit.contains("inch"), "the refusal lists the units: {unit}");
         let separator = format_measurement_inner(1440, "cm", ";").unwrap_err();
-        assert!(separator.contains("unknown decimal separator"), "{separator}");
+        assert!(
+            separator.contains("unknown decimal separator"),
+            "{separator}"
+        );
         // A persisted ordinal is the mistake this module exists to prevent, so
         // it must not resolve to the unit at that index.
         for ordinal in ["0", "1", "2", "3", "4"] {

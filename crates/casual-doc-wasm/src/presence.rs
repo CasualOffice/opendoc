@@ -379,6 +379,44 @@ mod tests {
         }
     }
 
+    /// **Presence is not document state**, and the facade must keep it that way.
+    ///
+    /// The engine holds its half structurally:
+    /// `presence_is_never_written_to_the_revision_log` fails the build if the
+    /// revision log or the session envelope so much as names this module. That scan
+    /// cannot see the facade, and the facade is where the mistake is easy — a
+    /// `Roster` field on the document handle would sit one careless line away from
+    /// a commit, would be walked by anything on the editing path, and would outlive
+    /// the connection it belongs to.
+    ///
+    /// So this scans `WasmDocument`'s own declaration. A source scan is the only way
+    /// to assert the ABSENCE of a field: a constructor listing every field still
+    /// compiles when another one is added.
+    #[test]
+    fn the_document_handle_holds_no_roster() {
+        let source = include_str!("lib.rs").replace("\r\n", "\n");
+        let declaration = source
+            .split_once("pub struct WasmDocument {")
+            .and_then(|(_, rest)| rest.split_once("\n}\n"))
+            .map(|(body, _)| body.to_owned())
+            .expect("`WasmDocument` is declared in lib.rs");
+        for forbidden in ["Roster", "Presence", "presence::"] {
+            assert!(
+                !declaration.contains(forbidden),
+                "`WasmDocument` names `{forbidden}`: presence is never persisted, never \
+                 replayed and dies with its connection, so it must not be document state"
+            );
+        }
+        // The guard is only worth having if it can see the thing it forbids.
+        let planted = "    roster: Roster,\n";
+        assert!(
+            ["Roster", "Presence", "presence::"]
+                .iter()
+                .any(|forbidden| planted.contains(forbidden)),
+            "the scan cannot see a field it is supposed to forbid"
+        );
+    }
+
     /// A payload crosses the boundary **unchanged**, including bytes that are not
     /// valid UTF-8 — the boundary must not quietly turn an opaque payload into
     /// text it can print.

@@ -63,8 +63,8 @@ use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 // import does not conflict here.
 use casual_doc_layout::compose::{ComposeOptions, compose_page_with};
 use casual_doc_layout::display::Color as PaintColor;
-use casual_doc_layout::formatting_marks::FormattingMarks;
 use casual_doc_layout::document_layout::{LayoutUpdate, document_page_config, paginate_document};
+use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): reflow, ADR-046 / `docs/151`.
 use casual_doc_layout::document_layout::DEFAULT_TILE_HEIGHT;
 use casual_doc_layout::document_layout::LayoutView;
@@ -13118,8 +13118,8 @@ impl WasmDocument {
     /// See [`WasmDocument::set_formatting_marks`]. Plain `Result<_, String>` so the
     /// repaint-not-repagination guards run under `cargo test` on native targets.
     fn set_formatting_marks_inner(&mut self, patch: &str) -> Result<String, String> {
-        let patch: FormattingMarksPatch = serde_json::from_str(patch)
-            .map_err(|error| format!("formatting marks: {error}"))?;
+        let patch: FormattingMarksPatch =
+            serde_json::from_str(patch).map_err(|error| format!("formatting marks: {error}"))?;
         let mut marks = self.marks;
         // `all` first, so an individual key written beside it wins — which is what
         // makes "everything except the space dots" one call rather than two.
@@ -15711,12 +15711,9 @@ where
 /// host binds one checkbox to it instead of OR-ing five fields and getting the
 /// answer subtly wrong.
 fn formatting_marks_json(marks: FormattingMarks) -> String {
-    let color = marks.color.map(|c| {
-        format!(
-            "\"#{:02x}{:02x}{:02x}{:02x}\"",
-            c.r, c.g, c.b, c.a
-        )
-    });
+    let color = marks
+        .color
+        .map(|c| format!("\"#{:02x}{:02x}{:02x}{:02x}\"", c.r, c.g, c.b, c.a));
     format!(
         "{{\"paragraph\":{},\"tab\":{},\"space\":{},\"lineBreak\":{},\"pageBreak\":{},\
          \"color\":{},\"any\":{}}}",
@@ -44980,7 +44977,7 @@ mod tests {
                 .expect("typing into a plain-text document");
         }
         assert!(
-            d.galley_cache.len() > 0,
+            !d.galley_cache.is_empty(),
             "the fixture must leave shaped paragraphs cached, or this guard cannot \
              see a re-pagination"
         );
@@ -45047,15 +45044,27 @@ mod tests {
 
         // The other direction: the marks must actually reach the raster, or every
         // assertion above would hold for a setter that did nothing.
-        let marked = d.render_page_inner(0, 96.0).expect("raster page 0 with marks");
+        let marked = d
+            .render_page_inner(0, 96.0)
+            .expect("raster page 0 with marks");
         assert_eq!(
             (marked.width_px, marked.height_px),
             (unmarked.width_px, unmarked.height_px),
             "the page is the same size in pixels with marks on"
         );
-        assert_ne!(
-            marked.rgba, unmarked.rgba,
-            "the marks did not reach the raster at all"
+        // Compared as a count of differing bytes rather than with `assert_ne!`: a
+        // page bitmap is tens of megabytes, and a failed `assert_ne!` on two of
+        // them buries the CI log in pixel values nobody can read.
+        let changed = marked
+            .rgba
+            .iter()
+            .zip(&unmarked.rgba)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            changed > 0,
+            "the marks did not reach the raster at all: {} bytes identical",
+            unmarked.rgba.len()
         );
 
         // And back off: `compose_page_with(page, &default())` is byte-identical to
@@ -45066,9 +45075,17 @@ mod tests {
             .expect("the ¶ button turns every mark off");
         assert!(state.contains("\"any\":false"), "{state}");
         let restored = d.render_page_inner(0, 96.0).expect("raster page 0 again");
+        let still_changed = restored
+            .rgba
+            .iter()
+            .zip(&unmarked.rgba)
+            .filter(|(a, b)| a != b)
+            .count();
         assert_eq!(
-            restored.rgba, unmarked.rgba,
-            "turning the marks off did not restore the unmarked display list"
+            (still_changed, restored.rgba.len()),
+            (0, unmarked.rgba.len()),
+            "turning the marks off did not restore the unmarked display list: \
+             {still_changed} bytes still differ"
         );
 
         // Idempotent: a host may call this on every render without spending a
@@ -45181,7 +45198,13 @@ mod tests {
             .expect("back to the line's ink");
         assert!(state.contains("\"color\":null"), "{state}");
 
-        for bad in ["\"ff8800\"", "\"#ff88\"", "\"#gggggg\"", "\"#ff8800f\"", "17"] {
+        for bad in [
+            "\"ff8800\"",
+            "\"#ff88\"",
+            "\"#gggggg\"",
+            "\"#ff8800f\"",
+            "17",
+        ] {
             let patch = format!("{{\"color\":{bad}}}");
             let refused = d
                 .set_formatting_marks_inner(&patch)
