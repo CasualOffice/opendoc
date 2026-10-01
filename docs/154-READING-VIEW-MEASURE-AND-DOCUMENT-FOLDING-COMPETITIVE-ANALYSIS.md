@@ -1,8 +1,13 @@
 # 154 — The reading view: measure, and document folding. Competitive analysis and recommendation
 
-**Status:** **Analysis and recommendation. Nothing built.** No behaviour changed by this
-document, deliberately — the owner's instruction was competitive analysis first, and
-`SKILL.md` §8 says name the established solution before inventing one.
+**Status:** Analysis and recommendation, 2026-10-01 — nothing built then, deliberately,
+because the owner's instruction was competitive analysis first and `SKILL.md` §8 says name
+the established solution before inventing one. **§5.1 and §5.2 BUILT 2026-10-02** on the
+owner's instruction to fix it: the cap, the four-step per-viewer control, the centred
+column, and the ceiling that closes §3.3's refusal. ADR-048 is now **Accepted** and carries
+the record of what implementation changed about it. **§5.3 (folding) is NOT built and was
+not started** — ADR-049 stays Proposed, which is the independence claim §5.3 makes being
+honoured rather than merely asserted. §8 below marks each item.
 **Opened:** 2026-10-01.
 **Proposes:** [ADR-048](08-ADR-REGISTER.md) (the measure is capped; two width policies over
 one layout mechanism) and [ADR-049](08-ADR-REGISTER.md) (folding is a per-viewer block
@@ -788,24 +793,53 @@ finds all of them together. **No part of §5 depends on any row in this list.**
     to roughly ±5%, which is far inside the 3× discrepancy they are being used to
     establish. **When §5.1 is built, the guard should count characters on a shaped line
     rather than divide** — that is the form that cannot drift.
+    **STILL OPEN after implementation (2026-10-02), and why.** The shell has no per-line
+    text API: glyphs are rastered to canvas by the engine, so there is no line box to count
+    characters in. What shipped instead is two guards at two tiers — the character→twip
+    conversion pinned as a pure function (`reflow_view.test.mjs`: 80 characters of 11pt
+    Calibri is 7,024 twips / 468 CSS px) and the **painted geometry** pinned in the browser
+    (`reflow.spec.mjs`: the column is 500px of a 1,440px window and centred). Neither counts
+    a shaped character, so the ±5% stands. A shaped count would need either a line-box
+    getter on the seam or a hit-test sweep across one line; both are real work and neither
+    is this lane's.
 20. **The 2160px / 1104px refusal thresholds (§3.3) were computed from the shipped formula,
     not observed in a browser.** The formula is `reflowMeasure` reproduced exactly and the
     bound is `MAX_REFLOW_COLUMN`; the arithmetic is in §9. It has not been reproduced by
     resizing a real window, and it should be before the row is cited as a defect report.
+    **RESOLVED 2026-10-02 — observed in Chromium.** With the shell's ceiling mutated away
+    and Full chosen, a 1,440px window stepped to 50% zoom loses `is-reflow` entirely: the
+    engine throws, `sync` reverts the preference to paper, and the guard that expects reflow
+    to still be on times out after 30s. With the ceiling in place the same window lays out.
+    So the defect was real, it is reachable from the UI by two zoom clicks, and it is now
+    closed. The *boundary* figures are still arithmetic, but they are arithmetic a committed
+    guard performs: `reflow_view.test.mjs` asserts that 2,160px/100%, 1,104px/50%,
+    1,632px/75% and 3,216px/150% each exceed the bound with the ceiling lifted **and that
+    one quantum lower does not**, so each is pinned as the FIRST refused width rather than
+    merely as a refused one.
 
 ## 8. Open questions and work items this analysis opens
 
-1. **The cap** (§5.1). `webapp/src/reflow_view.mjs` — a ceiling beside
-   `REFLOW_MIN_CONTENT_TWIP`, and the character→twip resolution. Needs the engine to expose
-   the default face's mean advance, or the 0.40 em fallback. **No `crates/` change is
-   required for the clamp itself.**
-2. **The `ColumnTooWide` refusal** (§3.3) is a defect in its own right and should be
-   verified in a browser and filed, because it is reachable today and the cap only masks it.
-   `MAX_REFLOW_COLUMN`'s doc comment should stop describing a legitimate caller as having
-   "converted units wrongly".
-3. **The width control** (§5.1), per-viewer, ≥2 surfaces, four steps including an explicit
-   Full.
-4. **The Reading-view preset** (§5.2 item 3).
+1. ~~**The cap** (§5.1).~~ **DONE 2026-10-02.** `REFLOW_MAX_CONTENT_TWIP` and
+   `reflowCapTwip` in `webapp/src/reflow_view.mjs`; the clamp is
+   `min(available, capTwip, REFLOW_MAX_CONTENT_TWIP)` in `reflowMeasure`. **No `crates/`
+   change was required — zero lines.** The engine was not asked to expose a mean advance:
+   `stylePreview("Normal")` already yields the default face and size (O(styles)), and the
+   advance comes from the measured table in `reflow_view.mjs` with the 0.40 em fallback.
+2. ~~**The `ColumnTooWide` refusal** (§3.3).~~ **CLOSED 2026-10-02**, and **reproduced in a
+   browser first**, which is what §7 item 20 asked for: with the shell's ceiling lifted and
+   Full chosen at 50% zoom on a 1,440px window, `#viewport` loses `is-reflow` because `sync`
+   catches the throw and reverts the viewer to paper. It is closed by mirroring the engine's
+   bound in the shell and applying it to **every** step including Full — the cap alone would
+   have left it reachable through the new control. `MAX_REFLOW_COLUMN`'s doc comment still
+   describes a correct caller as having converted units wrongly: **open**, deliberately, as a
+   comment-only `crates/` edit of no behavioural value (ADR-048 consequences).
+3. ~~**The width control** (§5.1).~~ **DONE 2026-10-02.** Per-viewer
+   (`docReflowWidth`), four steps — Narrow 55 / Reading 80 (default) / Paper (the document's
+   own column) / Full — on three surfaces: the View band's `#viewTextWidthBtn` popover,
+   View ▸ Text width, and four palette rows, declared as four exact rows in
+   `COMMAND_CONTRACT`.
+4. **The Reading-view preset** (§5.2 item 3). **Still open and deliberately not built**: it
+   sets reduced chrome, which is another lane's surface.
 5. **`w15:collapsed`**: parse, model, round-trip, export — **and add a fixture that carries
    it**, which is worth doing before anything else in §5.3 because it turns §7 item 18 from
    an unknown into either a report or a red gate.
