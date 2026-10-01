@@ -25,6 +25,33 @@ from the no-horizontal-scroll rule (§7). **Opened:** 2026-09-30. **Decision:**
 > §6.2 records where this document's proposed quantisation was wrong and why, and
 > §7 records the before-and-after measurement and two things §7 did not
 > anticipate.
+>
+> **CORRECTED (154), 2026-10-01 — five things, and one of them is a defect in the
+> shipped behaviour.** `154-READING-VIEW-MEASURE-AND-DOCUMENT-FOLDING-COMPETITIVE-`
+> `ANALYSIS.md` re-did the competitive analysis at the owner's instruction and
+> found this document wrong in five places, each marked **CORRECTED (154)** below
+> with a pointer to the section of `154` that carries the evidence:
+>
+> 1. **§1's trichotomy is false** — there is a fourth answer, capping the measure,
+>    and it is the one every reference uses. This is the root error: stating the
+>    space of answers as closed is what made a design with no maximum look
+>    complete.
+> 2. **§6.2 / `reflow_view.mjs` cap the column at nothing.** At a 1440px window
+>    the reading column is **1,408 CSS px — 241 characters** of the document's
+>    default face, against WCAG 2.1 SC 1.4.8's 80. Worse, `setLayoutView`
+>    **refuses outright** above 22in, which a 2160px window at 100% zoom or a
+>    1104px window at 50% already asks for. `154` §3.
+> 3. **§2.2 omits Google's Text width control entirely** — Google's own cap, and
+>    the half of their design we should have copied. `154` §2.1.
+> 4. **§2.3's "Word abstaining" is wrong three ways.** Word is the strongest vote
+>    *for* capping: Immersive Reader has a four-step Column Width control whose
+>    documented purpose is line length. `154` §2.2.
+> 5. **§3.2's premise that ONLYOFFICE's reader mode is read-only is false in
+>    source.** The decision to stay editable was right; the evidence for it was
+>    not. `154` §2.3(d).
+>
+> What survives is most of it, listed explicitly in `154` §5.4: §4 entire, §4.4a,
+> §4.6, §5, §6.2's two numbers, §6.3, §6.4, §6.5 and §7.
 
 ## 1. The problem, stated as a measurement
 
@@ -37,6 +64,16 @@ scroll" rule, and it is named as an exception rather than hidden — in
 
 A Letter page's text column is 6.5in — **624 CSS px at 96dpi**. It cannot be both
 390px wide and readable. There are exactly three answers and only three:
+
+> **CORRECTED (154): there are four, and the fourth is the one every reference
+> uses.** This trichotomy is the root error of this document. The missing answer is
+> **4. Cap the measure and centre the column**, leaving desk on both sides — Google's
+> Text width, Word's Immersive Reader Column Width, and every reader in `154` §2.4.
+> Because the list below is stated as closed and reflow is picked out of it, the
+> design that follows never asks *how wide* the reflowed column should be; it only
+> asks that it not exceed the window. That is how `reflow_view.mjs` came to ship a
+> minimum with no maximum and a 241-character line at 1440px (`154` §3). Answer 3 is
+> still correct **and it is not complete without answer 4.**
 
 1. **Shrink the page to fit.** `webapp/src/view_zoom.mjs`'s `FIT_ON_OPEN_FLOOR = 0.5`
    already computes this and refuses it, with the reason in the file: a phone fits a
@@ -103,10 +140,42 @@ Three things are worth taking from this and one is worth refusing:
   `H` choice makes page breaks appear in arbitrary places on a phone; ours should be
   chosen for the reader, not inherited from the paper.
 
+> **CORRECTED (154): "viewport-width pages" is wrong, and their `W` is stranger than
+> this section knew.** `W` is not the viewport at all — it is
+> `sectPr.GetPageWidth() / AscCommon.AscBrowser.retinaPixelRatio`
+> (`word/Drawing/HtmlPage.js:1099-1100`), the **paper's own width divided by the
+> device pixel ratio**, with a flat 5mm margin on all four sides
+> (`ReadView.js:79`). So their measure tracks the display's pixel *density* rather
+> than its size: two phones of identical physical width get different reading
+> columns if their DPRs differ. There is no maximum column width anywhere in
+> `word/`. What they *do* vary for the reader is the **type size** — a nine-step
+> ladder `[12,14,16,18,22,28,36,48,72]`pt, default 16pt
+> (`HtmlPage.js:104-105, 1102`), fed to `GetFontScale()` (`ReadView.js:90-93`). They
+> reach a reading measure by growing the advance instead of narrowing the column.
+> `154` §2.3(a)–(c) and §5.1's last paragraph, which says how that composes with a
+> cap rather than competing with it.
+
 Their touch side for that mode is a separate, much simpler `CReaderTouchManager`
 (`word/Drawing/mobileTouchManager.js:833-915`) with `SelectEnabled = false` and
 `TableTrackEnabled = false` — i.e. **their reader mode is not editable.** §3 says
 why ours must be.
+
+> **CORRECTED (154): that inference is false, and it was load-bearing.**
+> `SelectEnabled` has **exactly two consumers in the whole tree**, both inside the
+> touch-manager base — `CheckSelectTrack`
+> (`common/Scrolls/mobileTouchManagerBase.js:928`, comment: *"onTouchStart => check
+> if we hit selection anchors, to avoid starting scrolls/zooms"*) and `CheckSelect`
+> (`:1873`). They gate **touch selection handles and table-resize handles**, not
+> document mutation. Read-only in ONLYOFFICE is a separate mechanism:
+> `turnOnViewerMode()` calls `api.asc_addRestriction(Asc.c_oAscRestrictionType.View)`
+> (`web-apps/.../mobile/src/controller/Toolbar.jsx:296-304`), and
+> `changeMobileView()` eight lines below it (`:306-311`) calls
+> `api.ChangeReaderMode()` and touches no restriction. Their edit buttons are gated
+> on `isEdit`/`isViewer`, not on reader state (`mobile/src/view/Toolbar.jsx:148`).
+> **Our decision to stay editable is unchanged and is right** — but the reason is the
+> mobile-support one in §3.2's second paragraph, not a divergence from a read-only
+> field, because there is no read-only field: Word's Immersive Reader is editable too
+> (`154` §2.2(c), first-party). `154` §2.3(d) re-read each line above directly.
 
 ### 2.2 Google Docs — Pageless
 
@@ -119,12 +188,55 @@ content as a continuous scroll". Two properties matter for §4:
   element that genuinely cannot fit rather than handed to the page. That is exactly
   the arbitration this shell already uses for a ribbon band, and §6.3 adopts it.
 
+> **CORRECTED (154): a third property matters more than either of these, and this
+> section omits it.** Google ships **View → Text width** for pageless documents —
+> Narrow, Medium or Wide — and the support page states *"Your text width choice
+> won't affect how collaborators see your docs."* So Google splits the two
+> decisions, and splits them **opposite ways**: the *format* is a document property
+> (`DocumentStyle.documentFormat`, `DocumentMode.PAGES|PAGELESS`, in the Docs API),
+> and the *width* is per-viewer with no API field at all. This document records the
+> first row and calls it a deliberate divergence, which it is (§3.4) — and never
+> mentions the second row, which is Google's answer to the question §1 forgot to
+> ask. A design citing Pageless as prior art while omitting its width control has
+> cited half the prior art. `154` §2.1 and §5.1.
+>
+> Also absent from this section: **Google ships collapsible headings in Pageless**
+> (announced 2023-05-16), with the same two-tier persistence — an editor sets the
+> saved default for everyone, a viewer's own toggling is not persisted. `154` §2.1
+> and §5.3, which places folding outside reflow entirely.
+
 ### 2.3 Word
 
 `148` §4 found no reflow toggle in Microsoft's own documentation, in either
 direction, and recorded it as unverified rather than as an absence. Word for
 Windows' **Web Layout** view is the nearest thing and is not documented for the web
 or mobile clients. So the vote is Docs and ONLYOFFICE for, Word abstaining.
+
+> **CORRECTED (154): Word does not abstain. Word is the strongest vote FOR capping,
+> and this paragraph removed the best evidence in the field from the record.** It is
+> wrong three ways — `154` §2.2 has the sources:
+>
+> 1. **Immersive Reader has an explicit measure control.** Text Preferences →
+>    **Column Width**, four named steps (Very Narrow, Narrow, Moderate, Wide), and
+>    Microsoft's own accessibility page states the purpose outright: it *"changes line
+>    length to improve focus and comprehension."* Alongside Text Size, Text Spacing,
+>    page colour, Line Focus. **And it is not read-only** — *"Once you click in your
+>    Word document to read or edit, the Immersive Reader ribbon will minimize."*
+>    (first-party, fetched).
+> 2. **Read Mode reflows into adjustable columns** — *"Read Mode automatically fits
+>    the page layout to your device, using columns and larger font sizes, both of
+>    which you can adjust"* (first-party, fetched). Word's reading view moves two
+>    levers, columns and type size, and lets the reader move both.
+> 3. **Web Layout is the analogue of what we built, flaw included** — editable, no
+>    page boundaries, headers/footers hidden, and text wrapped to the **window
+>    width** with no cap. And **Word for the web's original rendering was continuous**;
+>    "Separate Pages" was added as an option (Microsoft's own Insider blog). So "not
+>    documented for the web" is stale.
+>
+> Four Word things, three aims: **Web Layout** = pageless authoring (what we built),
+> **Read Mode / Immersive Reader** = reading (capped measure), **Focus** = chrome
+> hiding only. `154` §5.2 keeps those three separable here rather than fusing them
+> into one toggle.
 
 ## 3. What reflow is here — four decisions
 
@@ -477,6 +589,22 @@ Layout". Ours is **"Reflow"** because it is the only one of the three that is
 accurate for a mode that is still editable and still cut into tiles — and because
 "Reader mode" would promise ONLYOFFICE's read-only behaviour, which §3.2 rejects.
 
+> **CORRECTED (154), twice.** The naming argument's second half rests on §3.2's false
+> premise — ONLYOFFICE's reader mode is **not** read-only — so "Reader mode" would
+> promise nothing untrue. The name "Reflow" survives anyway, for its first reason.
+>
+> **The CONTROL SHAPE is the real correction: a binary toggle is wrong.** It fuses
+> two questions with different answers — *is the document on paper?* (layout:
+> pagination, headers, ruler, Pages panel) and *how wide is the text?* (measure:
+> nothing structural). They coincide only on a phone, where the window is narrower
+> than any cap, which is why the phone-only evaluation could not see the
+> distinction. Google ships them as two controls (Pageless, then Text width) and
+> Word ships three separable things (Web Layout, Immersive Reader's Column Width,
+> Focus). `154` §5.2 recommends: keep this toggle for the layout question, add a
+> four-step per-viewer **width** control, and ship "Reading view" as a **preset**
+> that sets layout + width + chrome + folding — one registry row writing four
+> preferences, not a second layout mechanism.
+
 ### 6.2 Feeding the width back
 
 **Built 2026-10-01.** `renderAll()` calls `reflowView.sync(cssPerTwip)` after the
@@ -490,6 +618,41 @@ and getting that the other way round is how a gutter becomes an overflow.
 `gap: 0` were a call-site change as predicted, and `#viewport.is-reflow` in
 `style.css` removes the sheet shadow and corner radius that would otherwise draw
 a paper edge across a sentence.
+
+> **CORRECTED (154) — THE DEFECT. This section answers "not wider than the window"
+> and never asks "how wide should a reading column be", so the shipped width feed has
+> a minimum and NO MAXIMUM.** `reflowMeasure` computes
+> `floor(totalPx / cssPerTwip) - 2 * gutterTwip` against `REFLOW_MIN_CONTENT_TWIP`
+> and nothing else. Measured consequences (`154` §3, with the derivation in `154` §9):
+>
+> | Viewport @100% | Column | Characters, 11pt Carlito |
+> | --- | --- | --- |
+> | 390 (phone) | 352 px | **60** — correct, and the only width ever evaluated |
+> | 1280 | 1,248 px | 213 |
+> | 1440 | 1,408 px | **241** |
+> | 1920 | 1,888 px | 323 |
+>
+> against WCAG 2.1 SC 1.4.8's normative *"Width is no more than 80 characters or
+> glyphs (40 if CJK)"*. **And it is not only too wide — above a reachable width it
+> fails outright.** `LayoutView::reflow` refuses `content_width > MAX_REFLOW_COLUMN`
+> (22in), whose doc comment says a caller asking for more "has converted units
+> wrongly" — written as a unit-conversion sanity check and now reachable by a correct
+> caller. First refused viewport width: **2,160px at 100% zoom, 1,632px at 75%,
+> 1,104px at 50%** (and 50% is a `ZOOM_STEPS` entry and the `FIT_ON_OPEN_FLOOR`
+> value). `sync` catches the throw, flips the preference back to paper and shows the
+> reader a message about twips.
+>
+> The fix is one clamp in the **caller** — `min(available, cap)` — and needs **no
+> engine change at all**, because ADR-046 put the measure in the seam. `154` §5.1
+> recommends the cap as a target in **characters** (default 80, from WCAG 1.4.8 —
+> the only normative first-party figure available), resolved to twips by the measured
+> mean advance of the document's default face, with the column centred on the desk
+> above the cap. A capped column also cannot reach 22in, so the refusal goes away as
+> a side effect.
+>
+> **The two numbers below are still right**, and once a cap exists they bind only
+> *below* it — above the cap the column stops tracking the window, which makes most
+> desktop resizes free for a second and better reason.
 
 **Two numbers, and this section proposed one of them wrongly.** It said "the
 nearest 8px". What shipped is **16px, floored** (`REFLOW_QUANTUM_PX`), and both
@@ -710,3 +873,26 @@ Opened by the shell half, 2026-10-01:
    field refusing — and `reflow_chrome.mjs` holds them. They are not yet shown to
    the reader anywhere. Recorded so that "the engine reports its approximations"
    is not read as "the product does".
+
+Opened by the competitive re-analysis, 2026-10-01 (`154` §8 is the live list):
+
+9. **The measure is uncapped** — 241 characters at a 1440px window, against WCAG
+   2.1 SC 1.4.8's 80. `154` §3.1–§3.2, §5.1. **The headline item**, and the one
+   the owner raised.
+10. **`setLayoutView` refuses a reachable window width** — 2,160px at 100% zoom,
+    1,104px at 50% — and the shell silently reverts to paper with the engine's twip
+    message. A defect in its own right, not only a symptom; `MAX_REFLOW_COLUMN`'s
+    doc comment should stop describing a correct caller as having mis-converted
+    units. `154` §3.3.
+11. **Reading and pageless authoring want different widths**, and a binary toggle
+    cannot express that. `154` §5.2 — one layout mechanism, two width policies
+    (`min(available, document's own measure)` for authoring,
+    `min(available, character target)` for reading), and "Reading view" as a preset.
+12. **Collapsible headings do not exist anywhere**, and they are **not** part of
+    reflow. `w15:collapsed` (`CT_OnOff`, Word's `w15` namespace) is not parsed,
+    `webapp/src/outline_panel.mjs` is a flat list with no disclosure, and no
+    `.docx` in the repository carries the element — so the loss-coverage gate has
+    never had the chance to flag the drop. `154` §3.4 and §5.3.
+13. **WCAG 2.1 SC 1.4.8 item 3** — there is no mechanism to un-justify a justified
+    document in the reading view. New, and a reading-view concern rather than a
+    fidelity one. `154` §2.5.

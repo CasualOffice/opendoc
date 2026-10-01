@@ -206,6 +206,7 @@ VBA
 VLM
 VML
 Vello
+Viewport
 Virtualized
 Vue
 WAI
@@ -435,6 +436,7 @@ overpaint
 overridable
 pPr
 pageBreakBefore
+pageless
 paginator
 paginators
 para
