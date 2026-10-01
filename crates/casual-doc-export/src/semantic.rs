@@ -127,6 +127,9 @@ const COMMENTS_CT: &str =
 // Comment companion parts (P1F-10): threading, durable ids, and identity.
 const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
 const W15_NS: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+/// ECMA-376 Part 3 Markup Compatibility, for the `mc:Ignorable` directive that
+/// accompanies a `w15` declaration in Word's own output.
+const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const W16CID_NS: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
 const COMMENTS_EXTENDED_REL_TYPE: &str =
     "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
@@ -1163,6 +1166,30 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
     BytesStart::new(name)
 }
 
+/// Declares `w15` and the markup-compatibility prefix on a part root that can
+/// contain a `w:pPr`, and marks `w15` ignorable — exactly as Word writes it.
+///
+/// `w15:collapsed` (the saved folded-heading state, ADR-049) is the only `w15`
+/// element the body writer emits, and it can appear in any part that carries
+/// paragraph properties: the main document, a header or footer, a footnote or
+/// endnote body, a comment body, a style's `w:pPr`, or a numbering level's `w:pPr`.
+/// Declaring the prefix in one function instead of six literal sites is the point:
+/// a prefix declared next to the rule that needs it cannot be forgotten by the next
+/// part writer, and
+/// `casual-doc-export/tests/collapsed_heading_state.rs::no_written_part_uses_an_undeclared_prefix`
+/// fails the build if one is.
+///
+/// `mc:Ignorable="w15"` says an older consumer MAY ignore the element. That is what
+/// Word writes and it is the conservative interop choice: a reader that does not
+/// know the fold state is better off showing everything than refusing the part. It
+/// is **not** a licence for *us* to lose it — our own reader deliberately does not
+/// act on the directive, and `mc_ignorable_does_not_suppress_the_fold` holds that.
+fn declare_fold_namespaces(element: &mut BytesStart<'_>) {
+    element.push_attribute(("xmlns:w15", W15_NS));
+    element.push_attribute(("xmlns:mc", MC_NS));
+    element.push_attribute(("mc:Ignorable", "w15"));
+}
+
 /// Emits `[Content_Types].xml` with the standard defaults plus the main-document
 /// override.
 fn content_types_xml(
@@ -1735,6 +1762,7 @@ fn notes_xml(
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
     r.push_attribute(("xmlns:r", R_NS));
+    declare_fold_namespaces(&mut r);
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, note) in notes.iter() {
         let mut el = start(item);
@@ -1781,6 +1809,7 @@ fn comments_xml(
     r.push_attribute(("xmlns:w", W_NS));
     r.push_attribute(("xmlns:r", R_NS));
     r.push_attribute(("xmlns:w14", W14_NS));
+    declare_fold_namespaces(&mut r);
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, comment) in comments.iter() {
         let mut el = start("w:comment");
@@ -1966,6 +1995,7 @@ fn header_footer_xml(
     // `xmlns:w14` so a content-control checkbox's `w14:checkbox` detail is
     // well-formed when a block sdt lives in a header/footer.
     r.push_attribute(("xmlns:w14", W14_NS));
+    declare_fold_namespaces(&mut r);
     if watermark.is_some() {
         // `v`/`o` carry the watermark's VML shape. Declared only when a watermark
         // is present so a header without one serializes byte-identically to
@@ -2969,6 +2999,7 @@ fn styles_xml(
     let mut w = new_writer();
     let mut root = start("w:styles");
     root.push_attribute(("xmlns:w", W_NS));
+    declare_fold_namespaces(&mut root);
     w.write_event(Event::Start(root)).map_err(pkg)?;
     // `w:docDefaults` precedes the styles (schema order): `w:rPrDefault` then
     // `w:pPrDefault`. A `Some(default)` run/paragraph still emits its (empty)
@@ -3413,6 +3444,7 @@ fn numbering_xml(
     let mut w = new_writer();
     let mut root = start("w:numbering");
     root.push_attribute(("xmlns:w", W_NS));
+    declare_fold_namespaces(&mut root);
     w.write_event(Event::Start(root)).map_err(pkg)?;
     for (id, abstract_num) in abstracts.iter() {
         let mut el = start("w:abstractNum");
@@ -3626,6 +3658,7 @@ fn document_xml(
     doc.push_attribute(("xmlns:dgm", DGM_NS));
     doc.push_attribute(("xmlns:v", V_NS));
     doc.push_attribute(("xmlns:o", O_NS));
+    declare_fold_namespaces(&mut doc);
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     // The page background (`w:background`), which ECMA-376 puts BEFORE `w:body` as
     // the first child of `w:document` — a `w:background` after the body is
@@ -5141,6 +5174,34 @@ fn write_paragraph_properties(
     if let Some(level) = properties.outline_level {
         let mut el = start("w:outlineLvl");
         el.push_attribute(("w:val", level.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w15:collapsed` — the saved folded-heading state, written next to the
+    // outline level it is about rather than at the end of `w:pPr`, because the two
+    // are one fact (ADR-049: folding is keyed on the outline).
+    //
+    // Tri-state like every toggle above: bare is on, `w:val="0"` is the explicit
+    // off that cancels an inherited fold. Emitting only the on case would drop
+    // every cancellation and silently re-fold a section the document unfolded.
+    //
+    // The `w15` prefix is declared on each part root that can carry a `w:pPr`
+    // (`document_xml`, the header/footer writer, the note writer, `w:comments`,
+    // `w:styles`, `w:numbering`), and
+    // `casual-doc-export/tests/collapsed_heading_state.rs` holds the general rule
+    // that no written part may use an undeclared prefix — so a seventh pPr-bearing
+    // part added later cannot emit a malformed element in silence.
+    //
+    // **Unverified:** where Word itself places `w15:collapsed` among the `w:pPr`
+    // children. This writer's child order is already not the `CT_PPr` schema
+    // sequence (`w:jc` precedes `w:keepNext`, `w:spacing` follows `w:outlineLvl`),
+    // so matching Word's exact position is neither achieved nor regressed here; the
+    // element is foreign content under `mc:Ignorable` and Word is tolerant of its
+    // position. Recorded rather than assumed.
+    if let Some(collapsed) = properties.collapsed {
+        let mut el = start("w15:collapsed");
+        if !collapsed {
+            el.push_attribute(("w:val", "0"));
+        }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(spacing) = &properties.spacing {
