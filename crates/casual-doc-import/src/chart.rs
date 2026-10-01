@@ -364,9 +364,9 @@ enum Scope {
     /// `c:scaling` inside an axis.
     Scaling,
     /// `c:legend`.
-    LegendScope,
+    Legend,
     /// `c:dLbls`.
-    DataLabelsScope,
+    Labels,
     /// `c:externalData`.
     ExternalData,
     /// A container whose children are dispositioned individually but which
@@ -751,7 +751,7 @@ impl Parser {
             }
             (Scope::Chart, b"legend") => {
                 self.legend = Some(Legend::default());
-                Ok(Step::Push(Scope::LegendScope))
+                Ok(Step::Push(Scope::Legend))
             }
             (Scope::Chart, b"plotVisOnly") => {
                 self.chart.plot_visible_only = is_true(attribute_value(element, b"val").as_deref());
@@ -983,7 +983,7 @@ impl Parser {
             }
             (Scope::Series, b"dLbls") => {
                 self.data_labels = Some(DataLabels::default());
-                Ok(Step::Push(Scope::DataLabelsScope))
+                Ok(Step::Push(Scope::Labels))
             }
             // ---- a series' shape properties: solid fill and line only ----
             (Scope::ShapeProperties, b"solidFill") => Ok(Step::Push(Scope::SolidFill)),
@@ -1190,7 +1190,7 @@ impl Parser {
                 Ok(Step::Leaf)
             }
             // ---- legend ----
-            (Scope::LegendScope, b"legendPos") => {
+            (Scope::Legend, b"legendPos") => {
                 if let Some(legend) = self.legend.as_mut() {
                     legend.position = match attribute_value(element, b"val").as_deref() {
                         Some("l") => LegendPosition::Left,
@@ -1202,17 +1202,14 @@ impl Parser {
                 }
                 Ok(Step::Leaf)
             }
-            (Scope::LegendScope, b"overlay") => {
+            (Scope::Legend, b"overlay") => {
                 if let Some(legend) = self.legend.as_mut() {
                     legend.overlay = is_true(attribute_value(element, b"val").as_deref());
                 }
                 Ok(Step::Leaf)
             }
             // ---- data labels ----
-            (
-                Scope::DataLabelsScope,
-                b"showVal" | b"showCatName" | b"showSerName" | b"showPercent",
-            ) => {
+            (Scope::Labels, b"showVal" | b"showCatName" | b"showSerName" | b"showPercent") => {
                 if let Some(labels) = self.data_labels.as_mut() {
                     let on = is_true(attribute_value(element, b"val").as_deref());
                     match local {
@@ -1224,7 +1221,7 @@ impl Parser {
                 }
                 Ok(Step::Leaf)
             }
-            (Scope::DataLabelsScope, b"dLblPos") => {
+            (Scope::Labels, b"dLblPos") => {
                 if let Some(labels) = self.data_labels.as_mut() {
                     labels.position = match attribute_value(element, b"val").as_deref() {
                         Some("b") => Some(DataLabelPosition::Bottom),
