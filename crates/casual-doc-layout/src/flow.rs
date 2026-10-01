@@ -43,8 +43,13 @@ use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::EmphasisMark;
 
 use casual_doc_model::v1::PaginatedField;
+// Own line (anti-conflict): the typed chart projection this lane consumes.
+use casual_doc_model::v1::Chart;
 
 use crate::block::BlockBorderSpace;
+use crate::chart;
+// Own line (anti-conflict): the chart box's layout-level carriers.
+use crate::text::{ChartPrimitive, InlineChart};
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorderReserve,
     CellBorders, CellBoxSpacing, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
@@ -260,6 +265,49 @@ struct FlowCtx<'a> {
     /// `w:numRestart`, `docs/105` FID-L-05). `None` for the standalone galley
     /// builders, which then fall back to the note's decimal definition ordinal.
     note_labels: Option<&'a NoteLabels>,
+    /// The reverse index from an `EmbeddedObject`'s [`NodeId`] to its typed chart
+    /// projection, built on first use. See [`ChartIndex`].
+    chart_index: ChartIndex<'a>,
+}
+
+/// The reverse index from an embedded object's [`NodeId`] to its chart projection.
+///
+/// `Definitions::charts` is keyed by `ChartId` and each [`Chart`] names the object
+/// it projects, so finding "the chart for THIS object" is a reverse lookup. Doing
+/// it by scanning the table per object would be a lookup-by-id inside a loop over
+/// ids — the shape `SKILL` §8 forbids, and the one that turned a document outline
+/// into an O(n²) — so the index is built **once per galley** and only when a chart
+/// is actually reached.
+///
+/// Complexity: O(charts) to build, O(log charts) per lookup, and `Unbuilt` for
+/// every document that has none.
+#[derive(Debug, Default)]
+enum ChartIndex<'a> {
+    /// Not yet needed. The state every document without a chart stays in.
+    #[default]
+    Unbuilt,
+    /// Built: object node id → projection, in node order.
+    Built(BTreeMap<NodeId, &'a Chart>),
+}
+
+impl<'a> ChartIndex<'a> {
+    /// The projection anchored to `object`, building the index on first use.
+    fn get(&mut self, definitions: &'a Definitions, object: NodeId) -> Option<&'a Chart> {
+        if let Self::Unbuilt = self {
+            *self = Self::Built(
+                definitions
+                    .charts
+                    .iter()
+                    .map(|(_, chart)| (chart.object, chart))
+                    .collect(),
+            );
+        }
+        match self {
+            Self::Built(index) => index.get(&object).copied(),
+            // Unreachable: the arm above replaced `Unbuilt` before this match.
+            Self::Unbuilt => None,
+        }
+    }
 }
 
 /// The resolved, layout-relevant portion of one section's document grid.
@@ -400,6 +448,7 @@ pub fn build_galley_with_report_view(
         paragraph_float_exclusions: None,
         note_label: None,
         note_labels: None,
+        chart_index: ChartIndex::default(),
     };
     let (galley, _float_floor) = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -762,6 +811,7 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         paragraph_float_exclusions: exclusions,
         note_label: notes.label,
         note_labels: notes.labels,
+        chart_index: ChartIndex::default(),
     };
     flow_blocks_into(blocks, shaper, content_width, &mut ctx, sink, marks);
     // The snapshot when the pass took one (an outermost pass over two or more
@@ -871,6 +921,7 @@ fn flow_running_blocks(
         paragraph_float_exclusions: None,
         note_label: notes.label,
         note_labels: notes.labels,
+        chart_index: ChartIndex::default(),
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
@@ -982,6 +1033,7 @@ pub(crate) fn build_galley_cached_labeled(
         paragraph_float_exclusions: None,
         note_label: notes.label,
         note_labels: notes.labels,
+        chart_index: ChartIndex::default(),
     };
     // A galley retained by the previous build can only be reused if it was built
     // under the same note labels; a note added, removed or renumbered changes
@@ -1052,6 +1104,12 @@ pub(crate) fn build_galley_cached_labeled(
                 // reuse could serve stale nested content. Text boxes are rare, so
                 // always reshaping them is the correct, simple choice.
                 let has_text_box = items.iter().any(|i| matches!(i, FlowItem::TextBox { .. }));
+                // A paragraph carrying a drawn chart is never cached, for exactly the
+                // same reason: a chart's primitives come from `Definitions::charts`,
+                // which is not part of the paragraph and so is not in the item hash,
+                // so a reuse could serve a stale projection. Charts are rare, and the
+                // composition is per-chart work (`docs/155` §8.5).
+                let has_chart = items.iter().any(|i| matches!(i, FlowItem::Chart { .. }));
                 // A paragraph carrying a note reference is never cached either, for
                 // the same reason as a numbered one: the marker's resolved label is
                 // not in the item hash, so an edit that inserts a note earlier in the
@@ -1060,7 +1118,7 @@ pub(crate) fn build_galley_cached_labeled(
                 let has_note_reference = items
                     .iter()
                     .any(|i| matches!(i, FlowItem::NoteReference(_)));
-                let uncacheable = has_text_box || numbered || has_note_reference;
+                let uncacheable = has_text_box || has_chart || numbered || has_note_reference;
                 // The paragraph-mark size + effective style feed the empty-paragraph
                 // line height (synthesized below); folding them into the key keeps a
                 // reused fragment correct when only the mark/style changes.
@@ -1393,6 +1451,21 @@ fn paragraph_hash(
                 10u8.hash(&mut hasher);
                 (marker.kind as u8).hash(&mut hasher);
                 marker.note.node_id().as_u128().hash(&mut hasher);
+            }
+            // A chart's primitives are not hashed here; a paragraph carrying one
+            // bypasses the galley cache entirely (see `build_galley_cached`),
+            // because the projection they are composed from is not part of the
+            // paragraph. This arm only keeps the match exhaustive.
+            FlowItem::Chart {
+                size,
+                primitives,
+                model_len,
+            } => {
+                11u8.hash(&mut hasher);
+                size.width.0.hash(&mut hasher);
+                size.height.0.hash(&mut hasher);
+                primitives.len().hash(&mut hasher);
+                model_len.hash(&mut hasher);
             }
         }
     }
@@ -2943,6 +3016,7 @@ fn block_intrinsic(
         paragraph_float_exclusions: None,
         note_label: None,
         note_labels: None,
+        chart_index: ChartIndex::default(),
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -3549,7 +3623,9 @@ fn collect_items_with_measure<'a>(
                     out.push(item);
                 }
             }
-            InlineNode::EmbeddedObject(object) => embedded_object_items(object, out, ctx),
+            InlineNode::EmbeddedObject(object) => {
+                embedded_object_items(object, out, shaper, ctx);
+            }
             InlineNode::AnchoredDrawing(drawing) => {
                 if intrinsic.is_none()
                     && let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent, width)
@@ -3749,11 +3825,37 @@ fn collect_items_with_measure<'a>(
     }
 }
 
+/// Flattens an embedded object (`a:graphicFrame` → chart / diagram / OLE) into the
+/// item stream, in order of how much we actually know about it:
+///
+/// 1. a **typed chart projection** that has drawable content becomes a
+///    [`FlowItem::Chart`] — the authored `wp:extent` box with the chart painted
+///    into it (`docs/155` §9 increment 5);
+/// 2. a producer-supplied **preview** picture becomes an image blit (legacy OLE
+///    only in practice — import never populates one for a DrawingML chart, which
+///    is why the chart case above is not a nicety);
+/// 3. anything else keeps the typed text placeholder, unchanged.
+///
+/// Case 3 is deliberately still reachable and is not a fallback nobody takes: a
+/// chart whose part declined to project, whose only groups are pie or doughnut
+/// (tier 1B — no arc primitive), or that carries no series at all lands here, and
+/// a labelled placeholder is more honest than an empty frame (`docs/155` §6.2).
+///
+/// Complexity: O(1) plus, for a chart, O(points in that chart) once. The chart
+/// index is built at most once per galley and never looked up per point
+/// (`docs/155` §8.5).
 fn embedded_object_items<'a>(
     object: &EmbeddedObject,
     out: &mut Vec<FlowItem<'a>>,
+    shaper: &dyn LineShaper,
     ctx: &mut FlowCtx,
 ) {
+    if object.kind == EmbeddedKind::Chart
+        && let Some(item) = chart_item(object, shaper, ctx)
+    {
+        out.push(item);
+        return;
+    }
     if let Some(preview) = object.preview
         && let Some(media) = ctx.media.get(&preview)
     {
@@ -3778,6 +3880,119 @@ fn embedded_object_items<'a>(
         &RunProperties::default(),
         ctx,
     )));
+}
+
+/// Composes the chart box for an embedded object that has a typed projection with
+/// drawable content, or `None` to fall through to the placeholder.
+///
+/// The `model_len` the box reports is the label it replaces, so drawing a chart
+/// moves no caret offset — see [`FlowItem::Chart`]'s own note.
+fn chart_item<'a>(
+    object: &EmbeddedObject,
+    shaper: &dyn LineShaper,
+    ctx: &mut FlowCtx,
+) -> Option<FlowItem<'a>> {
+    let size = extent_to_size(&object.extent);
+    if size.width.raw() <= 0 || size.height.raw() <= 0 {
+        return None;
+    }
+    let chart = ctx.chart_index.get(ctx.definitions, object.id)?;
+    if !chart::has_drawable_content(chart) {
+        return None;
+    }
+    let style = chart_style(ctx.palette);
+    // The label shaper resolves fonts through the document's own cascade, so chart
+    // text uses the document's fonts rather than a hard-coded face. It is handed a
+    // CLONE of the projection's text only; nothing in the closure touches the
+    // chart.
+    let base = RunProperties {
+        size_half_points: Some(CHART_LABEL_HALF_POINTS),
+        ..RunProperties::default()
+    };
+    // Copied out before the shaping closure borrows `ctx` mutably: a chart's
+    // authored colour may name a THEME slot, and `run_color` is the document's one
+    // resolution of that — the chart module deliberately holds no second copy.
+    let palette = ctx.palette;
+    let colors = |color: Color| run_color(Some(color), palette);
+    let primitives = {
+        let mut shape_label = |text: &str| chart_label(text, &base, shaper, ctx);
+        chart::compose_chart(chart, size, &style, &colors, &mut shape_label)
+    };
+    if primitives.is_empty() {
+        return None;
+    }
+    Some(FlowItem::Chart {
+        size,
+        primitives,
+        model_len: embedded_object_label(object).len() as u32,
+    })
+}
+
+/// Chart furniture text size, in half-points: 9 pt, Word's default chart font
+/// size for axis labels, the legend and data labels.
+const CHART_LABEL_HALF_POINTS: u32 = 18;
+
+/// Shapes one short chart label through the document's own cascade and shaper.
+///
+/// Returns `None` for an empty label or one that shaped to nothing, which
+/// [`chart::compose_chart`] treats as "do not paint and do not reserve".
+fn chart_label(
+    text: &str,
+    base: &RunProperties,
+    shaper: &dyn LineShaper,
+    ctx: &mut FlowCtx,
+) -> Option<chart::ChartLabel> {
+    if text.is_empty() {
+        return None;
+    }
+    let styled = styled_owned_run(text.to_owned(), base, ctx);
+    let node = NodeId::from_parts(1, 1).expect("fixed valid chart shaping id");
+    let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    let layout = shaper.shape_paragraph(&[styled], tabs::unwrapped_constraints(), range);
+    let line = layout.lines.first()?;
+    let width = line
+        .runs
+        .iter()
+        .map(|run| safe_add(run.origin.x, run_advance(run)))
+        .max()
+        .unwrap_or(Twip::ZERO);
+    if width.raw() <= 0 {
+        return None;
+    }
+    let mut runs = line.runs.clone();
+    for run in &mut runs {
+        // A chart label is not model text: it is the chart's cached string, not
+        // the paragraph's, so its glyph clusters must not name offsets in a
+        // paragraph they do not index. Same rule as an inline math box's runs.
+        run.node = None;
+        for glyph in &mut run.glyphs {
+            glyph.cluster = 0;
+        }
+    }
+    Some(chart::ChartLabel {
+        runs,
+        width,
+        ascent: line.ascent,
+        descent: line.descent,
+    })
+}
+
+/// The chart colour style for this document: the theme's six accents as the series
+/// colour cycle (`docs/155` §12 Q-D — resolve against the document theme, which
+/// already exists; `colors1.xml` stays out of scope and preserved).
+fn chart_style(palette: Option<&ResolvedPalette>) -> chart::ChartStyle {
+    let mut style = chart::ChartStyle::default();
+    if let Some(palette) = palette {
+        style.accents = [
+            palette.slot(ThemeColorRef::Accent1),
+            palette.slot(ThemeColorRef::Accent2),
+            palette.slot(ThemeColorRef::Accent3),
+            palette.slot(ThemeColorRef::Accent4),
+            palette.slot(ThemeColorRef::Accent5),
+            palette.slot(ThemeColorRef::Accent6),
+        ];
+    }
+    style
 }
 
 fn embedded_object_label(object: &EmbeddedObject) -> &'static str {
@@ -4517,7 +4732,10 @@ fn shape_paragraph_items(
     let is_standalone = |item: &FlowItem<'_>| {
         matches!(
             item,
-            FlowItem::TextBox { .. } | FlowItem::HorizontalRule(_) | FlowItem::FloatBarrier { .. }
+            FlowItem::TextBox { .. }
+                | FlowItem::Chart { .. }
+                | FlowItem::HorizontalRule(_)
+                | FlowItem::FloatBarrier { .. }
         )
     };
     if !items.iter().any(is_standalone) {
@@ -4547,6 +4765,13 @@ fn shape_paragraph_items(
                     *content_layout,
                     range,
                 );
+                stack_lines(&mut out, vec![line], &mut cursor_y);
+                i += 1;
+            }
+            FlowItem::Chart {
+                size, primitives, ..
+            } => {
+                let line = chart_line(*size, primitives.clone(), range);
                 stack_lines(&mut out, vec![line], &mut cursor_y);
                 i += 1;
             }
@@ -4871,6 +5096,7 @@ fn image_line(
         text_boxes: Vec::new(),
         rules: Vec::new(),
         tab_extents: Vec::new(),
+        charts: Vec::new(),
     }
 }
 
@@ -4893,6 +5119,7 @@ fn math_line(size: Size, runs: Vec<GlyphRun>, rules: Vec<InlineRule>, range: Mod
         text_boxes: Vec::new(),
         rules,
         tab_extents: Vec::new(),
+        charts: Vec::new(),
     }
 }
 
@@ -4916,6 +5143,7 @@ fn float_barrier_line(height: Twip, range: ModelRange) -> Line {
         text_boxes: Vec::new(),
         rules: Vec::new(),
         tab_extents: Vec::new(),
+        charts: Vec::new(),
     }
 }
 
@@ -4954,6 +5182,40 @@ fn textbox_line(
         }],
         rules: Vec::new(),
         tab_extents: Vec::new(),
+        charts: Vec::new(),
+    }
+}
+
+/// A line holding a single inline chart box at the paragraph's leading edge, its
+/// height equal to the authored `wp:extent` height so following content stacks
+/// below it. The box carries its already-composed, box-local primitives;
+/// composition translates each into page space (`docs/155` §9 increment 5).
+///
+/// This is where the chart's authored extent stops being ignored: the old
+/// `[chart]` run reserved one line of text, so the box a Word user sized is now
+/// the box the engine reserves.
+fn chart_line(size: Size, primitives: Vec<ChartPrimitive>, range: ModelRange) -> Line {
+    Line {
+        runs: Vec::new(),
+        ascent: size.height,
+        descent: Twip::ZERO,
+        height: size.height,
+        clip: false,
+        range,
+        line_break: LineBreak::Wrap,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: Vec::new(),
+        fields: Vec::new(),
+        notes: Vec::new(),
+        text_boxes: Vec::new(),
+        rules: Vec::new(),
+        tab_extents: Vec::new(),
+        charts: vec![InlineChart {
+            origin: Point::new(Twip::ZERO, Twip::ZERO),
+            size,
+            primitives,
+        }],
     }
 }
 
@@ -4979,6 +5241,7 @@ fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
         text_boxes: Vec::new(),
         rules: vec![rule],
         tab_extents: Vec::new(),
+        charts: Vec::new(),
     }
 }
 
@@ -6135,6 +6398,7 @@ fn layout_fielded_line(
         text_boxes: Vec::new(),
         rules: Vec::new(),
         tab_extents,
+        charts: Vec::new(),
     }
 }
 
@@ -7946,6 +8210,7 @@ mod tests {
             paragraph_float_exclusions: None,
             note_label: None,
             note_labels: None,
+            chart_index: ChartIndex::default(),
         };
         let mut items = Vec::new();
         collect_items(
@@ -8005,6 +8270,7 @@ mod tests {
             paragraph_float_exclusions: None,
             note_label: None,
             note_labels: None,
+            chart_index: ChartIndex::default(),
         };
         let mut out = Vec::new();
         push_styled_runs(text, &properties, &mut ctx, &mut out);
@@ -8184,6 +8450,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         };
         // The shaper has already made the second baseline paragraph-relative.
         let mut out = Vec::new();
@@ -11849,6 +12116,7 @@ mod tests {
                 paragraph_float_exclusions: None,
                 note_label: None,
                 note_labels: None,
+                chart_index: ChartIndex::default(),
             };
             block_intrinsic(&[paragraph(700, inlines)], &ParleyShaper::new(), &ctx, None)
         }
@@ -14909,6 +15177,7 @@ mod tests {
                         text_boxes: Vec::new(),
                         rules: Vec::new(),
                         tab_extents: Vec::new(),
+                        charts: Vec::new(),
                     }],
                 },
                 box_metrics: BoxMetrics::default(),

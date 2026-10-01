@@ -135,6 +135,36 @@ pub enum FlowItem<'a> {
         /// Resolved content offset and overflow clipping.
         content_layout: TextBoxContentLayout,
     },
+    /// An inline chart (`a:graphicFrame` → `c:chart`): its authored `wp:extent`
+    /// box and the paint primitives [`crate::chart`] composed from the typed
+    /// projection. Laid out on its own line, like an [`FlowItem::TextBox`];
+    /// composition translates each primitive into page space (`docs/155` §9
+    /// increment 5).
+    Chart {
+        /// The chart box's outer size in twips (from the drawing's EMU extent).
+        size: Size,
+        /// The box-local paint primitives, in paint order.
+        primitives: Vec<crate::text::ChartPrimitive>,
+        /// How many bytes of the paragraph's MODEL text this chart occupies.
+        ///
+        /// **The label's byte length, not zero**, and that is deliberate. An
+        /// embedded object with no preview used to flow as a
+        /// [`FlowItem::Run`] holding `[chart]`, so its offsets were that
+        /// label's bytes, and `casual-doc-wasm`'s `inline_anchor_len` counts
+        /// exactly those same bytes for the same node. Drawing the chart must
+        /// not move a caret offset in the paragraph that holds it, and the wasm
+        /// facade is another lane's file, so the model byte space is left
+        /// untouched and the box reports what the run it replaced reported.
+        ///
+        /// KNOWN DIVERGENCE, pre-existing and not repaired here:
+        /// [`crate::flow::node_plain_text`] contributes **nothing** for an
+        /// embedded object, so both this and `inline_anchor_len` already
+        /// over-count against it. Aligning the three is one change across the
+        /// layout, wasm and edit crates; making it here unilaterally would
+        /// desynchronise layout from the facade, which is strictly worse than a
+        /// recorded disagreement.
+        model_len: u32,
+    },
     /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a filled full-content-
     /// width line, already resolved (origin, size, color) against the content width
     /// and alignment. Laid out on its own line, like an [`FlowItem::Image`];
@@ -194,6 +224,10 @@ impl FlowItem<'_> {
             // Never the painted value, which for a `PAGE` field is recomputed
             // after pagination and for an empty one is a placeholder.
             FlowItem::Field { model_len, .. } => *model_len,
+            // A drawn chart reports the bytes the `[chart]` run it replaced
+            // reported, so painting one cannot move a caret offset. See the
+            // variant's own note.
+            FlowItem::Chart { model_len, .. } => *model_len,
             // `w:ptab`, hard breaks, drawings, notes, text boxes, rules and the
             // float markers contribute no bytes — matching `node_plain_text`
             // and `casual-doc-edit`'s `inline_text_len`, which skip them all.
@@ -479,6 +513,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
             | FlowItem::Field { .. }
             | FlowItem::NoteReference(_)
             | FlowItem::TextBox { .. }
+            | FlowItem::Chart { .. }
             | FlowItem::HorizontalRule(_)
             | FlowItem::FloatBarrier { .. }
             | FlowItem::FloatExclusion { .. } => {}
@@ -693,6 +728,7 @@ fn layout_tabbed_line(
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
                 tab_extents: work.tab_extents,
+                charts: Vec::new(),
             };
             cursor_y = cursor_y + height;
             line
@@ -1138,6 +1174,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         text_boxes: Vec::new(),
         rules: Vec::new(),
         tab_extents: Vec::new(),
+        charts: Vec::new(),
     }
 }
 

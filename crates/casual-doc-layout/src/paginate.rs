@@ -2183,6 +2183,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -2243,6 +2244,7 @@ mod tests {
                     text_boxes: Vec::new(),
                     rules: Vec::new(),
                     tab_extents: Vec::new(),
+                    charts: Vec::new(),
                 }
             })
             .collect();
@@ -2289,6 +2291,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         };
         let mut second = blank_line(Twip(200));
         second.runs.push(GlyphRun {

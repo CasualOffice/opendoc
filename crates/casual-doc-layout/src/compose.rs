@@ -19,10 +19,14 @@ use crate::display::ShapeTransform;
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::LayerBlend;
+// Own line (anti-conflict): the chart lane's path and dash primitives.
+use crate::display::PathCommand;
+// Own line (anti-conflict): the solid dash a chart's furniture strokes with.
+use casual_doc_model::v1::DashStyle;
 // Own line (anti-conflict): the paint-only non-printing-character overlay.
 use crate::formatting_marks::{FormattingMarks, MarkLayer};
 use crate::page::PlacedWatermarkContent;
-use crate::text::{InlineImage, LineLayout, TextBoxContentLayout};
+use crate::text::{ChartPrimitive, ChartStroke, InlineImage, LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
 
 /// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
@@ -236,6 +240,20 @@ fn compose_paragraph_into(
             compose_blocks(list, &text_box.blocks, content_origin, inner, marks);
             list.push(PaintItem::PopClip);
         }
+        // Inline charts: each primitive is box-local, so it is translated by the
+        // chart box's own page-space origin and emitted through the SAME display
+        // vocabulary everything else uses — there is no chart-specific paint item
+        // and the backend needed no change (`docs/155` §7.2).
+        for chart in &line.charts {
+            let box_origin = Point::new(origin.x + chart.origin.x, origin.y + chart.origin.y);
+            // Clipped to the authored `wp:extent`: a chart whose labels or series
+            // overflow its box must not paint over the paragraph beside it.
+            list.push(PaintItem::PushClip(Rect::new(box_origin, chart.size)));
+            for primitive in &chart.primitives {
+                compose_chart_primitive(list, primitive, box_origin);
+            }
+            list.push(PaintItem::PopClip);
+        }
         // Inline horizontal rules (`w:pict` / `v:rect@o:hr`): a filled rectangle
         // spanning (a fraction of) the content width, translated into page space.
         for rule in &line.rules {
@@ -250,6 +268,95 @@ fn compose_paragraph_into(
         }
         if line.clip {
             list.push(PaintItem::PopClip);
+        }
+    }
+}
+
+/// Translates one box-local [`ChartPrimitive`] into page space and emits it as a
+/// display-list item.
+///
+/// Every variant maps onto a primitive the display list already had, which is why
+/// drawing a chart needed no new `PaintItem` and no renderer change: a bar is a
+/// `Shape`/`Rect`, a gridline is a `Shape`/`Line`, a series polyline and an area
+/// polygon are a `Shape`/`Path`, a marker is a `Shape`/`Ellipse`, and a label is
+/// `Glyphs`. `Shape` rather than the flat `Rect`/`Ellipse` items so a chart's fill
+/// and outline go through the same resolved-fill seam a DrawingML shape does.
+///
+/// Complexity: O(1) per primitive (O(points) for a path).
+fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, origin: Point) {
+    let shift = |point: Point| Point::new(origin.x + point.x, origin.y + point.y);
+    let shift_rect = |rect: Rect| Rect::new(shift(rect.origin), rect.size);
+    let outline = |stroke: Option<ChartStroke>| {
+        stroke.map(|stroke| ShapeOutline {
+            color: rgba(stroke.color),
+            width: stroke_px(stroke.width),
+            dash: DashStyle::Solid,
+        })
+    };
+    let solid = |fill: Option<[u8; 4]>| fill.map(|fill| Fill::Solid(rgba(fill)));
+    match primitive {
+        ChartPrimitive::Rect { rect, fill, stroke } => list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: shift_rect(*rect),
+            },
+            fill: solid(*fill),
+            stroke: outline(*stroke),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        }),
+        ChartPrimitive::Ellipse { rect, fill, stroke } => list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Ellipse {
+                rect: shift_rect(*rect),
+            },
+            fill: solid(*fill),
+            stroke: outline(*stroke),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        }),
+        ChartPrimitive::Line { from, to, stroke } => list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Line {
+                from: shift(*from),
+                to: shift(*to),
+            },
+            fill: None,
+            stroke: outline(Some(*stroke)),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        }),
+        ChartPrimitive::Path {
+            points,
+            closed,
+            fill,
+            stroke,
+        } => {
+            let mut commands = Vec::with_capacity(points.len());
+            for (index, point) in points.iter().enumerate() {
+                let point = shift(*point);
+                commands.push(if index == 0 {
+                    PathCommand::MoveTo { point }
+                } else {
+                    PathCommand::LineTo { point }
+                });
+            }
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Path {
+                    commands,
+                    closed: *closed,
+                },
+                fill: solid(*fill),
+                stroke: outline(*stroke),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+        }
+        ChartPrimitive::Text { run } => {
+            let mut placed = run.clone();
+            placed.origin = shift(run.origin);
+            list.push(PaintItem::Glyphs { run: placed });
         }
     }
 }
@@ -1837,6 +1944,7 @@ mod tests {
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
                 tab_extents: Vec::new(),
+                charts: Vec::new(),
             }],
         }
     }
@@ -2632,6 +2740,7 @@ mod tests {
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
                 tab_extents: Vec::new(),
+                charts: Vec::new(),
             }],
         };
         let origin = Point::new(Twip(200), Twip(300));
