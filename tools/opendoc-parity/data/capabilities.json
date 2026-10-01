@@ -2220,15 +2220,13 @@
       "area": "para",
       "title": "Show non-printing characters",
       "ours": {
-        "absent": [
-          "view.formattingMarks"
-        ]
+        "command": "view.formattingMarks"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.tipShowHiddenChars"
       },
       "rank": 3,
-      "note": "There is no pilcrow, tab-arrow or space-dot overlay anywhere in our chrome, which makes tab stops and empty paragraphs hard to diagnose while editing."
+      "note": "Shipped as a Home split button, a View menu submenu, the palette and the Cmd-8 chord, with five switchable marks. Three of Word's marks are still undrawn - the end-of-cell mark, the section-break rule and the no-break space - because each needs a layout change, not a chrome one. Their mechanism is the same split button; their defect we avoided is painting the marks in a fixed ink, which disappears on a dark page."
     },
     {
       "id": "para.indent.decrease",
@@ -3713,15 +3711,18 @@
       "area": "review",
       "title": "Restrict editing to view, comments, forms or tracked changes",
       "ours": {
-        "absent": [
-          "review.restrictEditing"
-        ]
+        "partial": {
+          "evidence": {
+            "command": "review.restrictEditing"
+          },
+          "missing": "the password. Import drops `w:hash` and `w:salt`, so a password-protected document round-trips to a passwordless one, and the dialog says in words that this is a policy rather than a password."
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.ProtectDialog.textReview"
       },
       "rank": 2,
-      "note": "Their four allow-levels map almost exactly onto our three review modes, but ours are a session choice while theirs are written into the file and password-locked."
+      "note": "Their four allow-levels, in Word's dropdown order and wording, plus a fifth No restriction row so Stop Protection is the same control. The restriction is now written into the file and enforced by the engine (ADR-052 enforcement, ADR-059 setter), not a session choice - which is what the previous grade said was missing. What is still theirs alone is the password lock."
     },
     {
       "id": "review.screen-reader-structure",
@@ -4489,7 +4490,7 @@
               "literal": "MeasurementUnit"
             }
           },
-          "missing": "the preference in the chrome, and the ruler's own lattice"
+          "missing": "the ruler's own lattice. The preference now ships in Settings, the File menu and the palette, and it governs Page setup, but the ruler still draws inch ticks whatever is chosen - which the dialog says out loud rather than hiding."
         }
       },
       "theirs": {
@@ -5115,21 +5116,16 @@
       "area": "table",
       "title": "Border width and line style",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "webapp/src/table_cell_chrome.mjs",
-              "literal": "BORDER_WEIGHTS_EIGHTH_POINTS"
-            }
-          },
-          "missing": "line style, in the CHROME only. The engine argument landed: `border_edge` takes a style, `setCellBorder` takes an optional `style` of six tokens and refuses a seventh, and `cellBorderStyle` reads one back, so dashed, dotted and double are authorable through the facade today. What is missing is a control that sends one - no ribbon, menu, context-menu or palette surface offers the style, so the capability is unreachable for a user. Graded a gap for that reason and no other."
+        "anchor": {
+          "file": "webapp/src/table_cell_chrome.mjs",
+          "literal": "BORDER_STYLES"
         }
       },
       "theirs": {
         "control": "cmbBorderSize"
       },
       "rank": 2,
-      "note": "WIDTH now ships, and it is their whole anchor: `cmbBorderSize` offers seven widths and no style, and their advanced table dialog is the same control again. Ours is one pen for the cell presets and the table presets together, which is Word's shape, and it defaults to half a point - the value Word, their `TableSettings` and our own `insertTable` already used, where the chrome used to send one point and silently double the gridlines it had just drawn. Guarded on the EFFECT rather than the control: the width is read back out of a real normalized-JSON export, because the only border read-back the facade offers is a presence bitmask."
+      "note": "Exceeds them deliberately: `cmbBorderSize` offers seven widths and no style, and their advanced table dialog is the same control again. Ours is one pen for the cell presets and the table presets together, which is Word's shape. The six renderable styles are now offered in the cell-format popover, reached from the context menu and the palette, and the select reflects `cellBorderStyle` rather than assuming solid."
     },
     {
       "id": "table.borders-dialog",
