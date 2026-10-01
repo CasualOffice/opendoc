@@ -587,12 +587,7 @@ fn place_vertical_legend(
 }
 
 /// A key swatch and its label, vertically centred in a `row`-tall slot.
-fn draw_legend_entry(
-    entry: &LegendEntry,
-    origin: Point,
-    row: Twip,
-    out: &mut Vec<ChartPrimitive>,
-) {
+fn draw_legend_entry(entry: &LegendEntry, origin: Point, row: Twip, out: &mut Vec<ChartPrimitive>) {
     let key_top = Twip(origin.y.raw() + ((row.raw() - LEGEND_KEY.raw()) / 2).max(0));
     out.push(ChartPrimitive::Rect {
         rect: Rect::new(
@@ -763,7 +758,9 @@ fn draw_axes(
                 draw_value_axis_labels(chart, axis, plot, position, style, shape, out);
             }
             AxisKind::Category | AxisKind::Date => {
-                draw_category_axis_labels(chart, axis, plot, categories, position, style, shape, out);
+                draw_category_axis_labels(
+                    chart, axis, plot, categories, position, style, shape, out,
+                );
             }
         }
     }
@@ -781,7 +778,11 @@ fn draw_value_axis_labels(
 ) {
     let scale = axis_scale(chart, axis);
     let on_right = position == AxisPosition::Right;
-    let edge = if on_right { plot.right() } else { plot.origin.x };
+    let edge = if on_right {
+        plot.right()
+    } else {
+        plot.origin.x
+    };
     let show = axis.tick_label_position != TickLabelPosition::None;
     for value in scale.ticks() {
         let y = along(plot.bottom(), plot.origin.y, scale.fraction(value));
@@ -964,8 +965,8 @@ fn draw_bars(
         let color = paint.series(series, geometry.first_color + index);
         let mut stack = vec![0.0f64; geometry.categories];
         if stacked {
-            for prior in 0..index {
-                accumulate(&mut stack, &values[prior], normalised.as_deref());
+            for prior in values.iter().take(index) {
+                accumulate(&mut stack, prior, normalised.as_deref());
             }
         }
         for category in 0..geometry.categories {
@@ -984,7 +985,8 @@ fn draw_bars(
             let lead = if stacked {
                 slot * category as i32 + (slot - bar_width) / 2
             } else {
-                slot * category as i32 + (slot - step * (series_count as i32 - 1) - bar_width) / 2
+                slot * category as i32
+                    + (slot - step * (series_count as i32 - 1) - bar_width) / 2
                     + step * index as i32
             };
             let rect = if horizontal {
@@ -1014,7 +1016,14 @@ fn draw_bars(
                 stroke: None,
             });
             if show_value(series) {
-                draw_data_label(&format_value(raw), rect, horizontal, paint.style, shape, out);
+                draw_data_label(
+                    &format_value(raw),
+                    rect,
+                    horizontal,
+                    paint.style,
+                    shape,
+                    out,
+                );
             }
         }
     }
@@ -1075,8 +1084,8 @@ fn draw_lines(
         }
         let mut stack = vec![0.0f64; geometry.categories];
         if stacked {
-            for prior in 0..index {
-                accumulate(&mut stack, &values[prior], normalised.as_deref());
+            for prior in values.iter().take(index) {
+                accumulate(&mut stack, prior, normalised.as_deref());
             }
         }
         let mut points: Vec<Point> = Vec::new();
@@ -1214,8 +1223,8 @@ fn draw_areas(
         let color = paint.series(series, geometry.first_color + index);
         let mut stack = vec![0.0f64; geometry.categories];
         if stacked {
-            for prior in 0..index {
-                accumulate(&mut stack, &values[prior], normalised.as_deref());
+            for prior in values.iter().take(index) {
+                accumulate(&mut stack, prior, normalised.as_deref());
             }
         }
         let mut upper: Vec<Point> = Vec::new();
@@ -1291,12 +1300,7 @@ fn draw_scatter(
     let x_scale = scatter_x_scale(group);
     for (index, series) in group.series.iter().enumerate() {
         let color = paint.line(series, geometry.first_color + index);
-        let count = range_len(&series.values).max(
-            series
-                .x_values
-                .as_ref()
-                .map_or(0, |range| range_len(range)),
-        );
+        let count = range_len(&series.values).max(series.x_values.as_ref().map_or(0, range_len));
         let ys = dense_numbers(&series.values, count);
         let xs = series
             .x_values
@@ -1320,10 +1324,7 @@ fn draw_scatter(
             ));
         }
         let smoothed = if series.smooth
-            || matches!(
-                scatter,
-                ScatterStyle::Smooth | ScatterStyle::SmoothMarker
-            )
+            || matches!(scatter, ScatterStyle::Smooth | ScatterStyle::SmoothMarker)
         {
             sample_smooth(&points)
         } else {
@@ -1395,8 +1396,10 @@ fn draw_data_label(
     let (left, baseline) = if horizontal {
         (
             anchor.right() + LABEL_GAP,
-            Twip(anchor.origin.y.raw() + anchor.size.height.raw() / 2 + label.ascent.raw()
-                - label.height().raw() / 2),
+            Twip(
+                anchor.origin.y.raw() + anchor.size.height.raw() / 2 + label.ascent.raw()
+                    - label.height().raw() / 2,
+            ),
         )
     } else {
         (
@@ -1625,12 +1628,7 @@ fn category_count(chart: &Chart) -> usize {
         })
         .flat_map(|group| group.series.iter())
         .map(|series| {
-            range_len(&series.values).max(
-                series
-                    .categories
-                    .as_ref()
-                    .map_or(0, |range| range_len(range)),
-            )
+            range_len(&series.values).max(series.categories.as_ref().map_or(0, range_len))
         })
         .max()
         .unwrap_or(0)
@@ -1701,10 +1699,10 @@ fn axis_scale(chart: &Chart, axis: &Axis) -> Scale {
     let mut scale = derived_scale(chart, Some(axis.id), reversed);
     // `c:min`/`c:max` are carried verbatim; parse them through the model's own
     // accessor rather than re-implementing the refusal of `NaN`/`1e400`.
-    if let Some(min) = axis.minimum.as_ref().and_then(parse_axis_bound) {
+    if let Some(min) = axis.minimum.as_deref().and_then(parse_axis_bound) {
         scale.min = min;
     }
-    if let Some(max) = axis.maximum.as_ref().and_then(parse_axis_bound) {
+    if let Some(max) = axis.maximum.as_deref().and_then(parse_axis_bound) {
         scale.max = max;
     }
     if scale.max <= scale.min {
@@ -1715,8 +1713,8 @@ fn axis_scale(chart: &Chart, axis: &Axis) -> Scale {
 }
 
 /// A verbatim axis bound as a finite `f64`, through the model's accessor.
-fn parse_axis_bound(text: &String) -> Option<f64> {
-    ChartValue::Number(text.clone()).as_f64()
+fn parse_axis_bound(text: &str) -> Option<f64> {
+    ChartValue::Number(text.to_owned()).as_f64()
 }
 
 /// The data-derived scale for the series plotted against `axis_id` (or, with
@@ -1751,7 +1749,9 @@ fn derived_scale(chart: &Chart, axis_id: Option<u32>, reversed: bool) -> Scale {
         let mut negative = vec![0.0f64; count];
         for series in &group.series {
             for (index, value) in &series.values.points {
-                let Some(value) = value.as_f64() else { continue };
+                let Some(value) = value.as_f64() else {
+                    continue;
+                };
                 any = true;
                 let slot = *index as usize;
                 if stacked && slot < count {
@@ -1793,10 +1793,9 @@ fn derived_scale(chart: &Chart, axis_id: Option<u32>, reversed: bool) -> Scale {
 /// Whether a group stacks its series.
 fn group_is_stacked(group: &ChartGroup) -> bool {
     match group.kind {
-        ChartGroupKind::Bar { grouping, .. } => matches!(
-            grouping,
-            BarGrouping::Stacked | BarGrouping::PercentStacked
-        ),
+        ChartGroupKind::Bar { grouping, .. } => {
+            matches!(grouping, BarGrouping::Stacked | BarGrouping::PercentStacked)
+        }
         ChartGroupKind::Line { grouping, .. } | ChartGroupKind::Area { grouping } => {
             matches!(grouping, Grouping::Stacked | Grouping::PercentStacked)
         }

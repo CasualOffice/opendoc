@@ -64,7 +64,10 @@ fn imported() -> Document {
 /// The first page's display list.
 fn painted(document: &Document) -> DisplayList {
     let layout = paginate_document(document, &ParleyShaper::new());
-    let page = layout.pages.first().expect("the fixture paginates to a page");
+    let page = layout
+        .pages
+        .first()
+        .expect("the fixture paginates to a page");
     compose_page(page)
 }
 
@@ -85,7 +88,6 @@ fn filled_rects(list: &DisplayList) -> Vec<Rect> {
 
 /// Every `PaintItem::Shape` carrying a path, as its vertex list.
 fn paths(list: &DisplayList) -> Vec<Vec<(Twip, Twip)>> {
-    use casual_doc_layout::display::PathCommand;
     list.items
         .iter()
         .filter_map(|item| match item {
@@ -147,7 +149,11 @@ fn the_fixture_projects_a_two_group_chart_with_three_axes() {
     let charts = &document.definitions().charts;
     assert_eq!(charts.len(), 1, "the fixture has exactly one chart");
     let chart = charts.iter().next().expect("the chart").1;
-    assert_eq!(chart.plot_area.groups.len(), 2, "bar + line is a combo chart");
+    assert_eq!(
+        chart.plot_area.groups.len(),
+        2,
+        "bar + line is a combo chart"
+    );
     assert_eq!(
         chart.plot_area.axes.len(),
         3,
@@ -219,7 +225,9 @@ fn the_bar_group_paints_bars_whose_heights_are_in_the_ratio_of_its_cached_values
     // ratios above while being wrong on the page.
     let baselines: Vec<i32> = bars.iter().map(|rect| rect.bottom().raw()).collect();
     assert!(
-        baselines.windows(2).all(|pair| (pair[0] - pair[1]).abs() <= 1),
+        baselines
+            .windows(2)
+            .all(|pair| (pair[0] - pair[1]).abs() <= 1),
         "every bar sits on the value axis zero, got {baselines:?}"
     );
 }
@@ -345,7 +353,9 @@ fn reading_a_projection_does_not_change_the_document() {
     // normalises, caches into, or dirties the model while drawing, this reddens
     // before an export guard would.
     let document = imported();
-    let before = document.to_json().expect("the imported document serializes");
+    let before = document
+        .to_json()
+        .expect("the imported document serializes");
     let list = painted(&document);
     assert!(
         !filled_rects(&list).is_empty(),

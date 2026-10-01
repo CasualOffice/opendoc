@@ -49,7 +49,6 @@ use casual_doc_model::v1::Chart;
 use crate::block::BlockBorderSpace;
 use crate::chart;
 // Own line (anti-conflict): the chart box's layout-level carriers.
-use crate::text::{ChartPrimitive, InlineChart};
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorderReserve,
     CellBorders, CellBoxSpacing, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
@@ -60,6 +59,7 @@ use crate::cascade::{
     requested_font_family_for, union_cnf,
 };
 use crate::incremental::{DirtySet, GalleyCache};
+use crate::text::{ChartPrimitive, InlineChart};
 // Separate `use` lines (anti-conflict): the galley sink seam, `docs/113` step 4.
 use crate::font_substitution::DeclaredFamilies;
 use crate::font_substitution::GenericFamily;
