@@ -401,10 +401,8 @@ pub fn import_package(
     // `word/charts/_rels/chartN.xml.rels`, not the document's). Read here because
     // only this entry point has a package; the parts stay in the opaque side-table
     // and the embedded workbook is never opened (`docs/155` §5.2).
-    let mut chart_part_sources: std::collections::BTreeMap<
-        String,
-        crate::chart::ChartPartSource,
-    > = std::collections::BTreeMap::new();
+    let mut chart_part_sources: std::collections::BTreeMap<String, crate::chart::ChartPartSource> =
+        std::collections::BTreeMap::new();
     let chart_part_names: Vec<String> = embedded_index
         .values()
         .filter(|rel| rel.relationship_type.ends_with("/chart"))
@@ -414,7 +412,9 @@ pub fn import_package(
         if chart_part_sources.contains_key(&part_name) {
             continue;
         }
-        let bytes = package.read_part(&part_name).map_err(ImportError::Package)?;
+        let bytes = package
+            .read_part(&part_name)
+            .map_err(ImportError::Package)?;
         let rels = package
             .part_relationships(&part_name)
             .map_err(ImportError::Package)?

@@ -5788,7 +5788,11 @@ fn chart_part_pointer() -> EmbeddedPart {
 }
 
 /// A paragraph holding one embedded object of `kind`.
-fn embedded_object_paragraph(paragraph_id: NodeId, object_id: NodeId, kind: EmbeddedKind) -> BlockNode {
+fn embedded_object_paragraph(
+    paragraph_id: NodeId,
+    object_id: NodeId,
+    kind: EmbeddedKind,
+) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: paragraph_id,
         properties: ParagraphProperties::default().into(),
@@ -5905,7 +5909,11 @@ fn a_chart_id_joins_the_document_id_walk() {
     assert_eq!(
         Document::new(
             tid(99),
-            vec![embedded_object_paragraph(tid(1), object, EmbeddedKind::Chart)],
+            vec![embedded_object_paragraph(
+                tid(1),
+                object,
+                EmbeddedKind::Chart
+            )],
             definitions,
         ),
         Err(ModelError::DuplicateNodeId(tid(1))),
@@ -5930,8 +5938,12 @@ fn a_chart_id_joins_the_document_id_walk() {
 /// it did before the table existed.
 #[test]
 fn the_charts_table_is_omitted_from_a_snapshot_when_empty() {
-    let document = Document::new(tid(99), vec![paragraph_block(tid(1))], Definitions::default())
-        .expect("a valid document");
+    let document = Document::new(
+        tid(99),
+        vec![paragraph_block(tid(1))],
+        Definitions::default(),
+    )
+    .expect("a valid document");
     let json = String::from_utf8(document.to_json().unwrap()).unwrap();
     assert!(
         !json.contains("charts"),
@@ -5959,7 +5971,12 @@ fn a_cached_chart_number_survives_a_snapshot_round_trip_verbatim() {
         reopened, document,
         "a chart projection must be a fixed point of the snapshot round trip"
     );
-    let (_, chart) = reopened.definitions().charts.iter().next().expect("the chart");
+    let (_, chart) = reopened
+        .definitions()
+        .charts
+        .iter()
+        .next()
+        .expect("the chart");
     let (_, first) = &chart.plot_area.groups[0].series[0].values.points[0];
     assert_eq!(first, &ChartValue::Number("4.30".to_owned()));
     assert_eq!(first.as_f64(), Some(4.3));
@@ -5994,7 +6011,11 @@ fn a_chart_projection_beyond_its_bounds_is_refused() {
     assert_eq!(
         Document::new(
             tid(99),
-            vec![embedded_object_paragraph(tid(1), tid(2), EmbeddedKind::Chart)],
+            vec![embedded_object_paragraph(
+                tid(1),
+                tid(2),
+                EmbeddedKind::Chart
+            )],
             definitions,
         ),
         Err(ModelError::PropertyValueOutOfDomain {
@@ -6015,7 +6036,11 @@ fn a_chart_projection_beyond_its_bounds_is_refused() {
     assert_eq!(
         Document::new(
             tid(99),
-            vec![embedded_object_paragraph(tid(1), tid(2), EmbeddedKind::Chart)],
+            vec![embedded_object_paragraph(
+                tid(1),
+                tid(2),
+                EmbeddedKind::Chart
+            )],
             definitions,
         ),
         Err(ModelError::PropertyValueOutOfDomain {
@@ -6043,7 +6068,11 @@ fn a_chart_projection_resolves_inside_a_nested_container() {
             cells: vec![cell(
                 tid(12),
                 TableCellProperties::default(),
-                vec![embedded_object_paragraph(tid(1), object, EmbeddedKind::Chart)],
+                vec![embedded_object_paragraph(
+                    tid(1),
+                    object,
+                    EmbeddedKind::Chart,
+                )],
             )],
         }],
     }));
