@@ -81,6 +81,15 @@ export const PROTECTION_LEVELS = Object.freeze([
   Object.freeze({ value: "forms", edit: "forms", labelKey: "protect.level.forms" }),
 ]);
 
+/** Whether an `edit` token restricts anything at all.
+ *
+ *  `null` is the element being absent and `"none"` is a restriction switched off;
+ *  neither restricts, and the two are deliberately not collapsed anywhere else,
+ *  because only the EXPORTER may decide which of them to write back.
+ *
+ *  O(1). */
+const restricts = (edit) => edit !== null && edit !== "none";
+
 /**
  * Reads `documentProtection()`'s JSON into the two things the dialog shows.
  *
@@ -202,7 +211,16 @@ export function createDocumentProtection(io) {
     const row = PROTECTION_LEVELS.find((level) => level.value === (group.value() ?? "off"));
     const wantedEdit = row?.edit ?? null;
     const wantedEnforcement = wantedEdit !== null && enforce?.checked === true;
-    if (wantedEdit === state.edit && wantedEnforcement === state.enforcement) {
+    // Compared on what RESTRICTS, not on the raw token. `edit=null` (the element
+    // absent) and `edit="none"` (a restriction an author set up and switched off)
+    // are different states that both restrict nothing, and the radio group has one
+    // row for the pair — so a reader who opens this dialog on a `none` document and
+    // presses Apply has chosen nothing and must get no write. Comparing the tokens
+    // directly made `null === "none"` false and rewrote the file, which is what
+    // both this function's note above and `readProtection`'s said it did not do.
+    const sameRestriction =
+      wantedEdit === state.edit || (!restricts(wantedEdit) && !restricts(state.edit));
+    if (sameRestriction && wantedEnforcement === state.enforcement) {
       modal.close();
       return;
     }
