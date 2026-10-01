@@ -102,7 +102,10 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
-        | Operation::SetEvenAndOddHeaders { .. } => Tier::DocumentScope,
+        | Operation::SetEvenAndOddHeaders { .. }
+        // Document-global policy with no node and no registry key: the definition of
+        // document scope (ADR-059).
+        | Operation::SetDocumentProtection { .. } => Tier::DocumentScope,
     }
 }
 
@@ -149,6 +152,7 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetAbstractNumbering { .. } => "SetAbstractNumbering",
         Operation::SetNumberingInstance { .. } => "SetNumberingInstance",
         Operation::SetMediaReference { .. } => "SetMediaReference",
+        Operation::SetDocumentProtection { .. } => "SetDocumentProtection",
         Operation::CreateBookmark { .. } => "CreateBookmark",
         Operation::DeleteBookmark { .. } => "DeleteBookmark",
         Operation::RenameBookmark { .. } => "RenameBookmark",
@@ -314,6 +318,7 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
+        | Operation::SetDocumentProtection { .. }
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
         | Operation::SetTextBoxBody { .. } => Coordinates::None,

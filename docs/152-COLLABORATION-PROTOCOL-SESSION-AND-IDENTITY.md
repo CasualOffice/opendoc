@@ -845,6 +845,19 @@ construction rather than by promise. The op set derives `serde` — one schema d
    missing is the **session's** access level, which needs the token of Q4; a document that
    asks not to be edited and a participant who is not allowed to edit it are two different
    questions with one enforcement point.
+
+   **Now fully reachable in one direction, and the authority question is answered explicitly
+   rather than left open** (ADR-059). `Operation::SetDocumentProtection` installs and lifts the
+   restriction, so the policy is no longer write-once-from-a-file. Its ordering rule is the part
+   that touches this question: the operation is **exempt from the restriction it changes** —
+   otherwise a batch judged on its worst operation would refuse the operation that lifts it,
+   `readOnly` would be a one-way door, and the enforcement of ADR-052 would be worse than its
+   absence. Exemption from *the document's* policy is not exemption from a *participant's*
+   access level: when Q4's grant exists, `Refusal::ReadOnlyAccess` applies to this operation like
+   any other, and `casual_doc_edit::protection::exempt_from_protection` is the single place that
+   has to learn the difference. Until then **the local reader is the only authority**, which is
+   what Word does with an unpassworded restriction, and no password material is modelled or
+   verified — ADR-052's "policy, not security" stays literally true.
 6. **Durability.** The relay's retained tail is in memory and bounded by count. A durable
    ordered log, snapshots and compaction are `107` 6.1, and the sibling's warning transfers
    directly: retained/unmodelled bytes are inert, so store them **once** with the document and

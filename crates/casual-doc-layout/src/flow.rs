@@ -3367,7 +3367,14 @@ pub(crate) fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<Resolve
 
 /// Maps the common OOXML line-style families to backend-independent patterns.
 /// Producer-specific and art-border tokens intentionally use the solid fallback.
-fn border_pattern(style: &str) -> BorderPattern {
+///
+/// Public because it is the authority on which line tokens the renderer can draw **apart**,
+/// and a host offering a border-style control has to agree with it: a token that resolves to
+/// `Solid` here is a dropdown entry that paints identically to Single, which is the "never a
+/// dead control" rule broken quietly. `casual-doc-wasm`'s `border_style_token` is checked
+/// against this rather than keeping a second copy of the list. O(1).
+#[must_use]
+pub fn border_pattern(style: &str) -> BorderPattern {
     match style {
         "double" => BorderPattern::Double,
         "dotted" => BorderPattern::Dotted,
@@ -3390,7 +3397,13 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
     let style: u32 = match edge.style.as_str() {
         "double" => 3,
         "single" => 2,
-        "dashed" | "dotted" | "dotDash" | "dashDotStroked" => 1,
+        // Every broken line ranks alike, `dotDotDash` included. It was missing, so a
+        // dot-dot-dash edge ranked 0 — level with `nil` and with an unrecognised token — and
+        // lost a same-width conflict to any other visible style. That was invisible for as
+        // long as no setter could produce the token; it became reachable the moment the
+        // facade's border setters took a style argument, which is why it is fixed here and
+        // not left for the chrome to trip over.
+        "dashed" | "dashSmallGap" | "dotted" | "dotDash" | "dashDotStroked" | "dotDotDash" => 1,
         _ => 0,
     };
     // Darker colors win ties: rank by inverse luminance (absent color = black).
@@ -12643,6 +12656,50 @@ mod tests {
             BorderPattern::Solid,
             "art-border tokens keep the documented deterministic fallback"
         );
+    }
+
+    /// Every broken line ranks alike in a border conflict, `dotDotDash` included.
+    ///
+    /// `dotDotDash` was absent from `border_rank`'s style list, so it fell through to 0 —
+    /// level with `nil` and with an unrecognised token — and a dot-dot-dash edge lost a
+    /// same-width conflict to any other visible style. Harmless while nothing could author
+    /// the token; a defect the moment the facade's border setters took a style argument.
+    ///
+    /// Asserts the guarantee (a visible broken line is not outranked by another visible
+    /// broken line of the same width) rather than the rank numbers, so it survives a
+    /// re-scaling of the ranks.
+    #[test]
+    fn every_broken_line_style_ranks_alike_in_a_border_conflict() {
+        let edge = |style: &str| BorderEdge {
+            style: style.to_owned(),
+            size_eighth_points: Some(8),
+            color: None,
+            space_points: None,
+        };
+        let broken = [
+            "dashed",
+            "dashSmallGap",
+            "dotted",
+            "dotDash",
+            "dashDotStroked",
+            "dotDotDash",
+        ];
+        for style in broken {
+            for other in broken {
+                assert_eq!(
+                    border_rank(&edge(style)),
+                    border_rank(&edge(other)),
+                    "{style} and {other} are both visible broken lines of one width, so \
+                     neither may outrank the other"
+                );
+            }
+            // …and a broken line still beats an invisible edge of the same declared width,
+            // which is the precondition that makes the equality above mean something.
+            assert!(
+                border_rank(&edge(style)) > border_rank(&edge("nil")),
+                "{style} must outrank an invisible edge"
+            );
+        }
     }
 
     #[test]

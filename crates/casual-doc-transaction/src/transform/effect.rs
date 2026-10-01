@@ -324,6 +324,9 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             | Operation::SetSectionPageNumbering { .. }
             | Operation::SetSectionVerticalAlignment { .. }
             | Operation::SetEvenAndOddHeaders { .. }
+            // Inert: it moves no text, splits and joins nothing, and destroys no key —
+            // it swaps one `Option` in the settings record (ADR-059).
+            | Operation::SetDocumentProtection { .. }
             | Operation::SetShapeFill { .. }
             | Operation::SetShapeStroke { .. }
             | Operation::SetTextBoxBody { .. },

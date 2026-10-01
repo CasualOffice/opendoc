@@ -772,6 +772,10 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         }
         // Registry- and document-scoped: no node anchor. Their liveness is `anchor_key`.
         Operation::SetCoreProperties { .. }
+        // Document-global policy: it names no node and no registry key, so it has no
+        // liveness precondition at all — there is nothing a concurrent delete could take
+        // away from it (ADR-059).
+        | Operation::SetDocumentProtection { .. }
         | Operation::SetSectionGeometry { .. }
         | Operation::SpliceSectionBoundary { .. }
         | Operation::SetStyleDefinition { .. }
@@ -846,6 +850,9 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::ReplaceTable { .. }
         | Operation::SetCoreProperties { .. }
         | Operation::UpdateReviewState { .. }
+        // Document protection is a field of `Definitions::settings`, which always exists:
+        // no key to be missing, so no tombstone is possible.
+        | Operation::SetDocumentProtection { .. }
         | Operation::SetStyleDefinition { .. }
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
@@ -1671,6 +1678,7 @@ impl Aspects {
     const EVEN_AND_ODD_HEADERS: Self = Self(1 << 21);
     const NUMBERING_DEFINITION: Self = Self(1 << 22);
     const MEDIA_REFERENCE: Self = Self(1 << 23);
+    const DOCUMENT_PROTECTION: Self = Self(1 << 24);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1762,6 +1770,15 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         )),
         Operation::SetEvenAndOddHeaders { .. } => {
             Some((Target::Settings, Aspects::EVEN_AND_ODD_HEADERS))
+        }
+        // The same `Definitions::settings` object as the headers flag above, and a
+        // DIFFERENT aspect: two replicas, one turning on even/odd headers and one
+        // restricting editing, claim independent fields of one settings record and must not
+        // destroy each other. Two replicas both changing the restriction DO contend, and the
+        // later one wins — which is the right answer for a policy whose value is its whole
+        // payload (ADR-059).
+        Operation::SetDocumentProtection { .. } => {
+            Some((Target::Settings, Aspects::DOCUMENT_PROTECTION))
         }
         Operation::InsertText { .. }
         | Operation::DeleteText { .. }

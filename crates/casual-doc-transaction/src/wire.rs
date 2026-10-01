@@ -335,7 +335,10 @@ impl WireOperation {
             // property bundle, a geometry, a flag, or nothing but the ids already charged
             // above. Grouped rather than wildcarded so a 56th variant is a compile error
             // here too, and whoever adds it has to decide whether it carries bytes.
-            Operation::DeleteText { .. }
+            // `SetDocumentProtection` belongs here and not above: two bools and a
+            // five-valued enum, `Copy`, with no owned payload at all (ADR-059).
+            Operation::SetDocumentProtection { .. }
+            | Operation::DeleteText { .. }
             | Operation::SplitParagraph { .. }
             | Operation::JoinParagraphs { .. }
             | Operation::FormatText { .. }
@@ -458,6 +461,9 @@ impl WireOperation {
             | Operation::SetTableProperties { .. }
             | Operation::ReplaceTable { .. }
             | Operation::SetCoreProperties { .. }
+            // It carries a policy value, not an identity: there is no id for a receiver to
+            // already hold, so there is no silent replace to make reachable (ADR-059).
+            | Operation::SetDocumentProtection { .. }
             | Operation::SetSectionGeometry { .. }
             | Operation::DeleteBookmark { .. }
             | Operation::RenameBookmark { .. }
