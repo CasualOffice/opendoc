@@ -506,6 +506,22 @@ pub(crate) fn apply_paragraph_property(
                 None => return false,
             }
         }
+        // `w15:collapsed` — Word's saved folded-heading state, in the Office 2012
+        // namespace. Matched on the LOCAL name like every other property here, so
+        // the producer's prefix does not matter; the namespace is pinned by
+        // `fixtures/generated/collapsed-headings.docx` rather than by this arm,
+        // because a local-name parser cannot tell `w:collapsed` from
+        // `w15:collapsed` and the project's own notes had guessed the wrong one.
+        //
+        // Tri-state, like every `CT_OnOff` above it: bare or `w:val="1"` is folded,
+        // and an explicit `w:val="0"` is a CANCELLATION that must survive the
+        // cascade rather than read as silence. Before this arm existed the element
+        // reached `body.rs`'s long-tail `report_element` and was reported as
+        // `OmittedNotRetained` — a named loss, not a silent one, which is what
+        // `docs/154` §3.4 could not determine for want of a fixture.
+        b"collapsed" => {
+            properties.collapsed = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
         _ => return false,
     }
     true

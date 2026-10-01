@@ -1055,6 +1055,36 @@ pub struct ParagraphProperties {
     /// Outline (heading) level, `0..=9` (`w:outlineLvl`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_level: Option<u8>,
+    /// This heading is saved **folded**: `w15:collapsed`, the `CT_OnOff` element
+    /// Word writes in a heading's `w:pPr` in the Office 2012 namespace
+    /// `http://schemas.microsoft.com/office/word/2012/wordml`.
+    ///
+    /// Microsoft's Open Specifications define it as: *"When a collapsed element is
+    /// added to a paragraph (pPr) of a particular heading level and its value is
+    /// true/on/1, immediately subsequent paragraphs with a higher heading level
+    /// number appear collapsed when the document is opened."* So the flag sits on
+    /// the heading and its SCOPE is everything after it up to the next heading of
+    /// the same or a lower outline-level number. That scope is derived from the
+    /// outline, never stored — storing it would duplicate a fact the heading tree
+    /// already carries and let the two disagree after an edit.
+    ///
+    /// Tri-state, for the reason spelled out at length on
+    /// [`Self::contextual_spacing`]: `None` is "absent, inherit", `Some(true)` is
+    /// folded, and `Some(false)` is an explicit `w:val="0"` that CANCELS a fold a
+    /// style chain contributed. A plain `bool` would make the cancellation
+    /// unrepresentable and silently re-fold a section the document had unfolded.
+    ///
+    /// **This is the saved document DEFAULT, not a viewer's live fold state.** The
+    /// split is Google's and it is the only model that can honour a Word file: an
+    /// editor changes the default for everyone, while a reader's own folding is
+    /// per-viewer and is never written back into the file. ADR-049 decides this;
+    /// `docs/157` records the evidence. The per-viewer half lives in the shell, not
+    /// here.
+    ///
+    /// **It is never an access control.** Whatever this says, the content is in the
+    /// file, in every export, in find, and in the accessibility mirror.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
     /// Paragraph borders (`w:pBdr`). Stored out of line — see
     /// [`BoxedParagraphBorders`] — because almost no paragraph has any; it reads
     /// and writes as a plain [`ParagraphBorders`].
