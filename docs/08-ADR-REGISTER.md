@@ -2308,6 +2308,98 @@ costed against a fallback that does not exist.
 - **Owner decision needed:** whether to add the operation. Until then suggesting mode stays
   out of a session, with the refusal code `152` §5.3 gives it.
 
+## ADR-056 — `150` §9.1 and §9.2 are answered on the envelope, and the closed operation set does not change
+
+- **Status:** Accepted, implemented.
+- **Date:** 2026-10-02.
+- **Context:** `152` §9 named exactly two remaining blockers for the byte codec, and said
+  freezing bytes over them is *"the one thing a compatibility surface must not do"*:
+  - **`150` §9.1** — `InsertBlocks`/`DeleteBlocks`/`InsertTable`/`InsertFieldRange` name a
+    sibling **index**, which is why the `BlockPlacement` seam exists and why refusals U2 and
+    U6 exist;
+  - **`150` §9.2** — `Pos` carries no **affinity**, which is refusal U5.
+
+  Each was recorded as needing a change to the closed operation set, which ADR-030 I2 reserves
+  to the owner.
+- **Decision: neither change is made, and neither is needed.** Both facts travel on the
+  **envelope**, beside the operation, as an `Intent`. **No `Operation` variant changed and
+  `Pos` is untouched.** `transform` gains `transform_declared`, which reads the declaration;
+  `casual_doc_transaction::resolve_anchor` re-derives a slot's index from its anchor.
+- **Why the envelope is the right place, and not a convenience.** Neither fact changes what
+  `apply` does. An index is what `apply` consumes and it is already exact on the author's own
+  replica; an affinity is not consumed by `apply` at all, because
+  `casual_doc_edit::insert_text`'s attachment rule is fixed and changing it would break
+  convergence (`150` §5.4). Both are **authoring** facts — true of the moment an operation was
+  written, needed only by a *transform*, and needed only on a replica that did not write it.
+  A receiver cannot reconstruct one, which is why it must travel; `apply` must not read one,
+  which is why it must not be in the operation.
+- **The precedent, named:** ADR-051, one increment earlier, for identity. `150` §9.3 proposed
+  that an operation enumerate the ids it mints; that could not work, and the answer was to
+  carry the *space* on the envelope. This is the same move twice more, and the consequence is
+  the same one: the op shapes are now final, so the codec is unblocked **without a waiver**.
+- **Measured, not assumed.** Taking §9.2 in the op set was tried first: adding one field to
+  `Pos` fails the build with two `E0063` in `casual-doc-wasm` (`lib.rs:2311`, `lib.rs:5712`) —
+  a file another lane holds. That is precisely the "two green PRs can make `main` red" shape
+  §5a of the working contract records, and it is what makes the op-set route **irreversible**
+  where an envelope field is additive: a transaction that declares nothing behaves exactly as
+  it did, so nothing has to be updated at once and a decoder meeting an unknown declaration
+  skips it.
+- **Shape.**
+
+  | On the envelope | What it says | Read by |
+  | --- | --- | --- |
+  | `Intent::anchor` → `BlockAnchor::Before(NodeId)` / `AtEnd` | the block an index was counted to | `transform_declared`, `resolve_anchor` |
+  | `Intent::affinity` → `Affinity::Before` / `After` | which side of a boundary the content belongs to | `transform_declared` |
+
+  `Transaction::with_intents` is a **builder**, not a parameter on `new`/`reserve`, for the
+  same reason the decision itself went this way: a parameter is a breaking change to every
+  call site. A missing entry reads as `Intent::NONE`, which is what every caller declared
+  before this existed. `Commit` retains them, because a commit becomes `against` for the next
+  arrival; `WireOperation::declaring` carries them, because a receiver cannot recompute them.
+- **An anchor is rebased by doing nothing.** A concurrent split carves out a new block and a
+  concurrent join destroys one; neither *renames* the anchor, so the intention "put it between
+  the same two neighbours" survives untouched and `transform` returns the slot unchanged.
+  The cached index is re-derived **once**, by `resolve_anchor`, immediately before the
+  operation is applied — which is the only moment the state it must be right about exists.
+  That is also why resolution is not inside `transform`: an arrival is rebased over *every*
+  commit since its base revision, and resolving against an intermediate state would have to be
+  rebased again, reintroducing the arithmetic the anchor removes. `transform` stays pure.
+- **`BlockTarget` is a second trait over one `BlockIndex`, deliberately.** `BlockPlacement`
+  must describe the **base** state, which neither replica holds while it transforms;
+  `BlockTarget` describes the state the caller is **about to mutate**, which every caller holds
+  by definition. One is a promise that is hard to keep and the other is a fact in hand, and the
+  names are what stop the wrong one being passed. One index answers both.
+- **What this closes, stated without overstating.**
+  - **U2 for insertion gaps** — `InsertBlocks`/`InsertTable`/`InsertFieldRange` over a
+    concurrent split or join now need **no placement at all**.
+  - **Half of U5** — a declared `Affinity::Before` is answered. `Affinity::After` is the
+    commoner intent (typing at a paragraph start takes the following character's formatting in
+    Word and in Docs) and remains **refused**, because no operation in the set attaches text to
+    the run *after* a boundary. Declaring it does not make it expressible; it makes the refusal
+    say the engine understood and cannot comply, which is a different and better statement than
+    "nobody knows what you meant". Closing it properly needs either an operation that attaches
+    on the following side or a run-property argument a pure transform cannot read.
+  - **A destroyed anchor is a reportable loss**, never a fall-back to the stale index.
+- **Still open, and not quietly treated as covered.** `DeleteBlocks` is *not* anchored: a
+  removal band is not one anchor but a span of victims, and the node-addressed form of that is
+  a list the operation does not carry. Refusal U6 therefore stands. `150` §9.1 is updated in
+  place to say so.
+- **Mutation proofs.** (1) Ignore a declared anchor in `rebase_coordinates` →
+  `a_declared_anchor_answers_what_no_base_state_placement_could` fails with *"a declared anchor
+  answers it with no placement: Unsupported { … reason: \"no block placement: neither operation
+  says where the split paragraph sits\" }"*. (2) Treat `Affinity::After` as answerable →
+  `a_declared_affinity_answers_the_insertion_a_concurrent_join_absorbed` fails with the
+  transform returning `Ok(Keep(InsertText { … offset: 8 }))` where a refusal was required.
+  (3) Drop the session's `resolve_anchor` call →
+  `an_anchored_arrival_is_resolved_before_it_is_applied` fails with the paste landing at body
+  index 2 instead of 3 (`left: 3, right: 4`). (4) Make a destroyed anchor resolve to the
+  nearest index instead of reporting → `a_destroyed_anchor_is_a_loss_and_never_a_fallback_to_
+  the_stale_index` fails with `left: Ok(()), right: Err(AnchorDestroyed { … })`.
+- **Not decided here:** whether to *also* take the op-set change later. If one is ever taken,
+  the envelope declaration becomes redundant rather than wrong, which is the reversibility this
+  decision was chosen for.
+
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

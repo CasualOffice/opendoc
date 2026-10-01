@@ -55,7 +55,7 @@
 //!
 //! # What an intent is not
 //!
-//! It is not a second address. [`Operation`](casual_doc_edit::Operation) remains the only
+//! It is not a second address. [`Operation`] remains the only
 //! thing `apply` reads, and an operation whose envelope declares nothing is exactly as
 //! applicable as it was before this module existed. An intent is read by
 //! [`transform`](crate::transform::transform) and by [`resolve_anchor`], and by nothing

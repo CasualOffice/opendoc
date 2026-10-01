@@ -75,9 +75,11 @@ use crate::protocol::{
     Submission,
 };
 use crate::transform::{
-    BlockIndex, BlockPlacement, Change, Rebase, Side, Tombstone, TransformError, transform_placed,
+    ANCHOR_UNRESOLVED, BlockIndex, BlockPlacement, Change, Rebase, Side, Tombstone, TransformError,
+    transform_declared,
 };
 use crate::wire::{self, Collision, IdSpace, WireOperation};
+use crate::{AnchorError, Intent};
 use crate::{Commit, Operation, RevisionId, RevisionLog, TransactionError};
 
 /// Why a session step could not be taken.
@@ -397,7 +399,13 @@ impl ClientSession {
                 .iter()
                 .cloned()
                 .zip(commit.mints().iter().copied())
-                .map(|(operation, mint)| WireOperation::of(operation, mint))
+                .enumerate()
+                .map(|(index, (operation, mint))| {
+                    // The author's declarations travel too: a receiver cannot reconstruct an
+                    // authoring fact, which is the whole reason it is on the envelope
+                    // (doc 150 §9.1/§9.2, ADR-056).
+                    WireOperation::of(operation, mint).declaring(commit.intent(index))
+                })
                 .collect();
             let cost: usize = carried.iter().map(WireOperation::carried_bytes).sum();
             if !operations.is_empty() && spent + cost > CHUNK_BUDGET_BYTES {
@@ -556,20 +564,30 @@ impl ClientSession {
         }
         let sender =
             wire::space_of(self.document_space, arrival.client).ok_or(SessionError::NoIdSpace)?;
-        let mut remote = Vec::with_capacity(arrival.operations.len());
-        let mut remote_mints = Vec::with_capacity(arrival.operations.len());
-        for carried in &arrival.operations {
-            remote.push(
-                carried
+        let mut carried = Carried {
+            operations: Vec::with_capacity(arrival.operations.len()),
+            mints: Vec::with_capacity(arrival.operations.len()),
+            intents: Vec::with_capacity(arrival.operations.len()),
+        };
+        for wire_operation in &arrival.operations {
+            carried.operations.push(
+                wire_operation
                     .localise(document, sender)
                     .map_err(SessionError::IdCollision)?
                     .clone(),
             );
-            remote_mints.push(carried.mint());
+            carried.mints.push(wire_operation.mint());
+            carried.intents.push(wire_operation.intent());
         }
 
         if log.unordered_commits() == 0 {
-            let revision = apply_remote(document, remote_mints, log, remote)?;
+            let revision = apply_remote(
+                document,
+                carried.mints,
+                carried.intents,
+                log,
+                carried.operations,
+            )?;
             log.settle(revision);
             self.revision = self.revision.max(arrival.revision);
             return Ok(Reception {
@@ -581,12 +599,6 @@ impl ClientSession {
 
         // The one working copy this design needs, and only on the contended path: a remote
         // edit arriving while this replica has unacknowledged work of its own. A rollback
-        // that fails half way through has damaged the document, and there is no operation
-        // that repairs it, so the copy is what makes "on Err the document is exactly what it
-        // was" true here as it is of `RevisionLog::apply`. Cost: O(document) per contended
-        // arrival, never per keystroke. Doc 152 §10 Q1.
-        // The one working copy this design needs, and only on the contended path: a remote
-        // edit arriving while this replica has unacknowledged work of its own. A rollback
         // that fails half way through has damaged the document and no operation repairs it,
         // so the copy is what makes "on Err the document is exactly what it was" as true here
         // as it is of `RevisionLog::apply`. The log is copied too, and that copy is O(undo
@@ -594,7 +606,7 @@ impl ClientSession {
         // never per keystroke and never when nothing is in flight. Doc 152 §10 Q1.
         let restore_document = document.clone();
         let restore_log = log.clone();
-        match self.rebase(arrival, document, ids, log, remote, remote_mints) {
+        match self.rebase(arrival, document, ids, log, carried) {
             Ok(reception) => Ok(reception),
             Err(error) => {
                 *document = restore_document;
@@ -612,9 +624,13 @@ impl ClientSession {
         document: &mut Document,
         ids: &mut IdGenerator,
         log: &mut RevisionLog,
-        remote: Vec<Operation>,
-        remote_mints: Vec<Mint>,
+        carried: Carried,
     ) -> Result<Reception, SessionError> {
+        let Carried {
+            operations: remote,
+            mints: remote_mints,
+            intents: remote_intents,
+        } = carried;
         let mut tombstones = Vec::new();
         let unordered = log.detach_unordered();
 
@@ -623,12 +639,30 @@ impl ClientSession {
         // **forwards** from the inverses the commits already recorded, touching the document
         // not at all. That is why only the inverses need a probe: the operations do not.
         let mut images: Vec<Vec<Operation>> = Vec::with_capacity(unordered.len());
-        let mut image = remote;
+        // The arrival's own declarations travel with its operations through the images, so a
+        // sender that said what its index was counted to is still saying it after the image
+        // has been rebased three times. An image piece inherits its parent's declaration.
+        let mut image: Vec<(Operation, Intent)> = remote
+            .iter()
+            .enumerate()
+            .map(|(index, operation)| {
+                (
+                    operation.clone(),
+                    remote_intents.get(index).copied().unwrap_or(Intent::NONE),
+                )
+            })
+            .collect();
         for commit in &unordered {
-            images.push(image.clone());
+            images.push(image.iter().map(|(op, _)| op.clone()).collect());
             let changes = changes_of(commit)?;
-            image = rebase_over(image, &changes, Side::Earlier, &mut tombstones)
-                .map_err(SessionError::CannotMerge)?;
+            image = rebase_over_declared(
+                image,
+                &changes,
+                Side::Earlier,
+                &crate::transform::NoPlacement,
+                &mut tombstones,
+            )
+            .map_err(SessionError::CannotMerge)?;
         }
 
         // Phase 1: roll back newest-first. Rolling commit `i` back arrives at commit `i`'s
@@ -667,7 +701,7 @@ impl ClientSession {
         // The arrival's image at the horizon *is* the arrival — `images[0]` is `remote`
         // before any transform — so it lands under the spaces its sender declared, and not
         // under spaces of this replica's own. That is the whole point of carrying them.
-        let ordered_at = apply_remote(document, remote_mints, log, at_horizon)?;
+        let ordered_at = apply_remote(document, remote_mints, remote_intents, log, at_horizon)?;
         log.settle(ordered_at);
 
         // Phase 3: replay each step rebased, keeping its identity so undo is untouched. The
@@ -678,14 +712,55 @@ impl ClientSession {
         let mut moved: Vec<(RevisionId, Option<RevisionId>)> = Vec::with_capacity(unordered.len());
         let mut replayed = 0_usize;
         for (commit, changes) in unordered.iter().zip(&probed) {
-            let rebased = rebase_over_placed(
-                commit.operations().to_vec(),
-                changes,
-                Side::Later,
-                &placement,
-                &mut tombstones,
-            )
-            .map_err(SessionError::CannotMerge)?;
+            let subjects: Vec<(Operation, Intent)> = commit
+                .operations()
+                .iter()
+                .enumerate()
+                .map(|(index, operation)| (operation.clone(), commit.intent(index)))
+                .collect();
+            let rebased =
+                rebase_over_declared(subjects, changes, Side::Later, &placement, &mut tombstones)
+                    .map_err(SessionError::CannotMerge)?;
+            // **The anchor's one resolution point** (doc 150 §9.1, ADR-056). An anchored slot
+            // came through `transform` untouched, because an identity does not move; its
+            // cached index is re-derived *here*, against the document this replay is about to
+            // mutate. That state is the only one the index can be right about, and unlike the
+            // base state `BlockPlacement` needs, this replica holds it.
+            //
+            // A destroyed anchor is a loss, not a licence to fall back on the stale index:
+            // falling back is the silent divergence this whole layer exists to refuse.
+            let target = BlockIndex::of(document);
+            let mut rebased = rebased;
+            let mut lost = Vec::new();
+            for (position, (operation, intent)) in rebased.iter_mut().enumerate() {
+                let Some(anchor) = intent.anchor() else {
+                    continue;
+                };
+                match crate::resolve_anchor(operation, anchor, &target) {
+                    Ok(()) => {}
+                    Err(AnchorError::AnchorDestroyed { .. }) => {
+                        tombstones.push(Tombstone {
+                            operation: crate::transform::variant_name(operation),
+                            against: "Remote change",
+                        });
+                        lost.push(position);
+                    }
+                    Err(AnchorError::ContainerUnknown | AnchorError::NotASlotOperation { .. }) => {
+                        return Err(SessionError::CannotMerge(TransformError::Unsupported {
+                            subject: crate::transform::variant_name(operation),
+                            against: "Remote change",
+                            reason: ANCHOR_UNRESOLVED,
+                        }));
+                    }
+                }
+            }
+            for position in lost.into_iter().rev() {
+                rebased.remove(position);
+            }
+            let rebased: Vec<Operation> = rebased
+                .into_iter()
+                .map(|(operation, _)| operation)
+                .collect();
             if rebased.is_empty() {
                 // Every operation of this step was satisfied or tombstoned by the arrival, so
                 // the step itself is gone. The tombstones already say what was lost.
@@ -726,6 +801,17 @@ impl ClientSession {
     }
 }
 
+/// One arrival's operations and everything that travels beside them, one entry each.
+///
+/// Three parallel vectors that must stay the same length, so they are one value: an arrival
+/// whose mints or declarations had slipped out of step with its operations would mis-apply
+/// silently, and the type is what stops them being passed separately.
+struct Carried {
+    operations: Vec<Operation>,
+    mints: Vec<Mint>,
+    intents: Vec<Intent>,
+}
+
 /// Applies an arrival as one ordered commit through the choke point.
 ///
 /// Labelled from the engine's own step vocabulary so a host never has to invent a name for
@@ -733,19 +819,24 @@ impl ClientSession {
 fn apply_remote(
     document: &mut Document,
     mints: Vec<Mint>,
+    intents: Vec<Intent>,
     log: &mut RevisionLog,
     operations: Vec<Operation>,
 ) -> Result<RevisionId, SessionError> {
     if operations.is_empty() {
         return Ok(log.head());
     }
+    // The sender's declarations are retained on the commit, not dropped at the boundary: this
+    // commit becomes `against` for the next arrival, and a rebase of *this replica's* later
+    // work reads them.
     let transaction = crate::Transaction::new(
         crate::TransactionId::new(0),
         log.head(),
         "Remote change",
         mints,
         operations,
-    );
+    )
+    .with_intents(intents);
     log.apply(document, transaction)
         .map(Commit::revision)
         .map_err(SessionError::Refused)
@@ -799,41 +890,32 @@ fn probe(
     Ok(operations.into_iter().zip(inverses).collect())
 }
 
-/// Rebases every operation in `subjects` over every change in `against`, in order.
+/// Rebases every operation in `subjects` over every change in `against`, in order, carrying
+/// each subject's declaration with it.
 ///
 /// A `Satisfied` subject disappears and a `Tombstoned` one is recorded, because a tombstone
 /// is a loss and the caller has to be able to report it.
-fn rebase_over(
-    subjects: Vec<Operation>,
-    against: &[(Operation, Operation)],
-    side: Side,
-    tombstones: &mut Vec<Tombstone>,
-) -> Result<Vec<Operation>, TransformError> {
-    rebase_over_placed(
-        subjects,
-        against,
-        side,
-        &crate::transform::NoPlacement,
-        tombstones,
-    )
-}
-
-/// [`rebase_over`] with a placement, for the pairs that need one.
-fn rebase_over_placed(
-    subjects: Vec<Operation>,
+///
+/// A declaration is a fact about the operation's *author*, so it survives a rebase unchanged
+/// and a [`Rebase::KeepMany`] gives every piece its parent's — the pieces are one intention
+/// expressed as several operations, which is exactly what `150` §5.3 says they are.
+fn rebase_over_declared(
+    subjects: Vec<(Operation, Intent)>,
     against: &[(Operation, Operation)],
     side: Side,
     placement: &dyn BlockPlacement,
     tombstones: &mut Vec<Tombstone>,
-) -> Result<Vec<Operation>, TransformError> {
+) -> Result<Vec<(Operation, Intent)>, TransformError> {
     let mut current = subjects;
     for (operation, inverse) in against {
         let change = Change::new(operation, inverse);
         let mut next = Vec::with_capacity(current.len());
-        for subject in &current {
-            match transform_placed(subject, change, side, placement)? {
-                Rebase::Keep(operation) => next.push(operation),
-                Rebase::KeepMany(operations) => next.extend(operations),
+        for (subject, intent) in &current {
+            match transform_declared(subject, *intent, change, side, placement)? {
+                Rebase::Keep(operation) => next.push((operation, *intent)),
+                Rebase::KeepMany(operations) => {
+                    next.extend(operations.into_iter().map(|operation| (operation, *intent)));
+                }
                 Rebase::Satisfied => {}
                 Rebase::Tombstoned(tombstone) => tombstones.push(tombstone),
             }

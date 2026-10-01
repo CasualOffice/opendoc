@@ -30,7 +30,7 @@ use crate::protocol::{
     Refusal, Resume, ResumeKey, Revision, Seq, ServerMessage,
 };
 use crate::wire::{self, Clash, Collision, IdSpace, WireOperation};
-use crate::{Coalesce, RevisionLog, Transaction, TransactionId};
+use crate::{Coalesce, Intent, RevisionLog, Transaction, TransactionId};
 
 use super::{ClientSession, ServerSession, SessionError};
 
@@ -118,6 +118,28 @@ impl Replica {
     /// Applies a local edit through the one mutation path.
     fn edit(&mut self, label: &'static str, operations: Vec<Operation>) {
         self.edit_coalescing(label, operations, Coalesce::New);
+    }
+
+    /// An edit whose author declares what its operations cannot say (doc 150 §9.1/§9.2).
+    fn edit_declaring(
+        &mut self,
+        label: &'static str,
+        operations: Vec<Operation>,
+        intents: Vec<Intent>,
+    ) {
+        self.next_transaction += 1;
+        let transaction = Transaction::reserve(
+            TransactionId::new(self.next_transaction),
+            self.log.head(),
+            label,
+            &mut self.ids,
+            operations,
+        )
+        .expect("identity spaces")
+        .with_intents(intents);
+        self.log
+            .apply(&mut self.document, transaction)
+            .expect("the edit applies");
     }
 
     fn edit_coalescing(
@@ -2160,5 +2182,80 @@ fn work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operatio
         session.id_space(),
         offline,
         "a participant was handed the reserved offline space"
+    );
+}
+
+#[test]
+fn an_anchored_arrival_is_resolved_before_it_is_applied() {
+    // Doc 150 §9.1, ADR-056, end to end. Ada pastes a block immediately before paragraph 2
+    // and declares that; Grace splits paragraph 0, which adds a block *before* Ada's slot.
+    //
+    // Ada's paste comes out of `transform` with its index UNTOUCHED, because an anchor does
+    // not move. So the only thing that can make it land in the right place is the session
+    // re-deriving the index from the anchor against the document it is about to mutate. That
+    // makes this guard a direct test of the resolution step rather than of the arithmetic:
+    // delete the resolution and the paste lands one block too early.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    let pasted = ada.ids.next_id().expect("id");
+    let pasted_run = ada.ids.next_id().expect("id");
+    let paste = Operation::InsertBlocks {
+        container: None,
+        index: 2,
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: pasted,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: pasted_run,
+                properties: RunProperties::default().into(),
+                text: "pasted".to_owned(),
+            })],
+        })],
+    };
+    ada.edit_declaring("Paste", vec![paste], vec![Intent::before(paragraphs[2])]);
+
+    let split_into = grace.ids.next_id().expect("id");
+    grace.edit(
+        "Typing",
+        vec![Operation::SplitParagraph {
+            at: Pos::new(paragraphs[0], 4),
+            new_id: split_into,
+            properties: None,
+        }],
+    );
+
+    let from_grace = grace.exchange(&mut server);
+    assert_eq!(from_grace.len(), 1);
+    let reception = ada.receive(&from_grace[0]).expect("the arrival merges");
+    assert_eq!(reception.replayed, 1, "Ada's paste must be replayed");
+
+    // The precondition, stated so this guard cannot pass by the split having landed somewhere
+    // harmless: the split really did add a block before the anchor.
+    let order: Vec<NodeId> = ada
+        .document
+        .body()
+        .iter()
+        .map(|block| match block {
+            BlockNode::Paragraph(paragraph) => paragraph.id,
+            other => panic!("unexpected block {other:?}"),
+        })
+        .collect();
+    assert_eq!(order.len(), 5, "three paragraphs, one split, one paste");
+    let anchor_at = order
+        .iter()
+        .position(|id| *id == paragraphs[2])
+        .expect("the anchor survived");
+    let paste_at = order
+        .iter()
+        .position(|id| *id == pasted)
+        .expect("the paste survived");
+    assert_eq!(
+        paste_at + 1,
+        anchor_at,
+        "the paste must still sit immediately before the block it was authored before; \
+         body order was {order:?}"
     );
 }

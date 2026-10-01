@@ -37,7 +37,7 @@ use casual_doc_model::v1::{
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
-use crate::{Coalesce, RevisionLog, Transaction, TransactionId};
+use crate::{BlockAnchor, Coalesce, Intent, RevisionLog, Transaction, TransactionId};
 
 use super::*;
 
@@ -1133,5 +1133,163 @@ fn the_live_editor_has_no_collaboration_dependency() {
     assert!(
         smuggled.matches(PROTOCOL).count() > smuggled.matches(PROTOCOL_CLIENT_ID).count(),
         "the scan cannot see a forbidden protocol item smuggled in beside `ClientId`"
+    );
+}
+
+#[test]
+fn a_declared_anchor_answers_what_no_base_state_placement_could() {
+    // The pair `a_placement_answers_the_pairs_a_bare_transform_refuses` answers with a
+    // `BlockIndex` **of the base state**. This asserts the stronger thing ADR-056 claims: a
+    // declared anchor answers the same pair with *no placement at all*, so a session that
+    // cannot reconstruct the base state is no longer refused.
+    //
+    // The condition is CREATED rather than inherited: the paste is placed AFTER the split's
+    // paragraph, which is the half of the case that actually needs the index to move. A paste
+    // before it would pass whatever the anchor did, because its index is already right.
+    let mut seed = seed();
+    let base = seed.document.clone();
+    let paragraphs = seed.paragraphs.clone();
+    let split = Operation::SplitParagraph {
+        at: Pos::new(paragraphs[1], 4),
+        new_id: seed.ids.next_id().expect("id"),
+        properties: None,
+    };
+    // Authored immediately before body paragraph 3, which is body index 3 before the split
+    // and body index 4 after it.
+    let paste = Operation::InsertBlocks {
+        container: None,
+        index: 3,
+        blocks: vec![fresh_paragraph(&mut seed.ids, "pasted")],
+    };
+    let declared = Intent::before(paragraphs[3]);
+
+    let mut document = base.clone();
+    let inverse = apply_one(&mut document, &mut replica_ids(), &split).expect("split applies");
+    let change = Change::new(&split, &inverse);
+
+    assert!(
+        matches!(
+            transform(&paste, change, Side::Later),
+            Err(TransformError::Unsupported { .. })
+        ),
+        "undeclared and unplaced, the pair still has no answer"
+    );
+
+    let rebased = transform_declared(&paste, declared, change, Side::Later, &NoPlacement)
+        .expect("a declared anchor answers it with no placement");
+    // The slot comes back UNTOUCHED: an identity does not move, so there is nothing to
+    // rebase. The index is re-derived by `resolve_anchor` against the state it will be
+    // applied to, which is what the next assertion does.
+    let Rebase::Keep(mut kept) = rebased else {
+        panic!("expected the operation to be kept, got {rebased:?}");
+    };
+    assert_eq!(
+        kept, paste,
+        "an anchored slot is not rebased arithmetically"
+    );
+
+    let target = BlockIndex::of(&document);
+    crate::resolve_anchor(&mut kept, BlockAnchor::Before(paragraphs[3]), &target)
+        .expect("the anchor is still there");
+    let Operation::InsertBlocks { index, .. } = kept else {
+        panic!("expected the paste");
+    };
+    assert_eq!(
+        index, 4,
+        "the split added a block before the anchor, so the resolved slot moved from 3 to 4"
+    );
+}
+
+#[test]
+fn a_destroyed_anchor_is_a_loss_and_never_a_fallback_to_the_stale_index() {
+    // The case the anchor cannot answer, asserted so the mechanism's edge is documented by a
+    // test rather than by prose. A join destroys `second`; an operation authored immediately
+    // before `second` has lost the neighbour it named.
+    let mut seed = seed();
+    let paragraphs = seed.paragraphs.clone();
+    let mut document = seed.document.clone();
+    let join = Operation::JoinParagraphs {
+        first: paragraphs[0],
+        second: paragraphs[1],
+        properties: None,
+    };
+    apply_one(&mut document, &mut replica_ids(), &join).expect("join applies");
+
+    let mut paste = Operation::InsertBlocks {
+        container: None,
+        index: 1,
+        blocks: vec![fresh_paragraph(&mut seed.ids, "pasted")],
+    };
+    let target = BlockIndex::of(&document);
+    assert_eq!(
+        crate::resolve_anchor(&mut paste, BlockAnchor::Before(paragraphs[1]), &target),
+        Err(crate::AnchorError::AnchorDestroyed {
+            anchor: paragraphs[1]
+        }),
+        "a destroyed anchor is reported, not silently resolved to something near it"
+    );
+}
+
+#[test]
+fn a_declared_affinity_answers_the_insertion_a_concurrent_join_absorbed() {
+    // Refusal U5, and all three of its answers in one place: undeclared is refused as it
+    // always was, the preceding side is ANSWERED, and the following side is refused with a
+    // reason that says the engine understood and cannot comply.
+    let seed = seed();
+    let paragraphs = seed.paragraphs.clone();
+    let mut document = seed.document.clone();
+    let join = Operation::JoinParagraphs {
+        first: paragraphs[0],
+        second: paragraphs[1],
+        properties: None,
+    };
+    let inverse = apply_one(&mut document, &mut replica_ids(), &join).expect("join applies");
+    let change = Change::new(&join, &inverse);
+    let typing = Operation::InsertText {
+        at: Pos::new(paragraphs[1], 0),
+        text: "X".to_owned(),
+    };
+
+    let undeclared = transform(&typing, change, Side::Later);
+    assert!(
+        matches!(
+            undeclared,
+            Err(TransformError::Unsupported { reason, .. })
+                if reason.contains("declared no affinity")
+        ),
+        "undeclared, the side is unknowable: {undeclared:?}"
+    );
+
+    let preceding = transform_declared(
+        &typing,
+        Intent::NONE.with_affinity(Affinity::Before),
+        change,
+        Side::Later,
+        &NoPlacement,
+    )
+    .expect("the preceding side is what `insert_text` already does");
+    let Rebase::Keep(Operation::InsertText { at, .. }) = preceding else {
+        panic!("expected a moved insertion, got {preceding:?}");
+    };
+    assert_eq!(
+        (at.node, at.offset),
+        (paragraphs[0], 8),
+        "the position follows `second`'s text into `first`"
+    );
+
+    let following = transform_declared(
+        &typing,
+        Intent::NONE.with_affinity(Affinity::After),
+        change,
+        Side::Later,
+        &NoPlacement,
+    );
+    assert!(
+        matches!(
+            following,
+            Err(TransformError::Unsupported { reason, .. })
+                if reason.contains("no operation attaches text to the run after a boundary")
+        ),
+        "the following side is understood and still inexpressible: {following:?}"
     );
 }

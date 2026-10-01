@@ -654,8 +654,8 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-<!-- session-suite-count: 37 -->
-**37 tests** over the state machines, driving **two replicas and a relay in one process**. The
+<!-- session-suite-count: 38 -->
+**38 tests** over the state machines, driving **two replicas and a relay in one process**. The
 number is **derived, not maintained**: `the_session_suite_count_in_the_design_doc_is_derived`
 counts the suite and fails if this line disagrees, because a hand-kept count in a published
 document has twice drifted into a false public claim here (`104` read 114/47 against an actual
