@@ -625,6 +625,129 @@ fn a_redefined_style_is_keyed_by_name_and_names_the_changed_property() {
     );
 }
 
+/// A chart that changed is **located and reported as not characterised**.
+///
+/// `charts` is in `OPAQUE_CONSTRUCTS`, so the contract is two things at once: a
+/// change record naming the construct, *and* a `NotCompared` finding saying the
+/// engine could not say what inside it changed. Asserting only the change record
+/// would pass while the honesty half silently disappeared — which is the whole
+/// reason that finding exists.
+///
+/// Also the other half: two documents whose charts are identical must produce
+/// neither, or the finding fires on every healthy comparison and gets filtered out.
+#[test]
+fn a_changed_chart_is_located_and_reported_as_not_characterised() {
+    use casual_doc_model::v1::{
+        BarDirection, BarGrouping, Chart, ChartCoverage, ChartGroup, ChartGroupKind, ChartId,
+        ChartValue, DataRange, DisplayBlanks, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
+        PlotArea, Series,
+    };
+
+    /// A one-paragraph document holding one embedded chart object and a
+    /// projection of it whose single cached value is `value`.
+    fn document_with_chart(value: &str) -> Document {
+        let mut document = base_document();
+        let object_id = NodeId::new(900_001).expect("non-zero");
+        let BlockNode::Paragraph(first) = &mut document.body_mut()[0] else {
+            panic!("the base fixture starts with a paragraph");
+        };
+        first
+            .inlines
+            .push(InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                id: object_id,
+                kind: EmbeddedKind::Chart,
+                part: EmbeddedPart {
+                    relationship_id: "rId5".to_owned(),
+                    relationship_type:
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                            .to_owned(),
+                    part_name: "word/charts/chart1.xml".to_owned(),
+                },
+                extra_parts: Vec::new(),
+                preview: None,
+                extent: Extent {
+                    width_emu: 5_486_400,
+                    height_emu: 3_200_400,
+                },
+                prog_id: None,
+            })));
+        document.definitions_mut().charts.insert(
+            ChartId::new(NodeId::new(900_002).expect("non-zero")),
+            Chart {
+                object: object_id,
+                coverage: ChartCoverage::Complete,
+                title: None,
+                auto_title_deleted: false,
+                plot_area: PlotArea {
+                    groups: vec![ChartGroup {
+                        kind: ChartGroupKind::Bar {
+                            direction: BarDirection::Column,
+                            grouping: BarGrouping::Clustered,
+                            gap_width: 150,
+                            overlap: 0,
+                        },
+                        series: vec![Series {
+                            values: DataRange {
+                                formula: Some("Sheet1!$B$2".to_owned()),
+                                point_count: 1,
+                                points: vec![(0, ChartValue::Number(value.to_owned()))],
+                                number_format: None,
+                            },
+                            ..Series::default()
+                        }],
+                        axis_ids: vec![1, 2],
+                        vary_colors: false,
+                    }],
+                    axes: Vec::new(),
+                },
+                legend: None,
+                plot_visible_only: true,
+                display_blanks_as: DisplayBlanks::Gap,
+                vary_colors: false,
+                external_data: None,
+            },
+        );
+        document
+            .validate()
+            .expect("the fixture is a valid document");
+        document
+    }
+
+    let left = document_with_chart("4.30");
+    let right = document_with_chart("9.90");
+    let changed = diff(&left, &right);
+    assert!(
+        of(&changed, DiffFamily::Definition, DiffKind::Property)
+            .iter()
+            .any(|change| change.fields.first().map(String::as_str) == Some("charts")),
+        "a changed chart must be located; got {:?}",
+        changed
+            .changes
+            .iter()
+            .map(|change| change.fields.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        has_finding(&changed, FindingCode::NotCompared, "charts"),
+        "and the engine must say it could not characterise the change; findings: {:?}",
+        changed.findings
+    );
+
+    // The other half: identical charts raise nothing at all.
+    let unchanged = diff(&document_with_chart("4.30"), &document_with_chart("4.30"));
+    assert!(
+        !unchanged
+            .changes
+            .iter()
+            .any(|change| change.fields.first().map(String::as_str) == Some("charts")),
+        "two identical charts must not be reported as a change"
+    );
+    assert!(
+        !has_finding(&unchanged, FindingCode::NotCompared, "charts"),
+        "nor raise the honesty finding on a healthy comparison"
+    );
+}
+
 /// Adding a field to `Definitions` must not silently add an uncompared
 /// construct. The field list is read from the model's own source, so a new field
 /// fails this until [`crate::compare`] says what happens to it.

@@ -60,6 +60,7 @@ pub const STORY_FIELDS: &[&str] = &["headers", "footers", "footnotes", "endnotes
 /// `Definitions` fields compared by [`compare_definitions`].
 pub const DEFINITION_FIELDS: &[&str] = &[
     "styles",
+    "charts",
     "abstractNumbering",
     "numbering",
     "sections",
@@ -86,6 +87,13 @@ pub const OPAQUE_CONSTRUCTS: &[&str] = &[
     "abstractNumbering",
     "numbering",
     "fieldRanges",
+    // A chart projection, for both of the reasons this list exists at once. It is
+    // keyed by a `ChartId` the parse minted, so two files' projections cannot be
+    // paired — the same reason `numbering` and `fieldRanges` are here. And it is a
+    // *read projection of a retained part* (`docs/155` §6.1): the authority for a
+    // chart's content is `word/charts/chartN.xml`, whose bytes this engine does not
+    // hold, so even a paired projection could not characterise the whole change.
+    "charts",
 ];
 
 /// Media part digests, keyed by package part name.
@@ -414,6 +422,18 @@ pub fn compare_definitions(
         "fieldRanges",
         &left_definitions.field_ranges,
         &right_definitions.field_ranges,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // Charts: located, not characterised, per `OPAQUE_CONSTRUCTS` above. The
+    // serialization this does is O(chart data), which is bounded by the model's own
+    // per-chart ceilings and does not scale with body length, and it only happens
+    // when the two sides actually differ.
+    compare_field(
+        "charts",
+        &left_definitions.charts,
+        &right_definitions.charts,
         DiffFamily::Definition,
         &mut changes,
         findings,
