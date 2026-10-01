@@ -1992,6 +1992,11 @@ fn resolve_in_line(line: &mut Line, page_label: &str, total: &str, shaper: &dyn 
         line.runs[idx].origin.x = pen;
         pen = pen + advance_of(&line.runs[idx]);
     }
+    // This reflow packs every run from the first field CONTIGUOUSLY, which removes
+    // the gaps any tab at or after that point had opened. Drop those recorded
+    // extents rather than leave them pointing at space that is no longer there: a
+    // painted tab arrow must never claim a tab the line no longer shows.
+    line.tab_extents.retain(|extent| extent.start < start_x);
 }
 
 /// The total advance of a glyph run (sum of its glyphs' advances).
@@ -2177,6 +2182,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -2236,6 +2242,7 @@ mod tests {
                     notes: Vec::new(),
                     text_boxes: Vec::new(),
                     rules: Vec::new(),
+                    tab_extents: Vec::new(),
                 }
             })
             .collect();
@@ -2281,6 +2288,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         let mut second = blank_line(Twip(200));
         second.runs.push(GlyphRun {

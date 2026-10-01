@@ -20,7 +20,12 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use casual_doc_layout::block::BlockFragment;
+// Separate `use` lines (anti-conflict): the paint-only formatting-marks overlay.
+use casual_doc_layout::compose::ComposeOptions;
+use casual_doc_layout::compose::compose_page;
+use casual_doc_layout::compose::compose_page_with;
 use casual_doc_layout::document_layout::paginate_document;
+use casual_doc_layout::formatting_marks::FormattingMarks;
 // Separate `use` lines (anti-conflict): the measure tier of `docs/113`.
 use casual_doc_layout::document_layout::document_page_config;
 use casual_doc_layout::flow::build_galley_for_blocks;
@@ -36,7 +41,8 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, BlockNode, Definitions, Document, Indentation,
     InlineNode, LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
     NumberingRef, PageMargins, PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties,
-    Run, RunProperties, SectionBoundary, SectionColumns, SectionId, Spacing, TabAlignment, TabStop,
+    Run, RunProperties, SectionBoundary, SectionColumns, SectionId, Spacing, Tab, TabAlignment,
+    TabStop,
 };
 
 fn node(id: u64) -> NodeId {
@@ -217,7 +223,35 @@ fn fixtures() -> Vec<(&'static str, Document)> {
         section(9, None),
     );
 
+    // 9. An explicit tab stop: a label, a `w:tab`, and a value that lands on the
+    //    stop. The corpus had NO `w:tab` fixture at all, so a change to a tab's
+    //    resolved advance moved no line in this golden — which was found by
+    //    mutating a tab's advance and watching the golden stay green. Tabs are
+    //    now load-bearing geometry (`crate::formatting_marks` draws an arrow
+    //    inside the advance), so the advance is locked here.
+    let tabbed = document(
+        vec![BlockNode::Paragraph(Paragraph {
+            id: node(700),
+            properties: ParagraphProperties {
+                tabs: vec![TabStop {
+                    position_twips: 2_880,
+                    alignment: TabAlignment::Start,
+                    leader: None,
+                }],
+                ..ParagraphProperties::default()
+            }
+            .into(),
+            inlines: vec![
+                run(701, "Label"),
+                InlineNode::Tab(Tab { id: node(702) }),
+                run(703, "Value"),
+            ],
+        })],
+        section(9, None),
+    );
+
     vec![
+        ("tabbed-row", tabbed),
         ("contextual-spacing", contextual),
         ("spaced-no-contextual", spaced),
         ("valign-bottom", valign_bottom),
@@ -441,6 +475,28 @@ fn dump_layout(name: &str, layout: &PaginatedLayout, out: &mut String) {
                 )
                 .unwrap();
             }
+            // Every resolved tab's advance, in absolute page-local x. Emitted only
+            // for a line that HAS a tab, so no existing fixture's dump changes.
+            // Without it the golden could not see a tab's advance move at all:
+            // a tab changes where text inside the paragraph sits, not the
+            // paragraph's own rectangle.
+            if let BlockFragment::Paragraph {
+                lines, box_metrics, ..
+            } = &placed.fragment
+            {
+                let origin_x = placed.rect.origin.x + box_metrics.indent_start;
+                for line in &lines.lines {
+                    for extent in &line.tab_extents {
+                        writeln!(
+                            out,
+                            "      tab=({}..{})",
+                            pt(origin_x + extent.start),
+                            pt(origin_x + extent.end),
+                        )
+                        .unwrap();
+                    }
+                }
+            }
         }
     }
 }
@@ -513,6 +569,77 @@ fn geometry_of_fixtures_matches_the_golden_snapshot() {
         actual, expected,
         "geometry drifted from the golden (docs/94 H1). If intended, re-bless with \
          REBLESS_GEOMETRY=1 and review the diff."
+    );
+}
+
+/// Non-printing characters are paint, so they cannot move the golden — asserted
+/// against the committed golden itself, over the whole fixture corpus.
+///
+/// `shell.formatting-marks` adds a paint-only overlay
+/// ([`casual_doc_layout::formatting_marks`]). The binding claim is that the
+/// marks-on geometry is the marks-off geometry, and this is where that is held:
+/// every fixture is paginated once, every page is composed **with every mark on**,
+/// and the geometry is then dumped through the same `dump_layout` the golden was
+/// blessed from and compared to the golden's own bytes. If a mark ever reserved
+/// space, shifted a baseline, or re-paginated anything, this fails with the same
+/// readable diff a layout regression produces.
+///
+/// It also holds the two structural facts the claim rests on: composing a page
+/// does not MUTATE the layout (the serialized layout is identical before and
+/// after), and a marks-on display list is the marks-off list plus a suffix (the
+/// content items are a byte-identical prefix).
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "shaped line metrics differ on Windows; golden is blessed on Linux/macOS"
+)]
+#[test]
+fn formatting_marks_do_not_move_the_geometry_golden() {
+    let shaper = ParleyShaper::new();
+    let options = ComposeOptions {
+        marks: FormattingMarks::ALL,
+    };
+    let mut actual = String::new();
+    for (name, doc) in fixtures() {
+        let layout = paginate_document(&doc, &shaper);
+        let before = serde_json::to_string(&layout).expect("a layout serializes");
+        for (index, page) in layout.pages.iter().enumerate() {
+            let plain = compose_page(page);
+            let marked = compose_page_with(page, &options);
+            assert!(
+                marked.items.len() >= plain.items.len(),
+                "{name} page {}: marks must only ADD items ({} < {})",
+                index + 1,
+                marked.items.len(),
+                plain.items.len()
+            );
+            for (position, (content, same)) in plain.items.iter().zip(&marked.items).enumerate() {
+                assert_eq!(
+                    serde_json::to_string(content).expect("a paint item serializes"),
+                    serde_json::to_string(same).expect("a paint item serializes"),
+                    "{name} page {}: content item {position} changed when marks were \
+                     turned on — the marks are not a suffix",
+                    index + 1
+                );
+            }
+        }
+        let after = serde_json::to_string(&layout).expect("a layout serializes");
+        assert_eq!(
+            before, after,
+            "{name}: composing a page with marks on mutated the paginated layout"
+        );
+        dump_layout(name, &layout, &mut actual);
+    }
+
+    // Normalised: a Windows checkout presents the committed golden as CRLF while
+    // the generator writes LF, and a guard must not fail on a line ending.
+    let expected = std::fs::read_to_string(golden_path())
+        .unwrap_or_else(|_| panic!("missing geometry golden {}", golden_path().display()))
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual.replace("\r\n", "\n"),
+        expected,
+        "the geometry golden MOVED with formatting marks on. Marks are paint-only; \
+         if this fails the design is wrong — do not re-bless the golden."
     );
 }
 

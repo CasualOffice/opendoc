@@ -523,6 +523,48 @@ pub struct Line {
     /// when non-empty so a plain galley stays byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<InlineRule>,
+    /// The horizontal span each tab on this line advanced across
+    /// ([`TabExtent`]). Empty for the overwhelming majority of lines; serialized
+    /// only when non-empty so a tab-free galley stays byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tab_extents: Vec<TabExtent>,
+}
+
+/// The horizontal span one resolved tab advanced across, in the same
+/// paragraph-content-relative twips as a [`GlyphRun::origin`] on the same line.
+///
+/// A tab is not a glyph in this engine: tab-bearing text is split into segments
+/// at each `w:tab` and each following segment is positioned at its resolved stop
+/// ([`crate::tabs`]), so the tab's advance is the *space between two segments* and
+/// nothing recorded it. This records it, for the same reason
+/// [`Line::bars`] records a bar stop's rule position: the tab
+/// resolver is the only code that knows the answer, and a later consumer cannot
+/// recover it without re-deriving the layout.
+///
+/// It is **geometry, not a mark**. It is populated on every layout pass whether or
+/// not formatting marks are being painted, it is the same value either way, and
+/// nothing measures from it — so recording it cannot move a line. The consumer
+/// today is [`crate::formatting_marks`], which draws the tab arrow inside the
+/// span; a tab-stop ruler and a click-in-a-tab hit test are the obvious next ones.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TabExtent {
+    /// The left edge — where the preceding content ended.
+    pub start: Twip,
+    /// The right edge — where the following segment begins. Equal to
+    /// [`start`](Self::start) for a tab that resolved to no advance at all
+    /// (a stop already passed), which paints nothing.
+    pub end: Twip,
+}
+
+impl TabExtent {
+    /// The advance this tab covers. Never negative: the resolver clamps a stop
+    /// that would move the pen backwards.
+    ///
+    /// O(1).
+    #[must_use]
+    pub fn width(self) -> Twip {
+        Twip((self.end.raw() - self.start.raw()).max(0))
+    }
 }
 
 impl Line {
@@ -756,6 +798,7 @@ pub trait LineShaper {
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
+                tab_extents: Vec::new(),
             });
             y = y + image.size.height;
         }
@@ -825,6 +868,7 @@ pub trait LineShaper {
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules,
+                tab_extents: Vec::new(),
             });
             y = y + math.size.height;
         }
@@ -860,6 +904,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         let layout = LineLayout {
             lines: vec![line(240), line(240), line(200)],

@@ -19,6 +19,8 @@ use crate::display::ShapeTransform;
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::LayerBlend;
+// Own line (anti-conflict): the paint-only non-printing-character overlay.
+use crate::formatting_marks::{FormattingMarks, MarkLayer};
 use crate::page::PlacedWatermarkContent;
 use crate::text::{InlineImage, LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
@@ -40,18 +42,64 @@ const FOOTNOTE_SEPARATOR_WIDTH: Twip = Twip(10);
 pub(crate) const FOOTNOTE_SEPARATOR_LENGTH: Twip = Twip(2_880);
 
 /// Stroke width (device px) of an inline text box's border (a hairline).
+/// What composition may paint on top of a page's content.
+///
+/// Every field is a **paint-only** decoration: it is read when the display list
+/// is built and is not an input to shaping, flow or pagination, so changing one
+/// repaints a page and cannot repaginate the document. `Default` paints nothing
+/// extra, which is why [`compose_page`] and `compose_page_with(page,
+/// &ComposeOptions::default())` produce byte-identical lists.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ComposeOptions {
+    /// The non-printing characters to paint ([`crate::formatting_marks`]).
+    pub marks: FormattingMarks,
+}
+
 /// Builds a display list for one paragraph's shaped lines, placed with the
 /// paragraph's top-left at `origin` (in twips). The shaper positions each glyph
 /// run relative to the paragraph's own origin (run `origin` = the run's left edge
 /// on its baseline); composition translates those into page coordinates.
+///
+/// Paints no formatting marks: a mark belongs to a page's one overlay, and a
+/// paragraph composed on its own has no page to append it to. Use
+/// [`compose_page_with`] for marks.
 #[must_use]
 pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
     let mut list = DisplayList::new();
+    compose_paragraph_into(
+        &mut list,
+        layout,
+        origin,
+        Twip::ZERO,
+        &mut MarkLayer::new(FormattingMarks::default()),
+    );
+    list
+}
+
+/// [`compose_paragraph`], writing into an existing list and collecting the
+/// paragraph's formatting marks into `marks`.
+///
+/// `measure` is the paragraph's content width — what a page-break rule spans.
+///
+/// Complexity: O(glyphs + inline children) on this paragraph's lines.
+fn compose_paragraph_into(
+    list: &mut DisplayList,
+    layout: &LineLayout,
+    origin: Point,
+    measure: Twip,
+    marks: &mut MarkLayer,
+) {
     // Tracks the top of the current line (twips from the paragraph content top) so
     // `bar` tab stops can be drawn as vertical rules spanning the line's box.
     let mut line_top = Twip::ZERO;
     for line in &layout.lines {
         let current_top = line_top;
+        // The line's non-printing characters are COLLECTED here, next to the
+        // geometry they are derived from, and APPENDED to the page's list once
+        // every content item is in it (`crate::formatting_marks`). Collecting
+        // rather than pushing is what keeps the content items a byte-identical
+        // prefix of the marks-on list.
+        marks.line(line, origin, current_top, measure);
         if line.clip {
             // Exact line spacing clips only the block axis. Use a deliberately
             // huge horizontal span so hanging indents and positioned tabs remain
@@ -115,11 +163,11 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             if run.decoration.border.is_some() || run.decoration.emphasis.is_some() {
                 let advance = run.glyphs.iter().fold(Twip::ZERO, |acc, g| acc + g.advance);
                 if let Some(edge) = run.decoration.border {
-                    compose_run_border(&mut list, run_box(advance), edge);
+                    compose_run_border(list, run_box(advance), edge);
                 }
                 if let Some(mark) = run.decoration.emphasis {
                     compose_emphasis_marks(
-                        &mut list,
+                        list,
                         run,
                         Point::new(placed_x, baseline_y),
                         line.ascent,
@@ -180,7 +228,12 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             );
             let clip = text_box_clip(box_rect, text_box.content_layout);
             list.push(PaintItem::PushClip(clip));
-            compose_blocks(&mut list, &text_box.blocks, content_origin);
+            // The inner measure is the box inset by its internal margin on both
+            // sides — the same width the box's content was flowed to.
+            let inner = Twip(
+                (text_box.size.width.raw() - 2 * text_box.content_layout.origin.x.raw()).max(0),
+            );
+            compose_blocks(list, &text_box.blocks, content_origin, inner, marks);
             list.push(PaintItem::PopClip);
         }
         // Inline horizontal rules (`w:pict` / `v:rect@o:hr`): a filled rectangle
@@ -199,7 +252,6 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             list.push(PaintItem::PopClip);
         }
     }
-    list
 }
 
 /// A shape/line stroke's device-pixel width: the twip width at 96 DPI, floored at
@@ -261,7 +313,25 @@ fn shape_outline(stroke: &AnchorStroke) -> ShapeOutline {
 /// exactly like body fragments.
 #[must_use]
 pub fn compose_page(page: &Page) -> DisplayList {
+    compose_page_with(page, &ComposeOptions::default())
+}
+
+/// [`compose_page`] plus the paint-only decorations in `options` — today, the
+/// non-printing characters.
+///
+/// **This is the only entry point a formatting-marks toggle needs.** The marks
+/// are appended after every content item, so the list this returns with
+/// `options.marks.is_empty()` is byte-identical to [`compose_page`]'s, and with
+/// marks on it is that same list followed by the mark items. Nothing about the
+/// page changes: `options` reaches no function that measures, so a toggle is a
+/// repaint and never a repagination.
+///
+/// Complexity: O(page content), the same as [`compose_page`]; the marks add
+/// O(visible glyphs) when space dots are on and O(visible lines) otherwise.
+#[must_use]
+pub fn compose_page_with(page: &Page, options: &ComposeOptions) -> DisplayList {
     let mut list = DisplayList::new();
+    let mut marks = MarkLayer::new(options.marks);
     // The float layer is a single stable z-order: `behindDoc` floats paint below
     // the text layer, the rest above, each band ordered by (relativeHeight,
     // document order) so group children paint in child order and a shape can sit
@@ -269,7 +339,7 @@ pub fn compose_page(page: &Page) -> DisplayList {
     let mut floats: Vec<&PlacedAnchor> = page.anchored.iter().collect();
     floats.sort_by_key(|anchor| anchor.z);
     for anchor in floats.iter().filter(|anchor| anchor.behind_doc) {
-        compose_anchor(&mut list, anchor);
+        compose_anchor(&mut list, anchor, &mut marks);
     }
     // Column separator rules (`w:cols/@w:sep`): a thin vertical hairline centered in
     // each inter-column gap, painted under the text layer (the gap carries no
@@ -285,10 +355,22 @@ pub fn compose_page(page: &Page) -> DisplayList {
         });
     }
     for placed in &page.header {
-        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+        compose_fragment(
+            &mut list,
+            &placed.fragment,
+            placed.rect.origin,
+            placed.rect.size.width,
+            &mut marks,
+        );
     }
     for placed in &page.placed {
-        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+        compose_fragment(
+            &mut list,
+            &placed.fragment,
+            placed.rect.origin,
+            placed.rect.size.width,
+            &mut marks,
+        );
     }
     // The footnote separator rule: Word draws a short hairline between the body
     // and the footnote band (a full-band-width rule when the band continues a note
@@ -296,10 +378,22 @@ pub fn compose_page(page: &Page) -> DisplayList {
     // furniture — it never enters the caret/selection model.
     compose_footnote_separators(&mut list, page);
     for placed in &page.footnotes {
-        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+        compose_fragment(
+            &mut list,
+            &placed.fragment,
+            placed.rect.origin,
+            placed.rect.size.width,
+            &mut marks,
+        );
     }
     for placed in &page.footer {
-        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+        compose_fragment(
+            &mut list,
+            &placed.fragment,
+            placed.rect.origin,
+            placed.rect.size.width,
+            &mut marks,
+        );
     }
     // Margin line numbers (`w:lnNumType`): page furniture in the margin, already
     // positioned in page-local twips by the post-pagination pass. Painted after
@@ -316,7 +410,7 @@ pub fn compose_page(page: &Page) -> DisplayList {
         compose_page_borders(&mut list, borders);
     }
     for anchor in floats.iter().filter(|anchor| !anchor.behind_doc) {
-        compose_anchor(&mut list, anchor);
+        compose_anchor(&mut list, anchor, &mut marks);
     }
     // The watermark is painted LAST, over the finished page, and MULTIPLIED.
     //
@@ -339,6 +433,11 @@ pub fn compose_page(page: &Page) -> DisplayList {
     // a word harder to read. That is the compositing model of ink on paper, which
     // is what a watermark is.
     compose_watermark(&mut list, page);
+    // The non-printing characters go LAST, as a suffix: the content items above
+    // are therefore a byte-identical prefix of this list whatever the mark set is,
+    // which is the whole proof that a mark cannot move anything
+    // (`crate::formatting_marks`).
+    list.items.extend(marks.into_items());
     list
 }
 
@@ -630,7 +729,7 @@ fn compose_emphasis_marks(
 /// stroked rectangle, a line/connector, or a text box (fill + border + its flowed
 /// content, offset into the box by the internal margin, exactly like an inline
 /// text box).
-fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
+fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut MarkLayer) {
     match &anchor.content {
         AnchorContent::Image {
             media,
@@ -716,7 +815,9 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             );
             let clip = text_box_clip(anchor.rect, *content_layout);
             list.push(PaintItem::PushClip(clip));
-            compose_blocks(list, blocks, content_origin);
+            let inner =
+                Twip((anchor.rect.size.width.raw() - 2 * content_layout.origin.x.raw()).max(0));
+            compose_blocks(list, blocks, content_origin, inner, marks);
             list.push(PaintItem::PopClip);
         }
         AnchorContent::Table { rows } => {
@@ -725,7 +826,13 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             // identical path an in-flow table takes — borders, shading, cell
             // content and all. No clip: a table is sized to its own rows, and
             // Word does not clip a positioned table to a box.
-            compose_blocks(list, rows, anchor.rect.origin);
+            compose_blocks(
+                list,
+                rows,
+                anchor.rect.origin,
+                anchor.rect.size.width,
+                marks,
+            );
         }
     }
 }
@@ -852,7 +959,19 @@ fn text_box_clip(rect: Rect, layout: TextBoxContentLayout) -> Rect {
 }
 
 /// Composes one block fragment at `origin` (top-left, twips) into `list`.
-fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Point) {
+///
+/// `measure` is the fragment's flowed width, carried because a page-break mark is
+/// a rule across the content column and the fragment is the only thing that knows
+/// how wide that is. `marks` collects the fragment's non-printing characters, so a
+/// cell's, a header's, a footnote's and a text box's marks all come from this one
+/// recursion rather than a second implementation (the uniform-flow rule).
+fn compose_fragment(
+    list: &mut DisplayList,
+    fragment: &BlockFragment,
+    origin: Point,
+    measure: Twip,
+    marks: &mut MarkLayer,
+) {
     match fragment {
         BlockFragment::Paragraph {
             lines,
@@ -879,8 +998,11 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
                 let box_rect = Rect::new(content_origin, Size::new(box_width, lines.height()));
                 compose_paragraph_decor(list, box_rect, decor);
             }
-            list.items
-                .extend(compose_paragraph(lines, content_origin).items);
+            let content_measure = Twip(
+                (measure.raw() - box_metrics.indent_start.raw() - box_metrics.indent_end.raw())
+                    .max(0),
+            );
+            compose_paragraph_into(list, lines, content_origin, content_measure, marks);
         }
         BlockFragment::TableRow { cells, clip, .. } => {
             let row_height = fragment.height();
@@ -925,12 +1047,15 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
                     cell_origin.y + cell.content_y_offset(cell_height),
                 );
                 // An `exact` row height clips content that overflows the cell.
+                let cell_measure = Twip(
+                    (cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw()).max(0),
+                );
                 if *clip {
                     list.push(PaintItem::PushClip(cell_rect));
-                    compose_blocks(list, &cell.blocks, content_origin);
+                    compose_blocks(list, &cell.blocks, content_origin, cell_measure, marks);
                     list.push(PaintItem::PopClip);
                 } else {
-                    compose_blocks(list, &cell.blocks, content_origin);
+                    compose_blocks(list, &cell.blocks, content_origin, cell_measure, marks);
                 }
             }
         }
@@ -1255,10 +1380,16 @@ fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &Paragraph
 
 /// Composes a vertical stack of block fragments (a table cell's content) starting
 /// at `origin`, advancing by each fragment's height.
-fn compose_blocks(list: &mut DisplayList, blocks: &[BlockFragment], origin: Point) {
+fn compose_blocks(
+    list: &mut DisplayList,
+    blocks: &[BlockFragment],
+    origin: Point,
+    measure: Twip,
+    marks: &mut MarkLayer,
+) {
     let mut y = origin.y;
     for block in blocks {
-        compose_fragment(list, block, Point::new(origin.x, y));
+        compose_fragment(list, block, Point::new(origin.x, y), measure, marks);
         y = y + block.height();
     }
 }
@@ -1272,6 +1403,28 @@ mod tests {
     use crate::units::Twip;
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::DashStyle;
+
+    /// The pre-marks `compose_fragment`, for the tests below that are about
+    /// content geometry and not about the overlay. Shadows the glob-imported
+    /// name deliberately so those tests read exactly as they did.
+    fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Point) {
+        super::compose_fragment(
+            list,
+            fragment,
+            origin,
+            Twip::ZERO,
+            &mut MarkLayer::new(FormattingMarks::default()),
+        );
+    }
+
+    /// The pre-marks `compose_anchor`; see [`compose_fragment`].
+    fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
+        super::compose_anchor(
+            list,
+            anchor,
+            &mut MarkLayer::new(FormattingMarks::default()),
+        );
+    }
 
     #[test]
     fn compose_places_glyph_runs_at_the_paragraph_origin() {
@@ -1683,6 +1836,7 @@ mod tests {
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
+                tab_extents: Vec::new(),
             }],
         }
     }
@@ -2477,6 +2631,7 @@ mod tests {
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
+                tab_extents: Vec::new(),
             }],
         };
         let origin = Point::new(Twip(200), Twip(300));

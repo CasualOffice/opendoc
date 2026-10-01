@@ -1791,6 +1791,7 @@ mod tests {
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
+                tab_extents: Vec::new(),
             });
             baseline += LINE_H;
         }
@@ -1848,6 +1849,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -2065,6 +2067,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         }
     }
 
@@ -3057,6 +3060,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: n,
@@ -3286,6 +3290,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
 
         // Offset 0 sits in the small run: 240 twips tall, not the line's 560.
@@ -3354,6 +3359,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         let fragment = BlockFragment::Paragraph {
             id,
@@ -3428,6 +3434,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         assert_eq!(caret_metrics(&line, 0), (Twip(200), Twip(40)));
     }
@@ -3585,6 +3592,7 @@ mod table_chrome_tests {
                     notes: Vec::new(),
                     text_boxes: Vec::new(),
                     rules: Vec::new(),
+                    tab_extents: Vec::new(),
                 }],
             },
             box_metrics: BoxMetrics::default(),
