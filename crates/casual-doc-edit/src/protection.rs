@@ -134,6 +134,11 @@ pub fn refuse_if_protected(
     }
     let level = protection.edit;
     for op in ops {
+        // The ordering trap. See `exempt_from_protection`, which is also what the facade's
+        // `forms` check calls, so the exemption is one rule in one place.
+        if exempt_from_protection(op) {
+            continue;
+        }
         match level {
             DocumentProtectionEdit::None | DocumentProtectionEdit::Forms => {}
             DocumentProtectionEdit::ReadOnly => return Err(ProtectionRefusal::ReadOnly),
@@ -150,6 +155,63 @@ pub fn refuse_if_protected(
         }
     }
     Ok(())
+}
+
+/// Whether `op` is exempt from **every** editing restriction, including `readOnly`.
+///
+/// Exactly one operation is: [`Operation::SetDocumentProtection`], the operation that
+/// installs or lifts the restriction itself.
+///
+/// # The ordering trap, and why this function is the whole of ADR-059's subtlety
+///
+/// A batch is judged on its **worst** operation. Without this exemption the operation that
+/// *lifts* a restriction is refused by the restriction it is lifting:
+/// `SetDocumentProtection { protection: None }` sent to a `readOnly` document comes back
+/// [`ProtectionRefusal::ReadOnly`], `readOnly` becomes a **one-way door**, and a document
+/// that arrived protected can never be unprotected in this editor. That is strictly worse
+/// than not enforcing protection at all — the user loses a document rather than gaining a
+/// policy — so it is the one case this module must get right. Word and ONLYOFFICE both offer
+/// Review ▸ Restrict Editing in both directions.
+///
+/// The exemption is unconditional and symmetric: it covers **imposing** a restriction as well
+/// as lifting one, because both are the same authority question and a document that forbids
+/// comments has no standing to forbid being made read-only.
+///
+/// # It is still judged against the protection in force *before* the batch
+///
+/// [`refuse_if_protected`] reads the level once, before the loop, so every *other* operation
+/// in the batch is judged against the restriction that was in force when the batch arrived.
+/// A batch may lift a restriction, and a batch may edit, but a batch may **not** lift a
+/// restriction and then edit under the lift: `[SetDocumentProtection(None), InsertText]` is
+/// refused on the `InsertText`. That is the conservative reading and it keeps ADR-052's "a
+/// batch is judged whole" true.
+///
+/// # Who may do this
+///
+/// The local reader, and nobody else is checked. `152` §10 Q4's host-signed participant grant
+/// would be the honest authority — *the document* says "do not edit me", and only a *grant*
+/// can say who may overrule it — and it does not exist. Until it does, anyone who can open
+/// the document can lift its restriction, which is exactly what Word does with an
+/// **unpassworded** restriction. Password material (`w:hash`, `w:salt`, `w:cryptSpinCount`)
+/// is deliberately not modelled and never verified: ADR-052 records that this is policy and
+/// not security, and checking a hash would advertise a boundary that does not exist, since
+/// the legacy hash is removable by editing one attribute in the XML.
+///
+/// # Why `matches!` and not an exhaustive match
+///
+/// This module's other two matches are exhaustive with no `_` arm, because their safe default
+/// is "refuse" and a wildcard would silently exempt a new operation. Here the positive list
+/// *is* the exemption list, so a 60th operation defaults to **governed** — the safe answer —
+/// and exhaustiveness would buy a 59-arm list and nothing else.
+///
+/// Called by [`refuse_if_protected`] and by the facade's `w:edit="forms"` check, which has
+/// the identical trap: a forms-protected document would otherwise be unliftable too, because
+/// a document-global operation is never "inside a form field".
+///
+/// O(1).
+#[must_use]
+pub fn exempt_from_protection(op: &Operation) -> bool {
+    matches!(op, Operation::SetDocumentProtection { .. })
 }
 
 /// Whether `document`'s protection is the enforced forms-only level.
@@ -220,6 +282,13 @@ fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
         | Operation::SetMediaReference { .. }
+        // Never reached from `refuse_if_protected`, which exempts this operation above
+        // before the level is consulted. `false` is nonetheless the right answer to put
+        // here: it is not a comment change, and if the exemption above were ever removed
+        // the exemption would have to be re-made DELIBERATELY at the choke point rather
+        // than inherited silently from this arm. The ordering-trap guard in the tests
+        // below is what notices if it goes.
+        | Operation::SetDocumentProtection { .. }
         | Operation::CreateBookmark { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
@@ -755,5 +824,143 @@ mod tests {
                 .all(|code| code.starts_with("document.protected-")),
             "the codes must share the family prefix a host routes on: {codes:?}"
         );
+    }
+
+    /// **ADR-059's ordering trap, and the guard the whole feature rests on.**
+    ///
+    /// A batch is judged on its WORST operation, so before `exempt_from_protection` existed
+    /// the operation that lifts a restriction was refused by the restriction it lifts: a
+    /// `readOnly` document could never be unprotected, which is strictly worse than not
+    /// enforcing protection at all.
+    ///
+    /// Driven red by judging the batch on its worst operation — deleting the
+    /// `exempt_from_protection` early-`continue` from `refuse_if_protected`, which is exactly
+    /// the trap. Recorded in the commit message.
+    ///
+    /// All four enforced levels, in both directions, because the trap is not specific to
+    /// `readOnly`: a comments-only document must not be able to forbid being unrestricted
+    /// either.
+    #[test]
+    fn the_operation_that_changes_protection_is_never_refused_by_the_protection_it_changes() {
+        for level in [
+            DocumentProtectionEdit::ReadOnly,
+            DocumentProtectionEdit::Comments,
+            DocumentProtectionEdit::TrackedChanges,
+            DocumentProtectionEdit::Forms,
+        ] {
+            let document = protected(level, true);
+            // The precondition is explicit: this document really does refuse an ordinary
+            // edit. Without it the guard could pass because nothing was protected at all —
+            // measuring the fixture instead of the guarantee. `Forms` is excluded because
+            // the engine deliberately leaves that level to the facade.
+            if level != DocumentProtectionEdit::Forms {
+                assert!(
+                    refuse_if_protected(&document, &[typing()]).is_err(),
+                    "the fixture at {level:?} does not actually restrict editing, so this \
+                     guard would pass for the wrong reason"
+                );
+            }
+
+            // Lifting it entirely — Word's "Stop Protection".
+            assert_eq!(
+                refuse_if_protected(&document, &[lift()]),
+                Ok(()),
+                "a {level:?} document refused the operation that LIFTS it: the restriction \
+                 is a one-way door and the feature is worse than absent"
+            );
+            // And tightening it, which is the same authority question.
+            assert_eq!(
+                refuse_if_protected(&document, &[impose(DocumentProtectionEdit::ReadOnly)]),
+                Ok(()),
+                "a {level:?} document refused the operation that CHANGES it"
+            );
+            // Inside a batch, which is where "judged on its worst operation" actually bites:
+            // the lift travels beside another protection change and neither is refused.
+            assert_eq!(
+                refuse_if_protected(
+                    &document,
+                    &[impose(DocumentProtectionEdit::Comments), lift()]
+                ),
+                Ok(()),
+                "a {level:?} document refused a BATCH of protection changes"
+            );
+        }
+    }
+
+    /// The other half of the same rule, and the reason the exemption is not a hole: the lift
+    /// is exempt, but every other operation in the batch is still judged against the
+    /// restriction that was in force when the batch ARRIVED. So a batch cannot lift a
+    /// restriction and then edit under the lift.
+    ///
+    /// Driven red by the plausible WRONG fix to the ordering trap: waving the whole batch
+    /// through when any operation in it is exempt
+    /// (`if ops.iter().any(exempt_from_protection) { return Ok(()); }`). That turns the
+    /// exemption into a hole — a lift becomes a passkey for everything travelling beside it —
+    /// and this is the guard that sees it. Recorded in the commit message.
+    #[test]
+    fn a_batch_may_not_lift_a_restriction_and_then_edit_under_the_lift() {
+        let document = protected(DocumentProtectionEdit::ReadOnly, true);
+        assert_eq!(
+            refuse_if_protected(&document, &[lift(), typing()]),
+            Err(ProtectionRefusal::ReadOnly),
+            "a batch smuggled a keystroke in behind its own unlock"
+        );
+        // Order is irrelevant — the batch is judged whole, not in sequence.
+        assert_eq!(
+            refuse_if_protected(&document, &[typing(), lift()]),
+            Err(ProtectionRefusal::ReadOnly),
+            "a batch smuggled a keystroke in ahead of its own unlock"
+        );
+    }
+
+    /// `exempt_from_protection` exempts exactly one operation and defaults a new one to
+    /// **governed**. The positive list is the exemption list, so this asserts the default
+    /// rather than enumerating 59 variants: a sample of ordinary operations, plus the one
+    /// exemption.
+    #[test]
+    fn only_the_protection_operation_itself_is_exempt() {
+        assert!(exempt_from_protection(&lift()));
+        assert!(exempt_from_protection(&impose(
+            DocumentProtectionEdit::ReadOnly
+        )));
+        for op in [typing(), deleting(), review(vec![run(11, "abcdefgh")])] {
+            assert!(
+                !exempt_from_protection(&op),
+                "an ordinary operation is exempt from every restriction: {op:?}"
+            );
+        }
+    }
+
+    /// Word's `w:enforcement="0"` state stays reachable: `None` means the element is absent,
+    /// and an unenforced restriction is `Some` with the flag clear. Collapsing the two would
+    /// lose a state Word round-trips.
+    #[test]
+    fn an_unenforced_restriction_is_a_different_value_from_no_restriction() {
+        let unenforced = protected(DocumentProtectionEdit::ReadOnly, false);
+        assert!(
+            unenforced
+                .definitions()
+                .settings
+                .document_protection
+                .is_some(),
+            "an unenforced restriction must still be present, so export writes it back"
+        );
+        assert_eq!(refuse_if_protected(&unenforced, &[typing()]), Ok(()));
+    }
+
+    /// `SetDocumentProtection { protection: None }` — Word's "Stop Protection".
+    fn lift() -> Operation {
+        Operation::SetDocumentProtection { protection: None }
+    }
+
+    /// `SetDocumentProtection` installing an enforced restriction at `edit`.
+    fn impose(edit: DocumentProtectionEdit) -> Operation {
+        Operation::SetDocumentProtection {
+            protection: Some(DocumentProtection {
+                edit,
+                enforcement: true,
+                formatting: false,
+            }),
+        }
     }
 }

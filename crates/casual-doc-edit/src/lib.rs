@@ -60,6 +60,9 @@ use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 // Section-break authoring (`docs/130` §4.3): the boundary `SpliceSectionBoundary`
 // carries, and the start type a new section takes.
 use casual_doc_model::v1::SectionBoundary;
+// The editing restriction `SetDocumentProtection` installs or lifts (ADR-059). Its own
+// `use` line, per the parallel-lane rule above.
+use casual_doc_model::v1::DocumentProtection;
 
 // Captions and cross-references: the OOXML field markup (`SEQ`, `REF`, `PAGEREF`,
 // `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005). Its own module
@@ -852,6 +855,50 @@ pub enum Operation {
         id: MediaId,
         /// The reference to install, or `None` to remove `id`.
         reference: Option<Box<MediaReference>>,
+    },
+    /// Install or remove the document's editing restriction
+    /// (`w:documentProtection`) — ADR-059.
+    ///
+    /// Document-global, not node-scoped, and its own inverse carrying the previous
+    /// value (`None` when there was none): the same `Some`/`None` shape as
+    /// [`Operation::SetStyleDefinition`], for the same reason — it inverts in both
+    /// directions, so undoing "restrict editing" lifts the restriction and undoing
+    /// "stop protection" puts the previous restriction back, byte for byte.
+    /// `DocumentProtection` is `Copy` and three fields wide, so unlike the
+    /// definition operations it needs no `Box`.
+    ///
+    /// **Why it exists.** ADR-052 made `readOnly`, `comments` and `trackedChanges`
+    /// *enforced* at this crate's protection check, and nothing could *set* them —
+    /// so a document that arrived protected was permanently restricted in this
+    /// editor while Word and ONLYOFFICE both offer Review ▸ Restrict Editing. The
+    /// capability was enforced and unreachable, which is the sharpest form of the
+    /// "modeled is not shipped" failure.
+    ///
+    /// **It is exempt from the restriction it changes**, including `readOnly` — see
+    /// [`protection::refuse_if_protected`] for the ordering rule and why the
+    /// alternative makes `readOnly` a one-way door. It is judged against the
+    /// protection in force *before* the batch, so one batch can lift a restriction
+    /// or impose one, but never lift a restriction and then edit under the lift.
+    ///
+    /// **Authority.** The local reader is the only authority there is: a
+    /// host-signed participant grant (`152` §10 Q4) does not exist yet, so anyone
+    /// who can open the document can lift its restriction. That is exactly what
+    /// Word does with an **unpassworded** restriction. Password material
+    /// (`w:hash`, `w:salt`, `w:cryptSpinCount`, …) is deliberately not modelled and
+    /// not verified — ADR-052 records why: this is policy, not security, and
+    /// verifying a hash would invite the claim that the restriction holds against
+    /// an adversary when the legacy hash is removable by editing one XML attribute.
+    ///
+    /// Never rejected: every `DocumentProtection` value is valid, the swap cannot
+    /// invalidate the document, and `None` is the absence of a restriction rather
+    /// than an error. O(1) — it touches one `Option` in `Definitions::settings` and
+    /// never walks the document.
+    SetDocumentProtection {
+        /// The restriction to install, or `None` to remove it entirely (Word's
+        /// "Stop Protection"). A restriction with `enforcement: false` is a real
+        /// state Word round-trips — remembered but not applied — so that is
+        /// `Some(..)` with the flag clear, not `None`.
+        protection: Option<DocumentProtection>,
     },
     /// Create a bookmark: register `name` under the fresh `bookmark` id in
     /// `Definitions::bookmarks` and insert its paired `BookmarkStart`/`BookmarkEnd`
@@ -2347,6 +2394,26 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             Ok(Operation::SetMediaReference {
                 id: *id,
                 reference: previous.map(Box::new),
+            })
+        }
+        // ADR-059. A swap, and deliberately not a validate-and-roll-back like the four
+        // definition tables above: every `DocumentProtection` value is in the model's domain
+        // (two bools and a five-valued enum) and the field is read by nothing that could be
+        // left dangling, so there is no invalid state to refuse. `None` is the absence of a
+        // restriction, not a failure.
+        //
+        // Whether this operation is ALLOWED is not decided here — `apply` applies, and
+        // `protection::refuse_if_protected` judges, at the facade's choke point before any
+        // operation in the batch lands. That split is why lifting a `readOnly` restriction
+        // works: see that function's ordering rule.
+        Operation::SetDocumentProtection { protection } => {
+            let slot = &mut doc.definitions_mut().settings.document_protection;
+            let previous = match protection {
+                Some(protection) => slot.replace(*protection),
+                None => slot.take(),
+            };
+            Ok(Operation::SetDocumentProtection {
+                protection: previous,
             })
         }
         Operation::CreateBookmark {

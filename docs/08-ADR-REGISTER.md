@@ -2599,10 +2599,13 @@ costed against a fallback that does not exist.
 
 ## ADR-059 — `SetDocumentProtection`: the one operation that would make protection reachable
 
-- **Status:** **Proposed, designed, not implemented.** It adds a variant to the closed operation
-  set, which ADR-030 I2 reserves to the owner — and, separately, it cannot be landed by the
-  collaboration lane at all, for a reason that is measured below rather than asserted.
-- **Date:** 2026-10-02.
+- **Status:** **Accepted and implemented**, 2026-10-02 — the operation, the ordering rule, and
+  the facade surface. The reachability half (Review ▸ Restrict Editing plus a command-palette
+  entry, `105` UX-004) is `webapp/`'s and is **still open**; see "the reachability half" below.
+  It was proposed rather than implemented because it adds a variant to the closed operation set,
+  which ADR-030 I2 reserves to the owner, and because the two wasm match sites measured below sat
+  in a file another lane held.
+- **Date:** 2026-10-02 (proposed and implemented the same day).
 - **Context:** ADR-052 made `w:documentProtection` **enforced** at the operation for `readOnly`,
   `comments` and `trackedChanges`. It is now the sharpest instance of this repository's most
   expensive recurring pattern, pointing the other way: the capability is *enforced* and
@@ -2659,8 +2662,62 @@ costed against a fallback that does not exist.
   surfaces, so landing the operation without Review ▸ Restrict Editing *and* a command-palette
   entry would leave the same defect one layer up. That half is `webapp/`'s and is named here so
   the operation is not mistaken for the feature.
-- **Owner decision needed:** whether to add the variant, and who may lift a restriction before
-  the host-signed grant exists.
+- **How it was implemented, and the two things that were decided rather than assumed.**
+
+  1. **The ordering trap is one predicate, not an inline rule.**
+     `casual_doc_edit::protection::exempt_from_protection` is public and is called from **both**
+     choke points — the engine's `refuse_if_protected` and, which this ADR did not anticipate,
+     the facade's `w:edit="forms"` loop. **The forms level had the identical trap and it was
+     already shipped**: a document-global operation is never "inside a form field", so
+     `op_is_inside_a_form_field` refused it, and the owner's forms-protected loan agreement
+     could never have been unprotected. One rule in one place rather than two copies, because
+     two implementations of one exemption diverge. The exemption is a `matches!` and not an
+     exhaustive match on purpose: the positive list *is* the exemption list, so a 60th operation
+     defaults to **governed**, which is the safe answer, where the module's other two matches
+     have the opposite default and therefore may not carry a `_` arm.
+  2. **It is still judged against the protection in force *before* the batch**, which falls out
+     of `refuse_if_protected` reading the level once above the loop. So a batch may lift a
+     restriction and a batch may edit, but a batch may not lift a restriction and then edit
+     under the lift: `[SetDocumentProtection(None), InsertText]` is refused on the `InsertText`,
+     in either order. That keeps "a batch is judged whole" (ADR-052) true, and it closes the
+     obvious **wrong** fix — waving a whole batch through because one operation in it is exempt,
+     which would make a lift a passkey for everything travelling beside it.
+  3. **Authority: the local reader, and nothing else is checked.** `152` §10 Q4's host-signed
+     participant grant does not exist, so there is no session access level to consult. Anyone
+     who can open the document can lift its restriction — which is exactly what Word does with
+     an **unpassworded** restriction, and it is said in the operation's doc comment, in
+     `exempt_from_protection`, and on the facade method rather than left to be inferred.
+     **No password material is modelled, requested, or verified**, and that is a decision and
+     not an omission: ADR-052 records that this is policy rather than security, and verifying
+     `w:hash`/`w:salt` would advertise a boundary that does not exist, since the legacy hash is
+     removable by editing one attribute in the XML. When the grant lands, the honest rule is
+     *the document says "do not edit me" and only a grant says who may overrule it*, and this
+     predicate is the single place that changes.
+  4. **The 13 match sites were exactly as measured** — 2 in `casual-doc-edit`, 9 in
+     `casual-doc-transaction`, 2 in `crates/casual-doc-wasm/src/lib.rs` — and the two wasm arms
+     are the ones named here. The transaction crate's answers: `Tier::DocumentScope`,
+     `Coordinates::None`, `Effect::Inert`, no node anchor and no registry key (so no tombstone
+     is possible), the fixed-size payload group, no introduced identity, and
+     `(Target::Settings, Aspects::DOCUMENT_PROTECTION)` — the same settings record as
+     `SetEvenAndOddHeaders` and a **different** aspect, so a concurrent even/odd-header change
+     and a concurrent restriction do not destroy each other while two concurrent restriction
+     changes do contend and the later wins.
+  5. **No model change was needed.** `DocumentProtection` is `Copy` and three fields wide, as
+     predicted, so the variant carries it unboxed.
+- **The facade surface the host calls:** `setDocumentProtection(edit, enforcement, formatting)`
+  where `edit` is `none` | `readOnly` | `comments` | `trackedChanges` | `forms`, or `null` for
+  Word's "Stop Protection"; `documentProtection()` reads it back as JSON. An unknown level is
+  refused with a sentence rather than defaulted, because defaulting would silently apply a
+  restriction the host did not ask for. `enforcement: false` stays distinguishable from "no
+  restriction at all", because Word writes that state and it must survive a save.
+- **Mutation proofs.** (1) The `exempt_from_protection` early-`continue` is dropped from
+  `refuse_if_protected` and the ordering-trap guard reddens with `left: Err(ReadOnly)` on the
+  operation that lifts the restriction — if that guard cannot fail, the trap is still there.
+  (2) The whole batch is waved through when any operation in it is exempt, and the
+  lift-then-edit guard reddens — the exemption is not a hole. (3) The exemption is dropped from
+  the facade's forms loop and the forms-protected fixture refuses its own unprotection.
+  (4) The same engine mutation, seen end to end through `setDocumentProtection`. (5) The inverse
+  drops the previous value and undoing "Stop Protection" no longer restores the restriction.
 
 ## ADR-055 — A second document class is additive: new crates, a second surface, and seams published in place
 

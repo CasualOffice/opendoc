@@ -103,6 +103,9 @@ use casual_doc_model::v1::{
     VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
+// The editing restriction `setDocumentProtection` installs or lifts (ADR-059). Its own `use`
+// line, in sorted position, per the parallel-lane import rule.
+use casual_doc_model::v1::{DocumentProtection, DocumentProtectionEdit};
 use casual_doc_model::v1::{
     DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
     FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap,
@@ -805,7 +808,12 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
-        Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
+        // A protection change is a document-wide policy edit and Word labels it that way
+        // (Review ▸ Restrict Editing), so it shares `SetCoreProperties`' label rather than
+        // getting a bespoke one (ADR-059).
+        Operation::SetCoreProperties { .. } | Operation::SetDocumentProtection { .. } => {
+            HistoryKind::DocumentProperties
+        }
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
@@ -3502,7 +3510,9 @@ impl WasmDocument {
         }
 
         let mut properties = TableProperties::default();
-        set_table_borders_preset(&mut properties.borders, "all", || border_edge(0, 0, 0, 4));
+        set_table_borders_preset(&mut properties.borders, "all", || {
+            border_edge("single", 0, 0, 0, 4)
+        });
         let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
         Ok(BlockNode::Table(Box::new(Table {
             id: table_id,
@@ -3863,6 +3873,104 @@ impl WasmDocument {
             HistoryKind::Edit,
         )
         .map_err(to_js)
+    }
+
+    /// The document's editing restriction (`w:documentProtection`), for the host's
+    /// Restrict Editing surface, as JSON.
+    ///
+    /// `{"edit":null}` when there is no restriction at all; otherwise `edit` is one
+    /// of `none`, `readOnly`, `comments`, `trackedChanges`, `forms` and the two
+    /// flags say whether it is being applied and whether style formatting is locked
+    /// too. `edit: "none"` with no enforcement is a real state Word round-trips — a
+    /// restriction the author set up and switched off — and it is deliberately
+    /// distinguishable from `null`, which is the element being absent.
+    ///
+    /// O(1).
+    #[wasm_bindgen(js_name = documentProtection)]
+    #[must_use]
+    pub fn document_protection(&self) -> String {
+        let Some(protection) = self.document.definitions().settings.document_protection else {
+            return "{\"edit\":null,\"enforcement\":false,\"formatting\":false}".to_owned();
+        };
+        format!(
+            "{{\"edit\":\"{}\",\"enforcement\":{},\"formatting\":{}}}",
+            protection_token(protection.edit),
+            protection.enforcement,
+            protection.formatting
+        )
+    }
+
+    /// Installs or lifts the document's editing restriction (Word's
+    /// Review ▸ Restrict Editing), as one undoable action — ADR-059.
+    ///
+    /// `edit` is `none`, `readOnly`, `comments`, `trackedChanges` or `forms`;
+    /// passing `null`/`undefined` removes `w:documentProtection` entirely, which is
+    /// Word's "Stop Protection". `enforcement` is Word's "Yes, Start Enforcing
+    /// Protection" and is ignored when `edit` is `null`.
+    ///
+    /// **This can always lift a restriction, including `readOnly`** — the operation
+    /// is exempt from the protection check for the reason
+    /// `casual_doc_edit::protection::refuse_if_protected` records: a batch is judged
+    /// on its worst operation, so without the exemption `readOnly` would be a
+    /// one-way door and the feature would be worse than not having it.
+    ///
+    /// **Who may do this: the local reader, and nobody else is checked.** There is
+    /// no participant grant yet (`152` §10 Q4), so any host that can open the
+    /// document can lift its restriction — which is exactly what Word does with an
+    /// **unpassworded** restriction. No password is modelled, asked for, or
+    /// verified: ADR-052 records that this is policy rather than security, and
+    /// verifying `w:hash`/`w:salt` would advertise a boundary that does not exist
+    /// (the legacy hash is removable by editing one XML attribute).
+    ///
+    /// # Errors
+    ///
+    /// A refusal when `edit` is not one of the five tokens. O(1).
+    #[wasm_bindgen(js_name = setDocumentProtection)]
+    pub fn set_document_protection(
+        &mut self,
+        edit: Option<String>,
+        enforcement: bool,
+        formatting: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.set_document_protection_inner(edit.as_deref(), enforcement, formatting)
+            .map_err(to_js)
+    }
+
+    /// [`Self::set_document_protection`] before the `JsValue` boundary.
+    ///
+    /// Split out for the same reason `toggle_form_checkbox_inner` is: a `JsValue` cannot be
+    /// constructed on a non-wasm target, so a test that drives the refusal path through the
+    /// bound method panics inside wasm-bindgen instead of reporting the refusal. A guard whose
+    /// red output says "cannot call wasm-bindgen imported functions" cannot tell anyone which
+    /// guarantee broke.
+    ///
+    /// # Errors
+    ///
+    /// A refusal when `edit` is not one of the five `w:edit` tokens, or when the choke point
+    /// refuses the operation. O(1).
+    fn set_document_protection_inner(
+        &mut self,
+        edit: Option<&str>,
+        enforcement: bool,
+        formatting: bool,
+    ) -> Result<EditResult, String> {
+        let protection = match edit {
+            None => None,
+            Some(token) => Some(DocumentProtection {
+                edit: protection_edit(token).ok_or_else(|| {
+                    casual_doc_edit::refusal::marked(
+                        "document.protection-unknown-level",
+                        &format!("\u{201c}{token}\u{201d} isn't an editing restriction."),
+                    )
+                })?,
+                enforcement,
+                formatting,
+            }),
+        };
+        self.apply_action_as(
+            vec![Operation::SetDocumentProtection { protection }],
+            HistoryKind::DocumentProperties,
+        )
     }
 
     /// Creates an empty header or footer for the section the given page belongs
@@ -6484,7 +6592,9 @@ impl WasmDocument {
         }
 
         let mut properties = TableProperties::default();
-        set_table_borders_preset(&mut properties.borders, "all", || border_edge(0, 0, 0, 4));
+        set_table_borders_preset(&mut properties.borders, "all", || {
+            border_edge("single", 0, 0, 0, 4)
+        });
         let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
         let table = Table {
             id: table_id,
@@ -8274,12 +8384,13 @@ impl WasmDocument {
 
     /// Applies a border `edges` preset to EVERY cell in the range
     /// `anchor_node`..`focus_node`, in one edit and one undo entry. The presets are
-    /// [`setCellBorder`](Self::set_cell_border)'s.
+    /// [`setCellBorder`](Self::set_cell_border)'s, and so is `style`.
     ///
     /// # Errors
-    /// When the range refuses (see [`tableCellRange`](Self::table_cell_range)).
+    /// When the range refuses (see [`tableCellRange`](Self::table_cell_range)), or when
+    /// `style` is not one of the six line styles.
     #[wasm_bindgen(js_name = setCellBorderRange)]
-    #[allow(clippy::too_many_arguments)] // flat JS signature (range + preset + rgb + size)
+    #[allow(clippy::too_many_arguments)] // flat JS signature (range + preset + rgb + size + style)
     pub fn set_cell_border_range(
         &mut self,
         anchor_node: &str,
@@ -8289,11 +8400,13 @@ impl WasmDocument {
         g: u8,
         b: u8,
         size_eighth_points: u32,
+        style: Option<String>,
     ) -> Result<EditResult, JsValue> {
+        let style = border_style_or_default(style.as_deref()).map_err(to_js)?;
         let edges = edges.to_string();
         self.apply_cell_props_range(anchor_node, focus_node, move |p| {
             set_table_borders_preset(&mut p.borders, &edges, || {
-                border_edge(r, g, b, size_eighth_points)
+                border_edge(style, r, g, b, size_eighth_points)
             });
         })
         .map_err(to_js)
@@ -8378,9 +8491,18 @@ impl WasmDocument {
 
     /// Applies a border `edges` preset to the cell containing `node`: `"none"`/`"box"`
     /// clear-or-set the four cell edges; `"top"`/`"bottom"`/`"left"`/`"right"` toggle
-    /// one edge. Set edges use a single line of `size_eighth_points` in the RGB.
+    /// one edge. Set edges use a line of `size_eighth_points` in the RGB, drawn in
+    /// `style`.
+    ///
+    /// `style` is one of `single`, `double`, `dotted`, `dashed`, `dotDash`, `dotDotDash` —
+    /// the six renderings `casual_doc_layout::flow` can actually draw apart (see
+    /// `border_style_token`). Omitting it means `single`, which is what this method did
+    /// before it took a style at all, so an existing host keeps working unchanged.
+    ///
+    /// # Errors
+    /// When the cell refuses, or when `style` is not one of the six.
     #[wasm_bindgen(js_name = setCellBorder)]
-    #[allow(clippy::too_many_arguments)] // flat JS signature (node + preset + rgb + size)
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node + preset + rgb + size + style)
     pub fn set_cell_border(
         &mut self,
         node: &str,
@@ -8389,11 +8511,13 @@ impl WasmDocument {
         g: u8,
         b: u8,
         size_eighth_points: u32,
+        style: Option<String>,
     ) -> Result<EditResult, JsValue> {
+        let style = border_style_or_default(style.as_deref()).map_err(to_js)?;
         let edges = edges.to_string();
         self.apply_cell_props(node, move |p| {
             set_table_borders_preset(&mut p.borders, &edges, || {
-                border_edge(r, g, b, size_eighth_points)
+                border_edge(style, r, g, b, size_eighth_points)
             });
         })
     }
@@ -8401,8 +8525,12 @@ impl WasmDocument {
     /// Applies a border `edges` preset to the whole table containing `node`:
     /// `"none"` clears all; `"box"` sets the four outer edges; `"all"` sets outer +
     /// inside gridlines; `"top"`/`"bottom"`/`"left"`/`"right"` toggle one outer edge.
+    /// `style` is [`setCellBorder`](Self::set_cell_border)'s.
+    ///
+    /// # Errors
+    /// When `node` is not in a table, or when `style` is not one of the six line styles.
     #[wasm_bindgen(js_name = setTableBorder)]
-    #[allow(clippy::too_many_arguments)] // flat JS signature (node + preset + rgb + size)
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node + preset + rgb + size + style)
     pub fn set_table_border(
         &mut self,
         node: &str,
@@ -8411,7 +8539,9 @@ impl WasmDocument {
         g: u8,
         b: u8,
         size_eighth_points: u32,
+        style: Option<String>,
     ) -> Result<EditResult, JsValue> {
+        let style = border_style_or_default(style.as_deref()).map_err(to_js)?;
         let nid = node_id(node)?;
         let (table, _cell) =
             locate_cell(&self.document, nid).ok_or_else(|| to_js("not in a table".into()))?;
@@ -8419,7 +8549,7 @@ impl WasmDocument {
             .map(|t| t.properties.clone())
             .ok_or_else(|| to_js("table not found".into()))?;
         set_table_borders_preset(&mut props.borders, edges, || {
-            border_edge(r, g, b, size_eighth_points)
+            border_edge(style, r, g, b, size_eighth_points)
         });
         self.apply_action(vec![Operation::SetTableProperties {
             table,
@@ -8453,6 +8583,34 @@ impl WasmDocument {
             .to_string(),
             None => String::new(),
         }
+    }
+
+    /// The canonical line style of the cell's first set border edge (top, then bottom, then
+    /// left, then right), or `""` when the cell has no border at all.
+    ///
+    /// Without this a style dropdown would be write-only: Word's Borders control shows the
+    /// style already in force, and a control that cannot reflect its own state is the
+    /// half-dead version of the dead control the working contract forbids. The token is
+    /// canonicalised through `border_style_token`, so a document carrying `dashSmallGap`
+    /// reflects as `dashed` and the host has one spelling per rendering to match against;
+    /// a style the renderer cannot draw apart reports `"single"`, which is what it paints.
+    ///
+    /// O(1) — it reads the cell's own properties and walks nothing.
+    #[wasm_bindgen(js_name = cellBorderStyle)]
+    #[must_use]
+    pub fn cell_border_style(&self, node: &str) -> String {
+        self.cell_props_of(node)
+            .and_then(|p| {
+                let bd = &p.borders;
+                bd.top
+                    .as_ref()
+                    .or(bd.bottom.as_ref())
+                    .or(bd.start.as_ref())
+                    .or(bd.end.as_ref())
+                    .map(|edge| border_style_token(&edge.style).unwrap_or("single"))
+            })
+            .unwrap_or_default()
+            .to_owned()
     }
 
     /// The cell's border edges as a bitmask (top=1, bottom=2, left=4, right=8) — for
@@ -13824,6 +13982,15 @@ impl WasmDocument {
             return Ok(());
         }
         for op in ops {
+            // The SAME ordering trap the engine's check has, and it bites here too: a
+            // document-global operation is never "inside a form field", so without this
+            // `w:edit="forms"` would be a one-way door and a forms-protected document could
+            // never be unprotected. One rule, one predicate, called from both choke points
+            // (ADR-059) — the alternative is two implementations of one exemption, which is
+            // exactly how they diverge.
+            if casual_doc_edit::protection::exempt_from_protection(op) {
+                continue;
+            }
             if !self.op_is_inside_a_form_field(op) {
                 return Err(refused!(
                     "document.protected-forms-only",
@@ -22024,14 +22191,78 @@ fn block_holds(block: &BlockNode, node: NodeId) -> bool {
     }
 }
 
-/// A single-line border edge in the given RGB at `size_eighth_points` eighth-points.
-fn border_edge(r: u8, g: u8, b: u8, size_eighth_points: u32) -> BorderEdge {
+/// A border edge in `style` (an OOXML `w:val` line token) in the given RGB at
+/// `size_eighth_points` eighth-points.
+///
+/// `style` used to be hard-coded `"single"`, which made a style control a permanently dead
+/// dropdown: the model stores any token, `casual_doc_layout::flow`'s `border_pattern` already
+/// resolves five non-solid patterns, and the exporter writes the token verbatim — the only
+/// missing link was an argument. Validate with [`border_style_token`] before calling.
+fn border_edge(style: &str, r: u8, g: u8, b: u8, size_eighth_points: u32) -> BorderEdge {
     BorderEdge {
-        style: "single".to_string(),
+        style: style.to_owned(),
         size_eighth_points: Some(size_eighth_points.clamp(2, 96)),
         color: Some(RgbColor { r, g, b }),
         space_points: None,
     }
+}
+
+/// The canonical OOXML `w:val` token for a border line style the renderer can actually
+/// draw **distinguishably**, or `None` when it cannot.
+///
+/// # Why this refuses instead of falling back to `single`
+///
+/// The model stores any string and the exporter writes it verbatim, so a bogus token would
+/// round-trip happily and paint as a solid line — which is the "never a dead control" rule
+/// broken quietly: a host would ship a `Wavy` entry that looks identical to `Single` and
+/// nothing would ever report it. `border_pattern` resolves exactly six distinguishable
+/// renderings, so exactly six are offered, and anything else is refused at the facade where
+/// the host can see it.
+///
+/// The accepted set, grouped by what the renderer draws:
+///
+/// | Token(s) | Pattern |
+/// | --- | --- |
+/// | `single` | solid |
+/// | `double` | double |
+/// | `dotted` | dotted |
+/// | `dashed`, `dashSmallGap` | dashed |
+/// | `dotDash`, `dashDotStroked` | dash-dot |
+/// | `dotDotDash` | dash-dot-dot |
+///
+/// The aliases are accepted and canonicalised rather than rejected because a document can
+/// arrive carrying them: a host reflecting an edge's current style and re-applying it must not
+/// be refused its own document's value. Clearing a border is the `edges` presets' `"none"`
+/// and its per-edge toggle, not a style token, so `nil`/`none` are deliberately absent —
+/// a style argument sets how a line looks, it does not decide whether there is one.
+///
+/// O(1).
+fn border_style_token(style: &str) -> Option<&'static str> {
+    Some(match style {
+        "single" => "single",
+        "double" => "double",
+        "dotted" => "dotted",
+        "dashed" | "dashSmallGap" => "dashed",
+        "dotDash" | "dashDotStroked" => "dotDash",
+        "dotDotDash" => "dotDotDash",
+        _ => return None,
+    })
+}
+
+/// [`border_style_token`] for an optional host argument: `None` (JS `undefined`) means
+/// `"single"`, which is what the three border setters did before they took a style at all.
+///
+/// # Errors
+///
+/// A refusal naming the token, when it is not one of the six the renderer can draw.
+fn border_style_or_default(style: Option<&str>) -> Result<&'static str, String> {
+    let style = style.unwrap_or("single");
+    border_style_token(style).ok_or_else(|| {
+        casual_doc_edit::refusal::marked(
+            "table.border-style-unknown",
+            &format!("\u{201c}{style}\u{201d} isn't a border line style."),
+        )
+    })
 }
 
 /// Applies a border preset to a [`TableBorders`] (cell or table): `"none"` clears
@@ -25861,6 +26092,40 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
     }
 }
 
+/// The `w:documentProtection/@w:edit` token a typed [`DocumentProtectionEdit`]
+/// reflects as, for the host's Restrict Editing surface.
+///
+/// The same five spellings OOXML uses, so the host, the file and this facade all
+/// name a restriction the same way. O(1).
+const fn protection_token(edit: DocumentProtectionEdit) -> &'static str {
+    match edit {
+        DocumentProtectionEdit::None => "none",
+        DocumentProtectionEdit::ReadOnly => "readOnly",
+        DocumentProtectionEdit::Comments => "comments",
+        DocumentProtectionEdit::TrackedChanges => "trackedChanges",
+        DocumentProtectionEdit::Forms => "forms",
+    }
+}
+
+/// A `w:edit` token as a typed [`DocumentProtectionEdit`], or `None` when it is not
+/// one of the five.
+///
+/// The inverse of [`protection_token`], and all five are accepted: a host that can
+/// read a restriction must be able to write the same one back, which is what makes
+/// the Restrict Editing surface round-trip rather than only tighten. An unknown
+/// token is refused rather than defaulted — defaulting would silently apply a
+/// restriction the host did not ask for. O(1).
+fn protection_edit(token: &str) -> Option<DocumentProtectionEdit> {
+    Some(match token {
+        "none" => DocumentProtectionEdit::None,
+        "readOnly" => DocumentProtectionEdit::ReadOnly,
+        "comments" => DocumentProtectionEdit::Comments,
+        "trackedChanges" => DocumentProtectionEdit::TrackedChanges,
+        "forms" => DocumentProtectionEdit::Forms,
+        _ => return None,
+    })
+}
+
 /// The `ST_NumberFormat` token a typed [`NumberFormat`] reflects as, for the
 /// toolbar's marker-format gallery. Mirrors the export/paginate mapping.
 fn number_format_token(format: &NumberFormat) -> &str {
@@ -26007,6 +26272,11 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // neutral placeholder (matches `apply_group`'s own default caret).
         Operation::SetCoreProperties { .. } => Pos::new(doc_id, 0),
         Operation::UpdateReviewState { .. } => Pos::new(doc_id, 0),
+        // Also document-global, and the caret must NOT move: restricting or unrestricting
+        // editing is a policy change, and scrolling the reader away from what they were
+        // looking at because they ticked a protection box would be a defect. Routed through
+        // `apply_action_caret` with the caller's own caret like the others (ADR-059).
+        Operation::SetDocumentProtection { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
         // Section-scoped, and the caret does not move: turning line numbers on
@@ -29879,6 +30149,190 @@ mod tests {
         doc.toggle_form_checkbox_inner(&control.to_string())
             .expect("ticking a checkbox is a form action");
         assert_eq!(doc.form_checkbox_checked(&control.to_string()), 1);
+    }
+
+    /// **The ordering trap at the FACADE, which is where a reader actually meets it.**
+    ///
+    /// ADR-059. A `readOnly` document must be unprotectable from the product, or `readOnly`
+    /// is a one-way door: a file that arrives protected would be permanently uneditable in
+    /// this editor while Word and ONLYOFFICE both offer Review ▸ Restrict Editing. This
+    /// drives the whole path — `setDocumentProtection` → `apply_action_as` →
+    /// `WasmDocument::refuse_if_protected` → `casual_doc_edit::protection` — rather than the
+    /// engine predicate alone, because the facade adds a second check of its own that had the
+    /// identical trap.
+    ///
+    /// The precondition is explicit and asserted: the document really does refuse an ordinary
+    /// keystroke first. Without that this guard would pass on an unprotected document, which
+    /// is measuring the fixture rather than the guarantee.
+    ///
+    /// Driven red by dropping the `exempt_from_protection` early-`continue` from
+    /// `casual_doc_edit::protection::refuse_if_protected`. Recorded in the commit message.
+    #[test]
+    fn a_read_only_document_can_be_unprotected_and_re_protected_from_the_facade() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+
+        // Impose the restriction through the operation, not by writing the model: the point
+        // is that the product can reach both directions.
+        doc.set_document_protection_inner(Some("readOnly"), true, false)
+            .expect("a reader may restrict editing");
+        assert_eq!(
+            doc.document.definitions().settings.document_protection,
+            Some(DocumentProtection {
+                edit: DocumentProtectionEdit::ReadOnly,
+                enforcement: true,
+                formatting: false,
+            }),
+        );
+        // The precondition: it really is read-only now.
+        let refusal = doc
+            .apply(Operation::InsertText {
+                at: Pos::new(node, 0),
+                text: "QZX".to_owned(),
+            })
+            .expect_err("a read-only document must refuse a keystroke");
+        assert!(
+            refusal.contains("protected"),
+            "the refusal must say why: {refusal}"
+        );
+
+        // And it lifts — the half that did not exist.
+        doc.set_document_protection_inner(None, false, false)
+            .expect("a read-only document must be unprotectable, or readOnly is a one-way door");
+        assert_eq!(
+            doc.document.definitions().settings.document_protection,
+            None,
+            "Stop Protection must remove w:documentProtection, not merely disable it"
+        );
+        doc.apply(Operation::InsertText {
+            at: Pos::new(node, 0),
+            text: "QZX".to_owned(),
+        })
+        .expect("editing works once the restriction is lifted");
+
+        // The inverse carries the previous value, so undo puts the restriction BACK: the
+        // `Some`/`None` shape inverts in both directions (ADR-059).
+        doc.undo_inner().expect("the keystroke undoes");
+        doc.undo_inner().expect("the lift undoes");
+        assert_eq!(
+            doc.document.definitions().settings.document_protection,
+            Some(DocumentProtection {
+                edit: DocumentProtectionEdit::ReadOnly,
+                enforcement: true,
+                formatting: false,
+            }),
+            "undoing Stop Protection must restore the exact restriction it removed"
+        );
+    }
+
+    /// The same trap at `w:edit="forms"`, which is enforced in the FACADE and not in the
+    /// engine — so it needed the exemption separately, and a shared predicate rather than a
+    /// second copy of the rule.
+    ///
+    /// A document-global operation is never "inside a form field", so
+    /// `op_is_inside_a_form_field` refuses it; without the exemption the owner's
+    /// forms-protected loan agreement could never be unprotected. Real fixture, real
+    /// restriction read from the file.
+    ///
+    /// Driven red by removing the `exempt_from_protection` early-`continue` from
+    /// `WasmDocument::refuse_if_protected`'s forms loop. Recorded in the commit message.
+    #[test]
+    fn a_forms_protected_document_can_be_unprotected_from_the_facade() {
+        const PROTECTED: &[u8] = include_bytes!("../../../fixtures/generated/forms-protected.docx");
+        let mut doc = open_document(PROTECTED).expect("open");
+
+        // The precondition comes from the FILE, not from this test: the fixture declares
+        // `w:edit="forms" w:enforcement="1"`.
+        assert_eq!(
+            doc.document
+                .definitions()
+                .settings
+                .document_protection
+                .map(|protection| protection.edit),
+            Some(DocumentProtectionEdit::Forms),
+            "the fixture no longer carries a forms restriction, so this guard would pass for \
+             the wrong reason"
+        );
+        let body = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                if found.is_none() && node_plain_text(&p.inlines).contains("End of form") {
+                    found = Some(p.id);
+                }
+            });
+            found.expect("the fixture has ordinary body text")
+        };
+        doc.apply(Operation::InsertText {
+            at: Pos::new(body, 0),
+            text: "QZX".to_owned(),
+        })
+        .expect_err("the body of a forms-protected document is locked");
+
+        let lifted = doc.set_document_protection_inner(None, false, false);
+        assert!(
+            lifted.is_ok(),
+            "a forms-protected document must be unprotectable too, or `forms` is a one-way \
+             door: {lifted:?}"
+        );
+        doc.apply(Operation::InsertText {
+            at: Pos::new(body, 0),
+            text: "QZX".to_owned(),
+        })
+        .expect("the body is editable once the restriction is lifted");
+    }
+
+    /// The host-facing read/write pair round-trips every level, and `enforcement: false` stays
+    /// distinguishable from "no restriction at all" — a state Word writes when the author set
+    /// a restriction up and then switched it off, and one that must survive a save.
+    ///
+    /// An unknown level is refused rather than defaulted: defaulting would silently apply a
+    /// restriction the host did not ask for.
+    #[test]
+    fn the_protection_surface_round_trips_every_level_the_file_can_carry() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        assert_eq!(
+            doc.document_protection(),
+            "{\"edit\":null,\"enforcement\":false,\"formatting\":false}",
+            "an unprotected document must report no restriction, not a defaulted one"
+        );
+        for level in ["none", "readOnly", "comments", "trackedChanges", "forms"] {
+            doc.set_document_protection_inner(Some(level), true, true)
+                .unwrap_or_else(|error| panic!("{level} must be settable: {error}"));
+            assert_eq!(
+                doc.document_protection(),
+                format!("{{\"edit\":\"{level}\",\"enforcement\":true,\"formatting\":true}}"),
+                "the level a host writes must be the level it reads back"
+            );
+        }
+        // Word's "set up but switched off" state.
+        doc.set_document_protection_inner(Some("readOnly"), false, false)
+            .expect("an unenforced restriction is a real state");
+        assert_eq!(
+            doc.document_protection(),
+            "{\"edit\":\"readOnly\",\"enforcement\":false,\"formatting\":false}",
+            "an unenforced restriction must stay present and distinguishable from none"
+        );
+        // An unrecognised level is refused with a sentence, not defaulted to a restriction
+        // the host did not ask for — and the document is left exactly as it was.
+        let before = doc.document.definitions().settings.document_protection;
+        let refusal = doc
+            .set_document_protection_inner(Some("sideways"), true, false)
+            .expect_err("an unknown level must be refused, never defaulted");
+        assert!(
+            refusal.contains("isn't an editing restriction"),
+            "the refusal must say what went wrong: {refusal}"
+        );
+        assert_eq!(
+            doc.document.definitions().settings.document_protection,
+            before,
+            "a refused level must change nothing"
+        );
+        assert_eq!(protection_edit(""), None);
+        assert_eq!(
+            protection_edit("READONLY"),
+            None,
+            "the tokens are the OOXML spellings, matched exactly"
+        );
     }
 
     /// The owner's loan agreement uses the OTHER form mechanism — legacy
@@ -35624,7 +36078,7 @@ mod tests {
 
         d.set_cell_vertical_align_range(&cells[0][0], &cells[1][1], "center")
             .expect("align the block");
-        d.set_cell_border_range(&cells[0][0], &cells[1][1], "box", 0, 0, 0, 8)
+        d.set_cell_border_range(&cells[0][0], &cells[1][1], "box", 0, 0, 0, 8, None)
             .expect("border the block");
 
         let t = casual_doc_edit::find_table(&d.document, table).expect("table");
@@ -38352,15 +38806,15 @@ mod tests {
         assert_eq!(d.cell_vertical_align_at(&cell_para), "bottom");
 
         // Clear then box the cell borders (independent of the corpus's initial edges).
-        d.set_cell_border(&cell_para, "none", 0, 0, 0, 8)
+        d.set_cell_border(&cell_para, "none", 0, 0, 0, 8, None)
             .expect("clear border");
         assert_eq!(d.cell_border_edges(&cell_para), 0);
-        d.set_cell_border(&cell_para, "box", 0, 0, 0, 8)
+        d.set_cell_border(&cell_para, "box", 0, 0, 0, 8, None)
             .expect("box border");
         assert_eq!(d.cell_border_edges(&cell_para), 0b1111);
 
         // A table-level border (outer + inside) applies without error.
-        d.set_table_border(&cell_para, "all", 0, 0, 0, 8)
+        d.set_table_border(&cell_para, "all", 0, 0, 0, 8, None)
             .expect("table border");
 
         // Undo every edit in reverse → back to the initial state.
@@ -38372,6 +38826,118 @@ mod tests {
         assert_eq!(d.cell_vertical_align_at(&cell_para), initial_valign);
         d.undo().expect("u shading");
         assert_eq!(d.cell_shading_at(&cell_para), initial_shading);
+    }
+
+    /// **Every border line style the facade offers paints differently, and the one it stores
+    /// is the one the renderer resolves.**
+    ///
+    /// `border_edge` used to hard-code `"single"`, so a style dropdown would have been
+    /// permanently dead. This closes the loop the chrome needs: the token the host passes
+    /// reaches the model, and `casual_doc_layout::flow::border_pattern` — the renderer's own
+    /// authority, not a second copy of the list — resolves the six offered tokens to six
+    /// DISTINCT patterns. A seventh entry that collapsed onto `Solid` would be a control that
+    /// looks like it works and does nothing, which is the failure this repository calls its
+    /// most expensive.
+    ///
+    /// Driven red by adding a style the renderer cannot draw apart (`"wave"`) to
+    /// `border_style_token`. Recorded in the commit message.
+    #[test]
+    fn every_offered_border_style_reaches_the_model_and_paints_differently() {
+        use casual_doc_layout::block::BorderPattern;
+        use casual_doc_layout::flow::border_pattern;
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let cell_para = nodes
+            .iter()
+            .find(|(id, _)| d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph inside a table cell");
+
+        // The six the host may offer, and the alias spellings a document can arrive carrying.
+        let offered = [
+            "single",
+            "double",
+            "dotted",
+            "dashed",
+            "dotDash",
+            "dotDotDash",
+        ];
+        let mut patterns = Vec::new();
+        for style in offered {
+            // Clear first, so each style is applied to a cell with no border and the stored
+            // token can only have come from this call.
+            d.set_cell_border(&cell_para, "none", 0, 0, 0, 8, None)
+                .expect("clear border");
+            d.set_cell_border(&cell_para, "box", 0, 0, 0, 8, Some(style.to_owned()))
+                .unwrap_or_else(|_| panic!("{style} must be settable"));
+
+            let stored = d
+                .cell_props_of(&cell_para)
+                .and_then(|p| p.borders.top.clone())
+                .expect("the box preset sets the top edge")
+                .style;
+            assert_eq!(
+                stored, style,
+                "the facade stored {stored:?} for a {style:?} border: the argument is not \
+                 reaching the model"
+            );
+            // And the host can read back what it wrote, so a dropdown can show its own state.
+            assert_eq!(
+                d.cell_border_style(&cell_para),
+                style,
+                "the style a host writes must be the style it reads back"
+            );
+            patterns.push(border_pattern(&stored));
+        }
+
+        // Six offered styles, six distinct renderings. This is the no-dead-dropdown
+        // guarantee, asserted against the renderer's own resolver.
+        for (i, left) in patterns.iter().enumerate() {
+            for (j, right) in patterns.iter().enumerate() {
+                assert!(
+                    i == j || left != right,
+                    "{} and {} both paint as {left:?}: one of them is a dead dropdown entry",
+                    offered[i],
+                    offered[j]
+                );
+            }
+        }
+        assert_eq!(
+            patterns[0],
+            BorderPattern::Solid,
+            "single is the solid line"
+        );
+
+        // The alias spellings a round-tripped document can carry are accepted and
+        // canonicalised, so a host re-applying its own document's value is not refused.
+        for (alias, canonical) in [("dashSmallGap", "dashed"), ("dashDotStroked", "dotDash")] {
+            d.set_cell_border(&cell_para, "none", 0, 0, 0, 8, None)
+                .expect("clear border");
+            d.set_cell_border(&cell_para, "box", 0, 0, 0, 8, Some(alias.to_owned()))
+                .unwrap_or_else(|_| panic!("{alias} must be accepted"));
+            assert_eq!(
+                d.cell_border_style(&cell_para),
+                canonical,
+                "{alias} must canonicalise to {canonical} so the host has one spelling per \
+                 rendering"
+            );
+        }
+
+        // A style the renderer cannot draw apart is refused rather than silently painted
+        // solid: the model stores any string and the exporter writes it verbatim, so a
+        // fallback here would be an invisible no-op in a saved file.
+        assert_eq!(border_style_token("wave"), None);
+        assert_eq!(border_style_token("thickThinLargeGap"), None);
+        assert_eq!(
+            border_style_token("nil"),
+            None,
+            "clearing a border is the edges preset, not a style token"
+        );
+        // Omitting the argument keeps the old behaviour, so an existing host is unchanged.
+        assert_eq!(border_style_or_default(None), Ok("single"));
+        assert!(border_style_or_default(Some("wave")).is_err());
     }
 
     /// Inserting a fresh table adds a 3×4 grid after the caret's block and lands the
