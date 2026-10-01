@@ -45,6 +45,7 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.fields": "Fields",
   "menuGroup.find": "Find and replace",
   "menuGroup.font": "Font",
+  "menuGroup.formattingMarks": "Formatting marks",
   "menuGroup.headerFooter": "Header & footer",
   "menuGroup.help": "Help",
   "menuGroup.history": "History",
@@ -61,6 +62,7 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.print": "Print",
   "menuGroup.proofing": "Proofing",
   "menuGroup.properties": "Properties",
+  "menuGroup.protect": "Protect",
   "menuGroup.rowsAndColumns": "Rows & columns",
   "menuGroup.save": "Save",
   "menuGroup.select": "Select",
@@ -237,7 +239,14 @@ export const EN_STRINGS = Object.freeze({
   // the Section dropdown's options are one per section, and the preview's label
   // reads out whatever the size fields currently say.
   "pageSetup.sectionNumber": "Section {number}",
-  "pageSetup.dimensions": "{width} \u00d7 {height} in",
+  // The unit is a PARAMETER now, not the English word "in" baked into the
+  // sentence. Every locale translated that word — "po" in French, "\u30a4\u30f3\u30c1" in
+  // Japanese — which was correct while the only unit was inches and became a
+  // wrong unit presented as a right one the moment the preference could move.
+  // What is substituted is the engine's own suffix (`cm`, `mm`, `in`, `pt`, `pi`):
+  // a unit SYMBOL, the same in every language, which is the convention
+  // `borderWeightLabel` already prints `pt` under.
+  "pageSetup.dimensions": "{width} \u00d7 {height} {unit}",
   // The object bar's hint while a crop session is live. It is its own key rather
   // than a reuse of the resize hint because it names a different gesture: the
   // grips under the pointer are crop grips, and the bar that said "Drag handles
@@ -964,4 +973,53 @@ export const EN_STRINGS = Object.freeze({
   "table.dragToMoveColumn": "Drag to move this column",
   "table.rowMoved": "Row {from} moved to position {to}",
   "table.columnMoved": "Column {from} moved to position {to}",
+  // ---- Four capabilities the engine had and the product could not reach -----
+  //
+  // The ¶ button (`docs/153` `shell.formatting-marks`), the measurement-unit
+  // preference (`shell.measurement-units`), the border line style
+  // (`table.border-width-style`) and Restrict Editing (`review.restrict-editing`).
+  // Every ROW LABEL in the controls themselves is markup and carries its English
+  // beside its key; what is here is only what a SCRIPT composes.
+
+  // One sentence for every control that needs an open document and does not have
+  // one. It was an unrouted English literal in six places in `main.js` before
+  // this; these four capabilities route it, which is the direction the
+  // unrouted-string ratchet only moves in.
+  "command.needsDocument": "Open a document first",
+
+  // The ¶ command reads as a switch, like `view.compactRibbon` and
+  // `tools.smartQuotes`, so a reader sees the state without opening anything.
+  "formattingMarks.commandOn": "Formatting marks: on",
+  "formattingMarks.commandOff": "Formatting marks: off",
+  // ONE composed pattern for all five individual switches rather than five
+  // sentences: the mark's own name is already a declared markup string, so this
+  // costs one catalogue entry instead of five and a translator sees the shape once.
+  "formattingMarks.markSwitch": "{mark}: {state}",
+  "formattingMarks.stateOn": "on",
+  "formattingMarks.stateOff": "off",
+
+  // The unit names a chooser offers. The engine supplies the id, the suffix, the
+  // display precision and the spinner step; the NAME is chrome, and ONLYOFFICE's
+  // own `cmbUnit` rows are names too ("Centimeter", "Point", "Inch").
+  "units.cm": "Centimetres",
+  "units.mm": "Millimetres",
+  "units.inch": "Inches",
+  "units.point": "Points",
+  "units.pica": "Picas",
+  "units.command": "Measurement units: {unit}",
+
+  // The border line style's palette and context-menu row. The ellipsis is this
+  // chrome's convention for a row that opens a control rather than acting.
+  "table.borderStyleCommand": "Border line style\u2026",
+
+  // Restrict Editing. The dialog's own strings are markup; these are the command
+  // row, the two things the status bar says, and the one disabled reason.
+  "protect.command": "Restrict editing\u2026",
+  "protect.applied": "Editing restricted to: {level}",
+  "protect.removed": "Editing is no longer restricted",
+  // Not `protect.enforce.disabled`: `protect.enforce` is a markup key, and a
+  // catalogue entry that looks like a child of another key invites `isDeclared`'s
+  // plural-family prefix rule to answer for it.
+  "protect.enforceOff": "Choose a restriction before applying one",
+
 });

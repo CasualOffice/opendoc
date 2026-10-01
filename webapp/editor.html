@@ -313,6 +313,30 @@
         <select id="languageSelect" class="dialog-select" data-i18n-label="settings.language.label" aria-label="Language"></select>
         <p class="settings-note" id="languageNote" data-i18n="settings.language.note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
       </div>
+      <!-- Measurement units (`docs/153` `shell.measurement-units`). ONLYOFFICE's
+           own home for this is File ▸ Advanced Settings (`cmbUnit`,
+           `FileMenuPanels.js:747`) and Word's is File ▸ Options ▸ Advanced ▸
+           Display; this editor has no Options backstage, so Settings is the
+           equivalent place, and it sits beside Language because both decide how
+           the chrome speaks rather than what the document says.
+
+           The rows are the ENGINE's, filled by `measurement_units.mjs`: five units
+           with their own display precision and spinner step, in the engine's order.
+           What is persisted is the string ID — ONLYOFFICE persists an integer
+           (`setItem("de-settings-unit", cmbUnit.getValue())`, read back through
+           `parseInt`) and pays for it with two disagreeing unit enums.
+
+           The note says what the preference does NOT yet govern. The ruler draws
+           its own inch lattice from `twipsPerInch` and a centimetre preference
+           does not move those ticks, so a reader is told rather than left to
+           discover it — `docs/99` §9.6: understating is as false as overstating,
+           and a preference that silently governs some surfaces and not others is
+           worse than one that says which. -->
+      <div class="settings-section">
+        <div class="settings-label" data-i18n="settings.units.label" id="measurementUnitLabel">Measurement units</div>
+        <select id="measurementUnitSelect" class="dialog-select" aria-labelledby="measurementUnitLabel"></select>
+        <p class="settings-note" data-i18n="settings.units.note">Used by Page setup. The ruler still draws inch ticks whatever is chosen here.</p>
+      </div>
       <div class="settings-section">
         <div data-i18n="settingsPanel.accent" class="settings-label">Accent</div>
         <div class="swatches" id="accentSwatches">
@@ -509,7 +533,24 @@
                   <button data-i18n-title="panelHome.checklist.title" data-i18n-label="panelHome.checklist.label" id="checkList" type="button" class="fmt" title="Checklist" aria-label="Checklist" aria-pressed="false"><span class="ms" aria-hidden="true">checklist</span></button>
                   <button data-i18n-title="panelHome.decreaseIndentTab.title" data-i18n-label="panelHome.decreaseIndent.label" id="indentDec" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent"><span class="ms" aria-hidden="true">format_indent_decrease</span></button>
                   <button data-i18n-title="panelHome.increaseIndentTab.title" data-i18n-label="panelHome.increaseIndent.label" id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><span class="ms" aria-hidden="true">format_indent_increase</span></button>
-                  <button data-i18n-title="panelHome.paragraphProperties.title" data-i18n-label="panelHome.paragraphProperties.label" id="paraOptsBtn" type="button" class="fmt" title="Paragraph properties" aria-label="Paragraph properties" aria-controls="paragraphPropertiesPanel" aria-expanded="false"><span class="ms" aria-hidden="true">format_paragraph</span></button>
+                  <button data-i18n-title="panelHome.paragraphProperties.title" data-i18n-label="panelHome.paragraphProperties.label" id="paraOptsBtn" type="button" class="fmt" title="Paragraph properties" aria-label="Paragraph properties" aria-controls="paragraphPropertiesPanel" aria-expanded="false"><span class="ms" aria-hidden="true">tune</span></button>
+                  <!-- The ¶ button (`docs/153` `shell.formatting-marks`). Home ▸
+                       Paragraph is where Word keeps Show/Hide ¶ and where
+                       ONLYOFFICE keeps `btnShowHidenChars`, and theirs is a SPLIT
+                       toggle (`Toolbar.js:785-804`: `enableToggle: true, split:
+                       true`) whose menu holds checkable rows — so the split is
+                       both references' shape, not an invention. The main half
+                       toggles every mark; the caret opens the five individual
+                       switches Word buries in File ▸ Options ▸ Display.
+                       `aria-pressed` because it is a STATE, bound to the engine's
+                       own `any` rather than to five OR-ed fields.
+                       Ribbon cost: one 32px button plus a 16px caret on the band
+                       `ribbon-width-budget.spec.mjs` measures, which holds a
+                       120px floor on the headroom that is left. -->
+                  <span class="list-split">
+                    <button data-i18n-title="panelHome.formattingMarks.title" data-i18n-label="panelHome.formattingMarks.label" id="formattingMarksBtn" type="button" class="fmt list-split-main" title="Formatting marks" aria-label="Formatting marks" aria-pressed="false" disabled><span class="ms" aria-hidden="true">format_paragraph</span></button>
+                    <button data-i18n-title="panelHome.formattingMarksChoose.title" data-i18n-label="panelHome.formattingMarksChoose.label" id="formattingMarksMenuBtn" type="button" class="fmt list-caret" title="Choose which formatting marks show" aria-label="Choose which formatting marks show" aria-haspopup="menu" aria-controls="formattingMarksMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+                  </span>
                 </div>
                 <div class="fmt-row-line">
                   <button data-i18n-title="panelHome.alignLeft.title" data-i18n-label="panelHome.alignLeft.label" id="alignStart" type="button" class="fmt" title="Align left" aria-label="Align left" aria-pressed="false"><span class="ms" aria-hidden="true">format_align_left</span></button>
@@ -1025,6 +1066,23 @@
             </div>
             <span data-i18n="panelReview.compare" class="rgroup-label">Compare</span>
           </div>
+          <!-- Protect, last on the band, which is where Word 365 keeps it: its
+               Review tab reads … Changes | Compare | Protect | Ink. ONLYOFFICE
+               files theirs on a Protection tab behind their own dialog
+               (`ProtectDialog.js`). ADR-052 enforces `w:documentProtection` at the
+               operation and ADR-059 added the operation that installs or lifts it;
+               until this button there was no way to reach either, so a document
+               that arrived protected stayed protected for good.
+               `aria-pressed` because a restriction is a STATE, and it is bound to
+               the engine's own answer rather than to what the dialog last asked
+               for. One 32px button on a band `ribbon-width-budget.spec.mjs`
+               measures as fitting far below 1280px. -->
+          <div class="rgroup" data-group="review-protect">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="protect.tip" data-i18n-label="panelReview.restrictEditing.label" id="reviewProtectBtn" type="button" class="fmt" title="Restrict what readers may change in this document" aria-label="Restrict editing" aria-haspopup="dialog" aria-pressed="false" disabled><span class="ms" aria-hidden="true">lock</span></button>
+            </div>
+            <span data-i18n="panelReview.protect" class="rgroup-label">Protect</span>
+          </div>
         </div>
         <!-- Overflow: groups that don't fit the current width move here instead
              of the ribbon ever showing a horizontal scrollbar (docs/64). -->
@@ -1176,17 +1234,17 @@
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.pageSize">Page size</legend>
               <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" min="1" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" min="1" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
               </div>
             </fieldset>
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.margins">Margins</legend>
               <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
                 <!-- Gutter: the binding margin added on the inner edge, which the
                      engine has added to `margin_start` since P1F-36
                      (`casual-doc-layout/src/document_layout.rs`) with no way to
@@ -1207,7 +1265,7 @@
                      multi-crate change that must arrive as one unit. An offered
                      control that silently did nothing is the thing docs/63
                      forbids. -->
-                <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
               </div>
             </fieldset>
             <!-- Word's Page Setup ▸ Layout ▸ Vertical alignment. WORD is the model
@@ -1241,7 +1299,7 @@
                 <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
                   <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
                 </select></label>
-                <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" min="0" max="5" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" data-measure-min-twip="0" data-measure-max-twip="7200" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
               </div>
               <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /> Line between columns</label>
             </fieldset>
@@ -1535,7 +1593,7 @@
       <div data-i18n="lineNumbersMenu.options" class="menu-heading">Options</div>
       <label data-i18n="lineNumbersMenu.startAt" class="menu-row">Start at<input data-i18n-label="lineNumbersMenu.firstLineNumber.label" id="lineNumberStart" type="number" min="0" max="32767" step="1" inputmode="numeric" aria-label="First line number" /></label>
       <label data-i18n="lineNumbersMenu.countBy" class="menu-row">Count by<input data-i18n-label="lineNumbersMenu.numberEveryNthLine.label" id="lineNumberCountBy" type="number" min="1" max="32767" step="1" inputmode="numeric" aria-label="Number every Nth line" /></label>
-      <label data-i18n="lineNumbersMenu.fromText" class="menu-row">From text<input data-i18n-label="lineNumbersMenu.gapFromTextToNumbers.label" id="lineNumberDistance" type="number" min="0" max="22" step="0.01" inputmode="decimal" aria-label="Gap from text to the numbers" /><span class="menu-unit">in</span></label>
+      <label data-i18n="lineNumbersMenu.fromText" class="menu-row">From text<input data-i18n-label="lineNumbersMenu.gapFromTextToNumbers.label" id="lineNumberDistance" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" aria-label="Gap from text to the numbers" /><span class="menu-unit" data-measure-suffix>in</span></label>
     </div>
 
     <!-- Text width (`docs/154` §5.1, ADR-048). Four steps, `menuitemradio`
@@ -1553,6 +1611,30 @@
       <button type="button" class="menu-item" data-text-width="reading" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.reading.row">Reading — 80 characters (WCAG AAA)</span></button>
       <button type="button" class="menu-item" data-text-width="fit" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.fit.row">Paper — this document's own column</span></button>
       <button type="button" class="menu-item" data-text-width="full" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.full.row">Full — as wide as the window</span></button>
+    </div>
+
+    <!-- Which formatting marks show (`docs/153` `shell.formatting-marks`). Five
+         `menuitemcheckbox` rows, because they are five independent switches and
+         not values of one measure — the opposite of `textWidthMenu` above, and the
+         same distinction `radio_group.mjs` exists to keep honest.
+
+         The roster is the five marks the ENGINE can paint. Word's Display pane
+         also lists hidden text, optional hyphens and object anchors; the layout
+         engine draws no mark for any of them, so a switch here would be a control
+         that does nothing — absent is the honest form of that gap, and
+         `formatting_marks.mjs` says so where the decision lives.
+
+         The menu stays OPEN as rows are ticked: a reader flips several while
+         watching the page, which is how Word's Display pane and ONLYOFFICE's own
+         split menu behave. Each row carries the command id it runs, so the markup
+         and the module cannot disagree about which row means which mark. -->
+    <div data-i18n-label="ui.formattingMarks.label" id="formattingMarksMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Formatting marks">
+      <div data-i18n="formattingMarksMenu.heading" class="menu-heading">Show these marks</div>
+      <button type="button" class="menu-item" data-mark="tab" data-command="view.formattingMarks.tab" role="menuitemcheckbox" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="formattingMarks.tab">Tab characters</span></button>
+      <button type="button" class="menu-item" data-mark="space" data-command="view.formattingMarks.space" role="menuitemcheckbox" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="formattingMarks.space">Spaces</span></button>
+      <button type="button" class="menu-item" data-mark="paragraph" data-command="view.formattingMarks.paragraph" role="menuitemcheckbox" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="formattingMarks.paragraph">Paragraph marks</span></button>
+      <button type="button" class="menu-item" data-mark="lineBreak" data-command="view.formattingMarks.lineBreak" role="menuitemcheckbox" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="formattingMarks.lineBreak">Line breaks</span></button>
+      <button type="button" class="menu-item" data-mark="pageBreak" data-command="view.formattingMarks.pageBreak" role="menuitemcheckbox" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="formattingMarks.pageBreak">Page and column breaks</span></button>
     </div>
 
     <div data-i18n-label="ui.cellBorderFormatting.label" id="tableMenu" class="context-menu spacing-menu table-format-menu" hidden role="dialog" aria-label="Cell and border formatting">
@@ -1584,6 +1666,30 @@
            The options are filled by `table_cell_chrome.mjs` so the number is
            formatted in the reader's own locale ("0,5 pt" in French) instead of
            seven English literals in markup. -->
+      <!-- LINE STYLE, beside the weight. Word's Table Design tab carries Line
+           Style, Line Weight and Pen Colour as three separate controls that apply
+           to whichever border button is pressed next, and this is that shape: the
+           style, then the weight, then where to put it.
+           `setCellBorder`/`setCellBorderRange`/`setTableBorder` all take the style
+           as a trailing optional argument, and the six values are the only ones
+           `casual_doc_layout::flow` draws apart — anything else is refused with a
+           sentence rather than silently painted as a solid line.
+           Unlike the weight above, this one DOES reflect: `cellBorderStyle` exists
+           so the control can show the style already in force, and a write-only
+           dropdown is the half-dead version of the dead control `docs/63` forbids.
+           It reflects on open and then behaves as a pen, which is exactly what
+           Word's own Line Style combo does. -->
+      <div class="menu-row">
+        <label data-i18n="tableMenu.lineStyle" class="menu-label" for="borderStyle">Line style</label>
+        <select data-i18n-label="tableMenu.borderLineStyle.label" id="borderStyle" class="menu-select" aria-label="Border line style">
+          <option data-i18n="borderStyle.single" value="single">Solid</option>
+          <option data-i18n="borderStyle.double" value="double">Double</option>
+          <option data-i18n="borderStyle.dotted" value="dotted">Dotted</option>
+          <option data-i18n="borderStyle.dashed" value="dashed">Dashed</option>
+          <option data-i18n="borderStyle.dotDash" value="dotDash">Dash-dot</option>
+          <option data-i18n="borderStyle.dotDotDash" value="dotDotDash">Dash-dot-dot</option>
+        </select>
+      </div>
       <div class="menu-row">
         <label data-i18n="tableMenu.lineWeight" class="menu-label" for="borderWeight">Line weight</label>
         <select data-i18n-label="tableMenu.borderLineWeight.label" id="borderWeight" class="menu-select" aria-label="Border line weight"></select>
@@ -1878,6 +1984,65 @@
           <p id="proofLanguagesNote" class="dialog-field-note" role="status" aria-live="polite"></p>
         </div>
         <footer class="dialog-foot"><span data-i18n="proofLanguagesDialog.windowNote" class="dialog-note">Proofing checks the pages you are looking at, so scroll through a long document to check all of it.</span><div class="dialog-actions"><button data-i18n="proofLanguagesDialog.done" id="proofLanguagesDone" type="button" class="dialog-button">Done</button></div></footer>
+      </section>
+    </div>
+    <!-- Review ▸ Restrict Editing (ADR-052, ADR-059; `docs/153`
+         `review.restrict-editing`).
+
+         THE SHAPE. ONLYOFFICE's dialog is four radios —
+         `ProtectDialog.js:121-148` binds `rbView`/`rbForms`/`rbReview`/`rbComments`
+         to `Asc.c_oAscEDocProtect.ReadOnly`/`Forms`/`TrackedChanges`/`Comments` —
+         and Word's task pane is a dropdown of the same four plus a "Start
+         Enforcing Protection" button. This is their radio presentation in Word's
+         order (strictest first) with Word's own wording, and a FIFTH row for "no
+         restriction": Word's Stop Protection has to be reachable from the same
+         control rather than from a second button that only exists sometimes.
+
+         NO PASSWORD FIELD, and both references have one. `w:documentProtection`
+         can carry `w:hash`/`w:salt`/`w:cryptSpinCount`; ADR-052 records that none
+         of it is modelled, and that verifying it would advertise a boundary this
+         product does not have — the legacy hash comes off by editing one XML
+         attribute. So the space the password box would have occupied says what the
+         restriction actually is instead. That sentence is the feature, not a
+         disclaimer: "policy, not security" has to be true in what the reader is
+         told. -->
+    <div id="restrictEditingDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="restrictEditingTitle" aria-describedby="restrictEditingDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="protect.title" id="restrictEditingTitle">Restrict editing</h2>
+              <p data-i18n="protect.description" id="restrictEditingDescription">Choose what this document asks readers to limit themselves to.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="protect.close.label" id="restrictEditingClose" type="button" class="dialog-close" title="Close" aria-label="Close restrict editing"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <div class="settings-section">
+            <div data-i18n="protect.levels" class="settings-label" id="restrictEditingLevelsLabel">Allow only this kind of editing</div>
+            <div class="segmented segmented-stacked" id="restrictEditingLevels" role="radiogroup" aria-labelledby="restrictEditingLevelsLabel">
+              <button data-i18n="protect.level.none" type="button" data-protect-level="off">No restriction</button>
+              <button data-i18n="protect.level.readOnly" type="button" data-protect-level="readOnly">No changes (read only)</button>
+              <button data-i18n="protect.level.trackedChanges" type="button" data-protect-level="trackedChanges">Tracked changes</button>
+              <button data-i18n="protect.level.comments" type="button" data-protect-level="comments">Comments</button>
+              <button data-i18n="protect.level.forms" type="button" data-protect-level="forms">Filling in forms</button>
+            </div>
+          </div>
+          <div class="settings-section" id="restrictEditingEnforceRow">
+            <label class="dialog-check">
+              <input id="restrictEditingEnforce" type="checkbox" />
+              <span><strong data-i18n="protect.enforce">Apply this restriction now</strong><small data-i18n="protect.enforce.hint">Word's "Start enforcing protection". Left off, the restriction is kept in the file without being applied — a state Word writes, and one this preserves.</small></span>
+            </label>
+          </div>
+          <p data-i18n="protect.authority" class="settings-note">This is a policy, not a password. Anyone who can open this document can lift the restriction here, exactly as in Word when no password was set. No password is stored, asked for, or checked.</p>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="restrictEditingCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="watermarkDialog.apply" id="restrictEditingApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
       </section>
     </div>
     <div id="dropCapDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="dropCapTitle" aria-describedby="dropCapDescription">

@@ -20,7 +20,7 @@
 // review-mode gate. Both are about the application's state rather than about
 // page setup, so they stay where the rest of that logic is and arrive here as
 // `io.runEdit` (which gates) and `setEnabled`.
-import { TWIPS_PER_INCH, inchesToTwips } from "./units.mjs";
+import { TWIPS_PER_INCH } from "./units.mjs";
 import { t } from "./i18n.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
 
@@ -56,6 +56,13 @@ const LINE_NUMBER_MODES = new Map([
  *   `registerPopover(button, menu, reflect)` the host's popover manager, which
  *                         is what gives a new menu the light-dismiss contract
  *                         for free (`light-dismiss-contract.spec.mjs`)
+ *   `measure`             the reader's measurement-unit preference
+ *                         (`measurement_units.mjs`): `format(twips)` for a field,
+ *                         `display(twips)` for prose, `parse(text)` for what was
+ *                         typed, and `applyToField(input)` for the spinner's step,
+ *                         bounds and suffix. Word's *Measurement units* setting
+ *                         governs exactly this dialog, which is why it arrives
+ *                         here rather than being read from a global.
  */
 export function createPageSetup(io) {
   const el = (id) => document.getElementById(id);
@@ -112,14 +119,66 @@ export function createPageSetup(io) {
     ["columns", () => columnCount],
   ]);
 
-  /** An inches field's value as twips. */
-  const fieldTwips = (input) => inchesToTwips(input.value);
+  /** Every distance field in this dialog, in the order a reader meets them.
+   *
+   *  One list rather than six mentions: the unit preference has to be applied to
+   *  each one's step, bounds and suffix, and Apply has to be able to refuse when
+   *  any of them is unreadable. A field added to the markup and left out of here
+   *  would silently keep inch bounds, which is the drift this list prevents. */
+  const GEOMETRY_FIELDS = () => [
+    widthInput,
+    heightInput,
+    marginTop,
+    marginBottom,
+    marginLeft,
+    marginRight,
+    marginGutter,
+    columnGap,
+  ];
 
-  /** Twips → an inches string for a page-geometry field. Unlike the general
-   *  helper, 0 shows as "0": a page dimension or margin is never meaningfully
-   *  unset, so blanking one would read as "inherited" when it is not. */
+  /** The geometry fields plus the Line Numbers popover's "From text" distance,
+   *  which is the one distance field OUTSIDE this dialog that the same preference
+   *  governs. It is in the unit list and NOT in the Apply guard: it belongs to a
+   *  popover that commits on change, and it is legitimately empty while line
+   *  numbering is off, so refusing Page setup's Apply over it would be refusing on
+   *  a control the reader is not looking at. */
+  const DISTANCE_FIELDS = () => [...GEOMETRY_FIELDS(), lineNumberDistance];
+
+  /** A distance field's value as twips, or `null` when the engine refuses it.
+   *
+   *  Was `inchesToTwips`, which read a blank or unparseable field as 0 and wrote a
+   *  zero-inch margin nobody typed. The engine refuses each bad input with its own
+   *  sentence and `measurement_units.mjs` shows it, so this returns `null` and
+   *  Apply declines rather than inventing a value (`AGENTS.md`: no silent data
+   *  loss). */
+  const fieldTwips = (input) => io.measure.parse(input.value);
+
+  /** Twips → the text a page-geometry field shows, in the reader's own unit.
+   *
+   *  Unlike the general helper, 0 shows as "0": a page dimension or margin is
+   *  never meaningfully unset, so blanking one would read as "inherited" when it
+   *  is not. `measure.format` keeps that property. */
   function inchText(twip) {
-    return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "") || "0";
+    return io.measure.format(twip ?? 0);
+  }
+
+  /** Re-labels and re-bounds every distance field for the unit now in force, and
+   *  repaints the values in it.
+   *
+   *  Called when the dialog opens and when the preference changes, so a reader who
+   *  switches to centimetres while Page setup is open sees the fields convert
+   *  rather than reading inches under a `cm` label. The values are re-read from the
+   *  CONTROLS rather than from the document: a number the reader has typed and not
+   *  applied is theirs, and converting it is not the same as discarding it.
+   *
+   *  Complexity: O(fields). */
+  function reflectUnits() {
+    const twips = DISTANCE_FIELDS().map((input) => (input ? fieldTwips(input) : null));
+    for (const input of DISTANCE_FIELDS()) io.measure.applyToField(input);
+    DISTANCE_FIELDS().forEach((input, index) => {
+      if (input && twips[index] !== null) input.value = inchText(twips[index]);
+    });
+    updatePreview();
   }
 
   function reflectColumns(columns) {
@@ -153,12 +212,20 @@ export function createPageSetup(io) {
   }
 
   function updatePreview() {
-    const width = Math.max(1, Number(widthInput.value) || 1);
-    const height = Math.max(1, Number(heightInput.value) || 1);
-    const top = Math.max(0, Number(marginTop.value) || 0);
-    const bottom = Math.max(0, Number(marginBottom.value) || 0);
-    const left = Math.max(0, Number(marginLeft.value) || 0);
-    const right = Math.max(0, Number(marginRight.value) || 0);
+    // TWIPS, not inches. The preview is a ratio and a set of percentages, so it is
+    // unit-free arithmetic once the fields are read through the preference — which
+    // is the whole reason this stopped reading `Number(input.value)` directly.
+    //
+    // `?? 0` here and nowhere else: an unreadable field has already said why
+    // through `measure.parse`, and a picture drawn from a 0 is better than a
+    // preview that stops updating while someone is still typing. Apply refuses the
+    // same field rather than writing that 0 (`applyBtn`'s guard below).
+    const width = Math.max(1, fieldTwips(widthInput) ?? 0);
+    const height = Math.max(1, fieldTwips(heightInput) ?? 0);
+    const top = Math.max(0, fieldTwips(marginTop) ?? 0);
+    const bottom = Math.max(0, fieldTwips(marginBottom) ?? 0);
+    const left = Math.max(0, fieldTwips(marginLeft) ?? 0);
+    const right = Math.max(0, fieldTwips(marginRight) ?? 0);
     const percent = (value, dimension) =>
       `${Math.min(38, Math.max(3, (value / dimension) * 100))}%`;
 
@@ -168,9 +235,15 @@ export function createPageSetup(io) {
     previewMargins.style.setProperty("--preview-margin-bottom", percent(bottom, height));
     previewMargins.style.setProperty("--preview-margin-left", percent(left, width));
     previewMargins.style.setProperty("--preview-margin-right", percent(right, width));
+    // The caption is PROSE a reader reads rather than a field they type into, so it
+    // is the only place that uses the locale's own decimal separator — `2,54` in
+    // French — and it carries the unit's suffix, which used to be the English word
+    // "in" baked into the catalogue string. A translated "po" under a centimetre
+    // preference was a wrong unit presented as a right one.
     previewLabel.textContent = t("pageSetup.dimensions", {
-      width: inchText(width * TWIPS_PER_INCH),
-      height: inchText(height * TWIPS_PER_INCH),
+      width: io.measure.display(width),
+      height: io.measure.display(height),
+      unit: io.measure.unit().suffix,
     });
   }
 
@@ -266,6 +339,10 @@ export function createPageSetup(io) {
     const show = open ?? !modal.isOpen;
     if (show === modal.isOpen) return;
     if (show && !reflect()) return; // no section geometry to edit
+    // The unit in force, applied to every field BEFORE the dialog is seen: the
+    // reader may have changed the preference since this dialog was last open, and a
+    // field labelled `cm` holding inches is the one state this must never show.
+    if (show) reflectUnits();
     focusIntent = show ? (INTENTS.get(intent) ?? null) : null;
     pageSetupBtn.setAttribute("aria-expanded", String(show));
     if (show) modal.open();
@@ -291,11 +368,12 @@ export function createPageSetup(io) {
     attr: "data-orientation",
     onSelect: (orientation) => {
       // Swap width/height to match, mirroring Word's orientation toggle.
-      const w = Number(widthInput.value) || 0;
-      const h = Number(heightInput.value) || 0;
-      if ((orientation === "landscape") === w > h) return; // already matches
-      const widthTwips = fieldTwips(widthInput);
-      const heightTwips = fieldTwips(heightInput);
+      // In twips, so the comparison is unit-free: in centimetres an A4 page is
+      // 21 x 29.7, and `Number(value)` would have compared the numerals of two
+      // different units' readings the moment the preference moved off inches.
+      const widthTwips = fieldTwips(widthInput) ?? 0;
+      const heightTwips = fieldTwips(heightInput) ?? 0;
+      if ((orientation === "landscape") === widthTwips > heightTwips) return; // already matches
       widthInput.value = inchText(heightTwips);
       heightInput.value = inchText(widthTwips);
       updatePreview();
@@ -345,7 +423,7 @@ export function createPageSetup(io) {
   function geometryMoved(section, columns) {
     const size = section.pageSize ?? {};
     const margins = section.pageMargins ?? {};
-    const painted = (twip) => inchesToTwips(inchText(twip ?? 0));
+    const painted = (twip) => io.measure.parse(inchText(twip ?? 0));
     const effective =
       section.orientation ??
       ((size.widthTwips ?? 0) > (size.heightTwips ?? 0) ? "landscape" : "portrait");
@@ -365,6 +443,19 @@ export function createPageSetup(io) {
   applyBtn.addEventListener("click", async () => {
     const doc = io.getDoc();
     if (!doc || !current) return;
+    // A REFUSAL, NEVER A ZERO. The previous reader turned a blank or unparseable
+    // field into 0 and wrote it, so clearing the Top margin and pressing Apply set
+    // a zero-inch margin the reader never typed. `measure.parse` has already said
+    // what is wrong with the value, in the engine's own words; what is left is to
+    // decline to write and put the caret on the field, rather than letting the rest
+    // of the payload through with one invented number in it.
+    const unreadable = GEOMETRY_FIELDS().find(
+      (input) => input && !input.disabled && fieldTwips(input) === null,
+    );
+    if (unreadable) {
+      unreadable.focus();
+      return;
+    }
     // Read fresh rather than trusting the snapshot this dialog opened on, for the
     // same reason Header and footer settings does: the two dialogs share `w:pgMar`,
     // and an Apply built from a stale `pageMargins` would carry a band distance
@@ -527,6 +618,11 @@ export function createPageSetup(io) {
 
   const api = {
     open: toggle,
+    /** Re-label and re-bound every distance field for the unit now in force.
+     *  Called by `measurement_units.mjs` when the preference changes, so a reader
+     *  who switches units with Page setup open sees the fields convert rather than
+     *  reading inches under a centimetre label. */
+    reflectUnits,
     /** Fill the controls from the caret's section WITHOUT opening the dialog.
      *  The File page shows this panel as a PANE rather than raising a modal over
      *  itself, so it needs the half of `toggle` that reads the document — the

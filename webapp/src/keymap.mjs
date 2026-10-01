@@ -32,11 +32,16 @@
 // suspends everything, including ⌘C inside their own dialogs. So the dispatcher
 // here needs no modal check of its own: it runs after that lock.
 //
-// Their per-type "unlocked" flag — a chord that still works on a
-// protected document — has no meaning here yet: this editor has review modes,
-// not document protection, and the modes are enforced by the commands
-// themselves, which report their own refusal. Inventing a second gate would put
-// the reason for a refusal in two places.
+// Their per-type "unlocked" flag — a chord that still works on a protected
+// document — still has no meaning here, and the reason has CHANGED: this editor
+// now has document protection as well as review modes (ADR-052 enforces
+// `w:documentProtection` at the operation, ADR-059 installs and lifts it, and
+// Review ▸ Restrict Editing reaches both). What makes a second gate unnecessary is
+// that the enforcement is at the OPERATION: every chord routes to a command, every
+// command that writes routes to the one choke point, and the choke point refuses
+// with its own sentence. A flag here would put the reason for a refusal in two
+// places and would have to be kept in step with
+// `casual_doc_edit::protection::exempt_from_protection` by hand.
 
 import { STANDARD_PLATFORM, matchesShortcut } from "./keyboard.mjs";
 
@@ -193,6 +198,16 @@ export const KEYMAP = [
   // ---- View ----------------------------------------------------------------
   { chord: "⌘=", command: "view.zoomIn", scope: APP_SCOPE },
   { chord: "⌘-", command: "view.zoomOut", scope: APP_SCOPE },
+  // Show/Hide formatting marks. ⌘8 is Word for Mac's own chord for it, and
+  // ONLYOFFICE registers theirs as `shortcutHints.ShowAll`
+  // (`Toolbar.js:806-808`), so both references advertise one.
+  //
+  // NOT Word for Windows' Ctrl+Shift+8, and the reason is `event.key` rather than
+  // taste: Shift+8 reports `"*"` on a US layout, so `⌘⇧8` would parse to a
+  // keystroke no keyboard produces — a chord advertised on four surfaces and dead
+  // on all of them, which is UX-007 exactly. `⌘` already resolves to Control off
+  // Apple, so this is ⌘8 on a Mac and Ctrl+8 elsewhere, both live.
+  { chord: "⌘8", command: "view.formattingMarks", scope: APP_SCOPE },
 
   // ---- Review --------------------------------------------------------------
   // `review.comment`, NOT `comment.add`: the latter is the annotate surface's own

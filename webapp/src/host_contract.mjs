@@ -438,6 +438,21 @@ export const COMMAND_CONTRACT = Object.freeze([
   // the host withheld `open`, so a host that wanted review without file access
   // still gets the version-history comparison rather than losing the capability.
   exact("review.compare", null),
+  // Restrict Editing (ADR-052, ADR-059). `edit`, and NOT `mutate`: installing or
+  // lifting `w:documentProtection` writes the document's own policy, which is a
+  // stronger act than typing — a `commentor` whose grant is comments-only must not
+  // be able to tell the document to stop asking for comments. That is the same
+  // reasoning the six accept/reject rows carry, and the same place this API is
+  // deliberately stricter than the chrome: the chrome refuses this in Viewing mode
+  // and allows it in Suggesting, because a suggester is still an author of the
+  // file, while a host that granted only `comment` has said otherwise about this
+  // container.
+  //
+  // It is NOT conditional on a restriction being absent. A document that arrives
+  // protected must be able to reach this, or `readOnly` is a one-way door — the
+  // trap ADR-059 removed in the engine, and the one a `requires` that read the
+  // document's own state would have rebuilt here.
+  exact("review.restrictEditing", "edit"),
 
   // ---- style --------------------------------------------------------------
   // Both write to the document's style table, so both are mutations. Declared
@@ -498,6 +513,31 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("view.textWidth.reading", null),
   exact("view.textWidth.fit", null),
   exact("view.textWidth.full", null),
+  // Formatting marks — the ¶ button and its five individual switches
+  // (`docs/153` `shell.formatting-marks`). EXACT rows and not a family, by this
+  // file's own addressing rule: a family is for a roster generated from the
+  // document or the font inventory, while these five are the exact set of marks
+  // `casual_doc_layout::formatting_marks` can paint, fixed in
+  // `formatting_marks.mjs`.
+  //
+  // Each requires NOTHING, and that is a claim worth making explicitly rather than
+  // by omission: a mark is a VIEW. The setter issues no `Operation`, bumps no
+  // document revision, moves no page boundary and cannot reach the export path, so
+  // a host that granted no mutation capability at all may still offer it — and a
+  // reader proof-reading someone else's document is exactly who wants it. Same
+  // grade, for the same reason, as `view.reflow` and `view.textWidth.*`.
+  exact("view.formattingMarks", null),
+  exact("view.formattingMarks.tab", null),
+  exact("view.formattingMarks.space", null),
+  exact("view.formattingMarks.paragraph", null),
+  exact("view.formattingMarks.lineBreak", null),
+  exact("view.formattingMarks.pageBreak", null),
+  // The measurement-unit preference (`docs/153` `shell.measurement-units`). Also
+  // nothing: it is the PERSON's choice of how distances are shown, it changes no
+  // document byte, and it is meaningful with nothing open — which is why the
+  // engine exposes the conversion layer as free functions rather than as methods on
+  // a document handle.
+  exact("view.measurementUnits", null),
   exact("view.compactRibbon", null),
   exact("view.zoomIn", null),
   exact("view.zoomOut", null),
