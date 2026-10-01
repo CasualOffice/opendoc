@@ -3102,6 +3102,179 @@ converging them is a geometry change that moves goldens. This partially answers 
 pending question "whether layout uses fixed-point units internally": layout stays in twips, and
 EMU is a boundary unit with its rounding named at the boundary.
 
+## ADR-060 — A participant's access level is a host-signed grant: the host signs, the boundary verifies, the engine enforces
+
+- **Status:** **Accepted and implemented**, 2026-10-02 — the capability vocabulary, the engine's
+  enforcement point, the wire surface, and the relay's boundary check. **No signature profile is
+  chosen**, deliberately; see "what is deliberately not decided". The chrome half (routing four
+  refusal codes, and disabling Review ▸ Restrict Editing with a reason when `manageProtection` is
+  absent) is `webapp/`'s and is **open**.
+- **Date:** 2026-10-02.
+- **Closes:** `152` §10 Q4 (the host-signed grant) and §10 Q5 (access enforcement at the
+  operation). Implements `107` 6.7's open half and `143` §10's second enforcement layer.
+- **Relates to:** ADR-052 (the *document's* protection, enforced at the operation), ADR-059 (the
+  operation that changes it, and `exempt_from_protection` as the one place that would have to
+  learn the difference), ADR-047 (the relay holds no document, which is what bounds what it can
+  judge), ADR-057 (the wire), ADR-058 (the relay and its durability).
+
+### Context: two authorities were collapsed into one, and the narrower one was missing
+
+ADR-052 made `w:documentProtection` **enforced at the operation**, by projection equality. That
+answers *what the document asks of everyone*. It does not answer *what this participant may do*,
+and nothing did: a room's read-only guest could lift the document's own restriction and then edit
+freely, because `exempt_from_protection` knew only one kind of caller. `152` §10 Q5 recorded the
+gap in exactly those words and ADR-059 named the function that would have to close it.
+
+Two facts, not one: **a document that asks not to be edited** and **a participant who is not
+allowed to edit it**. Collapsing them has a concrete cost in both directions — a standalone
+reader must still be able to lift an unpassworded restriction (that is what Word does, and
+ADR-052's "policy, not security" depends on it), while a room guest must not.
+
+### The established pattern, named before any code
+
+A **least-privilege capability grant**. The host signs a short-lived token binding a subject to a
+document and a capability set; the boundary verifies it; the engine enforces what came back. Four
+independent precedents for the same shape: OAuth2/JWT's audience-subject-scope-expiry, WOPI's
+access token, ONLYOFFICE's own JWT, and Fluid's permission-bound container. `143` §10 had already
+written it down as five enforcement layers. Nothing here is invented; what is new is that the
+layer this repository owns exists.
+
+### Decision
+
+**1. One vocabulary, in `casual_doc_edit::access`.** `Capabilities` — `comment`, `suggest`,
+`edit`, `manage_protection` — with private fields, named presets (`viewer`, `commenter`,
+`suggester`, `editor`, `owner`) and `narrowed_to` as the only composition, because a narrowing
+operation that can widen is not one. It lives beside `Operation` because that is the only place an
+exhaustive judgement over the operation set can be a **compile error**.
+
+Named `bool` fields and not a bitmask: the wire is JSON (ADR-057), so each field carries
+`#[serde(default)]` and both drift directions fail towards *less* access — an unknown field is
+ignored, a missing one reads `false`. A bitmask makes an unknown bit invisible and a width change
+silent.
+
+**2. Reading is not a capability.** Admission *is* the view right. A `view` flag would be a flag
+nothing could ever be false for, so `143` §10's `view` class is the floor rather than a bit.
+
+**3. `review`, `history.read`, `history.restore` and `share.admin` are deliberately absent**, and
+this is the part most likely to look like an omission. None has an enforcement point in this
+crate, and a capability nothing enforces is the "modeled is not shipped" failure the working
+contract names. `review` cannot get an *exact* one: `is_tracked_only` is a **negative** test — it
+says an operation only *added* tracked marks — so accepting, rejecting and untracked typing all
+fail it alike, and ADR-052's rule is that only projections that can be made exact are built. A
+reviewer is therefore granted `editor()` today, which is **wider than the role**, and that is
+recorded rather than hidden.
+
+**4. One enforcement rule for two boundaries that hold different information.**
+`refuse_if_not_permitted(document: Option<&Document>, operations, capabilities)`:
+
+- **With a document** — every honest replica, at the facade's choke point. The `comment` and
+  `suggest` classes are decided by ADR-052's projection equality, exactly and with no heuristic.
+- **Without one** — the relay. ADR-047 makes it hold no document, so it can judge only what an
+  operation's *variant* admits. That answer is **strictly weaker and never refuses something a
+  replica would allow**, which is a property and not a hope:
+  `the_relay_s_document_free_answer_never_refuses_what_a_replica_allows` pins it.
+
+So the line the relay holds against a **rewritten client** is write-versus-no-write, plus "that
+was definitely not a comment". The finer classes are enforced by every replica and reflected by
+the chrome; against an adversary who rewrote their own client they are policy, in exactly the
+sense ADR-052 uses the word. **Saying so is the point**: a boundary claimed and not held is worse
+than one never claimed.
+
+**5. The grant is the outer gate; the document's policy is the inner one.** The access check runs
+first, the protection check second. A participant with no write capability is refused on an
+*unprotected* document too, and reversing the two would let an unprotected document admit a
+read-only guest's edit.
+
+**6. `exempt_from_protection` now distinguishes a local reader from a room guest** — which is
+ADR-059's prediction, met. Exemption from *the document's* policy is not exemption from a
+*participant's* access level: `SetDocumentProtection` stays exempt from the restriction it
+changes (or `readOnly` would be a one-way door), and is subject to `manage_protection` like any
+other operation.
+
+**7. `Capabilities` never travels from a client.** `152` §2b made a forged identity
+*unexpressible* for presence by giving the message no field to put one in. The same asymmetry
+here: `Join` carries an opaque `GrantToken`, and `capabilities` appears on `Welcome` and
+`Resumed` only — server to client. A capability a client could assert is a capability a client
+can forge. What a client may do with its copy is **disable a control and say why**; the authority
+is the relay's own copy.
+
+**8. `PROTOCOL_VERSION` is not bumped**, and the reasoning is in the constant rather than here:
+`Join.grant` and `capabilities` are both *added optional fields*, and no enum variant changed. A
+grantless client meets a loud `NotAuthorised` / `ODC-7003` rather than the silent disagreement a
+version bump exists to prevent.
+
+**9. The verification seam is `server::access`, and it has no default.** `Access::Open(caps)` is a
+real, reachable policy — a read-only broadcast room, a comment-only review link — that cannot tell
+two participants apart, so a grant presented to such a room is **ignored** rather than honoured
+(the conservative direction: an open room's ceiling cannot be raised by a token).
+`Access::Granted(Box<dyn GrantVerifier>)` requires one. `Relay::new` takes an `Access` with **no
+`impl Default`**, and the binary requires a role on its command line, because a permission policy
+nobody configured must fail at the call site as a missing argument rather than at runtime as a
+room where everybody is an owner. That is "never a dead control" applied to a security boundary.
+
+`GrantVerifier::verify` returns `Result<Capabilities, GrantRefusal>` and not `Option`, so "I could
+not tell" has somewhere to go other than a capability set. A verifier that falls back to *allow*
+on a parse failure turns every malformed byte into an owner, and it is the single most likely way
+this seam gets implemented wrongly — so the doc comment says so in those words.
+
+### What is deliberately not decided
+
+**No signature profile.** `143` §16 Q5 leaves JWT, PASETO and an opaque provider token open, and
+picking one adds a cryptographic dependency to this workspace — a supply-chain and `cargo deny`
+decision, not a coding one. What ships is the seam plus two explicit policies. This is **not** the
+same as "nothing is enforced": an `Open(commenter())` room refuses every participant's
+`InsertText` at the relay with `ODC-7004`, whatever their client offered.
+
+**No durable capability as authority.** A grant is re-verified on **every** join, resumed or not,
+so reconnecting cannot restore a right the room revoked (`143` §10). A capability replayed out of
+a journal would do exactly that, which is why the relay's live grant map is connection-lifetime
+state and why ADR-058's `Admission` record carries the capability as **evidence for an operator**
+rather than as authority.
+
+### Two security defects found while building this, both closed, both proven red
+
+Neither was theoretical and neither needed a stolen credential.
+
+1. **A connected participant could submit as somebody else.** `Relay::handle` passed `submission`
+   to `commit` without comparing `submission.client` to the identity its own socket joined as.
+   Worse than misattribution: it writes the **victim's** `(client, seq)` dedupe entry, so the
+   victim's own next chunk at that seq returns `Duplicate` and vanishes — precisely the harm
+   `ResumeKey`'s doc comment describes for a stolen resume key, reachable without one. With the
+   check removed the forgery is answered `Ack { through: Seq(1), revision: Revision(2) }`.
+2. **A connection that had never joined could submit at all.** `commit` keyed everything on the
+   dedupe table and the base, so a `Base::Revision(head)` submission could name **any**
+   `ClientId`. The range check is `ServerSession::has_assigned`; the exact check is the connection
+   comparison above, and it is at the boundary because a connection is not a thing a pure state
+   machine has.
+
+**Why the check could not go in `commit`, measured rather than reasoned about.** ADR-058's
+recovery hands a logged submission back to `commit` and checks the answer, so `commit` may depend
+only on state the journal records. `ServerSession::join` was not journalled, so `next_client`,
+`resumes` and any grant table were all advanced after the last checkpoint and gone on restart —
+and adding a check against any of them made the relay refuse **its own file**:
+`a_chunk_is_durable_before_the_room_says_it_is_ordered` failed with
+`DecisionDiffers { logged: 1, replayed: None }` the moment one was added. `has_assigned` is
+therefore derived from `next_client` — an inequality, a pure function of checkpointed state —
+rather than from a table. ADR-058's `Admission` record is what later made the stronger check
+durable.
+
+### Mutation proofs
+
+Nine, each of a different production line. The two above, plus: dropping the access check from the
+facade's choke point (a viewer's `InsertText` is applied); making `admitted_by` answer
+`Capabilities::viewer` for an unknown operation (a new operation arrives ungoverned); letting
+`narrowed_to` union instead of intersect (a viewer narrowed by an owner becomes an owner); giving
+`SetDocumentProtection` an unconditional exemption (a read-only guest lifts the restriction);
+removing the "grant is re-verified on every join" overwrite (a revoked right survives a
+reconnect); and dropping the relay's document-free weakening (the relay refuses `AddComment`,
+which a replica allows — proving the weaker answer is not *weaker*).
+
+One of them **passed on its first writing** and had to be strengthened, which is the shape
+`SKILL` §4 warns about: the forged-submission guard used `Base::Chained`, which is refused as
+`Malformed` for an unrelated reason (a client with nothing accepted cannot chain), so it passed
+against a relay with no identity check at all. Rewritten to **create the condition** — an accepted
+chunk first, so the chain resolves — it reddens.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

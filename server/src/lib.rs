@@ -39,12 +39,14 @@
 //! `a_single_writer_is_never_refused_by_the_ordering_rule` pins the `W = 1` case separately.
 //! The relay adds one `fsync` per ordered chunk, and that is the whole of what durability costs.
 
+pub mod access;
 pub mod fanout;
 pub mod journal;
 pub mod relay;
 pub mod room;
 pub mod transport;
 
+pub use access::{Access, GrantRefusal, GrantVerifier};
 pub use fanout::Participants;
 pub use journal::{Journal, JournalError, Recovered};
 pub use relay::{Handled, Relay};

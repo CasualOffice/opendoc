@@ -294,6 +294,7 @@ mod tests {
             ("refusal.rs", include_str!("refusal.rs")),
             ("mint.rs", include_str!("mint.rs")),
             ("protection.rs", include_str!("protection.rs")),
+            ("access.rs", include_str!("access.rs")),
         ]
     }
 
@@ -310,13 +311,20 @@ mod tests {
     /// every platform rather than only on Windows.
     fn production(name: &str, raw: &str) -> String {
         let text = raw.replace("\r\n", "\n");
-        let tests_at = text.find("\n#[cfg(test)]\nmod tests {").unwrap_or_else(|| {
-            panic!(
-                "{name} must carry a `#[cfg(test)] mod tests` marker for the scan to \
-                 cut at; without the cut this guard reads its own test code and \
-                 reports itself"
-            )
-        });
+        // Two spellings, because a module may keep its tests inline or in a sibling
+        // file (`#[cfg(test)] #[path = "x_tests.rs"] mod tests;`). Both are a valid
+        // cut; a file with NEITHER is not, and still panics — the marker is what
+        // stops this guard reading its own test code and reporting itself.
+        let tests_at = text
+            .find("\n#[cfg(test)]\nmod tests {")
+            .or_else(|| text.find("\n#[cfg(test)]\n#[path = "))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{name} must carry a `#[cfg(test)] mod tests` marker — inline or \
+                     `#[path]`-ed to a sibling file — for the scan to cut at; without \
+                     the cut this guard reads its own test code and reports itself"
+                )
+            });
         text[..tests_at].to_owned()
     }
 

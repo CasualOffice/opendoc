@@ -16,6 +16,7 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::ParagraphIndex;
+use casual_doc_edit::access::Capabilities;
 // Its own line, not folded into a sorted block: a shared `use` list is where
 // parallel lanes collide (rustfmt is set to Preserve).
 use casual_doc_edit::SplitProperties;
@@ -544,6 +545,16 @@ pub struct WasmDocument {
     /// operations would be the wrong axis — the same `SetInlines` is legitimate
     /// inside a field and forbidden outside one.
     editing_a_form_field: bool,
+    /// What **this participant** is allowed to do — `152` §10 Q4's host-signed grant,
+    /// as the engine sees it after the host has verified the token.
+    ///
+    /// [`Capabilities::local`] until a host says otherwise, which is the standalone
+    /// mode and is the only honest default: a document on your own machine has no
+    /// grant, nobody to issue one, and the reader holds the bytes (ADR-052). A
+    /// narrower value arrives through
+    /// [`WasmDocument::adopt_participant_capabilities`], never from a document and
+    /// never from a wire message this engine read itself.
+    capabilities: Capabilities,
     /// Numeric `w:id` allocator for editor-authored revisions. Imported opaque
     /// ids remain untouched; allocated values are never reused within a session,
     /// including after Undo.
@@ -12972,6 +12983,72 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Narrows this replica to the capabilities the room granted this participant —
+    /// `152` §10 Q4, the engine half.
+    ///
+    /// The host calls this after it has **verified** the grant, with the capability set that
+    /// came out of the verification. The engine does not parse a token, does not check a
+    /// signature and does not read an expiry: it reads no clock and holds no key, which is
+    /// the same rule that makes `WasmDocument::adopt_participant_identity` take a number
+    /// rather than mint one. ADR-060 records where the signature profile belongs.
+    ///
+    /// # It can only ever narrow
+    ///
+    /// The new value is **intersected** with what this replica already holds, so a second
+    /// call cannot widen access and a host that re-applies a stale grant cannot restore a
+    /// right the room revoked. A participant who needs more than they were granted rejoins;
+    /// `143` §10's "losing edit permission leaves the document readable and preserves unsent
+    /// local work" is exactly this direction.
+    ///
+    /// **A document with no session must not call it, and does not need to.** Until it is
+    /// called this replica holds every capability, which is the standalone mode: no grant,
+    /// nobody to issue one, and the reader holds the bytes (ADR-052, `152` §2a). Local-first
+    /// is unchanged by the existence of this seam.
+    ///
+    /// # What a client may assume from this
+    ///
+    /// That the relay will refuse what this refuses. **Not** that this is the authority: the
+    /// relay keeps its own copy from the grant it verified and judges every submission against
+    /// it, so a modified client that skipped this call still cannot write above its level.
+    /// What this buys is a chrome that can disable a control *with a reason* instead of
+    /// offering a gesture the network will reject.
+    ///
+    /// # Errors
+    ///
+    /// An unknown capability name. Unknown names are refused rather than ignored: a host that
+    /// misspells `"suggest"` must hear about it, because silently granting less is a bug that
+    /// looks like a working read-only mode.
+    ///
+    /// O(1).
+    #[wasm_bindgen(js_name = adoptParticipantCapabilities)]
+    pub fn adopt_participant_capabilities(&mut self, granted: Vec<String>) -> Result<(), JsValue> {
+        self.adopt_participant_capabilities_internal(&granted)
+            .map_err(to_js)
+    }
+
+    /// What this participant is allowed to do, as the capability names a host passes to
+    /// `WasmDocument::adopt_participant_capabilities`, sorted.
+    ///
+    /// Host-visible so chrome can disable a control and *say why*, rather than discovering the
+    /// refusal by sending the gesture. Empty means read-only.
+    #[wasm_bindgen(getter, js_name = participantCapabilities)]
+    pub fn participant_capabilities(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if self.capabilities.may_comment() {
+            names.push("comment".to_owned());
+        }
+        if self.capabilities.may_edit() {
+            names.push("edit".to_owned());
+        }
+        if self.capabilities.may_manage_protection() {
+            names.push("manageProtection".to_owned());
+        }
+        if self.capabilities.may_suggest() {
+            names.push("suggest".to_owned());
+        }
+        names
+    }
+
     /// The namespace this replica currently mints in, as 16 lowercase hex digits.
     ///
     /// Host-visible so an integration can assert its replicas are partitioned rather than
@@ -13096,6 +13173,33 @@ impl WasmDocument {
         self.edit_ids.rebase(space.get());
         self.edit_ids
             .reserve_through(self.document.highest_counter_in(space));
+        Ok(())
+    }
+
+    /// See [`WasmDocument::adopt_participant_capabilities`]. Plain `Result<_, String>` so the
+    /// access guards run under `cargo test` on native targets.
+    fn adopt_participant_capabilities_internal(
+        &mut self,
+        granted: &[String],
+    ) -> Result<(), String> {
+        let mut capabilities = Capabilities::viewer();
+        for name in granted {
+            capabilities = match name.as_str() {
+                "comment" => capabilities.with_comment(),
+                "suggest" => capabilities.with_suggest(),
+                "edit" => capabilities.with_edit(),
+                "manageProtection" => capabilities.with_manage_protection(),
+                other => {
+                    return Err(format!(
+                        "unknown capability {other:?}; the grant may name comment, suggest, \
+                         edit or manageProtection"
+                    ));
+                }
+            };
+        }
+        // Intersection, never replacement: a grant can only ever narrow what this replica
+        // holds, so re-applying a stale one cannot restore a revoked right.
+        self.capabilities = self.capabilities.narrowed_to(capabilities);
         Ok(())
     }
 
@@ -13963,6 +14067,23 @@ impl WasmDocument {
     /// which is a real state Word round-trips — so the flag is checked, not
     /// just the mode.
     fn refuse_if_protected(&self, ops: &[Operation]) -> Result<(), String> {
+        // **The grant is the outer gate, and it is outside the form-field exemption too.**
+        // A participant's access level is not a question about where their caret is: a
+        // read-only guest in a room may not fill in a form field either, and `152` §10 Q5 is
+        // the record that a document that asks not to be edited and a participant who is not
+        // allowed to edit it are two different questions with one enforcement point. So this
+        // is above the `editing_a_form_field` early return, not below it — below it, a
+        // form-aware action would be a hole straight through the grant.
+        //
+        // `Some(&self.document)` because a replica HAS a document: that is what makes the
+        // `comment` and `suggest` classes exact rather than variant-level. The relay holds no
+        // document (ADR-047), passes `None`, and gets the weaker variant-level answer.
+        casual_doc_edit::access::refuse_if_not_permitted(
+            Some(&self.document),
+            ops,
+            self.capabilities,
+        )
+        .map_err(|refusal| refusal.reason().to_owned())?;
         if self.editing_a_form_field {
             return Ok(());
         }
@@ -13972,7 +14093,7 @@ impl WasmDocument {
         // `casual_doc_edit::protection`). All three were modelled and exported and enforced
         // nowhere until that module existed: a document a reader could see was protected was
         // fully editable.
-        casual_doc_edit::protection::refuse_if_protected(&self.document, ops)
+        casual_doc_edit::protection::refuse_if_protected(&self.document, ops, self.capabilities)
             .map_err(|refusal| refusal.reason().to_owned())?;
         // `forms` stays here, and only `forms`, because it is the one level whose answer
         // needs state the engine cannot see: whether the reader is inside an enabled text
@@ -13988,7 +14109,7 @@ impl WasmDocument {
             // never be unprotected. One rule, one predicate, called from both choke points
             // (ADR-059) — the alternative is two implementations of one exemption, which is
             // exactly how they diverge.
-            if casual_doc_edit::protection::exempt_from_protection(op) {
+            if casual_doc_edit::protection::exempt_from_protection(op, self.capabilities) {
                 continue;
             }
             if !self.op_is_inside_a_form_field(op) {
@@ -24645,6 +24766,7 @@ fn open_document_bounded(
         next_transaction: 0,
         typing_history: None,
         editing_a_form_field: false,
+        capabilities: Capabilities::local(),
         revision_ids,
         revision: 0,
         // Populated lazily on the first edit's incremental re-pagination; the open
@@ -33006,6 +33128,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             editing_a_form_field: false,
+            capabilities: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -33452,6 +33575,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let d = WasmDocument {
             editing_a_form_field: false,
+            capabilities: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -33753,6 +33877,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             editing_a_form_field: false,
+            capabilities: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -37609,6 +37734,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
             editing_a_form_field: false,
+            capabilities: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -39780,6 +39906,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
             editing_a_form_field: false,
+            capabilities: Capabilities::local(),
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),

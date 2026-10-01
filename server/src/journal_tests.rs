@@ -6,6 +6,7 @@
 //! restart, that a torn tail is survivable and a torn middle is not, and that recovery verifies
 //! the decision rather than trusting the file.
 
+use casual_doc_edit::access::Capabilities;
 use casual_doc_edit::{Mint, Operation, Pos};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_transaction::protocol::CHUNK_BUDGET_BYTES;
@@ -32,11 +33,15 @@ fn scratch(name: &str) -> std::path::PathBuf {
 }
 
 fn joined(session: &mut ServerSession, who: &str) -> ClientId {
-    let answer = session.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new(who).expect("an identity"),
-        resume: None,
-    }));
+    let answer = session.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new(who).expect("an identity"),
+            grant: None,
+            resume: None,
+        }),
+        Capabilities::owner(),
+    );
     match answer {
         ServerMessage::Welcome { client, .. } | ServerMessage::Resumed { client, .. } => client,
         other => panic!("expected a welcome, got {other:?}"),
@@ -211,21 +216,36 @@ fn recovery_checks_the_decision_and_refuses_a_journal_that_disagrees() {
     } else {
         logged + 1
     };
-    let text = String::from_utf8(std::fs::read(&path).expect("read")).expect("the payload is text");
-    let doctored = text.replace(
-        &format!("\"revision\":{logged}"),
-        &format!("\"revision\":{forged}"),
+    // Edited as BYTES, not as a `String`. A journal frame is a binary header followed by a JSON
+    // payload, so its length field can hold any byte at all — and this guard used to decode the
+    // whole file as UTF-8 and happened to pass only because every checkpoint it had ever seen was
+    // short enough for the length byte to be ASCII. Adding one field to `ServerSession` pushed the
+    // checkpoint to 194 bytes, the length byte became `0xC2`, and the `expect` blew up on a file
+    // that was perfectly intact. Searching the bytes has no such coupling.
+    let bytes = std::fs::read(&path).expect("read");
+    let needle = format!("\"revision\":{logged}").into_bytes();
+    let replacement = format!("\"revision\":{forged}").into_bytes();
+    assert_eq!(
+        needle.len(),
+        replacement.len(),
+        "the replacement must be the same width, or this tests truncation instead"
     );
+    let at = bytes
+        .windows(needle.len())
+        .rposition(|window| window == needle.as_slice())
+        .expect("the appended record names the revision it was ordered at");
+    let mut doctored = bytes.clone();
+    doctored[at..at + replacement.len()].copy_from_slice(&replacement);
     assert_ne!(
-        doctored, text,
+        doctored, bytes,
         "the revision must actually have been rewritten"
     );
     assert_eq!(
         doctored.len(),
-        text.len(),
-        "the replacement must be the same width, or this tests truncation instead"
+        bytes.len(),
+        "the file must be the same length, or this tests truncation instead"
     );
-    std::fs::write(&path, doctored.as_bytes()).expect("write");
+    std::fs::write(&path, &doctored).expect("write");
 
     match Journal::open(&path) {
         Err(JournalError::DecisionDiffers {

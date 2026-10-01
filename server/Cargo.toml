@@ -21,13 +21,16 @@ name = "opendoc-relay"
 path = "src/main.rs"
 
 [dependencies]
+# A real dependency since ADR-060, not a dev one: `Capabilities` is the vocabulary a room's
+# access policy speaks, and it lives beside `Operation` in the edit crate because that is the
+# only place an exhaustive judgement over the op set can be a compile error.
+casual-doc-edit.workspace = true
 casual-doc-transaction.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
 # The journal's guards drive a real relay through real chunks: a durability test that builds its
 # own fake submission proves the test's idea of one, not the engine's.
-casual-doc-edit.workspace = true
 casual-doc-model.workspace = true
 
 [lints]

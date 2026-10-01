@@ -63,6 +63,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{Document, DocumentProtectionEdit, InlineNode, Revision, RevisionKind};
 
 use crate::Operation;
+use crate::access::Capabilities;
 use crate::containers::{InlineDescent, inline_descent};
 
 /// Why `w:documentProtection` refuses an operation.
@@ -111,6 +112,14 @@ impl ProtectionRefusal {
 /// holds the "the reader is in a form field right now" state this crate cannot see, and
 /// moving it would be a second mechanism for one rule. [`forms`] is the seam.
 ///
+/// `capabilities` is **this participant's** access level, which is a different authority from
+/// the document's policy and is read for exactly one thing: whether
+/// [`Operation::SetDocumentProtection`] is exempt (see [`exempt_from_protection`]). Pass
+/// [`Capabilities::local`] where there is no session, which is the standalone mode and the
+/// behaviour ADR-052 shipped. The *participant's* own check is
+/// [`crate::access::refuse_if_not_permitted`] and it runs **before** this one — the grant is
+/// the outer gate.
+///
 /// # Errors
 ///
 /// The [`ProtectionRefusal`] for the level that refused, naming the level and not the
@@ -123,6 +132,7 @@ impl ProtectionRefusal {
 pub fn refuse_if_protected(
     document: &Document,
     ops: &[Operation],
+    capabilities: Capabilities,
 ) -> Result<(), ProtectionRefusal> {
     let Some(protection) = document.definitions().settings.document_protection.as_ref() else {
         return Ok(());
@@ -136,7 +146,7 @@ pub fn refuse_if_protected(
     for op in ops {
         // The ordering trap. See `exempt_from_protection`, which is also what the facade's
         // `forms` check calls, so the exemption is one rule in one place.
-        if exempt_from_protection(op) {
+        if exempt_from_protection(op, capabilities) {
             continue;
         }
         match level {
@@ -160,7 +170,8 @@ pub fn refuse_if_protected(
 /// Whether `op` is exempt from **every** editing restriction, including `readOnly`.
 ///
 /// Exactly one operation is: [`Operation::SetDocumentProtection`], the operation that
-/// installs or lifts the restriction itself.
+/// installs or lifts the restriction itself — **and only for a participant whose grant lets
+/// them manage protection.**
 ///
 /// # The ordering trap, and why this function is the whole of ADR-059's subtlety
 ///
@@ -186,16 +197,31 @@ pub fn refuse_if_protected(
 /// refused on the `InsertText`. That is the conservative reading and it keeps ADR-052's "a
 /// batch is judged whole" true.
 ///
-/// # Who may do this
+/// # Who may do this — `152` §10 Q4, answered
 ///
-/// The local reader, and nobody else is checked. `152` §10 Q4's host-signed participant grant
-/// would be the honest authority — *the document* says "do not edit me", and only a *grant*
-/// can say who may overrule it — and it does not exist. Until it does, anyone who can open
-/// the document can lift its restriction, which is exactly what Word does with an
-/// **unpassworded** restriction. Password material (`w:hash`, `w:salt`, `w:cryptSpinCount`)
-/// is deliberately not modelled and never verified: ADR-052 records that this is policy and
-/// not security, and checking a hash would advertise a boundary that does not exist, since
-/// the legacy hash is removable by editing one attribute in the XML.
+/// *The document* says "do not edit me", and only a **grant** can say who may overrule it.
+/// `152` §10 Q4/Q5 recorded that as owed and ADR-059 named this function as the single place
+/// that would have to learn the difference. It now has:
+///
+/// - **No session** — [`Capabilities::local`], the standalone mode. The local reader is the
+///   only authority and may lift the restriction, exactly what Word does with an
+///   **unpassworded** restriction and exactly what ADR-052 shipped. Unchanged.
+/// - **In a room** — the capabilities the host signed. A read-only guest, a commenter and a
+///   suggester are **not** exempt: their `SetDocumentProtection` is refused by
+///   [`crate::access::refuse_if_not_permitted`] before this is reached, and refused again
+///   here if some future caller runs the checks the other way round. Two gates for one rule is
+///   deliberate; the inner one costs a `bool` read and closes an ordering hole nobody would
+///   notice.
+///
+/// So the sentence that was true and wrong — "anyone who can open a document can lift its
+/// restriction" — is now true only where it should be: on your own machine, with your own file.
+///
+/// Password material (`w:hash`, `w:salt`, `w:cryptSpinCount`) is still deliberately not
+/// modelled and never verified. That has not changed and is not what this closes: ADR-052
+/// records that the document's protection is policy and not security, and checking a hash would
+/// advertise a boundary that does not exist, since the legacy hash is removable by editing one
+/// attribute in the XML. A *grant* is a different matter — it is held by the host and signed by
+/// the host, and the relay refuses without it.
 ///
 /// # Why `matches!` and not an exhaustive match
 ///
@@ -210,8 +236,8 @@ pub fn refuse_if_protected(
 ///
 /// O(1).
 #[must_use]
-pub fn exempt_from_protection(op: &Operation) -> bool {
-    matches!(op, Operation::SetDocumentProtection { .. })
+pub const fn exempt_from_protection(op: &Operation, capabilities: Capabilities) -> bool {
+    matches!(op, Operation::SetDocumentProtection { .. }) && capabilities.may_manage_protection()
 }
 
 /// Whether `document`'s protection is the enforced forms-only level.
@@ -236,7 +262,7 @@ pub fn forms(document: &Document) -> bool {
 /// interesting question is which ones are not — and a catch-all would silently exempt the
 /// 59th operation from every restriction in this module. That is the same rule `clone`'s
 /// inline match and `WireOperation::introduces` follow, for the same reason.
-fn is_comment_only(document: &Document, op: &Operation) -> bool {
+pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
     match op {
         // The one operation that can be a comment. Its paragraph replacements are compared
         // with the comment markers removed from both sides: if what is left is identical, the
@@ -318,7 +344,7 @@ fn is_comment_only(document: &Document, op: &Operation) -> bool {
 ///
 /// Word's tracked-changes restriction allows comments too, so this is a superset of
 /// [`is_comment_only`]: the projection below drops comment markers as well.
-fn is_tracked_only(document: &Document, op: &Operation) -> bool {
+pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
     match op {
         Operation::UpdateReviewState { paragraphs, .. } => paragraphs.iter().all(|state| {
             current_inlines(document, state.node).is_some_and(|current| {
@@ -560,7 +586,7 @@ mod tests {
         let document = protected(DocumentProtectionEdit::ReadOnly, true);
         for op in [typing(), deleting(), review(vec![run(11, "abcdefgh")])] {
             assert_eq!(
-                refuse_if_protected(&document, std::slice::from_ref(&op)),
+                refuse_if_protected(&document, std::slice::from_ref(&op), Capabilities::local()),
                 Err(ProtectionRefusal::ReadOnly),
                 "a read-only document accepted {op:?}"
             );
@@ -573,7 +599,10 @@ mod tests {
         // then turned it off. Refusing on it would make a saved-and-reopened document
         // uneditable for a policy nobody asked to apply.
         let document = protected(DocumentProtectionEdit::ReadOnly, false);
-        assert_eq!(refuse_if_protected(&document, &[typing()]), Ok(()));
+        assert_eq!(
+            refuse_if_protected(&document, &[typing()], Capabilities::local()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -593,7 +622,7 @@ mod tests {
             }),
         ]);
         assert_eq!(
-            refuse_if_protected(&document, &[anchored]),
+            refuse_if_protected(&document, &[anchored], Capabilities::local()),
             Ok(()),
             "a comment anchor must be accepted, or the level allows nothing it exists for"
         );
@@ -604,12 +633,12 @@ mod tests {
             run(11, "abcdefgh"),
         ]);
         assert_eq!(
-            refuse_if_protected(&document, &[suggested]),
+            refuse_if_protected(&document, &[suggested], Capabilities::local()),
             Err(ProtectionRefusal::CommentsOnly),
             "a tracked insertion is not a comment"
         );
         assert_eq!(
-            refuse_if_protected(&document, &[typing()]),
+            refuse_if_protected(&document, &[typing()], Capabilities::local()),
             Err(ProtectionRefusal::CommentsOnly)
         );
     }
@@ -628,7 +657,7 @@ mod tests {
             comments: None,
         };
         assert_eq!(
-            refuse_if_protected(&document, &[elsewhere]),
+            refuse_if_protected(&document, &[elsewhere], Capabilities::local()),
             Err(ProtectionRefusal::CommentsOnly)
         );
     }
@@ -646,7 +675,7 @@ mod tests {
             run(11, "abcdefgh"),
         ]);
         assert_eq!(
-            refuse_if_protected(&plain, &[insert]),
+            refuse_if_protected(&plain, &[insert], Capabilities::local()),
             Ok(()),
             "a tracked insertion must be accepted, or the level allows no editing at all"
         );
@@ -658,18 +687,21 @@ mod tests {
             RevisionKind::Deletion,
             vec![run(11, "abcdefgh")],
         )]);
-        assert_eq!(refuse_if_protected(&plain, &[delete]), Ok(()));
+        assert_eq!(
+            refuse_if_protected(&plain, &[delete], Capabilities::local()),
+            Ok(())
+        );
 
         // Untracked typing through the same operation: a character appears outside any
         // revision, so the projection gains it.
         let untracked = review(vec![run(50, "x"), run(11, "abcdefgh")]);
         assert_eq!(
-            refuse_if_protected(&plain, &[untracked]),
+            refuse_if_protected(&plain, &[untracked], Capabilities::local()),
             Err(ProtectionRefusal::TrackedChangesOnly),
             "an untracked edit is what this level exists to prevent"
         );
         assert_eq!(
-            refuse_if_protected(&plain, &[typing()]),
+            refuse_if_protected(&plain, &[typing()], Capabilities::local()),
             Err(ProtectionRefusal::TrackedChangesOnly)
         );
 
@@ -687,7 +719,7 @@ mod tests {
         // Accepting the insertion unwraps it: the before-projection GAINS the text.
         let accepted = review(vec![run(31, "x"), run(11, "abcdefgh")]);
         assert_eq!(
-            refuse_if_protected(&suggested, &[accepted]),
+            refuse_if_protected(&suggested, &[accepted], Capabilities::local()),
             Err(ProtectionRefusal::TrackedChangesOnly),
             "accepting a tracked change is a review decision, not a tracked edit"
         );
@@ -696,7 +728,7 @@ mod tests {
         // only the vanished revision id distinguishes it from nothing having happened.
         let rejected = review(vec![run(11, "abcdefgh")]);
         assert_eq!(
-            refuse_if_protected(&suggested, &[rejected]),
+            refuse_if_protected(&suggested, &[rejected], Capabilities::local()),
             Err(ProtectionRefusal::TrackedChangesOnly),
             "rejecting restores the before-state, so ONLY the lost revision id catches it — \
              the projection alone would have let it through"
@@ -709,7 +741,10 @@ mod tests {
         // the comments level rather than a sibling of it.
         let document = protected(DocumentProtectionEdit::TrackedChanges, true);
         let anchored = review(vec![comment_range(20, 21), run(11, "abcdefgh")]);
-        assert_eq!(refuse_if_protected(&document, &[anchored]), Ok(()));
+        assert_eq!(
+            refuse_if_protected(&document, &[anchored], Capabilities::local()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -723,7 +758,7 @@ mod tests {
             typing(),
         ];
         assert_eq!(
-            refuse_if_protected(&document, &ops),
+            refuse_if_protected(&document, &ops, Capabilities::local()),
             Err(ProtectionRefusal::CommentsOnly),
             "a batch whose first operation is allowed must still be judged whole"
         );
@@ -746,7 +781,10 @@ mod tests {
         )
         .expect("a valid document");
         crate::reset_block_visits();
-        assert_eq!(refuse_if_protected(&document, &[typing()]), Ok(()));
+        assert_eq!(
+            refuse_if_protected(&document, &[typing()], Capabilities::local()),
+            Ok(())
+        );
         assert_eq!(
             crate::block_visits(),
             0,
@@ -855,7 +893,7 @@ mod tests {
             // the engine deliberately leaves that level to the facade.
             if level != DocumentProtectionEdit::Forms {
                 assert!(
-                    refuse_if_protected(&document, &[typing()]).is_err(),
+                    refuse_if_protected(&document, &[typing()], Capabilities::local()).is_err(),
                     "the fixture at {level:?} does not actually restrict editing, so this \
                      guard would pass for the wrong reason"
                 );
@@ -863,14 +901,18 @@ mod tests {
 
             // Lifting it entirely — Word's "Stop Protection".
             assert_eq!(
-                refuse_if_protected(&document, &[lift()]),
+                refuse_if_protected(&document, &[lift()], Capabilities::local()),
                 Ok(()),
                 "a {level:?} document refused the operation that LIFTS it: the restriction \
                  is a one-way door and the feature is worse than absent"
             );
             // And tightening it, which is the same authority question.
             assert_eq!(
-                refuse_if_protected(&document, &[impose(DocumentProtectionEdit::ReadOnly)]),
+                refuse_if_protected(
+                    &document,
+                    &[impose(DocumentProtectionEdit::ReadOnly)],
+                    Capabilities::local()
+                ),
                 Ok(()),
                 "a {level:?} document refused the operation that CHANGES it"
             );
@@ -879,7 +921,8 @@ mod tests {
             assert_eq!(
                 refuse_if_protected(
                     &document,
-                    &[impose(DocumentProtectionEdit::Comments), lift()]
+                    &[impose(DocumentProtectionEdit::Comments), lift()],
+                    Capabilities::local()
                 ),
                 Ok(()),
                 "a {level:?} document refused a BATCH of protection changes"
@@ -901,13 +944,13 @@ mod tests {
     fn a_batch_may_not_lift_a_restriction_and_then_edit_under_the_lift() {
         let document = protected(DocumentProtectionEdit::ReadOnly, true);
         assert_eq!(
-            refuse_if_protected(&document, &[lift(), typing()]),
+            refuse_if_protected(&document, &[lift(), typing()], Capabilities::local()),
             Err(ProtectionRefusal::ReadOnly),
             "a batch smuggled a keystroke in behind its own unlock"
         );
         // Order is irrelevant — the batch is judged whole, not in sequence.
         assert_eq!(
-            refuse_if_protected(&document, &[typing(), lift()]),
+            refuse_if_protected(&document, &[typing(), lift()], Capabilities::local()),
             Err(ProtectionRefusal::ReadOnly),
             "a batch smuggled a keystroke in ahead of its own unlock"
         );
@@ -919,13 +962,14 @@ mod tests {
     /// exemption.
     #[test]
     fn only_the_protection_operation_itself_is_exempt() {
-        assert!(exempt_from_protection(&lift()));
-        assert!(exempt_from_protection(&impose(
-            DocumentProtectionEdit::ReadOnly
-        )));
+        assert!(exempt_from_protection(&lift(), Capabilities::local()));
+        assert!(exempt_from_protection(
+            &impose(DocumentProtectionEdit::ReadOnly),
+            Capabilities::local()
+        ));
         for op in [typing(), deleting(), review(vec![run(11, "abcdefgh")])] {
             assert!(
-                !exempt_from_protection(&op),
+                !exempt_from_protection(&op, Capabilities::local()),
                 "an ordinary operation is exempt from every restriction: {op:?}"
             );
         }
@@ -945,7 +989,10 @@ mod tests {
                 .is_some(),
             "an unenforced restriction must still be present, so export writes it back"
         );
-        assert_eq!(refuse_if_protected(&unenforced, &[typing()]), Ok(()));
+        assert_eq!(
+            refuse_if_protected(&unenforced, &[typing()], Capabilities::local()),
+            Ok(())
+        );
     }
 
     /// `SetDocumentProtection { protection: None }` — Word's "Stop Protection".

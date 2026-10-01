@@ -117,6 +117,17 @@ pub mod mint;
 // judgement on an arriving operation, which a rule written in the facade could not give it.
 pub mod protection;
 
+// A PARTICIPANT's access level, which is a different authority from the document's own
+// protection (`152` §10 Q4/Q5, ADR-060). Its own module because the grant is the outer gate and
+// `protection` is the inner one, because the relay needs the same judgement with no document in
+// hand, and because a capability a client could state is a capability a client can forge — so
+// the type that carries one has no constructor that takes anything off a wire.
+//
+// A plain comment, not a doc comment, for the reason `references` above carries one: a doc
+// comment here resolves in the crate root's scope and every intra-doc link in it fails
+// `RUSTDOCFLAGS="-D warnings" cargo doc`.
+pub mod access;
+
 pub use mint::{Mint, MintedIds};
 
 // The inline container set, declared once (`docs/109` HF-212). An `InlineNode` can

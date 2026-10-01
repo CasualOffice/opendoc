@@ -18,12 +18,18 @@
 //! ADR-058 give the reasons separately; together they mean a chunk cannot be acknowledged before
 //! it is durable, and two participants cannot be told about the order in two different orders.
 
+use std::collections::BTreeMap;
 use std::io::Write;
+
+use casual_doc_edit::access::{Capabilities, refuse_if_not_permitted};
 
 use casual_doc_transaction::codec::encode_frame;
 use casual_doc_transaction::presence::{Accepted, Roster};
-use casual_doc_transaction::protocol::{Arrival, ClientId, ClientMessage, Outcome, ServerMessage};
+use casual_doc_transaction::protocol::{
+    Arrival, ClientId, ClientMessage, Outcome, Refusal, ServerMessage,
+};
 
+use crate::access::Access;
 use crate::fanout::Participants;
 use crate::room::{Room, RoomError};
 
@@ -53,22 +59,47 @@ pub struct Handled {
 #[derive(Debug)]
 pub struct Relay<W> {
     room: Room,
+    /// How this room answers "what may this participant do" — ADR-060. **Not durable**: a grant
+    /// is re-verified on every join, and a verifier holds a key, which is not a thing to write
+    /// into a journal.
+    access: Access,
     participants: Participants<W>,
     /// **Never journalled** (`152` §2b): presence is overwritten wholesale, never merged, never
     /// replayed. It shares the room's lock so one message is handled at a time, not its
     /// durability.
     roster: Roster,
+    /// What each **connected** participant may do, from the grant this relay verified at its
+    /// join — ADR-060.
+    ///
+    /// Connection-lifetime state, like [`Relay::participants`] and [`Relay::roster`], and
+    /// **deliberately not durable**. A grant is re-verified on every join, so after a restart
+    /// every client rejoins and presents one again; there is nothing here a recovery could want.
+    /// Keeping it out of [`ServerSession`](casual_doc_transaction::session::ServerSession) is
+    /// also what keeps `commit` a pure function of checkpointed state, which ADR-058's replay
+    /// depends on.
+    granted: BTreeMap<ClientId, Capabilities>,
 }
 
 impl<W: Write> Relay<W> {
-    /// A relay over `room` with nobody connected.
+    /// A relay over `room` with nobody connected, admitting participants under `access`.
+    ///
+    /// **`access` has no default, deliberately** (see [`crate::access`]): a permission policy
+    /// nobody configured must fail at the call site as a missing argument, not at runtime as a
+    /// room where everybody is an owner.
     #[must_use]
-    pub fn new(room: Room) -> Self {
+    pub fn new(room: Room, access: Access) -> Self {
         Self {
             room,
+            access,
             participants: Participants::new(),
             roster: Roster::new(),
+            granted: BTreeMap::new(),
         }
+    }
+
+    /// This room's access policy.
+    pub const fn access(&self) -> &Access {
+        &self.access
     }
 
     /// The room, for a caller that needs to checkpoint it or report on it.
@@ -107,24 +138,96 @@ impl<W: Write> Relay<W> {
         message: &ClientMessage,
     ) -> Result<Handled, RoomError> {
         match message {
-            ClientMessage::Join(_) => {
-                let answer = self.room.join(message);
+            ClientMessage::Join(join) => {
+                // The policy, consulted before the order hears about this connection at all. A
+                // failure is `NotAuthorised` and **terminal**: a client that retries an
+                // unauthorised join loops for ever, which is exactly what
+                // `Refusal::is_terminal` already says about this code.
+                let granted = match self.access.capabilities(join.grant.as_ref()) {
+                    Ok(granted) => granted,
+                    Err(_) => {
+                        return Ok(Handled {
+                            answer: Some(ServerMessage::Stopped {
+                                reason: Refusal::NotAuthorised,
+                            }),
+                            ..Handled::default()
+                        });
+                    }
+                };
+                let answer = self.room.join(message, granted);
                 let mut handled = Handled {
                     answer: Some(answer.clone()),
                     ..Handled::default()
                 };
                 // The participant set is keyed by the id the relay just assigned — the same id a
                 // resume hands back, which is why `joined` replaces rather than refuses.
-                if let ServerMessage::Welcome { client, .. } | ServerMessage::Resumed { client, .. } =
-                    answer
-                    && let Some(writer) = writer.take()
+                if let ServerMessage::Welcome { client, .. }
+                | ServerMessage::Resumed { client, .. } = answer
                 {
-                    handled.joined_as = Some(client);
-                    self.participants.joined(client, writer);
+                    // Recorded on **every** accepted join, resumed or not, and recorded before
+                    // the writer is taken: a resume re-verifies the grant, so reconnecting
+                    // cannot restore a right the room revoked (`143` §10).
+                    self.granted.insert(client, granted);
+                    if let Some(writer) = writer.take() {
+                        handled.joined_as = Some(client);
+                        self.participants.joined(client, writer);
+                    }
                 }
                 Ok(handled)
             }
             ClientMessage::Submit(submission) => {
+                // **A submission may only claim the connection it arrived on.** `152` §2b made a
+                // forged identity unexpressible for presence by giving the message no field to
+                // put one in; `Submission` has one, because the relay's dedupe table is keyed on
+                // it, so here the claim is *checked* instead.
+                //
+                // Unchecked, this was a real hole and not a theoretical one. Writing as somebody
+                // else attributes the work to them, and — worse — it writes their `(client, seq)`
+                // entry, so their own next chunk at that seq comes back `Duplicate` and is
+                // silently dropped. That is precisely the harm `ResumeKey`'s doc comment names
+                // for a stolen resume key, reachable without one.
+                //
+                // `None` means nothing has joined on this connection yet, which is the same
+                // answer for the same reason.
+                // Two checks and not one. The connection check below is the exact one; this is
+                // the range check, and it is here because a third-party relay driving
+                // `ServerSession` directly has only this one available — so `has_assigned` is
+                // reachable rather than a query nothing calls.
+                if !self.room.session().has_assigned(submission.client)
+                    || me != Some(submission.client)
+                {
+                    return Ok(Handled {
+                        answer: Some(ServerMessage::Refused {
+                            seq: Some(submission.seq),
+                            reason: Refusal::NotAuthorised,
+                        }),
+                        ..Handled::default()
+                    });
+                }
+                // Then the write line, which is the whole of what a relay holding no document
+                // can judge (ADR-047, ADR-060). `None` for the document is not a shortcut: it is
+                // the honest argument, and `casual_doc_edit::access` answers it with a provably
+                // weaker rule that never refuses what a replica would allow. The finer classes —
+                // was that really a comment? — need the document and are enforced by every
+                // replica, which the module docs say out loud rather than implying.
+                let granted = self.granted.get(&submission.client).copied();
+                let offered: Vec<_> = submission
+                    .operations
+                    .iter()
+                    .map(|operation| operation.as_offered().clone())
+                    .collect();
+                let permitted = granted.is_some_and(|granted| {
+                    refuse_if_not_permitted(None, &offered, granted).is_ok()
+                });
+                if !permitted {
+                    return Ok(Handled {
+                        answer: Some(ServerMessage::Refused {
+                            seq: Some(submission.seq),
+                            reason: Refusal::ReadOnlyAccess,
+                        }),
+                        ..Handled::default()
+                    });
+                }
                 // `Room::commit` journals before it answers; this cannot be reordered from here.
                 match self.room.commit(submission)? {
                     Outcome::Ordered { revision } => {
@@ -196,6 +299,10 @@ impl<W: Write> Relay<W> {
     /// (ONLYOFFICE's `Remove_ForeignCursor` covers the same transition).
     pub fn disconnected(&mut self, client: ClientId) -> Vec<ClientId> {
         self.participants.left(client);
+        // A grant dies with the connection, exactly as presence does. A grant left behind is a
+        // capability nobody is holding, and the next participant to be handed this number would
+        // inherit it before its own join had been verified.
+        self.granted.remove(&client);
         if self.roster.forget(client) {
             let bytes = encode_frame(&ServerMessage::Departed { client });
             return self.participants.fan_out(client, &bytes);
