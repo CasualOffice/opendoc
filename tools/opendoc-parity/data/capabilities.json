@@ -3588,7 +3588,7 @@
         "control": "btnProtectDoc"
       },
       "rank": 2,
-      "note": "Not licence-gated for them. We have no document-protection concept at all: our restrictions come from the host's grant, which the document itself cannot carry."
+      "note": "Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. The remaining gap is also narrower than their control in one direction and wider in another: we drop `w:hash`/`w:salt` on import, so a password-protected document round-trips to a passwordless one."
     },
     {
       "id": "review.protect-form",
@@ -5122,7 +5122,7 @@
               "literal": "BORDER_WEIGHTS_EIGHTH_POINTS"
             }
           },
-          "missing": "line style. `border_edge` in `crates/casual-doc-wasm` hard-codes the `single` token and no setter takes a style argument, so dashed, dotted and double cannot be authored however the control were drawn - and a permanently dead dropdown is the pattern this tree has just finished removing. The model stores any token, the layout already paints five non-solid patterns and the exporter writes them verbatim, so what is left is one argument in three Rust functions."
+          "missing": "line style, in the CHROME only. The engine argument landed: `border_edge` takes a style, `setCellBorder` takes an optional `style` of six tokens and refuses a seventh, and `cellBorderStyle` reads one back, so dashed, dotted and double are authorable through the facade today. What is missing is a control that sends one - no ribbon, menu, context-menu or palette surface offers the style, so the capability is unreachable for a user. Graded a gap for that reason and no other."
         }
       },
       "theirs": {
