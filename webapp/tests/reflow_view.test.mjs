@@ -12,16 +12,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readFileSync } from "node:fs";
+
 import { TWIPS_PER_INCH } from "../src/units.mjs";
 import {
+  FULL_WIDTH_ADVANCE_EM,
   REFLOW_DEBOUNCE_MS,
   REFLOW_GUTTER_PX,
+  REFLOW_MAX_CONTENT_TWIP,
   REFLOW_MIN_CONTENT_TWIP,
   REFLOW_QUANTUM_PX,
+  REFLOW_WIDTH_DEFAULT,
+  REFLOW_WIDTH_STEPS,
+  charTargetTwip,
   createWidthFeed,
   quantiseReflowWidth,
   reflowAvailability,
+  reflowCapTwip,
   reflowMeasure,
+  reflowWidthStep,
 } from "../src/reflow_view.mjs";
 
 /** CSS px per twip at 100%, exactly as `renderAll` computes it. */
@@ -121,6 +130,277 @@ test("the gutter is the same number of PIXELS at every zoom", () => {
       `${zoom * 100}%: gutter painted at ${gutterTwip * cssPerTwip}px`,
     );
   }
+});
+
+// ---- The CAP (`docs/154` §5, ADR-048) ---------------------------------------
+//
+// These are the measure-tier claims. The PAINT-tier ones — a capped, centred
+// column at 1440px, no horizontal scroll at 390px in either policy, a viewport
+// past the old 22in threshold laying out rather than refusing, and
+// Reading -> Fit -> Reading returning the same layout — are
+// `tests/e2e/reflow.spec.mjs`'s, because a pure-function assertion about a width
+// says nothing about what a reader sees.
+
+/** The default face's numbers, as `stylePreview("Normal")` reports them for a
+ *  document that has not overridden `docDefaults` — Word's own default. */
+const CALIBRI_11 = { face: "Calibri", fontSizePt: 11 };
+
+test("the published cap is 80 characters, and in twips it is the published number", () => {
+  // The two numbers `docs/154` §5.1 and ADR-048 publish, pinned where they are
+  // computed. 80 x 0.3991em x 11pt x 20 twips/pt = 7,020 twips = 468 CSS px at
+  // 100%. If the mean advance, the target or the arithmetic moves, the published
+  // figure moves with it and this is where that is noticed.
+  //
+  // 7,024 and not `docs/154` §5.1's 7,020: that figure was 468 CSS px converted
+  // BACK to twips, so it carried the pixel rounding twice. 468 px is right to the
+  // pixel and 7,024 is the exact twip value; `154` and ADR-048 are corrected in
+  // place rather than this guard being bent to a double-rounded number.
+  assert.equal(reflowWidthStep("reading").chars, 80, "WCAG 2.1 SC 1.4.8's number");
+  const cap = reflowCapTwip("reading", CALIBRI_11);
+  assert.equal(cap, 7024, "the Reading cap in twips");
+  assert.equal(Math.round(cap * (96 / TWIPS_PER_INCH)), 468, "the Reading cap in CSS px");
+});
+
+test("an unknown face falls back to 0.40 em per character, with its error stated", () => {
+  // The fallback is an approximation and is allowed to be one; what it may not be
+  // is far enough out to matter. Asserted as a BOUND against the measured spread
+  // (0.393-0.431 em across the four bundled base text faces) rather than as an
+  // equality, because the claim being made is "within a few per cent", not "this
+  // number".
+  const measured = reflowCapTwip("reading", CALIBRI_11);
+  const unknown = reflowCapTwip("reading", { face: "Nonesuch Display", fontSizePt: 11 });
+  assert.ok(Math.abs(unknown - measured) / measured < 0.05, `${unknown} vs ${measured}`);
+  for (const face of ["Times New Roman", "Cambria", "Arial"]) {
+    const other = reflowCapTwip("reading", { face, fontSizePt: 11 });
+    assert.ok(Math.abs(other - unknown) / unknown < 0.08, `${face}: ${other} vs ${unknown}`);
+  }
+});
+
+test("a full-width face gets WCAG's 40 glyphs, not its 80 characters", () => {
+  // The CJK branch, driven by MEASUREMENT rather than by a family name: an
+  // ideograph is one em wide, so a face whose mean advance is near 1.0 em is
+  // full-width and 1.4.8's 40 applies. REACHABLE BUT NOT REACHED in the shipped
+  // product — this engine bundles no CJK face, so no entry in the advance table
+  // is full-width and the Latin fallback is what a CJK document gets today. That
+  // is a font-provisioning gap, recorded as one; the rule is exercised here so it
+  // is a live branch and not a comment.
+  const fullWidth = charTargetTwip(40, 11, 1.0);
+  const latin = charTargetTwip(80, 11, 0.3991);
+  assert.ok(FULL_WIDTH_ADVANCE_EM > 0.431, "a Latin text face must not read as full-width");
+  assert.ok(FULL_WIDTH_ADVANCE_EM < 1.0, "an ideographic face must");
+  assert.equal(fullWidth, 8800);
+  assert.ok(fullWidth > latin, "40 full-width glyphs are wider than 80 Latin characters");
+});
+
+test("the measure is capped at 1440px, and the cap is what gets painted", () => {
+  // THE DEFECT, stated as its own guard. `docs/154` §3.2: 1,408 CSS px and 241
+  // characters at a 1440px window, measured from the shipped formula. With the
+  // cap the column is 7,020 twips whatever the window does above it.
+  const cap = reflowCapTwip("reading", CALIBRI_11);
+  const capped = reflowMeasure(1440, AT_100, { capTwip: cap });
+  assert.equal(capped.contentWidthTwip, cap);
+  assert.equal(capped.capped, true);
+  // And it is narrower than the space it has, which is what "centre it on the
+  // desk" needs to be true of the tile.
+  assert.ok(capped.totalPx < capped.availablePx, `${capped.totalPx} vs ${capped.availablePx}`);
+
+  // Characters, the unit every source states its answer in. 241 -> 80.
+  const perChar = 0.3991 * 11 * 20; // twips per character of 11pt Calibri
+  const uncapped = reflowMeasure(1440, AT_100);
+  assert.equal(Math.round(uncapped.contentWidthTwip / perChar), 241, "the defect, reproduced");
+  assert.equal(Math.round(capped.contentWidthTwip / perChar), 80, "and closed");
+});
+
+test("every step is min(available, X) — one mechanism, four values", () => {
+  // Monotonic, and each one no wider than the space available. A step that could
+  // produce a column WIDER than the window would be the horizontal scroll reflow
+  // exists to retire, reintroduced through the control.
+  const docMeasureTwip = 9360; // a Letter page's own 6.5in text column
+  const widths = REFLOW_WIDTH_STEPS.map((step) => {
+    const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip });
+    const measure = reflowMeasure(1920, AT_100, { capTwip: cap });
+    return [step.id, measure.contentWidthTwip];
+  });
+  const values = widths.map(([, twip]) => twip);
+  assert.deepEqual(
+    values,
+    [...values].sort((a, b) => a - b),
+    `the steps must widen in order: ${JSON.stringify(widths)}`,
+  );
+  const available = reflowMeasure(1920, AT_100, {}).contentWidthTwip;
+  for (const [id, twip] of widths) {
+    assert.ok(twip <= available, `${id} asked for ${twip} of an available ${available}`);
+  }
+  // Fit comes from the DOCUMENT and invents no constant: 6.5in of text column.
+  assert.equal(reflowCapTwip("fit", { docMeasureTwip }), docMeasureTwip);
+  // And Reading is narrower than the paper, which is the whole point — a Letter
+  // page's own column is 107 characters, already past WCAG's 80.
+  assert.ok(reflowCapTwip("reading", CALIBRI_11) < docMeasureTwip);
+});
+
+test("the desktop default is Reading, which is the one line that changes it", () => {
+  // The call `docs/154` §5 left open and ADR-048 records as the owner's. Named
+  // here so that changing it is a visible, single-line decision rather than a
+  // silent drift, and so the owner overruling it moves one assertion with it.
+  assert.equal(REFLOW_WIDTH_DEFAULT, "reading");
+  assert.equal(reflowWidthStep(null).id, "reading", "never chosen resolves to the default");
+  assert.equal(reflowWidthStep("nonsense").id, "reading", "and so does a bad preference");
+});
+
+test("a viewport past the old 22in refusal lays out instead of being refused", () => {
+  // DEFECT TWO (`docs/154` §3.3), which is the one that must not come back.
+  // `LayoutView::reflow` refuses `content_width > 31,680` twips; with no ceiling
+  // upstream, `reflowMeasure` asked for more at 2,160px/100% and at 1,104px/50%,
+  // and `sync` then reverted the reader to paper with a message about twips.
+  //
+  // Asserted for EVERY step including `full`, because the cap only removes the
+  // refusal for the steps that cap — and a named Full that threw would be the
+  // same defect reached through the new control.
+  const cases = [
+    [2160, 1],
+    [2560, 1],
+    [3840, 1],
+    [1104, 0.5],
+    [1440, 0.5],
+    [1632, 0.75],
+    [3216, 1.5],
+  ];
+  for (const [width, zoom] of cases) {
+    const cssPerTwip = (96 * zoom) / TWIPS_PER_INCH;
+    for (const step of REFLOW_WIDTH_STEPS) {
+      const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip: 9360 });
+      const measure = reflowMeasure(width, cssPerTwip, { capTwip: cap });
+      assert.ok(
+        measure.contentWidthTwip <= REFLOW_MAX_CONTENT_TWIP,
+        `${step.id} at ${width}px/${zoom * 100}% asks the engine for ` +
+          `${measure.contentWidthTwip} twips, which it refuses above ${REFLOW_MAX_CONTENT_TWIP}`,
+      );
+    }
+  }
+  // And the thresholds themselves, derived from the shipped formula rather than
+  // quoted from `docs/154` §3.3: with the ceiling lifted — which is what the code
+  // did before this change — 2,160px at 100% and 1,104px at 50% both ask the
+  // engine for more than 22in, and one quantum lower neither does. That is the
+  // defect reproduced and its boundary pinned, in the same test that proves the
+  // ceiling closes it.
+  const lifted = (px, zoom) =>
+    reflowMeasure(px, (96 * zoom) / TWIPS_PER_INCH, { maxContentTwip: Infinity }).contentWidthTwip;
+  for (const [px, zoom] of [
+    [2160, 1],
+    [1104, 0.5],
+    [1632, 0.75],
+    [3216, 1.5],
+  ]) {
+    assert.ok(lifted(px, zoom) > REFLOW_MAX_CONTENT_TWIP, `${px}px at ${zoom * 100}% was refused`);
+    assert.ok(
+      lifted(px - REFLOW_QUANTUM_PX, zoom) <= REFLOW_MAX_CONTENT_TWIP,
+      `${px}px at ${zoom * 100}% is not the FIRST width refused`,
+    );
+  }
+});
+
+test("the phone is untouched: at 390px the default is still the whole window", () => {
+  // The guard the missing cap needed and did not have. A phone-only evaluation is
+  // exactly what hid the defect (`docs/154` §3.2), so the fix gets a phone-only
+  // guard of its own in the other direction.
+  //
+  // THREE of the four steps reduce to `available` at the phone rung, and the
+  // DEFAULT is one of them, so the 60 characters and ADR-044's retired
+  // horizontal-scroll exemption are untouched by this feature as shipped.
+  //
+  // `narrow` is the exception, and it is a FINDING rather than a regression: 55
+  // characters is 4,829 twips and a 390px window offers 5,280 — 60 characters — so
+  // Narrow genuinely binds on a phone. ADR-048's "on a phone both reduce to
+  // available" was said of the two POLICIES (Fit and Reading) and is true of both;
+  // it is not true of a step a reader deliberately chose to be narrower than their
+  // screen, and it should not be. What must hold for EVERY step is the direction:
+  // never wider than the window, which is the no-horizontal-scroll guarantee.
+  const available = reflowMeasure(390, AT_100, {});
+  assert.equal(
+    Math.round(available.contentWidthTwip / (0.3991 * 11 * 20)),
+    60,
+    "the 60 characters `docs/154` §3.2 calls correct",
+  );
+  for (const step of REFLOW_WIDTH_STEPS) {
+    const cap = reflowCapTwip(step.id, { ...CALIBRI_11, docMeasureTwip: 9360 });
+    const measure = reflowMeasure(390, AT_100, { capTwip: cap });
+    assert.ok(
+      measure.contentWidthTwip <= available.contentWidthTwip,
+      `${step.id} asked for ${measure.contentWidthTwip} of a phone's ${available.contentWidthTwip}`,
+    );
+    const paintedPx = (measure.contentWidthTwip + 2 * measure.gutterTwip) * AT_100;
+    assert.ok(paintedPx <= 390 + 0.25, `${step.id} painted ${paintedPx}px into 390`);
+    if (step.id === "narrow") continue;
+    assert.equal(
+      measure.contentWidthTwip,
+      available.contentWidthTwip,
+      `${step.id} changed the phone's column from ${available.contentWidthTwip}`,
+    );
+    assert.equal(measure.capped, false, `${step.id} capped a phone`);
+    assert.equal(measure.totalPx, measure.availablePx);
+  }
+  // And the DEFAULT specifically, because that is what a phone reader is given
+  // without choosing anything at all.
+  assert.equal(
+    reflowMeasure(390, AT_100, { capTwip: reflowCapTwip(REFLOW_WIDTH_DEFAULT, CALIBRI_11) })
+      .contentWidthTwip,
+    available.contentWidthTwip,
+  );
+});
+
+test("above the cap a resize changes nothing the engine is told", () => {
+  // The consequence ADR-048 claims: most desktop resizes become free for a second
+  // and better reason than the 16px bucket. Asserted as "the three numbers the
+  // engine is handed, and the bucket the feed reads, are identical" — because the
+  // bucket is what makes the resize free and the three numbers are what make it
+  // correct.
+  const cap = reflowCapTwip("reading", CALIBRI_11);
+  const at = (px) => reflowMeasure(px, AT_100, { capTwip: cap });
+  const first = at(1280);
+  for (const px of [1281, 1366, 1440, 1600, 1920, 2560]) {
+    const later = at(px);
+    assert.equal(later.contentWidthTwip, first.contentWidthTwip, `${px}px moved the column`);
+    assert.equal(later.gutterTwip, first.gutterTwip);
+    assert.equal(
+      quantiseReflowWidth(later.totalPx),
+      quantiseReflowWidth(first.totalPx),
+      `${px}px moved the width bucket, so the feed would schedule an O(document) pass`,
+    );
+  }
+});
+
+test("a cap that cannot be resolved falls back to the window, never to a failure", () => {
+  // A reading comfort must not be the reason a document fails to lay out. Every
+  // way the resolution can come up short answers `Infinity`, which is `available`
+  // — i.e. exactly the behaviour before this feature.
+  for (const doc of [{}, { face: null }, { fontSizePt: 0 }, { face: "", fontSizePt: NaN }]) {
+    assert.ok(Number.isFinite(reflowCapTwip("reading", doc)), "a face is optional, 11pt is assumed");
+  }
+  assert.equal(reflowCapTwip("fit", {}), Infinity, "no document measure -> no cap");
+  assert.equal(reflowCapTwip("fit", { docMeasureTwip: 0 }), Infinity);
+  assert.equal(reflowCapTwip("full", CALIBRI_11), Infinity, "Full is uncapped by policy");
+  const measure = reflowMeasure(1440, AT_100, { capTwip: Infinity });
+  assert.deepEqual(measure.contentWidthTwip, reflowMeasure(1440, AT_100, {}).contentWidthTwip);
+});
+
+test("every width step is fully labelled, in English, in the shipped catalogue", () => {
+  // The step table carries four catalogue keys per step and the catalogue is
+  // built from two sources — `editor.html` for the rows and the default's short
+  // label, `en_strings.mjs` for the rest, because `build-locale.mjs` refuses a key
+  // declared in both. That split is a real hazard: a fifth step, or a renamed one,
+  // would half-label itself and the product would print a dotted key on a ribbon
+  // button. This is the guard that makes the split safe.
+  const english = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8"));
+  const missing = [];
+  for (const step of REFLOW_WIDTH_STEPS) {
+    for (const key of [step.shortKey, step.rowKey, step.titleKey, step.commandKey]) {
+      if (typeof english[key] !== "string" || english[key].trim() === "") missing.push(key);
+    }
+  }
+  for (const key of ["textWidth.command", "textWidth.pagedWithheld", "menuGroup.textWidth"]) {
+    if (typeof english[key] !== "string") missing.push(key);
+  }
+  assert.deepEqual(missing, [], "a step with no sentence is a control that cannot say what it is");
 });
 
 // ---- Availability -----------------------------------------------------------

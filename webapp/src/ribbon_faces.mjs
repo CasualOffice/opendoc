@@ -148,6 +148,14 @@ export const VIEW_FACES = Object.freeze([
   // Reflow's ribbon face; `view.reflow` in the View menu and the palette is the
   // other surface (`docs/151` §6.1).
   face("#viewReflowBtn", "view.reflow"),
+  // Text width is a CHOOSER, not a command: the button opens a four-step radio
+  // menu over `view.textWidth.*`, and every step is its own registry row (and its
+  // own View ▸ Text width menu row), so the button is a doorway. Inventing a
+  // `view.textWidth` command whose only behaviour is to open the menu would add a
+  // palette row nobody asked for and a nineteen-language string to satisfy a
+  // guard — the same reasoning the change-case and underline menus are declared
+  // under (`docs/154` §5.1, ADR-048).
+  chooser("#viewTextWidthBtn", "view.textWidth."),
   face("#viewZoomOut", "view.zoomOut"),
   face("#viewZoomIn", "view.zoomIn"),
   face("#viewFitWidth", "view.zoom.fitWidth"),

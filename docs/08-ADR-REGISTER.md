@@ -1529,7 +1529,9 @@ no-horizontal-scroll rule**: 384 into 390 at the phone rung, where it measured
 which supplies the rule this ADR left implicit — *which* width the caller passes — and
 corrects one sentence of its evidence (below). The mechanism decided here is not
 reopened: because the measure is a parameter of the seam, the cap costs one clamp in the
-caller and no engine change at all.
+caller and no engine change at all. **That prediction held exactly**: ADR-048 shipped on
+2026-10-02 with zero lines changed under `crates/`, which is the strongest available
+evidence that the seam chosen here was the right seam.
 
 **Decision.** A pageless/reflow view is a **`LayoutView` parameter threaded to the one
 place layout geometry is decided**, not a second layout path and not a document edit:
@@ -1764,12 +1766,51 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
 
 ## ADR-048 — The reflow measure is capped in characters, and reading is a width POLICY, not a second layout mechanism
 
-**Status:** **Proposed, 2026-10-01 — nothing built.** Raised by the owner's challenge that
+**Status:** Proposed 2026-10-01; **Accepted and implemented 2026-10-02** — the clamp, the
+four-step per-viewer control on three surfaces, the centred column, and the engine-ceiling
+mirror that closes the `ColumnTooWide` refusal. Raised by the owner's challenge that
 "the complete view and wider content is not at all suitable for reading", and specified in
 `154-READING-VIEW-MEASURE-AND-DOCUMENT-FOLDING-COMPETITIVE-ANALYSIS.md`. **Amends ADR-046**
 (supplies the caller rule it left implicit, and corrects one sentence of its evidence);
-**does not reopen it**. Awaiting the owner's decision on the default target and the number
-of steps.
+**does not reopen it**. The two calls it left to the owner are implemented as proposed —
+**80 characters and four steps** — and the default is **Reading**, which is one assignment
+(`REFLOW_WIDTH_DEFAULT` in `webapp/src/reflow_view.mjs`): a reader opening a document on a
+1440px screen should not be handed a 241-character line. **The owner may overrule it by
+changing that one line.**
+
+**What implementation changed about this ADR, recorded rather than smoothed over.**
+
+- **The published cap in twips was wrong by four.** This ADR and `154` §5.1 said *468 CSS
+  px / 7,020 twips*; 7,020 was 468 px converted *back* to twips, so the pixel rounding
+  counted twice. The exact value is `round(80 × 0.3991 em × 11 pt × 20)` = **7,024** twips
+  = 468.27 px, so **468 px is unchanged and right**. Corrected in place above and in `154`
+  §5.1; pinned by `reflow_view.test.mjs`, which is how it was found.
+- **The engine's 22in bound is MIRRORED in the shell and applied to every step, Full
+  included.** The ADR said the cap "removes the `ColumnTooWide` refusal as a side effect,
+  since a capped column cannot reach 22in" — true of the three capping steps and **false of
+  the explicit `full`**, which this ADR also requires. A named Full that threw on a 4K
+  monitor would be the same defect reached through the new control, so
+  `REFLOW_MAX_CONTENT_TWIP` is a second, never-waived ceiling beside the viewer's cap and
+  Full means "as wide as the window, up to the widest column the engine can shape".
+- **"On a phone both reduce to `available`" is true of the two POLICIES and not of every
+  step.** Fit, Reading and Full all reduce to `available` at the 390px rung, so the 60
+  characters and ADR-044's retired horizontal-scroll exemption are untouched. `narrow` is 55
+  characters = 4,829 twips against the rung's 5,280, so it genuinely binds on a phone — and
+  should, because a reader chose it. The guards therefore assert *equality* for the default
+  and the two policies and *direction* (never wider than the window) for every step.
+- **`fit` ships labelled "Paper".** The View band already carries Fit width and Fit page in
+  its Zoom group; a third Fit in one band is a worse menu than one accurate noun. The policy
+  keeps the name `fit` in code.
+- **The CJK 40 is a live, tested branch and is not reached in the shipped product.** The
+  target is chosen by the resolved face's *measured* mean advance (full-width above 0.70 em)
+  rather than by a family name, which is the only non-guessing signal available. No CJK face
+  is bundled, so no entry in the advance table is full-width and a CJK document gets the
+  Latin fallback today. That is the font-provisioning gap, recorded here rather than left to
+  be discovered.
+- **`stylePreview("Normal")` and `pageSetup()` are the two getters the cap reads**, chosen
+  because each is O(styles) or O(1); the caret-aware `pageSetupSections`/`sectionLayout`
+  resolve a node by walking every paragraph and a cap is not worth a document walk per
+  render.
 
 **The defect this answers, with the number.** `webapp/src/reflow_view.mjs`'s
 `reflowMeasure` has a minimum (`REFLOW_MIN_CONTENT_TWIP`) and **no maximum**, so the
@@ -1801,7 +1842,11 @@ paper and shows the reader a message about twips. Derivations in `154` §3 and �
   Bringhurst's widely-quoted 66 for an evidence reason rather than a typographic one: 80 is
   normative, first-party and quotable, and 66 could not be verified against his text
   (`154` §7 item 1). 80 is also the conservative end, so the default errs towards the paper
-  the reader is used to. At 11pt Calibri that is **468 CSS px / 7,020 twips**.
+  the reader is used to. At 11pt Calibri that is **468 CSS px / 7,024 twips**.
+  (**Corrected on implementation**: this read 7,020, which was 468 px converted back to
+  twips and so carried the pixel rounding twice. The exact value is
+  `round(80 × 0.3991 em × 11 pt × 20)` = 7,024 = 468.27 px, so 468 px is unchanged.
+  `154` §5.1 carries the same correction, and `reflow_view.test.mjs` pins 7,024.)
 - **Above the cap the column is CENTRED on the application desk** — not widened, not given
   a paper edge, not split into columns. `#viewport.is-reflow` already removes the sheet
   shadow and radius, so a tile becomes a text column on the app background, which is what
@@ -1855,21 +1900,37 @@ citation and §7 lists every claim that could not be verified.
   resizes become free for a second and better reason than `151` §6.2's quantisation. The
   quantum and the debounce still bind below the cap and are unchanged.
 - `MAX_REFLOW_COLUMN`'s doc comment must stop describing a correct caller as having
-  "converted units wrongly", and the refusal should be verified in a browser and filed
-  before the cap masks it.
+  "converted units wrongly". **STILL OPEN**, deliberately: it is a comment-only `crates/`
+  edit of no behavioural value whose price is a full Rust gate sweep, and the shell now
+  mirrors the bound so no correct caller reaches it. The refusal itself **was** verified in
+  a browser before being masked (`154` §7 item 20): with the shell ceiling lifted and Full
+  chosen at 50% zoom on a 1,440px window, `#viewport` loses `is-reflow` because `sync`
+  catches the throw and reverts the viewer to paper. That is the mutation proof for the
+  paint-tier guard and the browser reproduction in one run.
 - The cap's guard must **count characters on a shaped line**, not divide a column by a mean
   advance; the figures above are arithmetic on a measured mean and accurate to roughly ±5%,
   which is ample to establish a 3× discrepancy and not the form a committed guard may take.
-- **Open:** the default step (80 is proposed), the number of steps (four is proposed), and
-  their labels. All three are owner calls.
+- **Closed by implementation:** the default step is **Reading (80)**, there are **four**
+  steps, and they are labelled Narrow / Reading / Paper / Full. All three remain owner calls
+  and all three are one-line changes; the default is `REFLOW_WIDTH_DEFAULT`.
+- **Open, and deliberately NOT built here:** the "Reading view" preset (it would set reduced
+  chrome, which belongs to another lane), a reader type-size control (`151` §8 item 2), and
+  a guard that counts characters on a *shaped* line rather than dividing by a mean advance
+  (`154` §7 item 19) — the shell has no per-line text API, so the conversion is pinned as a
+  pure function in `reflow_view.test.mjs` and the painted geometry is pinned at the paint
+  tier.
 - **Open:** WCAG 1.4.8 item 3 — there is no mechanism to un-justify a justified document in
   the reading view. Named so it is not rediscovered.
 
 ## ADR-049 — Folding is a per-viewer block visibility filter keyed on the outline, not a layout view
 
-**Status:** **Proposed, 2026-10-01 — nothing built.** Raised by the owner ("collapsible and
-expandable based on outlines like VS Code does with code") and specified in `154` §5.3.
-Independent of ADR-046 and ADR-048 by design; that independence is the decision.
+**Status:** **Proposed, 2026-10-01 — nothing built, and still nothing built as of
+2026-10-02.** Raised by the owner ("collapsible and expandable based on outlines like VS
+Code does with code") and specified in `154` §5.3. Independent of ADR-046 and ADR-048 by
+design; that independence is the decision — and it was honoured in practice: ADR-048 was
+implemented on 2026-10-02 with **no folding work and no folding seam**, which is what this
+ADR's independence claim was for. Folding remains a separate lane and this ADR stays
+Proposed until that lane runs.
 
 **The gap.** There is no folding anywhere: `webapp/src/outline_panel.mjs` renders a **flat**
 list of buttons with `lvl-1`…`lvl-6` classes, no disclosure, no `aria-expanded`, no

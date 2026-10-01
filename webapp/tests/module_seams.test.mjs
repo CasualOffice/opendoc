@@ -353,8 +353,18 @@ const SRC = new URL("../src/", import.meta.url);
  *
  *  MEASURED from this tree after the extraction, not calculated: the io block came
  *  out and a shorter io block went back in, so the arithmetic on either half would
- *  have been wrong in both directions. */
-const MAIN_JS_LINE_CEILING = 16190;
+ *  have been wrong in both directions.
+ *
+ *  Lowered to 16,189 by the reading-measure cap (`docs/154` §5.1, ADR-048). The
+ *  file was AT its ceiling again and the round needed two lines of it — the width
+ *  control's four command rows, and a `setEnabled()` in the relabel hook, because
+ *  the ribbon button's label is the chosen STEP's and not the markup's. It paid
+ *  with the thing it needed a seam on: the four rows are generated inside
+ *  `reflow_chrome.mjs` from the one step table and spread into the registry, so
+ *  `main.js` carries one line for four commands and the three-line rationale that
+ *  used to sit over `view.reflow` moved to live with the control. MEASURED from
+ *  this tree, not carried from the branch. */
+const MAIN_JS_LINE_CEILING = 16189;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

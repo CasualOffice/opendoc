@@ -41,6 +41,8 @@ from the no-horizontal-scroll rule (§7). **Opened:** 2026-09-30. **Decision:**
 >    default face, against WCAG 2.1 SC 1.4.8's 80. Worse, `setLayoutView`
 >    **refuses outright** above 22in, which a 2160px window at 100% zoom or a
 >    1104px window at 50% already asks for. `154` §3.
+>    **FIXED 2026-10-02 by ADR-048**, both halves, in one clamp in the caller and
+>    with no `crates/` change; see the implementation note at §6.2.
 > 3. **§2.2 omits Google's Text width control entirely** — Google's own cap, and
 >    the half of their design we should have copied. `154` §2.1.
 > 4. **§2.3's "Word abstaining" is wrong three ways.** Word is the strongest vote
@@ -653,6 +655,22 @@ a paper edge across a sentence.
 > **The two numbers below are still right**, and once a cap exists they bind only
 > *below* it — above the cap the column stops tracking the window, which makes most
 > desktop resizes free for a second and better reason.
+>
+> **FIXED, 2026-10-02 (ADR-048, now Accepted).** Both halves, by the one clamp:
+> `reflowMeasure` is `min(available, capTwip, REFLOW_MAX_CONTENT_TWIP)`, and no
+> `crates/` change was needed. The cap is a target in characters — 80 (40 CJK) from
+> WCAG 2.1 SC 1.4.8, **468 CSS px / 7,024 twips** at 11pt Calibri — with four
+> per-viewer steps (Narrow 55, Reading 80 and the default, Paper = the document's own
+> text column, Full = uncapped by policy), reachable from the View band, View ▸ Text
+> width and the palette. `REFLOW_MAX_CONTENT_TWIP` mirrors the engine's 22in bound
+> and is applied to **every** step including Full, which is what makes the refusal
+> unreachable rather than merely unlikely. The refusal was also **reproduced in a
+> browser** for the first time (`154` §7 item 20 asked for that): with the ceiling
+> lifted and Full chosen at 50% zoom on a 1,440px window, `#viewport` loses
+> `is-reflow` because `sync` catches the throw and reverts to paper. Guards:
+> `webapp/tests/reflow_view.test.mjs` (measure tier) and
+> `webapp/tests/e2e/reflow.spec.mjs` (paint tier), each driven red by mutation
+> before being trusted.
 
 **Two numbers, and this section proposed one of them wrongly.** It said "the
 nearest 8px". What shipped is **16px, floored** (`REFLOW_QUANTUM_PX`), and both

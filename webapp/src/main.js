@@ -11833,10 +11833,8 @@ function editorCommands(context = { surface: "palette" }) {
         ]
       : []),
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
-    // Reflow (`docs/151` §6.1, ADR-046). The label carries the state, the shape
-    // `view.compactRibbon` below already uses; the second face is the View
-    // band's `#viewReflowBtn`. Not "Reader mode" — ours stays editable.
     { id: "view.reflow", label: t(reflowView.isOn() ? "reflow.commandOn" : "reflow.commandOff"), group: "View", kw: "reflow pageless continuous column mobile phone reader web layout wrap width", enabled: !readOnlyReason, disabledReason: t("reflow.unavailable"), run: () => reflowView.toggle() },
+    ...reflowView.commands(),
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     // Ribbon density (docs/104 HF-094). The choice was already real and already
@@ -16037,6 +16035,7 @@ void startLocalisation({
   onLocalised: () => {
     // Every relabel re-introduces ⌘ from the catalogue (`105` UX-009, #599).
     localizeShortcutGlyphs(document.body, EDITOR_KEYBOARD_PLATFORM);
+    reflowView.setEnabled(); // the width button's label is the STEP's, not markup's
     if (doc) updateStats();
     // The timeline's rows, day headings and disclosure are all script-built from
     // locale-shaped values, and the View entry's disabled reason is a sentence —

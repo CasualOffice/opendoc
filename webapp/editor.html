@@ -905,6 +905,19 @@
                    `ribbon-width-budget.spec.mjs` measures as fitting far below
                    1280px. The palette and the View menu are its other faces. -->
               <button data-i18n-title="panelView.reflow.title" data-i18n-label="panelView.reflow.label" id="viewReflowBtn" type="button" class="fmt" title="Reflow the document to the window width instead of showing pages" aria-label="Reflow" aria-pressed="false" disabled><span class="ms" aria-hidden="true">wrap_text</span></button>
+              <!-- Text width (`docs/154` §5.1, ADR-048). WCAG 2.1 SC 1.4.8 (AAA)
+                   asks for "a mechanism" to hold a block of text to 80
+                   characters (40 CJK); a capped default with no control
+                   satisfies the criterion in exactly one configuration, so the
+                   cap ships WITH its control. It sits immediately after Reflow
+                   because it is only meaningful in reflow — on paper the measure
+                   is the document's own — and it carries the step's name rather
+                   than an icon, because four measures are not four pictures and
+                   the current one is the thing a reader needs to see. One 32px+
+                   text button on a band that fits far below 1280px. Its other
+                   faces are the View menu's Text width submenu and the palette. -->
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <button data-i18n-title="panelView.textWidth.title" data-i18n-label="panelView.textWidth.label" id="viewTextWidthBtn" type="button" class="fmt fmt-num" title="Text width — how many characters a line holds" aria-label="Text width" aria-haspopup="menu" aria-controls="textWidthMenu" aria-expanded="false" disabled><span data-i18n="textWidth.reading.short" data-width-label>Reading</span></button>
             </div>
             <span data-i18n="panelView.show" class="rgroup-label">Show</span>
           </div>
@@ -1523,6 +1536,23 @@
       <label data-i18n="lineNumbersMenu.startAt" class="menu-row">Start at<input data-i18n-label="lineNumbersMenu.firstLineNumber.label" id="lineNumberStart" type="number" min="0" max="32767" step="1" inputmode="numeric" aria-label="First line number" /></label>
       <label data-i18n="lineNumbersMenu.countBy" class="menu-row">Count by<input data-i18n-label="lineNumbersMenu.numberEveryNthLine.label" id="lineNumberCountBy" type="number" min="1" max="32767" step="1" inputmode="numeric" aria-label="Number every Nth line" /></label>
       <label data-i18n="lineNumbersMenu.fromText" class="menu-row">From text<input data-i18n-label="lineNumbersMenu.gapFromTextToNumbers.label" id="lineNumberDistance" type="number" min="0" max="22" step="0.01" inputmode="decimal" aria-label="Gap from text to the numbers" /><span class="menu-unit">in</span></label>
+    </div>
+
+    <!-- Text width (`docs/154` §5.1, ADR-048). Four steps, `menuitemradio`
+         because they are mutually exclusive values of one measure and not four
+         switches — the same shape `lineNumbersMenu` above uses for the same
+         reason. Labelled by what each one does, with the character target in the
+         row's own hint, because "80" means nothing until you know it is WCAG
+         2.1 SC 1.4.8's maximum and "Wide" means nothing at all. Full is a named
+         step on purpose: a host embedding the editor in a 400px column has the
+         narrow case for free, and naming Full is what makes the default's
+         narrowness discoverable rather than mysterious. -->
+    <div data-i18n-label="ui.textWidth.label" id="textWidthMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Text width">
+      <div data-i18n="textWidthMenu.heading" class="menu-heading">Text width</div>
+      <button type="button" class="menu-item" data-text-width="narrow" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.narrow.row">Narrow — about 55 characters</span></button>
+      <button type="button" class="menu-item" data-text-width="reading" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.reading.row">Reading — 80 characters (WCAG AAA)</span></button>
+      <button type="button" class="menu-item" data-text-width="fit" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.fit.row">Paper — this document's own column</span></button>
+      <button type="button" class="menu-item" data-text-width="full" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="textWidth.full.row">Full — as wide as the window</span></button>
     </div>
 
     <div data-i18n-label="ui.cellBorderFormatting.label" id="tableMenu" class="context-menu spacing-menu table-format-menu" hidden role="dialog" aria-label="Cell and border formatting">

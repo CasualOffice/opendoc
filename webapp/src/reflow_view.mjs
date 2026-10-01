@@ -63,6 +63,22 @@
 //     two characters at 11pt, and it halves the number of distinct widths a
 //     390 -> 1280px drag can produce (56 rather than 111).
 //
+// ---- THE THIRD NUMBER, which this module shipped without --------------------
+//
+// `docs/154`, ADR-048. The two numbers above decide WHICH WIDTHS COUNT AS THE
+// SAME; neither of them asks whether the window is a sensible measure in the
+// first place, and `REFLOW_QUANTUM_PX`'s doc comment shows the shape of the
+// omission — every word of it is about not EXCEEDING the viewport. There was a
+// floor (`REFLOW_MIN_CONTENT_TWIP`) and no ceiling, so the reading column was
+// the whole window at every width: 60 characters at 390px, which is right and
+// was the only width ever evaluated, and 241 at 1440px, which is three times the
+// WCAG 1.4.8 bound. `REFLOW_WIDTH_STEPS` and `reflowCapTwip` below are the
+// ceiling; `reflowMeasure` is where the one clamp lives.
+//
+// The cap also makes a resize cheaper than quantisation alone can: above it the
+// column does not move with the window AT ALL, so most desktop resizes are free
+// for a second and better reason than the bucket.
+//
 // `REFLOW_DEBOUNCE_MS = 150` is a trailing debounce with no leading call. It is
 // under the ~200ms at which an interface stops feeling attached to the gesture,
 // and above the frame budget by an order of magnitude, so a burst of `resize`
@@ -99,11 +115,301 @@ export const REFLOW_GUTTER_PX = 16;
  *  opens at, which `FIT_ON_OPEN_FLOOR` pins at 100%. */
 export const REFLOW_MIN_CONTENT_TWIP = TWIPS_PER_INCH;
 
+/** The engine's own CEILING on a reading column, mirrored here so a correct
+ *  caller never reaches it: `LayoutView::reflow` refuses `content_width >
+ *  MAX_REFLOW_COLUMN` (`document_layout.rs`, `Twip(31_680)` = 22in).
+ *
+ *  THIS IS DEFECT TWO of `docs/154` §3.3, and it is a different defect from the
+ *  missing cap even though one line fixes both. That bound was written as a
+ *  UNIT-CONVERSION sanity check — its own doc comment says a caller asking for
+ *  more "has converted units wrongly" — and with no maximum upstream it became
+ *  reachable by a caller that had converted perfectly: `reflowMeasure` asks for
+ *  more than 22in of column at a **2,160px window at 100% zoom**, and at
+ *  **1,104px at 50%**, where 50% is both a `ZOOM_STEPS` entry and the value of
+ *  `FIT_ON_OPEN_FLOOR`. `reflow_chrome.mjs`'s `sync` caught the throw, reverted
+ *  the preference to paper and showed the reader a sentence about twips, so
+ *  reflow turned itself off on a wide monitor and blamed the units.
+ *
+ *  It is mirrored rather than asked for because there is no `maxReflowColumn`
+ *  getter on the seam — exactly as `REFLOW_MIN_CONTENT_TWIP` above mirrors the
+ *  engine's floor, and for the same reason. It is applied to EVERY width policy
+ *  including `full`, which is what makes the refusal unreachable rather than
+ *  merely unlikely: a reader who asks for an uncapped column on a 4K monitor is
+ *  given the widest column the engine can lay out, not an error. That is the
+ *  honest arbitration — the engine genuinely cannot shape a column wider than
+ *  this — and it is the same shape as the floor's. */
+export const REFLOW_MAX_CONTENT_TWIP = 22 * TWIPS_PER_INCH;
+
 /** Where the per-viewer preference lives (ADR-046: a viewer's choice, never a
  *  document property — one person's phone must not reformat another person's
  *  monitor). `null` from `readPref` means "never chosen", which is what lets the
  *  phone rung supply the default without overriding anybody. */
 export const REFLOW_PREF_KEY = "docReflow";
+
+// ---- THE MEASURE: how wide a reading column may be --------------------------
+//
+// `docs/154`, ADR-048. The defect this half answers has a number rather than a
+// taste: `reflowMeasure` had a floor and NO CEILING, so the reading column was
+// the window minus two gutters at every width — 352 CSS px at the 390px phone
+// rung, which is 60 characters of 11pt Calibri and correct, but 1,408 px and
+// **241 characters** at a 1440px window, and 323 at 1920. Every reference caps
+// it: Google Docs' View ▸ Text width (Narrow/Medium/Wide, per-viewer, stated by
+// Google to be invisible to collaborators), Word's Immersive Reader ▸ Column
+// Width (four steps, documented purpose "changes line length to improve focus
+// and comprehension"), Word's Read Mode (adjustable columns). ONLYOFFICE do not
+// cap — they divide the paper's width by the device pixel ratio and grow the
+// TYPE instead — and they ship no desktop reading view at all, so on this
+// surface they are not a reference.
+//
+// WHY 80 AND NOT 66. The number is WCAG 2.1 SC 1.4.8 Visual Presentation (Level
+// AAA): "Width is no more than 80 characters or glyphs (40 if CJK)", inside a
+// criterion that asks for "a mechanism". It is the only normative, first-party,
+// quotable figure in the whole field. Bringhurst's 45-75/66 is the figure
+// everyone reaches for and it could NOT be verified against his text — no
+// reachable source quotes the sentence with a page citation (`154` §7 item 1) —
+// and this repository has published false claims twice (`105` EV-007, `99` §9),
+// so the choice is made on EVIDENCE rather than on typography. 80 is also the
+// conservative end of the two, so the default errs towards the paper the reader
+// is already used to. Note that a Letter page's own 6.5in text column is 107
+// characters at 11pt, already past 80, which is why the cap cannot simply be
+// "the paper".
+//
+// WHY THE TARGET IS IN CHARACTERS. Every source above states its answer in
+// characters, and it is the only unit that transfers across faces and sizes. It
+// also makes a reader TYPE-SIZE control (`151` §8 item 2, still deferred) a
+// consequence rather than a second policy: changing the size changes the width
+// and leaves the measure where it was.
+
+/** Mean advance per character, in em, of the faces this engine bundles —
+ *  measured from each face's own `hmtx` table over a fixed 674-character English
+ *  prose sample (the openings of *Pride and Prejudice* and *On the Origin of
+ *  Species*, public domain), so that spaces and punctuation are weighted as they
+ *  actually occur rather than an alphabet being measured. The derivation is
+ *  reproducible in ten lines of `fontTools` and is printed in full in `154` §9.
+ *
+ *  Keyed by the metric-compatible name a document actually asks for as well as
+ *  by the bundled file's family, because a DOCX says `Calibri` and the engine
+ *  substitutes Carlito. Lower-cased on lookup.
+ *
+ *  Complexity: O(1). */
+const MEAN_ADVANCE_EM = new Map([
+  ["calibri", 0.3991],
+  ["carlito", 0.3991],
+  ["times new roman", 0.393],
+  ["liberation serif", 0.393],
+  ["cambria", 0.4156],
+  ["caladea", 0.4156],
+  ["arial", 0.431],
+  ["helvetica", 0.431],
+  ["liberation sans", 0.431],
+]);
+
+/** The advance to use for a face whose metrics are not known here, in em.
+ *
+ *  Stated as an APPROXIMATION WITH ITS ERROR rather than as a constant with no
+ *  source: the spread across the four bundled base text faces is 0.393-0.431 em,
+ *  under 10%, so 0.40 em sits in the middle of the measured range and a cap
+ *  computed from it is within about ±4% of one computed from the real face. That
+ *  is nowhere near the 3× discrepancy this cap exists to close. */
+export const MEAN_ADVANCE_EM_FALLBACK = 0.4;
+
+/** Above this mean advance a face is treated as FULL-WIDTH, i.e. CJK, and WCAG
+ *  1.4.8's 40-glyph target applies instead of 80.
+ *
+ *  Measured rather than guessed at from a family name: a CJK face's ideographs
+ *  are one em wide by construction, so the mean advance over running text is
+ *  near 1.0 em, while every Latin text face measured above is under 0.44. 0.70
+ *  is the midpoint of that gap and nothing measured sits near it.
+ *
+ *  **Reachable but not reached today, and that is a FONT gap rather than a logic
+ *  gap**: this engine bundles no CJK face, so `MEAN_ADVANCE_EM` has no full-width
+ *  entry and the fallback is Latin-shaped. The rule is unit-tested against a
+ *  synthetic 1.0 em face so it is a live branch and not a comment; the moment a
+ *  CJK face is bundled and measured, or the seam grows a mean-advance getter, the
+ *  40 applies with no change here. Recorded in the report rather than left to be
+ *  discovered. */
+export const FULL_WIDTH_ADVANCE_EM = 0.7;
+
+/** WCAG 2.1 SC 1.4.8's two numbers, which are the Reading step's targets. */
+export const READING_TARGET_CHARS = 80;
+export const READING_TARGET_CHARS_CJK = 40;
+
+/** The four width steps, per-viewer, and what each one caps the column at.
+ *
+ *  FOUR because WCAG 1.4.8 asks for "a mechanism" and does not say how many
+ *  rungs it has: Google Docs offers three (Narrow/Medium/Wide), Word's Immersive
+ *  Reader four (Very Narrow/Narrow/Moderate/Wide). Four, labelled by what they
+ *  do rather than by a number, with the targets stated here in the code.
+ *
+ *  Each step is one `X` in `min(available, X)` — **ONE mechanism, four values**,
+ *  not four layout paths. `LayoutView::Reflow` is untouched by all of them.
+ *
+ *  | step | `X` | where the number comes from |
+ *  | --- | --- | --- |
+ *  | `narrow` | 55 characters | NOT a sourced number; see below |
+ *  | `reading` | 80 characters (40 CJK) | WCAG 2.1 SC 1.4.8 (AAA). **The default.** |
+ *  | `fit` | the document's own text measure | the document. Invents no constant. |
+ *  | `full` | uncapped | the pre-cap behaviour, named on purpose |
+ *
+ *  `narrow`'s 55 is the one number here with no normative source, and it is a
+ *  STEP and never a default for exactly that reason. It is offered because a
+ *  mechanism whose only rungs are "the AAA bound" and "off" gives a reader who
+ *  finds 80 too wide nowhere to go; it sits inside the 45-75 range that is
+ *  attributed to Bringhurst and that `154` §7 could not verify, and it is
+ *  labelled as a choice rather than published as a finding.
+ *
+ *  `fit` is ADR-048's *pageless authoring* policy: it never makes a line LONGER
+ *  than the paper the author is writing for, which is the property an author
+ *  needs and a reader does not care about. It ships labelled **Paper** rather
+ *  than *Fit* because the same View band already carries Fit width and Fit page
+ *  in its Zoom group, and a third Fit in one band is a worse menu than one
+ *  accurate noun.
+ *
+ *  `full` is named on purpose and is not a confession: a host embedding the
+ *  editor in a 400px column has the narrow case for free and may want the wide
+ *  one, and a named Full makes the default's narrowness discoverable instead of
+ *  mysterious. It is still bounded by `REFLOW_MAX_CONTENT_TWIP`, because the
+ *  engine cannot shape a wider column and a refusal is not a width.
+ *
+ *  Each step carries its own catalogue KEYS rather than having them built from
+ *  the id with a template literal. Two reasons and the second is the binding one:
+ *  a key spelled out is a key `build-locale.mjs`'s extractor and
+ *  `reflow_view.test.mjs`'s completeness guard can both see, and a `t()` called
+ *  on an interpolated key is read by that extractor as the literal
+ *  `textWidth.${step}.short` and fails the build. */
+export const REFLOW_WIDTH_STEPS = Object.freeze([
+  Object.freeze({
+    id: "narrow",
+    chars: 55,
+    charsCjk: 28,
+    shortKey: "textWidth.narrow.short",
+    rowKey: "textWidth.narrow.row",
+    titleKey: "textWidth.narrow.title",
+    commandKey: "textWidth.narrow.command",
+  }),
+  Object.freeze({
+    id: "reading",
+    chars: READING_TARGET_CHARS,
+    charsCjk: READING_TARGET_CHARS_CJK,
+    shortKey: "textWidth.reading.short",
+    rowKey: "textWidth.reading.row",
+    titleKey: "textWidth.reading.title",
+    commandKey: "textWidth.reading.command",
+  }),
+  Object.freeze({
+    id: "fit",
+    chars: null,
+    charsCjk: null,
+    shortKey: "textWidth.fit.short",
+    rowKey: "textWidth.fit.row",
+    titleKey: "textWidth.fit.title",
+    commandKey: "textWidth.fit.command",
+  }),
+  Object.freeze({
+    id: "full",
+    chars: Infinity,
+    charsCjk: Infinity,
+    shortKey: "textWidth.full.short",
+    rowKey: "textWidth.full.row",
+    titleKey: "textWidth.full.title",
+    commandKey: "textWidth.full.command",
+  }),
+]);
+
+/** THE DESKTOP DEFAULT, and the ONE LINE that changes it.
+ *
+ *  `reading`. A reader who opens a document on a 1440px screen and turns the
+ *  pages off should get 80 characters, not 241 — that is the whole finding of
+ *  `154` §3.2, and defaulting to `full` would ship the measurement and not the
+ *  fix. `154` §5 left this call open and ADR-048 records it as the owner's; it
+ *  is implemented as Reading, and changing it to `"fit"` or `"full"` is this one
+ *  assignment and nothing else.
+ *
+ *  It is ONE default and not a per-device pair on purpose: on a phone every step
+ *  reduces to `available` anyway, because a 390px window is narrower than the
+ *  narrowest cap, so the phone's 60 characters and ADR-044's retired
+ *  horizontal-scroll exemption are untouched by this value whatever it is. A
+ *  phone-only evaluation is precisely what hid the missing cap (`154` §3.2), so
+ *  the defaults are deliberately not split by device again. */
+export const REFLOW_WIDTH_DEFAULT = "reading";
+
+/** Where the width step lives: per-viewer, beside `docReflow`.
+ *
+ *  Per-viewer because that is what Google does with Text width and says in as
+ *  many words — "Your text width choice won't affect how collaborators see your
+ *  docs" — and because neither DOCX nor ODT has anywhere to put it, so a
+ *  document property here would be a sidecar that reformats every
+ *  collaborator's screen (ADR-048). */
+export const REFLOW_WIDTH_PREF_KEY = "docReflowWidth";
+
+/** The step `id` names, or the default when it names none. O(1). */
+export function reflowWidthStep(id) {
+  return (
+    REFLOW_WIDTH_STEPS.find((step) => step.id === id) ??
+    REFLOW_WIDTH_STEPS.find((step) => step.id === REFLOW_WIDTH_DEFAULT)
+  );
+}
+
+/** The mean advance of `face`, in em: measured where it is known, the
+ *  stated-error fallback where it is not. O(1).
+ *
+ * @param {string|null|undefined} face the document's default family, as
+ *        `stylePreview("Normal")` reports it.
+ */
+export function meanAdvanceEm(face) {
+  const key = String(face ?? "")
+    .trim()
+    .toLowerCase();
+  return MEAN_ADVANCE_EM.get(key) ?? MEAN_ADVANCE_EM_FALLBACK;
+}
+
+/**
+ * A character target resolved to twips, through the document's default face.
+ *
+ * `chars x mean_advance x size`. The em is the font size, so the twips per em
+ * are `pt x 20`; nothing here depends on the zoom, because the cap is a measure
+ * in the DOCUMENT's space and the zoom is a property of the glass.
+ *
+ * Complexity: O(1).
+ *
+ * @param {number} chars the target, in characters of the default face.
+ * @param {number} fontSizePt the default size in points. 11 is Word's default.
+ * @param {number} advanceEm the mean advance per character, in em.
+ * @returns {number} the cap in twips, or `Infinity` for an uncapped target.
+ */
+export function charTargetTwip(chars, fontSizePt, advanceEm) {
+  if (!(chars > 0) || !(fontSizePt > 0) || !(advanceEm > 0)) return Infinity;
+  if (!Number.isFinite(chars)) return Infinity;
+  return Math.round(chars * advanceEm * fontSizePt * 20);
+}
+
+/**
+ * THE CAP: the `X` in `min(available, X)` for one width step and one document.
+ *
+ * This is the whole of ADR-048's policy layer. It returns a number of twips and
+ * nothing else, so the clamp below it is one `Math.min` and the engine needs no
+ * change at all — `LayoutView::Reflow { content_width }` already takes the
+ * measure as a parameter, which is why ADR-046 getting the seam right is what
+ * makes this cheap.
+ *
+ * Complexity: O(1). Safe to call once per render pass; it reads no document.
+ *
+ * @param {string} stepId one of `REFLOW_WIDTH_STEPS`.
+ * @param {{face?: string|null, fontSizePt?: number, docMeasureTwip?: number|null}} doc
+ *        the document's default face and size (`stylePreview("Normal")`), and its
+ *        own text measure for the `fit` step. Each may be missing: a cap is a
+ *        reading comfort and must never be the reason a document fails to lay
+ *        out, so an unknown face falls back and an unknown measure falls through
+ *        to `Infinity` — i.e. to `available`, which is where this started.
+ * @returns {number} twips, possibly `Infinity`.
+ */
+export function reflowCapTwip(stepId, { face, fontSizePt, docMeasureTwip } = {}) {
+  const step = reflowWidthStep(stepId);
+  if (step.id === "fit") return docMeasureTwip > 0 ? docMeasureTwip : Infinity;
+  const advanceEm = meanAdvanceEm(face);
+  const chars = advanceEm >= FULL_WIDTH_ADVANCE_EM ? step.charsCjk : step.chars;
+  return charTargetTwip(chars, fontSizePt > 0 ? fontSizePt : 11, advanceEm);
+}
 
 /** The bucket `px` falls in: the largest multiple of `quantum` that is not
  *  wider than it. Floored, never nearest — see the header.
@@ -120,12 +426,26 @@ export function quantiseReflowWidth(px, quantum = REFLOW_QUANTUM_PX) {
 }
 
 /**
- * The engine's three arguments, from the space the shell actually has.
+ * The engine's three arguments, from the space the shell actually has — and
+ * ONE CLAMP, which is the whole of ADR-048 at the call site.
  *
  * The tile's TOTAL width — `content + 2 * gutter` in the engine's synthetic
- * page — is what gets painted, so it is the quantised bucket that has to be the
- * total, not the content. Getting that the other way round is how a gutter
- * becomes an overflow.
+ * page — is what gets painted, so below the cap it is the quantised bucket that
+ * has to be the total, not the content. Getting that the other way round is how
+ * a gutter becomes an overflow.
+ *
+ * `contentWidthTwip = min(available, capTwip, REFLOW_MAX_CONTENT_TWIP)`. Two
+ * ceilings, two different jobs, and they are kept apart on purpose: `capTwip` is
+ * a READING COMFORT chosen by the viewer and may be `Infinity`;
+ * `REFLOW_MAX_CONTENT_TWIP` is the engine's hard bound and is never waived, so
+ * `full` is a width rather than a refusal. See both constants.
+ *
+ * ABOVE THE CAP THE RETURNED `totalPx` STOPS MOVING, which is deliberate and is
+ * what the width feed reads: a desktop resize that changes only how much desk
+ * surrounds the column produces the same bucket, so it costs one division and no
+ * document work at all. That is a second and better reason for the §6.2
+ * quantisation's O(1) guarantee, and it holds for every window width above the
+ * cap rather than only inside a 16px bucket.
  *
  * Complexity: O(1). Called once per render and once per settled resize.
  *
@@ -135,30 +455,52 @@ export function quantiseReflowWidth(px, quantum = REFLOW_QUANTUM_PX) {
  *        `renderAll` computes it. The zoom belongs in here: at 150% the reader
  *        wants bigger text in the same window, which is fewer twips of measure,
  *        and that falls out of this conversion rather than needing a rule.
- * @param {{quantum?:number, gutterPx?:number, minContentTwip?:number}} [options]
- * @returns {{totalPx:number, contentWidthTwip:number, gutterTwip:number}|null}
+ * @param {{quantum?:number, gutterPx?:number, minContentTwip?:number,
+ *          capTwip?:number, maxContentTwip?:number}} [options]
+ * @returns {{totalPx:number, availablePx:number, contentWidthTwip:number,
+ *            gutterTwip:number, capped:boolean}|null}
  *          `null` when there is no usable width yet (a viewport that has not
  *          been laid out reports 0), so the caller leaves the view alone rather
- *          than asking the engine for a column of nothing.
+ *          than asking the engine for a column of nothing. `totalPx` is the
+ *          PAINTED tile's width; `availablePx` is the bucket the window offered,
+ *          and the two differ exactly when `capped`.
  */
 export function reflowMeasure(clientWidthPx, cssPerTwip, options = {}) {
   const quantum = options.quantum ?? REFLOW_QUANTUM_PX;
   const gutterPx = options.gutterPx ?? REFLOW_GUTTER_PX;
   const minContentTwip = options.minContentTwip ?? REFLOW_MIN_CONTENT_TWIP;
-  const totalPx = quantiseReflowWidth(clientWidthPx, quantum);
-  if (totalPx <= 0 || !(cssPerTwip > 0)) return null;
+  const capTwip = options.capTwip ?? Infinity;
+  const maxContentTwip = options.maxContentTwip ?? REFLOW_MAX_CONTENT_TWIP;
+  const availablePx = quantiseReflowWidth(clientWidthPx, quantum);
+  if (availablePx <= 0 || !(cssPerTwip > 0)) return null;
   const gutterTwip = Math.max(0, Math.round(gutterPx / cssPerTwip));
   // Floored, so the two gutters and the column can never add up to more than
   // the bucket after rounding — a rounded-up content width is a one-twip
   // overflow, which is invisible until it is a scrollbar.
-  const contentWidthTwip = Math.floor(totalPx / cssPerTwip) - 2 * gutterTwip;
-  if (contentWidthTwip < minContentTwip) {
+  const availableTwip = Math.floor(availablePx / cssPerTwip) - 2 * gutterTwip;
+  if (availableTwip < minContentTwip) {
     // Below the engine's floor the column stops shrinking rather than being
     // refused: see REFLOW_MIN_CONTENT_TWIP. The gutter goes with it, because a
     // gutter wider than the column it pads is the other thing the seam refuses.
-    return { totalPx, contentWidthTwip: minContentTwip, gutterTwip: 0 };
+    // No cap is consulted here: every cap is wider than an inch, so a floor and
+    // a ceiling can never both bind, and asking would only invite them to.
+    return {
+      totalPx: availablePx,
+      availablePx,
+      contentWidthTwip: minContentTwip,
+      gutterTwip: 0,
+      capped: false,
+    };
   }
-  return { totalPx, contentWidthTwip, gutterTwip };
+  const contentWidthTwip = Math.min(availableTwip, capTwip, maxContentTwip);
+  const capped = contentWidthTwip < availableTwip;
+  return {
+    totalPx: capped ? (contentWidthTwip + 2 * gutterTwip) * cssPerTwip : availablePx,
+    availablePx,
+    contentWidthTwip,
+    gutterTwip,
+    capped,
+  };
 }
 
 /**

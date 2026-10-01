@@ -248,6 +248,21 @@ export const APP_MENU_SECTIONS = {
     // references file their equivalent under View for the same reason
     // (`docs/151` §6.1).
     band("menuGroup.show", "view.outline", "view.pages", "view.showChanges", "view.reflow", "view.compactRibbon"),
+    // Text width, a SUBMENU of four mutually exclusive steps, between Show and
+    // Zoom (`docs/154` §5.1, ADR-048). It is where Google Docs puts View ▸ Text
+    // width and where Word's Immersive Reader puts Column Width, and it is a
+    // flyout rather than four inline rows because four rows of one radio group
+    // would be the longest band in this menu for a single choice — the length
+    // complaint `sub` exists to answer. It is NOT in Show: Show holds view
+    // STATES, and this is a measure, which is the same distinction that keeps
+    // `view.reflow` out of Zoom.
+    sub(
+      "menuGroup.textWidth",
+      "view.textWidth.narrow",
+      "view.textWidth.reading",
+      "view.textWidth.fit",
+      "view.textWidth.full",
+    ),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),
   ],
   // Word's Insert TAB group order, which ONLYOFFICE's Insert tab also follows:
