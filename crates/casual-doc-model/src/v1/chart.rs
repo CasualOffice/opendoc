@@ -88,8 +88,12 @@ impl ChartCoverage {
 /// A number is kept in its **verbatim lexical form** — the text of `c:v` — and
 /// parsed to `f64` by the consumer through [`ChartValue::as_f64`], never stored
 /// as a float. See this module's header for the two reasons.
+/// Adjacently tagged (`content = "value"`), not internally tagged like `Color`:
+/// an internally-tagged enum cannot carry a newtype variant whose payload is a
+/// string, and serde fails at *serialization* time rather than at compile time —
+/// which is how the snapshot round-trip guard below earned its keep.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum ChartValue {
     /// A `c:numCache` value, verbatim (`<= MAX_CHART_NUMBER_BYTES` bytes).
     Number(String),
