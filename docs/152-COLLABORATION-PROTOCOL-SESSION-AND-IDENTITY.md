@@ -160,6 +160,89 @@ relay does with a room nobody is in. Neither is decided here, and neither blocks
 
 ---
 
+## 2b. Presence — built 2026-10-01
+
+`107` 6.6's other half, and the one part of it the byte codec does not block: presence needs no
+`transform`, no inverse and no position in the total order, so it is genuinely separable. Under
+§2a's two modes it is also no longer a late nicety — a **shared** document joins a room on its
+first open, so the roster exists from the moment it opens.
+
+### The pattern, and the source that was read rather than the documentation
+
+**Yjs's awareness protocol**: one entry per client, **overwritten wholesale**, never merged,
+never persisted, never replayed. Because nothing merges, nothing transforms.
+
+**ONLYOFFICE independently has the same shape**, from their checked-out source rather than
+their marketing:
+
+| What their code does | Where |
+| --- | --- |
+| `this._participants = participantsNew;` — the roster is a **complete list from the server, replaced wholesale**, not per-client deltas | `sdkjs/common/docscoapi.js`, `_onParticipantsChanged` |
+| A list whose `participantsTimestamp` is not newer is **ignored** | same, `_onFirstLoadChangesEnd`'s caller |
+| `sendCursor` sends `{"type": "cursor", "cursor": <string>}` and **nothing else**, while the received message carries `'user'` and `'useridoriginal'` — **the client never states who it is** | `sendCursor`, and `word/api.js`'s `Update_ForeignCursor` |
+| `Update_ForeignCursor` reads `e[e.length - 1]` — the **last wins**, no merge | `word/api.js` |
+| `Remove_ForeignCursor(e['id'])` on a connection-state change — presence dies with the connection | `word/api.js` |
+
+Three independent sources agreeing — Yjs, ONLYOFFICE, and this document's own earlier design —
+is the strongest reason to take a shape rather than invent one. **Their AGPL source is cited,
+never copied.**
+
+### The identity rule, held by the type system
+
+`ClientMessage::Presence(PresenceUpdate)` carries a clock and an opaque payload and **no
+identity field at all**. The participant number is attached by the receiver from the session
+the message arrived on, and the fan-out — `ServerMessage::Awareness { client, update }` — is
+the only place the two travel together. A client that wants to claim to be somebody else has
+nowhere to write the claim, which is stronger than validating a field: there is no field.
+
+`a_presence_update_has_no_field_a_client_could_claim_an_identity_in` is a source scan, because
+a scan is the only way to assert the *absence* of a field — a constructor listing every field
+still compiles when a defaulted one is added. Driven red by adding `pub client: ClientId` **and
+fixing the three literals so it compiled**, since the first attempt failed to build and that
+would have proved the compiler worked rather than the guard.
+
+### What it deliberately is not
+
+Not a **typed** cursor. `107` P-4 owes an anchor mapping before a remote caret can survive a
+concurrent structural edit, so a typed position would promise what the engine cannot keep. The
+payload is opaque and bounded: the host fills it, the engine carries it, and when P-4 lands a
+typed caret is a payload *shape* rather than a protocol change. ONLYOFFICE's cursor is an opaque
+string too.
+
+### Bounds, and why a refusal rather than a truncation
+
+A roster is unbounded input from the network, so both axes are capped with typed refusals:
+`MAX_PRESENCE_BYTES` = 4 KiB per entry and `MAX_PARTICIPANTS` = 128 per room. A truncated
+**opaque** payload is a payload whose meaning changed silently, which is worse than a refusal,
+and the roster is fanned out to everyone — the *n*-th participant's cost is paid *n* times. A
+participant already in a full room may still **move**: the cap is on membership, not on
+movement, or every caret in a busy room would freeze.
+
+### Presence does not reach the log, and that is structural
+
+`presence_is_never_written_to_the_revision_log` scans the production half of `lib.rs` and
+`session.rs` for `Roster`, `PresenceUpdate` and `presence::` and fails if any appears. It is
+why `session.rs` never sees a presence message at all: the session orders *edits*, and presence
+has nothing to order. Driven red by storing a `Roster` on `Commit` — which would have made it
+persisted and replayed, the two things §9 said it must never be.
+
+### `PROTOCOL_VERSION` 2 → 3
+
+Required by this document's own rule: an added optional field is not a bump, but a **new enum
+variant is a hard break**, because a tagged enum with an unknown tag does not deserialize at
+all. A version-2 peer would drop an `Awareness` frame rather than skip a field. Nothing about
+edits changed.
+
+### Still owed by the editor chrome
+
+`doc.adoptParticipantIdentity(welcome.client)` on joining — the one call Phase 6 needs from
+`webapp/`, and under §2a it is now on the **first** open of a shared document rather than when a
+second participant arrives. A roster with nothing rendering it is built and unreachable, which
+is the pattern `SKILL` §9.4 names; this is reported with every increment of this lane until the
+chrome lands.
+
+---
+
 ## 3. The decision: a dumb relay, not a document replica
 
 This is the one central open question this document exists to settle, and it is a real
@@ -684,7 +767,7 @@ Each is out for a reason, not for lack of time.
 | --- | --- |
 | **The byte codec** | `casual-doc-edit` has no `serde` at all. Of the three op-set findings that were about to move the shapes, **`150` §9.3 is now closed** — and it moved no `Operation` variant at all: the mint travels on the envelope (`Transaction`, and `WireOperation` on the wire), because the number of identities an operation mints is discovered at application time and cannot be enumerated at authoring time (`150` §9.4, ADR-048). What still moves the shapes is `150` §9.1 (node-addressed block operations) and §9.2 (`Pos` affinity). Freezing bytes over those is the one thing a compatibility surface must not do. `107` §8 Q5, `150` §10 Q5. |
 | **The relay binary** | It is a workspace member under `server/`, not a crate, and it needs the codec and a transport first. The state machine it will drive is here and is testable without it, which is the point of a state machine over supplied bytes. |
-| **Presence and cursors** | Yjs's awareness protocol, adopted not invented: one entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed. It needs no transform and no order, so it is genuinely separable — and it needs the anchor mapping `107` P-4 owes before a remote cursor can survive a structural edit. |
+| ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. The relay's fan-out of it waits on the relay. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
 | ~~**Any `casual-doc-wasm` change**~~ | **Done 2026-10-01** (§4.4). The editor mints through the model's `IdSpace`, not through the collaboration modules, so `the_live_editor_has_no_collaboration_dependency` still holds unchanged — which is the reason the partition was put in `casual-doc-model` rather than in `wire`. |
 

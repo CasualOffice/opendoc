@@ -73,6 +73,7 @@ use casual_doc_edit::{EditError, Mint};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
+pub mod presence;
 pub mod protocol;
 pub mod session;
 pub mod transform;
