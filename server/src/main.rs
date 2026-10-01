@@ -22,9 +22,24 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use casual_doc_transaction::codec::encode_frame;
-use casual_doc_transaction::protocol::{ClientMessage, Outcome, Revision, ServerMessage};
+use casual_doc_transaction::protocol::{
+    Arrival, ClientId, ClientMessage, Outcome, Revision, ServerMessage,
+};
 use opendoc_relay::transport::{Frames, ReadError};
-use opendoc_relay::{Recovered, Room};
+use opendoc_relay::{Participants, Recovered, Room};
+
+/// The room and the connected participants behind **one** lock.
+///
+/// One lock and not two, deliberately: the decision, its journal write and the fan-out have to
+/// happen without another chunk interleaving, or two participants can be told about the order in
+/// two different orders. Holding one lock across all three makes "journal first, answer second,
+/// then fan out" true under concurrency rather than only in one thread. The relay's per-message
+/// work is an append and N writes and never a document, so the lock is held briefly by
+/// construction (ADR-047, ADR-058).
+struct Relay {
+    room: Room,
+    participants: Participants<TcpStream>,
+}
 
 fn main() -> std::process::ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -86,14 +101,17 @@ fn report(recovered: &Recovered) {
 fn serve(journal: &str, address: &str) -> Result<(), Box<dyn core::error::Error>> {
     let (room, recovered) = Room::open(journal)?;
     report(&recovered);
-    let room = Arc::new(Mutex::new(room));
+    let relay = Arc::new(Mutex::new(Relay {
+        room,
+        participants: Participants::new(),
+    }));
     let listener = TcpListener::bind(address)?;
     println!("relaying {journal} on {}", listener.local_addr()?);
     for stream in listener.incoming() {
         let stream = stream?;
-        let room = Arc::clone(&room);
+        let relay = Arc::clone(&relay);
         std::thread::spawn(move || {
-            if let Err(error) = participant(stream, &room) {
+            if let Err(error) = participant(stream, &relay) {
                 eprintln!("participant ended: {error}");
             }
         });
@@ -103,10 +121,34 @@ fn serve(journal: &str, address: &str) -> Result<(), Box<dyn core::error::Error>
 
 fn participant(
     stream: TcpStream,
-    room: &Mutex<Room>,
+    relay: &Mutex<Relay>,
 ) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
-    let mut writer = stream.try_clone()?;
+    let writer = stream.try_clone()?;
+    let mut answers = stream.try_clone()?;
     let mut frames = Frames::new(stream);
+    // Set on the Join, and the only thing that stops this connection being fanned its own chunk
+    // back. Until it is known this connection is not in the participant set at all.
+    let mut me: Option<ClientId> = None;
+    let outcome = serve_participant(&mut frames, &mut answers, writer, relay, &mut me);
+    // Whatever ended this connection — a clean leave, a broken pipe, a refused frame — the
+    // participant must leave the set. A writer left behind is a socket every future chunk is
+    // written to, and `Participants::fan_out` would report it as failed forever.
+    if let Some(client) = me
+        && let Ok(mut relay) = relay.lock()
+    {
+        relay.participants.left(client);
+    }
+    outcome
+}
+
+fn serve_participant(
+    frames: &mut Frames<TcpStream>,
+    answers: &mut TcpStream,
+    writer: TcpStream,
+    relay: &Mutex<Relay>,
+    me: &mut Option<ClientId>,
+) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+    let mut writer = Some(writer);
     loop {
         let message: ClientMessage = match frames.next_frame() {
             Ok(message) => message,
@@ -114,33 +156,69 @@ fn participant(
             Err(error) => return Err(Box::new(error)),
         };
         let answer = {
-            // The lock is held across the decision and its journal write, which is what makes
-            // "journal first, answer second" true under concurrency as well as in one thread.
-            let mut room = room.lock().map_err(|_| "the room lock was poisoned")?;
+            let mut relay = relay.lock().map_err(|_| "the room lock was poisoned")?;
             match &message {
-                ClientMessage::Join(_) => Some(room.join(&message)),
-                ClientMessage::Submit(submission) => match room.commit(submission)? {
-                    Outcome::Ordered { revision } | Outcome::Duplicate { revision } => {
-                        Some(ServerMessage::Ack {
+                ClientMessage::Join(_) => {
+                    let answer = relay.room.join(&message);
+                    // The participant set is keyed by the id the relay just assigned — the same
+                    // id a resume hands back, which is why `joined` replaces rather than refuses.
+                    if let ServerMessage::Welcome { client, .. }
+                    | ServerMessage::Resumed { client, .. } = answer
+                        && let Some(writer) = writer.take()
+                    {
+                        *me = Some(client);
+                        relay.participants.joined(client, writer);
+                    }
+                    Some(answer)
+                }
+                ClientMessage::Submit(submission) => {
+                    // Journal first (inside `Room::commit`), answer second, fan out third.
+                    match relay.room.commit(submission)? {
+                        Outcome::Ordered { revision } => {
+                            let arrival = Arrival {
+                                revision,
+                                client: submission.client,
+                                operations: submission.operations.clone(),
+                            };
+                            let bytes = encode_frame(&ServerMessage::Apply(arrival));
+                            let behind = relay.participants.fan_out(submission.client, &bytes);
+                            // Reported, not swallowed: each of these is now behind the order, and
+                            // `152` §5.5's resume is how it catches up — which only happens if
+                            // somebody noticed.
+                            for client in behind {
+                                eprintln!(
+                                    "participant {} missed revision {}; it must resume",
+                                    client.get(),
+                                    revision.get()
+                                );
+                            }
+                            Some(ServerMessage::Ack {
+                                through: submission.seq,
+                                revision,
+                            })
+                        }
+                        // A duplicate is acknowledged and **not** fanned out again: everybody
+                        // already has it, and a second copy would be applied twice.
+                        Outcome::Duplicate { revision } => Some(ServerMessage::Ack {
                             through: submission.seq,
                             revision,
-                        })
+                        }),
+                        Outcome::Refused { reason } => Some(ServerMessage::Refused {
+                            seq: Some(submission.seq),
+                            reason,
+                        }),
                     }
-                    Outcome::Refused { reason } => Some(ServerMessage::Refused {
-                        seq: Some(submission.seq),
-                        reason,
-                    }),
-                },
-                // Presence is not ordered, never acknowledged and never retried (`152` §2b), so
-                // the relay has nothing to say about one. Fanning it out needs the roster this
-                // increment does not build; dropping it is honest, and answering it would not be.
+                }
+                // Presence is not ordered, never acknowledged and never retried (`152` §2b). The
+                // relay has nothing to say about one; fanning it out needs the roster this
+                // increment does not wire, and answering it would be worse than dropping it.
                 ClientMessage::Presence(_) => None,
                 ClientMessage::Leave => return Ok(()),
             }
         };
         if let Some(answer) = answer {
-            writer.write_all(&encode_frame(&answer))?;
-            writer.flush()?;
+            answers.write_all(&encode_frame(&answer))?;
+            answers.flush()?;
         }
     }
 }

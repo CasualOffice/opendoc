@@ -2530,9 +2530,28 @@ costed against a fallback that does not exist.
   so removing `sync_data` leaves it green. Durability against power loss is not observable from a
   unit test in one process, so that line is reviewed rather than tested — recorded here because a
   guard claimed to prove more than it does is how this repository has been bitten before.
-- **Not built here:** fan-out to the other participants (the relay answers the sender and holds
-  the order; a roster-driven broadcast is the next increment), presence fan-out, and the
-  host-signed grant (`152` §10 Q4) that an access level would be read from.
+- **Fan-out is built, because a relay that does not fan out is not a relay.** `Participants` is
+  generic over the writer so its two rules are testable against a `Vec<u8>` rather than a port — a
+  rule that needs a socket to exercise is a rule that gets exercised by hand, once. The rules:
+  **the author is excluded** (a client that received its own chunk back would apply its own edit
+  twice; what it is waiting for is the acknowledgement, a different message on a different path),
+  and **a failed write is returned rather than swallowed** (that participant is now *behind the
+  order*, and `152` §5.5's resume is how it catches up — which only happens if somebody noticed).
+  A **duplicate** is acknowledged and deliberately **not** fanned out again. The room and the
+  participant set sit behind **one** lock, so decide → journal → answer → fan out cannot
+  interleave and two participants cannot be told about the order in two different orders. A
+  connection that ends for any reason leaves the set, or every future chunk is written to a dead
+  socket and reported as failed forever.
+  It is **not** a queue: a slow participant blocks the fan-out for its own write, because
+  per-participant buffering needs back-pressure and a policy for a reader that never drains, and
+  both are designs rather than details.
+- **Not built here:** presence fan-out (it needs the roster wired, and a *typed* cursor still
+  waits on `107` P-4), and the host-signed grant (`152` §10 Q4) that an access level would be read
+  from.
+- **Two more mutation proofs, for fan-out.** (5) Drop the author-exclusion → `the_author_receives_
+  nothing_and_the_others_receive_the_bytes` fails `left: [(0,3),(1,3),(2,3)], right:
+  [(0,3),(1,0),(2,3)]`. (6) Swallow a failed write → `a_participant_whose_write_failed_is_
+  reported_rather_than_swallowed` fails `left: [], right: [ClientId(1)]`.
 
 
 ## ADR-059 — `SetDocumentProtection`: the one operation that would make protection reachable
