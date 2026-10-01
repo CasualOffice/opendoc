@@ -57,7 +57,6 @@ use casual_doc_io::{
 };
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
-use casual_doc_layout::compose::compose_page;
 // Formatting marks (`docs/153` "Show non-printing characters"): the paint-only
 // overlay `compose_page_with` appends after a page's content. Separate `use`
 // lines, where the pinned rustfmt sorts them, so a parallel lane adding an
@@ -15683,7 +15682,27 @@ struct FormattingMarksPatch {
     /// The rule at each page or column break.
     page_break: Option<bool>,
     /// `#rrggbb` / `#rrggbbaa`, or `null` for the line's own ink.
+    ///
+    /// `deserialize_with` is not decoration: serde maps an explicit `null` onto an
+    /// `Option<Option<_>>`'s **outer** `None`, so without it `{"color":null}` and
+    /// an omitted `color` would be the same value and "back to the line's own ink"
+    /// would be unexpressible. The guard
+    /// `a_mark_takes_the_lines_own_ink_and_a_mistyped_override_is_refused`
+    /// caught exactly that.
+    #[serde(default, deserialize_with = "deserialize_present")]
     color: Option<Option<String>>,
+}
+
+/// Distinguishes "the key was absent" from "the key was present and `null`" —
+/// the `double_option` idiom. Called only when the key IS present, so wrapping
+/// in `Some` is what records its presence; the inner `Option` then carries
+/// `null` as `None`.
+fn deserialize_present<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// [`FormattingMarks`] as the host reads it back.
@@ -44921,5 +44940,260 @@ mod tests {
         d.document
             .validate()
             .expect("the document is valid after undo");
+    }
+
+    /// **The invariant the whole formatting-marks seam rests on: a mark is paint.**
+    ///
+    /// `docs/153` promises that the non-printing characters "provably move
+    /// nothing", and the layout crate holds that for `compose_page_with` itself —
+    /// its geometry golden is composed with every mark on and stays byte-identical.
+    /// What no layout-crate test can see is the FACADE: a setter that re-ran
+    /// pagination, dropped the shaped-paragraph cache, or bumped the document
+    /// revision would satisfy every engine guard and still turn a ¶ click into an
+    /// `O(document)` pass, a dirtied autosave, or an undo step.
+    ///
+    /// So this asserts, across a toggle:
+    ///
+    /// - the page COUNT and every page's GEOMETRY are identical;
+    /// - the document revision (`log.head()`) does not move — no `Operation` is
+    ///   issued, so undo is unaffected;
+    /// - the view epoch moves by exactly one, which is what the host re-rasters on;
+    /// - the galley cache is untouched — **this is the observable that detects a
+    ///   repagination**, and it is stated here because the page count cannot:
+    ///   re-paginating the same document with the same shaper produces the same
+    ///   pages, so a page-count assertion alone passes on a setter that wastes a
+    ///   whole document pass. The cache is what a re-pagination throws away.
+    /// - and, in the other direction, the raster actually CHANGES with marks on and
+    ///   returns byte-for-byte to the unmarked bitmap with them off. Without that
+    ///   last pair the whole test would pass on a setter that did nothing at all.
+    #[test]
+    fn turning_formatting_marks_on_repaints_and_never_repaginates() {
+        // Long enough to hold several pages: a one-page fixture has no page
+        // boundary for a repagination to move, so it could not fail.
+        let mut d = plain_text_document(400);
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        // Three keystrokes through the public typing path, so the galley cache
+        // holds shaped paragraphs. Without them the cache is empty and the half of
+        // this guard that can see a repagination would be vacuous.
+        for offset in 6u32..9 {
+            d.type_text(&node, offset, &node, offset, "x".to_owned(), 1)
+                .expect("typing into a plain-text document");
+        }
+        assert!(
+            d.galley_cache.len() > 0,
+            "the fixture must leave shaped paragraphs cached, or this guard cannot \
+             see a re-pagination"
+        );
+
+        let pages_before = d.page_count();
+        assert!(
+            pages_before > 1,
+            "the fixture must span more than one page, got {pages_before}"
+        );
+        let geometry_before: Vec<(i32, i32)> = (0..pages_before)
+            .map(|index| {
+                let size = d.page_size_inner(index).expect("a page size");
+                (size.width_twip, size.height_twip)
+            })
+            .collect();
+        let document_revision_before = d.log.head();
+        let cached_before = (d.galley_cache.len(), d.galley_cache.bytes());
+        let view_epoch_before = d.revision;
+        let unmarked = d.render_page_inner(0, 96.0).expect("raster page 0");
+
+        let state = d
+            .set_formatting_marks_inner("{\"all\":true}")
+            .expect("the ¶ button turns every mark on");
+        assert!(state.contains("\"any\":true"), "{state}");
+        assert!(state.contains("\"paragraph\":true"), "{state}");
+        assert!(
+            state.contains("\"color\":null"),
+            "a mark takes the line's own ink unless the host overrides it: {state}"
+        );
+
+        assert_eq!(
+            d.page_count(),
+            pages_before,
+            "a formatting-marks toggle changed the page count"
+        );
+        let geometry_after: Vec<(i32, i32)> = (0..pages_before)
+            .map(|index| {
+                let size = d.page_size_inner(index).expect("a page size");
+                (size.width_twip, size.height_twip)
+            })
+            .collect();
+        assert_eq!(
+            geometry_after, geometry_before,
+            "a formatting-marks toggle moved a page's geometry"
+        );
+        assert_eq!(
+            d.log.head(),
+            document_revision_before,
+            "a formatting-marks toggle committed a transaction: it is a view, so it \
+             must not reach undo or dirty the document"
+        );
+        assert_eq!(
+            d.revision,
+            view_epoch_before + 1,
+            "a formatting-marks toggle must bump the view epoch exactly once — that \
+             is how the host knows to re-raster"
+        );
+        assert_eq!(
+            (d.galley_cache.len(), d.galley_cache.bytes()),
+            cached_before,
+            "a formatting-marks toggle re-shaped the document: `ComposeOptions` \
+             reaches no function that measures, so there is nothing to re-flow"
+        );
+
+        // The other direction: the marks must actually reach the raster, or every
+        // assertion above would hold for a setter that did nothing.
+        let marked = d.render_page_inner(0, 96.0).expect("raster page 0 with marks");
+        assert_eq!(
+            (marked.width_px, marked.height_px),
+            (unmarked.width_px, unmarked.height_px),
+            "the page is the same size in pixels with marks on"
+        );
+        assert_ne!(
+            marked.rgba, unmarked.rgba,
+            "the marks did not reach the raster at all"
+        );
+
+        // And back off: `compose_page_with(page, &default())` is byte-identical to
+        // `compose_page(page)`, which is what makes the default-off promise real
+        // rather than asserted.
+        let state = d
+            .set_formatting_marks_inner("{\"all\":false}")
+            .expect("the ¶ button turns every mark off");
+        assert!(state.contains("\"any\":false"), "{state}");
+        let restored = d.render_page_inner(0, 96.0).expect("raster page 0 again");
+        assert_eq!(
+            restored.rgba, unmarked.rgba,
+            "turning the marks off did not restore the unmarked display list"
+        );
+
+        // Idempotent: a host may call this on every render without spending a
+        // re-raster it does not need.
+        let epoch = d.revision;
+        d.set_formatting_marks_inner("{\"all\":false}")
+            .expect("idempotent");
+        assert_eq!(
+            d.revision, epoch,
+            "a no-op patch bumped the view epoch, so every render would re-raster"
+        );
+    }
+
+    /// Patch semantics, and the refusal that stops a misspelled toggle becoming a
+    /// dead control.
+    ///
+    /// An omitted key is left alone — that is what lets one setter serve both
+    /// Word's single ¶ button and the five individual toggles in its *Display*
+    /// pane — and `all` is applied first so `{"all":true,"space":false}` is
+    /// "everything except the space dots" in one call. An unknown key is a thrown
+    /// refusal rather than a call that silently does nothing (`SKILL` §10: never a
+    /// dead control).
+    #[test]
+    fn a_formatting_marks_patch_leaves_omitted_keys_alone_and_refuses_an_unknown_one() {
+        let mut d = plain_text_document(4);
+        assert!(
+            d.formatting_marks().contains("\"any\":false"),
+            "marks are all-off until a host asks: {}",
+            d.formatting_marks()
+        );
+
+        d.set_formatting_marks_inner("{\"tab\":true}")
+            .expect("one toggle");
+        let state = d.formatting_marks();
+        assert!(state.contains("\"tab\":true"), "{state}");
+        assert!(state.contains("\"space\":false"), "{state}");
+        assert!(state.contains("\"any\":true"), "{state}");
+
+        // `all` first, the individual key second.
+        let state = d
+            .set_formatting_marks_inner("{\"all\":true,\"space\":false}")
+            .expect("all but one");
+        assert!(state.contains("\"paragraph\":true"), "{state}");
+        assert!(state.contains("\"pageBreak\":true"), "{state}");
+        assert!(
+            state.contains("\"space\":false"),
+            "an individual key must win over `all`: {state}"
+        );
+
+        // An omitted key survives the next patch.
+        d.set_formatting_marks_inner("{\"tab\":false}")
+            .expect("one toggle");
+        let state = d.formatting_marks();
+        assert!(state.contains("\"tab\":false"), "{state}");
+        assert!(
+            state.contains("\"space\":false"),
+            "an omitted key must be left as it was: {state}"
+        );
+        assert!(state.contains("\"paragraph\":true"), "{state}");
+
+        for bad in [
+            "{\"paragrpah\":true}",
+            "{\"all\":true,\"nonsense\":1}",
+            "{\"paragraph\":\"yes\"}",
+            "true",
+            "[]",
+            "",
+        ] {
+            let refused = d
+                .set_formatting_marks_inner(bad)
+                .expect_err("a patch that cannot be honoured must be refused");
+            assert!(
+                refused.starts_with("formatting marks: "),
+                "the refusal must carry a message a host can show, got {refused:?}"
+            );
+        }
+        // The refusals changed nothing.
+        assert!(d.formatting_marks().contains("\"paragraph\":true"));
+    }
+
+    /// The ONLYOFFICE dark-page defect this seam deliberately does not reproduce:
+    /// they hard-code black for the tab and break marks, so those vanish on a dark
+    /// page. Ours default to **the line's own ink**, and a host that wants an
+    /// override says so explicitly — a mistyped override is refused rather than
+    /// silently falling back to black, because falling back to black IS the defect.
+    #[test]
+    fn a_mark_takes_the_lines_own_ink_and_a_mistyped_override_is_refused() {
+        let mut d = plain_text_document(4);
+        assert!(
+            d.formatting_marks().contains("\"color\":null"),
+            "the default must be the line's own ink: {}",
+            d.formatting_marks()
+        );
+
+        let state = d
+            .set_formatting_marks_inner("{\"all\":true,\"color\":\"#ff8800\"}")
+            .expect("an explicit override");
+        assert!(
+            state.contains("\"color\":\"#ff8800ff\""),
+            "an #rrggbb override reads back opaque: {state}"
+        );
+        let state = d
+            .set_formatting_marks_inner("{\"color\":\"#0011223c\"}")
+            .expect("an explicit override with alpha");
+        assert!(state.contains("\"color\":\"#0011223c\""), "{state}");
+
+        // Back to the line's ink.
+        let state = d
+            .set_formatting_marks_inner("{\"color\":null}")
+            .expect("back to the line's ink");
+        assert!(state.contains("\"color\":null"), "{state}");
+
+        for bad in ["\"ff8800\"", "\"#ff88\"", "\"#gggggg\"", "\"#ff8800f\"", "17"] {
+            let patch = format!("{{\"color\":{bad}}}");
+            let refused = d
+                .set_formatting_marks_inner(&patch)
+                .expect_err("a colour that cannot be read must be refused");
+            assert!(
+                refused.starts_with("formatting marks: "),
+                "{refused:?} must be a message a host can show"
+            );
+        }
+        assert!(
+            d.formatting_marks().contains("\"color\":null"),
+            "a refused override must not leave a colour behind"
+        );
     }
 }

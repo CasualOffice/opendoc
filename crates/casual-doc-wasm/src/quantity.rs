@@ -226,7 +226,10 @@ mod tests {
         assert_eq!(parse_measurement_inner("6", "pica"), Ok(1440));
         assert_eq!(parse_measurement_inner("25.4", "mm"), Ok(1440));
         assert_eq!(format_measurement_inner(1440, "cm", "."), Ok("2.54".into()));
-        assert_eq!(format_measurement_inner(1440, "inch", "."), Ok("1".into()));
+        // The display precision is always written out, so a field does not change
+        // width as the user types: an inch is `1.00`, not `1`.
+        assert_eq!(format_measurement_inner(1440, "inch", "."), Ok("1.00".into()));
+        assert_eq!(format_measurement_inner(1440, "mm", ","), Ok("25,4".into()));
     }
 
     /// A suffix in the text wins over the field's label, and both separators are
@@ -306,27 +309,50 @@ mod tests {
         );
     }
 
-    /// Format-then-parse is a fixed point across the boundary for every
-    /// displayable value in every unit — so a dialog that shows a value and reads
-    /// it back cannot drift the number it was given.
+    /// **What the boundary shows, it reads back.** For every twip value and every
+    /// unit: format it, parse what was shown, format that again — and the two
+    /// strings are identical. A dialog that shows a value and reads the field back
+    /// unchanged therefore cannot drift the number it was given, however many
+    /// times the user opens it.
+    ///
+    /// Stated as a fixed point of `format`, and deliberately **not** as
+    /// `parse(format(t)) == t`: the engine's display precision is the finest for
+    /// which one step is still a whole twip, so a twip between two display steps
+    /// is not representable and rounds to the nearer one. That rounding is honest —
+    /// `decimal_places` exists so a shown digit always survives a round trip — and
+    /// a guard demanding exact recovery of an unrepresentable value would be
+    /// demanding a digit the product cannot honour. The second half bounds the
+    /// rounding instead: it never moves further than one display step.
+    ///
+    /// The comma separator is a display choice only, so it must read back to the
+    /// same twip as the dot.
     #[test]
     fn what_the_boundary_shows_it_reads_back() {
         for unit in MeasurementUnit::ALL {
             let id = unit.id();
             let step = unit.step().raw();
-            // One display step apart, across a span wide enough to cover a page.
-            for n in 0..200 {
-                let twips = n * step;
+            // Every whole twip across a span wider than a page, so the values
+            // BETWEEN display steps are covered rather than avoided.
+            for twips in 0..2_000 {
                 let shown = format_measurement_inner(twips, id, ".").expect("formats");
                 let read = parse_measurement_inner(&shown, id).expect("parses");
+                let again = format_measurement_inner(read, id, ".").expect("formats");
                 assert_eq!(
-                    read, twips,
-                    "{id}: {twips} twips shown as {shown:?} read back as {read}"
+                    again, shown,
+                    "{id}: {twips} twips shown as {shown:?}, read back as {read}, \
+                     shown again as {again:?}"
                 );
-                // The comma separator is a display choice only; it must read back
-                // to the same twip.
+                assert!(
+                    (read - twips).abs() <= step,
+                    "{id}: {twips} twips read back as {read}, further than one \
+                     display step ({step}) away"
+                );
                 let comma = format_measurement_inner(twips, id, "comma").expect("formats");
-                assert_eq!(parse_measurement_inner(&comma, id), Ok(twips));
+                assert_eq!(
+                    parse_measurement_inner(&comma, id),
+                    Ok(read),
+                    "{id}: the separator is a display choice, not a value change"
+                );
             }
         }
     }

@@ -1062,14 +1062,37 @@ fn the_live_editor_has_no_collaboration_dependency() {
     //
     // Doc 152 §9 states the scope this pins: `casual-doc-wasm` is deliberately unchanged by
     // that increment, so this guard is what stops the next one changing it by accident.
-    const FORBIDDEN: [&str; 6] = [
+    //
+    // ## The one exception, and why it is narrow rather than convenient
+    //
+    // `protocol::ClientId` is admitted, and nothing else in `protocol` is. Doc 152 §2b asks
+    // the chrome to RENDER the roster — a `Roster` with nothing reading it is the "built and
+    // unreachable" pattern `SKILL` §9.4 names — and `Roster::accept`/`get`/`forget` all name a
+    // `ClientId`, so the presence reader in `casual-doc-wasm` cannot be written without it.
+    //
+    // It is admitted rather than worked around because the alternatives were worse: a
+    // crate-root or `presence` re-export would have let the editor reach the same type while
+    // this scan reported clean, which is a guard that lies; and a facade-local copy of the
+    // roster would be a second implementation of one rule, which `SKILL` §8 forbids.
+    //
+    // The guarantee is unchanged, because `ClientId` is a newtype over a `u64` with two `const
+    // fn`s and no behaviour: it orders nothing, transforms nothing and contacts nothing. What
+    // this guard exists to forbid is the *machinery* — `Join`, `Welcome`, `ClientMessage`,
+    // `ServerMessage`, `Base`, `Revision`, the sessions and the wire codec — and every one of
+    // those is still refused, including through a `use` list that tries to smuggle one in
+    // beside `ClientId` (`{ClientId, Join}` names `protocol` once and `protocol::ClientId`
+    // never, so it offends).
+    const FORBIDDEN: [&str; 5] = [
         "casual_doc_transaction::session",
-        "casual_doc_transaction::protocol",
         "casual_doc_transaction::wire",
         "ClientSession",
         "ServerSession",
         "WireOperation",
     ];
+    // The module the editor may name only to reach `ClientId`, and the one path it may name it
+    // in.
+    const PROTOCOL: &str = "casual_doc_transaction::protocol";
+    const PROTOCOL_CLIENT_ID: &str = "casual_doc_transaction::protocol::ClientId";
 
     let editor = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -1082,6 +1105,17 @@ fn the_live_editor_has_no_collaboration_dependency() {
                 offenders.push(format!("{name} reaches `{forbidden}`"));
             }
         }
+        // Every mention of `protocol` must be a mention of `protocol::ClientId`. Counting is
+        // what makes a mixed `use` list offend: it names the module once and the admitted path
+        // zero times.
+        let named = text.matches(PROTOCOL).count();
+        let admitted = text.matches(PROTOCOL_CLIENT_ID).count();
+        if named > admitted {
+            offenders.push(format!(
+                "{name} reaches `{PROTOCOL}` for something other than `ClientId` \
+                 ({named} mentions, {admitted} of them `ClientId`)"
+            ));
+        }
     }
     assert!(
         offenders.is_empty(),
@@ -1091,5 +1125,13 @@ fn the_live_editor_has_no_collaboration_dependency() {
     assert!(
         FORBIDDEN.iter().any(|item| planted.contains(item)),
         "the scan cannot see a dependency it is supposed to forbid"
+    );
+    // The narrowed half has to be able to fail too, or the exception would have quietly
+    // readmitted the whole module: a `use` list pairing the admitted type with a forbidden one
+    // must still be caught.
+    let smuggled = "use casual_doc_transaction::protocol::{ClientId, Join};";
+    assert!(
+        smuggled.matches(PROTOCOL).count() > smuggled.matches(PROTOCOL_CLIENT_ID).count(),
+        "the scan cannot see a forbidden protocol item smuggled in beside `ClientId`"
     );
 }
