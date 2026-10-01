@@ -202,6 +202,28 @@ function licensingEntryPoints() {
   for (const tool of directories("tools")) {
     paths.push(join(REPO, "tools", tool, "src", "main.rs"));
   }
+  // Every OTHER workspace member, read from `Cargo.toml` rather than from a
+  // directory this list happens to know about. The two globs above cover the two
+  // places crates have lived so far; the relay landed at `server/` and was
+  // invisible to both, which the completeness test below caught — correctly, and
+  // for exactly the reason its own comment gives. Deriving the remainder from the
+  // manifest means the next member outside those two directories is covered on
+  // arrival instead of reddening `main` first.
+  const manifestMembers = [
+    ...(readFileSync(join(REPO, "Cargo.toml"), "utf8").match(/^members = \[([\s\S]*?)^\]/m)?.[1] ?? "")
+      .matchAll(/"([^"]+)"/g),
+  ].map((match) => match[1]);
+  for (const member of manifestMembers) {
+    if (member.startsWith("crates/") || member.startsWith("tools/")) continue;
+    for (const root of ["lib.rs", "main.rs"]) {
+      const candidate = join(REPO, member, "src", root);
+      try {
+        if (statSync(candidate).isFile()) paths.push(candidate);
+      } catch {
+        // A member without that root simply has the other one.
+      }
+    }
+  }
   for (const name of [
     "capabilities.mjs",
     "embed_element.mjs",
