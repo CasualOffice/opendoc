@@ -2047,6 +2047,57 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 // --- Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01 --------
 
 /// A custom path resolves to a polyline inside the shape's box, and the two
+/// An adjustment guide that COMPUTES its value is honoured, not passed over for the
+/// preset default (`109` FID-G-02 / FID-L-04 groundwork).
+///
+/// `a:avLst` guides are usually literals, so before the formula evaluator existed
+/// layout matched on a `val ` prefix and fell back to the documented default for
+/// anything else. That failure is invisible by construction: the shape still draws,
+/// still looks like itself, and is simply the wrong proportions — with no report,
+/// because nothing knew a formula had been skipped.
+///
+/// A `roundRect` is the clearest witness: its radius is `shorter * adj / 100000`, so
+/// the default 16667 and a computed 25000 give visibly different radii on the same
+/// 1440-twip box.
+#[test]
+fn an_adjustment_guide_that_computes_its_value_is_evaluated_not_defaulted() {
+    let radius_with = |adjustments: Vec<ShapeAdjustment>| {
+        let content = only_anchor_content(&single_child_group_document(preset_shape_child(
+            ShapeGeometry::RoundRectangle,
+            adjustments,
+        )));
+        match content {
+            AnchorContent::RoundedRectangle { radius, .. } => radius,
+            other => panic!("expected a rounded rectangle, got {other:?}"),
+        }
+    };
+    let adj = |formula: &str| {
+        vec![ShapeAdjustment {
+            name: "adj".to_owned(),
+            formula: formula.to_owned(),
+        }]
+    };
+
+    // The preset default, 16667: 1440 * 16667 / 100000 = 240.
+    assert_eq!(radius_with(Vec::new()), Twip(240), "preset default");
+    // A literal still resolves exactly as it always did.
+    assert_eq!(radius_with(adj("val 25000")), Twip(360), "literal");
+    // And a formula computing the same 25000 must give the same radius. Before the
+    // evaluator this silently returned the default's 240.
+    assert_eq!(
+        radius_with(adj("*/ 50000 1 2")),
+        Twip(360),
+        "a computed guide must not fall back to the default"
+    );
+    // One referencing the box resolves too: `ss` is 1440, so ss/4 = 360 and the
+    // radius is 1440 * 360 / 100000 = 5.
+    assert_eq!(
+        radius_with(adj("*/ ss 1 4")),
+        Twip(5),
+        "a box-relative guide"
+    );
+}
+
 /// A curve's CONTROL points are resolved into page space, not just its endpoints
 /// (`109` FID-G-02).
 ///

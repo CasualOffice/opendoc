@@ -283,10 +283,29 @@ changed, because the "out of scope" list above is no longer wholly true.
    cannot be forgotten there. The generated fixture's curve shape moved from the
    reported side to the drawn side, and its loss count went 2 to 1.
 
-Still out of scope and still FID-G-02: `a:arcTo`; the `a:gdLst` formula language and
-any guide-named coordinate, which is the largest remaining piece and what FID-L-04's
-preset table blocks on; multiple subpaths; `a:ahLst`/`a:cxnLst`; the `a:rect` text
-rectangle; ODF export; Edit Points; and path-exact hit testing.
+5. **The guide formula LANGUAGE now exists**, as `casual-doc-layout::shape_guide`:
+   all 17 ECMA-376 `a:gd@fmla` opcodes over the built-in variable environment
+   (`w`/`h`/`ss`/`ls`, the box edges and centres, the `wd<n>`/`hd<n>`/`ssd<n>`
+   fraction families, and the angle constants), with guides resolving in order so a
+   later one can name an earlier one. Lengths are in the caller's unit; angles are
+   1/60000 degree.
+
+   Its first consumer is **adjustment resolution**. `adjustment_value` matched a
+   `val ` prefix and fell back to the preset default for anything else, so a shape
+   whose `adj` was computed drew with proportions nobody authored — and invisibly,
+   since the shape still looked like itself and nothing reported a skip. A literal
+   resolves exactly as before; the committed goldens are byte-identical.
+
+   Deliberately NOT done with it yet: a guide-NAMED path coordinate
+   (`<a:pt x="wd2"/>`) still refuses the geometry. That needs `a:gdLst` in the model
+   and a path coordinate that can hold a name rather than an integer, which is a
+   model change, not an evaluator one. The language was the stated blocker; it is no
+   longer the blocker.
+
+Still out of scope and still FID-G-02: `a:arcTo`; `a:gdLst` in the model and
+guide-named path coordinates (the language exists, the consumer does not); multiple
+subpaths; `a:ahLst`/`a:cxnLst`; the `a:rect` text rectangle; ODF export; Edit Points;
+and path-exact hit testing.
 
 ### Rejected
 
