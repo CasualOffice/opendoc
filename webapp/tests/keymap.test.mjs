@@ -194,11 +194,52 @@ const SPACING_COMMAND_IDS = (() => {
   return ids;
 })();
 
+// The BREAK commands reach the registry through `LAYOUT_SURFACE`, which
+// `editorCommands()` maps wholesale into palette rows with `id: entry.command` —
+// so, like the two above, they are genuinely registered and invisible to a scan
+// for literal ids. ⌘⏎ is bound to one of them, which is the whole of `104`
+// HF-127's fix, so a broken link here would put that chord straight back where
+// it was: present in the table and inert at the keyboard.
+//
+// BOTH links are asserted, because either one breaking is enough to kill the
+// chord: `editorCommands` must still map `LAYOUT_SURFACE`, and `LAYOUT_SURFACE`
+// must still spread the break rows into itself. The ids themselves come from
+// `break_commands.mjs` rather than being listed here, so a break removed from
+// that table takes its chord's target with it and this test says so.
+const BREAK_COMMAND_IDS = (() => {
+  assert.match(
+    EDITOR_COMMANDS_SOURCE,
+    /\.\.\.LAYOUT_SURFACE\.filter\(\(entry\) => entry\.label\)\.map\(/,
+    "editorCommands() no longer maps LAYOUT_SURFACE into palette rows, so the " +
+      "break commands are not in the registry and ⌘⏎ is dead",
+  );
+  assert.match(
+    MAIN_JS,
+    /\.\.\.breakSurfaceRows\(/,
+    "LAYOUT_SURFACE no longer spreads the break rows, so ⌘⏎ has nothing to run",
+  );
+  const source = readFileSync(new URL("../src/break_commands.mjs", import.meta.url), "utf8");
+  const ids = [...source.matchAll(/command: "([\w.]+)"/g)].map((match) => match[1]);
+  const sections = [...source.matchAll(/command: `layout\.break\.section\.\$\{start\}`/g)];
+  assert.ok(
+    ids.length >= 2 && sections.length === 1,
+    `break_commands.mjs declares ${ids.length} literal break ids and ` +
+      `${sections.length} generated section families; the scan has drifted`,
+  );
+  const starts = /SECTION_STARTS = Object\.freeze\(\[([^\]]+)\]\)/.exec(source);
+  assert.ok(starts, "SECTION_STARTS has moved, so the four section ids cannot be derived");
+  return [
+    ...ids,
+    ...[...starts[1].matchAll(/"(\w+)"/g)].map((match) => `layout.break.section.${match[1]}`),
+  ];
+})();
+
 test("every chord names a command the registry actually returns", () => {
   const registered = new Set([
     ...[...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
     ...TABLE_COMMAND_IDS,
     ...SPACING_COMMAND_IDS,
+    ...BREAK_COMMAND_IDS,
   ]);
   assert.ok(registered.size > 80, `only ${registered.size} commands found; the scan has drifted`);
   const missing = [...new Set(KEYMAP.map((row) => row.command))].filter((id) => !registered.has(id));

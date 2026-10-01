@@ -580,6 +580,22 @@
             </div>
             <span data-i18n="panelInsert.table" class="rgroup-label">Table</span>
           </div>
+          <!-- Breaks. ONE dropdown holding all six, which is ONLYOFFICE's shape
+               (`Toolbar.js:2382-2390`: one Breaks button, menu of Page Break /
+               Column Break / Insert Section Break ▸ four start types) and Word's
+               (Layout ▸ Page Setup ▸ Breaks). Six band buttons for six breaks
+               would spend the Insert band's whole remaining width on a group
+               nobody opens twice in a paragraph.
+               Placed second, after Table: Word's Insert tab opens with Pages and
+               ONLYOFFICE's Breaks button sits in their first Insert group, so
+               early is right, and the Table group is `data-ribbon-pinned` and
+               stays first. -->
+          <div class="rgroup" data-group="insert-breaks" data-ribbon-pinned>
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelInsert.insertBreak.title" data-i18n-label="panelInsert.breaks.label" id="insertBreaksBtn" type="button" class="fmt" title="Insert a page, column or section break" aria-label="Breaks" aria-haspopup="menu" aria-controls="insertBreaksMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">insert_page_break</span></button>
+            </div>
+            <span data-i18n="panelInsert.breaks" class="rgroup-label">Breaks</span>
+          </div>
           <div class="rgroup" data-group="illustrations" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertPictureFromFile.title" data-i18n-label="panelInsert.insertPicture.label" id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span data-i18n="insertPictureBtn.picture" class="fmt-big-label">Picture</span></button>
@@ -983,6 +999,18 @@
               <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
+          </div>
+          <!-- Compare, last on the Review band, which is where Word keeps it:
+               their Review tab reads Proofing | Comments | Tracking | Changes |
+               Compare, with Compare rightmost. ONLYOFFICE puts theirs on
+               Collaboration behind `canReview`. It opens the side panel the
+               comparison is read in, so the rail's own Compare entry and this
+               button are two faces of ONE command. -->
+          <div class="rgroup" data-group="review-compare">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelReview.compareDocuments.title" data-i18n-label="panelReview.compare.label" id="reviewCompareBtn" type="button" class="fmt" title="Compare this document with another one" aria-label="Compare" aria-pressed="false" disabled><span class="ms" aria-hidden="true">difference</span></button>
+            </div>
+            <span data-i18n="panelReview.compare" class="rgroup-label">Compare</span>
           </div>
         </div>
         <!-- Overflow: groups that don't fit the current width move here instead
@@ -1514,6 +1542,22 @@
       </div>
       <div class="menu-divider"></div>
       <div data-i18n="tableMenu.cellBorders" class="menu-heading">Cell borders</div>
+      <!-- THE PEN, not a reflector. Word's Table Design keeps Line Weight beside
+           the border painter and Google Docs keeps Border width beside the border
+           buttons: in both, the control says what the NEXT stroke draws with and
+           does not change to describe the selection. ONLYOFFICE is the same shape
+           (`cmbBorderSize`; `onBorderSizeSelect` only remembers the value), so all
+           three references agree and this follows them. It is deliberately ONE
+           control for both the cell presets below and the table presets further
+           down — the pen, then where to put it — because two weights for one
+           gesture is a question a person should not have to answer twice.
+           The options are filled by `table_cell_chrome.mjs` so the number is
+           formatted in the reader's own locale ("0,5 pt" in French) instead of
+           seven English literals in markup. -->
+      <div class="menu-row">
+        <label data-i18n="tableMenu.lineWeight" class="menu-label" for="borderWeight">Line weight</label>
+        <select data-i18n-label="tableMenu.borderLineWeight.label" id="borderWeight" class="menu-select" aria-label="Border line weight"></select>
+      </div>
       <div class="menu-row border-row">
         <div data-i18n-label="tableMenu.cellBorders.label" class="border-presets" role="group" aria-label="Cell borders">
           <button data-i18n-title="tableMenu.noBorder.title" type="button" class="border-btn" data-cellborder="none" title="No border" aria-pressed="false"><span class="bx"></span></button>
@@ -1535,6 +1579,25 @@
         </div>
         <label data-i18n-title="tableMenu.tableBorderColor.title" class="border-color" title="Table border color"><input data-i18n-label="tableMenu.tableBorderColor.label" id="tableBorderColor" type="color" value="#000000" aria-label="Table border color" /></label>
       </div>
+    </div>
+
+    <!-- The Breaks menu. FLAT, with the full name on every row, which is Google
+         Docs' Insert ▸ Break rather than Word's two headings with short names —
+         because the same label serves the command palette, where "Next Page"
+         alone says nothing, and one label per command is this chrome's rule.
+         Each row carries the command id it runs, so the markup and
+         `break_commands.mjs` cannot disagree about which row means which break.
+         `data-command` here is NOT read by the Insert surface-parity guard: that
+         one scans `.ribbon-panel .rgroup button[data-command]`, and a popover is
+         not inside a ribbon panel. -->
+    <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
+      <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
+      <button data-i18n="break.column" type="button" role="menuitem" class="menu-item" data-command="layout.break.column">Column break</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="break.section.nextPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.nextPage">Section break (next page)</button>
+      <button data-i18n="break.section.continuous" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.continuous">Section break (continuous)</button>
+      <button data-i18n="break.section.evenPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.evenPage">Section break (even page)</button>
+      <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
     </div>
 
     <!-- A size grid, not a menu: the container is a dialog holding a `role="grid"`
@@ -2384,6 +2447,13 @@
              button's, so the two entry points cannot drift into saying different
              things about why version history is unavailable. -->
         <button data-i18n-title="ui.versionHistory.title" data-i18n-label="ui.versionHistory.label" id="railVersions" type="button" class="rail-btn" title="Version history" aria-label="Version history" aria-pressed="false" disabled><span class="ms" aria-hidden="true">history</span><span data-i18n="railVersions.versions">Versions</span></button>
+        <!-- Compare, below Versions, because a comparison is read beside the
+             document the way the outline and the comments are — Google Docs puts
+             its change list in a side panel for the same reason. It is the same
+             `review.compare` command the Review band and the Review menu run, so
+             the glyph is the same one: two faces of one command must not look
+             like two commands. -->
+        <button data-i18n-title="ui.compareDocuments.title" data-i18n-label="ui.compareDocuments.label" id="railCompare" type="button" class="rail-btn" title="Compare with another document" aria-label="Compare documents" aria-pressed="false" disabled><span class="ms" aria-hidden="true">difference</span><span data-i18n="railCompare.compare">Compare</span></button>
       </nav>
       <aside data-i18n-label="ui.outline.label2" id="outlinePanel" class="side-panel" hidden aria-label="Outline">
         <div class="panel-head">
@@ -2398,6 +2468,20 @@
           <button data-i18n-title="pagesPanel.closePages.title" data-i18n-label="pagesPanel.closePages.label" id="pagesClose" type="button" class="panel-close" title="Close pages" aria-label="Close pages"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         <div id="pagesBody" class="panel-body pages-grid"></div>
+      </aside>
+      <!-- The comparison's change list. A SIDE PANEL and not a modal, for the
+           reason the outline is one: a reader comparing two documents is looking
+           at both the list and the page, and a dialog over the page hides half
+           of what they came for. The file input is the Word route — Review ▸
+           Compare picks a document off the disk — and its `accept` list is the
+           importers' own, because a comparison has to PARSE the other side. -->
+      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel" hidden aria-label="Compare documents">
+        <div class="panel-head">
+          <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
+          <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="compareBody" class="panel-body compare-body"></div>
+        <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
       </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">

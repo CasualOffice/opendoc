@@ -79,6 +79,14 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     .evaluateAll((buttons) => buttons.map((button) => button.id));
   expect(buttonIds).toEqual([
     "insertTableBtn",
+    // Breaks, second. ONE dropdown for all six — Word's Layout ▸ Page Setup ▸
+    // Breaks and ONLYOFFICE's Insert ▸ Breaks are both one control
+    // (`Toolbar.js:2382-2390`), and six band buttons for six breaks would spend
+    // the Insert band's whole remaining width on a group nobody opens twice in a
+    // paragraph. The six commands are `layout.break.*`, in the Insert MENU's own
+    // Breaks submenu, so none of them is in the `insert.*` roster the parity test
+    // further down compares.
+    "insertBreaksBtn",
     "insertPictureBtn",
     "insertShapeBtn",
     "insertTextBoxBtn",
@@ -122,6 +130,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   // did not simply disappear.
   expect(await page.locator("#panelInsert .rgroup-label").allTextContents()).toEqual([
     "Table",
+    "Breaks",
     "Illustrations",
     "Links",
     // Word's own Insert-tab group, in Word's own position: straight after Links.
@@ -136,6 +145,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   // act on, and pinning it would fail a cosmetic refresh while catching nothing.
   const expected = [
     ["#insertTableBtn", "Insert table"],
+    ["#insertBreaksBtn", "Breaks"],
     ["#insertPictureBtn", "Insert picture"],
     ["#insertShapeBtn", "Insert shape"],
     ["#insertTextBoxBtn", "Insert text box"],

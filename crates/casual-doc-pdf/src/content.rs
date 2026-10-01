@@ -24,6 +24,7 @@ use casual_doc_layout::display::Gradient;
 use casual_doc_layout::display::GradientKind;
 use casual_doc_layout::display::LayerBlend;
 use casual_doc_layout::display::PaintItem;
+use casual_doc_layout::display::PathCommand;
 use casual_doc_layout::display::ShapeGeometry;
 use casual_doc_layout::display::ShapeOutline;
 use casual_doc_layout::display::ShapeTransform;
@@ -911,32 +912,96 @@ impl Content {
     /// Emits a polyline subpath. `closed` appends `h`, which is what makes a
     /// stroked path join back to its origin; an open custom geometry
     /// (docs/119) must NOT, or a two-point rule strokes back over itself.
+    /// A closed vertex list, for the FLAT [`PaintItem::Polygon`].
+    ///
+    /// Kept beside [`Content::path_commands`] for the same reason the raster backend
+    /// keeps its own: the flat polygon is the simple solid-colour seam shading,
+    /// borders and table furniture paint through, and it never carries a curve.
     fn path_polygon(&mut self, points: &[Point], closed: bool) {
         let Some(first) = points.first() else {
             self.op("n");
             return;
         };
-        self.bytes.extend_from_slice(
-            format!(
-                "{} {} m\n",
-                num(pt(first.x)),
-                num(self.height - pt(first.y))
-            )
-            .as_bytes(),
-        );
+        self.move_to_point(*first);
         for point in &points[1..] {
-            self.bytes.extend_from_slice(
-                format!(
-                    "{} {} l\n",
-                    num(pt(point.x)),
-                    num(self.height - pt(point.y))
-                )
-                .as_bytes(),
-            );
+            self.segment_to(*point, "l");
         }
         if closed {
             self.op("h");
         }
+    }
+
+    /// Emits a resolved shape path: `m`/`l` for moves and lines, `c` for curves.
+    ///
+    /// PDF has no quadratic operator, so a [`PathCommand::QuadTo`] is promoted to a
+    /// cubic with the standard control mapping — `c1 = p0 + 2/3*(c - p0)` and
+    /// `c2 = p2 + 2/3*(c - p2)` — which is exact, not an approximation: every
+    /// quadratic Bézier IS a cubic with those controls.
+    fn path_commands(&mut self, commands: &[PathCommand], closed: bool) {
+        let Some(first) = commands.first() else {
+            self.op("n");
+            return;
+        };
+        let start = first.endpoint();
+        self.move_to_point(start);
+        let mut current = start;
+        for command in &commands[1..] {
+            match *command {
+                PathCommand::MoveTo { point } => self.move_to_point(point),
+                PathCommand::LineTo { point } => self.segment_to(point, "l"),
+                PathCommand::CubicTo {
+                    control1,
+                    control2,
+                    point,
+                } => self.cubic_to(control1, control2, point),
+                PathCommand::QuadTo { control, point } => {
+                    let lift = |from: Point, to: Point| {
+                        Point::new(
+                            Twip(from.x.raw() + (to.x.raw() - from.x.raw()) * 2 / 3),
+                            Twip(from.y.raw() + (to.y.raw() - from.y.raw()) * 2 / 3),
+                        )
+                    };
+                    self.cubic_to(lift(current, control), lift(point, control), point);
+                }
+            }
+            current = command.endpoint();
+        }
+        if closed {
+            self.op("h");
+        }
+    }
+
+    /// `x y m` — begin a subpath, flipping into PDF's y-up space.
+    fn move_to_point(&mut self, point: Point) {
+        self.segment_to(point, "m");
+    }
+
+    /// One `x y <op>` path operator.
+    fn segment_to(&mut self, point: Point, op: &str) {
+        self.bytes.extend_from_slice(
+            format!(
+                "{} {} {op}\n",
+                num(pt(point.x)),
+                num(self.height - pt(point.y))
+            )
+            .as_bytes(),
+        );
+    }
+
+    /// `x1 y1 x2 y2 x3 y3 c` — a cubic Bézier.
+    fn cubic_to(&mut self, control1: Point, control2: Point, point: Point) {
+        self.bytes.extend_from_slice(
+            format!(
+                "{} {} {} {} {} {} c\n",
+                num(pt(control1.x)),
+                num(self.height - pt(control1.y)),
+                num(pt(control2.x)),
+                num(self.height - pt(control2.y)),
+                num(pt(point.x)),
+                num(self.height - pt(point.y))
+            )
+            .as_bytes(),
+        );
     }
 
     fn line(&mut self, from: Point, to: Point) {
@@ -957,7 +1022,7 @@ impl Content {
             ShapeGeometry::Rect { rect } => self.path_rect(*rect),
             ShapeGeometry::Ellipse { rect } => self.path_ellipse(*rect),
             ShapeGeometry::RoundedRect { rect, radius } => self.path_rounded_rect(*rect, *radius),
-            ShapeGeometry::Polygon { points, closed } => self.path_polygon(points, *closed),
+            ShapeGeometry::Path { commands, closed } => self.path_commands(commands, *closed),
             ShapeGeometry::Line { from, to } => self.line(*from, *to),
         }
     }
@@ -1223,7 +1288,12 @@ fn geometry_bounds(geometry: &ShapeGeometry) -> Option<Rect> {
         ShapeGeometry::Rect { rect }
         | ShapeGeometry::Ellipse { rect }
         | ShapeGeometry::RoundedRect { rect, .. } => Some(*rect),
-        ShapeGeometry::Polygon { points, .. } => {
+        ShapeGeometry::Path { commands, .. } => {
+            let points: Vec<Point> = commands
+                .iter()
+                .flat_map(|command| command.points())
+                .collect();
+            let points = &points[..];
             let first = points.first()?;
             let (mut min_x, mut min_y, mut max_x, mut max_y) =
                 (first.x.raw(), first.y.raw(), first.x.raw(), first.y.raw());
@@ -1334,4 +1404,106 @@ fn exponential(from: Color, to: Color) -> String {
         channel(to.g),
         channel(to.b)
     )
+}
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    fn stream(commands: &[PathCommand], closed: bool) -> String {
+        let mut content = Content {
+            bytes: Vec::new(),
+            height: 100.0,
+            clips: 0,
+        };
+        content.path_commands(commands, closed);
+        String::from_utf8(content.bytes).expect("ascii operators")
+    }
+
+    /// The six numbers of the stream's single `c` operator.
+    fn cubic_operands(stream: &str) -> Vec<f32> {
+        let line = stream
+            .lines()
+            .find(|line| line.ends_with(" c"))
+            .expect("a cubic operator");
+        line.trim_end_matches(" c")
+            .split_whitespace()
+            .map(|n| n.parse().expect("numeric operand"))
+            .collect()
+    }
+
+    #[test]
+    fn a_cubic_emits_one_c_operator_with_both_controls() {
+        let out = stream(
+            &[
+                PathCommand::MoveTo {
+                    point: Point::new(Twip(0), Twip(0)),
+                },
+                PathCommand::CubicTo {
+                    control1: Point::new(Twip(200), Twip(400)),
+                    control2: Point::new(Twip(400), Twip(400)),
+                    point: Point::new(Twip(600), Twip(0)),
+                },
+            ],
+            false,
+        );
+        assert_eq!(out.matches(" c\n").count(), 1, "exactly one curve: {out}");
+        // 20 twips to the point, and PDF's y axis is up, so y = height - pt(y).
+        assert_eq!(
+            cubic_operands(&out),
+            vec![10.0, 80.0, 20.0, 80.0, 30.0, 100.0]
+        );
+    }
+
+    /// PDF has no quadratic operator, so a quad is promoted — and the promotion is
+    /// exact, not an approximation: every quadratic IS the cubic whose controls sit
+    /// two thirds of the way from each endpoint toward the quadratic's control.
+    ///
+    /// The expected numbers are written out rather than recomputed from the same
+    /// formula the production code uses, so the test cannot agree with a wrong
+    /// implementation by sharing its arithmetic.
+    #[test]
+    fn a_quadratic_is_promoted_to_the_exact_equivalent_cubic() {
+        let out = stream(
+            &[
+                PathCommand::MoveTo {
+                    point: Point::new(Twip(0), Twip(0)),
+                },
+                PathCommand::QuadTo {
+                    control: Point::new(Twip(300), Twip(600)),
+                    point: Point::new(Twip(600), Twip(0)),
+                },
+            ],
+            false,
+        );
+        assert_eq!(
+            out.matches(" c\n").count(),
+            1,
+            "promoted to one cubic: {out}"
+        );
+        // P0 (0,0), C (300,600), P2 (600,0) in twips.
+        //   c1 = P0 + 2/3*(C - P0) = (200, 400) -> (10pt, 100-20 = 80)
+        //   c2 = P2 + 2/3*(C - P2) = (400, 400) -> (20pt, 80)
+        // Naively repeating the raw control twice would give x = 15, not 10 and 20.
+        assert_eq!(
+            cubic_operands(&out),
+            vec![10.0, 80.0, 20.0, 80.0, 30.0, 100.0]
+        );
+    }
+
+    #[test]
+    fn a_closed_path_emits_h_and_an_open_one_does_not() {
+        let commands = [
+            PathCommand::MoveTo {
+                point: Point::new(Twip(0), Twip(0)),
+            },
+            PathCommand::LineTo {
+                point: Point::new(Twip(200), Twip(0)),
+            },
+            PathCommand::LineTo {
+                point: Point::new(Twip(200), Twip(200)),
+            },
+        ];
+        assert!(stream(&commands, true).contains("h\n"));
+        assert!(!stream(&commands, false).contains("h\n"));
+    }
 }

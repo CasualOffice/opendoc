@@ -125,7 +125,18 @@ test("the timeline is reachable from File, from the View band AND from the rail"
   const railOrder = await page
     .locator(".rail .rail-btn")
     .evaluateAll((els) => els.map((el) => el.id));
-  expect(railOrder).toEqual(["railOutline", "railPages", "railReview", "railVersions"]);
+  // `railCompare` is last, below Versions, and that order is the point: a
+  // comparison is read BESIDE the document the way the outline and the comments
+  // are, and it is the newest of the five. It is one face of `review.compare`
+  // (`docs/153` `review.compare-documents`) — `compare.spec.mjs` drives it and the
+  // Review band's button and asserts both open the same panel.
+  expect(railOrder).toEqual([
+    "railOutline",
+    "railPages",
+    "railReview",
+    "railVersions",
+    "railCompare",
+  ]);
 
   const rail = page.locator("#railVersions");
   await expect(rail).toBeEnabled();
@@ -608,11 +619,18 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
     "Show changes",
     expect.stringContaining("Delete this version"),
   ]);
-  // Present, disabled, and honest about why — SKILL §10, and `docs/140` H3 is
-  // where the structural diff actually is.
+  // Show changes, LIVE on this row. It used to be present and disabled, carrying
+  // "Comparing one version with another is not built yet" — and that sentence was
+  // wrong about which half was missing: `crates/casual-doc-diff` and
+  // `crates/casual-doc-wasm/src/diff.rs` were complete the whole time and
+  // `webapp/` called neither. `compare_documents.mjs` is the panel they were
+  // waiting for, and `compare.spec.mjs` drives this row and asserts the
+  // comparison it produces. This is the OLDEST row; the head's own refusal — the
+  // head is the document on screen, so comparing it with itself shows nothing —
+  // is asserted there too.
   const changes = page.locator(`${rowMenu} [data-command-id="version.changes"]`);
-  await expect(changes).toBeDisabled();
-  await expect(changes).toHaveAttribute("title", /not built yet/i);
+  await expect(changes).toBeEnabled();
+  await expect(changes).not.toHaveAttribute("title", /not built yet/i);
   // Keep is a STATE, so it is a checkbox row rather than a label that flips.
   await expect(page.locator(`${rowMenu} [data-command-id="version.keep"]`)).toHaveAttribute(
     "role",

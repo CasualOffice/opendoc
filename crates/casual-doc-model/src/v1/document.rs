@@ -1797,12 +1797,11 @@ impl Document {
                                 && (0..=MAX_EMU).contains(&path.height_emu),
                             "group.shape.path.extent",
                         )?;
-                        for command in &path.commands {
-                            let point = match command {
-                                ShapePathCommand::MoveTo { point }
-                                | ShapePathCommand::LineTo { point } => *point,
-                                ShapePathCommand::Close => continue,
-                            };
+                        // Via `points()` rather than a local match, so a curve's
+                        // CONTROL points are bounds-checked too — they are real
+                        // coordinates that reach the rasteriser, and a match here
+                        // that only looked at endpoints would pass an unbounded one.
+                        for point in path.commands.iter().flat_map(ShapePathCommand::points) {
                             check_domain(
                                 (-MAX_EMU..=MAX_EMU).contains(&point.x_emu)
                                     && (-MAX_EMU..=MAX_EMU).contains(&point.y_emu),

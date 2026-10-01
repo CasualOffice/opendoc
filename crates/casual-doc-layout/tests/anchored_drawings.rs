@@ -36,6 +36,15 @@ use casual_doc_model::v1::{
     TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition, WrapDistances, WrapMode,
 };
 
+/// The vertices a resolved path arrives at, in order.
+///
+/// The typed presets emit only moves and lines, so for them this is exactly the
+/// vertex list the tests asserted before the path primitive replaced it — which is
+/// what keeps those assertions comparable across the change.
+fn endpoints(commands: &[casual_doc_layout::display::PathCommand]) -> Vec<Point> {
+    commands.iter().map(|command| command.endpoint()).collect()
+}
+
 fn node(id: u64) -> NodeId {
     NodeId::from_parts(id, 1).unwrap()
 }
@@ -175,6 +184,177 @@ fn an_anchored_drawing_composes_at_its_resolved_page_rect() {
         })
         .expect("an anchored image paint item");
     assert_eq!(rect.origin, Point::new(Twip(1_440), Twip(2_880)));
+}
+
+/// EMU → twip rounding is reachable from a real anchored drawing, not only from the
+/// converter's own unit tests (`156` §6 row 0.6).
+///
+/// Every other fixture in this file uses "nice inch" EMU values — 914400, 1828800 —
+/// which are exact multiples of 635 and so quantise identically under any rounding
+/// rule. That is why converging the rule moved no committed golden, and it is exactly
+/// why this guard is needed: with no non-integral value anywhere in the suite, a
+/// regression from rounding back to truncation would be invisible to all of it.
+#[test]
+fn a_non_integral_emu_anchor_rounds_rather_than_truncates() {
+    let (media_id, definitions) = media_defs();
+    // 1_000_000 EMU = 1574.80 twips; 400_000 EMU = 629.92 twips. Neither is a
+    // multiple of 635, so truncation and rounding disagree on all four numbers.
+    let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
+        opacity: None,
+        id: node(12),
+        media: media_id,
+        extent: Extent {
+            width_emu: 1_000_000,
+            height_emu: 1_000_000,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Page,
+                position: HorizontalPosition::Offset(1_000_000),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Page,
+                position: VerticalPosition::Offset(400_000),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: Default::default(),
+            wrap_polygon: None,
+            behind_doc: false,
+        },
+        descr: None,
+        relative_height: None,
+        crop: None,
+        border: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    }));
+    let para = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body text"), drawing],
+    });
+    let doc = Document::new(node(1), vec![para], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    let placed = &layout.pages[0].anchored[0];
+    // Truncation would give origin (1574, 629) and a 1574-twip square.
+    assert_eq!(placed.rect.origin, Point::new(Twip(1_575), Twip(630)));
+    assert_eq!(placed.rect.size, Size::new(Twip(1_575), Twip(1_575)));
+}
+
+/// A group with `a:xfrm@rot` turns its children, which it did not before: the
+/// rotation was modelled and round-tripped but never applied, so a rotated Word
+/// group painted unrotated (`156` §6 row 0.5).
+///
+/// The child's rect stays axis-aligned and MOVES to where the rotation sends its
+/// centre, while the orientation rides the `ShapeTransform` the painter already
+/// honours about a free centre. That is what lets a rigid group transform ride the
+/// existing per-object path instead of needing a group container in the placed
+/// output.
+#[test]
+fn a_rotated_group_turns_its_children_about_the_group_centre() {
+    let (_media_id, definitions) = media_defs();
+    // Group box: 2in x 1in at page (1in, 1in) -> origin (1440,1440) size (2880,1440),
+    // so its centre is (2880, 2160). The child is a 1in square at the group's own
+    // origin, centre (2160, 2160) — 720 twips LEFT of the group centre.
+    let group_extent = Extent {
+        width_emu: 1_828_800,
+        height_emu: 914_400,
+    };
+    let child_extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: node(31),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: child_extent,
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: None,
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    let group_with = |rotation: Option<i32>| {
+        InlineNode::Group(Box::new(WordprocessingGroup {
+            hyperlink: None,
+            id: node(30),
+            anchor: Some(page_anchor(914_400, 914_400)),
+            relative_height: None,
+            extent: group_extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: group_extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: group_extent,
+                flip_h: false,
+                flip_v: false,
+                rotation,
+            },
+            children: vec![child.clone()],
+        }))
+    };
+
+    let place = |rotation: Option<i32>| {
+        let para = BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(11, "Body text"), group_with(rotation)],
+        });
+        let doc = Document::new(node(1), vec![para], definitions.clone()).unwrap();
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &doc, &shaper, &cfg);
+        let placed = &layout.pages[0].anchored[0];
+        (placed.rect, placed.transform)
+    };
+
+    // Unrotated: the child sits at the group origin, untransformed. This is the
+    // identity fast path, and it is why adding the machinery moved no golden.
+    let (rect, transform) = place(None);
+    assert_eq!(rect.origin, Point::new(Twip(1_440), Twip(1_440)));
+    assert_eq!(rect.size, Size::new(Twip(1_440), Twip(1_440)));
+    assert!(
+        transform.is_none(),
+        "an unrotated group must add no transform"
+    );
+
+    // 90° clockwise about (2880, 2160): the child centre (2160, 2160) is 720 twips
+    // to the LEFT, so it lands 720 ABOVE at (2880, 1440) — left -> up is clockwise
+    // when y grows downward. Origin therefore (2880-720, 1440-720).
+    let (rect, transform) = place(Some(90 * 60_000));
+    assert_eq!(
+        rect.origin,
+        Point::new(Twip(2_160), Twip(720)),
+        "the child's rect must move to where the group rotation sends its centre"
+    );
+    assert_eq!(
+        rect.size,
+        Size::new(Twip(1_440), Twip(1_440)),
+        "size is rigid"
+    );
+    let transform = transform.expect("a rotated group must give its child a transform");
+    assert_eq!(transform.rotation, 90 * 60_000);
+    assert!(!transform.flip_h && !transform.flip_v);
+    assert_eq!(
+        transform.center,
+        Point::new(Twip(2_880), Twip(1_440)),
+        "the painter must turn the child about its NEW centre"
+    );
 }
 
 #[test]
@@ -1813,18 +1993,18 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     let mut layout = paginate(&galley, &cfg);
     place_floats(&mut layout, &document, &shaper, &cfg);
 
-    let polygons: Vec<&Vec<Point>> = layout.pages[0]
+    let polygons: Vec<Vec<Point>> = layout.pages[0]
         .anchored
         .iter()
         .filter_map(|anchor| match &anchor.content {
-            AnchorContent::Polygon { points, .. } => Some(points),
+            AnchorContent::Path { commands, .. } => Some(endpoints(commands)),
             _ => None,
         })
         .collect();
     assert_eq!(polygons.len(), 3);
     assert_eq!(
         polygons[0],
-        &vec![
+        vec![
             Point::new(Twip(2_160), Twip(1_440)),
             Point::new(Twip(2_880), Twip(2_880)),
             Point::new(Twip(1_440), Twip(2_880)),
@@ -1832,7 +2012,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     );
     assert_eq!(
         polygons[1],
-        &vec![
+        vec![
             Point::new(Twip(2_880), Twip(1_440)),
             Point::new(Twip(4_320), Twip(2_880)),
             Point::new(Twip(2_880), Twip(2_880)),
@@ -1840,7 +2020,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     );
     assert_eq!(
         polygons[2],
-        &vec![
+        vec![
             Point::new(Twip(5_040), Twip(1_440)),
             Point::new(Twip(5_760), Twip(2_160)),
             Point::new(Twip(5_040), Twip(2_880)),
@@ -1855,7 +2035,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             .filter(|item| matches!(
                 item,
                 PaintItem::Shape {
-                    geometry: DisplayShapeGeometry::Polygon { .. },
+                    geometry: DisplayShapeGeometry::Path { .. },
                     ..
                 }
             ))
@@ -1867,6 +2047,85 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 // --- Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01 --------
 
 /// A custom path resolves to a polyline inside the shape's box, and the two
+/// A curve's CONTROL points are resolved into page space, not just its endpoints
+/// (`109` FID-G-02).
+///
+/// This is the specific way a curve goes wrong while still looking like a curve: if
+/// only endpoints were mapped, the controls would stay in the path's own coordinate
+/// space — tiny numbers near the page origin — and the curve would whip off toward
+/// the top-left instead of bulging where it was authored. Every number below is
+/// arithmetic on a 1" box at a known page position, not a snapshot.
+#[test]
+fn a_curves_control_points_are_resolved_into_page_space() {
+    use casual_doc_layout::display::PathCommand;
+    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: node(91),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Other,
+        preset: None,
+        adjustments: Vec::new(),
+        path: Some(ShapePath {
+            width_emu: 100,
+            height_emu: 100,
+            commands: vec![
+                ShapePathCommand::MoveTo {
+                    point: PointEmu { x_emu: 0, y_emu: 0 },
+                },
+                ShapePathCommand::CubicBezTo {
+                    control1: PointEmu {
+                        x_emu: 30,
+                        y_emu: 80,
+                    },
+                    control2: PointEmu {
+                        x_emu: 70,
+                        y_emu: 80,
+                    },
+                    point: PointEmu {
+                        x_emu: 100,
+                        y_emu: 0,
+                    },
+                },
+            ],
+        }),
+        fill: None,
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+
+    let content = only_anchor_content(&single_child_group_document(child));
+    let AnchorContent::Path {
+        commands, closed, ..
+    } = content
+    else {
+        panic!("expected a path, got {content:?}");
+    };
+    assert!(!closed, "no a:close was authored");
+    // The box is 1440 twips square at (1440, 1440), and `@w`/`@h` are 100, so a
+    // coordinate maps to 1440 + round(1440 * value / 100).
+    assert_eq!(
+        commands,
+        vec![
+            PathCommand::MoveTo {
+                point: Point::new(Twip(1_440), Twip(1_440)),
+            },
+            PathCommand::CubicTo {
+                control1: Point::new(Twip(1_872), Twip(2_592)),
+                control2: Point::new(Twip(2_448), Twip(2_592)),
+                point: Point::new(Twip(2_880), Twip(1_440)),
+            },
+        ],
+    );
+}
+
 /// `a:path` coordinate-space rules are applied per axis: a POSITIVE `@w`/`@h`
 /// scales the coordinate to the box, and a ZERO one (an absent attribute) is an
 /// absolute EMU offset that does not scale (docs/119 §3).
@@ -1966,11 +2225,13 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     let mut layout = paginate(&galley, &cfg);
     place_floats(&mut layout, &document, &shaper, &cfg);
 
-    let polygons: Vec<(&Vec<Point>, bool)> = layout.pages[0]
+    let polygons: Vec<(Vec<Point>, bool)> = layout.pages[0]
         .anchored
         .iter()
         .filter_map(|anchor| match &anchor.content {
-            AnchorContent::Polygon { points, closed, .. } => Some((points, *closed)),
+            AnchorContent::Path {
+                commands, closed, ..
+            } => Some((endpoints(commands), *closed)),
             _ => None,
         })
         .collect();
@@ -1986,7 +2247,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     assert_eq!(
         polygons[0],
         (
-            &vec![
+            vec![
                 Point::new(Twip(1_440), Twip(1_440)),
                 Point::new(Twip(2_880), Twip(1_440)),
             ],
@@ -1997,7 +2258,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     assert_eq!(
         polygons[1],
         (
-            &vec![
+            vec![
                 Point::new(Twip(3_600), Twip(1_440)),
                 Point::new(Twip(4_320), Twip(2_880)),
                 Point::new(Twip(2_880), Twip(2_880)),
@@ -2014,7 +2275,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         .iter()
         .filter_map(|item| match item {
             PaintItem::Shape {
-                geometry: DisplayShapeGeometry::Polygon { closed, .. },
+                geometry: DisplayShapeGeometry::Path { closed, .. },
                 ..
             } => Some(*closed),
             _ => None,
@@ -2343,7 +2604,13 @@ fn every_shape_geometry_reaches_its_own_layout_primitive() {
         let document = single_child_group_document(preset_shape_child(geometry, Vec::new()));
         let content = only_anchor_content(&document);
         match (expected(geometry), &content) {
-            (Expected::Polygon(count), AnchorContent::Polygon { points, closed, .. }) => {
+            (
+                Expected::Polygon(count),
+                AnchorContent::Path {
+                    commands, closed, ..
+                },
+            ) => {
+                let points = endpoints(commands);
                 assert_eq!(points.len(), count, "{geometry:?} vertex count");
                 assert!(*closed, "{geometry:?} is a closed outline");
                 for point in points {
@@ -2375,8 +2642,8 @@ fn new_presets_resolve_to_their_documented_outlines() {
     let outline = |geometry, adjustments| {
         let document = single_child_group_document(preset_shape_child(geometry, adjustments));
         match only_anchor_content(&document) {
-            AnchorContent::Polygon { points, .. } => points,
-            other => panic!("expected a polygon, got {other:?}"),
+            AnchorContent::Path { commands, .. } => endpoints(&commands),
+            other => panic!("expected a path, got {other:?}"),
         }
     };
     let at = |x, y| Point::new(Twip(x), Twip(y));

@@ -14,6 +14,56 @@
 // popover writes cell properties and the dialog splits one cell. Table-scoped
 // controls (the properties inspector, the formula, autofit) are a different
 // subject and stay where they are.
+import { n } from "./i18n.mjs";
+
+/** The border widths the pen offers, in EIGHTH-POINTS — `w:sz`'s own unit, and
+ *  the unit `setCellBorderRange` and `setTableBorder` take, so nothing converts
+ *  between the control and the engine.
+ *
+ *  THE LIST IS THE ONE GOOGLE DOCS AND ONLYOFFICE AGREE ON, and it is a subset of
+ *  Word's. Verified from source rather than memory:
+ *  `reference/web-apps/apps/common/main/lib/component/ComboBorderSize.js:109-115`
+ *  offers 0.5, 1, 1.5, 2.25, 3, 4.5 and 6 pt, and Google Docs' border-width menu
+ *  is the same seven.
+ *
+ *  Word also offers ¼ pt and ¾ pt and this deliberately does not. The engine can
+ *  represent them (it clamps `w:sz` to 2..=96, so ¼ pt is the floor rather than
+ *  out of range) — they are left out because two of the three references do not
+ *  offer them and because at 100% zoom on a 96-DPI display ¼ pt is a third of a
+ *  pixel, so the control would promise a distinction the page cannot show. That
+ *  is a judgement, recorded here so it can be argued with rather than discovered.
+ *
+ *  `none` is not in this list: clearing a border is the `none` PRESET beside the
+ *  weight, not a zero width. ONLYOFFICE folds the two together by prepending a
+ *  "No borders" row to the same combo; we already had the preset, and a second
+ *  way to say the same thing is how two controls start disagreeing. */
+export const BORDER_WEIGHTS_EIGHTH_POINTS = Object.freeze([4, 8, 12, 18, 24, 36, 48]);
+
+/** Word's and ONLYOFFICE's default pen, and the engine's own.
+ *
+ *  Three values were in play before this: the cell-format popover wrote 8
+ *  (1 pt), `insertTable` in the wasm facade writes 4, and Word's Table Design
+ *  opens on ½ pt — so a table inserted by the editor had ½ pt gridlines and the
+ *  first border a person applied silently doubled to 1 pt. One value now, and it
+ *  is the one all three references already used.
+ *
+ *  ONLYOFFICE source: `ComboBorderSize` prepends "No borders" and
+ *  `TableSettings.js:366` then selects `store.at(1)`, which is the 0.5 pt row. */
+export const DEFAULT_BORDER_WEIGHT_EIGHTH_POINTS = 4;
+
+/** `18` -> `"2.25 pt"`, in the reader's locale — `"2,25 pt"` in French.
+ *
+ *  The number goes through `Intl` rather than being written out seven times in
+ *  markup: that is one catalogue key for the unit instead of seven English
+ *  literals, and it is also the only way a comma-decimal locale reads correctly.
+ *  `pt` is not translated and is not routed — it is the unit symbol, the same in
+ *  every language this ships in, and the spacing and paragraph dialogs already
+ *  print it bare.
+ *
+ *  Complexity: O(1). */
+export function borderWeightLabel(eighthPoints) {
+  return `${n(eighthPoints / 8)} pt`;
+}
 
 /**
  * Wires the cell-format popover.
@@ -39,6 +89,7 @@
  * @param {HTMLElement} host.vAlign         the vertical-alignment radio group
  * @param {HTMLInputElement} host.cellBorderColor
  * @param {HTMLInputElement} host.tableBorderColor
+ * @param {HTMLSelectElement} host.borderWeight  the pen's width, in eighth-points
  * @param {() => object|null} host.doc
  * @param {() => string} host.caretNode     the caret's paragraph node id, or ""
  * @param {(apply) => boolean} host.formatRange  the range write runner
@@ -49,6 +100,31 @@
  * @returns {{reflect: () => void}} the popover's own state reflector
  */
 export function bindCellFormatMenu(host) {
+  // The pen's options, filled once. Deliberately NOT refilled on reflect: the
+  // list does not depend on the document, and rebuilding a `<select>` under a
+  // keyboard user who has it open loses their place.
+  if (host.borderWeight && host.borderWeight.options.length === 0) {
+    for (const eighths of BORDER_WEIGHTS_EIGHTH_POINTS) {
+      const option = document.createElement("option");
+      option.value = String(eighths);
+      option.textContent = borderWeightLabel(eighths);
+      host.borderWeight.append(option);
+    }
+    host.borderWeight.value = String(DEFAULT_BORDER_WEIGHT_EIGHTH_POINTS);
+  }
+
+  /** The width the next border stroke draws with, in eighth-points.
+   *
+   *  Falls back to the default rather than to `NaN` when the control is absent or
+   *  somehow empty: a border is what the person asked for, and refusing to draw
+   *  one because a dropdown could not be read would be the worse answer. */
+  function penWeight() {
+    const chosen = Number(host.borderWeight?.value);
+    return Number.isFinite(chosen) && chosen > 0
+      ? chosen
+      : DEFAULT_BORDER_WEIGHT_EIGHTH_POINTS;
+  }
+
   const vAlignGroup = host.bindRadioGroup(host.vAlign, {
     attr: "data-valign",
     onSelect: (valign) => {
@@ -87,7 +163,7 @@ export function bindCellFormatMenu(host) {
     host.onButton(b, () => {
       const [r, g, bl] = host.hexToRgb(host.cellBorderColor.value);
       host.formatRange((a, f) =>
-        host.doc().setCellBorderRange(a, f, b.dataset.cellborder, r, g, bl, 8),
+        host.doc().setCellBorderRange(a, f, b.dataset.cellborder, r, g, bl, penWeight()),
       );
       reflect();
     });
@@ -95,7 +171,9 @@ export function bindCellFormatMenu(host) {
   for (const b of host.menu.querySelectorAll("[data-tableborder]")) {
     host.onButton(b, () => {
       const [r, g, bl] = host.hexToRgb(host.tableBorderColor.value);
-      host.runNodeEdit((n) => host.doc().setTableBorder(n, b.dataset.tableborder, r, g, bl, 8));
+      host.runNodeEdit((node) =>
+        host.doc().setTableBorder(node, b.dataset.tableborder, r, g, bl, penWeight()),
+      );
     });
   }
 

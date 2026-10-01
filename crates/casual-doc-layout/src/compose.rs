@@ -763,7 +763,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
         AnchorContent::Rectangle { .. }
         | AnchorContent::Ellipse { .. }
         | AnchorContent::RoundedRectangle { .. }
-        | AnchorContent::Polygon { .. }
+        | AnchorContent::Path { .. }
         | AnchorContent::Line { .. } => {
             if let Some(item) = shape_paint_item(&anchor.content, anchor.rect, anchor.transform) {
                 list.push(item);
@@ -881,14 +881,14 @@ fn shape_paint_item(
             None,
             None,
         ),
-        AnchorContent::Polygon {
-            points,
+        AnchorContent::Path {
+            commands,
             closed,
             fill,
             stroke,
         } => (
-            ShapeGeometry::Polygon {
-                points: points.clone(),
+            ShapeGeometry::Path {
+                commands: commands.clone(),
                 closed: *closed,
             },
             fill.as_ref(),

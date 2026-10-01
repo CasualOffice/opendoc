@@ -67,21 +67,30 @@
 export const FILE_SURFACE = [
   { nameKey: "menuGroup.newAndOpen", ids: ["file.new", "file.open", "file.recoverDrafts"] },
   { nameKey: "menuGroup.save", ids: ["file.save"] },
-  // The six export formats behind one row. Google Docs files exactly these
-  // under Download; Word's backstage gives Export its own page. Seven rows of
-  // which six say "export as" is the shape that made this menu long, and Save
+  // The nine export formats behind one row. Google Docs files exactly these
+  // under Download; Word's backstage gives Export its own page. Ten rows of
+  // which nine say "export as" is the shape that made this menu long, and Save
   // is not one of them — it belongs beside New and Open, not behind a flyout.
   //
   // The File PAGE renders a submenu flat, so its Export category keeps the
   // heading-over-rows treatment it already had; only the dropdown folds.
+  //
+  // `dotx`, `html` and `markdown` joined the six: all three writers shipped in
+  // the engine and reached NO menu at all, so the only place they surfaced was
+  // the Save-as picker, under their raw format ids. Order follows Word's
+  // backstage — the document formats, then the interchange ones, with the
+  // debugging artifact last.
   {
     nameKey: "filePane.export.label",
     submenu: true,
     ids: [
       "file.export.pdf",
       "file.export.docx",
+      "file.export.dotx",
       "file.export.odt",
       "file.export.rtf",
+      "file.export.html",
+      "file.export.markdown",
       "file.export.text",
       "file.export.json",
     ],
@@ -263,6 +272,27 @@ export const APP_MENU_SECTIONS = {
   // while the menu had them on Insert.
   insert: [
     band("menuGroup.table", "insert.table"),
+    // Breaks. A SUBMENU, because six rows of "… break" would make this menu long
+    // for a group nobody opens twice in a paragraph — the same argument the
+    // Export band makes on the File surface, and the shape ONLYOFFICE uses for
+    // the same six (`Toolbar.js:2382-2390`).
+    //
+    // The ids are `layout.*` because a break IS page setup — Word files them
+    // under Layout ▸ Page Setup — while Insert is where people look for them,
+    // which is exactly why the three running-content rows below are `layout.*`
+    // on this menu too. The menu home MATTERS and is not decoration: in compact
+    // chrome the ribbon is hidden, so a command with only a band face is
+    // palette-only there, which is the hole the References menu was added to
+    // close.
+    sub(
+      "menuGroup.breaks",
+      "layout.break.page",
+      "layout.break.column",
+      "layout.break.section.nextPage",
+      "layout.break.section.continuous",
+      "layout.break.section.evenPage",
+      "layout.break.section.oddPage",
+    ),
     band("menuGroup.illustrations", "insert.image", "insert.shape"),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),
@@ -477,6 +507,11 @@ export const APP_MENU_SECTIONS = {
       "review.rejectNext",
     ),
     band("menuGroup.allChanges", "review.acceptAll", "review.rejectAll"),
+    // Compare, last on the Review menu, which is where Word keeps it: their
+    // Review tab reads Proofing | Comments | Tracking | Changes | Compare, and
+    // Compare is the rightmost group. ONLYOFFICE files theirs under
+    // Collaboration ▸ Compare behind `canReview`.
+    band("menuGroup.compare", "review.compare"),
   ],
 };
 
