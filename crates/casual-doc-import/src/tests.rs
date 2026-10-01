@@ -3522,6 +3522,91 @@ fn chart_drawing_maps_to_an_embedded_object_and_is_not_reported_dropped() {
     );
 }
 
+/// A payload element locally named `chart` under a `a:graphicData` whose `@uri`
+/// is **not** the chart namespace is not a DrawingML chart, and must not be
+/// routed as one (`docs/155` §6.3, ADR-050).
+///
+/// The guarantee this asserts is about *identification*, not about this fixture:
+/// `a:graphicData` is the extension point where a foreign vocabulary is spliced
+/// into a drawing, so its `@uri` is the only thing that says which vocabulary the
+/// payload belongs to. The parser matches elements by local name — right for
+/// WordprocessingML, where a prefix is arbitrary, and not enough here. Before the
+/// fix the uri was captured (`body.rs` `graphicData` arm) and never read, so the
+/// **relationship type** and the **element name** decided between them and the
+/// producer's own declaration was ignored.
+///
+/// The relationship is deliberately typed `/chart` and the part deliberately
+/// named `charts/chart1.xml`: everything except the uri points at "chart", so the
+/// test can only pass if the uri is what decided. A fixture where the rel type
+/// also disagreed would pass with the uri check removed.
+#[test]
+fn a_graphic_data_payload_of_another_vocabulary_is_not_routed_as_a_chart() {
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:f="urn:opendoc:fixture:not-a-chart"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="304800"/><a:graphic><a:graphicData uri="urn:opendoc:fixture:not-a-chart"><f:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let chart_rel = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+    let chart = br#"<c:chartSpace xmlns:c="urn:c"/>"#;
+    let import = import_bytes(&build_package(
+        document.as_bytes(),
+        chart_rel,
+        &[("word/charts/chart1.xml", chart)],
+    ));
+
+    // No embedded object anywhere in the paragraph.
+    assert!(
+        !paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::EmbeddedObject(_))),
+        "a foreign graphicData payload was routed as an embedded object: {:?}",
+        paragraph(&import, 0).inlines
+    );
+    // And the loss is reported rather than silent: the drawing falls through to
+    // the picture path, which has nothing to resolve and says so.
+    assert!(
+        features(&import).contains(&"drawing"),
+        "an unroutable drawing must be reported, features: {:?}",
+        features(&import)
+    );
+    // The part's bytes still survive — refusing to *identify* a payload must not
+    // cost retention (`docs/155` §6.1 consequence 3).
+    assert!(
+        import
+            .retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == "word/charts/chart1.xml")
+    );
+}
+
+/// A `a:graphicData` with **no** `@uri` at all still admits its payload.
+///
+/// ECMA-376 makes the attribute required, so such a file is malformed — but a
+/// resolvable `c:chart` beside a missing uri is unambiguous, and refusing it would
+/// convert a preserved reference into a reported drop for no fidelity gain. This
+/// pins the leniency as a decision rather than leaving it as whatever the
+/// `is_none_or` happened to do (`docs/155` §6.3).
+#[test]
+fn a_graphic_data_without_a_uri_still_admits_its_chart_payload() {
+    use casual_doc_model::v1::EmbeddedKind;
+
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:c="urn:c"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="304800"/><a:graphic><a:graphicData><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let chart_rel = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+    let chart = br#"<c:chartSpace xmlns:c="urn:c"/>"#;
+    let import = import_bytes(&build_package(
+        document.as_bytes(),
+        chart_rel,
+        &[("word/charts/chart1.xml", chart)],
+    ));
+
+    let inlines = &paragraph(&import, 0).inlines;
+    let Some(InlineNode::EmbeddedObject(object)) = inlines.first() else {
+        panic!(
+            "a chart payload beside a missing graphicData@uri must still be \
+             admitted; got {inlines:?}"
+        );
+    };
+    assert_eq!(object.kind, EmbeddedKind::Chart);
+}
+
 const HYPERLINK_REL: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/docs" TargetMode="External"/></Relationships>"#;
 
 #[test]

@@ -34,6 +34,41 @@ const WATERMARK_DOCUMENT: &[u8] = br##"<?xml version="1.0" encoding="UTF-8" stan
 /// element text loses them. Import must LIFT this shape onto the section
 /// (`casual-doc-import/src/watermark.rs`) instead of leaving it a header float.
 const WATERMARK_HEADER: &[u8] = br##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w10="urn:schemas-microsoft-com:office:word"><w:p><w:r><w:rPr><w:noProof/></w:rPr><w:pict><v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" adj="10800" path="m@7,l@8,m@5,21600l@11,21600e"><v:path textpathok="t"/><v:textpath on="t" fitshape="t"/></v:shapetype><v:shape id="PowerPlusWaterMarkObject357476642" o:spid="_x0000_s2049" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:527.85pt;height:131.95pt;rotation:315;z-index:-251658752;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin" o:allowincell="f" fillcolor="#c0c0c0" stroked="f"><v:fill opacity=".5"/><v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" string="DRAFT"/></v:shape></w:pict></w:r></w:p></w:hdr>"##;
+/// `chart.docx` content types. The two chart-part overrides and the workbook's
+/// `Default Extension="xlsx"` are what let retention re-emit each part with the
+/// content type the producer declared rather than a guessed one.
+const CHART_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/><Override PartName="/word/charts/colors1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chartColorStyle+xml"/><Override PartName="/word/charts/style1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chartStyle+xml"/></Types>"#;
+/// `chart.docx` document relationships: only the chart is reachable from the
+/// body. `colors1.xml`, `style1.xml` and the workbook hang off the chart's own
+/// `_rels`, which is how Word writes them and why the closure matters.
+const CHART_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+/// `chart.docx` body: a sentence, then an inline `a:graphicFrame` whose
+/// `a:graphicData@uri` is the chart namespace and whose payload is `c:chart`,
+/// then a sentence after it. The surrounding text is not decoration — it is how a
+/// layout guard can tell a chart that reserved its `wp:extent` box from one that
+/// reflowed the paragraph as a five-character word (`155` §1).
+const CHART_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><w:body><w:p><w:r><w:t>Revenue by quarter, with the target as a line.</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="5486400" cy="3200400"/><wp:docPr id="1" name="Chart 1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId4"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:t>Figure 1.</w:t></w:r></w:p></w:body></w:document>"#;
+/// `chart.docx` chart part. See `chart_entries`' doc comment for what each piece
+/// of this is here to discriminate.
+const CHART_PART: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Revenue by quarter</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Actual</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$5</c:f><c:strCache><c:ptCount val="4"/><c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt><c:pt idx="2"><c:v>Q3</c:v></c:pt><c:pt idx="3"><c:v>Q4</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$5</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="4"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt><c:pt idx="2"><c:v>3.5</c:v></c:pt><c:pt idx="3"><c:v>4.5</c:v></c:pt></c:numCache></c:numRef></c:val><c:trendline><c:trendlineType val="linear"/></c:trendline></c:ser><c:gapWidth val="150"/><c:overlap val="-27"/><c:axId val="111111111"/><c:axId val="222222222"/></c:barChart><c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/><c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:strRef><c:f>Sheet1!$C$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Target</c:v></c:pt></c:strCache></c:strRef></c:tx><c:val><c:numRef><c:f>Sheet1!$C$2:$C$5</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="4"/><c:pt idx="0"><c:v>4</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt><c:pt idx="2"><c:v>4</c:v></c:pt><c:pt idx="3"><c:v>4</c:v></c:pt></c:numCache></c:numRef></c:val><c:smooth val="0"/></c:ser><c:marker val="1"/><c:axId val="111111111"/><c:axId val="333333333"/></c:lineChart><c:catAx><c:axId val="111111111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222222222"/></c:catAx><c:valAx><c:axId val="222222222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:numFmt formatCode="General" sourceLinked="1"/><c:crossAx val="111111111"/></c:valAx><c:valAx><c:axId val="333333333"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="r"/><c:crossAx val="111111111"/></c:valAx></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:externalData r:id="rId3"><c:autoUpdate val="0"/></c:externalData></c:chartSpace>"#;
+/// `chart.docx` chart-part relationships — the closure retention has to carry.
+const CHART_PART_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartColorStyle" Target="colors1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartStyle" Target="style1.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/Microsoft_Excel_Worksheet1.xlsx"/></Relationships>"#;
+/// `chart.docx` colour style, abridged to one method element. `155` §4.3 puts this
+/// part out of scope and preserved, so its size is irrelevant and its survival is
+/// not.
+const CHART_COLORS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cs:colorStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" meth="cycle" id="10"><a:schemeClr val="accent1"/><a:schemeClr val="accent2"/></cs:colorStyle>"#;
+/// `chart.docx` chart style, abridged the same way and out of scope the same way.
+const CHART_STYLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cs:chartStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" id="201"><cs:axisTitle><cs:lnRef idx="0"/></cs:axisTitle></cs:chartStyle>"#;
+/// `chart.docx` embedded workbook: an opaque blob with a ZIP local-file
+/// signature, **not** a valid `.xlsx`.
+///
+/// This is the fixture's most deliberate choice. `155` §5 decides that we read the
+/// cached data table and never open the workbook, because opening it is how a
+/// document product acquires a spreadsheet engine. A fixture whose workbook we
+/// could parse would quietly invite exactly the thing the design forbids, and a
+/// test written against it would pass for the wrong reason. What must hold of these
+/// bytes is only that they come back identical.
+const CHART_WORKBOOK: &[u8] = b"PK\x03\x04opendoc-fixture-opaque-workbook";
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
 const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -112,6 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output.join("floating-table.docx"),
         package(&entries_with_document(&floating_table_document()))?,
     )?;
+
+    fs::write(output.join("chart.docx"), package(&chart_entries())?)?;
 
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((
@@ -328,6 +365,91 @@ fn note_reference_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
             "word/endnotes.xml".to_owned(),
             NOTE_REFERENCES_ENDNOTES.to_vec(),
             CompressionMethod::Deflated,
+        ),
+    ]
+}
+
+/// `chart.docx` — one realistic DrawingML chart with its whole relationship
+/// closure, built for `docs/155`.
+///
+/// Every other chart XML in this repository is a two-element stub
+/// (`<c:chartSpace><c:chart/></c:chartSpace>`), which is enough to prove that a
+/// *reference* round-trips and not enough to prove anything about a chart. This
+/// fixture is deliberately the shape `155` §4 and §6 argue about, so the claims in
+/// that document are checkable rather than asserted:
+///
+/// * **Tier 1, and combo by construction.** A `c:barChart` and a `c:lineChart` in
+///   one `c:plotArea` — which is what a combo chart *is* (`155` §4.2) — with two
+///   cached series, cached categories, a title, a legend, and three axes. The
+///   third axis (`axId 333333333`, `axPos="r"`) is a **secondary axis**, named by
+///   the line group and not by the bar group, so a model that puts the chart type
+///   on the chart rather than on the group cannot represent this file.
+/// * **Out of scope, so the report has something true to say.** `c:trendline` on
+///   the first series is a `155` §4.3 construct: it must never be silently
+///   dropped and it must never be claimed as modeled.
+/// * **`4.30`.** The first cached value is spelled with a trailing zero on
+///   purpose. `4.30` and `4.3` are the same number and different documents, so a
+///   projection that parses a cached value into an `f64` and reformats it cannot
+///   rewrite this part byte-faithfully — which is the whole reason `155` §8.2
+///   stores a cached number in its verbatim lexical form. A fixture is the only
+///   thing that makes that mistake fail rather than merely be argued about.
+/// * **A closure, not a part.** `chart1.xml` has its own `_rels` reaching
+///   `colors1.xml`, `style1.xml` and an embedded workbook under
+///   `word/embeddings/`. Retention enumerates parts rather than walking the
+///   relationship graph (`casual-doc-import/src/lib.rs:512-644`), so a fixture
+///   with a real closure is what proves the closure survives — the guarantee
+///   `155` §6.1 rests on.
+///
+/// The workbook payload is a short opaque blob, not a valid `.xlsx`. That is
+/// deliberate and it is the point: `155` §5 says we never open it, so a fixture
+/// whose workbook we could parse would be testing something this design promises
+/// not to do. What must hold is that its bytes come back unchanged.
+fn chart_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            CHART_DOCUMENT.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            CHART_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            CHART_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/charts/chart1.xml".to_owned(),
+            CHART_PART.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/charts/_rels/chart1.xml.rels".to_owned(),
+            CHART_PART_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/charts/colors1.xml".to_owned(),
+            CHART_COLORS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/charts/style1.xml".to_owned(),
+            CHART_STYLE.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/embeddings/Microsoft_Excel_Worksheet1.xlsx".to_owned(),
+            CHART_WORKBOOK.to_vec(),
+            CompressionMethod::Stored,
         ),
     ]
 }

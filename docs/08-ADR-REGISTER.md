@@ -1927,6 +1927,122 @@ views: the heading tree does not change when the paper goes away.
   (VS Code has them; neither Word nor Docs exposes a level control), and whether folding
   gets a keyboard binding — no competitor documents one.
 
+## ADR-050 — A chart is a typed read projection of a retained part; the cache is the data, and the curve primitive is the shape lane's
+
+**Status:** Accepted for implementation, 2026-10-01. Specified in
+`155-DRAWINGML-CHART-MODEL-RENDERING-AND-AUTHORING-DESIGN.md`. **Closes `106` §9 Q3**
+— in the opposite direction to the recommendation on file, which was
+preserve-and-disclose for the v1 claim. Rows `105` FID-R-08 and `105` OO-014; depends on
+`105` FID-L-04 for one slice.
+
+**Decision.** Four parts. The first two are what keep a document product from becoming two
+products; the fourth is the one that sets the delivery order.
+
+1. **A chart is a typed READ PROJECTION of a retained part, never a replacement for it.**
+   `word/charts/chart1.xml` and everything reachable from it are already retained
+   byte-for-byte with a ledger record (`casual-doc-import/src/opaque.rs`,
+   `casual-doc-import/src/lib.rs:512-644`), and export already re-emits them verbatim. The
+   projection is a derived read index over those bytes — the same cache-plus-source-of-truth
+   shape as `ExportMode::ExactIfUnchanged` and as `34` §4's provenance map. Export copies the
+   part while the chart is clean; it regenerates only when the chart is dirty; and a chart
+   whose projection is incomplete **cannot be made dirty** — the operation is refused rather
+   than allowed to silently drop a trendline. A chart we fail to project behaves exactly as it
+   does today. Adding the projection changes no output byte, and a guard asserts it.
+2. **The cached data table is the data. The embedded workbook is never opened.**
+   `c:numCache`/`c:strCache` are read into the model; `c:f` is carried verbatim as an opaque
+   string and never parsed, resolved or evaluated; `c:externalData`'s workbook is a typed
+   *pointer* (`EmbeddedPart` — a part name and a relationship id, per `45` I4) to a part that
+   stays opaque bytes. Reading `word/embeddings/*.xlsx` would require a SpreadsheetML reader,
+   a cell model, a reference resolver and then a formula evaluator and a dependency graph —
+   that is `opencalc`, a separate product. **ONLYOFFICE's source settles the rendering half
+   outright and demonstrates the cost of the other half.** Their chart rendering never consults
+   a workbook — `recalculateReferences` begins `if (!oThis.worksheet) return;`
+   (`ChartSpace.js:5631-5632`) and `worksheet` is set only from `cell/` code, never from
+   `word/` — so in their document editor a chart draws purely from the caches, exactly as this
+   decision does. But every place they *touch* the workbook is a place a spreadsheet had to be
+   brought in: at save time `getXLSXFromCache` (`ChartSpace.js:2143-2167`) constructs
+   `new AscCommonExcel.Workbook(...)` and serialises it with `BinaryFileWriter`, so their
+   document bundle links the spreadsheet engine; and Edit data launches a **complete second
+   editor** in an iframe (`DocsAPI.DocEditor({documentType:'cell', …})`,
+   `ExternalDiagramEditor.js:63-92`, fed through `CFrameDiagramBinaryLoader`,
+   `sdkjs/common/frameManager.js:849`, reached from `word/api.js:9611`), which then parses
+   `c:f` to rebuild a workbook when the chart carried none (`fillWorkbookFromDiagramCache`,
+   `frameManager.js:488-497`). That is the accidental growth this part refuses, in the code of
+   the product we are an alternative to. The cost is confined to one interaction
+   and is paid by provenance: data editing is allowed on a chart **we** authored, where we own
+   both the cache and the workbook, and on an **imported** chart it ships **disabled with a
+   reason** rather than silently desynchronising the two.
+3. **Scope is the families that appear in documents, and combo is free.** Tier 1 is
+   bar/column, line, area, scatter, pie and doughnut. The plot area is modelled as a *list of
+   chart groups* and the axes as a *list*, so a combo chart and a secondary axis are the
+   absence of a restriction rather than two later features — putting a chart-type enum on the
+   chart instead of on the group is the mistake that makes both of them separate work. 3-D,
+   surface, stock, radar, bubble, pie-of-pie, trendlines, error bars, data tables,
+   `chartUserShapes` and all of `chartex` are out, each `omitted`-or-`degraded` +
+   `preserved` and reported per `35`.
+4. **`PaintItem::Path` is required before pie and doughnut, and it belongs to the shapes
+   lane, not to charts.** Bar, column, line, area and straight-line scatter need only the
+   `Rect`, `Line` and `Polygon` primitives the display list already has. A pie sector is an
+   arc, and there is no arc, quadratic or cubic anywhere in `PaintItem`
+   (`casual-doc-layout/src/display.rs:189`, `:114-152`) — `105` FID-L-04 is correct. A
+   many-sided polygon fan is **rejected**: `119` §6 already named per-shape vertex lists as
+   the wrong axis, `SKILL` §8 forbids a second mechanism for one rule, and ONLYOFFICE's own
+   pie is an `arcTo` between two radii (`drawPieChart::_calculateArc`,
+   `ChartsDrawer.js:12448-12467`; the doughnut's annulus is two arcs and two radii at
+   `:14284-14314`) with no polygonisation anywhere. They share **one rasteriser, one curve
+   vocabulary and one arc flattener** with preset shapes (`CShapeDrawer`, `Path2`, and
+   `ArcToCurvers`/`EllipseArc3` at `ArcTo.js:216`, which `Geometry.js:1556` also calls) while
+   building chart geometry in their own arena — so the layer they share is precisely the layer
+   `PaintItem::Path` is. The primitive is therefore built once for its four consumers (~165
+   presets, `a:custGeom` curves, SmartArt, charts), flattening arcs in the backend rather than
+   once per caller, and delivery splits: **tier 1A** (bar, column, line, area, scatter and all
+   furniture) ships on today's primitives; **tier 1B** is **pie and doughnut only** and keeps
+   today's reported placeholder until the primitive lands.
+   `c:smooth` is deliberately **not** in 1B: a smooth series is a curve *sampled into a
+   polyline*, not a shape outline, which is what their shipping code does — ten straight `lnTo`
+   segments per interval (`calculateSplineLine`, `ChartsDrawer.js:5435-5468`), with the
+   true-Bézier variants present but switched off behind `//TODO … draws incorrectly. check!`
+   (`:9365`, `:15237`).
+
+**Why this reopens Q3 at all.** The recommendation on file was preserve-and-disclose, on the
+grounds that it is honest and cheap. It is honest; it is not what is shipping. `155` §1
+measures the disclosure against the code: `preview: None` is hard-coded for both
+`EmbeddedKind::Chart` and `EmbeddedKind::Diagram` (`casual-doc-import/src/body.rs:5472`,
+`:5498`), and the only code that ever sets `preview` reads `v:imagedata` inside a `w:object`
+— legacy OLE. So "an embedded preview if the file supplies one, else a placeholder" is false
+for charts: a chart is **always** the literal text `[chart]`, in an unstyled run, reflowing
+the paragraph (`casual-doc-layout/src/flow.rs:3717-3755`). That is a weaker fallback than the
+one `w:altChunk` already gets, which is a labelled dashed box. Preserve-and-disclose was
+costed against a fallback that does not exist.
+
+**Consequences.**
+- `casual-doc-model` gains a `charts: DefinitionMap<ChartId, Chart>` table on `Definitions`,
+  each `Chart` anchored to its `EmbeddedObject` by `NodeId` (`45` I3) — **not** a field on
+  `EmbeddedObject`, both because a projection is derived data (I4) and because `SKILL` §5a
+  shape 1 makes a new field on that struct a cross-lane break of every literal in five
+  crates other lanes hold. `Definitions` is the established additive seam.
+- **No float may enter the model.** `Definitions` derives `Eq` and the v1 model contains zero
+  `f64`/`f32`. A cached number is therefore stored in its **verbatim lexical form** and parsed
+  by the consumer — which a byte-faithful rewrite needs anyway, since `"4.30"` and `"4.3"` are
+  the same number and different documents.
+- The compatibility report gains per-construct chart findings, so a chart with a trendline
+  stops reporting one line about a whole part and starts naming what was not understood. That
+  is a `degraded` + `preserved` row where today there is only `omitted` + `preserved`.
+- `a:graphicData@uri` is captured and never read (`body.rs:2776-2778`); routing is by the
+  local name `chart` alone (`:2780-2782`), so any element named `chart` with an `id` in any
+  namespace is taken as a DrawingML chart, and `EmbeddedKind::Other` is unreachable from
+  import as a result. Verifying the uri is a precondition of this decision and ships with it.
+- **No published grade moves and no `105` row closes until a chart actually draws** (`SKILL`
+  §9 rule 4). `155` §10 records which increments are user-reachable and which are not, and
+  records that `fidelity.js`'s `modeled: "full"` for Charts is itself an overstatement while
+  no chart data model exists.
+- Deliberately not decided here: whether an *imported* chart's data becomes editable behind
+  an explicit replace-the-workbook confirmation (`155` Q-A — it destroys producer-authored
+  content, so it is the owner's call), whether `PaintItem::Path` carries an explicit `ArcTo`
+  (`155` Q-B — recommended yes, on their evidence), and floating `wp:anchor` charts, which are
+  a pre-existing `EmbeddedObject` limit shared with SmartArt and OLE rather than a chart one
+  (`155` Q-C).
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

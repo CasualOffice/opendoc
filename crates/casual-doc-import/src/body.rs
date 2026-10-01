@@ -486,6 +486,36 @@ struct PendingGraphic {
     diagram_cs: Option<String>,
 }
 
+impl PendingGraphic {
+    /// Whether the drawing's `a:graphicData@uri` admits a payload of the
+    /// vocabulary `uri` names.
+    ///
+    /// Element matching in this parser is by **local name**, which is correct for
+    /// WordprocessingML (a prefix is arbitrary) but not sufficient to identify a
+    /// `a:graphicData` *payload*: `graphicData` is the extension point where a
+    /// foreign vocabulary is spliced in, and the `@uri` is the only thing that
+    /// says which one. Without this check any element locally named `chart`
+    /// carrying an `id`, in any namespace, inside any `w:drawing`, was routed as
+    /// a DrawingML chart — and `EmbeddedKind::Other` was consequently unreachable
+    /// from import, which is what `casual-doc-export`'s
+    /// `write_embedded_object` comment observes. `docs/155` §6.3.
+    ///
+    /// **An absent `@uri` still admits the payload.** ECMA-376 requires the
+    /// attribute, so a file without it is malformed — but a resolvable `c:chart`
+    /// beside a missing uri is unambiguous in practice, and refusing it would
+    /// turn a preserved reference into a reported drop for no fidelity gain. The
+    /// rule is therefore: believe the uri when the producer wrote one, and fall
+    /// back to the payload element when it did not.
+    fn declares(&self, uri: &str) -> bool {
+        self.uri.as_deref().is_none_or(|declared| declared == uri)
+    }
+}
+
+/// `a:graphicData@uri` for a DrawingML chart payload (`c:chart`).
+const GRAPHIC_DATA_CHART_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+/// `a:graphicData@uri` for a SmartArt diagram payload (`dgm:relIds`).
+const GRAPHIC_DATA_DIAGRAM_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+
 /// The `w:object` pointers collected while parsing an open OLE object, resolved
 /// into an embedded-object node when the object closes.
 #[derive(Default)]
@@ -5461,7 +5491,8 @@ impl BodyParser<'_> {
         let extra = self.drawing_extra;
         let graphic = std::mem::take(&mut self.pending_graphic);
         // A chart payload (`a:graphicData` -> `c:chart`).
-        if let Some(rid) = &graphic.chart_rid
+        if graphic.declares(GRAPHIC_DATA_CHART_URI)
+            && let Some(rid) = &graphic.chart_rid
             && let Some(part) = self.resolve_embedded_part(rid)
         {
             self.embedded_part_names.insert(part.part_name.clone());
@@ -5477,7 +5508,9 @@ impl BodyParser<'_> {
         }
         // A SmartArt diagram payload (`a:graphicData` -> `dgm:relIds`): the data
         // model is primary, layout/quick-style/colors are extra parts.
-        if let Some(part) = self.resolve_embedded_part_opt(&graphic.diagram_dm) {
+        if graphic.declares(GRAPHIC_DATA_DIAGRAM_URI)
+            && let Some(part) = self.resolve_embedded_part_opt(&graphic.diagram_dm)
+        {
             self.embedded_part_names.insert(part.part_name.clone());
             let mut extra_parts = Vec::new();
             for rid in [
