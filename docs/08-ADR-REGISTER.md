@@ -2535,6 +2535,72 @@ costed against a fallback that does not exist.
   host-signed grant (`152` §10 Q4) that an access level would be read from.
 
 
+## ADR-059 — `SetDocumentProtection`: the one operation that would make protection reachable
+
+- **Status:** **Proposed, designed, not implemented.** It adds a variant to the closed operation
+  set, which ADR-030 I2 reserves to the owner — and, separately, it cannot be landed by the
+  collaboration lane at all, for a reason that is measured below rather than asserted.
+- **Date:** 2026-10-02.
+- **Context:** ADR-052 made `w:documentProtection` **enforced** at the operation for `readOnly`,
+  `comments` and `trackedChanges`. It is now the sharpest instance of this repository's most
+  expensive recurring pattern, pointing the other way: the capability is *enforced* and
+  *unreachable*. A reader cannot restrict editing, and — worse — **cannot unrestrict it**, so a
+  document that arrives protected is permanently read-only in this editor while Word and
+  ONLYOFFICE both offer Review ▸ Restrict Editing. Import and export already round-trip the
+  policy faithfully, so nothing is lost on save; it simply cannot be *changed*.
+- **Decision (proposed).** One variant, in exactly the shape of the three definition operations
+  that landed with ADR-005:
+
+  ```rust
+  /// Install or remove the document's editing restriction (`w:documentProtection`).
+  ///
+  /// Document-global, not node-scoped, and its own inverse carrying the previous value
+  /// (`None` when there was none) — the same `Some`/`None` shape as
+  /// `SetStyleDefinition`, for the same reason: it inverts in both directions.
+  SetDocumentProtection {
+      protection: Option<DocumentProtection>,
+  },
+  ```
+
+  `DocumentProtection` is `Copy` and three fields wide, so it needs no `Box`. The whole of
+  `apply` is a swap of `definitions_mut().settings.document_protection`, returning the previous
+  value as the inverse.
+- **Why one variant and not a field on something existing.** The register's own precedent
+  (`InsertFieldRange`) states it: I2 is about keeping the set **closed and additive**, and a new
+  variant is additive while widening an existing one changes that operation's shape for every
+  caller. The three definition operations ADR-005 added are the template.
+- **The ordering trap, which is the only subtle part.** `refuse_if_protected` judges a batch on
+  its worst operation, so an operation that *lifts* a restriction would be refused by the
+  restriction it is lifting. The rule has to be that `SetDocumentProtection` is judged against
+  the protection in force **before** the batch and is itself exempt from `ReadOnly` — otherwise
+  `readOnly` is a one-way door and the feature is worse than absent. That is a decision about
+  authority, not about mechanics, and the honest form of it needs the session's access level
+  (`152` §10 Q4, still open): *the document* may say "do not edit me", and only a *participant
+  grant* can say who may overrule it. Until the grant exists, the local reader is the only
+  authority there is, which is exactly what Word does with an unpassworded restriction.
+- **Measured blast radius — 13 match sites, and 2 of them are not this lane's.** Adding the
+  variant was probed with a throwaway `ProbeVariant` and the compiler enumerated every site:
+  - **11 in this lane's own files**: `casual-doc-edit`'s `apply` dispatch and `protection.rs`'s
+    two exhaustive matches, and 9 in `casual-doc-transaction` (`transform/classify.rs` ×3,
+    `transform.rs` ×3, `transform/effect.rs`, `wire.rs` ×2).
+  - **2 in `crates/casual-doc-wasm/src/lib.rs`**, both exhaustive with no wildcard: the
+    `HistoryKind` classification (~line 799) and `caret_after` (~line 25779). A live lane holds
+    that 26,000-line file, and the working contract's §5a records precisely this shape as how two
+    green branches make `main` red.
+
+  So the change is **not blocked by design or by effort** — it is blocked by file ownership, and
+  it is small: the two wasm arms are `HistoryKind::DocumentProperties` (a protection change is a
+  document-wide policy edit, and Word labels it that way) and `Pos::new(doc_id, 0)` beside the
+  other document-global operations, which route through `apply_action_caret` with the caller's
+  own caret anyway.
+- **The reachability half is not optional.** `105` UX-004 requires every capability on **two**
+  surfaces, so landing the operation without Review ▸ Restrict Editing *and* a command-palette
+  entry would leave the same defect one layer up. That half is `webapp/`'s and is named here so
+  the operation is not mistaken for the feature.
+- **Owner decision needed:** whether to add the variant, and who may lift a restriction before
+  the host-signed grant exists.
+
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
