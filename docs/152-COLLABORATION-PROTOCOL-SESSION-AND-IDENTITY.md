@@ -703,11 +703,19 @@ operation — the case the probe exists for.
 pairs the `Refusal` *enum* with `docs/20` — every variant has a row, every `ODC-7xxx` row has
 a variant — and it is written as an array holding one of each variant, so adding a variant
 without a code fails to compile and adding one without a row fails the test. It does **not**
-prove a variant is reachable. Two are not yet sent by anything in this crate:
-`NotAuthorised` and `ReadOnlyAccess` are the authorisation family, and §9 says why no
-host-signed grant is built here. They are wire surface a host fills in, and the register
-describes them so a host can; that is a different claim from "this code is emitted", and
+prove a variant is reachable. Two were not sent by anything when this was written:
+`NotAuthorised` and `ReadOnlyAccess` are the authorisation family, and §9 recorded that no
+host-signed grant was built here. They were wire surface a host filled in, and the register
+described them so a host could; that is a different claim from "this code is emitted", and
 conflating the two is how a registry comes to document behaviour nothing performs.
+
+**Both are now emitted** (2026-10-02, ADR-060): `opendoc_relay::Relay::handle` answers
+`NotAuthorised` to a join whose grant does not verify and to a submission claiming a connection
+it did not arrive on, and `ReadOnlyAccess` to an operation outside the participant's
+capabilities. So the distinction this paragraph draws still stands as a *rule* — the register
+guard proves a code has a row and not that anything sends it — while the two examples it used
+have stopped being examples. That is the honest correction: the guard did not get stronger, the
+code caught up with the registry.
 
 **One defect was found by writing a guard rather than by mutating one, and it is worth
 recording because it is a consequence of this design and not of a slip.** Because a remote
@@ -770,6 +778,7 @@ no longer do — the set may still grow (ADR-054, ADR-059), and the format is ad
 construction rather than by promise. The op set derives `serde` — one schema definition rather than 58 hand-written encoders — inside a versioned length-delimited frame whose payload encoding is a *field*, so the pending CBOR decision is not pre-empted. Field names are therefore the surface, and `GOLDEN_CHUNK` is the only guard that can see a rename. `107` §8 Q5, `150` §10 Q5 closed for operations; the **snapshot** encoding is still open and must measure Q6's 4× before reusing JSON. |
 | ~~**The relay binary**~~ | **Built 2026-10-02 — ADR-058.** A workspace member under `server/`, with `nothing_under_crates_depends_on_the_relay` reading the *manifests* so the engine can never acquire a server by accident. Durability is a checkpoint plus a write-ahead tail whose recovery **re-takes the ordering decision and checks it**, rather than trusting the file; a torn tail is discarded and counted, a torn middle refused. `Room::commit` journals before it answers, because a client drops an acknowledged chunk. The transport is `std` only and thread-per-connection — a stated limit, since an async runtime is a dependency decision. Fan-out **is** built: the author is excluded, a failed write is returned so the resume path can catch that participant up, and a duplicate is acknowledged without being fanned again. Presence fan-out **is** built, with the identity the relay attaches rather than one a client could claim: a stale update is dropped, presence before a join is dropped, and a departure is announced. **Not** built: a typed cursor payload, which still waits on `107` P-4. |
 | ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. **The relay's fan-out of it landed 2026-10-02 (ADR-058).** |
+| ~~**The host-signed grant**~~ | **Built 2026-10-02 — ADR-060.** `Join.grant`, `capabilities` on `Welcome`/`Resumed`, `casual_doc_edit::access` as the engine's enforcement point, and `server::access` as the verification seam. **No signature profile** is chosen; §10 Q4 says why that is a decision rather than an omission. `Refusal::{NotAuthorised, ReadOnlyAccess}` are now emitted, which is the pair §7 used as its example of described-but-unreachable wire surface. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
 | ~~**Any `casual-doc-wasm` change**~~ | **Done 2026-10-01** (§4.4). The editor mints through the model's `IdSpace`, not through the collaboration modules, so `the_live_editor_has_no_collaboration_dependency` still holds unchanged — which is the reason the partition was put in `casual-doc-model` rather than in `wire`. |
 
@@ -832,13 +841,50 @@ construction rather than by promise. The op set derives `serde` — one schema d
    produced "*no contention was measured at all, so nothing here is evidence*", which is what
    stops the harness from reporting a comfortable zero because it forgot to contend — the
    defect its own first draft had, and which is recorded in the harness's comments.
-4. **The host-signed grant.** `protocol::Join` carries an opaque `Identity` and no token. The
-   sibling's token is "the whole integration contract" — who, which document, what permission,
-   where to fetch, where to POST back — and `143` §16 Q5 leaves the encoding open (JWT, PASETO,
-   or an opaque provider token). Nothing here decides it; `Identity` is the seam it plugs into.
-5. **Access enforcement at the operation.** The sibling enforces read-only *at the operation*
-   rather than by hiding a toolbar, including inside a batch. `Refusal::ReadOnlyAccess` exists
-   and nothing sends it yet, because there is no token to read an access level from.
+4. ~~**The host-signed grant.**~~ **Closed 2026-10-02 — ADR-060.** `protocol::Join` now carries
+   a `GrantToken` (opaque bytes, capped by `MAX_GRANT_BYTES`), and `capabilities` rides on
+   `Welcome` and `Resumed` — **server to client only**, the same asymmetry presence already has,
+   because a capability a client could assert is a capability a client can forge. The split is
+   **host signs → boundary verifies → engine enforces**: `server::access::{Access, GrantVerifier,
+   GrantRefusal}` is the verification seam, and it is the only place a key, a clock or a token
+   format appears. `PROTOCOL_VERSION` is **not** bumped: both are added optional fields and no
+   variant changed, so a grantless client meets a loud `ODC-7003` rather than the silent
+   disagreement a bump exists to prevent.
+
+   **The encoding is still open and that is deliberate**, not a gap left by this work. `143` §16
+   Q5's JWT-versus-PASETO-versus-opaque question is a supply-chain decision — it adds a
+   cryptographic dependency and a `cargo deny` consequence — so what ships is the seam plus two
+   explicit policies: `Access::Open(capabilities)`, a real enforcement point that cannot tell two
+   participants apart, and `Access::Granted(verifier)`, which requires one. `Relay::new` has
+   **no default** and the binary requires a role on its command line, because a permission policy
+   nobody configured must fail at the call site as a missing argument rather than at runtime as a
+   room where everybody is an owner.
+5. ~~**Access enforcement at the operation.**~~ **Closed 2026-10-02 — ADR-060.** The sibling
+   enforces read-only *at the operation* rather than by hiding a toolbar, including inside a
+   batch, and so do we now, in both directions. The history below is kept because the shape of
+   the answer was arrived at in three steps and each one constrains the next.
+
+   **What closed it.** `casual_doc_edit::access::refuse_if_not_permitted(document:
+   Option<&Document>, operations, capabilities)` — **one rule for two boundaries holding
+   different information**. With a document (every honest replica, at the facade's choke point)
+   the `comment` and `suggest` classes are decided by ADR-052's projection equality, exactly.
+   Without one (the relay, which ADR-047 makes hold no document) only the operation's *variant*
+   can be judged, and that answer is **strictly weaker — it never refuses something a replica
+   would allow**, which `the_relay_s_document_free_answer_never_refuses_what_a_replica_allows`
+   pins as a property rather than leaving to prose.
+
+   So the line the relay holds against a **rewritten client** is write-versus-no-write plus
+   "that was definitely not a comment"; the finer classes are enforced by every replica and
+   reflected by the chrome. Against an adversary who rewrote their own client they are policy,
+   in exactly the sense ADR-052 uses the word — and the module docs say so out loud, because a
+   boundary claimed and not held is worse than one never claimed.
+
+   **The grant is the outer gate and the document's policy is the inner one.** A participant with
+   no write capability is refused on an *unprotected* document too, so the access check runs
+   first; reversing them would let an unprotected document admit a read-only guest's edit.
+
+   The original wording, now history: `Refusal::ReadOnlyAccess` existed
+   and nothing sent it, because there was no token to read an access level from.
    **Half answered, from the other direction** (ADR-052): the *document's own*
    `w:documentProtection` is now enforced at the operation, in `casual-doc-edit`, and a batch
    is judged whole — so the shape the relay needs exists and is reusable by it. What is still
@@ -855,9 +901,11 @@ construction rather than by promise. The op set derives `serde` — one schema d
    absence. Exemption from *the document's* policy is not exemption from a *participant's*
    access level: when Q4's grant exists, `Refusal::ReadOnlyAccess` applies to this operation like
    any other, and `casual_doc_edit::protection::exempt_from_protection` is the single place that
-   has to learn the difference. Until then **the local reader is the only authority**, which is
-   what Word does with an unpassworded restriction, and no password material is modelled or
-   verified — ADR-052's "policy, not security" stays literally true.
+   has to learn the difference. **It has learnt it** (ADR-060): the function now takes the
+   participant's capabilities and distinguishes a standalone reader — who may lift an
+   unpassworded restriction, because that is what Word does and what ADR-052's "policy, not
+   security" rests on — from a room guest, who may not. No password material is modelled or
+   verified, so that sentence stays literally true.
 6. **Durability.** The relay's retained tail is in memory and bounded by count. A durable
    ordered log, snapshots and compaction are `107` 6.1, and the sibling's warning transfers
    directly: retained/unmodelled bytes are inert, so store them **once** with the document and
