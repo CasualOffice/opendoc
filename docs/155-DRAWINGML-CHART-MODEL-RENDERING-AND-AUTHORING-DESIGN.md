@@ -869,3 +869,118 @@ moves from out-of-scope to tier 1.
   chart actually draws. §10.
 - It does not touch `casual-doc-model`, `casual-doc-layout`, `casual-doc-render`
   or `webapp/`, which other lanes hold. §8, §9.
+
+---
+
+## 14. What increments 2-4 actually landed (2026-10-02)
+
+Recorded here rather than in a tracker because it is a correction to this
+document's own §8 and §9, and because the one thing a reader of this design needs
+to know is whether a user can see a chart. **They cannot.** Nothing in this
+increment draws anything; `105` FID-R-08 stays open and no grade moves (§10).
+
+### 14.1 The model, and three deviations from §8
+
+`crates/casual-doc-model/src/v1/chart.rs`, `ChartId` in `v1/ids.rs`,
+`Definitions::charts` as the side table §8.1 specifies, validation in
+`v1/document.rs` (`validate_charts`, `check_chart`), and `ChartId` added to
+`Document::visit_node_ids` — the one walk of the document's identities, so a chart
+id cannot collide with a body node and cannot be reissued by a reopened
+snapshot's generator.
+
+Three things differ from §8.3 and each is deliberate:
+
+1. **`Chart` carries no `id` field.** §8.3 sketched one. No other v1 definition
+   value carries its own id — `MediaReference`'s doc comment states the rule, and
+   the `FieldRangeId` comment in `v1::ids` is the same argument — so the map key
+   is the identity and an id that disagrees with its key is unrepresentable rather
+   than merely invalid.
+2. **`ChartValue` is adjacently tagged** (`tag = "type", content = "value"`), not
+   internally tagged like `Color`. Serde cannot internally tag a newtype variant
+   whose payload is a `String`, and it fails at **serialization** time rather than
+   at compile time: every chart projection would have made `Document::to_json`
+   return `SnapshotError::Serialization`. The snapshot round-trip guard caught it
+   on arrival, which is the clearest argument available for writing that guard.
+3. **`ChartGroup` gained `vary_colors`.** `c:varyColors` is a child of the chart
+   *group* in OOXML, not only of the chart space; §8.3 put it only on `Chart`.
+   Both are read.
+
+### 14.2 The reader
+
+`crates/casual-doc-import/src/chart.rs`. The caches are the data; `c:f` is carried
+verbatim and the module contains no reference, sheet, range or operator handling
+at all; `c:externalData` becomes an `EmbeddedPart` pointer and no workbook is
+opened on any path. Declining is a first-class outcome — `read_chart_part` returns
+no `Result` — so a malformed, over-bound, out-of-scope or empty part yields no
+projection and no import failure.
+
+**The §6.3 `graphicData@uri` fix was already in the tree** when this lane started
+(`PendingGraphic::declares`), with two guards in `casual-doc-import/src/tests.rs`.
+Its mutation proof is recorded below with the rest rather than skipped.
+
+### 14.3 Per-construct reporting, and what it does to the part row
+
+Built, because with a projection in place the constructs it captures are genuinely
+`mapped` and the remainder genuinely `degraded` — the precondition §9 increment 3
+sets. Three outcomes, which together replace one line about a part:
+
+| the projection | the report |
+| --- | --- |
+| captured everything (`Complete`) | **nothing.** `35` makes `mapped` unreachable in a report, so the whole-part `omitted` + `preserved` row is *suppressed* rather than restated. The opaque-part ledger record still exists, so the preservation claim stays auditable. |
+| captured some of it (`Partial`) | one `degraded` + `preserved` finding per unmodelled construct, feature `chart.<local name>`, charged to the chart part, each citing the part's own ledger record. The whole-part row is suppressed in favour of them. |
+| declined | today's whole-part `omitted` + `preserved` row, unchanged — **plus** one `omitted` + `preserved` finding naming the out-of-scope family, because "we do not model `bar3DChart`" is information the part row cannot carry. Malformed/over-bound/empty add nothing, so they add no row. |
+
+The feature name is qualified (`chart.spPr`, not `spPr`) because `spPr` and
+`marker` name constructs in the WordprocessingML drawing vocabulary too, and one
+aggregated finding would describe neither. It is a class prefix in the same shape
+as `docx.rsid` and `docx.watermark`, not a namespace prefix.
+
+One consequence worth stating plainly: a real Word chart writes `c:spPr` and
+`c:txPr` almost everywhere, so **nearly every imported chart will be `Partial`**,
+and therefore nearly every imported chart refuses regeneration. That is the
+intended conservative answer, not a gap — but it does mean `ChartCoverage::Complete`
+will be rare until the projection covers chart formatting.
+
+### 14.4 The export half, and the writer that was deliberately not built
+
+What landed is the **guarantee**, which is what §9 increment 4 calls user-reachable:
+`crates/casual-doc-export/tests/chart_retention.rs` now proves that the fixture's
+chart *projects* (two groups, three axes, `4.30` verbatim, `Partial`) **and** that
+every part of its closure still comes back byte-identical — a byte check alone
+passes vacuously once the reader declines, and a projection check alone says
+nothing about the output. A second guard proves a chart whose projection is
+`Complete` is **still** byte-copied, which is the only input on which a writer
+could legitimately have decided to rewrite the part.
+
+**No chart-XML regenerator was written, and this is a decision rather than an
+omission.** Three reasons:
+
+1. **Nothing can mark a chart dirty.** There is no dirty bit in the model, and the
+   only paths that could set one live in `casual-doc-edit` and `casual-doc-wasm`,
+   which other lanes hold. A regenerator would be unreachable by construction —
+   `SKILL` §9 rule 4's trap, built on purpose.
+2. **§6.1 consequence 1 means only a `Complete` projection could ever be
+   regenerated**, and by §14.3 almost no real chart is `Complete`. The function
+   would be dead on real files even with a dirty bit.
+3. It would be verifiable only by its own inverse (project -> write -> project),
+   which is a real property but not evidence that anything works for a user.
+
+The gate it would have to pass already exists and is guarded:
+`ChartCoverage::permits_regeneration`.
+
+### 14.5 Still open
+
+- **Increment 5 (the `flow.rs` consumer) is untouched and is the whole of
+  reachability.** `FID-R-08` stays open; a chart still renders as the literal text
+  `[chart]`.
+- `webapp/src/fidelity.js` grades Charts `modeled: "full"`, which was an
+  overstatement when no chart model existed and is still an overstatement now that
+  a partial one does. §10 says it should read `partial`. `webapp/` is another
+  lane's, so this is reported rather than edited.
+- A chart inside a header, footer, footnote or comment is **not projected**: those
+  part parsers are handed no embedded-relationship index, so a chart there is not
+  modelled as a chart node in the first place. The model-side anchor walk already
+  covers every container, so projecting one is an extension of
+  `chart::build_charts`' walk and nothing else.
+- Chart formatting (`c:spPr`, `c:txPr` and the chart-space fill) is reported, not
+  modelled, which is what keeps coverage `Partial` on real files.
