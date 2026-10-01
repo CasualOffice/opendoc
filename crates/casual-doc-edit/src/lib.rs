@@ -20,6 +20,8 @@
 //! broader object editing remain explicit follow-ups (doc 59 staging).
 
 use casual_doc_model::NodeId;
+use serde::{Deserialize, Serialize};
+
 use casual_doc_model::v1::{
     BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, DrawingAnchor,
     Extent, FontName, FontRef, GridColumn, GroupTransform, HighlightColor, Hyperlink,
@@ -174,7 +176,7 @@ pub fn reset_document_scans() {
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
 /// `w:strike`/`w:color`/`w:highlight`/`w:sz`/`w:vertAlign`/`w:rFonts`).
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, Eq, PartialEq)]
 pub struct FormatDelta {
     /// Set bold on/off.
     pub bold: Option<bool>,
@@ -251,7 +253,7 @@ impl FormatDelta {
 }
 
 /// A caret position: a paragraph node and a node-relative UTF-8 byte offset.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Pos {
     /// The paragraph node.
     pub node: NodeId,
@@ -268,7 +270,7 @@ impl Pos {
 }
 
 /// A half-open range `[start, end)` within one paragraph.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Range {
     /// Inclusive start.
     pub start: Pos,
@@ -281,7 +283,7 @@ pub struct Range {
 /// Review authoring/decisions can rewrite wrapper and marker structure while
 /// leaving every other paragraph untouched. Carrying complete inlines for only
 /// the affected paragraph gives Undo an exact, bounded inverse.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct ReviewParagraphState {
     /// Paragraph whose inline tree is replaced.
     pub node: NodeId,
@@ -297,7 +299,7 @@ pub struct ReviewParagraphState {
 /// [`CommonField::build`] turns a value of this enum into the [`Field`] node an
 /// [`Operation::InsertField`] inserts — it constructs the field instruction
 /// string, the [`FieldKind`] projection, and the cached-result leaf run.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub enum CommonField {
     /// `PAGE` — the current page number (recomputed at pagination).
     Page,
@@ -399,7 +401,7 @@ impl CommonField {
 /// Both halves of a paragraph split, set exactly by
 /// [`Operation::SplitParagraph`]. This is how the inverse of a join restores each
 /// paragraph's own properties rather than copying the first's onto both.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct SplitProperties {
     /// The leading paragraph (it keeps the original id).
     pub leading: ParagraphProperties,
@@ -409,7 +411,7 @@ pub struct SplitProperties {
 
 /// The closed editing op set (I2). Slice 1 carries the two text ops; structural
 /// and object ops are additive variants (doc 59).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub enum Operation {
     /// Insert `text` at a caret position.
     InsertText {
@@ -1172,7 +1174,7 @@ pub enum Operation {
 }
 
 /// Whether a running-content op addresses the header or the footer side.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunningRegion {
     /// The header map / a section's `headers`.
     Header,

@@ -1012,8 +1012,12 @@ fn the_keystroke_path_runs_no_transform() {
         "session.rs",
         "session_tests.rs",
     ];
-    // The collaboration modules themselves, which may of course name each other.
-    const COLLABORATION: [&str; 3] = ["protocol.rs", "wire.rs", "session.rs"];
+    // The collaboration modules themselves, which may of course name each other. `codec.rs` is
+    // one of them rather than an exemption from the rule: the only things it encodes are a wire
+    // chunk and a relay's ordered log, and a single-user edit encodes nothing at all. If the
+    // client's own durable log (`112`) ever reuses it, that is the change that has to argue
+    // here, which is the point of the list.
+    const COLLABORATION: [&str; 4] = ["protocol.rs", "wire.rs", "session.rs", "codec.rs"];
 
     let engine = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
@@ -1031,7 +1035,7 @@ fn the_keystroke_path_runs_no_transform() {
         // file has to name the forbidden strings in order to forbid them, which is the
         // shape of self-reference every source-scanning guard hits sooner or later.
         if !COLLABORATION.contains(&name.as_str()) && !name.ends_with("_tests.rs") {
-            for collab in ["session::", "ClientSession", "ServerSession"] {
+            for collab in ["session::", "codec::", "ClientSession", "ServerSession"] {
                 if text.contains(collab) {
                     offenders.push(format!("{name} reaches `{collab}`"));
                 }
@@ -1082,9 +1086,13 @@ fn the_live_editor_has_no_collaboration_dependency() {
     // those is still refused, including through a `use` list that tries to smuggle one in
     // beside `ClientId` (`{ClientId, Join}` names `protocol` once and `protocol::ClientId`
     // never, so it offends).
-    const FORBIDDEN: [&str; 5] = [
+    const FORBIDDEN: [&str; 6] = [
         "casual_doc_transaction::session",
         "casual_doc_transaction::wire",
+        // The byte codec is collaboration too. A lone editor saves through `casual-doc-io`,
+        // not through a wire format, and an editor that reached this would be one refactor
+        // away from a mandatory server.
+        "casual_doc_transaction::codec",
         "ClientSession",
         "ServerSession",
         "WireOperation",

@@ -37,6 +37,7 @@
 
 use crate::presence::PresenceUpdate;
 use crate::wire::WireOperation;
+use serde::{Deserialize, Serialize};
 
 /// The version both ends must agree on, checked for equality before anything else.
 ///
@@ -86,7 +87,7 @@ pub const CHUNK_BUDGET_BYTES: usize = 3 * 1024 * 1024;
 /// reads a clock. It is a per-relay, per-document counter and that is all it promises, so a
 /// clustered relay must carry its node alongside it; two nodes serving one document would
 /// otherwise both believe an edit was theirs.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ClientId(u64);
 
 impl ClientId {
@@ -113,7 +114,7 @@ impl ClientId {
 ///
 /// A client only ever names an absolute `Revision` in [`Base::Revision`], and only from a
 /// value the server just handed it. Doc 152 §5.2.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Revision(u64);
 
 impl Revision {
@@ -145,7 +146,7 @@ impl Revision {
 /// chunks with their original sequence numbers and the server answers
 /// [`Outcome::Duplicate`] for anything already ordered. Restarting the counter would let a
 /// new chunk collide with an old number and be discarded as a duplicate — silently.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Seq(u64);
 
 impl Seq {
@@ -228,7 +229,7 @@ impl Identity {
 /// ordered before chunk *n* is read. A `Chained` chunk from a client with nothing accepted
 /// is **refused rather than guessed at**: it cannot happen from a correct client, and
 /// inventing a base is how divergence starts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Base {
     /// An absolute ordered position, named only from a value the server just handed out.
     Revision(Revision),
@@ -237,7 +238,7 @@ pub enum Base {
 }
 
 /// One chunk of a client's own operations, offered for ordering.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Submission {
     /// Who wrote it.
     pub client: ClientId,
@@ -288,7 +289,7 @@ pub enum ClientMessage {
 }
 
 /// Somebody's ordered operations, to be applied locally.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Arrival {
     /// Where this chunk landed in the order.
     pub revision: Revision,

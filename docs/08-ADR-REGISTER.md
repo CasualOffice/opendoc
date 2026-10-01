@@ -2400,6 +2400,75 @@ costed against a fallback that does not exist.
   decision was chosen for.
 
 
+## ADR-057 — The operation set derives `serde`, and the wire is a versioned frame around a self-describing payload
+
+- **Status:** Accepted, implemented.
+- **Date:** 2026-10-02.
+- **Context:** `107` 6.4. `152` §9 would not freeze a byte codec while `150` §9.1 and §9.2 were
+  still about to move the operation shapes — *"the one thing a compatibility surface must not
+  do"*. ADR-056 answered both on the envelope, no `Operation` variant changed, and the shapes
+  are final. 6.1 (durability) and 6.6 (the relay binary) were both waiting on this and nothing
+  else.
+- **Decision 1: the op set derives `serde` rather than being hand-encoded.** `casual-doc-edit`
+  had no `serde` at all; it has it now. The model's values already derive it, so the operations'
+  payloads and the document snapshot (`25`) share **one** value schema.
+  - **Why not 58 hand-written encoders.** A hand-written encoder and the `apply` it must agree
+    with are *two definitions of one schema*, and two definitions of one rule diverge. `150`
+    §3.2 makes the same argument pointing the other way: an exhaustive match is right where
+    each arm is a **decision** someone must take, and wrong where every arm is the same
+    mechanical transcription. Nobody ever has to decide how a `u32` is encoded.
+  - **What it costs, stated plainly:** `serde`'s derive is externally tagged and field-named, so
+    **field names are the compatibility surface**. Adding a field is additive; renaming one is a
+    break that no type error catches and no round-trip test can see, because both sides of a
+    round trip move together. `GOLDEN_CHUNK` is the only guard that can, and it is why the
+    golden vector is not optional decoration.
+  - `Label` is `&'static str` and therefore **not** on the wire; `147` §7 Q2 already recorded
+    that a persisted log needs a stable code instead. Nothing here needs one, because a relay's
+    ordered entry carries no label (ADR-047 — it holds no document, so it holds only the order).
+- **Decision 2: a 12-byte frame — magic, frame version, payload encoding, payload length.**
+  - **The established pattern, named:** a versioned length-delimited frame around a
+    self-describing payload. That is protobuf's and CBOR's shared property, and the only one
+    that matters: a reader that meets something it does not understand can measure it and move
+    on.
+  - **`bincode`/`postcard` were rejected on that exact point.** They are smaller and are *not*
+    self-describing: the schema is the reader's own struct definition, so a field a newer sender
+    added is a silent misparse rather than a skipped one. For bytes two different versions of
+    this software will read, that trade is the wrong way round. Neither is a new dependency
+    either way — this adds **no new package**; `Cargo.lock` gained one dependency *edge*.
+  - **The payload encoding is a field, not an assumption.** The register's pending list reserves
+    *"canonical CBOR encoding profile and golden vectors"* for the **document** snapshot. Nothing
+    here pre-empts it: swapping the payload encoding is a `PayloadEncoding` value, and a decoder
+    meeting one it does not hold refuses by name. JSON is chosen for this increment because it is
+    what the model's values are already round-tripped in. Its known cost — `152` §10 Q6's `Vec<u8>`
+    as decimal numbers, about 4× — does **not** land on operations, because media travels as a
+    *reference* and the bytes stay in the host's resource map. It would land on a snapshot, and
+    that is exactly why the snapshot half of 6.1 must measure before reusing this encoding.
+  - **Every bound is a refusal, and ordered so the bound comes first.** A codec is the only place
+    in the crate that reads bytes it did not write, so `MAX_FRAME_BYTES` is checked from the
+    **header**, before the declared length is used for anything at all — a field saying four
+    gigabytes must not size an allocation on its way to being rejected. Trailing bytes are
+    refused rather than ignored: they mean writer and reader disagree about the record, and
+    guessing which is right is how a log loses its tail.
+  - **The codec is a collaboration module, not an exemption from the rule that guards them.**
+    `the_keystroke_path_runs_no_transform` was extended rather than relaxed: `codec.rs` joins
+    `protocol.rs`/`wire.rs`/`session.rs`, *and* reaching `codec::` from anywhere else is now
+    itself an offence, *and* `casual_doc_transaction::codec` joins what the live editor may not
+    name. A single-user edit encodes nothing; a lone editor saves through `casual-doc-io`.
+- **Mutation proofs.** (1) Check `MAX_FRAME_BYTES` *after* comparing the declared length with the
+  bytes present → `every_refusal_names_what_was_expected_and_none_of_them_allocates_the_declared_
+  length` fails with `Err(Truncated { declared: 4294967295, available: 0 })` where
+  `Err(TooLarge { .. })` was required. (2) Add `#[serde(deny_unknown_fields)]` to `Submission` →
+  `a_field_a_newer_sender_added_is_skipped_rather_than_refused` fails with *"unknown field
+  `aFieldFromTheFuture`, expected one of `client`, `seq`, `base`, `operations`"*. (3) Rename
+  `WireOperation::operation` to `op` on the wire → `the_golden_chunk_is_byte_for_byte_what_this_
+  build_writes` fails, which is the rename no other guard can see. (4) Plant `codec::` in a
+  keystroke-path module → `the_keystroke_path_runs_no_transform` reports *"v0.rs reaches
+  `codec::`"*.
+- **Not decided here:** the document snapshot's encoding (still the pending CBOR ADR); whether
+  the client's own durable log (`112`) reuses this frame — if it does, that change has to argue
+  with the collaboration-module list, which is the point of the list.
+
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

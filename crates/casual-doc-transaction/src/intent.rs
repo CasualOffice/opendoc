@@ -63,6 +63,7 @@
 
 use casual_doc_edit::Operation;
 use casual_doc_model::NodeId;
+use serde::{Deserialize, Serialize};
 
 use crate::Affinity;
 
@@ -73,7 +74,7 @@ use crate::Affinity;
 /// value: an index has to be rebased over every concurrent structural edit and needs a fact
 /// about the base state to do it, while an anchor needs nothing and is rebased by doing
 /// nothing at all.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum BlockAnchor {
     /// The operation was authored immediately **before** this block.
     Before(NodeId),
@@ -94,7 +95,7 @@ pub enum BlockAnchor {
 /// [`Intent::NONE`] declares nothing and is the default, so a caller that does not know
 /// these facts is in exactly the position every caller was in before this type existed: its
 /// pairs are refused rather than guessed.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Intent {
     anchor: Option<BlockAnchor>,
     affinity: Option<Affinity>,

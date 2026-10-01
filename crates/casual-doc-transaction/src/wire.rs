@@ -62,6 +62,7 @@
 use casual_doc_edit::{Mint, Operation};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
+use serde::{Deserialize, Serialize};
 
 use crate::protocol::ClientId;
 
@@ -106,7 +107,7 @@ pub fn document_space(document: &Document) -> IdSpace {
 /// the receiver, for one reason: the receiver must be able to check what the sender
 /// *claimed* to introduce against what its operation actually names. A sender that
 /// under-declares is caught by [`WireOperation::localise`] recomputing and comparing.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WireOperation {
     operation: Operation,
     mint: Mint,

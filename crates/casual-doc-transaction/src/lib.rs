@@ -65,6 +65,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
@@ -73,6 +74,7 @@ use casual_doc_edit::{EditError, Mint};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
+pub mod codec;
 pub mod intent;
 pub mod presence;
 pub mod protocol;
@@ -185,7 +187,7 @@ pub enum Coalesce {
 }
 
 /// Boundary behavior when an edit occurs at a position.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Affinity {
     /// Stay before content inserted or split at the same boundary.
     Before,

@@ -62,6 +62,7 @@
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::Document;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::error::Error;
@@ -926,7 +927,7 @@ fn rebase_over_declared(
 }
 
 /// One ordered entry of a relay's history.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Ordered {
     /// Where it landed.
     pub revision: Revision,
