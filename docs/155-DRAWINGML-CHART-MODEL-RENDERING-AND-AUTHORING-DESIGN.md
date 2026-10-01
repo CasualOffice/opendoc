@@ -1,6 +1,6 @@
-# 154 — DrawingML charts: model, rendering, and authoring
+# 155 — DrawingML charts: model, rendering, and authoring
 
-**Status:** accepted (ADR-048), implementation in `feat/charts`.
+**Status:** accepted (ADR-050), implementation in `feat/charts`.
 **Opened:** 2026-10-01.
 **Rows:** `105` FID-R-08 (charts preserved but never drawn), `105` OO-014
 (nothing to author), `106` §9 **Q3** — which this document closes in the
@@ -104,6 +104,31 @@ the six chartex families (§4.3), of which chartex already renders here as its
 fallback picture and the rest render as a placeholder with the loss reported —
 which is more than their pipeline can say about anything it drops.
 
+### 3.1a What they draw is not the same as what they keep
+
+Their family count overstates their fidelity, and the reader rewrites several
+chart types on the way in. From `SerializeChart.js`'s `ReadCT_PlotArea`
+(`:12920-13060`):
+
+| source | what their model ends up holding |
+| --- | --- |
+| `c:ofPieChart` | **converted to a plain `c:pieChart`** (`COfPieChart::convertToPieChart`, `ChartFormat.js:12845-12856`); the second plot, `splitType`, `splitPos`, `serLines` and `secondPieSize` are gone. The writer branch that would emit `ofPieChart` back (`SerializeChart.js:5644-5648`) is unreachable after a load, so **pie-of-pie is permanently lost on round-trip.** |
+| `c:bubbleChart` | **converted to a `CScatterChart`** (`ChartFormat.js:9789`); the bubble sizes are discarded — which also makes `drawBubbleChart` dead code for imported files |
+| `c:area3DChart`, `c:surface3DChart` | read as their 2-D/plain equivalents, and the writer branches are **commented out** (`SerializeChart.js:5593-5598`, `:5682-5687`), so they are written back flattened |
+| `c:dTable` | modelled (`ChartFormat.js:10427`), read, written and even themed — and **never drawn**; there is no `dTable` reference anywhere in `common/Charts/` |
+
+And there is **no cached-preview fallback for a chart on their side either.** The
+only `cachedImage` on a chart space is produced on *copy* for clipboard interop
+(`ChartSpace.js:5022`), and `cachedCanvas` (`:10498-10556`) is their own render
+memoised. An unsupported construct is degraded at import or silently not painted;
+the chartEx region-map case is an explicit early `return` in the draw path
+(`ChartSpace.js:10586-10591`, with a `// TODO` above it).
+
+So the correct comparison is not "seventeen against six". It is: **they draw more
+families and they lose several of them, permanently and silently; we draw fewer
+and lose none.** That is the trade this programme is making, and §6 is what makes
+our half of it true.
+
 ### 3.2 How they hold chart data — and the boundary they drew
 
 `c:externalData` is a typed member of their chart model, not bytes:
@@ -128,13 +153,46 @@ The document editor then sits in `isOpenedFrameEditor = true`
 through `asc_editChartDrawingObject(chartBinary)` → `FinalizeEditChart`
 (`word/api.js:9628-9641`).
 
-**So ONLYOFFICE's document editor does not contain a spreadsheet engine either.**
-It hands the chart to a *separate framed editor* and takes a serialised chart
-back. That is the same boundary D2 draws; the difference is only that they ship
-the editor on the other side of the frame and we do not (ours would be
-`opencalc`). This is direct evidence that "read the cache, do not open the
-workbook" is the architecturally normal answer for a word processor, not a
-shortcut.
+What is on the other side of that frame is a **complete spreadsheet editor**:
+`ExternalDiagramEditor.js:63-92` instantiates
+`new DocsAPI.DocEditor(…, { documentType: 'cell', document: { url: '_chart_' },
+editorConfig: { mode: 'editdiagram' } })` in an iframe and hands the blob over
+with `serviceCommand('setChartData', …)`. Inside it, `CDiagramCellFrameManager.preObtain`
+(`frameManager.js:511-523`) opens the **real embedded workbook** when one came
+with the chart, and when one did not it opens an empty workbook and reconstructs
+one from the caches *plus the parsed `c:f` formulas* (`fillWorkbookFromDiagramCache`,
+`:488-497`).
+
+So the accurate statement — and it is the one that matters — is this:
+
+> **Their chart RENDERING never consults a workbook.** `recalculateReferences`
+> begins `if (!oThis.worksheet) return;` (`ChartSpace.js:5631-5632`), and
+> `worksheet` is only ever set from `cell/` code, never from `word/`. In the
+> document editor a chart draws purely from `numCache`/`strCache`.
+> **Every place they touch the workbook is a place a spreadsheet had to be
+> brought in.** Save time: `CChartSpace::getXLSXFromCache` (`ChartSpace.js:2143-2167`)
+> constructs `new AscCommonExcel.Workbook(...)`, fills it from the caches and
+> serialises it with `AscCommonExcel.BinaryFileWriter` — so the document editor's
+> bundle links the spreadsheet engine. Edit time: a whole second editor in an
+> iframe.
+
+That is exactly the accidental growth D2 refuses, demonstrated in the code of the
+product we are an alternative to — and it confirms the *rendering* half of D2
+outright: **cache-only rendering is what the market leader does.** It also tells
+us what our own values-only writer (§5.3) would be a smaller version of:
+`getXLSXFromCache` is that function, built on a spreadsheet model because they had
+one to hand.
+
+One consequence of their save path is worth stating because it cuts the other way
+and is a real cost of manufacturing a workbook. `WriteCT_ChartXLSX`
+(`SerializeChart.js:1417-1459`) writes `oVal.XLSX` verbatim when the chart was not
+edited — so an untouched workbook *is* byte-preserved at their engine's level,
+fairly noted. But when the chart carried **no** embedded workbook, the same
+function manufactures one from the cache and injects it, so **their output gains
+an embedding the input did not have**; and after an edit-data session the xlsx is
+re-serialised whole from their spreadsheet model (`frameManager.js:203-222`,
+`GraphicObjects.js:1346-1360`), discarding anything their model does not
+represent. Both are reasons §5.3 refuses to rewrite a workbook we did not author.
 
 Two further observations worth recording:
 
@@ -149,46 +207,83 @@ Two further observations worth recording:
   more restricted case than an embedded one — which is the same distinction §5.3
   makes between a chart we authored and a chart we imported.
 
-### 3.3 How they draw — one mechanism, and it has arcs
+### 3.3 How they draw — one curve vocabulary, two geometry builders
 
-This is the question D4 turns on, and their answer is unambiguous.
+This is the question D4 turns on. Their answer is precise rather than simple, and
+the precision is the useful part.
 
 Every chart element goes through `ChartsDrawer.prototype.drawPath`
-(`ChartsDrawer.js:3136-3155`), which takes a path id, and then:
+(`ChartsDrawer.js:3136-3155`), which takes a path id and then:
 
 > `var cGeometry = new CGeometry2(); … cGeometry.AddPath(oPath);
 > this.cShapeDrawer.fromShape2(new CColorObj(pen, brush, cGeometry), …);
 > this.cShapeDrawer.draw(cGeometry);`
 
-`CGeometry2` and `CShapeDrawer` are **the preset-shape machinery**. The paths
-themselves are allocated on the chart space (`this.cChartSpace.AllocPath()` /
-`GetPath()`) and built with the DrawingML `a:path` command vocabulary —
-`moveTo`, `lnTo`, `arcTo`, `close`. **Their chart renderer is a client of the
-shape-path renderer. One mechanism, not two.**
+**Shared with preset shapes:** `AscCommon.CShapeDrawer` — the same rasteriser
+`Shape.js:5710` and `Image.js:622` use; the command vocabulary on
+`AscFormat.Path2` (`Path.js:2540`) — `moveTo:2606`, `lnTo:2610`, `arcTo:2614`,
+`quadBezTo:2640`, `cubicBezTo:2645`, `close:2651`; the emission layer
+(`Path2::draw`, `Path.js:2654-2711` → `_s/_m/_l/_c2/_c/_z`); and **the arc
+flattener** — `arcTo` is expanded to per-quadrant cubic Béziers by
+`AscFormat.ArcToCurvers` (`ArcTo.js:43-216`, `EllipseArc3` at `:216`), which is
+the identical function preset geometry uses (`Geometry.js:1556`).
 
-Pie and doughnut, concretely — `_calculateSegment(stAngle, swAngle, innerRadius,
-outerRadius, coords)` at `ChartsDrawer.js:8032-8057`:
+**Not shared:** the geometry *representation*. Charts do not build an
+`AscFormat.Geometry` with `pathLst`/`gdLst`/`avLst` guides. They use a chart-only
+trio — `CPathMemory`, a growable `Float64Array` command arena on the chart space
+(`ChartSpace.js:572-630`); `Path2` as a flyweight re-pointed into it by
+`GetPath(index)` (`:603-606`); and `CGeometry2`, a throwaway shim **defined inside
+`ChartsDrawer.js`** (`:17886-17940`) whose only job is to satisfy
+`CShapeDrawer.fromShape2`.
 
-> `path.moveTo(…)`; `path.arcTo(innerRadius…, -stAngle, -swAngle)`;
-> `path.lnTo(…)`; `path.arcTo(outerRadius…, -(stAngle+swAngle), swAngle)`;
-> `path.lnTo(…)`
+So, corrected from an earlier draft of this document that claimed one mechanism
+outright: **one rasteriser and one curve vocabulary; two geometry builders.** And
+that split is exactly the right one, because the layer they *share* is the
+primitive-and-flattener layer — which is what `PaintItem::Path` is — and the layer
+they *do not* share is chart layout maths (axis scales, gutters, 3-D projection),
+which nothing else would want. Their architecture endorses adding the primitive
+once and letting charts build their own geometry with it.
 
-An annular sector as **two arcs and two lines** — no polygon approximation
-anywhere. Circular markers are the same: a single `arcTo` sweeping `Math.PI * 2`
-(`:3200`, `:8933`).
+Pie and doughnut, concretely — and correcting a citation an earlier draft got
+wrong (`ChartsDrawer.js:8032` is the chartEx **sunburst** ring, not the pie):
 
-Three conclusions, and they are the whole of §7:
+- **Pie** — `drawPieChart::_calculateArc`, `ChartsDrawer.js:12448-12467`:
+  `moveTo(centre)`, `lnTo(rim at start angle)`, `arcTo(radius, radius, -stAng,
+  -swAng)`, `lnTo(centre)`. A sector as one arc and two radii.
+- **Doughnut** — `drawDoughnutChart::_calculateArc`, `:14284-14314`: `moveTo`,
+  `lnTo` outward, `arcTo` forward along the outer radius, `lnTo` inward, `arcTo`
+  backward along the inner radius. An annulus as **two arcs and two radii**.
 
-1. **`ArcTo` is a first-class path command, not a Bézier workaround** — which
-   settles Q-B.
+There is no `for (i…) lnTo` polygonisation of a pie sector anywhere in their
+renderer. Circular markers are the same single `arcTo` sweeping `2π` (`:3200`).
+
+**`c:smooth` is the exception, and it changes our delivery split.**
+`CChartsDrawer::calculateSplineLine` (`ChartsDrawer.js:5435-5468`) derives
+Catmull-Rom control points (`calculate_Bezier`, `:3744-3795`) and then evaluates
+them at `t = 0, 0.1, … 1.0`, stitching **ten straight `lnTo` segments per data
+interval**. The true-Bézier versions exist and are *switched off* behind an
+explicit comment — `_calculateSplineLine2` at `:9366` and `:15238`, both preceded
+by `//TODO for now enabling _calculateSplineLine function. with
+_calculateSplineLine2 draws incorrectly. check!`. So a smooth line in the shipping
+product is a sampled polyline, not a curve.
+
+Four conclusions, and they are the whole of §7:
+
+1. **`ArcTo` belongs in the command vocabulary and the flattening belongs in the
+   backend** — which is how they do it, in one shared place. That settles Q-B, and
+   for a better reason than "arcs are exact": it keeps one flattener rather than
+   one per caller.
 2. **A polygon fan is not how a production chart renderer draws a pie.** Ours
    would be the only one, and it would be a second curve mechanism in a repository
    whose shape lane is already scheduled to build the first.
-3. **The primitive is shared by construction.** They did not build a chart
-   geometry system; they reused the shape one. `PaintItem::Path` is therefore the
-   correct first increment for FID-L-04, `119`'s remaining curve work, SmartArt
-   *and* charts — one addition, four consumers — and building it inside a chart
-   renderer would be the architectural mistake their source shows they avoided.
+3. **The primitive is the shared layer; chart geometry is not.** `PaintItem::Path`
+   is therefore the correct first increment for FID-L-04, `119`'s remaining curve
+   work, SmartArt *and* charts — one addition, four consumers — while the chart
+   *geometry builder* is legitimately chart-specific.
+4. **A smooth line does not need the primitive.** It is a sampled function, not a
+   shape outline, so a polyline of evaluated points is the honest representation
+   and is what the market leader ships. `c:smooth` therefore moves from tier 1B
+   into **tier 1A**, and becomes a real cubic when the primitive lands.
 
 ---
 
@@ -442,15 +537,24 @@ table-drive the presets" — is the right one.
 | Line, incl. markers | polyline + marker glyphs | **yes** — `Polygon { closed: false }`, `Ellipse`/`Rect` |
 | Area, incl. stacked | closed polygons | **yes** — `Polygon { closed: true }` |
 | Scatter, `lineMarker`/`marker`/`line` with straight connectors | markers + polyline | **yes** |
-| Scatter or line with `c:smooth="1"` | Catmull-Rom → cubic Bézier | **no** |
+| Line or scatter with `c:smooth="1"` | Catmull-Rom **evaluated to a polyline** — a sampled function, not a shape outline, and what ONLYOFFICE ships (§3.3) | **yes** — `Polygon { closed: false }` |
 | **Pie** | circular sectors | **no** — an `Ellipse` cannot be a sector |
 | **Doughnut** | annular sectors | **no** |
 | Category labels, value labels, title, legend text | shaped text | **yes** — `Glyphs` |
 
 ### 7.3 The verdict
 
-**`PaintItem::Path` is required before pie and doughnut, and before smooth lines.
-It is not required for anything else in tier 1.**
+**`PaintItem::Path` is required before pie and doughnut, and before nothing else
+in tier 1.**
+
+It is *not* required for `c:smooth` — an earlier draft of this document said it
+was, and §3.3 corrects that from their source: a smooth series is a curve
+**sampled into a polyline**, which is what ONLYOFFICE ships and what the honest
+representation of a sampled function is. That distinction matters and is not a
+loophole: a pie sector is a *shape outline*, where flattening in the layout layer
+would be a second curve mechanism competing with the primitive; a smooth line is a
+*function evaluated at points*, where the polyline is the answer and the primitive
+would only make it tidier later.
 
 The tempting shortcut is to approximate a sector as a many-sided
 `Polygon`. It is rejected, for a reason that is about architecture rather than
@@ -473,13 +577,14 @@ pixels:
 design **does not add the primitive**; it specifies what charts need from it
 (§7.4) and splits delivery so that nothing waits unnecessarily:
 
-- **Tier 1A — bar, column, line, area, scatter (straight), plus all furniture,
-  combo and secondary axis.** Ships on today's primitives. No render-lane
-  dependency beyond a chart consumer in `flow.rs`.
-- **Tier 1B — pie, doughnut, smooth lines.** Gated on `PaintItem::Path`. Until
-  it exists these families take the §6.2 `omitted` + `preserved` path — the
-  placeholder, reported — which is honest, is what happens today, and is
-  strictly better than a curve mechanism we would have to delete.
+- **Tier 1A — bar, column, line (including `c:smooth`), area, scatter, plus all
+  furniture, combo and secondary axis.** Ships on today's primitives. No
+  render-lane dependency beyond a chart consumer in `flow.rs`.
+- **Tier 1B — pie and doughnut only.** Gated on `PaintItem::Path`. Until it
+  exists these two take the §6.2 `omitted` + `preserved` path — the placeholder,
+  reported — which is honest, is what happens today, and is strictly better than a
+  curve mechanism we would have to delete. It is also a smaller hole than the
+  earlier draft implied, because smooth lines moved out of it.
 
 ### 7.4 What charts need from `PaintItem::Path`, when the shapes lane builds it
 
@@ -493,9 +598,10 @@ Stated here so the primitive is designed once for all three consumers:
   `PaintItem::Shape`, so a sector can be filled and stroked in one item.
 - Multiple subpaths in one item, with a stated fill rule — a doughnut ring is
   naturally an outer arc and an inner arc, and every SmartArt glyph needs it too.
-- An explicit `ArcTo` rather than Bézier-only: a pie sector's arc is exact as an
-  arc and approximate as a Bézier, and the raster and PDF backends can both
-  express one. If the primitive ends up Bézier-only, charts will use the standard
+- An explicit `ArcTo` rather than Bézier-only, flattened **once** in the backend
+  rather than once per caller — `ArcTo.js:216` is where they do it and
+  `Geometry.js:1556` is the second caller that therefore did not need its own.
+  If the primitive ends up Bézier-only, charts will use the standard
   four-segment-per-quadrant approximation and say so in code.
 
 ---
@@ -514,7 +620,7 @@ A new definition table on `Definitions`, keyed by a new `ChartId`, with each
 ```rust
 // crates/casual-doc-model/src/v1/definitions.rs — inside `Definitions`
 /// Typed chart projections by id. Additive: omitted when empty so existing
-/// snapshots serialize byte-identically. `docs/154`.
+/// snapshots serialize byte-identically. `docs/155`.
 #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
 pub charts: DefinitionMap<ChartId, Chart>,
 ```
@@ -622,7 +728,7 @@ pub struct Series {
     pub x_values: Option<DataRange>,      // c:xVal (scatter)
     pub fill: Option<Color>,              // solid c:spPr fill only (§4.3)
     pub line: Option<ChartLine>,
-    pub smooth: bool,                     // c:smooth — tier 1B (§7.3)
+    pub smooth: bool,                     // c:smooth — tier 1A, sampled (§7.3)
     pub data_labels: Option<DataLabels>,  // c:dLbls
 }
 
@@ -686,12 +792,12 @@ believed, and each states whether a user can reach it.
 
 | # | Increment | Crates | Reachable by a user when it lands? |
 | --- | --- | --- | --- |
-| 1 | **This document + ADR-048.** | `docs/` | No — it is a design. Said plainly rather than implied. |
+| 1 | **This document + ADR-050.** | `docs/` | No — it is a design. Said plainly rather than implied. |
 | 2 | **The chart-XML reader**, producing the typed projection, behind a feature-gated internal API in this lane's own crates; plus the §6.3 `graphicData@uri` verification; plus a synthetic chart fixture carrying tier-1 *and* out-of-scope constructs, manifested. | `casual-doc-ooxml` (fixture), `casual-doc-import` | No. A reader with no consumer is the §9-rule-4 trap, and it is declared as such. |
 | 3 | **Disposition reporting per construct** — the §6.2 `degraded` + `preserved` rows, replacing one line about a part with named findings. | `casual-doc-import` | **Yes** — the compatibility report is a user-visible surface, and this is the first increment with a real answer to "what did you not understand about my chart?" |
 | 4 | **The export writer + the never-a-byte-changed guard**: `chart1.xml` byte-copied while clean, regeneration refused while `coverage == Partial`, and the round-trip guard extended to a chart with out-of-scope constructs. | `casual-doc-export` | **Yes**, as a guarantee rather than a feature: saving a document with a chart provably does not touch it. |
 | 5 | **The layout/render consumer — tier 1A.** *Belongs to the layout lane.* This lane supplies the projection, the fixture and the expected geometry; it does not edit `casual-doc-layout`. | (layout lane) | **Yes** — this is the increment where a chart stops reading `[chart]`. |
-| 6 | **Tier 1B** (pie, doughnut, smooth) once `PaintItem::Path` exists. | (render + layout lanes) | Yes. |
+| 6 | **Tier 1B** (pie and doughnut) once `PaintItem::Path` exists. | (render + layout lanes) | Yes. |
 | 7 | **Authoring**: insert a chart, chart elements, type and style, and data editing on charts we authored (§5.3). | `webapp` + facade lanes | Yes — and not before, which is why `153`'s four chart rows stay open until then. |
 
 Increments 2–4 are this lane's and are buildable now. Increments 5–7 are
@@ -748,7 +854,7 @@ moves from out-of-scope to tier 1.
 | # | Question | Recommendation |
 | --- | --- | --- |
 | Q-A | Should an **imported** chart's data become editable behind an explicit "this replaces the embedded workbook" confirmation? (§5.3) | Yes, after the values-only writer exists and the replacement can be named in the report. It destroys producer-authored content, so it is the owner's call. |
-| Q-B | Does `PaintItem::Path` get an explicit `ArcTo`, or Bézier-only? (§7.4) | `ArcTo`. A pie sector is exact as an arc, and both backends can express one. |
+| Q-B | Does `PaintItem::Path` get an explicit `ArcTo`, or Bézier-only? (§7.4) | `ArcTo`, flattened in the backend. Their renderer keeps `arcTo` in the command vocabulary and expands it to per-quadrant cubics in **one** shared function (`ArcTo.js:216`), which is what stops every caller growing its own flattener (§3.3). |
 | Q-C | Floating (`wp:anchor`) charts: fix `EmbeddedObject`'s missing `DrawingAnchor` in this programme or as one row for charts + SmartArt + OLE together? | Together, separately. It is not a chart limit and scoping it here would hide it. |
 | Q-D | Do chart **theme** colours resolve against `Definitions::color_scheme`, or does a chart carry its own `colors1.xml` palette? | Resolve against the document theme, which already exists; treat `colors1.xml` as out of scope and preserved. Revisit if real files disagree. |
 

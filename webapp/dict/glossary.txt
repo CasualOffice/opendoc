@@ -327,6 +327,7 @@ drawingml
 dropdown
 dropdowns
 editability
+editorConfig
 embeddability
 embeddable
 embeddings
@@ -343,6 +344,7 @@ façade
 ffData
 filesystem
 findable
+flattener
 fmt
 focusable
 fontTable
@@ -458,6 +460,7 @@ rAF
 rPr
 radiogroup
 rastered
+rasteriser
 rasterization
 rasterized
 rasterizer
