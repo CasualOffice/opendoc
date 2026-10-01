@@ -5115,16 +5115,21 @@
       "area": "table",
       "title": "Border width and line style",
       "ours": {
-        "absent": [
-          "table.border.width",
-          "table.border.style"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/table_cell_chrome.mjs",
+              "literal": "BORDER_WEIGHTS_EIGHTH_POINTS"
+            }
+          },
+          "missing": "line style. `border_edge` in `crates/casual-doc-wasm` hard-codes the `single` token and no setter takes a style argument, so dashed, dotted and double cannot be authored however the control were drawn - and a permanently dead dropdown is the pattern this tree has just finished removing. The model stores any token, the layout already paints five non-solid patterns and the exporter writes them verbatim, so what is left is one argument in three Rust functions."
+        }
       },
       "theirs": {
         "control": "cmbBorderSize"
       },
       "rank": 2,
-      "note": "Every border we write is hard-coded to 8 eighth-points (1 pt) solid; the engine's setCellBorder and setTableBorder already take a size argument, so the gap is the control. Line style (dashed, double, art) is unreachable on both the UI and the engine side here."
+      "note": "WIDTH now ships, and it is their whole anchor: `cmbBorderSize` offers seven widths and no style, and their advanced table dialog is the same control again. Ours is one pen for the cell presets and the table presets together, which is Word's shape, and it defaults to half a point - the value Word, their `TableSettings` and our own `insertTable` already used, where the chrome used to send one point and silently double the gridlines it had just drawn. Guarded on the EFFECT rather than the control: the width is read back out of a real normalized-JSON export, because the only border read-back the facade offers is a presence bitmask."
     },
     {
       "id": "table.borders-dialog",

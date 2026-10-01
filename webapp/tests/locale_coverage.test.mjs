@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1486],
-  ["de", 1486],
-  ["es", 1486],
-  ["fr", 1486],
-  ["hi", 1486],
-  ["id", 1486],
-  ["it", 1486],
-  ["ja", 1486],
-  ["ko", 1486],
-  ["nl", 1486],
-  ["pl", 1486],
-  ["pt-BR", 1486],
-  ["ru", 1486],
-  ["tr", 1486],
-  ["uk", 1486],
-  ["vi", 1486],
-  ["zh-Hans", 1486],
-  ["zh-Hant", 1486],
+  ["ar", 1488],
+  ["de", 1488],
+  ["es", 1488],
+  ["fr", 1488],
+  ["hi", 1488],
+  ["id", 1488],
+  ["it", 1488],
+  ["ja", 1488],
+  ["ko", 1488],
+  ["nl", 1488],
+  ["pl", 1488],
+  ["pt-BR", 1488],
+  ["ru", 1488],
+  ["tr", 1488],
+  ["uk", 1488],
+  ["vi", 1488],
+  ["zh-Hans", 1488],
+  ["zh-Hant", 1488],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -273,7 +273,16 @@ const COVERAGE = new Map([
  *  read 1,464 while the catalogues answered 1,475. A floor cannot notice work
  *  that was done, so it drifts downwards away from the truth every time a surface
  *  lands translated without the row being moved — which is why this is MEASURED
- *  from the merged catalogues and not 1,464 + 11. */
+ *  from the merged catalogues and not 1,464 + 11.
+ *
+ *  1,486 -> 1,488 is the table border PEN (`docs/153` `table.border-width-style`):
+ *  the line-weight control's visible label and its accessible name. Both are
+ *  markup keys with the English beside them, so this ratchet does not force them
+ *  — they were translated into all eighteen languages anyway, because the floor is
+ *  a floor and not a target. The seven WIDTHS themselves carry no catalogue entry
+ *  at all and deliberately so: they are built with `Intl` from a number and the
+ *  bare unit symbol, so a French reader sees "0,5 pt" rather than a translation of
+ *  "0.5 pt" that could not get the decimal separator right. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

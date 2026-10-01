@@ -1514,6 +1514,22 @@
       </div>
       <div class="menu-divider"></div>
       <div data-i18n="tableMenu.cellBorders" class="menu-heading">Cell borders</div>
+      <!-- THE PEN, not a reflector. Word's Table Design keeps Line Weight beside
+           the border painter and Google Docs keeps Border width beside the border
+           buttons: in both, the control says what the NEXT stroke draws with and
+           does not change to describe the selection. ONLYOFFICE is the same shape
+           (`cmbBorderSize`; `onBorderSizeSelect` only remembers the value), so all
+           three references agree and this follows them. It is deliberately ONE
+           control for both the cell presets below and the table presets further
+           down — the pen, then where to put it — because two weights for one
+           gesture is a question a person should not have to answer twice.
+           The options are filled by `table_cell_chrome.mjs` so the number is
+           formatted in the reader's own locale ("0,5 pt" in French) instead of
+           seven English literals in markup. -->
+      <div class="menu-row">
+        <label data-i18n="tableMenu.lineWeight" class="menu-label" for="borderWeight">Line weight</label>
+        <select data-i18n-label="tableMenu.borderLineWeight.label" id="borderWeight" class="menu-select" aria-label="Border line weight"></select>
+      </div>
       <div class="menu-row border-row">
         <div data-i18n-label="tableMenu.cellBorders.label" class="border-presets" role="group" aria-label="Cell borders">
           <button data-i18n-title="tableMenu.noBorder.title" type="button" class="border-btn" data-cellborder="none" title="No border" aria-pressed="false"><span class="bx"></span></button>

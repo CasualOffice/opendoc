@@ -332,8 +332,7 @@ const tableFmtMenu = document.getElementById("tableMenu");
 const cellShade = document.getElementById("cellShade");
 const cellShadeNone = document.getElementById("cellShadeNone");
 const cellVAlign = document.getElementById("cellVAlign");
-const cellBorderColor = document.getElementById("cellBorderColor");
-const tableBorderColor = document.getElementById("tableBorderColor");
+// The border controls are looked up where they are PASSED: three module-level names for one reader.
 const tableAlign = document.getElementById("tableAlign");
 const tableContext = document.getElementById("tableContext");
 const tableRibbon = document.querySelector(".table-ribbon");
@@ -10539,8 +10538,9 @@ const cellFormatMenu = bindCellFormatMenu({
   shade: cellShade,
   shadeNone: cellShadeNone,
   vAlign: cellVAlign,
-  cellBorderColor,
-  tableBorderColor,
+  cellBorderColor: document.getElementById("cellBorderColor"),
+  tableBorderColor: document.getElementById("tableBorderColor"),
+  borderWeight: document.getElementById("borderWeight"),
   doc: () => doc,
   caretNode: () => (selection && doc ? selection.focus.node : ""),
   formatRange: (apply) =>
