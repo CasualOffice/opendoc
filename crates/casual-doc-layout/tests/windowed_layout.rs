@@ -178,6 +178,12 @@ fn cell_of(id: u64, blocks: Vec<BlockFragment>) -> CellFragment {
         border_reserve: CellBorderReserve {
             top: Twip(20),
             bottom: Twip(20),
+            // The vertical edges are deliberately left at zero: they come off the
+            // cell's WIDTH, and this fixture's cells carry no shaped text whose
+            // wrapping could show it, so a non-zero value here would assert
+            // nothing. The horizontal pair above is what the measure tier folds.
+            start: Twip::ZERO,
+            end: Twip::ZERO,
         },
         table_borders: Default::default(),
         shading: None,

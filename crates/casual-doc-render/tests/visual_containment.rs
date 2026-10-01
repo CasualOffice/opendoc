@@ -56,7 +56,26 @@ const DPI: f32 = 96.0;
 ///
 /// Still five pages, same number of painted runs per page, and every containment
 /// and split-row assertion below unchanged.
-const EXPECTED_RGBA_FNV1A64: u64 = 0xa3ae_e806_7550_7d76;
+///
+/// # Re-blessed for the cell border reserve on the HORIZONTAL axis
+///
+/// Was `0xa3ae_e806_7550_7d76`. A cell's vertical borders now come off its content
+/// width, so a bordered cell wraps where Word and LibreOffice wrap it. This
+/// fixture's table is one column with `w:tblBorders` `left`/`right` at
+/// `w:sz="8"` — 20 twips each, half of each inside the cell, so **20 twips** off
+/// the flowed width. Measured consequences:
+///
+/// ```text
+/// widest line's right edge, pages 2-5   6466 -> 6422   (-44: a different word
+///                                                       now ends that line)
+/// words on page 4 / page 5              178/87 -> 177/88
+/// total words                           732 -> 732     (nothing lost)
+/// ```
+///
+/// The repagination of one word across the page-4/5 boundary is the point, not a
+/// side effect: a cell that flows too wide fits text no other renderer fits.
+/// Still five pages, and every containment and split-row assertion unchanged.
+const EXPECTED_RGBA_FNV1A64: u64 = 0x8d37_2258_8bef_564f;
 
 #[derive(Clone, Copy, Debug)]
 struct InkLine {

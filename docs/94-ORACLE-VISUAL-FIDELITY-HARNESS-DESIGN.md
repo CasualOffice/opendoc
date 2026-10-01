@@ -368,6 +368,71 @@ The residual +53 on the real document is the **separate** Carlito question below
 LibreOffice uses `sTypoAscender` for faces whose `hhea` line gap is 0, we use
 `hhea`, and none of the bundled faces sets `USE_TYPO_METRICS` to ask for it.
 
+### Closed with it: cell borders on the horizontal axis
+
+The counterpart of the vertical reserve, and the same physical fact: a border
+occupies space, so a bordered cell's content box is narrower and its text wraps
+earlier. It took none at all, so a bordered cell fitted text no other renderer
+fits.
+
+Measured against LibreOffice 26.2.4.2 on a single 6000-twip cell with zero
+margins, reading the content box off a left-aligned and a right-aligned paragraph
+inside it — the right-aligned one gives the box's right edge directly, which a
+left-aligned paragraph cannot:
+
+| cell's vertical borders | content narrows by |
+| --- | --- |
+| left + right, 120 twips each | 120 (60 + 60) |
+| left only, 120 twips | 60 |
+| right only, 120 twips | 60 |
+
+So **half** of each edge, which is the collapsed-border model (only the inner half
+lies inside the cell). Confirmed at `w:sz` 4/8/16/24/48 and for `double` at 4/8/16,
+where it is half of the *total* 3× thickness. Every one of those eleven probes now
+agrees to 3 twips — the same constant offset the no-border case has — against up
+to +117 before.
+
+The wrapping followed, which is the part that matters: a probe that wrapped
+9/8/9/6 words against the oracle's 8/8/8/8 now wraps 8/8/8/8 too, and on
+`visual-containment` one word repaginated across the page-4/5 boundary.
+
+**The two axes take different shares, and that is the oracle's asymmetry, not a
+simplification.** A horizontal edge charges the row its full thickness (measured:
+a one-row table with 120-twip top and bottom borders grows by 240); a vertical
+edge charges the content width half of its own. LibreOffice also narrows the box
+**without moving its left edge** — a 120-twip left border does not shift its text
+right at all, at any width tested — so the reserve comes off the width only and no
+text moves horizontally. Physically the inner half of a collapsed left border does
+overlap the first glyph and Word may inset instead; that is recorded as an open
+question rather than invented, because only the width is measurable here.
+
+### Measured and decided against: `w:lineRule="exact"`
+
+Now pinned at **ten** data points rather than one, and the answer is why it is not
+being implemented. LibreOffice places an `exact` line's baseline at exactly
+**0.8 × the authored height**, from the box top:
+
+| `w:line` | 200 | 300 | 360 | 480 | 720 | 480 @24pt | 720 @24pt |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline / height | 0.80 | 0.80 | 0.80 | 0.80 | 0.80 | 0.80 | 0.80 |
+
+Exact at five heights and **font-size-independent** — 12pt and 24pt give the same
+ratio, so it is not derived from the face's metrics at all. A bare 4/5 that no
+font explains is an implementation constant, and copying it would be fitting the
+proxy rather than implementing the format. Word's own rule for fixed line spacing
+is described as positioning the baseline from the box *bottom* by the font's
+descent, which this is not. So the measurement is recorded and the behaviour left
+alone until there is a Word-produced fixture to settle it (FID-P-02).
+
+### Measured and found already correct: indents
+
+Six probes — no indent, `w:ind@start`, `hanging`, `firstLine`, a numbered list
+with a hanging marker, and a list whose paragraph overrides the numbering's
+indent — all agree with the oracle to 2 twips with identical wrapping. So the
+−290/−362 twip `x0` divergence on five pages of the customer document is **not**
+indent handling, and it is **not reproduced** by any probe yet. Recorded as open
+rather than guessed at.
+
 ### Signals this instrument has measured and not yet closed
 
 Each is reproducible with one command; none is a judgement by eye.
@@ -419,12 +484,8 @@ Each is reproducible with one command; none is a judgement by eye.
    hang).
 4. **Comparable line count**, ours short by 1–3 on five pages. Remains after the
    substitution fix, so it is not that; the per-line dump localises it.
-5. **Left and right cell borders take no horizontal space either** — the same
-   omission as the closed vertical one, on the other axis. Measured on the border
-   probes: a cell's text region ends 10 twips further right at a 20-twip border
-   and 28 at a 60-twip one. It does not accumulate into pagination the way the
-   vertical one did, which is why it was not in FID-L-21's symptoms, and it is
-   the next thing to close.
+5. ~~**Left and right cell borders take no horizontal space either**~~ —
+   **fixed**, see below.
 
 ## Open questions
 
