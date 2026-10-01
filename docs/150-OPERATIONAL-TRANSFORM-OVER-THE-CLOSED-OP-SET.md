@@ -386,19 +386,21 @@ the anchor is a node id, so it is rebased by liveness alone.
 ## 6. The refusal surface, in full
 
 Refusing is a first-class answer. These are the pairs `transform` will not answer, each with
-the reason no answer exists. `transform::REFUSAL_REASONS` holds the sentences — fourteen of
+the reason no answer exists. `transform::REFUSAL_REASONS` holds the sentences — sixteen of
 them for these ten causes, because U2, U3 and U4 each say something different depending on
-which side of the pair asked. `the_refusal_surface_is_exactly_these_cases` fails the build two
+which side of the pair asked, and ADR-056 added two more: U5 now says a different thing when the
+envelope *declared* the side it meant, and a declared block anchor the target cannot resolve has
+a refusal of its own. `the_refusal_surface_is_exactly_these_cases` fails the build two
 ways: if a refusal is written as a bare string literal instead of a listed constant, and if a
 refusal outside the list reaches a caller.
 
 | # | Pair | Why there is no answer |
 | --- | --- | --- |
 | **U1** | `SetHyperlink` whose range straddles a concurrent `SplitParagraph` | Two wrappers are needed and the operation carries one fresh `NodeId`. |
-| **U2** | A sibling-indexed operation meeting a concurrent `SplitParagraph`/`JoinParagraphs`, with no `BlockPlacement` | §4: neither operation says where the other sits. Answered when a placement is supplied. |
+| **U2** | A sibling-indexed operation meeting a concurrent `SplitParagraph`/`JoinParagraphs`, with no `BlockPlacement` | §4: neither operation says where the other sits. Answered when a placement is supplied — **and, since ADR-056, answered with no placement at all for an insertion *gap* whose envelope declares a `BlockAnchor`.** It still stands for a removal band, which is a span of victims rather than one anchor. |
 | **U3** | `JoinParagraphs` whose two paragraphs a concurrent split or insertion separated | No operation joins non-adjacent paragraphs. |
 | **U4** | An inline-index operation meeting a change to the same paragraph's inline membership expressed as a byte offset | The index the run splitting produced is on neither operation. |
-| **U5** | `InsertText`/`InsertField` at offset 0 of a paragraph a concurrent join absorbed | The position lands exactly on the run boundary the join created, and `Pos` carries no affinity, so the operation cannot say which side it meant. §9.3. |
+| **U5** | `InsertText`/`InsertField` at offset 0 of a paragraph a concurrent join absorbed | The position lands exactly on the run boundary the join created. **Since ADR-056 the envelope can declare the side, and that splits this row in two:** `Affinity::Before` is *answered*; `Affinity::After` is refused because no operation attaches text to the run after a boundary, and an undeclared insertion is refused as before. §9.2, §9.5. |
 | **U6** | A block removal whose span covers either paragraph of a concurrent join | After the join, `second`'s text lives inside `first`; removing `first` removes text the other order leaves standing, and no operation removes "the bytes that came from `second`". |
 | **U7** | A whole-paragraph rewrite meeting a concurrent split or join of that paragraph | §5.6. |
 | **U8** | A whole-paragraph rewrite meeting a concurrent edit inside that paragraph | §5.6. |
@@ -511,14 +513,26 @@ share one normal form.
 These are consequences of the op set, not of the transform, and each would need an op-set
 change (ADR-030 I2) to close. They are reported, not taken.
 
-1. **Block operations are index-addressed, not node-addressed.** `InsertBlocks`/`DeleteBlocks`/
+1. ~~**Block operations are index-addressed, not node-addressed.**~~ **Closed for insertion
+   gaps 2026-10-02 — §9.5, ADR-056. Still open for removals.** `InsertBlocks`/`DeleteBlocks`/
    `InsertTable`/`InsertFieldRange` name a sibling index. That is the *only* reason §4's
    placement seam exists, and the only reason a paste concurrent with an Enter needs a fact
-   about the tree. A node-anchored form ("before this block") would remove the seam entirely.
-2. **`Pos` carries no affinity.** `Affinity` exists on the envelope's `Position` and not on the
-   operation, so an insertion at a run boundary cannot say which side of it the text belongs
-   to. That is refusal U5, and it is also why the §5.4 table has to reverse-engineer `apply`'s
-   attachment rule instead of reading an intent the operation declared.
+   about the tree. A node-anchored form ("before this block") would remove the seam entirely —
+   and it does, carried on the **envelope** rather than in the operation, so no variant changed.
+   **`DeleteBlocks` is deliberately not covered:** a removal band is not one anchor but a *span
+   of victims*, and the node-addressed form of that is a list the operation does not carry.
+   **Refusal U6 therefore stands**, and so does the placement seam for it.
+2. ~~**`Pos` carries no affinity.**~~ **Half closed 2026-10-02 — §9.5, ADR-056.** `Affinity`
+   exists on the envelope's `Position` and not on the operation, so an insertion at a run
+   boundary cannot say which side of it the text belongs to. That is refusal U5. The declaration
+   now travels on the envelope, so the *intent* is known — and one of its two values is
+   expressible and one is not. `Affinity::Before` is answered; `Affinity::After`, which is the
+   commoner intent, is still refused because **no operation in the set attaches text to the run
+   after a boundary**. The remaining half is an op-set question again, and a narrower one.
+   §5.4's table is **unchanged** and still reads `apply`'s attachment rule: content order is
+   decided by that rule and the settled order, and a declared affinity does not and must not
+   override it — it says what the author *meant*, which is a different question from what
+   `apply` *does*.
 3. ~~**Operations do not carry the identities they cause to be minted.**~~ **Closed** — see
    §9.4 and ADR-051. `apply` no longer holds an id generator at all; an operation travels with
    the *space* it mints in, and every replica applying it names the nodes it creates
@@ -594,6 +608,63 @@ suite.
    across replicas is still not possible**. `WireOperation::introduces` already enumerates
    the ids an operation declares in its own fields; what is missing is the undeclared mints
    inside `apply`. Recorded as `152` §10 Q8.
+
+### 9.5 How §9.1 and §9.2 were closed, and why not the way they proposed
+
+**ADR-056.** Both proposed an operation-set change and neither needed one, for the same reason
+ADR-051 found one increment earlier: **neither fact changes what `apply` does.** An index is
+what `apply` consumes and it is already exact on the author's own replica. An affinity is not
+consumed by `apply` at all — the attachment rule in §5.4 is fixed, and changing it would break
+convergence. Both are **authoring** facts: true of the moment the operation was written, needed
+only by a *transform*, and needed only on a replica that did not write it. A receiver cannot
+reconstruct one, so it must travel; `apply` must not read one, so it must not be in the
+operation. That is exactly the shape of an envelope field.
+
+So an `Intent` travels beside each operation, one per operation, in the same order `Mint`
+already uses:
+
+| Declaration | What it says | Read by |
+| --- | --- | --- |
+| `BlockAnchor::Before(NodeId)` / `AtEnd` | the block the index was counted to | `transform_declared`, `resolve_anchor` |
+| `Affinity::Before` / `After` | which side of a boundary the content belongs to | `transform_declared` |
+
+**An anchor is rebased by doing nothing.** A split carves out a new block and a join destroys
+one; neither *renames* the anchor, so "put it between the same two neighbours" survives
+untouched and `transform` returns the slot unchanged. The index is re-derived **once**, by
+`resolve_anchor`, immediately before the operation is applied.
+
+**Why the resolution is not inside `transform`, which is the part worth reading twice.** An
+arrival is rebased over *every* commit since its base revision. A resolution performed inside
+one transform step would be against an intermediate state and would then have to be rebased by
+the next step — which is the arithmetic the anchor exists to remove. The anchor is invariant
+across the whole sequence, so there is exactly one correct moment to resolve it, and it is the
+last one. That is what keeps `transform` pure: two operations and a settled order, never a
+document.
+
+**And it inverts §4's hardest precondition.** `BlockPlacement` must describe the *base* state,
+which §4 calls the thing most likely to be got wrong above this layer because **neither replica
+holds it** while transforming. `BlockTarget` describes the state the caller is *about to
+mutate*, which every caller holds by definition. Same shape, opposite precondition: one is a
+promise that is hard to keep, the other is a fact in hand. They are two traits over one
+`BlockIndex`, and the names are what stop the wrong one being passed.
+
+**Measured before it was chosen.** Taking §9.2 in the op set was tried first. Adding one field
+to `Pos` fails the build with two `E0063` in `casual-doc-wasm` (`lib.rs:2311`, `lib.rs:5712`) — a
+file another lane held — which is the "two green PRs can make `main` red" shape the working
+contract records. An envelope field is additive instead: a transaction that declares nothing
+behaves exactly as it did, so the change is reversible, and if the op-set change is ever taken
+the declaration becomes redundant rather than wrong.
+
+**What this unblocks.** The two findings that were about to move the **existing** op shapes no
+longer do, which is what `152` §9 required before a byte codec could be written — the only thing
+standing in front of 6.4, and therefore in front of 6.1 and 6.6.
+
+Not "the set is frozen", which would be an overstatement: ADR-054 and ADR-059 both propose an
+addition to it. What makes bytes safe to write is the **format** rather than a promise about the
+future — a new variant is a new externally-tagged name, so an older decoder refuses it *by name*
+instead of misparsing it. A compatibility surface has to survive the set growing; what it must not
+do is be frozen while the shapes it already carries are moving.
+
 
 ---
 

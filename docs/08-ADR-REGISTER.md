@@ -2308,6 +2308,360 @@ costed against a fallback that does not exist.
 - **Owner decision needed:** whether to add the operation. Until then suggesting mode stays
   out of a session, with the refusal code `152` §5.3 gives it.
 
+## ADR-056 — `150` §9.1 and §9.2 are answered on the envelope, and the closed operation set does not change
+
+- **Status:** Accepted, implemented.
+- **Date:** 2026-10-02.
+- **Context:** `152` §9 named exactly two remaining blockers for the byte codec, and said
+  freezing bytes over them is *"the one thing a compatibility surface must not do"*:
+  - **`150` §9.1** — `InsertBlocks`/`DeleteBlocks`/`InsertTable`/`InsertFieldRange` name a
+    sibling **index**, which is why the `BlockPlacement` seam exists and why refusals U2 and
+    U6 exist;
+  - **`150` §9.2** — `Pos` carries no **affinity**, which is refusal U5.
+
+  Each was recorded as needing a change to the closed operation set, which ADR-030 I2 reserves
+  to the owner.
+- **Decision: neither change is made, and neither is needed.** Both facts travel on the
+  **envelope**, beside the operation, as an `Intent`. **No `Operation` variant changed and
+  `Pos` is untouched.** `transform` gains `transform_declared`, which reads the declaration;
+  `casual_doc_transaction::resolve_anchor` re-derives a slot's index from its anchor.
+- **Why the envelope is the right place, and not a convenience.** Neither fact changes what
+  `apply` does. An index is what `apply` consumes and it is already exact on the author's own
+  replica; an affinity is not consumed by `apply` at all, because
+  `casual_doc_edit::insert_text`'s attachment rule is fixed and changing it would break
+  convergence (`150` §5.4). Both are **authoring** facts — true of the moment an operation was
+  written, needed only by a *transform*, and needed only on a replica that did not write it.
+  A receiver cannot reconstruct one, which is why it must travel; `apply` must not read one,
+  which is why it must not be in the operation.
+- **The precedent, named:** ADR-051, one increment earlier, for identity. `150` §9.3 proposed
+  that an operation enumerate the ids it mints; that could not work, and the answer was to
+  carry the *space* on the envelope. This is the same move twice more, and the consequence is
+  the same one: the two findings that were about to move the **existing** shapes no longer do, so
+  the codec is unblocked **without a waiver**. Not "the set is frozen", which would be an
+  overstatement — ADR-054 and ADR-059 both propose an addition to it. ADR-057's format is additive
+  under one by construction rather than by promise: an older decoder refuses an unknown variant by
+  name rather than misparsing it.
+- **Measured, not assumed.** Taking §9.2 in the op set was tried first: adding one field to
+  `Pos` fails the build with two `E0063` in `casual-doc-wasm` (`lib.rs:2311`, `lib.rs:5712`) —
+  a file another lane holds. That is precisely the "two green PRs can make `main` red" shape
+  §5a of the working contract records, and it is what makes the op-set route **irreversible**
+  where an envelope field is additive: a transaction that declares nothing behaves exactly as
+  it did, so nothing has to be updated at once and a decoder meeting an unknown declaration
+  skips it.
+- **Shape.**
+
+  | On the envelope | What it says | Read by |
+  | --- | --- | --- |
+  | `Intent::anchor` → `BlockAnchor::Before(NodeId)` / `AtEnd` | the block an index was counted to | `transform_declared`, `resolve_anchor` |
+  | `Intent::affinity` → `Affinity::Before` / `After` | which side of a boundary the content belongs to | `transform_declared` |
+
+  `Transaction::with_intents` is a **builder**, not a parameter on `new`/`reserve`, for the
+  same reason the decision itself went this way: a parameter is a breaking change to every
+  call site. A missing entry reads as `Intent::NONE`, which is what every caller declared
+  before this existed. `Commit` retains them, because a commit becomes `against` for the next
+  arrival; `WireOperation::declaring` carries them, because a receiver cannot recompute them.
+- **An anchor is rebased by doing nothing.** A concurrent split carves out a new block and a
+  concurrent join destroys one; neither *renames* the anchor, so the intention "put it between
+  the same two neighbours" survives untouched and `transform` returns the slot unchanged.
+  The cached index is re-derived **once**, by `resolve_anchor`, immediately before the
+  operation is applied — which is the only moment the state it must be right about exists.
+  That is also why resolution is not inside `transform`: an arrival is rebased over *every*
+  commit since its base revision, and resolving against an intermediate state would have to be
+  rebased again, reintroducing the arithmetic the anchor removes. `transform` stays pure.
+- **`BlockTarget` is a second trait over one `BlockIndex`, deliberately.** `BlockPlacement`
+  must describe the **base** state, which neither replica holds while it transforms;
+  `BlockTarget` describes the state the caller is **about to mutate**, which every caller holds
+  by definition. One is a promise that is hard to keep and the other is a fact in hand, and the
+  names are what stop the wrong one being passed. One index answers both.
+- **What this closes, stated without overstating.**
+  - **U2 for insertion gaps** — `InsertBlocks`/`InsertTable`/`InsertFieldRange` over a
+    concurrent split or join now need **no placement at all**.
+  - **Half of U5** — a declared `Affinity::Before` is answered. `Affinity::After` is the
+    commoner intent (typing at a paragraph start takes the following character's formatting in
+    Word and in Docs) and remains **refused**, because no operation in the set attaches text to
+    the run *after* a boundary. Declaring it does not make it expressible; it makes the refusal
+    say the engine understood and cannot comply, which is a different and better statement than
+    "nobody knows what you meant". Closing it properly needs either an operation that attaches
+    on the following side or a run-property argument a pure transform cannot read.
+  - **A destroyed anchor is a reportable loss**, never a fall-back to the stale index.
+- **Still open, and not quietly treated as covered.** `DeleteBlocks` is *not* anchored: a
+  removal band is not one anchor but a span of victims, and the node-addressed form of that is
+  a list the operation does not carry. Refusal U6 therefore stands. `150` §9.1 is updated in
+  place to say so.
+- **Mutation proofs.** (1) Ignore a declared anchor in `rebase_coordinates` →
+  `a_declared_anchor_answers_what_no_base_state_placement_could` fails with *"a declared anchor
+  answers it with no placement: Unsupported { … reason: \"no block placement: neither operation
+  says where the split paragraph sits\" }"*. (2) Treat `Affinity::After` as answerable →
+  `a_declared_affinity_answers_the_insertion_a_concurrent_join_absorbed` fails with the
+  transform returning `Ok(Keep(InsertText { … offset: 8 }))` where a refusal was required.
+  (3) Drop the session's `resolve_anchor` call →
+  `an_anchored_arrival_is_resolved_before_it_is_applied` fails with the paste landing at body
+  index 2 instead of 3 (`left: 3, right: 4`). (4) Make a destroyed anchor resolve to the
+  nearest index instead of reporting → `a_destroyed_anchor_is_a_loss_and_never_a_fallback_to_
+  the_stale_index` fails with `left: Ok(()), right: Err(AnchorDestroyed { … })`.
+- **Not decided here:** whether to *also* take the op-set change later. If one is ever taken,
+  the envelope declaration becomes redundant rather than wrong, which is the reversibility this
+  decision was chosen for.
+
+
+## ADR-057 — The operation set derives `serde`, and the wire is a versioned frame around a self-describing payload
+
+- **Status:** Accepted, implemented.
+- **Date:** 2026-10-02.
+- **Context:** `107` 6.4. `152` §9 would not freeze a byte codec while `150` §9.1 and §9.2 were
+  still about to move the operation shapes — *"the one thing a compatibility surface must not
+  do"*. ADR-056 answered both on the envelope, no `Operation` variant changed, and the shapes
+  are final. 6.1 (durability) and 6.6 (the relay binary) were both waiting on this and nothing
+  else.
+- **Decision 1: the op set derives `serde` rather than being hand-encoded.** `casual-doc-edit`
+  had no `serde` at all; it has it now. The model's values already derive it, so the operations'
+  payloads and the document snapshot (`25`) share **one** value schema.
+  - **Why not 58 hand-written encoders.** A hand-written encoder and the `apply` it must agree
+    with are *two definitions of one schema*, and two definitions of one rule diverge. `150`
+    §3.2 makes the same argument pointing the other way: an exhaustive match is right where
+    each arm is a **decision** someone must take, and wrong where every arm is the same
+    mechanical transcription. Nobody ever has to decide how a `u32` is encoded.
+  - **What it costs, stated plainly:** `serde`'s derive is externally tagged and field-named, so
+    **field names are the compatibility surface**. Adding a field is additive; renaming one is a
+    break that no type error catches and no round-trip test can see, because both sides of a
+    round trip move together. `GOLDEN_CHUNK` is the only guard that can, and it is why the
+    golden vector is not optional decoration.
+  - `Label` is `&'static str` and therefore **not** on the wire; `147` §7 Q2 already recorded
+    that a persisted log needs a stable code instead. Nothing here needs one, because a relay's
+    ordered entry carries no label (ADR-047 — it holds no document, so it holds only the order).
+- **Decision 2: a 12-byte frame — magic, frame version, payload encoding, payload length.**
+  - **The established pattern, named:** a versioned length-delimited frame around a
+    self-describing payload. That is protobuf's and CBOR's shared property, and the only one
+    that matters: a reader that meets something it does not understand can measure it and move
+    on.
+  - **`bincode`/`postcard` were rejected on that exact point.** They are smaller and are *not*
+    self-describing: the schema is the reader's own struct definition, so a field a newer sender
+    added is a silent misparse rather than a skipped one. For bytes two different versions of
+    this software will read, that trade is the wrong way round. Neither is a new dependency
+    either way — this adds **no new package**; `Cargo.lock` gained one dependency *edge*.
+  - **The payload encoding is a field, not an assumption.** The register's pending list reserves
+    *"canonical CBOR encoding profile and golden vectors"* for the **document** snapshot. Nothing
+    here pre-empts it: swapping the payload encoding is a `PayloadEncoding` value, and a decoder
+    meeting one it does not hold refuses by name. JSON is chosen for this increment because it is
+    what the model's values are already round-tripped in. Its known cost — `152` §10 Q6's `Vec<u8>`
+    as decimal numbers, about 4× — does **not** land on operations, because media travels as a
+    *reference* and the bytes stay in the host's resource map. It would land on a snapshot, and
+    that is exactly why the snapshot half of 6.1 must measure before reusing this encoding.
+  - **Every bound is a refusal, and ordered so the bound comes first.** A codec is the only place
+    in the crate that reads bytes it did not write, so `MAX_FRAME_BYTES` is checked from the
+    **header**, before the declared length is used for anything at all — a field saying four
+    gigabytes must not size an allocation on its way to being rejected. Trailing bytes are
+    refused rather than ignored: they mean writer and reader disagree about the record, and
+    guessing which is right is how a log loses its tail.
+  - **The codec is a collaboration module, not an exemption from the rule that guards them.**
+    `the_keystroke_path_runs_no_transform` was extended rather than relaxed: `codec.rs` joins
+    `protocol.rs`/`wire.rs`/`session.rs`, *and* reaching `codec::` from anywhere else is now
+    itself an offence, *and* `casual_doc_transaction::codec` joins what the live editor may not
+    name. A single-user edit encodes nothing; a lone editor saves through `casual-doc-io`.
+- **Mutation proofs.** (1) Check `MAX_FRAME_BYTES` *after* comparing the declared length with the
+  bytes present → `every_refusal_names_what_was_expected_and_none_of_them_allocates_the_declared_
+  length` fails with `Err(Truncated { declared: 4294967295, available: 0 })` where
+  `Err(TooLarge { .. })` was required. (2) Add `#[serde(deny_unknown_fields)]` to `Submission` →
+  `a_field_a_newer_sender_added_is_skipped_rather_than_refused` fails with *"unknown field
+  `aFieldFromTheFuture`, expected one of `client`, `seq`, `base`, `operations`"*. (3) Rename
+  `WireOperation::operation` to `op` on the wire → `the_golden_chunk_is_byte_for_byte_what_this_
+  build_writes` fails, which is the rename no other guard can see. (4) Plant `codec::` in a
+  keystroke-path module → `the_keystroke_path_runs_no_transform` reports *"v0.rs reaches
+  `codec::`"*.
+- **Not decided here:** the document snapshot's encoding (still the pending CBOR ADR); whether
+  the client's own durable log (`112`) reuses this frame — if it does, that change has to argue
+  with the collaboration-module list, which is the point of the list.
+
+
+## ADR-058 — The relay is a workspace member under `server/`, and its durability is a checkpoint plus a write-ahead tail
+
+- **Status:** Accepted, implemented. Transport is std-only by deliberate choice, below.
+- **Date:** 2026-10-02.
+- **Context:** `107` 6.1 (durability) and 6.6 (the relay binary). Both were blocked on the byte
+  codec, which was blocked on the operation shapes; ADR-056 and ADR-057 cleared both.
+- **Decision 1: `server/`, not `crates/`.** **No mandatory server** is a structural property of
+  this project rather than a preference (`10`, `AGENTS.md`), and a relay that `crates/` *could*
+  depend on is a relay that becomes required by accident, one `use` at a time. So the direction
+  of the dependency is a build-level fact: `server/` sees the engine and the engine cannot see
+  `server/`. `nothing_under_crates_depends_on_the_relay` reads the **manifests**, because a
+  `path` dependency is how it would actually happen, and it asserts it read at least ten of them
+  so it cannot pass by looking at nothing.
+- **Decision 2: durability is a checkpoint plus a write-ahead tail.** Named before built: this is
+  what every database does, and the alternative — rewrite the whole state per change — is what
+  makes a relay O(history) per edit. Compaction renames a freshly written file over the old one,
+  because a compaction that truncates in place is the operation that loses the data.
+- **What is durable is remarkably little, and that follows from ADR-047.** A dumb relay holds no
+  document, so the only state it can lose is **the order it imposed** plus the dedupe table that
+  stops a retried chunk landing twice. A relay that persisted a document would be a relay that
+  could disagree with its clients about one.
+- **Decision 3: recovery verifies rather than trusts.** A record carries the submission *and the
+  revision the relay ordered it at*, and recovery hands the submission back to
+  `ServerSession::commit` and **checks the answer matches**. Replaying the *outcome* instead —
+  writing the ordered entry straight into the history — would make every recovery "succeed",
+  including one where the ordering rule had changed under the file; and a relay whose order is
+  not the order its clients were acknowledged against has diverged everybody silently. Same
+  argument as ADR-051's: verifiable, not trusted.
+- **A torn tail is expected; a torn middle is not.** A process can die between appends, so the
+  last frame may be partial: that is discarded **and counted**, because the count is the only
+  evidence the previous run did not shut down cleanly. A frame that fails anywhere else is
+  refused, because the records after it belong to an order the file can no longer describe.
+- **Decision 4: journal first, answer second.** A client drops a chunk from its outstanding set
+  the moment it is acknowledged, so an acknowledgement that outlives its record loses the work
+  outright, while an un-acknowledged chunk is simply retried. The asymmetry is why `Room::commit`
+  returns the journal's **error** rather than the relay's answer when the write fails.
+- **Decision 5: the transport is `std` only, thread-per-connection — and that is a limit, not a
+  claim.** An async runtime is a dependency decision (`tokio` is a tree, and
+  `dependency-policy` runs `cargo deny`, a gate this lane cannot run), so it is left to the
+  owner. Thread-per-connection costs a thread per participant and suits tens per room, not
+  thousands. It is also the right shape for a *dumb* relay, whose per-message work is "append,
+  number, write to N sockets" and never a document: there is no computation to overlap, only i/o.
+  Moving to async is an optimisation of a working mechanism.
+  **This adds no new package at all** — `std::net`, `std::thread`, and the codec's own frame.
+- **`Frames` exists because a stream has no record boundaries.** Reading one message is: read
+  until the frame its own header measures is complete, decode, keep the remainder. Assuming one
+  `read` is one message, or scanning for a delimiter a payload may contain, is the bug every
+  hand-rolled framing has, so it is written once.
+- **Mutation proofs.** (1) Answer before journalling → `a_chunk_is_durable_before_the_room_says_
+  it_is_ordered` fails `left: 0, right: 1`. (2) Recovery accepts any ordered replay → `recovery_
+  checks_the_decision_and_refuses_a_journal_that_disagrees` fails, returning `Ok` with a
+  recovered relay. (3) Skip a corrupt frame instead of refusing → `a_corrupt_frame_in_the_middle_
+  is_refused_rather_than_skipped` fails with `Err(DecisionDiffers { logged: Revision(2),
+  replayed: None })` — the damage surfacing later and in the wrong vocabulary, which is the point.
+  (4) Add `opendoc-relay` to `casual-doc-edit`'s dev-dependencies →
+  `nothing_under_crates_depends_on_the_relay` names the manifest and both strings.
+- **A defect found by arithmetic, and the bound it needed.** A checkpoint embeds the relay's whole
+  retained history — `DEFAULT_RETAINED_REVISIONS` (400) entries of up to `CHUNK_BUDGET_BYTES`
+  (3 MB), about **1.2 GB** — while the codec's `MAX_FRAME_BYTES` is **30 MB**, because that one is a
+  backstop against a hostile *socket*. Reading the journal with the socket's bound meant a busy
+  relay writing a checkpoint it could never read back: `compact` succeeds and the next `open`
+  refuses its own file, taking the order with it. No test would ever have seen it, because no test
+  writes a 30 MB checkpoint — it was found by reading two constants against each other. The journal
+  therefore reads with its own derived bound, and
+  `the_journal_s_bound_covers_the_largest_checkpoint_the_relay_can_hold` guards the **arithmetic**,
+  which is the only thing that can be guarded here. Raising the codec's constant instead would have
+  been the wrong fix — a socket is not a file — and the guard asserts that too.
+  **The underlying shape is still wrong and is recorded rather than hidden:** a frame is only that
+  large because a checkpoint *embeds* the history. Writing the history as one bounded frame per
+  entry, which is what every other record already is, removes the special bound entirely; it needs
+  `ServerSession` to be reconstructible from its state plus a replay of its entries, an API it does
+  not have, so it is the next increment.
+- **Stated rather than implied:** the durability guard proves the **ordering** of the write
+  against the answer, not the `fsync`. A second `open` in the same process reads the page cache,
+  so removing `sync_data` leaves it green. Durability against power loss is not observable from a
+  unit test in one process, so that line is reviewed rather than tested — recorded here because a
+  guard claimed to prove more than it does is how this repository has been bitten before.
+- **Fan-out is built, because a relay that does not fan out is not a relay.** `Participants` is
+  generic over the writer so its two rules are testable against a `Vec<u8>` rather than a port — a
+  rule that needs a socket to exercise is a rule that gets exercised by hand, once. The rules:
+  **the author is excluded** (a client that received its own chunk back would apply its own edit
+  twice; what it is waiting for is the acknowledgement, a different message on a different path),
+  and **a failed write is returned rather than swallowed** (that participant is now *behind the
+  order*, and `152` §5.5's resume is how it catches up — which only happens if somebody noticed).
+  A **duplicate** is acknowledged and deliberately **not** fanned out again. The room and the
+  participant set sit behind **one** lock, so decide → journal → answer → fan out cannot
+  interleave and two participants cannot be told about the order in two different orders. A
+  connection that ends for any reason leaves the set, or every future chunk is written to a dead
+  socket and reported as failed forever.
+  It is **not** a queue: a slow participant blocks the fan-out for its own write, because
+  per-participant buffering needs back-pressure and a policy for a reader that never drains, and
+  both are designs rather than details.
+- **Presence fan-out is built too, and is the one place the identity direction is visible.** A
+  client sends `ClientMessage::Presence`, which has **no identity field**; the relay fans out
+  `ServerMessage::Awareness { client, update }`, where the identity is **the one the relay
+  attached**. That is what makes a forged identity *unexpressible* rather than merely rejected, and
+  it is ONLYOFFICE's own shape. Three rules follow and each has a guard: a **stale** update (an
+  older or equal clock) is dropped rather than fanned, because sending it would move a caret
+  *backwards* on every other screen; presence from a connection that has **not joined** is dropped,
+  because there is nobody to attribute it to and inventing one is what the no-identity-field design
+  exists to prevent; and a **departure is announced**, because a caret that outlives its owner is
+  worse than no caret — the reader believes somebody is there. Presence failures are deliberately
+  **not** reported as "behind", unlike an ordered chunk: presence is not ordered, so a participant
+  that missed one is not behind anything and the next update corrects it.
+- **The message handling moved out of the binary, and that was a correction rather than tidying.**
+  It was written in `main.rs` first, where every decision above sat behind a `TcpStream` and **no
+  test could reach any of them**. `relay::Relay<W>` is generic over the writer, so each one is
+  exercised against a `Vec<u8>`; the binary is now sockets and threads and nothing else. The part
+  that is hard to get right is the part a test can reach.
+- **Not built here:** a *typed* cursor payload (presence carries an opaque one and will until
+  `107` P-4 lands), and the host-signed grant (`152` §10 Q4) that an access level would be read
+  from.
+- **Five more mutation proofs, for fan-out and the relay's decisions.** (5) Drop the
+  author-exclusion → `the_author_receives_nothing_and_the_others_receive_the_bytes` fails
+  `left: [(0,3),(1,3),(2,3)], right: [(0,3),(1,0),(2,3)]`. (6) Swallow a failed write →
+  `a_participant_whose_write_failed_is_reported_rather_than_swallowed` fails `left: [], right:
+  [ClientId(1)]`. (7) Fan a **duplicate** out again →
+  `a_duplicate_chunk_is_acknowledged_and_not_fanned_out_a_second_time` fails `left: 2, right: 1`.
+  (8) Fan a **stale** presence update → `a_presence_update_that_says_nothing_new_is_not_fanned_out`
+  fails `left: 2, right: 1`. (9) Announce a departure unconditionally →
+  `a_connection_that_never_joined_can_disconnect_without_announcing_anything` fails with *"nobody
+  may be told that a participant who never arrived has left"*.
+
+
+## ADR-059 — `SetDocumentProtection`: the one operation that would make protection reachable
+
+- **Status:** **Proposed, designed, not implemented.** It adds a variant to the closed operation
+  set, which ADR-030 I2 reserves to the owner — and, separately, it cannot be landed by the
+  collaboration lane at all, for a reason that is measured below rather than asserted.
+- **Date:** 2026-10-02.
+- **Context:** ADR-052 made `w:documentProtection` **enforced** at the operation for `readOnly`,
+  `comments` and `trackedChanges`. It is now the sharpest instance of this repository's most
+  expensive recurring pattern, pointing the other way: the capability is *enforced* and
+  *unreachable*. A reader cannot restrict editing, and — worse — **cannot unrestrict it**, so a
+  document that arrives protected is permanently read-only in this editor while Word and
+  ONLYOFFICE both offer Review ▸ Restrict Editing. Import and export already round-trip the
+  policy faithfully, so nothing is lost on save; it simply cannot be *changed*.
+- **Decision (proposed).** One variant, in exactly the shape of the three definition operations
+  that landed with ADR-005:
+
+  ```rust
+  /// Install or remove the document's editing restriction (`w:documentProtection`).
+  ///
+  /// Document-global, not node-scoped, and its own inverse carrying the previous value
+  /// (`None` when there was none) — the same `Some`/`None` shape as
+  /// `SetStyleDefinition`, for the same reason: it inverts in both directions.
+  SetDocumentProtection {
+      protection: Option<DocumentProtection>,
+  },
+  ```
+
+  `DocumentProtection` is `Copy` and three fields wide, so it needs no `Box`. The whole of
+  `apply` is a swap of `definitions_mut().settings.document_protection`, returning the previous
+  value as the inverse.
+- **Why one variant and not a field on something existing.** The register's own precedent
+  (`InsertFieldRange`) states it: I2 is about keeping the set **closed and additive**, and a new
+  variant is additive while widening an existing one changes that operation's shape for every
+  caller. The three definition operations ADR-005 added are the template.
+- **The ordering trap, which is the only subtle part.** `refuse_if_protected` judges a batch on
+  its worst operation, so an operation that *lifts* a restriction would be refused by the
+  restriction it is lifting. The rule has to be that `SetDocumentProtection` is judged against
+  the protection in force **before** the batch and is itself exempt from `ReadOnly` — otherwise
+  `readOnly` is a one-way door and the feature is worse than absent. That is a decision about
+  authority, not about mechanics, and the honest form of it needs the session's access level
+  (`152` §10 Q4, still open): *the document* may say "do not edit me", and only a *participant
+  grant* can say who may overrule it. Until the grant exists, the local reader is the only
+  authority there is, which is exactly what Word does with an unpassworded restriction.
+- **Measured blast radius — 13 match sites, and 2 of them are not this lane's.** Adding the
+  variant was probed with a throwaway `ProbeVariant` and the compiler enumerated every site:
+  - **11 in this lane's own files**: `casual-doc-edit`'s `apply` dispatch and `protection.rs`'s
+    two exhaustive matches, and 9 in `casual-doc-transaction` (`transform/classify.rs` ×3,
+    `transform.rs` ×3, `transform/effect.rs`, `wire.rs` ×2).
+  - **2 in `crates/casual-doc-wasm/src/lib.rs`**, both exhaustive with no wildcard: the
+    `HistoryKind` classification (~line 799) and `caret_after` (~line 25779). A live lane holds
+    that 26,000-line file, and the working contract's §5a records precisely this shape as how two
+    green branches make `main` red.
+
+  So the change is **not blocked by design or by effort** — it is blocked by file ownership, and
+  it is small: the two wasm arms are `HistoryKind::DocumentProperties` (a protection change is a
+  document-wide policy edit, and Word labels it that way) and `Pos::new(doc_id, 0)` beside the
+  other document-global operations, which route through `apply_action_caret` with the caller's
+  own caret anyway.
+- **The reachability half is not optional.** `105` UX-004 requires every capability on **two**
+  surfaces, so landing the operation without Review ▸ Restrict Editing *and* a command-palette
+  entry would leave the same defect one layer up. That half is `webapp/`'s and is named here so
+  the operation is not mistaken for the feature.
+- **Owner decision needed:** whether to add the variant, and who may lift a restriction before
+  the host-signed grant exists.
+
 ## ADR-055 — A second document class is additive: new crates, a second surface, and seams published in place
 
 **Status:** Accepted for the shared-core work only, 2026-10-01. Specified in

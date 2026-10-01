@@ -17,6 +17,7 @@ members = [
     "crates/casual-doc-selection",
     "crates/casual-doc-transaction",
     "crates/casual-doc-wasm",
+    "server",
     "tools/opendoc-benchmark",
     "tools/opendoc-fidelity",
     "tools/opendoc-parity",

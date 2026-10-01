@@ -11,6 +11,12 @@ publish = false
 
 [dependencies]
 casual-doc-model.workspace = true
+# The operation set is a **compatibility surface** (`152` §9, `107` §8 Q5): a persisted log and
+# a wire chunk are both sequences of operations, and a format nobody can write is a format
+# nobody can version. The model's own values already derive serde, so deriving here rather than
+# hand-rolling 58 encoders means the op schema has exactly one definition and cannot disagree
+# with itself. ADR-057.
+serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

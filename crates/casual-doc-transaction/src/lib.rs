@@ -65,6 +65,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
@@ -73,6 +74,8 @@ use casual_doc_edit::{EditError, Mint};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
+pub mod codec;
+pub mod intent;
 pub mod presence;
 pub mod protocol;
 pub mod session;
@@ -83,6 +86,7 @@ pub mod wire;
 /// The live operation vocabulary. One set, re-exported rather than re-declared: a second
 /// enum over the same document is the defect doc 147 exists to remove.
 pub use casual_doc_edit::Operation;
+pub use intent::{AnchorError, BlockAnchor, BlockTarget, Intent, resolve_anchor};
 
 /// Monotonic session-local document revision.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -183,7 +187,7 @@ pub enum Coalesce {
 }
 
 /// Boundary behavior when an edit occurs at a position.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Affinity {
     /// Stay before content inserted or split at the same boundary.
     Before,
@@ -328,6 +332,7 @@ pub struct Transaction {
     coalesce: Coalesce,
     origin: Origin,
     mints: Vec<Mint>,
+    intents: Vec<Intent>,
     operations: Vec<Operation>,
 }
 
@@ -360,6 +365,7 @@ impl Transaction {
             coalesce: Coalesce::New,
             origin: Origin::Edit,
             mints,
+            intents: Vec::new(),
             operations,
         }
     }
@@ -387,6 +393,38 @@ impl Transaction {
     #[must_use]
     pub fn mints(&self) -> &[Mint] {
         &self.mints
+    }
+
+    /// The same transaction, declaring what its author knew that the operations cannot say.
+    ///
+    /// One [`Intent`] per operation, in the same order, exactly as `mints` is. A shorter
+    /// vector is not an error: a missing entry reads as [`Intent::NONE`], which is what every
+    /// caller declared before this existed, so adding the declaration is **additive** and
+    /// nothing has to be updated at once. See [`crate::intent`] for why these facts travel
+    /// here rather than inside the operations (doc 150 §9.1, §9.2, ADR-056).
+    ///
+    /// A builder rather than a parameter on [`Transaction::new`]/[`Transaction::reserve`] for
+    /// the same reason: adding a parameter is a breaking change to every call site, including
+    /// ones in crates this change has no business touching.
+    #[must_use]
+    pub fn with_intents(mut self, intents: Vec<Intent>) -> Self {
+        self.intents = intents;
+        self
+    }
+
+    /// What the author declared about each operation, in application order.
+    ///
+    /// Possibly shorter than [`Transaction::operations`]; read it through
+    /// [`Transaction::intent`] rather than by index.
+    #[must_use]
+    pub fn intents(&self) -> &[Intent] {
+        &self.intents
+    }
+
+    /// What the author declared about operation `index`, or [`Intent::NONE`].
+    #[must_use]
+    pub fn intent(&self, index: usize) -> Intent {
+        self.intents.get(index).copied().unwrap_or(Intent::NONE)
     }
 
     /// The same transaction, joining the newest undo group instead of opening one.
@@ -442,6 +480,7 @@ pub struct Commit {
     label: Label,
     origin: Origin,
     mints: Vec<Mint>,
+    intents: Vec<Intent>,
     operations: Vec<Operation>,
     inverse_operations: Vec<Operation>,
     position_map: PositionMap,
@@ -462,6 +501,22 @@ impl Commit {
     #[must_use]
     pub fn mints(&self) -> &[Mint] {
         &self.mints
+    }
+
+    /// What the author declared about each operation, in application order.
+    ///
+    /// Retained on the commit because a *rebase* reads it: an arriving operation is rebased
+    /// over the commits since its base revision, and an anchored slot stays anchored through
+    /// the whole sequence. Read it through [`Commit::intent`].
+    #[must_use]
+    pub fn intents(&self) -> &[Intent] {
+        &self.intents
+    }
+
+    /// What the author declared about operation `index`, or [`Intent::NONE`].
+    #[must_use]
+    pub fn intent(&self, index: usize) -> Intent {
+        self.intents.get(index).copied().unwrap_or(Intent::NONE)
     }
 
     /// The revision this commit was applied against.
@@ -754,6 +809,7 @@ impl RevisionLog {
             label: template.label,
             origin: template.origin,
             mints,
+            intents: template.intents.clone(),
             operations,
             inverse_operations,
             position_map: map,
@@ -836,6 +892,7 @@ impl RevisionLog {
             label: transaction.label,
             origin: transaction.origin,
             mints: transaction.mints,
+            intents: transaction.intents,
             operations: transaction.operations,
             inverse_operations: match transaction.coalesce {
                 Coalesce::ContinueKeepingFirstInverse => Vec::new(),

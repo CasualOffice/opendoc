@@ -654,8 +654,8 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-<!-- session-suite-count: 37 -->
-**37 tests** over the state machines, driving **two replicas and a relay in one process**. The
+<!-- session-suite-count: 38 -->
+**38 tests** over the state machines, driving **two replicas and a relay in one process**. The
 number is **derived, not maintained**: `the_session_suite_count_in_the_design_doc_is_derived`
 counts the suite and fails if this line disagrees, because a hand-kept count in a published
 document has twice drifted into a false public claim here (`104` read 114/47 against an actual
@@ -765,9 +765,11 @@ Each is out for a reason, not for lack of time.
 
 | Not built | Why, and what it waits for |
 | --- | --- |
-| **The byte codec** | `casual-doc-edit` has no `serde` at all. Of the three op-set findings that were about to move the shapes, **`150` §9.3 is now closed** — and it moved no `Operation` variant at all: the mint travels on the envelope (`Transaction`, and `WireOperation` on the wire), because the number of identities an operation mints is discovered at application time and cannot be enumerated at authoring time (`150` §9.4, ADR-051). What still moves the shapes is `150` §9.1 (node-addressed block operations) and §9.2 (`Pos` affinity). Freezing bytes over those is the one thing a compatibility surface must not do. `107` §8 Q5, `150` §10 Q5. |
-| **The relay binary** | It is a workspace member under `server/`, not a crate, and it needs the codec and a transport first. The state machine it will drive is here and is testable without it, which is the point of a state machine over supplied bytes. |
-| ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. The relay's fan-out of it waits on the relay. |
+| ~~**The byte codec**~~ | **Built 2026-10-02 — ADR-057.** The two findings that were moving the shapes are answered on the envelope (ADR-056), so **no `Operation` variant changed** and the two findings that were moving the *existing* shapes
+no longer do — the set may still grow (ADR-054, ADR-059), and the format is additive under that by
+construction rather than by promise. The op set derives `serde` — one schema definition rather than 58 hand-written encoders — inside a versioned length-delimited frame whose payload encoding is a *field*, so the pending CBOR decision is not pre-empted. Field names are therefore the surface, and `GOLDEN_CHUNK` is the only guard that can see a rename. `107` §8 Q5, `150` §10 Q5 closed for operations; the **snapshot** encoding is still open and must measure Q6's 4× before reusing JSON. |
+| ~~**The relay binary**~~ | **Built 2026-10-02 — ADR-058.** A workspace member under `server/`, with `nothing_under_crates_depends_on_the_relay` reading the *manifests* so the engine can never acquire a server by accident. Durability is a checkpoint plus a write-ahead tail whose recovery **re-takes the ordering decision and checks it**, rather than trusting the file; a torn tail is discarded and counted, a torn middle refused. `Room::commit` journals before it answers, because a client drops an acknowledged chunk. The transport is `std` only and thread-per-connection — a stated limit, since an async runtime is a dependency decision. Fan-out **is** built: the author is excluded, a failed write is returned so the resume path can catch that participant up, and a duplicate is acknowledged without being fanned again. Presence fan-out **is** built, with the identity the relay attaches rather than one a client could claim: a stale update is dropped, presence before a join is dropped, and a departure is announced. **Not** built: a typed cursor payload, which still waits on `107` P-4. |
+| ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. **The relay's fan-out of it landed 2026-10-02 (ADR-058).** |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
 | ~~**Any `casual-doc-wasm` change**~~ | **Done 2026-10-01** (§4.4). The editor mints through the model's `IdSpace`, not through the collaboration modules, so `the_live_editor_has_no_collaboration_dependency` still holds unchanged — which is the reason the partition was put in `casual-doc-model` rather than in `wire`. |
 

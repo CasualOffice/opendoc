@@ -37,6 +37,7 @@
 
 use crate::presence::PresenceUpdate;
 use crate::wire::WireOperation;
+use serde::{Deserialize, Serialize};
 
 /// The version both ends must agree on, checked for equality before anything else.
 ///
@@ -86,7 +87,7 @@ pub const CHUNK_BUDGET_BYTES: usize = 3 * 1024 * 1024;
 /// reads a clock. It is a per-relay, per-document counter and that is all it promises, so a
 /// clustered relay must carry its node alongside it; two nodes serving one document would
 /// otherwise both believe an edit was theirs.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ClientId(u64);
 
 impl ClientId {
@@ -113,7 +114,7 @@ impl ClientId {
 ///
 /// A client only ever names an absolute `Revision` in [`Base::Revision`], and only from a
 /// value the server just handed it. Doc 152 §5.2.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Revision(u64);
 
 impl Revision {
@@ -145,7 +146,7 @@ impl Revision {
 /// chunks with their original sequence numbers and the server answers
 /// [`Outcome::Duplicate`] for anything already ordered. Restarting the counter would let a
 /// new chunk collide with an old number and be discarded as a duplicate — silently.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Seq(u64);
 
 impl Seq {
@@ -170,7 +171,7 @@ impl Seq {
 /// increment carries no token, so "the identity it was issued to" is
 /// [`Join::identity`] — doc 152 §9 records the host-signed grant as the next increment's
 /// work, and §5.5 records why the key alone must never be enough.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ResumeKey(String);
 
 impl ResumeKey {
@@ -199,7 +200,7 @@ impl ResumeKey {
 /// rather than used alone: otherwise anyone holding a valid session could adopt another
 /// participant's [`ClientId`] and have that participant's submissions suppressed as
 /// duplicates.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Identity(String);
 
 impl Identity {
@@ -228,7 +229,7 @@ impl Identity {
 /// ordered before chunk *n* is read. A `Chained` chunk from a client with nothing accepted
 /// is **refused rather than guessed at**: it cannot happen from a correct client, and
 /// inventing a base is how divergence starts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Base {
     /// An absolute ordered position, named only from a value the server just handed out.
     Revision(Revision),
@@ -237,7 +238,7 @@ pub enum Base {
 }
 
 /// One chunk of a client's own operations, offered for ordering.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Submission {
     /// Who wrote it.
     pub client: ClientId,
@@ -250,7 +251,7 @@ pub struct Submission {
 }
 
 /// A client's opening message. **Nothing else is accepted before it.**
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct Join {
     /// The version this client speaks, compared for equality with [`PROTOCOL_VERSION`].
     pub protocol: u32,
@@ -261,7 +262,7 @@ pub struct Join {
 }
 
 /// What a reconnecting client offers so the server can recognise it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct Resume {
     /// The key this client presented on its previous join.
     pub key: ResumeKey,
@@ -270,7 +271,7 @@ pub struct Resume {
 }
 
 /// Client to server.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub enum ClientMessage {
     /// The opening message.
     Join(Join),
@@ -288,7 +289,7 @@ pub enum ClientMessage {
 }
 
 /// Somebody's ordered operations, to be applied locally.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Arrival {
     /// Where this chunk landed in the order.
     pub revision: Revision,
@@ -300,7 +301,7 @@ pub struct Arrival {
 }
 
 /// Server to client.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub enum ServerMessage {
     /// A first join: the participant's identity and where the document is.
     Welcome {
@@ -384,7 +385,7 @@ pub enum ServerMessage {
 /// saved, copy your work out*. The sibling engine answered an unparseable message with
 /// `CannotMerge` — naming the transform, the one part that was working — and lost a live
 /// debugging session to it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Refusal {
     /// The two ends do not speak the same protocol. Always terminal.

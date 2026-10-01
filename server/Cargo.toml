@@ -1,0 +1,34 @@
+[package]
+name = "opendoc-relay"
+description = "The optional collaboration relay: it orders chunks and holds no document (ADR-047)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# A workspace member under `server/`, deliberately not under `crates/`. Nothing in `crates/`
+# may depend on it, and `nothing_under_crates_depends_on_the_relay` fails the build if that
+# ever changes: a mandatory server is the one thing this project's position cannot survive.
+[lib]
+name = "opendoc_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "opendoc-relay"
+path = "src/main.rs"
+
+[dependencies]
+casual-doc-transaction.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+# The journal's guards drive a real relay through real chunks: a durability test that builds its
+# own fake submission proves the test's idea of one, not the engine's.
+casual-doc-edit.workspace = true
+casual-doc-model.workspace = true
+
+[lints]
+workspace = true

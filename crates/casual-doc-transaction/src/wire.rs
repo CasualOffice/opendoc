@@ -62,6 +62,7 @@
 use casual_doc_edit::{Mint, Operation};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
+use serde::{Deserialize, Serialize};
 
 use crate::protocol::ClientId;
 
@@ -106,10 +107,11 @@ pub fn document_space(document: &Document) -> IdSpace {
 /// the receiver, for one reason: the receiver must be able to check what the sender
 /// *claimed* to introduce against what its operation actually names. A sender that
 /// under-declares is caught by [`WireOperation::localise`] recomputing and comparing.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WireOperation {
     operation: Operation,
     mint: Mint,
+    intent: crate::Intent,
     introduces: Vec<NodeId>,
 }
 
@@ -126,8 +128,34 @@ impl WireOperation {
         Self {
             operation,
             mint,
+            intent: crate::Intent::NONE,
             introduces,
         }
+    }
+
+    /// The same wire operation, carrying what its author declared about it.
+    ///
+    /// An [`Intent`](crate::Intent) is an **authoring** fact — the block an index was counted
+    /// to, the side of a boundary content belongs to — and a receiver cannot reconstruct one,
+    /// which is why it travels (doc 150 §9.1/§9.2, ADR-056). It is deliberately not part of
+    /// [`WireOperation::of`]: declaring nothing is valid and is what every existing sender
+    /// does, so this is additive in the same way the type itself is.
+    ///
+    /// Unlike `introduces`, an intent is **not** recomputed and compared on receipt. There is
+    /// nothing to compare it against: only the sender knows it. What stops it being abused is
+    /// that it can only ever make a transform *answer a pair it would otherwise refuse* — it
+    /// cannot redirect an operation, because the index it resolves to is read from the
+    /// receiver's own document.
+    #[must_use]
+    pub fn declaring(mut self, intent: crate::Intent) -> Self {
+        self.intent = intent;
+        self
+    }
+
+    /// What the sender declared about this operation, or [`Intent::NONE`](crate::Intent::NONE).
+    #[must_use]
+    pub const fn intent(&self) -> crate::Intent {
+        self.intent
     }
 
     /// The operation, unchanged.
@@ -147,6 +175,7 @@ impl WireOperation {
         Self {
             operation,
             mint,
+            intent: crate::Intent::NONE,
             introduces,
         }
     }

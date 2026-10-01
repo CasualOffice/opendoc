@@ -75,6 +75,11 @@ use std::collections::HashMap;
 
 use casual_doc_edit::{FormatDelta, Operation, Pos, Range as EditRange, RunningRegion};
 use casual_doc_model::NodeId;
+
+// Separate `use` lines: the envelope declarations `150` §9.1/§9.2 added (ADR-056), kept out
+// of the shared sorted block so parallel lanes do not conflict in it.
+use crate::Affinity;
+use crate::Intent;
 // Separate `use` lines for the three definition tables an editing command may now
 // introduce (`147`, ADR-005) — added apart from the shared sorted block so parallel lanes
 // do not conflict in it.
@@ -124,7 +129,7 @@ impl Side {
 /// discovered, `the_refusal_surface_is_exactly_these_cases` fails when a refusal reaches
 /// the surface without being listed here, and a companion check fails the build if a
 /// refusal is written as a bare string literal instead of a constant.
-pub const REFUSAL_REASONS: [&str; 14] = [
+pub const REFUSAL_REASONS: [&str; 16] = [
     MALFORMED_CHANGE,
     HYPERLINK_CANNOT_DIVIDE,
     SPLIT_SEPARATED_THE_JOIN,
@@ -139,6 +144,8 @@ pub const REFUSAL_REASONS: [&str; 14] = [
     REWRITE_MEETS_A_STRUCTURAL_EDIT,
     REWRITE_MEETS_A_POSITIONAL_EDIT,
     TABLE_AXIS_NEEDS_A_FRESH_CELL,
+    INSERTION_DECLARED_THE_FOLLOWING_SIDE,
+    ANCHOR_UNRESOLVED,
 ];
 
 /// The change's inverse does not describe what its operation did, so the change cannot say
@@ -171,7 +178,22 @@ const INLINE_INDEX_ACROSS_TEXT: &str =
 const INLINE_INDEX_ACROSS_MEMBERSHIP: &str =
     "an inline index cannot be rebased across an inline added or removed at a byte offset";
 /// U5.
-const INSERTION_AT_AN_ABSORBED_PARAGRAPH_START: &str = "text inserted at the start of a paragraph a concurrent join absorbed has no expressible side: `Pos` carries no affinity";
+const INSERTION_AT_AN_ABSORBED_PARAGRAPH_START: &str = "text inserted at the start of a paragraph a concurrent join absorbed has no expressible side, and its envelope declared no affinity";
+/// U5, when the envelope *did* declare — and declared the side no operation can express.
+///
+/// A better refusal than the one above, and the difference is not cosmetic: this one says the
+/// author was understood and the operation set cannot carry out what they meant, which is a
+/// statement about the engine. The other says nobody knows what they meant.
+const INSERTION_DECLARED_THE_FOLLOWING_SIDE: &str = "text inserted at the start of a paragraph a concurrent join absorbed belongs with the text that follows it, and no operation attaches text to the run after a boundary";
+/// A declared block anchor could not be resolved against the state the operation was about to
+/// be applied to — doc 150 §9.1, ADR-056.
+///
+/// Not the same thing as a destroyed anchor, which is a reportable **loss** and not a refusal:
+/// this is "the container is not one the index walked", the same degradation
+/// [`BlockPlacement`] has, and it becomes a refusal for the same reason — an unknown answer
+/// must never become a wrong one.
+pub const ANCHOR_UNRESOLVED: &str =
+    "a declared block anchor could not be resolved in the container it names";
 /// U9.
 const TABLE_AXIS_NEEDS_A_FRESH_CELL: &str = "a concurrent insertion on the other table axis needs one more cell than the operation carries, and a transform may not mint identities";
 /// U8.
@@ -335,6 +357,7 @@ impl BlockPlacement for NoPlacement {
 #[derive(Clone, Debug, Default)]
 pub struct BlockIndex {
     positions: HashMap<NodeId, (Option<NodeId>, u32)>,
+    counts: HashMap<Option<NodeId>, u32>,
 }
 
 impl BlockIndex {
@@ -343,8 +366,9 @@ impl BlockIndex {
     #[must_use]
     pub fn of(document: &Document) -> Self {
         let mut positions = HashMap::new();
-        index_blocks(document.body(), None, &mut positions);
-        Self { positions }
+        let mut counts = HashMap::new();
+        index_blocks(document.body(), None, &mut positions, &mut counts);
+        Self { positions, counts }
     }
 }
 
@@ -354,56 +378,77 @@ impl BlockPlacement for BlockIndex {
     }
 }
 
+/// The same index, read as the state an operation is **about to be applied to**.
+///
+/// One index answers both questions; the two traits keep the two preconditions apart. See
+/// [`crate::intent::BlockTarget`] for why that distinction is load-bearing rather than
+/// pedantic.
+impl crate::intent::BlockTarget for BlockIndex {
+    fn block_position(&self, node: NodeId) -> Option<(Option<NodeId>, u32)> {
+        self.positions.get(&node).copied()
+    }
+
+    fn block_count(&self, container: Option<NodeId>) -> Option<u32> {
+        self.counts.get(&container).copied()
+    }
+}
+
 fn index_blocks(
     blocks: &[BlockNode],
     container: Option<NodeId>,
     out: &mut HashMap<NodeId, (Option<NodeId>, u32)>,
+    counts: &mut HashMap<Option<NodeId>, u32>,
 ) {
+    counts.insert(container, u32::try_from(blocks.len()).unwrap_or(u32::MAX));
     for (index, block) in blocks.iter().enumerate() {
         let index = u32::try_from(index).unwrap_or(u32::MAX);
         out.insert(block_id(block), (container, index));
         match block {
             BlockNode::Paragraph(paragraph) => {
                 for inline in &paragraph.inlines {
-                    index_inline(inline, out);
+                    index_inline(inline, out, counts);
                 }
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        index_blocks(&cell.blocks, Some(cell.id), out);
+                        index_blocks(&cell.blocks, Some(cell.id), out, counts);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, Some(sdt.id), out),
+            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, Some(sdt.id), out, counts),
             BlockNode::AltChunk(_) => {}
         }
     }
 }
 
-fn index_inline(inline: &InlineNode, out: &mut HashMap<NodeId, (Option<NodeId>, u32)>) {
+fn index_inline(
+    inline: &InlineNode,
+    out: &mut HashMap<NodeId, (Option<NodeId>, u32)>,
+    counts: &mut HashMap<Option<NodeId>, u32>,
+) {
     match inline {
         InlineNode::Hyperlink(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
         InlineNode::Field(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
         InlineNode::Revision(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
         InlineNode::Sdt(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
-        InlineNode::TextBox(node) => index_blocks(&node.blocks, Some(node.id), out),
+        InlineNode::TextBox(node) => index_blocks(&node.blocks, Some(node.id), out, counts),
         // Everything else carries no block container. DrawingML group internals are
         // deliberately not walked: a block inside a group answers `None`, which is a
         // refusal, not a wrong answer.
@@ -508,6 +553,33 @@ pub fn transform_placed(
     side: Side,
     placement: &dyn BlockPlacement,
 ) -> Result<Rebase, TransformError> {
+    transform_declared(subject, Intent::NONE, against, side, placement)
+}
+
+/// [`transform_placed`], reading what `subject`'s author declared on the envelope.
+///
+/// The two declarations are `150` §9.1's block anchor and §9.2's affinity, carried beside the
+/// operation rather than inside it — see [`crate::intent`] and ADR-056 for why. Both are
+/// *additive*: [`Intent::NONE`] reproduces [`transform_placed`] exactly, which is what makes
+/// this safe to thread through callers one at a time.
+///
+/// An **anchored** insertion gap needs neither arithmetic nor a base-state placement: the
+/// anchor is invariant under a concurrent split or join, so the slot is returned untouched and
+/// its index is re-derived by [`crate::resolve_anchor`] immediately before the operation is
+/// applied. A caller that supplies an anchor and does not resolve it applies a stale index, so
+/// the obligation is one call and `an_anchored_arrival_is_resolved_before_it_is_applied` is
+/// what holds the session to it.
+///
+/// # Errors
+///
+/// As [`transform_placed`], minus the pairs a declaration answers.
+pub fn transform_declared(
+    subject: &Operation,
+    intent: Intent,
+    against: Change<'_>,
+    side: Side,
+    placement: &dyn BlockPlacement,
+) -> Result<Rebase, TransformError> {
     note_transform();
     let names = (variant_name(subject), variant_name(against.operation));
     let refuse = |reason: &'static str| TransformError::Unsupported {
@@ -587,7 +659,7 @@ pub fn transform_placed(
     }
 
     // 4. Positional rebase.
-    let rebased = match rebase_coordinates(subject, &effect, side, placement) {
+    let rebased = match rebase_coordinates(subject, intent, &effect, side, placement) {
         Ok(rebased) => rebased,
         Err(reason) => return Err(refuse(reason)),
     };
@@ -1298,6 +1370,7 @@ fn rebase_slot_across_join(
 #[allow(clippy::too_many_lines)]
 fn rebase_coordinates(
     subject: &Operation,
+    intent: Intent,
     effect: &Effect,
     side: Side,
     placement: &dyn BlockPlacement,
@@ -1313,10 +1386,10 @@ fn rebase_coordinates(
             // came from `second` — the same string, two different run partitions, and two
             // different sets of run properties the moment those runs differ.
             //
-            // `Pos` carries no affinity, so the operation cannot say which side of the
-            // boundary it meant. `Affinity` exists one layer up on
-            // [`Position`](crate::Position) and putting it on `Pos` is an op-set change
-            // (ADR-030 I2), so this is recorded as a finding and refused, not guessed.
+            // `Pos` carries no affinity. Putting one on it is an op-set change (ADR-030
+            // I2) and a breaking one — ADR-056 records the measurement — so the
+            // declaration travels on the **envelope** instead, and this is where it is
+            // read. An undeclared insertion is refused exactly as it was before.
             if let Effect::Join { second, .. } = *effect
                 && at.node == second
                 && at.offset == 0
@@ -1325,7 +1398,25 @@ fn rebase_coordinates(
                     Operation::InsertText { .. } | Operation::InsertField { .. }
                 )
             {
-                return Err(INSERTION_AT_AN_ABSORBED_PARAGRAPH_START);
+                match intent.affinity() {
+                    // The author's content belongs with the text that PRECEDES the
+                    // position. The join put `first`'s text immediately before it, and
+                    // `casual_doc_edit::insert_text` attaches text at a boundary to the run
+                    // *before* it — so what `apply` already does is what was asked for, and
+                    // the ordinary mapping below is the answer rather than a refusal.
+                    Some(Affinity::Before) => {}
+                    // The other side, which is both the commoner intent — typing at a
+                    // paragraph start takes the following character's formatting in Word and
+                    // in Docs — and the one no operation expresses: it needs the text
+                    // attached to the run that came from `second`, and no operation in the
+                    // set attaches text to the run *after* a boundary. Declaring it does not
+                    // make it expressible; it makes the refusal honest about whose
+                    // limitation it is.
+                    Some(Affinity::After) => {
+                        return Err(INSERTION_DECLARED_THE_FOLLOWING_SIDE);
+                    }
+                    None => return Err(INSERTION_AT_AN_ABSORBED_PARAGRAPH_START),
+                }
             }
             match map_position(at, effect, side) {
                 Some(moved) => CoordinateRebase::Moved(Coordinates::Caret(moved)),
@@ -1400,6 +1491,31 @@ fn rebase_coordinates(
             index,
             count,
         } => {
+            // **doc 150 §9.1, ADR-056.** An insertion *gap* whose author declared the block
+            // it was authored before needs no arithmetic and no base-state placement. The
+            // anchor is an identity, and a concurrent split or join does not move an
+            // identity — a split carves out a new block and a join destroys one, and
+            // neither renames the anchor — so the intention "put it between the same two
+            // neighbours" survives untouched. The cached index is re-derived from the anchor
+            // by `crate::resolve_anchor` immediately before the operation is applied, which
+            // is the only moment the state it must be right about exists.
+            //
+            // Scoped to `count == 0` on purpose: that is an insertion gap
+            // (`InsertBlocks`/`InsertTable`/`InsertFieldRange`). A *removal* band is not one
+            // anchor but a span of victims, and the node-addressed form of that is a list
+            // the operation does not carry — recorded in `150` §9.1 as still open rather
+            // than quietly treated as covered here.
+            if count == 0
+                && intent.anchor().is_some()
+                && matches!(container, Container::Blocks(_))
+                && matches!(*effect, Effect::Split { .. } | Effect::Join { .. })
+            {
+                return Ok(CoordinateRebase::Moved(Coordinates::Slot {
+                    container,
+                    index,
+                    count,
+                }));
+            }
             // A split or a join changes a block container's membership at a position only
             // a placement can supply. Every other container is untouched by them.
             let band = match *effect {
