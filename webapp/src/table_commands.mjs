@@ -277,6 +277,28 @@ export function tableToolCommands(context, host) {
       disabledReason: structuralReason,
       run: () => host.openCellFormat(),
     },
+    // The border LINE STYLE's second and third surfaces (`docs/153`
+    // `table.border-width-style`; `105` UX-004). The control itself is the pen in
+    // the Cell formatting popover, which is Word's Table Design shape — line
+    // style, weight and colour, applied by whichever border button comes next —
+    // and this row carries it into the right-click menu and the command palette
+    // ("Table: Border line style…") rather than growing a second copy of a control
+    // that would then have to agree with the first about what the pen is set to.
+    //
+    // It LANDS ON the select rather than opening a menu of six values: a style
+    // chosen with no border button pressed changes nothing on the page, so six
+    // palette rows would each be a control that appears to do nothing — which is
+    // the dead control `docs/63` forbids, in the one costume that passes a
+    // reachability guard.
+    {
+      id: "table.borderStyle",
+      label: t("table.borderStyleCommand"),
+      group: "table-properties",
+      icon: "tableLayout",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => host.openCellFormat("borderStyle"),
+    },
     {
       id: "table.properties",
       label: "Table properties…",
