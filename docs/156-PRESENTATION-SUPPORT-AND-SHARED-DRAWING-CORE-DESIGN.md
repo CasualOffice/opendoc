@@ -1,4 +1,4 @@
-# 155 — Presentations (PPTX): the shared drawing core, and how to build it without disturbing DOCX
+# 156 — Presentations (PPTX): the shared drawing core, and how to build it without disturbing DOCX
 
 **Status:** **Design. Nothing here is implemented.** Tier 0 (§6) is DOCX work that
 stands on its own and is the only part this branch begins.
@@ -17,10 +17,12 @@ here.
 > product proposal: the first ten items require no commitment to presentations at
 > all, and if presentations are never built, none of the work is wasted.
 >
-> Sections §4.3 (Google Slides) and §4.4 (PowerPoint) are **deliberately empty
-> pending measurement** and are marked so. They are not omitted because they do not
-> matter; they gate §8's scope, and writing them from memory would violate `105`'s
-> evidence rules.
+> §4.3 (Google Slides) and §4.4 (PowerPoint) are now measured, and they moved three
+> decisions: animation authoring is deferrable because **neither competitor has it**
+> (Slides has no animation model at all; PowerPoint for the web ships 37 of ~150
+> effects), a master/layout **editor** is not v1 scope because **neither web client can
+> edit masters**, and §6 row 0.7's autofit requirement was **wrong in a way that would
+> have reduced fidelity** — §4.4 rank 4 records the correction.
 
 ---
 
@@ -171,10 +173,85 @@ requires animations is PowerPoint (§4.4), and `p:timing` retention must be verb
 and proven either way — a deck that silently loses its animations on save is a
 fidelity defect regardless of whether anyone authors them here.
 
-### 4.4 PowerPoint and the PresentationML surface — PENDING MEASUREMENT
+### 4.4 PowerPoint: the fidelity bar, and what its own web client cannot do
 
-Not yet written. Same gate. Must include the desktop-vs-web capability delta, since
-the web version is the realistic bar for a browser competitor.
+Sourced from `support.microsoft.com`, `learn.microsoft.com`, the Microsoft Open
+Specifications and ECMA-376/ISO 29500 normative text.
+
+**The organising insight, and it reorders §6.** PresentationML defers almost
+everything visual to a resolution chain. A renderer that gets the chain wrong does
+not render one thing wrong — it renders *every slide* wrong, consistently, in a way
+that looks like file corruption. A placeholder's slide XML is frequently nearly empty
+(`<p:ph idx="1"/>`, an empty `<p:spPr/>`, and the text); essentially all of its
+appearance comes from layout → master → `p:txStyles` → `defaultTextStyle` → theme.
+
+The fidelity bar, ranked by how fast a normal user notices rather than by difficulty.
+The top four are all resolution-chain problems:
+
+| Rank | What breaks | Maps to |
+|---|---|---|
+| 1 | **Placeholder inheritance chain** — the single highest-leverage correctness investment in the product | Tier 2 cascade |
+| 2 | **Theme colour resolution** — `schemeClr` + `clrMap`/`clrMapOvr` + ordered `lumMod`/`lumOff`, the `dk1`/`lt1` map bypass, and `phClr` resolving from the *referencing* colour. Almost nothing in a real deck uses literal RGB | **§6 row 0.2** |
+| 3 | **Theme fonts and font metrics** — wrong typeface changes line breaking, so text overflows and the whole deck reflows | existing font stack |
+| 4 | **Autofit** — see the correction below | **§6 row 0.7** |
+| 5 | **187 preset geometries + adjust values + `p:style` theme refs** — "a bounded, mechanical job, so there is no excuse for partial coverage" | **§6 rows 0.1, 0.2** |
+| 6 | Text layout: line breaking, `spcPct`, `bodyPr` insets/anchor/wrap, bullet `marL`/`indent`, tab stops — cumulative, and where clean-room implementations usually lose | existing flow engine |
+| 7 | Group transforms with `chOff`/`chExt` | **already correct here** (`anchor.rs` `GroupMapper`) |
+| 8 | Pictures: `srcRect` crop, `stretch`/`tile`, **and EMF/WMF** — dropping EMF/WMF alone makes a large fraction of real corporate decks look broken | **§6 row 0.3**, plus a decoder decision |
+| 9 | **Table styles** — `tableStyles.xml` in a real file often contains only a `def` GUID with *no definitions*, so the built-in gallery must be supplied by the implementation. There is no way around this; the definitions are not in the file | Tier 2 `a:tbl` |
+| 10 | Slide size and the EMU→px mapping | cheap, catastrophic if wrong |
+
+**Correction to §6 row 0.7, from rank 4.** This document previously said an editor
+"must re-solve shrink-to-fit on every keystroke". That is wrong and would *reduce*
+fidelity. The correct behaviour is to **honour the persisted `fontScale` /
+`lnSpcReduction` on load and never recompute them**, because PowerPoint computed them
+with its own font metrics and recomputing with ours gives a different answer on every
+overflowing slide — which in real corporate decks is most of them. A solver is needed
+only when the user *edits* the text, and it must then match PowerPoint's
+quantisation. So the existing behaviour (apply the authored scale) is right for
+viewing and round-trip; the gap is narrower than stated and is an *editing* gap only.
+
+**`p:timing` and `p:transition`, measured.** Both live in one schema file,
+`pml-animationInfo.xsd`: 107 element declarations, 59 complexTypes, 31 simpleTypes,
+**≈197 named schema components**. The time tree is uniformly recursive with unbounded
+depth (`CT_TimeNodeList` is the same 13-member choice for `tnLst`, `childTnLst` and
+`subTnLst`), `p:cTn` carries 24 attributes, and several PowerPoint-specific
+deviations are not in the standard at all (`repeatCount` 1000 meaning one iteration,
+`evtFilter="cancelBubble"`, four distinct readings of `fill`, the `(spid, grpId)`
+join between `p:bldLst` and the time tree). The conventional tree shape PowerPoint
+writes is **convention, not schema**.
+
+**Deferring is viable, and the measurement says so twice over.** Microsoft's own web
+client ships **37 of ~150 animation effects and 8 of ~53 transitions** — PowerPoint
+for the web is itself a partial implementation. Combined with §4.3 (Slides has no
+animation model at all), rendering no animations in v1 is defensible.
+
+**But there is a hard condition, and it is a data-safety condition, not a feature
+one.** `p:timing`, `p:transition`, `p:bldLst` and their `mc:AlternateContent`
+wrappers must round-trip **byte-faithfully from day one**, with a non-destructive
+affordance saying the editor does not yet play them. The failure that ends an
+evaluation is not "the animation didn't play here" — it is "I opened my deck in your
+editor, saved, reopened it in PowerPoint, and my animations were gone." That is
+silent data loss, which `AGENTS.md` already forbids. Preservation cost is trivial:
+one self-contained subtree per slide whose only outward reference is `spid`s, which
+must be remapped on shape delete and copy.
+
+**What PowerPoint *for the web* cannot do — the realistic bar for a browser
+competitor.** Masters and layouts **cannot be edited** (preserved and rendered only);
+themes cannot be modified; gradients, effects, eyedropper and styles are desktop-only;
+there is no Outline, Slide Master, Notes Page or Presenter view; **charts are
+view-only** — they cannot be created or edited; WordArt cannot be inserted; Merge
+Shapes, 3-D insert, picture effects and ink insert are all unsupported; table cell
+merge/split is desktop-only.
+
+Two scope conclusions follow directly, and they agree with §4.3:
+
+- **A master/layout *editor* is not v1 scope.** Neither Google Slides nor PowerPoint
+  for the web can edit masters or layouts. A layout **picker** is table stakes; a
+  master editor is not.
+- **Charts being a read projection over a retained part is the correct position**, not
+  a limitation — it is what PowerPoint for the web itself does. That independently
+  supports ADR-050's framing.
 
 ### 4.5 Animation and transitions are ~30% of their slide engine
 
@@ -238,8 +315,8 @@ deck requires.
 | 0.4 | `a:effectLst`: **zero** implementation at any layer; a populated list is reported as loss (`import/noop.rs:134-137`) | Word shape shadows and glows dropped on semantic save | Outer shadow + glow + soft edge is most of the value; 3-D is not. ONLYOFFICE round-trips glow/reflection/soft-edge with **no authoring UI in any editor** — parity here is cheap |
 | 0.5 | Group `rotation`/`flip_h`/`flip_v` are modelled (`model/v1/body.rs:1064-1075`) and round-tripped, but `GroupMapper` (`anchor.rs:1605-1611`) carries only `scale_x/scale_y/tx/ty` | **A rotated Word group paints unrotated** — a live render bug | Add rotation/flip to the group affine |
 | 0.6 | Three duplicated truncating `emu_to_twip` helpers (`flow.rs:4443`, `anchor.rs:2059`, `document_layout.rs:2070`), plus `emu_to_twip_f` (`anchor.rs:2064`) which **rounds**, and `emu_to_twip_signed` (`anchor.rs:2073`) which truncates toward zero | The two rules disagree by up to a whole twip (1000 EMU truncates to 1, rounds to 2), so a group child and a directly anchored sibling authored at the same EMU land a twip apart. Truncation also shrinks magnitudes, and an edge is `offset + extent`, so a right edge can fall two twips short and shapes authored to abut can seam. (Truncation toward zero *is* mirror-symmetric — an earlier draft of this row claimed otherwise and was wrong) | One `Emu` type in `units.rs`, one documented rounding rule, three copies deleted. Prerequisite for any EMU-native round-trip |
-| 0.7 | `normAutofit` `fontScale` is read and applied but **never re-solved** — three references in the whole layout crate (`flow.rs:4195`, `:4197`, and a test) | Typing in a Word text box with autofit leaves a stale scale — a live editing defect | A shrink-to-fit solver over `finish_text_box` + `block_intrinsic` |
-| 0.8 | `bodyPr@vert`/`@rot` unmodelled; `anchor.rs:927` states rotated text-box content is deferred | Word text boxes with vertical text render axis-aligned | Rotated/vertical text body |
+| 0.7 | `normAutofit` `fontScale` is read and applied but **never re-solved on edit** — three references in the whole layout crate (`flow.rs:4195`, `:4197`, and a test) | Typing in a Word text box with autofit leaves a stale scale — a live **editing** defect. Honouring the authored scale on load is *correct* and must not change (§4.4 rank 4) | A shrink-to-fit solver over `finish_text_box` + `block_intrinsic`, invoked **only on edit**, matching the producer's quantisation. Named prior art: bisection on a monotone predicate |
+| 0.8 | `bodyPr@vert`/`@rot` unmodeled; `anchor.rs:927` states rotated text-box content is deferred | Word text boxes with vertical text render axis-aligned | Rotated/vertical text body |
 | 0.9 | Group children carry `node: None` — "not individually selectable yet" (`page.rs:245-250`) | A UX gap in the shipped DOCX editor | Per-child identity |
 | 0.10 | `Disposition`/ledger/`validate` live inside `casual-doc-import`; `casual-doc-io` sees a lossy projection (`io/src/docx.rs:448`) | **ODT already cannot make ledger-validated preservation claims** | Lift the taxonomy into a shared crate |
 
@@ -274,9 +351,20 @@ master editor, command registry plus slide descriptors, locale keys.
 
 **Tier 4, preserve-and-disclose.** Animations (`p:timing`), transitions,
 presenter/slide-show runtime, media. Charts and SmartArt authoring belong to `155` /
-ADR-050 and are **not designed here**. §4.5 is the evidence that deferring
-animation authoring removes ~30% of the presentation-specific engine; §4.3/§4.4 must
-say whether that is survivable as a product.
+ADR-050 and are **not designed here**.
+
+Deferring animation *authoring* is settled (Q4): it removes ~30% of the
+presentation-specific engine (§4.5) and is parity with both competitors (§4.3, §4.4).
+What replaces it is **not optional and is not a Tier 4 item at all** — byte-faithful
+retention of `p:timing`, `p:transition`, `p:bldLst` and their `mc:AlternateContent`
+wrappers, with `spid` remapping on shape delete and copy, plus a non-destructive
+affordance. That is a **Tier 2 import/export requirement**, because silent loss is
+forbidden (`AGENTS.md`) and it is what would actually end an evaluation.
+
+Two items leave v1 scope on the competitive evidence: a **master/layout editor**
+(neither web client can edit masters — a layout *picker* is table stakes) and
+**chart authoring** (PowerPoint for the web is itself view-only, which independently
+supports ADR-050's read-projection framing).
 
 ## 9. Does this break DOCX, and how it is built so it does not
 
@@ -355,11 +443,14 @@ Required by the skill before designing anything structural.
   OO-014 rows in `105` and proceed independently of any presentation decision?
   This document's recommendation is yes.
 - **Q4.** ~~Deferring animation authoring — survivable, or disqualifying?~~
-  **Largely answered by §4.3: Google Slides has no animation or transition model at
-  all, so deferring *authoring* is parity with the number-two product.** What
-  remains is narrower and still open: PowerPoint-authored `p:timing` and
-  `p:transition` must round-trip **verbatim and provably**, because silent loss is a
-  fidelity defect independent of authoring. Confirm against §4.4.
+  **CLOSED by §4.3 and §4.4: survivable.** Google Slides has no animation or
+  transition model at all, and PowerPoint for the web ships only 37 of ~150 animation
+  effects and 8 of ~53 transitions. Deferring *authoring* is therefore parity with
+  both competitors, not a compromise. It converts into a **hard data-safety
+  requirement** instead: `p:timing`, `p:transition`, `p:bldLst` and their
+  `mc:AlternateContent` wrappers must round-trip byte-faithfully from day one, with a
+  non-destructive affordance. Preservation is trivial; silent loss would end an
+  evaluation and is already forbidden by `AGENTS.md`.
 - **Q5.** `107` says the op set is 47 in one place and 55 in another; it is 58.
   Correct `107` separately.
 
@@ -367,8 +458,10 @@ Required by the skill before designing anything structural.
 
 - Nothing here is implemented. No capability is shipped, reachable, or measured in a
   product.
-- No LOC estimate for Tiers 2–4 is given, because §4.3 and §4.4 are unwritten and an
-  estimate against an unmeasured scope would be a fabricated number.
+- **No LOC estimate for Tiers 2–4 is given.** §4.3 and §4.4 now bound the *scope*,
+  but a line estimate for work with no prototype would be a fabricated number, and
+  ONLYOFFICE's figures are their scale in JavaScript, not a prediction of ours. The
+  first Tier 2 increment should be measured, then used to estimate the rest.
 - The ONLYOFFICE figures are **their** scale, not a prediction of ours. Rust density,
   and the fact that their bundle carries an entire spreadsheet engine for chart data,
   make a direct ratio misleading.
