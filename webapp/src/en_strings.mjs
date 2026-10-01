@@ -74,6 +74,7 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.table": "Table",
   "menuGroup.text": "Text",
   "menuGroup.textColor": "Text color",
+  "menuGroup.textWidth": "Text width",
   "menuGroup.tracking": "Tracking",
   "menuGroup.undo": "Undo",
   "menuGroup.zoom": "Zoom",
@@ -116,6 +117,29 @@ export const EN_STRINGS = Object.freeze({
   // a windowed body is already read-only. Disabled WITH this, never dead.
   "reflow.unavailable":
     "This document is too large to lay out whole, so it is shown one page-window at a time and cannot be reflowed.",
+  // -- Text width (`docs/154` §5.1, ADR-048) ---------------------------------
+  // Four steps for one measure, each labelled by what it does rather than by a
+  // number: "Wide" tells a reader nothing and "80" tells them nothing until they
+  // know it is WCAG 2.1 SC 1.4.8's maximum, which is what the `.title` sentences
+  // are for. The `.row` sentences and `textWidth.reading.short` are declared in
+  // `editor.html` beside the markup that carries them — `build-locale.mjs`
+  // refuses a key declared in both places — and `reflow_view.test.mjs` asserts
+  // every step has all four, so the split cannot rot into a half-labelled step.
+  "textWidth.command": "Text width",
+  "textWidth.narrow.short": "Narrow",
+  "textWidth.fit.short": "Paper",
+  "textWidth.full.short": "Full",
+  "textWidth.narrow.title": "Narrow text: about 55 characters a line.",
+  "textWidth.reading.title":
+    "Reading width: 80 characters a line, which is the widest WCAG 2.1 SC 1.4.8 allows a block of text to be.",
+  "textWidth.fit.title": "As wide as this document's own text column, so no line is longer than on paper.",
+  "textWidth.full.title": "As wide as the window, however wide the window is.",
+  "textWidth.narrow.command": "Text width: Narrow",
+  "textWidth.reading.command": "Text width: Reading",
+  "textWidth.fit.command": "Text width: Paper",
+  "textWidth.full.command": "Text width: Full",
+  "textWidth.pagedWithheld":
+    "Text width applies in reflow. On pages the measure is the document's own, so turn Reflow on to choose one.",
   // Reflow cuts the document into tiles, not pages, so "Page 3 of 12" would be
   // wrong in both halves (`docs/151` §6.5). How far through the reader is, is a
   // question the tile index can answer honestly.

@@ -1801,7 +1801,11 @@ paper and shows the reader a message about twips. Derivations in `154` §3 and �
   Bringhurst's widely-quoted 66 for an evidence reason rather than a typographic one: 80 is
   normative, first-party and quotable, and 66 could not be verified against his text
   (`154` §7 item 1). 80 is also the conservative end, so the default errs towards the paper
-  the reader is used to. At 11pt Calibri that is **468 CSS px / 7,020 twips**.
+  the reader is used to. At 11pt Calibri that is **468 CSS px / 7,024 twips**.
+  (**Corrected on implementation**: this read 7,020, which was 468 px converted back to
+  twips and so carried the pixel rounding twice. The exact value is
+  `round(80 × 0.3991 em × 11 pt × 20)` = 7,024 = 468.27 px, so 468 px is unchanged.
+  `154` §5.1 carries the same correction, and `reflow_view.test.mjs` pins 7,024.)
 - **Above the cap the column is CENTRED on the application desk** — not widened, not given
   a paper edge, not split into columns. `#viewport.is-reflow` already removes the sheet
   shadow and radius, so a tile becomes a text column on the app background, which is what

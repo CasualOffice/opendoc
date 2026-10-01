@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1559],
-  ["de", 1559],
-  ["es", 1559],
-  ["fr", 1559],
-  ["hi", 1559],
-  ["id", 1559],
-  ["it", 1559],
-  ["ja", 1559],
-  ["ko", 1559],
-  ["nl", 1559],
-  ["pl", 1559],
-  ["pt-BR", 1559],
-  ["ru", 1559],
-  ["tr", 1559],
-  ["uk", 1559],
-  ["vi", 1559],
-  ["zh-Hans", 1559],
-  ["zh-Hant", 1559],
+  ["ar", 1582],
+  ["de", 1582],
+  ["es", 1582],
+  ["fr", 1582],
+  ["hi", 1582],
+  ["id", 1582],
+  ["it", 1582],
+  ["ja", 1582],
+  ["ko", 1582],
+  ["nl", 1582],
+  ["pl", 1582],
+  ["pt-BR", 1582],
+  ["ru", 1582],
+  ["tr", 1582],
+  ["uk", 1582],
+  ["vi", 1582],
+  ["zh-Hans", 1582],
+  ["zh-Hant", 1582],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -325,6 +325,21 @@ const COVERAGE = new Map([
  *  at all and deliberately so: they are built with `Intl` from a number and the
  *  bare unit symbol, so a French reader sees "0,5 pt" rather than a translation of
  *  "0.5 pt" that could not get the decimal separator right. */
+/** 1,464 -> 1,498 with the reading measure's TEXT WIDTH control (`docs/154` §5.1,
+ *  ADR-048): four steps, each with a short button label, a menu row, a tooltip
+ *  sentence and a palette label, plus the band name, the menu heading, the
+ *  button's own title/label pair and the sentence the control refuses with on
+ *  paper. Twenty-three keys, all eighteen languages, in the commit that routed
+ *  them — thirteen of them are script-side with no English in the markup to fall
+ *  back on, so a locale that could not answer one would print a dotted key on a
+ *  ribbon button.
+ *
+ *  RE-MEASURED FROM THE MERGED TREE, after rebasing onto an `origin/main` that had
+ *  meanwhile raised this row to 1,559 for Compare Documents. The branch's own
+ *  figure was 1,498 against a `main` of 1,464, and NEITHER describes the merge:
+ *  1,559 + 23 is the right arithmetic only by luck, and the number below is what
+ *  the merged catalogues actually answer. This is the trap `module_seams.test.mjs`
+ *  records three times, met here for real. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

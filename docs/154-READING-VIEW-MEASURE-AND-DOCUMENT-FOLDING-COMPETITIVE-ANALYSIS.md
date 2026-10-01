@@ -487,7 +487,18 @@ resolved to twips by the *measured mean advance of the document's default face a
 default size*, which is `docDefaults`/`Normal` — a value the engine already has a shaper
 for. `cap_twip = round(target_chars × mean_advance_twip(default_face, default_size))`. At
 Word's default (11pt Calibri → Carlito) that is 80 × 5.853px = **468 CSS px = 4.88in =
-7,020 twips**. A fallback for a face whose metrics are unavailable is **0.40 em per
+7,024 twips**.
+
+> **CORRECTED (implementation, 2026-10-02).** This paragraph read **7,020 twips**, and
+> that figure was 468 CSS px converted *back* to twips — the pixel rounding counted
+> twice. The twip arithmetic the shipped code performs is
+> `round(80 × 0.3991 em × 11 pt × 20 twips/pt)` = **7,024**, which is 468.27 CSS px and so
+> still **468 px to the pixel**. 468 is unchanged and correct; 7,020 was not. Pinned at
+> 7,024 by `webapp/tests/reflow_view.test.mjs` ("the published cap is 80 characters, and
+> in twips it is the published number"), which is how the double rounding was found.
+> ADR-048 is corrected in place with it.
+
+A fallback for a face whose metrics are unavailable is **0.40 em per
 character**, i.e. `cap ≈ 32 em`, justified by the measured 0.393–0.431 em spread across the
 four bundled base faces (§3.2) — stated as an approximation with its error, not as a
 constant with no source.

@@ -485,6 +485,19 @@ export const COMMAND_CONTRACT = Object.freeze([
   // the editor offers that this file does not name is invisible to a host, which
   // is the one audience it has.
   exact("view.reflow", null),
+  // The reading measure, four steps (`docs/154` §5.1, ADR-048). EXACT rows and
+  // not a family, because this file's addressing rule is about enumerability:
+  // `format.family.*` and `style.*` are generated from the document and cannot be
+  // tabulated, while the width steps are four literals fixed in
+  // `reflow_view.mjs`'s `REFLOW_WIDTH_STEPS`. Like `view.reflow` each requires
+  // NOTHING — a width is a per-viewer reading comfort, not an edit; no operation,
+  // no revision bump, nothing on the export path — so a host that granted no
+  // mutation capability can still offer them, and a host embedding the editor in
+  // a column has a reason to reach for `full` in particular.
+  exact("view.textWidth.narrow", null),
+  exact("view.textWidth.reading", null),
+  exact("view.textWidth.fit", null),
+  exact("view.textWidth.full", null),
   exact("view.compactRibbon", null),
   exact("view.zoomIn", null),
   exact("view.zoomOut", null),
