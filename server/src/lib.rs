@@ -41,11 +41,13 @@
 
 pub mod fanout;
 pub mod journal;
+pub mod relay;
 pub mod room;
 pub mod transport;
 
 pub use fanout::Participants;
 pub use journal::{Journal, JournalError, Recovered};
+pub use relay::{Handled, Relay};
 pub use room::{Room, RoomError};
 
 #[cfg(test)]

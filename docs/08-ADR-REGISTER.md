@@ -2545,13 +2545,36 @@ costed against a fallback that does not exist.
   It is **not** a queue: a slow participant blocks the fan-out for its own write, because
   per-participant buffering needs back-pressure and a policy for a reader that never drains, and
   both are designs rather than details.
-- **Not built here:** presence fan-out (it needs the roster wired, and a *typed* cursor still
-  waits on `107` P-4), and the host-signed grant (`152` §10 Q4) that an access level would be read
+- **Presence fan-out is built too, and is the one place the identity direction is visible.** A
+  client sends `ClientMessage::Presence`, which has **no identity field**; the relay fans out
+  `ServerMessage::Awareness { client, update }`, where the identity is **the one the relay
+  attached**. That is what makes a forged identity *unexpressible* rather than merely rejected, and
+  it is ONLYOFFICE's own shape. Three rules follow and each has a guard: a **stale** update (an
+  older or equal clock) is dropped rather than fanned, because sending it would move a caret
+  *backwards* on every other screen; presence from a connection that has **not joined** is dropped,
+  because there is nobody to attribute it to and inventing one is what the no-identity-field design
+  exists to prevent; and a **departure is announced**, because a caret that outlives its owner is
+  worse than no caret — the reader believes somebody is there. Presence failures are deliberately
+  **not** reported as "behind", unlike an ordered chunk: presence is not ordered, so a participant
+  that missed one is not behind anything and the next update corrects it.
+- **The message handling moved out of the binary, and that was a correction rather than tidying.**
+  It was written in `main.rs` first, where every decision above sat behind a `TcpStream` and **no
+  test could reach any of them**. `relay::Relay<W>` is generic over the writer, so each one is
+  exercised against a `Vec<u8>`; the binary is now sockets and threads and nothing else. The part
+  that is hard to get right is the part a test can reach.
+- **Not built here:** a *typed* cursor payload (presence carries an opaque one and will until
+  `107` P-4 lands), and the host-signed grant (`152` §10 Q4) that an access level would be read
   from.
-- **Two more mutation proofs, for fan-out.** (5) Drop the author-exclusion → `the_author_receives_
-  nothing_and_the_others_receive_the_bytes` fails `left: [(0,3),(1,3),(2,3)], right:
-  [(0,3),(1,0),(2,3)]`. (6) Swallow a failed write → `a_participant_whose_write_failed_is_
-  reported_rather_than_swallowed` fails `left: [], right: [ClientId(1)]`.
+- **Five more mutation proofs, for fan-out and the relay's decisions.** (5) Drop the
+  author-exclusion → `the_author_receives_nothing_and_the_others_receive_the_bytes` fails
+  `left: [(0,3),(1,3),(2,3)], right: [(0,3),(1,0),(2,3)]`. (6) Swallow a failed write →
+  `a_participant_whose_write_failed_is_reported_rather_than_swallowed` fails `left: [], right:
+  [ClientId(1)]`. (7) Fan a **duplicate** out again →
+  `a_duplicate_chunk_is_acknowledged_and_not_fanned_out_a_second_time` fails `left: 2, right: 1`.
+  (8) Fan a **stale** presence update → `a_presence_update_that_says_nothing_new_is_not_fanned_out`
+  fails `left: 2, right: 1`. (9) Announce a departure unconditionally →
+  `a_connection_that_never_joined_can_disconnect_without_announcing_anything` fails with *"nobody
+  may be told that a participant who never arrived has left"*.
 
 
 ## ADR-059 — `SetDocumentProtection`: the one operation that would make protection reachable
