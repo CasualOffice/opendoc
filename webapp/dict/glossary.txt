@@ -266,6 +266,7 @@ bbox
 bidi
 bijection
 bindgen
+bitmask
 blit
 blits
 blitted
@@ -298,6 +299,7 @@ composable
 config
 contenteditable
 contextualSpacing
+cryptographic
 customXml
 customizable
 debounce
@@ -571,6 +573,7 @@ unmerged
 unmodeled
 unmodelled
 unobservable
+unpassworded
 unreferenced
 unrepresentable
 unresolvable
