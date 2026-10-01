@@ -4108,21 +4108,13 @@
       "area": "shell",
       "title": "Save as a Word template (DOTX)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-io/src/dotx.rs",
-              "literal": "DotxAdapter"
-            }
-          },
-          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.dotx`"
-        }
+        "command": "file.export.dotx"
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 4,
-      "note": "ECMA-376 gives a template its own main-part content type and changes nothing else, so this is a `PackageKind` on the existing DOCX writer rather than a second writer. Registered in the built-in registry, so the Save selector offers it; what is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs` for the label, and a `file.export.*` contract row so a host can drive it."
+      "note": "ECMA-376 gives a template its own main-part content type and changes nothing else, so this is a `PackageKind` on the existing DOCX writer rather than a second writer. `file.export.dotx` is the File-menu row that drives it."
     },
     {
       "id": "shell.export-epub",
@@ -4144,21 +4136,13 @@
       "area": "shell",
       "title": "Export as HTML",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-io/src/html.rs",
-              "literal": "HtmlAdapter"
-            }
-          },
-          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.html`"
-        }
+        "command": "file.export.html"
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 3,
-      "note": "Theirs is HTML (Zipped): the markup plus every picture as a sibling file, in an archive a reader unpacks first. Ours is ONE file - pictures as `data:` URLs, the stylesheet inline, nothing referenced off the disk - and it carries merged table cells as `colspan`/`rowspan`, underline, super/subscript, colour, bookmarks as anchors and tracked changes as `<ins>`/`<del>`. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs` for the selector's label, and a `file.export.*` contract row so a host can drive it."
+      "note": "Theirs is HTML (Zipped): the markup plus every picture as a sibling file, in an archive a reader unpacks first. Ours is ONE file - pictures as `data:` URLs, the stylesheet inline, nothing referenced off the disk - and it carries merged table cells as `colspan`/`rowspan`, underline, super/subscript, colour, bookmarks as anchors and tracked changes as `<ins>`/`<del>`. `file.export.html` is the File-menu row that drives it; the name a person picks is Word's, which is Web Page."
     },
     {
       "id": "shell.export-json-snapshot",
@@ -4180,21 +4164,13 @@
       "area": "shell",
       "title": "Export as Markdown",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-io/src/markdown.rs",
-              "literal": "MarkdownAdapter"
-            }
-          },
-          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.md`"
-        }
+        "command": "file.export.markdown"
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 3,
-      "note": "A bounded CommonMark writer is registered in the built-in registry, so `availableExportFormats()` offers it and the download takes its name from the artifact's own suggested extension. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs`, without which the Save selector labels the option with the raw format id, and a `file.export.*` contract row so a host can drive it."
+      "note": "A bounded CommonMark writer is registered in the built-in registry and `file.export.markdown` is the File-menu row that drives it, named from the catalogue's `format.markdown` in all eighteen locales. The Save selector labelled the option with the raw format id until that key existed."
     },
     {
       "id": "shell.export-odt",
@@ -4242,13 +4218,21 @@
       "area": "shell",
       "title": "Export as RTF",
       "ours": {
-        "command": "file.export.rtf"
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/export_commands.mjs",
+              "literal": "file.export.rtf"
+            }
+          },
+          "missing": "an RTF writer. `crates/casual-doc-io/src/rtf.rs` declares `can_export: false` and registers no exporter, so the id is absent from `availableExportFormats()` and the File row is disabled carrying that as its reason rather than running an export that throws. RTF IMPORTS fully."
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 4,
-      "note": "Their RTF row is FileMenuPanels.js:64."
+      "note": "Their RTF row is FileMenuPanels.js:64. Ours reads RTF and cannot write it, which this row recorded as parity until the writer list was consulted."
     },
     {
       "id": "shell.export-txt",

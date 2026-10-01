@@ -67,21 +67,30 @@
 export const FILE_SURFACE = [
   { nameKey: "menuGroup.newAndOpen", ids: ["file.new", "file.open", "file.recoverDrafts"] },
   { nameKey: "menuGroup.save", ids: ["file.save"] },
-  // The six export formats behind one row. Google Docs files exactly these
-  // under Download; Word's backstage gives Export its own page. Seven rows of
-  // which six say "export as" is the shape that made this menu long, and Save
+  // The nine export formats behind one row. Google Docs files exactly these
+  // under Download; Word's backstage gives Export its own page. Ten rows of
+  // which nine say "export as" is the shape that made this menu long, and Save
   // is not one of them — it belongs beside New and Open, not behind a flyout.
   //
   // The File PAGE renders a submenu flat, so its Export category keeps the
   // heading-over-rows treatment it already had; only the dropdown folds.
+  //
+  // `dotx`, `html` and `markdown` joined the six: all three writers shipped in
+  // the engine and reached NO menu at all, so the only place they surfaced was
+  // the Save-as picker, under their raw format ids. Order follows Word's
+  // backstage — the document formats, then the interchange ones, with the
+  // debugging artifact last.
   {
     nameKey: "filePane.export.label",
     submenu: true,
     ids: [
       "file.export.pdf",
       "file.export.docx",
+      "file.export.dotx",
       "file.export.odt",
       "file.export.rtf",
+      "file.export.html",
+      "file.export.markdown",
       "file.export.text",
       "file.export.json",
     ],

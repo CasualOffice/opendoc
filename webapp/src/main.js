@@ -11593,7 +11593,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, enabled: hostCapabilities().has("new"), disabledReason: t("capability.embedded"), run: () => void newBlankDocument() },
     { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, enabled: hostCapabilities().has("open"), disabledReason: t("capability.embedded"), run: () => fileEl.click() },
     { id: "file.save", label: "Save", group: "File", kw: "export download", enabled: HOST_CAPS.has("save"), disabledReason: t("capability.notGranted"), run: () => saveDocument() },
-    ...exportCommands(exportDocumentAs, HOST_CAPS.has("download"), t("capability.notGranted")),
+    ...exportCommands(exportDocumentAs, HOST_CAPS.has("download"), t("capability.notGranted"), doc ? doc.availableExportFormats() : null),
     // Reachable with no document open, because the case it exists for is
     // arriving at a fresh tab after a crash (HF-011). Disabled WITH A REASON
     // when the store is empty — never a control that silently does nothing.

@@ -249,6 +249,45 @@ export const EN_STRINGS = Object.freeze({
   // product stayed in English in all eighteen languages — the rest of the
   // chrome localises from `data-i18n`, but this page builds its rows in script.
   "filePane.export.label": "Export",
+  // ---- Format names ---------------------------------------------------------
+  //
+  // ONE name per format, read by the File menu's `Export as …` rows, the File
+  // page's Export tiles, the Save-as picker and the version-history download
+  // (`format_io.mjs`). They were English literals in that frozen table, so every
+  // format name was untranslated in eighteen languages — and, worse, adding a
+  // format cost an unrouted-strings ceiling, which is exactly why Markdown, HTML
+  // and the Word template shipped in the engine and reached the picker as
+  // `text.markdown` and `org.openxmlformats.wordprocessingml.template`. A
+  // capability that ships with no name is a capability that did not arrive.
+  //
+  // FOUR OF THE NINE ARE THE SAME IN EVERY LOCALE ON PURPOSE. PDF, DOCX, ODT and
+  // Markdown are not words: the first three are file-format initialisms a person
+  // reads on a Save dialog in every language, and Markdown is a product name. An
+  // entry translated in eighteen catalogues would be eighteen chances to mistype
+  // a format and no chance to improve a translation — the same decision this
+  // catalogue already records for "GitHub" and the product name. They are still
+  // KEYS rather than literals, because a key can be overridden by a host and a
+  // literal cannot, and because the alternative is a table that is half routed.
+  "format.pdf": "PDF",
+  "format.docx": "DOCX",
+  "format.dotx": "Word Template",
+  "format.odt": "ODT",
+  "format.rtf": "Rich Text Format",
+  "format.html": "Web Page",
+  "format.markdown": "Markdown",
+  "format.text": "Plain text",
+  "format.json": "Normalized JSON",
+  // The File menu's export rows, composed from one pattern and the name above.
+  // Nine rows, one sentence: Word's Save As and Google Docs' Download both name
+  // the format once and let the surface supply the verb.
+  "filePane.export.as": "Export as {format}…",
+  // Said by an export row whose format this engine build registers no WRITER
+  // for. RTF is the live case: it imports and cannot be written back
+  // (`can_export: false`), so the row is disabled carrying this rather than
+  // offering a save that throws. Distinct from `capability.notGranted`, which is
+  // the host withholding downloads — "this cannot be done" and "not for you" are
+  // different answers and a reader deserves the right one.
+  "filePane.export.noWriter": "This build cannot write {format}",
   "filePane.settings.label": "Settings",
   "filePane.settings.blurb": "Appearance, your reviewer identity, autosave and proofing.",
   "filePane.properties.label": "Document properties",

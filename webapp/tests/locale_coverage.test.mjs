@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1464],
-  ["de", 1464],
-  ["es", 1464],
-  ["fr", 1464],
-  ["hi", 1464],
-  ["id", 1464],
-  ["it", 1464],
-  ["ja", 1464],
-  ["ko", 1464],
-  ["nl", 1464],
-  ["pl", 1464],
-  ["pt-BR", 1464],
-  ["ru", 1464],
-  ["tr", 1464],
-  ["uk", 1464],
-  ["vi", 1464],
-  ["zh-Hans", 1464],
-  ["zh-Hant", 1464],
+  ["ar", 1486],
+  ["de", 1486],
+  ["es", 1486],
+  ["fr", 1486],
+  ["hi", 1486],
+  ["id", 1486],
+  ["it", 1486],
+  ["ja", 1486],
+  ["ko", 1486],
+  ["nl", 1486],
+  ["pl", 1486],
+  ["pt-BR", 1486],
+  ["ru", 1486],
+  ["tr", 1486],
+  ["uk", 1486],
+  ["vi", 1486],
+  ["zh-Hans", 1486],
+  ["zh-Hant", 1486],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -253,7 +253,27 @@ const COVERAGE = new Map([
  *  RE-MEASURED from the merged catalogues rather than added to the previous figure.
  *  The old number was measured on 2026-09-25 and the catalogues had gained keys
  *  since without it moving, so 1,391 + 51 would have been wrong and would have
- *  published a floor no locale had ever sat at. */
+ *  published a floor no locale had ever sat at.
+ *
+ *  1,464 -> 1,486 is the FORMAT NAMES. Every format the chrome can offer — nine
+ *  of them — now names itself from `format.*` in the catalogue instead of from an
+ *  English literal in `format_io.mjs`'s frozen table, and the File menu's export
+ *  rows compose `filePane.export.as` around that name. ELEVEN of the twenty-two
+ *  are this change, translated into all eighteen languages in the commit that
+ *  routed them, because a format name is script-side: the Save-as picker builds
+ *  its options with `t()` and has no English in the markup to fall back on, so a
+ *  locale that could not answer one would print `format.docx` in a dropdown.
+ *
+ *  Four of the eleven are the same string in every locale on purpose — PDF, DOCX,
+ *  ODT and Markdown are initialisms and a product name, not words — which is the
+ *  decision `en_strings.mjs` records beside them and the same one this catalogue
+ *  already makes for "GitHub".
+ *
+ *  The other ELEVEN were already translated and were never recorded: the rows
+ *  read 1,464 while the catalogues answered 1,475. A floor cannot notice work
+ *  that was done, so it drifts downwards away from the truth every time a surface
+ *  lands translated without the row being moved — which is why this is MEASURED
+ *  from the merged catalogues and not 1,464 + 11. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

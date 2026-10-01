@@ -219,10 +219,19 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("file.new", "new"),
   exact("file.open", "open"),
   exact("file.save", "save"),
+  // Every export writes a file the visitor keeps, so all nine are the one
+  // `download` grant. Whether the ENGINE can write a given format is a different
+  // question and belongs to the registry's `enabled`/`disabledReason` — "not
+  // right now" — which is why `file.export.rtf` is declared here although RTF is
+  // import-only: the host's permission to download is not conditional on which
+  // writers this build happens to register.
   exact("file.export.pdf", "download"),
   exact("file.export.docx", "download"),
+  exact("file.export.dotx", "download"),
   exact("file.export.odt", "download"),
   exact("file.export.rtf", "download"),
+  exact("file.export.html", "download"),
+  exact("file.export.markdown", "download"),
   exact("file.export.text", "download"),
   exact("file.export.json", "download"),
   exact("file.print", "print"),
