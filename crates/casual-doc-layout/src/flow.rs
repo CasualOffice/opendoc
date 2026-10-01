@@ -10709,6 +10709,182 @@ mod tests {
         );
     }
 
+    /// Builds a chart-bearing paragraph: one `EmbeddedObject` of kind `Chart` with
+    /// the fixture's authored extent, plus the `Definitions::charts` projection
+    /// anchored to it (or none at all).
+    fn chart_document(
+        chart: Option<casual_doc_model::v1::Chart>,
+    ) -> (Definitions, Vec<InlineNode>) {
+        use casual_doc_model::v1::ChartId;
+
+        let object = NodeId::from_parts(901, 1).unwrap();
+        let mut definitions = Definitions::default();
+        if let Some(mut chart) = chart {
+            chart.object = object;
+            definitions
+                .charts
+                .insert(ChartId::new(NodeId::from_parts(902, 1).unwrap()), chart);
+        }
+        let inlines = vec![InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+            id: object,
+            kind: EmbeddedKind::Chart,
+            part: EmbeddedPart {
+                relationship_id: "rId4".to_owned(),
+                relationship_type:
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                        .to_owned(),
+                part_name: "word/charts/chart1.xml".to_owned(),
+            },
+            extra_parts: Vec::new(),
+            preview: None,
+            extent: Extent {
+                width_emu: 5_486_400,
+                height_emu: 3_200_400,
+            },
+            prog_id: None,
+        }))];
+        (definitions, inlines)
+    }
+
+    /// A bar chart over `values`: one series, one category axis, one value axis.
+    fn bar_chart(values: &[&str]) -> casual_doc_model::v1::Chart {
+        use casual_doc_model::v1::{
+            Axis, AxisKind, AxisPosition, BarDirection, BarGrouping, Chart, ChartCoverage,
+            ChartGroup, ChartGroupKind, ChartValue, DataRange, DisplayBlanks, PlotArea, Series,
+        };
+        Chart {
+            object: NodeId::from_parts(1, 1).unwrap(),
+            coverage: ChartCoverage::Partial,
+            title: None,
+            auto_title_deleted: true,
+            plot_area: PlotArea {
+                groups: vec![ChartGroup {
+                    kind: ChartGroupKind::Bar {
+                        direction: BarDirection::Column,
+                        grouping: BarGrouping::Clustered,
+                        gap_width: 150,
+                        overlap: -27,
+                    },
+                    series: vec![Series {
+                        index: 0,
+                        order: 0,
+                        values: DataRange {
+                            formula: Some("Sheet1!$B$2:$B$5".to_owned()),
+                            point_count: values.len() as u32,
+                            points: values
+                                .iter()
+                                .enumerate()
+                                .map(|(i, v)| (i as u32, ChartValue::Number((*v).to_owned())))
+                                .collect(),
+                            number_format: None,
+                        },
+                        ..Series::default()
+                    }],
+                    axis_ids: vec![1, 2],
+                    vary_colors: false,
+                }],
+                axes: vec![
+                    Axis {
+                        id: 1,
+                        kind: AxisKind::Category,
+                        position: Some(AxisPosition::Bottom),
+                        ..Axis::default()
+                    },
+                    Axis {
+                        id: 2,
+                        kind: AxisKind::Value,
+                        position: Some(AxisPosition::Left),
+                        ..Axis::default()
+                    },
+                ],
+            },
+            legend: None,
+            plot_visible_only: true,
+            display_blanks_as: DisplayBlanks::Gap,
+            vary_colors: false,
+            external_data: None,
+        }
+    }
+
+    #[test]
+    fn a_projected_chart_flows_as_a_chart_box_reserving_its_authored_extent() {
+        let (definitions, inlines) = chart_document(Some(bar_chart(&["1", "2", "3", "4"])));
+        let items = collected_items(&definitions, &inlines);
+        let [
+            FlowItem::Chart {
+                size,
+                primitives,
+                model_len,
+            },
+        ] = items.as_slice()
+        else {
+            panic!("a projected chart flows as a chart box, got {items:?}");
+        };
+        // 5486400 x 3200400 EMU = 6in x 3.5in = 8640 x 5040 twips.
+        assert_eq!(*size, Size::new(Twip(8_640), Twip(5_040)));
+        assert!(
+            primitives.len() > 4,
+            "the box carries real geometry, not just a frame"
+        );
+        assert_eq!(
+            *model_len,
+            "[chart]".len() as u32,
+            "the box reports the bytes the `[chart]` run reported, so drawing a \
+             chart moves no caret offset (see `FlowItem::Chart`)"
+        );
+    }
+
+    #[test]
+    fn a_chart_with_no_projection_still_paints_its_placeholder() {
+        // `docs/155` 6.2: a chart we did not project keeps the labelled placeholder
+        // and the preserved bytes. An empty frame would be less honest, and nothing
+        // at all would make the chart invisible.
+        let (definitions, inlines) = chart_document(None);
+        let items = collected_items(&definitions, &inlines);
+        assert_eq!(
+            run_texts(&items),
+            vec!["[chart]"],
+            "an unprojected chart is still visibly represented, got {items:?}"
+        );
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, FlowItem::Chart { .. })),
+            "and it does NOT produce an empty chart box"
+        );
+    }
+
+    #[test]
+    fn a_pie_only_chart_keeps_the_placeholder_because_there_is_no_arc_primitive() {
+        // Tier 1B (`docs/155` 7.3): a sector is an arc between two radii and
+        // `display::PathCommand` has `CubicTo`/`QuadTo` but no `ArcTo`. A polygon
+        // fan is rejected rather than shipped, so pie keeps today's reported
+        // placeholder - pinned here so a fan cannot be slipped in unnoticed.
+        let mut chart = bar_chart(&["1", "2", "3", "4"]);
+        chart.plot_area.groups[0].kind = casual_doc_model::v1::ChartGroupKind::Pie {
+            first_slice_angle: 0,
+        };
+        let (definitions, inlines) = chart_document(Some(chart));
+        let items = collected_items(&definitions, &inlines);
+        assert_eq!(
+            run_texts(&items),
+            vec!["[chart]"],
+            "a pie chart keeps the placeholder until the arc primitive exists"
+        );
+    }
+
+    #[test]
+    fn a_projected_chart_with_no_series_keeps_the_placeholder() {
+        // An empty frame is the one outcome worse than the placeholder.
+        let mut chart = bar_chart(&["1"]);
+        chart.plot_area.groups[0].series.clear();
+        let (definitions, inlines) = chart_document(Some(chart));
+        assert_eq!(
+            run_texts(&collected_items(&definitions, &inlines)),
+            vec!["[chart]"]
+        );
+    }
+
     #[test]
     fn a_vanished_run_is_not_collected_into_styled_runs() {
         // The shared item collector must drop a `w:vanish` run so it is never
