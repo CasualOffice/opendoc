@@ -100,7 +100,7 @@ pub struct Transaction {                 // an intent, not yet applied
     base_revision: RevisionId,
     label: Label,                        // the engine's user-facing step vocabulary
     coalesce: Coalesce,                  // New | Continue | ContinueKeepingFirstInverse
-    mints: Vec<Mint>,                    // one identity space per operation (ADR-048)
+    mints: Vec<Mint>,                    // one identity space per operation (ADR-051)
     operations: Vec<Operation>,          // casual_doc_edit::Operation — the one set
 }
 
@@ -111,7 +111,7 @@ pub struct Commit {                      // an applied transaction: one link in 
     group: GroupId,                      // undo granularity (§3.4)
     label: Label,
     origin: Origin,                      // Edit | Undo { group } | Redo { group }
-    mints: Vec<Mint>,                    // one identity space per operation (ADR-048)
+    mints: Vec<Mint>,                    // one identity space per operation (ADR-051)
     operations: Vec<Operation>,          // forward — the OT substrate
     inverse_operations: Vec<Operation>,  // in the order that undoes them
     position_map: PositionMap,
@@ -121,7 +121,7 @@ pub struct Commit {                      // an applied transaction: one link in 
 `RevisionLog::apply(document: &mut v1::Document, tx) -> &Commit` is the only way to produce a
 `Commit`.
 
-**It takes no id generator, and that is deliberate** (ADR-048). A `Transaction` carries one
+**It takes no id generator, and that is deliberate** (ADR-051). A `Transaction` carries one
 `Mint` per operation — the identity space that operation mints in — so the log cannot create an
 identity the transaction did not declare, and `casual_doc_edit::apply` is a pure function of
 `(document, mint, operation)`. `Transaction::reserve` is where an author's generator is touched,

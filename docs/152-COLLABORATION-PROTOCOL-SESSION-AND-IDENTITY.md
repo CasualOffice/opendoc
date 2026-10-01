@@ -131,7 +131,7 @@ creation explicit rather than implied.
 | Transforms per keystroke | **0.** `transform` is never called with nothing concurrent — §5.3's uncontended path goes straight down `RevisionLog::apply`, the same call a keystroke makes |
 | Document clones per keystroke | **0.** The one clone is on the *contended* path — a remote edit arriving while this replica has unacknowledged work |
 | Round trips before an edit is visible locally | **0.** Editing is optimistic; the relay orders, it does not admit |
-| Extra bytes per operation | One `Mint` (ADR-048) and the ids the operation declares, both charged in `carried_bytes` |
+| Extra bytes per operation | One `Mint` (ADR-051) and the ids the operation declares, both charged in `carried_bytes` |
 | Startup | One `Join`, one `Welcome`, and `ClientSession::joined` settling the log — no document walk |
 
 `a_replica_with_nothing_pending_does_not_roll_back` is the guard that keeps the first two at
@@ -765,7 +765,7 @@ Each is out for a reason, not for lack of time.
 
 | Not built | Why, and what it waits for |
 | --- | --- |
-| **The byte codec** | `casual-doc-edit` has no `serde` at all. Of the three op-set findings that were about to move the shapes, **`150` §9.3 is now closed** — and it moved no `Operation` variant at all: the mint travels on the envelope (`Transaction`, and `WireOperation` on the wire), because the number of identities an operation mints is discovered at application time and cannot be enumerated at authoring time (`150` §9.4, ADR-048). What still moves the shapes is `150` §9.1 (node-addressed block operations) and §9.2 (`Pos` affinity). Freezing bytes over those is the one thing a compatibility surface must not do. `107` §8 Q5, `150` §10 Q5. |
+| **The byte codec** | `casual-doc-edit` has no `serde` at all. Of the three op-set findings that were about to move the shapes, **`150` §9.3 is now closed** — and it moved no `Operation` variant at all: the mint travels on the envelope (`Transaction`, and `WireOperation` on the wire), because the number of identities an operation mints is discovered at application time and cannot be enumerated at authoring time (`150` §9.4, ADR-051). What still moves the shapes is `150` §9.1 (node-addressed block operations) and §9.2 (`Pos` affinity). Freezing bytes over those is the one thing a compatibility surface must not do. `107` §8 Q5, `150` §10 Q5. |
 | **The relay binary** | It is a workspace member under `server/`, not a crate, and it needs the codec and a transport first. The state machine it will drive is here and is testable without it, which is the point of a state machine over supplied bytes. |
 | ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. The relay's fan-out of it waits on the relay. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
@@ -837,7 +837,7 @@ Each is out for a reason, not for lack of time.
 5. **Access enforcement at the operation.** The sibling enforces read-only *at the operation*
    rather than by hiding a toolbar, including inside a batch. `Refusal::ReadOnlyAccess` exists
    and nothing sends it yet, because there is no token to read an access level from.
-   **Half answered, from the other direction** (ADR-049): the *document's own*
+   **Half answered, from the other direction** (ADR-052): the *document's own*
    `w:documentProtection` is now enforced at the operation, in `casual-doc-edit`, and a batch
    is judged whole — so the shape the relay needs exists and is reusable by it. What is still
    missing is the **session's** access level, which needs the token of Q4; a document that
@@ -877,14 +877,14 @@ Each is out for a reason, not for lack of time.
 9. **Tracked changes and the order of wrapping.** `107` §8 Q3 and `150` §10 Q4 are untouched
    here, and §5.3's suggesting-mode blocker is now a second reason they have to be settled
    before collaboration ships.
-10. **§5.3's blocker has a diagnosis, and it is not in the session** (ADR-051, proposed).
+10. **§5.3's blocker has a diagnosis, and it is not in the session** (ADR-054, proposed).
     Review typing is an `UpdateReviewState` — a whole-paragraph rewrite — so its inverse is a
     paragraph snapshot per character, which is the only reason the coalescing mode that
     *drops* inverses exists. `107` §4 **B4** already forbids a paragraph rewrite on the typing
     path, so the violation and the blocker are one thing rather than two. Expressed granularly,
     every commit can afford to keep its inverse and the rollback driver needs no change at all.
     The **second** reason suggesting mode cannot join — colliding revision `w:id` strings
-    across replicas, Q7 above — is genuinely separate: ADR-048's partition covers `NodeId`
+    across replicas, Q7 above — is genuinely separate: ADR-051's partition covers `NodeId`
     and not a producer string.
 
 ---
@@ -899,6 +899,6 @@ Each is out for a reason, not for lack of time.
 | `147` §3.3 | The log has one position, `head` | Two: `head` and `horizon`. A commit above the horizon is provisional and may be re-expressed; "nothing rewrites a commit" holds for everything below it, which is everything anybody else has seen. |
 | `107` §8 Q6 | "`site_id` allocation without a mandatory server, and collision behaviour" — open | Answered by §4.2 and by a property rather than by a probability: the participant number the relay assigns *is* the site id, and `IdSpace::participant` is injective in it. **And answered for the no-server case too** (§4.4): with no relay there is no site id, so a replica mints in a reserved offline space no participant number can be handed. |
 | `106` line 366 | Step 6.3's tie-break is `(revision, site_id)` | There is no `site_id` in `transform.rs` and never was: the tie-break is `Side::Earlier`/`Later`, taken from the relay's total order. Corrected in place. `104` HF-068 and `139` VH-007 carry the same stale phrase and belong to other owners, so they are reported rather than edited. |
-| `150` §9.3 | Operations do not carry the identities they cause to be minted — reported, not taken | **Taken.** `150` §9.4 / ADR-048: `apply` holds no id generator, an operation travels with the *space* it mints in, and the two session convergence guards compare documents with node identities intact instead of normalising them away. |
+| `150` §9.3 | Operations do not carry the identities they cause to be minted — reported, not taken | **Taken.** `150` §9.4 / ADR-051: `apply` holds no id generator, an operation travels with the *space* it mints in, and the two session convergence guards compare documents with node identities intact instead of normalising them away. |
 | `152` §4.4 (this document, previous revision) | "The live editor still derives its minting namespace from the document… the fix is the next increment's first item" | Done, 2026-10-01. §4.4 records the mechanism, the id families, the backward-compatibility case, and the four mutation proofs (§7). |
 | `152` §4.2 (this document, previous revision) | `space(c) = base ^ (K · (c + 1))`, one refused participant number | `space(c) = base ^ (K · (c + 2))`, two refused participant numbers, `base ^ K` reserved for an offline replica. `PROTOCOL_VERSION` 1 → 2, because the space is derived and two versions would disagree about it silently. |

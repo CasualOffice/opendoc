@@ -520,7 +520,7 @@ change (ADR-030 I2) to close. They are reported, not taken.
    to. That is refusal U5, and it is also why the §5.4 table has to reverse-engineer `apply`'s
    attachment rule instead of reading an intent the operation declared.
 3. ~~**Operations do not carry the identities they cause to be minted.**~~ **Closed** — see
-   §9.4 and ADR-048. `apply` no longer holds an id generator at all; an operation travels with
+   §9.4 and ADR-051. `apply` no longer holds an id generator at all; an operation travels with
    the *space* it mints in, and every replica applying it names the nodes it creates
    identically.
 

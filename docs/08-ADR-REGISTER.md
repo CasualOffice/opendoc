@@ -1749,7 +1749,7 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
 - Deliberately not decided or built here: the byte codec, the relay binary, presence,
   collaborative undo, the host-signed grant, and durability. `152` §9 and §10 say why for each.
 
-## ADR-048 — An operation carries the identity *space* it mints in, and `apply` holds no generator
+## ADR-051 — An operation carries the identity *space* it mints in, and `apply` holds no generator
 
 - **Status:** Accepted, implemented.
 - **Date:** 2026-10-01.
@@ -1820,7 +1820,7 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
 - **Not decided here:** identities inside a carried subtree (`152` §10 Q2) are still covered by
   the id-space rule at the mint and by `Document::validate`, not by an enumerating walk.
 
-## ADR-049 — Document protection is enforced at the operation, by projection equality, and it is policy rather than security
+## ADR-052 — Document protection is enforced at the operation, by projection equality, and it is policy rather than security
 
 - **Status:** Accepted, implemented for `readOnly`, `comments` and `trackedChanges`.
 - **Date:** 2026-10-01.
@@ -1903,7 +1903,7 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
   operation of a batch is judged and the batch guard fails. (4) A `Revision`'s children are
   cloned instead of projected and the container-set equivalence guard fails.
 
-## ADR-050 — O(1) paragraph resolution is a session-owned identity index maintained at the choke point, not a cache on the document
+## ADR-053 — O(1) paragraph resolution is a session-owned identity index maintained at the choke point, not a cache on the document
 
 - **Status:** **Proposed.** The decision is recorded; the work is not done here.
 - **Date:** 2026-10-01.
@@ -1952,7 +1952,7 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
   restate B1 as "O(1) above the windowing threshold, linear below it" — which is a weaker
   promise honestly kept, and is the only other coherent position.
 
-## ADR-051 — A tracked keystroke must be a granular operation, and that — not the session — is what unblocks suggesting mode
+## ADR-054 — A tracked keystroke must be a granular operation, and that — not the session — is what unblocks suggesting mode
 
 - **Status:** **Proposed.** It changes the operation set, which ADR-030 I2 reserves to the
   owner.
@@ -1988,7 +1988,7 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
   that is the quadratic-feeling cost `147` records the flat history stacks having had.
 - **The second reason suggesting mode cannot join is separate and still open**: `w:id`
   collisions between replicas (`152` §10 Q7). Two replicas minting revision `w:id`s
-  independently produce colliding opaque ids on export. ADR-048's identity partition covers
+  independently produce colliding opaque ids on export. ADR-051's identity partition covers
   `NodeId`s and **not** `w:id`, which is a producer string. Recorded here so the two reasons are
   not mistaken for one.
 - **Owner decision needed:** whether to add the operation. Until then suggesting mode stays
