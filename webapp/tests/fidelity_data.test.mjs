@@ -183,10 +183,18 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
   // Nothing claims "full" editable for content the editor cannot author at all
-  // (charts, SmartArt, math) or can only partly author (images: no in-place
-  // replace, no rotation, no picture styling). Headers and footers are NOT on
-  // this list any more — they are a complete editing surface, held to that by
-  // the operation × surface matrix and the formatting-toggle audit.
+  // (charts, SmartArt, math) or can only partly author. Headers and footers are
+  // NOT on this list any more — they are a complete editing surface, held to that
+  // by the operation × surface matrix and the formatting-toggle audit.
+  //
+  // CORRECTED 2026-10-01: this comment said images were partial because of "no
+  // in-place replace, no rotation, no picture styling". Rotation and flip ARE
+  // authored — three surfaces over `setObjectRotation`/`setObjectFlip`, which read
+  // and write a picture's own transform — so the reason stands on the other two:
+  // no in-place byte replacement and no picture borders, effects or transparency
+  // authoring. The GRADE is unchanged and was never the overstatement; the
+  // justification was, and a stale justification in a guard is how a grade gets
+  // defended with a fact that stopped being true (`105` EV-007).
   for (const family of [
     "Charts",
     "SmartArt",
@@ -307,4 +315,59 @@ test("the fidelity page does not advertise a CI gate it does not have", () => {
         `geometry gate is workflow_dispatch-only and skips every fixture`,
     );
   }
+});
+
+// EV-007 in the OTHER direction: a note that still denies something the editor
+// ships.
+//
+// `fidelity.js` carried "Rotation and flip authoring, custom geometry, and
+// text-box body properties (internal margins, vertical anchor, autofit) are not"
+// on the shapes row, and "authoring rotation/flip or transparency … are not
+// there" on the images row, for the whole time after that authoring shipped.
+// Understating is the same defect as overstating (`SKILL` §9 rule 6), and it did
+// more damage than it looks: those two sentences were being quoted as a reason not
+// to count work that was done.
+//
+// Nothing here re-derives a grade. What it holds is narrower and checkable: a note
+// may not DENY a capability whose authoring path is in the tree. Each row pairs a
+// denial phrase with the binding that makes the denial false, read out of the Rust
+// rather than asserted as a fact about it — so it fails in BOTH directions: a note
+// that re-adds the denial, and a binding removed while the note still promises it.
+test("no fidelity note denies an authoring path the engine ships", () => {
+  const WASM = new URL("../../crates/casual-doc-wasm/src/", import.meta.url);
+  const DENIALS = [
+    {
+      family: "Text boxes & shapes",
+      denial: /rotation and flip authoring[^.]*are not\b/i,
+      file: "objects.rs",
+      declaration: "js_name = setObjectRotation",
+    },
+    {
+      family: "Text boxes & shapes",
+      denial: /text-box body properties \([^)]*\) are not\b/i,
+      file: "lib.rs",
+      declaration: "js_name = setTextBoxBodyProperties",
+    },
+    {
+      family: "Images & inline drawings",
+      denial: /authoring rotation\/flip/i,
+      file: "objects.rs",
+      declaration: "js_name = setObjectFlip",
+    },
+  ];
+  const stale = [];
+  for (const { family, denial, file, declaration } of DENIALS) {
+    const rust = readFileSync(new URL(file, WASM), "utf8");
+    const shipped = rust.includes(declaration);
+    const row = FIDELITY.find((entry) => entry.family === family);
+    assert.ok(row, `fidelity.js no longer grades ${family}`);
+    const denied = denial.test(row.note);
+    if (shipped && denied) {
+      stale.push(`${family}: the note still denies what ${file} declares as ${declaration}`);
+    }
+    if (!shipped && !denied) {
+      stale.push(`${family}: ${declaration} is gone from ${file} and the note no longer says so`);
+    }
+  }
+  assert.deepEqual(stale, []);
 });
