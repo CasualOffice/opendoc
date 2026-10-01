@@ -18,6 +18,7 @@
 //! round-tripping through a real encoded string — with populated payloads — as the codec
 //! lane's first obligation rather than an afterthought.
 
+use casual_doc_edit::access::Capabilities;
 use casual_doc_edit::{FormatDelta, Mint, Operation, Pos, Range as EditRange};
 use casual_doc_model::v1::{
     BlockNode, Definitions, Document, InlineNode, Paragraph, ParagraphProperties, Run,
@@ -90,19 +91,51 @@ struct Replica {
     next_transaction: u128,
 }
 
+/// Admits `count` participants with full authority and hands back their ids.
+///
+/// Needed because `commit` now requires the submitting client to have been admitted, which is
+/// ADR-060's first check: before it, a chunk naming any participant number at all was ordered
+/// and fanned out. Three guards in this file submitted as a client that had never joined and
+/// were ordered anyway — which is the evidence that the hole was real rather than theoretical.
+///
+/// Participant numbers are handed out from zero upwards, so `admit(server, 4)` yields 0..=3.
+fn admit(server: &mut ServerSession, count: u64) -> Vec<ClientId> {
+    (0..count)
+        .map(|number| {
+            let answer = server.join(
+                &ClientMessage::Join(Join {
+                    protocol: PROTOCOL_VERSION,
+                    identity: Identity::new(format!("participant-{number}")).expect("an identity"),
+                    grant: None,
+                    resume: None,
+                }),
+                Capabilities::owner(),
+            );
+            match answer {
+                ServerMessage::Welcome { client, .. } => client,
+                other => panic!("expected a welcome, got {other:?}"),
+            }
+        })
+        .collect()
+}
+
 impl Replica {
     /// Joins `server` from `document`, minting in the space the relay's participant number
     /// implies — which is the whole point of [`IdSpace`] and is why each replica's allocator
     /// is different here.
     fn join(document: &Document, server: &mut ServerSession, key: &str, who: &str) -> Self {
-        let message = server.join(&ClientMessage::Join(Join {
-            protocol: PROTOCOL_VERSION,
-            identity: Identity::new(who).expect("an identity"),
-            resume: Some(Resume {
-                key: ResumeKey::new(key).expect("a key"),
-                revision: Revision::new(0),
+        let message = server.join(
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new(who).expect("an identity"),
+                grant: None,
+                resume: Some(Resume {
+                    key: ResumeKey::new(key).expect("a key"),
+                    revision: Revision::new(0),
+                }),
             }),
-        }));
+            Capabilities::owner(),
+        );
         let mut log = RevisionLog::default();
         let session =
             ClientSession::joined(document, &message, &mut log).expect("the join is accepted");
@@ -299,6 +332,7 @@ fn a_protocol_mismatch_stops_the_session_and_is_never_retried() {
             protocol: PROTOCOL_VERSION + 1,
             client: ClientId::new(0),
             revision: Revision::new(0),
+            capabilities: Capabilities::owner(),
         },
         &mut log,
     )
@@ -327,11 +361,15 @@ fn a_protocol_mismatch_stops_the_session_and_is_never_retried() {
 #[test]
 fn a_relay_answers_a_version_mismatch_with_a_stop_and_not_a_refusal() {
     let mut server = ServerSession::default();
-    let answer = server.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION + 7,
-        identity: Identity::new("ada").expect("an identity"),
-        resume: None,
-    }));
+    let answer = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION + 7,
+            identity: Identity::new("ada").expect("an identity"),
+            grant: None,
+            resume: None,
+        }),
+        Capabilities::owner(),
+    );
     assert!(
         matches!(
             answer,
@@ -1484,6 +1522,10 @@ fn the_first_chunk_names_a_revision_and_the_rest_are_chained() {
 #[test]
 fn a_chained_chunk_from_a_client_with_nothing_accepted_is_refused_not_guessed_at() {
     let mut server = ServerSession::default();
+    // Admitted, so the refusal under test is about the BASE and not about authorisation: an
+    // unadmitted client is refused for a different reason now (ADR-060) and would make this
+    // guard pass for the wrong one.
+    admit(&mut server, 4);
     let outcome = server.commit(&crate::protocol::Submission {
         client: ClientId::new(3),
         seq: Seq::new(1),
@@ -1506,6 +1548,7 @@ fn a_chained_chunk_from_a_client_with_nothing_accepted_is_refused_not_guessed_at
 #[test]
 fn a_resend_of_an_ordered_chunk_answers_where_it_landed_the_first_time() {
     let mut server = ServerSession::default();
+    admit(&mut server, 3);
     let submission = crate::protocol::Submission {
         client: ClientId::new(1),
         seq: Seq::new(1),
@@ -1652,14 +1695,18 @@ fn a_resumed_participant_keeps_its_number_and_its_chunk_counter() {
     );
     ada.exchange(&mut server);
 
-    let answer = server.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new("ada").expect("an identity"),
-        resume: Some(Resume {
-            key: ResumeKey::new("ada").expect("a key"),
-            revision: Revision::new(1),
+    let answer = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("ada").expect("an identity"),
+            grant: None,
+            resume: Some(Resume {
+                key: ResumeKey::new("ada").expect("a key"),
+                revision: Revision::new(1),
+            }),
         }),
-    }));
+        Capabilities::owner(),
+    );
     match &answer {
         ServerMessage::Resumed { client, .. } => assert_eq!(*client, number),
         other => panic!("expected a resume, got {other:?}"),
@@ -1685,14 +1732,18 @@ fn a_resume_key_presented_by_a_different_identity_is_not_honoured() {
     let (document, _) = seed();
     let mut server = ServerSession::default();
     let ada = Replica::join(&document, &mut server, "shared-key", "ada");
-    let answer = server.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new("mallory").expect("an identity"),
-        resume: Some(Resume {
-            key: ResumeKey::new("shared-key").expect("a key"),
-            revision: Revision::new(0),
+    let answer = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("mallory").expect("an identity"),
+            grant: None,
+            resume: Some(Resume {
+                key: ResumeKey::new("shared-key").expect("a key"),
+                revision: Revision::new(0),
+            }),
         }),
-    }));
+        Capabilities::owner(),
+    );
     match answer {
         ServerMessage::Welcome { client, .. } => assert_ne!(
             client,
@@ -1709,6 +1760,7 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
     // of the two messages is the whole point: the loss is announced *before* the thing that
     // discards it lands.
     let mut server = ServerSession::new(2);
+    admit(&mut server, 2);
     for seq in 1..=5_u64 {
         let outcome = server.commit(&crate::protocol::Submission {
             client: ClientId::new(1),
@@ -1731,22 +1783,30 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
     assert!(server.history_since(Revision::new(0)).is_none());
     assert!(server.history_since(server.oldest_rebasable()).is_some());
 
-    server.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new("ada").expect("an identity"),
-        resume: Some(Resume {
-            key: ResumeKey::new("ada").expect("a key"),
-            revision: Revision::new(0),
+    server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("ada").expect("an identity"),
+            grant: None,
+            resume: Some(Resume {
+                key: ResumeKey::new("ada").expect("a key"),
+                revision: Revision::new(0),
+            }),
         }),
-    }));
-    let answer = server.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new("ada").expect("an identity"),
-        resume: Some(Resume {
-            key: ResumeKey::new("ada").expect("a key"),
-            revision: Revision::new(0),
+        Capabilities::owner(),
+    );
+    let answer = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("ada").expect("an identity"),
+            grant: None,
+            resume: Some(Resume {
+                key: ResumeKey::new("ada").expect("a key"),
+                revision: Revision::new(0),
+            }),
         }),
-    }));
+        Capabilities::owner(),
+    );
     assert!(
         matches!(
             answer,
@@ -2143,11 +2203,15 @@ fn work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operatio
 
     // Mode 2. The document is shared, so it joins a room — even though nobody else is in it.
     let mut server = ServerSession::default();
-    let message = server.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new("ada").expect("an identity"),
-        resume: None,
-    }));
+    let message = server.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("ada").expect("an identity"),
+            grant: None,
+            resume: None,
+        }),
+        Capabilities::owner(),
+    );
     let mut session =
         ClientSession::joined(&standalone, &message, &mut log).expect("the join lands");
 

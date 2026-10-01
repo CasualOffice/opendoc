@@ -5,8 +5,23 @@
 //! ```text
 //! opendoc-relay create <journal>     create a room's durable log, and stop
 //! opendoc-relay inspect <journal>    replay it and report what it holds, and stop
-//! opendoc-relay serve <journal> <addr>
+//! opendoc-relay serve <journal> <addr> [viewer|commenter|suggester|editor|owner]
 //! ```
+//!
+//! # The role argument is required, and that is the point
+//!
+//! `serve` will not start without it. It is the room's
+//! [`Access::Open`](opendoc_relay::Access::Open) ceiling — every participant gets exactly that
+//! and the relay refuses anything outside it at the operation (ADR-060) — and an operator has to
+//! name it, because a default would be a permission nobody chose. `viewer` is a read-only
+//! broadcast room; `commenter` is a review link; `owner` is what an unauthenticated relay used to
+//! be, now said out loud.
+//!
+//! **This binary verifies no grants**, so it cannot tell two participants apart. A deployment
+//! that needs per-participant access implements
+//! [`GrantVerifier`](opendoc_relay::GrantVerifier) and passes
+//! [`Access::Granted`](opendoc_relay::Access::Granted); `143` §16 Q5 is why no signature profile
+//! is built in.
 //!
 //! `create` is separate from `serve` on purpose: `152` records that **the host creates the
 //! room, not the first client**, and a binary that created one on first connection would be a
@@ -21,15 +36,16 @@ use std::io::Write as _;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
+use casual_doc_edit::access::Capabilities;
 use casual_doc_transaction::codec::encode_frame;
 use casual_doc_transaction::protocol::{ClientId, ClientMessage, Revision};
 use opendoc_relay::transport::{Frames, ReadError};
-use opendoc_relay::{Recovered, Relay, Room};
+use opendoc_relay::{Access, Recovered, Relay, Room};
 
 fn main() -> std::process::ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let usage =
-        "usage: opendoc-relay create <journal> | inspect <journal> | serve <journal> <addr>";
+    let usage = "usage: opendoc-relay create <journal> | inspect <journal> | \
+                 serve <journal> <addr> <viewer|commenter|suggester|editor|owner>";
     let result = match arguments
         .iter()
         .map(String::as_str)
@@ -38,7 +54,13 @@ fn main() -> std::process::ExitCode {
     {
         ["create", journal] => create(journal),
         ["inspect", journal] => inspect(journal),
-        ["serve", journal, address] => serve(journal, address),
+        ["serve", journal, address, role] => match open_room_role(role) {
+            Some(access) => serve(journal, address, access),
+            None => {
+                eprintln!("{usage}");
+                return std::process::ExitCode::from(2);
+            }
+        },
         _ => {
             eprintln!("{usage}");
             return std::process::ExitCode::from(2);
@@ -86,10 +108,26 @@ fn report(recovered: &Recovered) {
 ///
 /// Everything this function decides is sockets and threads. The decisions that are hard to get
 /// right are in `opendoc_relay::relay`, where a test can reach them.
-fn serve(journal: &str, address: &str) -> Result<(), Box<dyn core::error::Error>> {
+/// The room's ceiling, by name. One role per capability preset and no way to spell a
+/// combination: an operator choosing a room's policy from a command line should be choosing
+/// between understood roles, and a host that needs an unusual set has
+/// [`Access`](opendoc_relay::Access) and the library.
+fn open_room_role(role: &str) -> Option<Access> {
+    let capabilities = match role {
+        "viewer" => Capabilities::viewer(),
+        "commenter" => Capabilities::commenter(),
+        "suggester" => Capabilities::suggester(),
+        "editor" => Capabilities::editor(),
+        "owner" => Capabilities::owner(),
+        _ => return None,
+    };
+    Some(Access::Open(capabilities))
+}
+
+fn serve(journal: &str, address: &str, access: Access) -> Result<(), Box<dyn core::error::Error>> {
     let (room, recovered) = Room::open(journal)?;
     report(&recovered);
-    let relay = Arc::new(Mutex::new(Relay::new(room)));
+    let relay = Arc::new(Mutex::new(Relay::new(room, access)));
     let listener = TcpListener::bind(address)?;
     println!("relaying {journal} on {}", listener.local_addr()?);
     for stream in listener.incoming() {

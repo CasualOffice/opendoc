@@ -16,13 +16,11 @@
 //!
 //! # What is deliberately absent
 //!
-//! **The byte codec.** [`Operation`](crate::Operation) has no `serde` implementation and
-//! `casual-doc-edit` carries no `serde` dependency, so these types are *shapes* and not an
-//! encoding. Choosing the encoding is its own surface — doc 107 §8 Q5, doc 150 §10 Q5 —
-//! and the op-set lane is going to move the operation shapes (node-addressed blocks,
-//! `Pos` affinity, minted run ids), which is exactly the wrong moment to freeze bytes.
-//! Doc 152 §9 lists the rest: no server binary, no presence, no collaborative undo, no
-//! change to `casual-doc-wasm`.
+//! Doc 152 §9's list, **kept current rather than left as it was written**. The byte codec
+//! (ADR-057), the relay binary, durability (ADR-058) and presence have all landed since, so
+//! this paragraph used to say `casual-doc-edit` carries no `serde` dependency — it does, and
+//! these types are an encoding now. What is still absent is collaborative undo, and the
+//! anchor mapping a typed remote caret waits on (`107` P-4).
 //!
 //! # The version rule
 //!
@@ -35,9 +33,11 @@
 //! absence concludes what the sender meant. A new **enum variant** is a hard break, because
 //! a tagged enum with an unknown tag does not deserialize at all.
 
+use casual_doc_edit::access::Capabilities;
+use serde::{Deserialize, Serialize};
+
 use crate::presence::PresenceUpdate;
 use crate::wire::WireOperation;
-use serde::{Deserialize, Serialize};
 
 /// The version both ends must agree on, checked for equality before anything else.
 ///
@@ -55,6 +55,17 @@ use serde::{Deserialize, Serialize};
 ///   [`ServerMessage::Departed`] are **new enum variants**, which the rule above calls a hard
 ///   break: a version-2 peer receiving an `Awareness` tag does not deserialize the message at
 ///   all, so it would drop the frame rather than skip a field. Nothing about edits changed.
+///
+/// **Not bumped for the host-signed grant** (ADR-060), and the reasoning is the rule above
+/// applied rather than waived. [`Join::grant`] and the `capabilities` field on
+/// [`ServerMessage::Welcome`] / [`ServerMessage::Resumed`] are *added optional fields*: a
+/// version-3 `Join` and a version-4 one with no grant decode to the same value, and a
+/// version-3 peer that omits `capabilities` is read as [`Capabilities::viewer`] — the floor,
+/// not a widening. No enum variant changed, so no peer meets a tag it cannot decode.
+///
+/// The case for bumping anyway is that a grantless client is refused from a room that requires
+/// one; that refusal is `ODC-7003` with a reason, which is the opposite of the **silent**
+/// disagreement version 2 existed for. A loud refusal is not a protocol break.
 pub const PROTOCOL_VERSION: u32 = 3;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
@@ -193,6 +204,54 @@ impl ResumeKey {
     }
 }
 
+/// A host-signed grant, **opaque to every line of this engine** — `152` §10 Q4.
+///
+/// # Why bytes and not claims
+///
+/// Because a capability a client can state is a capability a client can forge. `143` §10 says
+/// the provider does not trust a client-supplied role label, and `152` §2b made the same rule
+/// structural for presence by giving the message no field to put an identity in. This is that
+/// rule again: the claims travel *inside* the signed blob, and
+/// [`Capabilities`](casual_doc_edit::access::Capabilities) appears on the wire only in the
+/// **server-to-client** direction, where the relay is the one saying it.
+///
+/// # What the engine does with it: nothing
+///
+/// It carries it. Verification needs a key and a clock, and this crate holds neither — the same
+/// reason [`ClientId`] is assigned rather than minted and nothing here reads a time. ADR-060
+/// records the split: the **host** signs, the **boundary** verifies, the **engine** enforces
+/// the capabilities that came back. The signature profile (JWT, PASETO, an opaque provider
+/// token) stays `143` §16 Q5's open question, and deliberately so: freezing it here would pick
+/// a cryptographic dependency for every embedder, including the ones that already have an
+/// identity system and a key.
+///
+/// Bounded like every other network-supplied value here ([`MAX_GRANT_BYTES`]): a token is a
+/// credential, not a payload.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct GrantToken(Vec<u8>);
+
+/// The longest grant a relay will read.
+///
+/// Generous enough for a JWT with a certificate chain and far below a frame bound, because the
+/// failure it prevents is not a big token — it is an unbounded one, arriving before anything has
+/// been authorised and therefore from nobody in particular.
+pub const MAX_GRANT_BYTES: usize = 8 * 1024;
+
+impl GrantToken {
+    /// Wraps host-supplied bytes, or `None` when they are empty or over [`MAX_GRANT_BYTES`].
+    #[must_use]
+    pub fn new(value: impl Into<Vec<u8>>) -> Option<Self> {
+        let value = value.into();
+        (!value.is_empty() && value.len() <= MAX_GRANT_BYTES).then_some(Self(value))
+    }
+
+    /// The bytes, for the verifier and for nobody else.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// An opaque durable identity for the person behind a session.
 ///
 /// Supplied by the host, never minted here. Two tabs belonging to one person are two
@@ -257,6 +316,14 @@ pub struct Join {
     pub protocol: u32,
     /// Who is joining, as the host names them.
     pub identity: Identity,
+    /// The host-signed grant, when the room requires one.
+    ///
+    /// `None` is **not** "no restrictions": it is "I present nothing", and what that gets is
+    /// the room's own policy. A room that requires a grant answers [`Refusal::NotAuthorised`].
+    /// Defaulted so a peer that predates the field decodes, and so the absence is expressible
+    /// rather than inferred from a missing key.
+    #[serde(default)]
+    pub grant: Option<GrantToken>,
     /// A key from a previous connection, when this is a reconnect.
     pub resume: Option<Resume>,
 }
@@ -311,6 +378,18 @@ pub enum ServerMessage {
         client: ClientId,
         /// The ordered position the accompanying snapshot is at.
         revision: Revision,
+        /// What this participant may do, as the relay decided it from the grant it verified.
+        ///
+        /// **This direction only.** A client receives its capabilities and never states them —
+        /// the same asymmetry [`ServerMessage::Awareness`] has, and for the same reason: a
+        /// forged claim is unexpressible rather than merely rejected.
+        ///
+        /// What a client may assume is "this is what the relay will let me do", which is enough
+        /// to disable a control *with a reason*. It is not the authority: the relay judges every
+        /// submission against its own copy, so a client that ignores this still cannot write
+        /// above its level.
+        #[serde(default)]
+        capabilities: Capabilities,
     },
     /// A recognised reconnect, sent **instead of** [`ServerMessage::Welcome`].
     ///
@@ -326,6 +405,14 @@ pub enum ServerMessage {
         revision: Revision,
         /// Everything ordered since the client's own position, in order.
         missed: Vec<Arrival>,
+        /// What this participant may do **now** — re-derived from the grant presented on *this*
+        /// reconnect, not restored from the previous one.
+        ///
+        /// That is the direction `143` §10 requires: "losing edit permission leaves the document
+        /// readable and preserves unsent local work". A resume that restored the old level would
+        /// make reconnecting a way to undo a revocation.
+        #[serde(default)]
+        capabilities: Capabilities,
     },
     /// Cumulative acknowledgement: every seq up to and including `through` is ordered.
     ///

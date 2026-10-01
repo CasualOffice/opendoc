@@ -68,6 +68,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
+use casual_doc_edit::access::Capabilities;
 use casual_doc_edit::{EditError, Mint};
 
 use crate::protocol::{
@@ -209,6 +210,9 @@ struct Outstanding {
 #[derive(Clone, Debug)]
 pub struct ClientSession {
     client: ClientId,
+    /// What the relay said this participant may do. **Received, never asserted** — see
+    /// [`ServerMessage::Welcome`]'s `capabilities` field.
+    capabilities: Capabilities,
     space: IdSpace,
     document_space: IdSpace,
     revision: Revision,
@@ -245,6 +249,7 @@ impl ClientSession {
             protocol,
             client,
             revision,
+            capabilities,
         } = *message
         else {
             return Err(SessionError::OutOfOrder);
@@ -260,6 +265,7 @@ impl ClientSession {
         log.settle(log.head());
         Ok(Self {
             client,
+            capabilities,
             space,
             document_space,
             revision,
@@ -292,6 +298,7 @@ impl ClientSession {
             client,
             revision,
             ref missed,
+            capabilities,
         } = *message
         else {
             return Err(SessionError::OutOfOrder);
@@ -305,6 +312,11 @@ impl ClientSession {
         if client != self.client {
             return Err(SessionError::OutOfOrder);
         }
+        // **Replaced, not merged.** The grant presented on *this* reconnect is the one that
+        // applies, so a revocation cannot be undone by reconnecting (`143` §10). A client whose
+        // own copy must only narrow is a different rule in a different place — the facade's
+        // `adoptParticipantCapabilities` — because here the relay is the one speaking.
+        self.capabilities = capabilities;
         if !missed.is_empty() {
             self.awaiting = Some(revision);
         }
@@ -321,6 +333,16 @@ impl ClientSession {
     #[must_use]
     pub const fn id_space(&self) -> IdSpace {
         self.space
+    }
+
+    /// What the relay said this participant may do.
+    ///
+    /// Useful for disabling a control *with a reason*. **Not an authority**: the relay judges
+    /// every submission against its own copy, so a client that ignores this is refused on the
+    /// wire rather than obeyed.
+    #[must_use]
+    pub const fn capabilities(&self) -> Capabilities {
+        self.capabilities
     }
 
     /// The ordered position this session has reached.
@@ -1029,10 +1051,26 @@ impl ServerSession {
     ///
     /// The key is remembered on **every** join that offers one, resumed or not, because the
     /// point of a key is the *next* reconnect.
-    pub fn join(&mut self, message: &ClientMessage) -> ServerMessage {
+    ///
+    /// # `granted` is an argument, for the same reason time and identity are
+    ///
+    /// This state machine cannot verify a grant: verification needs a key and a clock and this
+    /// crate holds neither (`protocol`'s module docs). So the caller — the boundary, which has
+    /// both — verifies [`Join::grant`] and passes what came out. Making it a **required
+    /// argument** rather than an optional setter is the point: there is no way to admit a
+    /// participant without saying what they may do, which is the same compile-error discipline
+    /// ADR-052 used for the operation match. ADR-060.
+    ///
+    /// A resume adopts the capabilities presented **now**, not the ones the previous connection
+    /// held, so reconnecting cannot undo a revocation (`143` §10).
+    pub fn join(&mut self, message: &ClientMessage, granted: Capabilities) -> ServerMessage {
         let ClientMessage::Join(Join {
             protocol,
             identity,
+            // Deliberately not read here. Verifying a grant needs a key and a clock, and this
+            // crate holds neither; the boundary verified it and the answer arrived as
+            // `granted`. Named rather than globbed so a future field cannot slip past unread.
+            grant: _,
             resume,
         }) = message
         else {
@@ -1068,6 +1106,7 @@ impl ServerSession {
                         client,
                         revision: self.revision,
                         missed,
+                        capabilities: granted,
                     };
                 }
                 return ServerMessage::Refused {
@@ -1088,7 +1127,22 @@ impl ServerSession {
             protocol: PROTOCOL_VERSION,
             client,
             revision: self.revision,
+            capabilities: granted,
         }
+    }
+
+    /// Whether this session ever handed out `client` as a participant number.
+    ///
+    /// **Derived from `next_client`, not from a table.** Numbers are handed out from zero
+    /// upwards and never reused, so "assigned" is an inequality — which matters for more than
+    /// tidiness: it is a pure function of checkpointed state, so
+    /// [`commit`](ServerSession::commit) stays replayable and ADR-058's "recovery verifies rather
+    /// than trusts" keeps working. A capability *table* here would have made `commit` depend on
+    /// a `join` that is deliberately not journalled, and recovery would have refused the relay's
+    /// own file — which it did, once, before this was moved.
+    #[must_use]
+    pub const fn has_assigned(&self, client: ClientId) -> bool {
+        client.get() < self.next_client
     }
 
     /// Orders one submission, or says why it cannot be.
@@ -1099,6 +1153,37 @@ impl ServerSession {
     ///
     /// [`Base::Chained`] is resolved from the same table the dedupe uses, and a `Chained`
     /// chunk from a client with nothing accepted is **refused rather than guessed at**.
+    ///
+    /// # Why no access check happens here, written down because the obvious place is here
+    ///
+    /// A chunk naming a participant number this session never handed out *should* be refused,
+    /// and before ADR-060 nothing refused it anywhere: `commit` keyed everything on the dedupe
+    /// table and the base, so a `Base::Revision(head)` submission could name **any**
+    /// [`ClientId`]. That attributed the work to somebody else and, worse, wrote *their*
+    /// `(client, seq)` entry — so that participant's own next chunk at that seq came back
+    /// [`Outcome::Duplicate`] and was dropped. It is exactly the harm [`ResumeKey`]'s doc comment
+    /// describes for a stolen resume key, reachable without one.
+    ///
+    /// **It cannot be refused here, and the reason is ADR-058's replay.** Recovery hands a logged
+    /// submission back to this function and checks the answer, so `commit` may only depend on
+    /// state the journal records. [`ServerSession::join`] is deliberately *not* journalled — so
+    /// `next_client`, `resumes`, and any grant table are all advanced after the last checkpoint
+    /// and gone on restart. A check here against any of them refuses the relay's own file:
+    /// measured, not reasoned about — `a_chunk_is_durable_before_the_room_says_it_is_ordered`
+    /// failed with `DecisionDiffers { logged: 1, replayed: None }` the moment one was added.
+    ///
+    /// So the check lives at the boundary, which is also where it can be *exact*:
+    /// `opendoc_relay::Relay::handle` refuses a submission whose `client` is not the one its own
+    /// socket joined as — a connection, which no pure state machine has — and refuses an
+    /// operation outside the participant's capabilities. [`ServerSession::has_assigned`] is the
+    /// query it uses for the weaker range check, and it is a query rather than a rule here for
+    /// exactly the reason above.
+    ///
+    /// **The underlying gap is recorded rather than papered over.** That a join is not durable
+    /// also means the *resume table* does not survive a crash, so a client whose work was
+    /// acknowledged cannot resume after one and is told `TooFarBehind` instead. That is a
+    /// pre-existing hole, found by this work and belonging with the journal's record set rather
+    /// than with this function.
     pub fn commit(&mut self, submission: &Submission) -> Outcome {
         let previous = self.accepted.get(&submission.client).copied();
         if let Some((seq, revision)) = previous

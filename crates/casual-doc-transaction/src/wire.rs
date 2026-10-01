@@ -192,6 +192,36 @@ impl WireOperation {
         &self.introduces
     }
 
+    /// The operation as its sender wrote it, **unchecked**.
+    ///
+    /// # Why this exists, and why it is not [`WireOperation::localise`]
+    ///
+    /// `localise` is the apply path: it verifies the sender's declarations against a document
+    /// and is the only way to get an operation that is safe to *apply*. This is for a caller
+    /// that must decide something about the operation and **holds no document** — which is
+    /// exactly one caller, the relay, and exactly one question, what
+    /// [`access::admitted_by`](casual_doc_edit::access::admitted_by) answers: which capability
+    /// class could legitimately have sent this (ADR-060).
+    ///
+    /// # Does this break ADR-047?
+    ///
+    /// No, and the line is worth stating because it is a thin one. ADR-047 says the relay holds
+    /// no document and runs no transform. Reading which *variant* an operation is costs no
+    /// document, no state and no interpretation of content; the exhaustive judgement stays in
+    /// `casual-doc-edit`, where `Operation` lives, so a 59th operation is a compile error there
+    /// rather than a permission hole here. What the relay must not do is decide anything that
+    /// needs the document — and `access` makes that structural by taking the document as an
+    /// `Option` and giving the `None` caller a provably weaker answer.
+    ///
+    /// **Unchecked** is the word that matters: nothing here has verified that the operation can
+    /// be applied, that its ids are the sender's to mint, or that it means what it says. Only
+    /// [`WireOperation::localise`] does that, and a caller that applies this value instead has
+    /// skipped the id-space rule.
+    #[must_use]
+    pub const fn as_offered(&self) -> &Operation {
+        &self.operation
+    }
+
     /// Accepts this operation from `sender`, or says why it cannot be applied.
     ///
     /// Two checks, and both are about identity rather than about content:

@@ -15,6 +15,7 @@
 
 use std::path::Path;
 
+use casual_doc_edit::access::Capabilities;
 use casual_doc_transaction::protocol::{
     ClientMessage, Outcome, Revision, ServerMessage, Submission,
 };
@@ -92,13 +93,18 @@ impl Room {
         ))
     }
 
-    /// Admits a client, answering its opening message.
+    /// Admits a client with `granted`, answering its opening message.
     ///
     /// Not journalled: a participant number is handed out again on the next join and nothing
-    /// anybody was acknowledged for depends on it. What *is* durable is the resume table, and
-    /// that rides along in the next checkpoint.
-    pub fn join(&mut self, message: &ClientMessage) -> ServerMessage {
-        self.session.join(message)
+    /// anybody was acknowledged for depends on it. What *is* durable is the resume table and the
+    /// grant table, and both ride along in the next checkpoint.
+    ///
+    /// `granted` is what the **boundary** got out of the grant it verified (ADR-060). This type
+    /// does not verify anything: it holds a journal and an order, and a key does not belong
+    /// beside either. [`Relay::handle`](crate::Relay::handle) is where the
+    /// [`Access`](crate::Access) policy is consulted.
+    pub fn join(&mut self, message: &ClientMessage, granted: Capabilities) -> ServerMessage {
+        self.session.join(message, granted)
     }
 
     /// Orders `submission`, **journals the decision, and only then returns it**.

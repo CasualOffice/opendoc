@@ -2,6 +2,7 @@
 
 //! The room's one guarantee: **journal first, answer second.**
 
+use casual_doc_edit::access::Capabilities;
 use casual_doc_edit::{Mint, Operation, Pos};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_transaction::protocol::{
@@ -55,11 +56,15 @@ fn a_chunk_is_durable_before_the_room_says_it_is_ordered() {
     // been bitten by.
     let path = scratch("durable-before-answer");
     let mut room = Room::create(&path).expect("a new room");
-    let ServerMessage::Welcome { client, .. } = room.join(&ClientMessage::Join(Join {
-        protocol: PROTOCOL_VERSION,
-        identity: Identity::new("ada").expect("an identity"),
-        resume: None,
-    })) else {
+    let ServerMessage::Welcome { client, .. } = room.join(
+        &ClientMessage::Join(Join {
+            protocol: PROTOCOL_VERSION,
+            identity: Identity::new("ada").expect("an identity"),
+            grant: None,
+            resume: None,
+        }),
+        Capabilities::owner(),
+    ) else {
         panic!("expected a welcome");
     };
 
