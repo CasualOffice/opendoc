@@ -14845,7 +14845,7 @@ impl WasmDocument {
                     AnchorContent::Rectangle { .. }
                     | AnchorContent::Ellipse { .. }
                     | AnchorContent::RoundedRectangle { .. }
-                    | AnchorContent::Polygon { .. }
+                    | AnchorContent::Path { .. }
                     | AnchorContent::Line { .. } => "shape",
                     // A positioned table (`w:tblpPr`) rides the same float layer
                     // but is NOT a floating drawing object: it is selected and

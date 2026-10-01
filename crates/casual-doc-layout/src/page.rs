@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
 // Separate `use` line to minimize import-block merge conflicts.
+use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::model::ModelPos;
 use crate::text::{GlyphRun, TextBoxStroke};
@@ -104,12 +105,6 @@ fn solid_dash() -> DashStyle {
     DashStyle::Solid
 }
 
-/// The default for a serialized `AnchorContent::Polygon` that predates the
-/// `closed` field: every polygon that could be written then was closed.
-fn closed_polygon() -> bool {
-    true
-}
-
 fn is_solid_dash(dash: &DashStyle) -> bool {
     matches!(dash, DashStyle::Solid)
 }
@@ -160,19 +155,19 @@ pub enum AnchorContent {
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
-    /// A polyline whose page-local vertices are already resolved — closed
-    /// (a polygon) or open.
-    Polygon {
-        /// Vertices in path order. Typed presets produce three or four points; a
-        /// custom geometry (`a:custGeom`) produces its authored vertices,
+    /// A path whose page-local coordinates are already resolved — closed
+    /// (a filled figure) or open.
+    Path {
+        /// Commands in path order, beginning with a
+        /// [`PathCommand::MoveTo`]. A typed
+        /// preset resolves to a straight-line command list; a custom geometry
+        /// (`a:custGeom`) contributes its authored commands, curves included,
         /// bounded by `MAX_SHAPE_PATH_COMMANDS` (docs/119).
-        points: Vec<Point>,
-        /// Whether the last vertex joins back to the first (`a:close`, and every
-        /// typed preset). `false` strokes an open path, which is what an
-        /// unclosed `a:custGeom` means and what Word's own VML fallback for one
-        /// writes (docs/119 §4). Defaults to `true` so a display list serialized
-        /// before this field still deserializes as the closed polygon it was.
-        #[serde(default = "closed_polygon")]
+        commands: Vec<PathCommand>,
+        /// Whether the figure joins back to its subpath start (`a:close`, and every
+        /// typed preset). `false` strokes an open path, which is what an unclosed
+        /// `a:custGeom` means and what Word's own VML fallback for one writes
+        /// (docs/119 §4).
         closed: bool,
         /// The fill (solid or gradient), if filled.
         #[serde(default, skip_serializing_if = "Option::is_none")]

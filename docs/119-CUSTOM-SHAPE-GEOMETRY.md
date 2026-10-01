@@ -234,7 +234,8 @@ presets collapse into table entries rather than code.
 Each of these keeps today's behaviour — reported as an omission, painted as the
 bounding rectangle — and is `109` FID-G-02:
 
-- **Curves and arcs**: `a:cubicBezTo`, `a:quadBezTo`, `a:arcTo`.
+- ~~**Curves and arcs**~~ — **`a:cubicBezTo` and `a:quadBezTo` have since landed**; see
+  "Landed since" below. `a:arcTo` is still out, and still FID-G-02.
 - **Guide formulas**: `a:gdLst` and the `*/ +- pin sin cos at2 …` formula
   language, and therefore any path whose coordinates are guide *names* rather
   than integers. This is the single largest remaining piece.
@@ -251,6 +252,41 @@ bounding rectangle — and is `109` FID-G-02:
   bounding box. Deliberate: these rules are 0.1 pt high and a path-exact hit
   test would make them unclickable without a tolerance model we do not have.
   Recorded in the code, not left ambiguous.
+
+### Landed since: cubic and quadratic curves (FID-G-02, first piece)
+
+Dated 2026-10-02. The slice above stands as the record of FID-G-01; this records what
+changed, because the "out of scope" list above is no longer wholly true.
+
+1. **The display list's shape outline became a path, not a point list.** A
+   `PathCommand` (MoveTo/LineTo/CubicTo/QuadTo) replaced the vertex-only `Polygon`
+   geometry at both the layout and display layers, and both backends build real
+   curves. Replacing rather than adding was checked first: the display list derives
+   serde and carried a backward-compatibility default, but it has no persisted form
+   — no committed golden, no wasm export, only a self round-trip test — so the
+   choice was one mechanism instead of two. The preset vertex lists lift into
+   commands through a single helper, which goes away when they become table entries
+   (FID-L-04).
+2. **`a:cubicBezTo` and `a:quadBezTo` are modelled, imported, resolved, painted and
+   re-emitted.** The quadratic stays a quadratic in the model and on save; only PDF
+   promotes it, exactly, because PDF has no quadratic operator.
+3. **Arity is enforced, not tolerated.** DrawingML reads a curve's `a:pt` children
+   positionally, so a `cubicBezTo` with two points is not a cubic missing a control
+   — there is no way to know which position was meant. A wrong count, or a command
+   interrupted before its count is met, refuses the whole geometry and reports it,
+   which is the same answer an unmodeled command gets.
+4. **One bug this uncovered, worth recording.** The usability check required at
+   least one `a:lnTo`, so a path made only of a move and a curve was still rejected
+   after curves were modelled — the import suite stayed green while the capability
+   was unreachable. It now asks whether any command *draws*, through a method on the
+   command rather than a `matches!` at the call site, so a future command kind
+   cannot be forgotten there. The generated fixture's curve shape moved from the
+   reported side to the drawn side, and its loss count went 2 to 1.
+
+Still out of scope and still FID-G-02: `a:arcTo`; the `a:gdLst` formula language and
+any guide-named coordinate, which is the largest remaining piece and what FID-L-04's
+preset table blocks on; multiple subpaths; `a:ahLst`/`a:cxnLst`; the `a:rect` text
+rectangle; ODF export; Edit Points; and path-exact hit testing.
 
 ### Rejected
 

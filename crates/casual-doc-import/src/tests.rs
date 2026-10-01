@@ -3008,6 +3008,46 @@ fn unknown_preset_and_adjustment_guides_are_retained() {
 }
 
 #[test]
+fn a_curve_with_the_wrong_point_count_is_refused_rather_than_guessed() {
+    use casual_doc_model::v1::GroupChild;
+
+    // `a:cubicBezTo` takes exactly three `a:pt`, read POSITIONALLY. Two points is
+    // not "a cubic missing a control" — there is no way to know which of the three
+    // positions the file meant, so building a curve from them would invent
+    // geometry. It must fall back to the bounding rectangle and report, exactly as
+    // an unmodeled command does.
+    for (what, path) in [
+        (
+            "a cubic with two points",
+            r#"<a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:cubicBezTo><a:pt x="30" y="80"/><a:pt x="100" y="0"/></a:cubicBezTo>"#,
+        ),
+        (
+            "a quadratic with one point",
+            r#"<a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:quadBezTo><a:pt x="50" y="100"/></a:quadBezTo>"#,
+        ),
+        (
+            "a cubic interrupted by the next command",
+            r#"<a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:cubicBezTo><a:pt x="30" y="80"/><a:lnTo><a:pt x="100" y="0"/></a:lnTo></a:cubicBezTo>"#,
+        ),
+    ] {
+        let import = import_standalone_drawingml_shape(&format!(
+            r#"<a:custGeom><a:avLst/><a:pathLst><a:path w="100" h="100">{path}</a:path></a:pathLst></a:custGeom>"#
+        ));
+        let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected a standalone shape group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected the group child to be a shape");
+        };
+        assert!(shape.path.is_none(), "{what} must not produce a path");
+        assert!(
+            features(&import).contains(&"custGeom"),
+            "{what} is reported rather than silently dropped"
+        );
+    }
+}
+
+#[test]
 fn custom_shape_geometry_is_preserved_as_other_and_reported() {
     use casual_doc_model::v1::{GroupChild, ShapeGeometry};
 
@@ -8771,26 +8811,54 @@ fn a_custom_geometry_path_of_straight_segments_is_imported_as_a_path() {
 }
 
 #[test]
-fn an_unsupported_custom_geometry_keeps_its_rectangle_and_stays_reported() {
-    use casual_doc_model::v1::ShapeGeometry;
+fn a_curve_is_modelled_while_a_guide_coordinate_keeps_its_rectangle_and_stays_reported() {
+    use casual_doc_model::v1::{PointEmu, ShapeGeometry, ShapePathCommand};
 
     let import = custom_geometry_import();
     let shapes = custom_geometry_shapes(&import);
 
-    // 3. A cubic Bezier and 4. a guide-named coordinate are both outside the
-    //    modeled subset. Neither may be flattened into the straight segments it
-    //    is NOT: no path, so the bounding rectangle still paints.
-    for (index, what) in [(2, "a cubic Bezier"), (3, "a guide-named coordinate")] {
-        assert!(
-            shapes[index].path.is_none(),
-            "{what} must not produce a path"
-        );
-        assert_eq!(shapes[index].geometry, ShapeGeometry::Other);
-    }
+    // 3. The cubic Bezier is now MODELLED (`109` FID-G-02), so it carries a path
+    //    with its controls in the authored order. DrawingML reads `a:cubicBezTo`'s
+    //    three `a:pt` positionally, so asserting the order — not just the count —
+    //    is what would catch a reordering that stayed schema-valid.
+    let curve = shapes[2].path.as_ref().expect("the curve carries a path");
+    assert_eq!((curve.width_emu, curve.height_emu), (100, 100));
+    assert_eq!(
+        curve.commands,
+        vec![
+            ShapePathCommand::MoveTo {
+                point: PointEmu { x_emu: 0, y_emu: 0 },
+            },
+            ShapePathCommand::CubicBezTo {
+                control1: PointEmu {
+                    x_emu: 30,
+                    y_emu: 80
+                },
+                control2: PointEmu {
+                    x_emu: 70,
+                    y_emu: 80
+                },
+                point: PointEmu {
+                    x_emu: 100,
+                    y_emu: 0
+                },
+            },
+        ],
+    );
 
-    // And the loss is still named, exactly twice: once per unsupported shape,
-    // and NOT for the two we now draw. A guard that only checked the supported
-    // side would pass while the unsupported side fell silent.
+    // 4. A guide-named coordinate is still outside the modeled subset: it needs the
+    //    `a:gdLst` formula language. It must not be flattened into the straight
+    //    segments it is NOT, so no path and the bounding rectangle still paints.
+    assert!(
+        shapes[3].path.is_none(),
+        "a guide-named coordinate must not produce a path"
+    );
+    assert_eq!(shapes[3].geometry, ShapeGeometry::Other);
+
+    // And the loss is still named, exactly ONCE now: only the guide-named
+    // coordinate remains undrawable, the curve having moved to the supported side.
+    // A guard that only checked the supported side would pass while the
+    // unsupported side fell silent.
     let custgeom: u32 = import
         .report
         .entries
@@ -8799,8 +8867,8 @@ fn an_unsupported_custom_geometry_keeps_its_rectangle_and_stays_reported() {
         .map(|entry| entry.occurrences)
         .sum();
     assert_eq!(
-        custgeom, 2,
-        "custGeom is reported for the two geometries we cannot draw, and only those"
+        custgeom, 1,
+        "custGeom is reported for the one geometry we cannot draw, and only that"
     );
 }
 

@@ -97,6 +97,7 @@ dependencies = [
  "casual-doc-layout",
  "casual-doc-model",
  "casual-doc-ooxml",
+ "serde",
  "serde_json",
 ]
 
@@ -246,6 +247,8 @@ version = "0.0.1"
 dependencies = [
  "casual-doc-edit",
  "casual-doc-model",
+ "serde",
+ "serde_json",
  "unicode-segmentation",
 ]
 
@@ -796,6 +799,16 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "opendoc-relay"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-edit",
+ "casual-doc-model",
+ "casual-doc-transaction",
+ "serde",
 ]
 
 [[package]]

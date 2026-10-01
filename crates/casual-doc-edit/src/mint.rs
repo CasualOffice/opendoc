@@ -64,6 +64,8 @@
 //! 2. Applying one operation to one state mints one sequence of ids, on every replica.
 //! 3. Undo then redo restores the **same** node ids, because `inverse` is an involution.
 
+use serde::{Deserialize, Serialize};
+
 use casual_doc_model::{IdGenerator, NodeId};
 
 use crate::RunIds;
@@ -72,7 +74,7 @@ use crate::RunIds;
 ///
 /// Carried by the operation's envelope (`Transaction`, and `WireOperation` on the wire),
 /// never allocated by whoever applies it. See the module documentation.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Mint(NodeId);
 
 impl Mint {
