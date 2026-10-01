@@ -2606,6 +2606,94 @@ costed against a fallback that does not exist.
   entry, which is what every other record already is, removes the special bound entirely; it needs
   `ServerSession` to be reconstructible from its state plus a replay of its entries, an API it does
   not have, so it is the next increment.
+
+  **Amended 2026-10-02: the next increment happened, and the special bound is deleted rather than
+  documented.** `Record::Checkpoint` now carries a `SessionState` — the session *without* its
+  retained history — followed by one `Record::Retained` frame per entry.
+  `ServerSession::{checkpoint, restored}` is the API the paragraph above said was missing, and the
+  pair is deliberately not one serializable value: handing a caller something it could encode in
+  one frame would restore the defect. `MAX_JOURNAL_FRAME_BYTES` is **gone**, the journal reads with
+  the codec's own `MAX_FRAME_BYTES`, and `the_journal_s_bound_covers_the_largest_checkpoint_the_
+  relay_can_hold` is replaced by `every_journal_record_fits_the_codec_s_own_frame_bound`, which
+  measures the **bytes of every frame in a real file** rather than arithmetic between two
+  constants — a room with a small `retain` is driven past it so the checkpoint really carries a
+  full window.
+
+  Two things said plainly about the replacement. Its width assertion still **cannot** be driven
+  red without allocating 1.2 GB, which is why the frame-*count* assertion (`frames >= 2`) is what
+  carries it; that one does go red. And what is left unbounded is now the **participant tables**:
+  `accepted`, `resumes` and `granted` hold one small entry per participant ever admitted and
+  nothing prunes a departed one. That is a pre-existing slow leak, and the honest statement is that
+  it is now the *only* term in a checkpoint's size — at roughly 100 bytes an entry the 30 MB bound
+  is reached at some 300,000 lifetime participants, and reaching it is a loud refusal rather than
+  silence. Pruning is `152` §10.
+- **Decision 7, added 2026-10-02: a join is journalled, because not journalling one was a live
+  defect and not a tidiness question.** `Record::Admitted(Admission)` is written **before the join
+  is answered**, exactly as an ordered chunk is written before its acknowledgement, and
+  `Room::join` returns `Result` for the same reason `Room::commit` does. `ServerSession::join` now
+  hands back an `Admission` alongside its answer rather than offering a setter, so there is no way
+  to admit a participant without being handed the record of it — the same compile-error discipline
+  that makes ADR-060's `granted` a required argument.
+
+  **What was wrong, measured rather than deduced.** `probe_what_a_crash_actually_does_to_an_
+  admission` drove two participants joining after a checkpoint, one ordered-and-journalled chunk,
+  and a restart. It printed:
+
+  ```
+  BEFORE  ada=ClientId(0) grace=ClientId(1) head=Revision(1)
+  AFTER   head=Revision(1) replayed=1 has_assigned(ada)=false has_assigned(grace)=false
+  RESUME  ada presenting a known key after the crash -> Welcome { client: ClientId(0), ... }
+  SUBMIT  the holder of number 0, seq 1 -> Duplicate { revision: Revision(1) }
+  ```
+
+  Three distinct harms, and the handover's description of the second was **wrong in the direction
+  that matters**. It expected `TooFarBehind`; the measurement says `Welcome`, which is worse —
+  `TooFarBehind` is *announced* loss with an `ODC-7006` behind it, while a `Welcome` plus a
+  snapshot discards the unacknowledged work a resume exists to preserve (`152` §5.5) and says
+  nothing at all. Silent loss is the one failure class this project's priority order puts first.
+
+  1. `next_client` regressed to the last checkpoint while the dedupe table was rebuilt by replay,
+     so a participant number was **handed out twice** — and the next holder's first chunk came back
+     `Duplicate` and vanished. That is the harm ADR-060's forged-submission fix closed, reachable
+     through a crash instead of a forgery, and because a participant number *is* an `IdSpace`
+     (ADR-051) two live replicas would also have been minting colliding `NodeId`s.
+  2. The resume table regressed, so a client whose work was acknowledged could not resume.
+  3. `has_assigned` regressed, so the relay's own boundary check refused chunks from a participant
+     the order had acknowledged.
+
+  **And it let `commit` take the admission check back**, which ADR-060 wanted and could not have:
+  `granted` is now state the journal records, so recovery replays admissions ahead of the chunks
+  that depend on them, and the check is *exact* membership inside the state machine instead of a
+  range check at the boundary. `has_assigned` is deleted. The relay keeps **no second grant table**
+  — one durable table, overwritten by every accepted join, which is what makes a revocation take
+  effect on the reconnect; `a_narrowed_grant_on_rejoin_beats_the_one_the_journal_remembers` is the
+  guard, and it is the one that **passed on its first writing** and had to be rewritten to create
+  its condition (ada needs a *resume* key, or she is handed a new number and the two grants never
+  meet at one map key).
+
+  `Relay::disconnected` no longer forgets a grant, and that is a consequence rather than an
+  oversight: the hazard it guarded — the next holder of this number inheriting an unverified
+  capability — has no next holder now that numbers are never re-issued.
+  `a_grant_dies_with_the_connection` pinned that *mechanism* and is replaced by
+  `a_departed_participants_number_is_never_handed_to_anybody_else`, which asserts the guarantee in
+  both halves.
+
+  **Nine mutation proofs, all of which compile and all of which redden.** The floor on
+  `next_client` removed → "the restart handed out `ClientId(0)` again". The resume entry not
+  restored → the silent-`Welcome` message above, verbatim. `commit`'s membership check removed →
+  `left: Ordered { revision: Revision(1) }, right: Refused { reason: NotAuthorised }`. The
+  admission not journalled → `left: 0, right: 1` readmitted. A checkpoint that drops its retained
+  window → the window comes back `[]`. An orphan `Retained` accepted → the rebuilt history holds
+  `Revision(1)` **twice**. An append that also writes state → growth `[328, 330, 332, 334, 336,
+  338]`, visibly O(history). `insert` weakened to `or_insert` → the journal's wider grant survives
+  a narrowed rejoin. The relay's connection check removed → a forged submission is `Ack`ed.
+
+  **A trap in the mutation harness itself, recorded because it would have produced a false
+  green.** Restoring the file with `shutil.move` gives it an mtime *older* than the mutated version
+  cargo last compiled, so cargo compares mtimes, decides nothing changed, and reuses the **mutated
+  artifact** for the following run. One "unmutated" run was therefore a lie, and was chased as a
+  production bug before the cause was found. The harness now bumps the mtime on restore, and every
+  mutation above was re-run under it.
 - **Stated rather than implied:** the durability guard proves the **ordering** of the write
   against the answer, not the `fsync`. A second `open` in the same process reads the page cache,
   so removing `sync_data` leaves it green. Durability against power loss is not observable from a

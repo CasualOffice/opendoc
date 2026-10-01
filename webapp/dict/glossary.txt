@@ -391,6 +391,7 @@ intra
 invariants
 invertible
 invocable
+journalled
 kashida
 keepLines
 keepNext

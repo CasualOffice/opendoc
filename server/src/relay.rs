@@ -18,10 +18,9 @@
 //! ADR-058 give the reasons separately; together they mean a chunk cannot be acknowledged before
 //! it is durable, and two participants cannot be told about the order in two different orders.
 
-use std::collections::BTreeMap;
 use std::io::Write;
 
-use casual_doc_edit::access::{Capabilities, refuse_if_not_permitted};
+use casual_doc_edit::access::refuse_if_not_permitted;
 
 use casual_doc_transaction::codec::encode_frame;
 use casual_doc_transaction::presence::{Accepted, Roster};
@@ -68,16 +67,6 @@ pub struct Relay<W> {
     /// replayed. It shares the room's lock so one message is handled at a time, not its
     /// durability.
     roster: Roster,
-    /// What each **connected** participant may do, from the grant this relay verified at its
-    /// join — ADR-060.
-    ///
-    /// Connection-lifetime state, like [`Relay::participants`] and [`Relay::roster`], and
-    /// **deliberately not durable**. A grant is re-verified on every join, so after a restart
-    /// every client rejoins and presents one again; there is nothing here a recovery could want.
-    /// Keeping it out of [`ServerSession`](casual_doc_transaction::session::ServerSession) is
-    /// also what keeps `commit` a pure function of checkpointed state, which ADR-058's replay
-    /// depends on.
-    granted: BTreeMap<ClientId, Capabilities>,
 }
 
 impl<W: Write> Relay<W> {
@@ -93,7 +82,6 @@ impl<W: Write> Relay<W> {
             access,
             participants: Participants::new(),
             roster: Roster::new(),
-            granted: BTreeMap::new(),
         }
     }
 
@@ -154,7 +142,11 @@ impl<W: Write> Relay<W> {
                         });
                     }
                 };
-                let answer = self.room.join(message, granted);
+                // `Room::join` journals the admission before it answers, exactly as
+                // `Room::commit` does for a chunk, so a participant number cannot outlive the
+                // record of it (ADR-058). The `?` is the whole of "a caller that cannot journal
+                // must not admit".
+                let answer = self.room.join(message, granted)?;
                 let mut handled = Handled {
                     answer: Some(answer.clone()),
                     ..Handled::default()
@@ -164,10 +156,10 @@ impl<W: Write> Relay<W> {
                 if let ServerMessage::Welcome { client, .. }
                 | ServerMessage::Resumed { client, .. } = answer
                 {
-                    // Recorded on **every** accepted join, resumed or not, and recorded before
-                    // the writer is taken: a resume re-verifies the grant, so reconnecting
-                    // cannot restore a right the room revoked (`143` §10).
-                    self.granted.insert(client, granted);
+                    // The grant itself is recorded by the session, on every accepted join,
+                    // resumed or not — so a resume re-verifies it and reconnecting cannot
+                    // restore a right the room revoked (`143` §10). This relay keeps **no second
+                    // copy**: one table, durable, and `commit` reads the same one.
                     if let Some(writer) = writer.take() {
                         handled.joined_as = Some(client);
                         self.participants.joined(client, writer);
@@ -189,13 +181,16 @@ impl<W: Write> Relay<W> {
                 //
                 // `None` means nothing has joined on this connection yet, which is the same
                 // answer for the same reason.
-                // Two checks and not one. The connection check below is the exact one; this is
-                // the range check, and it is here because a third-party relay driving
-                // `ServerSession` directly has only this one available — so `has_assigned` is
-                // reachable rather than a query nothing calls.
-                if !self.room.session().has_assigned(submission.client)
-                    || me != Some(submission.client)
-                {
+                //
+                // **One check here now, not two.** This used to be paired with a
+                // `has_assigned` range check, because `ServerSession::commit` could not look at
+                // membership — a join was not journalled, so a membership check there refused
+                // the relay's own file on recovery. ADR-058's `Record::Admitted` made admission
+                // durable, so `commit` holds that line itself, *exactly* rather than as a range,
+                // and a third-party relay driving `ServerSession` directly gets it without
+                // having to know to ask. What is left here is the one thing no pure state
+                // machine can check: which connection the message arrived on.
+                if me != Some(submission.client) {
                     return Ok(Handled {
                         answer: Some(ServerMessage::Refused {
                             seq: Some(submission.seq),
@@ -210,7 +205,7 @@ impl<W: Write> Relay<W> {
                 // weaker rule that never refuses what a replica would allow. The finer classes —
                 // was that really a comment? — need the document and are enforced by every
                 // replica, which the module docs say out loud rather than implying.
-                let granted = self.granted.get(&submission.client).copied();
+                let granted = self.room.session().granted_for(submission.client);
                 let offered: Vec<_> = submission
                     .operations
                     .iter()
@@ -299,10 +294,13 @@ impl<W: Write> Relay<W> {
     /// (ONLYOFFICE's `Remove_ForeignCursor` covers the same transition).
     pub fn disconnected(&mut self, client: ClientId) -> Vec<ClientId> {
         self.participants.left(client);
-        // A grant dies with the connection, exactly as presence does. A grant left behind is a
-        // capability nobody is holding, and the next participant to be handed this number would
-        // inherit it before its own join had been verified.
-        self.granted.remove(&client);
+        // **No grant is forgotten here, and that is a consequence of durability rather than an
+        // oversight.** It used to be: a grant left behind was a capability nobody held, and the
+        // next participant handed this number would inherit it before its own join had been
+        // verified. Participant numbers are no longer re-issued — `Record::Admitted` makes
+        // `next_client` a durable floor (ADR-058) — so there is no next holder of this number to
+        // inherit anything, and the only connection that may submit as it is one whose own join
+        // has just re-verified and overwritten the entry.
         if self.roster.forget(client) {
             let bytes = encode_frame(&ServerMessage::Departed { client });
             return self.participants.fan_out(client, &bytes);
