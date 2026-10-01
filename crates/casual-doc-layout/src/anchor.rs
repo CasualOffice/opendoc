@@ -45,7 +45,9 @@ use crate::page::{
 };
 use crate::paginate::PageConfig;
 use crate::text::{LineShaper, TextBoxStroke};
-use crate::units::{Point, Rect, Size, Twip};
+use crate::units::{
+    Point, Rect, Size, Twip, emu_to_twip_extent, emu_to_twip_offset, emu_to_twip_rounded,
+};
 
 /// Places every floating object in the document (body and header/footer bands)
 /// onto the pages their anchors landed on, with a resolved rectangle and stacking
@@ -1653,8 +1655,11 @@ impl GroupMapper {
         let w = self.scale_x * extent.width_emu as f64;
         let h = self.scale_y * extent.height_emu as f64;
         Rect::new(
-            Point::new(origin.x + emu_to_twip_f(x), origin.y + emu_to_twip_f(y)),
-            Size::new(emu_to_twip_f(w), emu_to_twip_f(h)),
+            Point::new(
+                origin.x + emu_to_twip_rounded(x),
+                origin.y + emu_to_twip_rounded(y),
+            ),
+            Size::new(emu_to_twip_rounded(w), emu_to_twip_rounded(h)),
         )
     }
 }
@@ -1692,7 +1697,7 @@ fn custom_path_content(
                     .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
             ) + origin
         } else {
-            emu_to_twip_signed(value) + origin
+            emu_to_twip_offset(value) + origin
         }
     };
 
@@ -1765,7 +1770,7 @@ fn shape_transform(
 fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
     stroke.map(|s| AnchorStroke {
         color: rgba(s.color),
-        width: emu_to_twip(s.width_emu),
+        width: emu_to_twip_extent(s.width_emu),
         dash: s.dash.unwrap_or(DashStyle::Solid),
     })
 }
@@ -1773,7 +1778,7 @@ fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
 fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {
     TextBoxStroke {
         color: rgba(stroke.color),
-        width: emu_to_twip(stroke.width_emu),
+        width: emu_to_twip_extent(stroke.width_emu),
     }
 }
 
@@ -2001,8 +2006,8 @@ impl AnchorRefs {
 /// `relativeFrom`, and the offset (`posOffset`) or alignment placed within them.
 fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: Extent, refs: &AnchorRefs) -> Rect {
     let size = Size::new(
-        emu_to_twip(extent.width_emu),
-        emu_to_twip(extent.height_emu),
+        emu_to_twip_extent(extent.width_emu),
+        emu_to_twip_extent(extent.height_emu),
     );
     let hbox = match anchor.horizontal.relative_from {
         HorizontalAnchor::Page => refs.page,
@@ -2012,7 +2017,7 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: Extent, refs: &AnchorRefs
         HorizontalAnchor::Column => refs.column,
     };
     let x = match anchor.horizontal.position {
-        HorizontalPosition::Offset(emu) => hbox.origin.x + emu_to_twip_signed(emu),
+        HorizontalPosition::Offset(emu) => hbox.origin.x + emu_to_twip_offset(emu),
         HorizontalPosition::Align(align) => align_horizontal(align, hbox, size.width),
     };
     let vbox = match anchor.vertical.relative_from {
@@ -2025,7 +2030,7 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: Extent, refs: &AnchorRefs
         }
     };
     let y = match anchor.vertical.position {
-        VerticalPosition::Offset(emu) => vbox.origin.y + emu_to_twip_signed(emu),
+        VerticalPosition::Offset(emu) => vbox.origin.y + emu_to_twip_offset(emu),
         VerticalPosition::Align(align) => align_vertical(align, vbox, size.height),
     };
     Rect::new(Point::new(x, y), size)
@@ -2053,25 +2058,6 @@ fn align_vertical(align: VerticalAlign, vbox: Rect, height: Twip) -> Twip {
             Twip(vbox.origin.y.raw() + vbox.size.height.raw() - height.raw())
         }
     }
-}
-
-/// EMU → twips for a size (non-negative): 635 EMU per twip.
-fn emu_to_twip(emu: i64) -> Twip {
-    Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
-}
-
-/// EMU (as `f64`, from an affine transform) → twips, clamped to the twip range.
-fn emu_to_twip_f(emu: f64) -> Twip {
-    Twip(
-        (emu / 635.0)
-            .round()
-            .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
-    )
-}
-
-/// EMU → twips for a signed offset (a float may overhang its reference edge).
-fn emu_to_twip_signed(emu: i64) -> Twip {
-    Twip((emu / 635).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
 }
 
 #[cfg(test)]

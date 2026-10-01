@@ -78,6 +78,8 @@ use crate::text::{
 use crate::text::InlineTransform;
 // Own line (anti-conflict): the recorded advance of each resolved tab.
 use crate::text::TabExtent;
+// Own line (anti-conflict): the EMU boundary converter, per `156` §6 row 0.6.
+use crate::units::emu_to_twip_extent;
 use crate::units::{Point, Size, Twip};
 
 /// One page-derived edge exclusion applied at the start of a body paragraph.
@@ -3840,7 +3842,7 @@ fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'
         .saturating_add(extent.height_emu)
         .saturating_add(anchor.wrap_distances.bottom_emu)
         .max(0);
-    let height = emu_to_twip(clearance_emu);
+    let height = emu_to_twip_extent(clearance_emu);
     if height.raw() <= 0 {
         return None;
     }
@@ -3867,7 +3869,7 @@ fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'
         .saturating_add(extent.width_emu)
         .saturating_add(anchor.wrap_distances.end_emu)
         .max(0);
-    let width = emu_to_twip(exclusion_emu);
+    let width = emu_to_twip_extent(exclusion_emu);
     (width.raw() > 0).then_some(FlowItem::FloatExclusion {
         side,
         width,
@@ -3939,13 +3941,13 @@ fn wrap_carry(
         VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
         _ => return None,
     };
-    let height = emu_to_twip(
+    let height = emu_to_twip_extent(
         vertical_offset
             .saturating_add(extent.height_emu)
             .saturating_add(anchor.wrap_distances.bottom_emu)
             .max(0),
     );
-    let width = emu_to_twip(
+    let width = emu_to_twip_extent(
         anchor
             .wrap_distances
             .start_emu
@@ -3967,9 +3969,9 @@ fn wrap_carry(
         }
         HorizontalPosition::Align(HorizontalAlign::Center) => return None,
         HorizontalPosition::Offset(offset) => {
-            let centre = emu_to_twip(offset)
+            let centre = emu_to_twip_extent(offset)
                 .raw()
-                .saturating_add(emu_to_twip(extent.width_emu).raw() / 2);
+                .saturating_add(emu_to_twip_extent(extent.width_emu).raw() / 2);
             if centre.saturating_mul(2) <= content_width.raw().max(1) {
                 InlineFloatSide::Left
             } else {
@@ -4188,10 +4190,10 @@ struct ResolvedTextBoxInsets {
 fn text_box_insets(properties: &TextBoxBodyProperties) -> ResolvedTextBoxInsets {
     let insets = properties.insets;
     ResolvedTextBoxInsets {
-        left: emu_to_twip(i64::from(insets.left_emu)),
-        top: emu_to_twip(i64::from(insets.top_emu)),
-        right: emu_to_twip(i64::from(insets.right_emu)),
-        bottom: emu_to_twip(i64::from(insets.bottom_emu)),
+        left: emu_to_twip_extent(i64::from(insets.left_emu)),
+        top: emu_to_twip_extent(i64::from(insets.top_emu)),
+        right: emu_to_twip_extent(i64::from(insets.right_emu)),
+        bottom: emu_to_twip_extent(i64::from(insets.bottom_emu)),
     }
 }
 
@@ -4281,7 +4283,7 @@ fn rgba(color: Rgba) -> [u8; 4] {
 fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {
     TextBoxStroke {
         color: rgba(stroke.color),
-        width: emu_to_twip(stroke.width_emu),
+        width: emu_to_twip_extent(stroke.width_emu),
     }
 }
 
@@ -4428,7 +4430,7 @@ fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
 /// origin's `y` is `0` (the box owns its line — [`stack_lines`] shifts it into
 /// paragraph-absolute space).
 fn hr_item(rule: &ModelHorizontalRule, width: Twip) -> FlowItem<'static> {
-    let thickness = emu_to_twip(rule.thickness_emu).max(Twip(1));
+    let thickness = emu_to_twip_extent(rule.thickness_emu).max(Twip(1));
     let permille = i64::from(rule.width_permille).clamp(1, 1000);
     let rule_width = Twip(
         ((i64::from(width.raw()) * permille) / 1000).clamp(1, i64::from(width.raw().max(1))) as i32,
@@ -4449,15 +4451,9 @@ fn hr_item(rule: &ModelHorizontalRule, width: Twip) -> FlowItem<'static> {
 /// Converts a drawing's EMU extent to a twip box size.
 fn extent_to_size(extent: &Extent) -> Size {
     Size::new(
-        emu_to_twip(extent.width_emu),
-        emu_to_twip(extent.height_emu),
+        emu_to_twip_extent(extent.width_emu),
+        emu_to_twip_extent(extent.height_emu),
     )
-}
-
-/// EMU → twips: 914400 EMU/inch ÷ 1440 twips/inch = exactly 635 EMU per twip.
-/// Clamped to a non-negative `i32` twip (the model bounds `Extent` to `MAX_EMU`).
-fn emu_to_twip(emu: i64) -> Twip {
-    Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
 /// Shapes a paragraph's [`FlowItem`] stream into lines. Images are handed to the
