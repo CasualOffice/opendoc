@@ -30,6 +30,7 @@ const {
   orderEnds,
   magnifierPlacement,
   magnifierSource,
+  pointerDragSelects,
 } = await import("../src/touch_selection.mjs");
 
 const { MIN_TOUCH_TARGET_PX } = await import("../src/phone_chrome.mjs");
@@ -75,6 +76,28 @@ test("a press that HAS moved past the slop is a scroll, on either axis alone", (
   const down = { x: 100, y: 200 };
   assert.equal(movedPastThreshold(down, { x: 121, y: 200 }), true, "horizontal");
   assert.equal(movedPastThreshold(down, { x: 100, y: 179 }), true, "vertical, backwards");
+});
+
+// ── Which pointer may drag-select ──────────────────────────────────────────
+//
+// The boundary between this module and `main.js`'s drag-selection machine. Both
+// were reading the same `pointermove` stream, so a finger drove two selection
+// machines and the slop-free one won every race: a phone scroll selected text.
+// Keyed on the pointer and never on the device — a touchscreen laptop keeps its
+// mouse drag-selection and a tablet loses its finger one.
+
+test("a finger does not drag-select; every other pointer does", () => {
+  assert.equal(pointerDragSelects({ pointerType: "touch" }), false, "a finger");
+  assert.equal(pointerDragSelects({ pointerType: "mouse" }), true, "a mouse");
+  assert.equal(pointerDragSelects({ pointerType: "pen" }), true, "a pen/stylus");
+});
+
+test("an event with no pointerType at all still drag-selects", () => {
+  // The selection auto-scroll's tick synthesizes a point rather than forwarding
+  // a real event, so a synthesized point must not be mistaken for a finger: the
+  // gesture it belongs to was already decided at pointer-down.
+  assert.equal(pointerDragSelects({}), true, "no pointerType");
+  assert.equal(pointerDragSelects(undefined), true, "no event");
 });
 
 // ── The handle hit radius ───────────────────────────────────────────────────
