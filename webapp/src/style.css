@@ -1226,6 +1226,23 @@ input {
   box-shadow: var(--shadow-sm);
 }
 
+/* A segmented control laid out as a column, for a radio group whose options are
+   sentences rather than words — Restrict Editing's five levels read "No changes
+   (read only)" and "Filling in forms", which is Word's own wording and will not
+   fit five abreast at any dialog width. Same control, same ARIA, same checked
+   treatment; only the axis changes, so nothing about the token system moves. */
+.segmented-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.segmented-stacked button {
+  height: auto;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-align: start;
+}
+
 .swatches {
   display: flex;
   flex-wrap: wrap;

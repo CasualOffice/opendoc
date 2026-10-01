@@ -113,7 +113,12 @@ export const FILE_SURFACE = [
   // were the whole content of a `Tools` menu and a `Help` menu, which is two
   // more top-level names for five rows — and the two that fell off the end of
   // the menu bar behind a hidden scrollbar (`109` HF-097).
-  { nameKey: "menuGroup.settings", ids: ["view.settings"] },
+  // The measurement-unit preference sits in the SAME band as Settings, and in
+  // ONLYOFFICE it is literally the same pane: `cmbUnit` is a row of their File ▸
+  // Advanced Settings (`FileMenuPanels.js:747`), and Word's home for it is File ▸
+  // Options ▸ Advanced. This row lands on the chooser inside Settings rather than
+  // being a second copy of it, so the preference has one control and two ways in.
+  { nameKey: "menuGroup.settings", ids: ["view.settings", "view.measurementUnits"] },
   { nameKey: "menuGroup.help", ids: ["help.commands", "help.shortcuts", "help.about"] },
 ];
 
@@ -248,6 +253,26 @@ export const APP_MENU_SECTIONS = {
     // references file their equivalent under View for the same reason
     // (`docs/151` §6.1).
     band("menuGroup.show", "view.outline", "view.pages", "view.showChanges", "view.reflow", "view.compactRibbon"),
+    // Formatting marks. Google Docs' only surface for this is View ▸ Show
+    // non-printing characters, so the View menu is where a reader trained on Docs
+    // looks; the ribbon's ¶ button is where a reader trained on Word looks, and
+    // both exist.
+    //
+    // A SUBMENU, with the ¶ toggle as its first row and the five individual
+    // switches under it. Six inline rows would make this the longest band in the
+    // menu for one gesture most people only ever use whole — the same length
+    // argument `menuGroup.textWidth` and `menuGroup.breaks` are flyouts for. It is
+    // NOT in Show beside the other view states, because Show holds STATES of the
+    // window and this is a set of five independent ones.
+    sub(
+      "menuGroup.formattingMarks",
+      "view.formattingMarks",
+      "view.formattingMarks.tab",
+      "view.formattingMarks.space",
+      "view.formattingMarks.paragraph",
+      "view.formattingMarks.lineBreak",
+      "view.formattingMarks.pageBreak",
+    ),
     // Text width, a SUBMENU of four mutually exclusive steps, between Show and
     // Zoom (`docs/154` §5.1, ADR-048). It is where Google Docs puts View ▸ Text
     // width and where Word's Immersive Reader puts Column Width, and it is a
@@ -527,6 +552,12 @@ export const APP_MENU_SECTIONS = {
     // Compare is the rightmost group. ONLYOFFICE files theirs under
     // Collaboration ▸ Compare behind `canReview`.
     band("menuGroup.compare", "review.compare"),
+    // Protect, its own band and last, which is Word 365's own Review-tab order
+    // (… Changes | Compare | Protect | Ink). Its own band rather than a row under
+    // Compare because the rule every band in these menus follows is that a
+    // document-wide, hard-to-notice action does not sit one keystroke from a
+    // reversible navigation one.
+    band("menuGroup.protect", "review.restrictEditing"),
   ],
 };
 

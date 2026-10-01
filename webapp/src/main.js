@@ -6,6 +6,18 @@
 // no server, deployable as static files (e.g. GitHub Pages).
 
 import init, { open, beginVersionDiff, defaultDiffSlice, engineVersion } from "../pkg/casual_doc_wasm.js";
+// The measurement layer's five free functions. FREE, not methods on a document,
+// because a unit preference belongs to the person and governs dialogs that open
+// with nothing loaded — which is also why they are handed to
+// `measurement_units.mjs` rather than reached for there (that module stays
+// browser-free and engine-free, so its policy is answerable in node).
+import {
+  decimalSeparatorForLanguage,
+  defaultMeasurementUnit,
+  formatMeasurement,
+  measurementUnits,
+  parseMeasurement,
+} from "../pkg/casual_doc_wasm.js";
 import {
   NAMED_WEB_FONT_FACES,
   SCRIPT_FALLBACK_FONTS,
@@ -99,7 +111,11 @@ import { activeLocale, t } from "./i18n.mjs";
 import { authoredTitle, paintDocumentState } from "./localize.mjs";
 import { countLabels, pageIndicator, readerPosition } from "./status_counts.mjs";
 import { startLocalisation } from "./locale_boot.mjs";
-import { isShortcutLike, localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
+import { localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
+import { installRibbonTooltips } from "./ribbon_tooltip.mjs";
+import { createFormattingMarks } from "./formatting_marks.mjs";
+import { createMeasurementUnits } from "./measurement_units.mjs";
+import { createDocumentProtection } from "./document_protection.mjs";
 import {
   DRAFT_EXPORT_MODES,
   DraftPresence,
@@ -1124,138 +1140,13 @@ if (ribbonBodyEl) {
   syncRibbonTabStops();
 }
 
-// --- Delayed tooltips for icon-only ribbon controls (docs/64 §3) -------------
-// A single custom tooltip (~350ms hover/focus delay) shows the control's name +
-// shortcut. Reuses the existing `title`/`aria-label` content; the native title
-// is suppressed only while the control is actively hovered so it never appears
-// alongside the custom one, and is restored on leave (keeping dynamic titles and
-// accessibility intact).
-const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .styles-trigger";
-const ribbonTooltip = document.createElement("div");
-ribbonTooltip.className = "ribbon-tooltip";
-ribbonTooltip.setAttribute("role", "tooltip");
-ribbonTooltip.hidden = true;
-document.body.appendChild(ribbonTooltip);
-let tipTimer = 0;
-let tipTarget = null;
-
-function tipContentFor(el) {
-  // The LIVE title first, the parked copy only as a fallback. `armTip` removes the
-  // attribute for the duration of the hover, so anything written during that park
-  // — a disabled control's stated reason, above all — is NEWER than the parked
-  // copy, and reading the parked one showed the stale name (`docs/141` TBL-03).
-  const raw = (el.getAttribute("title") || el.dataset.tipTitle || "").trim();
-  const label = (el.getAttribute("aria-label") ?? "").trim();
-  const match = raw.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
-  const own = match ? match[1] : raw;
-  // A DISABLED control's title is the REASON it cannot run, and that reason is the
-  // only thing worth saying about it — so it outranks the control's own name here.
-  // Hovering a grey Sort button and reading "Sort rows ascending" is the §10 defect
-  // itself: the tooltip is the one channel a disabled control has, and it was
-  // spending it on what the button would have done.
-  const name = ((el.disabled ? own : "") || label || own).trim();
-  // The parenthetical is a shortcut only if it reads like one. "(3×3)" and
-  // "(compact view)" are part of the name, and translating them would have
-  // printed nonsense in the shortcut slot.
-  const parenthetical = match ? match[2].trim() : "";
-  // `isShortcutLike`, not a glyph test: the boot sweep has already rewritten
-  // these titles to "Ctrl+B" on a non-Apple keyboard, and a glyph-only test
-  // would then drop the chord from the tooltip on exactly the platform
-  // HF-025 exists for.
-  const shortcut = isShortcutLike(parenthetical) ? formatShortcut(parenthetical) : "";
-  return { name, shortcut };
-}
-
-function positionTip(el) {
-  const rect = el.getBoundingClientRect();
-  const tw = ribbonTooltip.offsetWidth;
-  const th = ribbonTooltip.offsetHeight;
-  let left = rect.left + rect.width / 2 - tw / 2;
-  left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-  let top = rect.bottom + 6;
-  if (top + th > window.innerHeight - 6) top = rect.top - th - 6;
-  ribbonTooltip.style.left = `${Math.round(left)}px`;
-  ribbonTooltip.style.top = `${Math.round(top)}px`;
-}
-
-function showTip(el) {
-  const { name, shortcut } = tipContentFor(el);
-  if (!name) return;
-  ribbonTooltip.textContent = name;
-  if (shortcut) {
-    const kbd = document.createElement("kbd");
-    kbd.textContent = shortcut;
-    ribbonTooltip.appendChild(kbd);
-  }
-  ribbonTooltip.hidden = false;
-  positionTip(el);
-  ribbonTooltip.classList.add("is-visible");
-}
-
-function armTip(el) {
-  if (el.getAttribute("title")) {
-    el.dataset.tipTitle = el.getAttribute("title");
-    el.removeAttribute("title");
-  }
-  tipTarget = el;
-  clearTimeout(tipTimer);
-  tipTimer = window.setTimeout(() => {
-    if (tipTarget === el) showTip(el);
-  }, 350);
-}
-
-function disarmTip(el) {
-  if (el && el.dataset.tipTitle != null) {
-    // …unless something wrote a NEWER title while the attribute was parked. It is
-    // removed for the whole hover, so a live `title` here is by definition newer
-    // than the parked copy. Restoring the parked copy regardless is how a disabled
-    // control's stated reason was silently and PERMANENTLY replaced by the name of
-    // what it would have done — in every band, for every reason the chrome writes,
-    // and only on controls the user had hovered, which is every control they were
-    // asking about (`docs/141` TBL-03).
-    if (!el.getAttribute("title")) el.setAttribute("title", el.dataset.tipTitle);
-    delete el.dataset.tipTitle;
-  }
-  if (tipTarget === el || !el) {
-    clearTimeout(tipTimer);
-    tipTimer = 0;
-    tipTarget = null;
-    ribbonTooltip.classList.remove("is-visible");
-    ribbonTooltip.hidden = true;
-  }
-}
-
-function bindRibbonTooltipSurface(surface) {
-  if (!surface) return;
-  surface.addEventListener("pointerover", (e) => {
-    const el = e.target.closest(TIP_SELECTOR);
-    if (!el || !surface.contains(el) || el === tipTarget) return;
-    if (tipTarget) disarmTip(tipTarget);
-    armTip(el);
-  });
-  surface.addEventListener("pointerout", (e) => {
-    if (!tipTarget) return;
-    if (e.relatedTarget && tipTarget.contains(e.relatedTarget)) return;
-    disarmTip(tipTarget);
-  });
-  surface.addEventListener("focusin", (e) => {
-    const el = e.target.closest(TIP_SELECTOR);
-    if (!el) return;
-    if (tipTarget && tipTarget !== el) disarmTip(tipTarget);
-    armTip(el);
-  });
-  surface.addEventListener("focusout", (e) => {
-    const el = e.target.closest(TIP_SELECTOR);
-    if (el) disarmTip(el);
-  });
-  surface.addEventListener("click", () => {
-    if (tipTarget) disarmTip(tipTarget);
-  });
-}
-
-bindRibbonTooltipSurface(document.querySelector(".ribbon"));
-bindRibbonTooltipSurface(ribbonOverflowMenu);
-window.addEventListener("scroll", () => { if (tipTarget) disarmTip(tipTarget); }, true);
+// Delayed tooltips for the icon-only ribbon controls. The behaviour, the tooltip
+// element and the title-parking rule are `ribbon_tooltip.mjs`; it reads no editor
+// state at all, which is why it could leave this file.
+const ribbonTooltips = installRibbonTooltips([document.querySelector(".ribbon"), ribbonOverflowMenu]);
+// Capturing, so a scroll anywhere disarms: a tooltip left floating over the place
+// a control used to be is worse than no tooltip.
+window.addEventListener("scroll", () => ribbonTooltips.disarm(), true);
 
 undoBtn.addEventListener("click", () => runEdit(() => doc.undo()));
 redoBtn.addEventListener("click", () => runEdit(() => doc.redo()));
@@ -3219,6 +3110,11 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     showCompatibilityFindings(compatibilityStatusEl, importFindingCount(doc.importReportJson), "import");
     railOutline.disabled = railPages.disabled = false;
     reflowView.setEnabled();
+    // The reader's formatting-mark preference, replayed onto the new handle: the
+    // PREFERENCE is the person's and outlives the document, while the STATE lives on
+    // the document because that is where the renderer reads it. Idempotent and O(1)
+    // when the two already agree, which is the common case.
+    formattingMarks.adopt();
     versionHistory.reflect();
     populateStyles();
     populateTableStyles();
@@ -6886,9 +6782,15 @@ const TABLE_COMMAND_HOST = {
   runEdit: (thunk, options) => runEdit(thunk, options),
   selectTableContext,
   openSplitCellDialog: () => toggleSplitCellDialog(true),
-  openCellFormat: () => {
+  // `focus` names a control INSIDE the popover to land on, which is how
+  // `table.borderStyle` reaches the line-style pen from the Table menu and the
+  // palette without a second copy of the control: the same shape `layout.indent`
+  // uses to reach the indent field. Focus is taken after the click, because the
+  // popover is hidden until then and `.focus()` on a hidden element is a no-op.
+  openCellFormat: (focus) => {
     selectRibbonTab("table");
     tableBtn.click();
+    if (focus) document.getElementById(focus)?.focus();
   },
   openTableProperties: () => toggleTableProperties(true),
   stepTableBand: (axis, sign) => tableChrome.stepCaretBand(selection?.focus?.node, pages, axis, sign),
@@ -7988,6 +7890,16 @@ const REVIEW_SURFACE = [
   { command: "tools.grammarCheck", buttons: () => [reviewGrammarCheckBtn], requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
   { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => smartQuotesEnabled, run: () => setSmartQuotes(!smartQuotesEnabled) },
   { command: "tools.languages", buttons: () => [reviewProofLanguagesBtn], requires: "always", run: () => proofing.openLanguages() },
+  // Restrict Editing (ADR-052, ADR-059). Declared HERE rather than beside the
+  // button for the reason this table gives twice over: one owner for `disabled`,
+  // for the reason it carries while disabled, and for the pressed state. The
+  // module owns the dialog and the engine call and nothing about the button, so
+  // the two cannot disagree about whether a restriction is in force.
+  //
+  // `pressed` reads the ENGINE, not what the dialog last asked for — ONLYOFFICE's
+  // Protect button is a state too — so a document that arrives protected shows the
+  // button pressed before anyone opens anything.
+  { command: "review.restrictEditing", buttons: () => [document.getElementById("reviewProtectBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", pressed: () => documentProtection.isActive(), run: () => documentProtection.open() },
 ];
 
 function insertCommandEnabled(commandId, context = {}) {
@@ -9035,6 +8947,10 @@ for (const entry of INSERT_SURFACE) {
       if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
     }
   }
+  // The ¶ control owns both of its halves and its popover's five checkmarks, so
+  // it reflects itself rather than being swept here: its state is the ENGINE's
+  // `any`, not a local flag, and nothing else on the band knows how to read it.
+  formattingMarks.reflect();
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
@@ -10538,6 +10454,7 @@ const cellFormatMenu = bindCellFormatMenu({
   cellBorderColor: document.getElementById("cellBorderColor"),
   tableBorderColor: document.getElementById("tableBorderColor"),
   borderWeight: document.getElementById("borderWeight"),
+  borderStyle: document.getElementById("borderStyle"),
   doc: () => doc,
   caretNode: () => (selection && doc ? selection.focus.node : ""),
   formatRange: (apply) =>
@@ -10549,6 +10466,49 @@ const cellFormatMenu = bindCellFormatMenu({
 });
 const tablePopover = registerPopover(tableBtn, tableFmtMenu, () => cellFormatMenu.reflect());
 bindBreaksMenu(BREAK_IO);
+
+// ---- Four engine capabilities that had no control at all --------------------
+// Each of these was reachable from the engine in one call and from the product in
+// none (`SKILL` §9 rule 4). What stays here is the editor state they need; every
+// decision — the competitor shape, the labels, the refusals, the command rows —
+// lives with its own control.
+//
+// `repaint` for the marks is the page WINDOW, not the document: turning marks on
+// is a repaint and never a repagination, so re-rastering what is on screen is the
+// whole of the chrome's duty and it is O(window) rather than O(document).
+const formattingMarks = createFormattingMarks({
+  getDoc: () => doc,
+  repaint: () => {
+    for (let i = pageWindow.first; i <= pageWindow.last; i++) repaintPage(i);
+  },
+  setStatus,
+});
+const measurement = createMeasurementUnits({
+  engine: {
+    measurementUnits,
+    defaultMeasurementUnit,
+    decimalSeparatorForLanguage,
+    parseMeasurement,
+    formatMeasurement,
+  },
+  select: document.getElementById("measurementUnitSelect"),
+  locale: () => activeLocale(),
+  onChanged: () => pageSetup.reflectUnits(),
+  setStatus,
+  openChooser: () => {
+    toggleSettings(true);
+    document.getElementById("measurementUnitSelect")?.focus();
+  },
+});
+const documentProtection = createDocumentProtection({
+  getDoc: () => doc,
+  runEdit,
+  registerModal,
+  fallbackFocus: () => pagesEl,
+  bindRadioGroup,
+  setStatus,
+  onChanged: () => updateToolbar(),
+});
 const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted") });
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
@@ -11835,6 +11795,13 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.reflow", label: t(reflowView.isOn() ? "reflow.commandOn" : "reflow.commandOff"), group: "View", kw: "reflow pageless continuous column mobile phone reader web layout wrap width", enabled: !readOnlyReason, disabledReason: t("reflow.unavailable"), run: () => reflowView.toggle() },
     ...reflowView.commands(),
+    // The ¶ toggle and its five switches, the measurement-unit preference, and
+    // Restrict Editing. Each module generates its own rows from its own table, so
+    // the palette, the menu and the control cannot offer different sets — and
+    // `main.js` carries one line per capability instead of eight command literals.
+    ...formattingMarks.commands(),
+    ...measurement.commands(),
+    ...documentProtection.commands(),
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     // Ribbon density (docs/104 HF-094). The choice was already real and already
@@ -16079,6 +16046,9 @@ const pageSetup = createPageSetup({
   runEdit,
   registerModal,
   registerPopover,
+  // Word's *Measurement units* setting governs exactly this dialog, so the
+  // preference arrives as a dependency rather than being read from a global.
+  measure: measurement,
 });
 
 // ---- Header and footer settings --------------------------------------------

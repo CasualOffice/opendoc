@@ -51,6 +51,39 @@ export const BORDER_WEIGHTS_EIGHTH_POINTS = Object.freeze([4, 8, 12, 18, 24, 36,
  *  `TableSettings.js:366` then selects `store.at(1)`, which is the 0.5 pt row. */
 export const DEFAULT_BORDER_WEIGHT_EIGHTH_POINTS = 4;
 
+/** The six line styles `casual_doc_layout::flow` can draw apart, in the order the
+ *  control offers them.
+ *
+ *  Exactly these six, because exactly these six render differently: the three
+ *  setters (`setCellBorder`, `setCellBorderRange`, `setTableBorder`) refuse
+ *  anything else with a sentence rather than painting it as a solid line, and
+ *  `cellBorderStyle` canonicalises whatever the document carries onto this same
+ *  vocabulary — a `dashSmallGap` in an imported file reflects as `dashed` — so
+ *  there is one spelling per rendering on both sides of the boundary.
+ *
+ *  The model can hold any `w:val` token and the exporter writes it back verbatim;
+ *  what this list is about is what can be AUTHORED and seen. Offering `wave` or
+ *  `thickThinMediumGap` in a dropdown that paints a plain line would be a control
+ *  that lies about what it did.
+ *
+ *  Word's Line Style list is longer (24 entries) and ONLYOFFICE's border combo
+ *  offers no style at all (`ComboBorderSize` is widths only), so this is a
+ *  deliberate midpoint: every style the renderer distinguishes, and nothing it
+ *  does not. */
+export const BORDER_STYLES = Object.freeze([
+  "single",
+  "double",
+  "dotted",
+  "dashed",
+  "dotDash",
+  "dotDotDash",
+]);
+
+/** The style the engine applies when none is given, and what the control opens
+ *  on. `setCellBorder`'s trailing argument is optional and means this, so an
+ *  omitted style and this value are the same request. */
+export const DEFAULT_BORDER_STYLE = "single";
+
 /** `18` -> `"2.25 pt"`, in the reader's locale — `"2,25 pt"` in French.
  *
  *  The number goes through `Intl` rather than being written out seven times in
@@ -90,6 +123,7 @@ export function borderWeightLabel(eighthPoints) {
  * @param {HTMLInputElement} host.cellBorderColor
  * @param {HTMLInputElement} host.tableBorderColor
  * @param {HTMLSelectElement} host.borderWeight  the pen's width, in eighth-points
+ * @param {HTMLSelectElement} host.borderStyle   the pen's line style, one of `BORDER_STYLES`
  * @param {() => object|null} host.doc
  * @param {() => string} host.caretNode     the caret's paragraph node id, or ""
  * @param {(apply) => boolean} host.formatRange  the range write runner
@@ -125,6 +159,19 @@ export function bindCellFormatMenu(host) {
       : DEFAULT_BORDER_WEIGHT_EIGHTH_POINTS;
   }
 
+  /** The line style the next border stroke draws with.
+   *
+   *  Falls back to `single` rather than to `undefined` for the same reason
+   *  `penWeight` falls back to the default weight: the engine would accept
+   *  `undefined` and mean `single` anyway, and sending the value explicitly is
+   *  what makes the control's state and the engine's argument the same thing. An
+   *  unrecognised value — markup and this table disagreeing — is refused here
+   *  rather than being sent for the engine to refuse, so the stroke still lands. */
+  function penStyle() {
+    const chosen = host.borderStyle?.value;
+    return BORDER_STYLES.includes(chosen) ? chosen : DEFAULT_BORDER_STYLE;
+  }
+
   const vAlignGroup = host.bindRadioGroup(host.vAlign, {
     attr: "data-valign",
     onSelect: (valign) => {
@@ -143,6 +190,20 @@ export function bindCellFormatMenu(host) {
       host.shade.value = `#${rgb.toString(16).padStart(6, "0")}`;
     }
     vAlignGroup.reflect(doc.cellVerticalAlignAt(node) || "top");
+    // The style ALREADY IN FORCE, which is the half that makes the dropdown a
+    // control rather than a write-only switch. `cellBorderStyle` returns "" when
+    // the cell has no border at all, and that is NOT a reason to move the control:
+    // the pen keeps whatever the person last chose, so clearing a border and
+    // drawing a new one does not silently revert to solid. A keyboard user with the
+    // list open is left alone for the same reason the weight list is never refilled.
+    const inForce = doc.cellBorderStyle(node);
+    if (
+      host.borderStyle &&
+      BORDER_STYLES.includes(inForce) &&
+      document.activeElement !== host.borderStyle
+    ) {
+      host.borderStyle.value = inForce;
+    }
     const edges = doc.cellBorderEdges(node);
     const bit = { top: 1, bottom: 2, left: 4, right: 8 };
     for (const b of host.menu.querySelectorAll(".border-btn")) {
@@ -163,7 +224,7 @@ export function bindCellFormatMenu(host) {
     host.onButton(b, () => {
       const [r, g, bl] = host.hexToRgb(host.cellBorderColor.value);
       host.formatRange((a, f) =>
-        host.doc().setCellBorderRange(a, f, b.dataset.cellborder, r, g, bl, penWeight()),
+        host.doc().setCellBorderRange(a, f, b.dataset.cellborder, r, g, bl, penWeight(), penStyle()),
       );
       reflect();
     });
@@ -172,7 +233,7 @@ export function bindCellFormatMenu(host) {
     host.onButton(b, () => {
       const [r, g, bl] = host.hexToRgb(host.tableBorderColor.value);
       host.runNodeEdit((node) =>
-        host.doc().setTableBorder(node, b.dataset.tableborder, r, g, bl, penWeight()),
+        host.doc().setTableBorder(node, b.dataset.tableborder, r, g, bl, penWeight(), penStyle()),
       );
     });
   }

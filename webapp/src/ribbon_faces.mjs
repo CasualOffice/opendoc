@@ -125,6 +125,14 @@ export const HOME_FACES = Object.freeze([
   chooser("#spacingBtn", "paragraph.spacing."),
   face("#restartList", "paragraph.list.restart"),
   face("#continueList", "paragraph.list.continue"),
+  // The ¶ split control (`docs/153` `shell.formatting-marks`). The main half IS
+  // `view.formattingMarks` — the command's own run is the same toggle — while the
+  // caret is a CHOOSER over `view.formattingMarks.`, the five individual switches,
+  // each of which is its own registry row and its own View-menu row. The same
+  // split the two colour controls and the underline menu are declared under, for
+  // the same reason: a doorway is not a capability.
+  face("#formattingMarksBtn", "view.formattingMarks"),
+  chooser("#formattingMarksMenuBtn", "view.formattingMarks."),
   chooser("#stylesTrigger", "style."),
   // Find and Replace are two faces of ONE command: `#replaceBtn`'s handler is
   // `findBtn.click()`, and the panel it opens is the same panel with the replace
