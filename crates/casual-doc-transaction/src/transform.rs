@@ -335,6 +335,7 @@ impl BlockPlacement for NoPlacement {
 #[derive(Clone, Debug, Default)]
 pub struct BlockIndex {
     positions: HashMap<NodeId, (Option<NodeId>, u32)>,
+    counts: HashMap<Option<NodeId>, u32>,
 }
 
 impl BlockIndex {
@@ -343,8 +344,9 @@ impl BlockIndex {
     #[must_use]
     pub fn of(document: &Document) -> Self {
         let mut positions = HashMap::new();
-        index_blocks(document.body(), None, &mut positions);
-        Self { positions }
+        let mut counts = HashMap::new();
+        index_blocks(document.body(), None, &mut positions, &mut counts);
+        Self { positions, counts }
     }
 }
 
@@ -354,56 +356,77 @@ impl BlockPlacement for BlockIndex {
     }
 }
 
+/// The same index, read as the state an operation is **about to be applied to**.
+///
+/// One index answers both questions; the two traits keep the two preconditions apart. See
+/// [`crate::intent::BlockTarget`] for why that distinction is load-bearing rather than
+/// pedantic.
+impl crate::intent::BlockTarget for BlockIndex {
+    fn block_position(&self, node: NodeId) -> Option<(Option<NodeId>, u32)> {
+        self.positions.get(&node).copied()
+    }
+
+    fn block_count(&self, container: Option<NodeId>) -> Option<u32> {
+        self.counts.get(&container).copied()
+    }
+}
+
 fn index_blocks(
     blocks: &[BlockNode],
     container: Option<NodeId>,
     out: &mut HashMap<NodeId, (Option<NodeId>, u32)>,
+    counts: &mut HashMap<Option<NodeId>, u32>,
 ) {
+    counts.insert(container, u32::try_from(blocks.len()).unwrap_or(u32::MAX));
     for (index, block) in blocks.iter().enumerate() {
         let index = u32::try_from(index).unwrap_or(u32::MAX);
         out.insert(block_id(block), (container, index));
         match block {
             BlockNode::Paragraph(paragraph) => {
                 for inline in &paragraph.inlines {
-                    index_inline(inline, out);
+                    index_inline(inline, out, counts);
                 }
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        index_blocks(&cell.blocks, Some(cell.id), out);
+                        index_blocks(&cell.blocks, Some(cell.id), out, counts);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, Some(sdt.id), out),
+            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, Some(sdt.id), out, counts),
             BlockNode::AltChunk(_) => {}
         }
     }
 }
 
-fn index_inline(inline: &InlineNode, out: &mut HashMap<NodeId, (Option<NodeId>, u32)>) {
+fn index_inline(
+    inline: &InlineNode,
+    out: &mut HashMap<NodeId, (Option<NodeId>, u32)>,
+    counts: &mut HashMap<Option<NodeId>, u32>,
+) {
     match inline {
         InlineNode::Hyperlink(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
         InlineNode::Field(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
         InlineNode::Revision(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
         InlineNode::Sdt(node) => {
             for child in &node.inlines {
-                index_inline(child, out);
+                index_inline(child, out, counts);
             }
         }
-        InlineNode::TextBox(node) => index_blocks(&node.blocks, Some(node.id), out),
+        InlineNode::TextBox(node) => index_blocks(&node.blocks, Some(node.id), out, counts),
         // Everything else carries no block container. DrawingML group internals are
         // deliberately not walked: a block inside a group answers `None`, which is a
         // refusal, not a wrong answer.
