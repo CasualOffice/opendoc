@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1582],
-  ["de", 1582],
-  ["es", 1582],
-  ["fr", 1582],
-  ["hi", 1582],
-  ["id", 1582],
-  ["it", 1582],
-  ["ja", 1582],
-  ["ko", 1582],
-  ["nl", 1582],
-  ["pl", 1582],
-  ["pt-BR", 1582],
-  ["ru", 1582],
-  ["tr", 1582],
-  ["uk", 1582],
-  ["vi", 1582],
-  ["zh-Hans", 1582],
-  ["zh-Hant", 1582],
+  ["ar", 1637],
+  ["de", 1637],
+  ["es", 1637],
+  ["fr", 1637],
+  ["hi", 1637],
+  ["id", 1637],
+  ["it", 1637],
+  ["ja", 1637],
+  ["ko", 1637],
+  ["nl", 1637],
+  ["pl", 1637],
+  ["pt-BR", 1637],
+  ["ru", 1637],
+  ["tr", 1637],
+  ["uk", 1637],
+  ["vi", 1637],
+  ["zh-Hans", 1637],
+  ["zh-Hant", 1637],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -340,6 +340,49 @@ const COVERAGE = new Map([
  *  1,559 + 23 is the right arithmetic only by luck, and the number below is what
  *  the merged catalogues actually answer. This is the trap `module_seams.test.mjs`
  *  records three times, met here for real. */
+/** 1,582 -> 1,637 is the FOUR CAPABILITIES the engine had and the product could
+ *  not reach (`docs/153` `shell.formatting-marks`, `shell.measurement-units`,
+ *  `table.border-width-style`, `review.restrict-editing`): the ¶ split button and
+ *  its five mark switches, the measurement-unit preference and the five unit
+ *  names, the six border line styles, and Restrict Editing's dialog, five levels
+ *  and two status sentences. Fifty-five keys, translated into all eighteen
+ *  languages in the commit that routed them.
+ *
+ *  THREE of the fifty-five are not new translations and deliberately so: the two
+ *  `formattingMarks.state*` words are each locale's own `headerFooter.stateOn`
+ *  and `stateOff` — the same "on"/"off" that already completes "Different odd &
+ *  even pages …" — and `protect.level.comments` is its own `menuGroup.comments`.
+ *  Two words for one idea is how a surface starts reading as a different product
+ *  from the one beside it.
+ *
+ *  `borderStyle.double` is NOT the fourth such copy, although English says
+ *  "Double" for both it and `paraLineSpacing.double`. That key is LINE SPACING,
+ *  and three catalogues say so in words that name lines rather than strokes —
+ *  Japanese "2 行", Korean "2줄", Simplified Chinese "2 倍行距". Copying it onto a
+ *  border would have put "2 lines" in a line-style dropdown in three languages,
+ *  which is the shape of bug a reuse table produces when it matches on the
+ *  English instead of on the meaning. It is translated as the stroke it is.
+ *  `protect.level.trackedChanges` is not a copy either: the obvious source,
+ *  `site.index.trackedChanges`, is itself among the ~570 keys of site prose that
+ *  have a seam and no translation, so copying it would have moved English into
+ *  eighteen catalogues under the appearance of a reuse.
+ *
+ *  `pageSetup.dimensions` is the one key whose ENGLISH changed, from
+ *  "{width} × {height} in" to "{width} × {height} {unit}", and it is why this row
+ *  could not be only additive. Nineteen catalogues had translated the word "in" —
+ *  "po" in French, "インチ" in Japanese, "Zoll" in German — which was correct while
+ *  inches were the only unit and became a wrong unit presented as a right one the
+ *  moment the preference could move. What is substituted now is the engine's own
+ *  SYMBOL (`cm`, `mm`, `in`, `pt`, `pi`), identical in every language, which is
+ *  the convention `borderWeightLabel` already prints `pt` under — so all eighteen
+ *  values are the same string, and that is a translation decision rather than
+ *  eighteen omissions.
+ *
+ *  MEASURED from the merged tree after rebasing onto an `origin/main` carrying
+ *  #729, not carried across the rebase. 1,582 + 55 happens to be the same number
+ *  here, which is luck and not method: the figure below is what the merged
+ *  catalogues answer, and the reason a number in this file is never arithmetic on
+ *  two branches' figures is recorded three times above. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];
