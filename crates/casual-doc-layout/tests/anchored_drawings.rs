@@ -2026,7 +2026,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             .filter(|item| matches!(
                 item,
                 PaintItem::Shape {
-                    geometry: DisplayShapeGeometry::Polygon { .. },
+                    geometry: DisplayShapeGeometry::Path { .. },
                     ..
                 }
             ))
@@ -2185,7 +2185,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         .iter()
         .filter_map(|item| match item {
             PaintItem::Shape {
-                geometry: DisplayShapeGeometry::Polygon { closed, .. },
+                geometry: DisplayShapeGeometry::Path { closed, .. },
                 ..
             } => Some(*closed),
             _ => None,

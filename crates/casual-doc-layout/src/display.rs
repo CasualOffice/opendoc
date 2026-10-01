@@ -109,10 +109,84 @@ pub struct ShapeOutline {
     pub dash: DashStyle,
 }
 
-/// The default for a serialized [`ShapeGeometry::Polygon`] that predates the
-/// `closed` field: every polygon that could be written then was closed.
-fn closed_polygon() -> bool {
-    true
+/// One command of a resolved shape path, in the same device-scaled twips as the
+/// rest of the list.
+///
+/// This is the display-list form of `casual_doc_model::v1::ShapePathCommand`, with
+/// coordinates already resolved to page-local twips so a backend only scales them.
+/// Curves live here because both `a:custGeom` and DrawingML's preset table need
+/// them (`119` §6, `109` FID-G-02); a straight polyline is just a command list that
+/// happens to contain none.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum PathCommand {
+    /// Start a subpath at a point (`a:moveTo`).
+    MoveTo {
+        /// The subpath's first point.
+        point: Point,
+    },
+    /// A straight segment to a point (`a:lnTo`).
+    LineTo {
+        /// The segment's endpoint.
+        point: Point,
+    },
+    /// A cubic Bézier (`a:cubicBezTo`): two control points, then the endpoint.
+    CubicTo {
+        /// The control point leaving the previous endpoint.
+        control1: Point,
+        /// The control point entering `point`.
+        control2: Point,
+        /// The curve's endpoint.
+        point: Point,
+    },
+    /// A quadratic Bézier (`a:quadBezTo`): one control point, then the endpoint.
+    ///
+    /// Kept distinct from [`PathCommand::CubicTo`] rather than promoted at
+    /// construction so the authored command survives into the display list; a
+    /// backend without a quadratic operator (PDF) promotes it itself.
+    QuadTo {
+        /// The single control point.
+        control: Point,
+        /// The curve's endpoint.
+        point: Point,
+    },
+}
+
+impl PathCommand {
+    /// The point the path arrives at after this command.
+    #[must_use]
+    pub fn endpoint(self) -> Point {
+        match self {
+            Self::MoveTo { point }
+            | Self::LineTo { point }
+            | Self::CubicTo { point, .. }
+            | Self::QuadTo { point, .. } => point,
+        }
+    }
+
+    /// Whether this command draws a segment, as opposed to only moving the pen.
+    #[must_use]
+    pub fn is_segment(self) -> bool {
+        !matches!(self, Self::MoveTo { .. })
+    }
+
+    /// Every point the command names, endpoint and controls alike.
+    ///
+    /// Control points are included deliberately: a Bézier lies inside the convex
+    /// hull of its control polygon, so this is a sound over-approximation for the
+    /// bounds a gradient extent and a clip need. A tight curve bound would be
+    /// smaller but is not what either caller is asking for.
+    pub fn points(self) -> impl Iterator<Item = Point> {
+        let (a, b, c) = match self {
+            Self::MoveTo { point } | Self::LineTo { point } => (point, None, None),
+            Self::CubicTo {
+                control1,
+                control2,
+                point,
+            } => (control1, Some(control2), Some(point)),
+            Self::QuadTo { control, point } => (control, Some(point), None),
+        };
+        core::iter::once(a).chain(b).chain(c)
+    }
 }
 
 /// The geometry primitive of a painted [`PaintItem::Shape`].
@@ -135,15 +209,19 @@ pub enum ShapeGeometry {
         /// The corner radius in twips.
         radius: Twip,
     },
-    /// A polyline in path order, closed (a polygon) or open.
-    Polygon {
-        /// The vertices in path order.
-        points: Vec<Point>,
-        /// Whether the last vertex joins back to the first. `false` strokes an
-        /// open path — an unclosed `a:custGeom` (docs/119). Defaults to `true`
-        /// so a display list serialized before this field still deserializes as
-        /// the closed polygon it was.
-        #[serde(default = "closed_polygon")]
+    /// A path in command order, closed (a filled figure) or open (stroked only).
+    ///
+    /// One primitive for every non-rectangular outline: a preset's hand-resolved
+    /// vertex list and an authored `a:custGeom` are the same thing here, which is
+    /// what `119` §6 means by "a path is the primitive and a preset is a recipe".
+    /// It replaced a point-list-only `Polygon` variant; the display list has no
+    /// persisted form, so nothing had to be migrated.
+    Path {
+        /// The commands in path order, beginning with a
+        /// [`PathCommand::MoveTo`].
+        commands: Vec<PathCommand>,
+        /// Whether the figure joins back to its subpath start. `false` strokes an
+        /// open path — an unclosed `a:custGeom` (`119`).
         closed: bool,
     },
     /// A straight line / connector.
