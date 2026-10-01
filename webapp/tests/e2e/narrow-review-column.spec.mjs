@@ -312,3 +312,111 @@ test("the sheet is dismissable and gives the screen back", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+/**
+ * Every control on the bottom chrome, hit-tested at the point a finger aims at.
+ *
+ * The CONTROLS and not the bar's bounding box, deliberately. `--h-compact-bar` is
+ * nominally `clamp(38px, 3.4vh, 46px)` — 38px at this height — while the painted
+ * bar is 41px (`.compact-toolbar`'s own `min-height: 40px` plus its 1px top
+ * border), so every bottom reserve derived from that token is 3px short and the
+ * sheet's bottom edge lands on the bar's border rather than above it. That 3px is
+ * a token defect to fix where the token lives; it is not a command a finger
+ * cannot reach, and a guard written against the bounding box would be asserting
+ * the token's arithmetic instead of the thing the user lost.
+ *
+ * `self` counts a hit that landed inside the control, `review` one that landed in
+ * the comments sheet — which is the whole complaint — and `other` anything else.
+ */
+function bottomChromeReach(page) {
+  return page.evaluate(() => {
+    const out = { controls: 0, self: 0, review: 0, other: 0, covered: [] };
+    const surfaces = [document.getElementById("compactToolbar"), document.querySelector(".footer")];
+    for (const surface of surfaces) {
+      if (!surface || surface.hidden || !surface.getClientRects().length) continue;
+      for (const control of surface.querySelectorAll("button, [role='button'], a[href], select")) {
+        if (control.hidden || control.disabled || !control.getClientRects().length) continue;
+        const box = control.getBoundingClientRect();
+        if (box.width < 1 || box.height < 1) continue;
+        const x = Math.round(box.left + box.width / 2);
+        const y = Math.round(box.top + box.height / 2);
+        out.controls += 1;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && (control.contains(hit) || hit.contains(control))) out.self += 1;
+        else if (hit?.closest("#reviewSidebar")) {
+          out.review += 1;
+          out.covered.push(`${control.id || control.className}@${x},${y}`);
+        } else out.other += 1;
+      }
+    }
+    return out;
+  });
+}
+
+// The comments sheet must not swallow the bottom command surface.
+//
+// `inset: auto 0 0 0` is the right shape for a shell whose commands are at the
+// top, and the wrong one for this shell. Measured at 390x844 before the fix: the
+// sheet occupied 645-844 while `#compactToolbar` is fixed at 773-814 and the
+// status bar at 814-844, so opening one comment hid the phone's entire command
+// surface. Word for mobile stacks its bottom ribbon sheet above the command row
+// and Google Docs' sheets sit above the keyboard-attached row; ONLYOFFICE is not
+// the authority here, because their phone chrome is a top Navbar plus toolbars
+// INSIDE the sheet (`apps/documenteditor/mobile/src/view/edit/Edit.jsx`) and they
+// have no global bottom row to swallow.
+//
+// This is also the precondition of the test above: it treats the command bar as
+// PERMANENT chrome that was "never the sheet's to give back", which is only true
+// if the sheet never had it.
+//
+// `docs/148` §5's region table records the oversight in two adjacent rows — the
+// compact toolbar "docked to the bottom, above the status bar", and four rows
+// later the comment column "bottom sheet (already, at 700px) | HF-088,
+// UNCHANGED". The rung that put a command surface at the bottom edge never
+// re-asked what was already parked there.
+//
+// Three rungs, because the standoff is not one number. Below 620px
+// (`PHONE_MAX_WIDTH`) the chrome is the status bar plus the docked command bar;
+// between 621 and 700px (`REVIEW_SHEET_MAX_WIDTH`) the sheet still applies but
+// `phone-mode` does not, so the status bar is the only bottom chrome and it is in
+// the normal flow — a rung the fix reaches through `--h-footer` as the fallback
+// and which nothing else in this file visits.
+for (const [name, size] of [
+  ["390px", PHONE],
+  ["620px", NARROW],
+  ["660px", { width: 660, height: 800 }],
+]) {
+  test(`at ${name} the sheet stands off the bottom chrome instead of covering it`, async ({
+    page,
+    consoleErrors,
+  }) => {
+    await page.setViewportSize(WIDE);
+    await gotoEditor(page);
+    await addComment(page, `Above the bar at ${name}`);
+
+    await page.setViewportSize(size);
+    await expect.poll(async () => (await columnBox(page)).sheetMode).toBe(true);
+    await expect(page.locator("#reviewSidebar")).toBeVisible();
+    // No wait on reflow here, unlike the rung tests above: this guard reads the
+    // sheet's and the bar's own boxes and neither comes from the debounced width
+    // feed. Reflow is not even on at 660px — it arms below the phone rung — so
+    // waiting for the page stack to fit the window would hang on the paper
+    // layout that is correct at this width.
+    await expect
+      .poll(async () => (await columnBox(page)).height)
+      .toBeGreaterThan(0);
+
+    // The observable, proved live: there ARE controls down there to cover.
+    const reach = await bottomChromeReach(page);
+    expect(reach.controls, "the bottom chrome must carry controls at this rung").toBeGreaterThan(0);
+
+    // THE GUARANTEE: not one of them is behind the sheet.
+    expect(
+      reach.review,
+      `the comments sheet covered ${reach.covered.join(" ")}`,
+    ).toBe(0);
+    expect(reach.self, "every bottom-chrome control answers its own hit test").toBe(reach.controls);
+
+    expect(consoleErrors).toEqual([]);
+  });
+}

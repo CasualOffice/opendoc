@@ -1525,7 +1525,11 @@ seamless tiles, withheld chrome and forced-paper printing (`151` §6), 2026-10-0
 Specified in `151-REFLOW-PAGELESS-LAYOUT-DESIGN.md`. Completes the consequence
 ADR-044 left open, and **retires `#viewport`'s exemption from ADR-044's
 no-horizontal-scroll rule**: 384 into 390 at the phone rung, where it measured
-794 into 326.
+794 into 326. **Amended 2026-10-01 by ADR-048** (below),
+which supplies the rule this ADR left implicit — *which* width the caller passes — and
+corrects one sentence of its evidence (below). The mechanism decided here is not
+reopened: because the measure is a parameter of the seam, the cap costs one clamp in the
+caller and no engine change at all.
 
 **Decision.** A pageless/reflow view is a **`LayoutView` parameter threaded to the one
 place layout geometry is decided**, not a second layout path and not a document edit:
@@ -1581,9 +1585,18 @@ the width comes from. Both references converge on the same mechanism — ONLYOFF
 (`word/Editor/Layout/ReadView.js`) — so a second paginator would be inventing a
 parallel path the prior art does not have.
 
-**Where we differ from ONLYOFFICE, deliberately:** their reader mode sets
-`SelectEnabled = false` and is **not editable**. A phone browser is our whole mobile
-story, so a reading mode you must leave in order to type is not an answer.
+**Why the document stays editable.** A phone browser is our whole mobile story
+(`18-SUPPORT-MATRIX.md`), so a reading mode you must leave in order to type is not an
+answer. **CORRECTED 2026-10-01 by `154` §2.3(d):** this paragraph previously justified
+the choice as a divergence from ONLYOFFICE, on the ground that "their reader mode sets
+`SelectEnabled = false` and is **not editable**." **That is false in source.**
+`SelectEnabled` has exactly two consumers, both in
+`common/Scrolls/mobileTouchManagerBase.js` (`:928`, `:1873`), and both gate **touch
+selection handles**, not mutation; read-only in ONLYOFFICE is
+`api.asc_addRestriction(Asc.c_oAscRestrictionType.View)`, which `ChangeReaderMode()`
+never calls. Microsoft's Immersive Reader is editable too (first-party). **The decision
+is unchanged and correct; only its evidence was wrong — and it was load-bearing here,
+which is why it is corrected in place rather than left to `151`.**
 
 **Consequences.**
 
@@ -1728,6 +1741,191 @@ decision stands and the next measurement belongs with the `107` §4 benchmarks.
   Never on a keystroke, never on an uncontended arrival.
 - Deliberately not decided or built here: the byte codec, the relay binary, presence,
   collaborative undo, the host-signed grant, and durability. `152` §9 and §10 say why for each.
+
+## ADR-048 — The reflow measure is capped in characters, and reading is a width POLICY, not a second layout mechanism
+
+**Status:** **Proposed, 2026-10-01 — nothing built.** Raised by the owner's challenge that
+"the complete view and wider content is not at all suitable for reading", and specified in
+`154-READING-VIEW-MEASURE-AND-DOCUMENT-FOLDING-COMPETITIVE-ANALYSIS.md`. **Amends ADR-046**
+(supplies the caller rule it left implicit, and corrects one sentence of its evidence);
+**does not reopen it**. Awaiting the owner's decision on the default target and the number
+of steps.
+
+**The defect this answers, with the number.** `webapp/src/reflow_view.mjs`'s
+`reflowMeasure` has a minimum (`REFLOW_MIN_CONTENT_TWIP`) and **no maximum**, so the
+reading column is the window minus two 16px gutters at every width: 352 CSS px at the
+390px phone rung (**60 characters** of 11pt Calibri — correct, and the only width ever
+evaluated), but **1,408 px — 241 characters — at a 1440px window**. WCAG 2.1 SC 1.4.8
+(AAA) requires that *"a mechanism is available"* for *"Width … no more than 80 characters
+or glyphs (40 if CJK)"*; we have no such mechanism in any configuration. And above a
+reachable width it **fails outright**: `LayoutView::reflow` refuses a column over 22in, so
+a 2,160px window at 100% zoom — or 1,104px at 50%, and 50% is both a `ZOOM_STEPS` entry and
+`FIT_ON_OPEN_FLOOR` — throws, and `reflow_chrome.mjs`'s `sync` reverts the preference to
+paper and shows the reader a message about twips. Derivations in `154` §3 and §9.
+
+**Decision.**
+
+- **The column is capped: `content_width = min(available, policy_cap)`.** One clamp, in the
+  **caller**. **No `crates/` change is required** — ADR-046 made the measure a parameter of
+  the seam, which is why this costs one line of arithmetic rather than a layout pass.
+  The cap also removes the `ColumnTooWide` refusal as a side effect, since a capped column
+  cannot reach 22in.
+- **The cap is a target in CHARACTERS**, because that is the unit every reference and
+  standard in `154` §2 is stated in and the only one that transfers across faces and sizes.
+  It resolves to twips as `target_chars × mean_advance(default_face, default_size)`,
+  measured by the shaper the engine already has. Fallback where the face's metrics are
+  unavailable: **0.40 em per character** (≈32 em at 80 characters), justified by a measured
+  0.393–0.431 em spread across the four bundled base text faces — an approximation stated
+  with its error, not a constant with no source.
+- **The default target is 80 characters (40 CJK), from WCAG 2.1 SC 1.4.8.** Chosen over
+  Bringhurst's widely-quoted 66 for an evidence reason rather than a typographic one: 80 is
+  normative, first-party and quotable, and 66 could not be verified against his text
+  (`154` §7 item 1). 80 is also the conservative end, so the default errs towards the paper
+  the reader is used to. At 11pt Calibri that is **468 CSS px / 7,020 twips**.
+- **Above the cap the column is CENTRED on the application desk** — not widened, not given
+  a paper edge, not split into columns. `#viewport.is-reflow` already removes the sheet
+  shadow and radius, so a tile becomes a text column on the app background, which is what
+  Docs, Immersive Reader and every reader in `154` §2.4 do.
+- **Two width POLICIES over ONE layout mechanism.** `LayoutView::Reflow` is unchanged; the
+  policies differ only in which `X` goes into `min(available, X)`:
+  - **Fit** — `X` = the document's own text measure (the first section's content width;
+    624px at Letter default). The *pageless authoring* policy. It never makes a line
+    **longer** than the paper the author is writing for, and it invents no constant: the
+    number comes from the document.
+  - **Reading** — `X` = the character target. The desktop default.
+  On a phone both reduce to `available`, so the phone's 60 characters and ADR-044's retired
+  horizontal-scroll exemption are untouched.
+- **"Reading view" is a PRESET, not a third mode.** It sets four independently useful
+  settings — pageless layout, Reading width, reduced chrome, folded outline (ADR-049) —
+  exactly as Word ships Focus (chrome) and Immersive Reader (measure) as separate things
+  that compose. One registry row writing four preferences is not a parallel path.
+- **The width control is per-viewer, four steps, ≥2 surfaces**, including an explicit
+  **Full** (uncapped). Per-viewer because that is what Google does and states in as many
+  words: *"Your text width choice won't affect how collaborators see your docs."* Full is
+  named on purpose — a host embedding in a 400px column has the narrow case already, and a
+  named Full makes the default's narrowness discoverable rather than mysterious.
+- **Nothing here becomes a document property.** Google makes *pageless* one
+  (`DocumentStyle.documentFormat`, `DocumentMode.PAGELESS`) and explicitly does **not** make
+  text width one. Both stay per-viewer here, and the decisive reason ADR-046 §3.4 did not
+  give is that **neither DOCX nor ODT has anywhere to put it**: a document property we
+  cannot serialise is a sidecar, and a sidecar that reformats every collaborator's screen is
+  a worse trade than a per-viewer default. ADR-044's reasoning stands as the second reason.
+- **The document stays editable, and the reason changes.** ADR-046 justified this as a
+  divergence from a read-only field. There is no read-only field (correction above;
+  Immersive Reader is editable too, first-party). The justification is the mobile-support
+  one alone, and it is sufficient.
+- **A reader type-size control is NOT bundled with this** (`151` §8 item 2 stands) — but its
+  status improves: once the cap is in characters, changing the size changes the width and
+  leaves the measure put, so it stops being a second policy and becomes a consequence. Both
+  references ship one; ONLYOFFICE ship *only* one (a nine-step point ladder) and no cap.
+
+**Why this shape.** The field converges and `151` §2.3 had removed the strongest vote from
+the record. Google caps (Text width: Narrow/Medium/Wide, per-viewer); Word caps twice over
+(Immersive Reader's four-step **Column Width**, whose documented purpose is *"changes line
+length to improve focus and comprehension"*, and Read Mode's adjustable columns); WCAG
+1.4.8 supplies the number. ONLYOFFICE do **not** cap — they take the paper's width divided
+by the device pixel ratio and grow the type instead — and they ship **no desktop reading
+view at all** (`ChangeReaderMode` has zero hits under `apps/documenteditor/main`), so on
+precisely the surface this ADR is about they are not a reference. `154` §2 has every
+citation and §7 lists every claim that could not be verified.
+
+**Consequences.**
+
+- A desktop resize above the cap changes nothing at all in the document, so most desktop
+  resizes become free for a second and better reason than `151` §6.2's quantisation. The
+  quantum and the debounce still bind below the cap and are unchanged.
+- `MAX_REFLOW_COLUMN`'s doc comment must stop describing a correct caller as having
+  "converted units wrongly", and the refusal should be verified in a browser and filed
+  before the cap masks it.
+- The cap's guard must **count characters on a shaped line**, not divide a column by a mean
+  advance; the figures above are arithmetic on a measured mean and accurate to roughly ±5%,
+  which is ample to establish a 3× discrepancy and not the form a committed guard may take.
+- **Open:** the default step (80 is proposed), the number of steps (four is proposed), and
+  their labels. All three are owner calls.
+- **Open:** WCAG 1.4.8 item 3 — there is no mechanism to un-justify a justified document in
+  the reading view. Named so it is not rediscovered.
+
+## ADR-049 — Folding is a per-viewer block visibility filter keyed on the outline, not a layout view
+
+**Status:** **Proposed, 2026-10-01 — nothing built.** Raised by the owner ("collapsible and
+expandable based on outlines like VS Code does with code") and specified in `154` §5.3.
+Independent of ADR-046 and ADR-048 by design; that independence is the decision.
+
+**The gap.** There is no folding anywhere: `webapp/src/outline_panel.mjs` renders a **flat**
+list of buttons with `lvl-1`…`lvl-6` classes, no disclosure, no `aria-expanded`, no
+`role="tree"`; no fold state exists in `webapp/src`; and **`w15:collapsed` is not parsed**
+— the `CT_OnOff` element in a heading's `w:pPr`, Word's `w15` namespace, by which Word
+persists a collapsed heading and which Microsoft's Open Specifications define. No `.docx`
+in the repository carries one (38 packages, every XML part, zero hits), so the
+loss-coverage gate has never had the opportunity to flag the drop. Word has folding; Google
+has folding; **ONLYOFFICE has none** (zero `collapsed` hits anywhere in `sdkjs/word/`, and
+`CDocumentOutline` exposes no Collapse or Expand).
+
+**Decision.**
+
+- **Folding is NOT part of reflow, and must not be built into it.** The thing it operates on
+  is the *heading tree*, which is identical on paper and in a reflowed column. Word's
+  folding works in Print Layout; Google's Pageless-only restriction buys a reader nothing
+  and is an artefact of where Google built it. Coupling two orthogonal settings is the
+  specific mistake ADR-048 corrects, and it must not be repeated one ADR later.
+- **The mechanism is a per-viewer block visibility filter — a `FoldSet` of collapsed heading
+  `NodeId`s threaded to the flow pass**, so the blocks of a collapsed subtree contribute no
+  fragments. **Not a second flow path.** Three precedents it reuses rather than parallels:
+  the filter already exists one tier down (`flow.rs:6500` drops a run whose cascaded
+  `w:vanish` is on); the per-viewer view parameter already exists twice (`ReviewView`,
+  `LayoutView`, both defaulting to today's behaviour); and the byte-space projection already
+  exists for hidden deletions (`casual-doc-wasm/src/lib.rs:9553`, guarded at `:32635`).
+- **Folded content projects to a single boundary position**, so a caret can never land
+  inside what the eye cannot see. It must **not** take `ReviewView::Markup`'s escape of
+  being "never fed to caret/selection/hit-test" — the document stays editable while folded.
+- **Two tiers of state, which is Google's model and the only one that can honour a Word
+  file**: `w15:collapsed` is the **document default**, parsed, modelled, round-tripped and
+  exported; the live per-viewer fold state lives beside `docReflow` in `prefs.mjs` and a
+  viewer's toggling is never written into the file. Google states this split outright — an
+  editor sets the saved default for everyone, a viewer's own changes "will not be saved".
+- **Find searches folded text and reveals by unfolding.** `findText` walks the **model**
+  (`casual-doc-wasm/src/lib.rs:3503`), so it already searches folded content by
+  construction; the work is that revealing a match unfolds its ancestors. VS Code's
+  behaviour.
+- **A selection crossing a folded heading takes the whole subtree**, out loud: one undoable
+  operation that states its scope ("Deleted section and N paragraphs"), never a quiet
+  cascade. Copy copies the subtree. No source answers this for any competitor, so it is
+  decided from this repository's own rule — no silent loss, and say what you did.
+- **Print, PDF and DOCX export are always fully expanded.** Word reportedly prints only
+  expanded content and Notion reportedly drops collapsed toggles from a PDF; **both are
+  rejected** as the silent-data-loss class the engineering priority order forbids. The seam
+  exists: `print.mjs`'s `withPagedLayout` already forces `Paged` with the restore in a
+  `finally`, and forcing "unfolded" belongs in the same wrapper, next to the rule it is a
+  rule about. DOCX export writes `w15:collapsed`, so the *state* survives while the
+  *content* always does.
+- **The accessibility mirror is filtered by the same set.** `webapp/src/a11y_mirror.mjs` is
+  model-derived, so an unfiltered mirror would read out what a sighted reader has folded
+  away — the fold would be a lie to one class of reader. The disclosure carries
+  `aria-expanded` and the collapsed heading announces how much is hidden.
+- **One state, two surfaces.** `outline_panel.mjs` becomes a real `role="tree"` of
+  `treeitem`s, and **the panel's disclosure and the in-body chevron drive the same
+  `FoldSet`**. Everyone else ships panel-tree-collapse and body-folding as two unrelated
+  features with two states (ONLYOFFICE ship only the first, over the same generic `TreeView`
+  widget their version-history panel uses); having one state is an improvement rather than
+  parity, and it satisfies the ≥2-surfaces floor by construction.
+- **A fold is never an access control.** Whatever the fold state, the content is in the
+  file, in the export, in find, and in the accessibility mirror.
+
+**Why this shape.** Folding is what makes a long document navigable rather than merely
+scrollable, and the question it answers — "where am I and what else is there" — is a
+property of the outline, not of the page. That is also why it must work in both layout
+views: the heading tree does not change when the paper goes away.
+
+**Consequences.**
+
+- **Add a `.docx` fixture carrying `w15:collapsed` before anything else here.** It converts
+  an unknown — whether the drop is reported or silent — into either a report or a red gate,
+  and it is the cheapest item on the list.
+- A `FoldSet` is a third view parameter on one mechanism. If it ever needs a second flow
+  path, the abstraction is wrong and the design should stop.
+- **Open:** whether `Fold Level N` and `Fold All` / `Unfold All` ship in the first version
+  (VS Code has them; neither Word nor Docs exposes a level control), and whether folding
+  gets a keyboard binding — no competitor documents one.
 
 ## ADR-050 — A chart is a typed read projection of a retained part; the cache is the data, and the curve primitive is the shape lane's
 
