@@ -35,6 +35,7 @@
 //! absence concludes what the sender meant. A new **enum variant** is a hard break, because
 //! a tagged enum with an unknown tag does not deserialize at all.
 
+use crate::presence::PresenceUpdate;
 use crate::wire::WireOperation;
 
 /// The version both ends must agree on, checked for equality before anything else.
@@ -49,7 +50,11 @@ use crate::wire::WireOperation;
 ///   number and would refuse each other's every introduction with `ODC-7008` while both
 ///   believed the message well formed. A silent disagreement about a derived value is the
 ///   case the equality check exists for.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// - **3** — presence. [`ClientMessage::Presence`] and [`ServerMessage::Awareness`] /
+///   [`ServerMessage::Departed`] are **new enum variants**, which the rule above calls a hard
+///   break: a version-2 peer receiving an `Awareness` tag does not deserialize the message at
+///   all, so it would drop the frame rather than skip a field. Nothing about edits changed.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
 ///
@@ -271,6 +276,13 @@ pub enum ClientMessage {
     Join(Join),
     /// A chunk of this client's own edits.
     Submit(Submission),
+    /// Where this client is looking now. **Carries no identity** — the receiver attaches the
+    /// participant number from the session the message arrived on, so a client has nowhere to
+    /// claim to be somebody else. See [`presence`](crate::presence).
+    ///
+    /// Not ordered against edits, never acknowledged, never retried: a presence update that is
+    /// lost is corrected by the next one, and a stale one is ignored by its clock.
+    Presence(PresenceUpdate),
     /// Leaving deliberately rather than by disconnecting.
     Leave,
 }
@@ -333,6 +345,29 @@ pub enum ServerMessage {
         seq: Option<Seq>,
         /// Why.
         reason: Refusal,
+    },
+    /// Somebody else is looking somewhere — fanned out, with the identity **the relay
+    /// attached**.
+    ///
+    /// This is the one place the participant number and the payload travel together, and the
+    /// direction matters: a client sends [`ClientMessage::Presence`], which has no identity
+    /// field, and receives this, which does. It is the shape ONLYOFFICE uses — `sendCursor`
+    /// sends `{type, cursor}` and the received message carries `'user'` as well — and it is
+    /// what makes a forged identity unexpressible rather than merely rejected.
+    Awareness {
+        /// Whose presence this is.
+        client: ClientId,
+        /// Where they are looking.
+        update: PresenceUpdate,
+    },
+    /// A participant is gone: forget its presence.
+    ///
+    /// Presence dies with the connection. A caret that outlives its owner is worse than no
+    /// caret, because the reader believes somebody is there — ONLYOFFICE calls
+    /// `Remove_ForeignCursor` on exactly this transition.
+    Departed {
+        /// Who left.
+        client: ClientId,
     },
     /// Terminal. The connection does not survive and a retry will not help.
     Stopped {

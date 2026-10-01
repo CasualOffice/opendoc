@@ -519,13 +519,67 @@ change (ADR-030 I2) to close. They are reported, not taken.
    operation, so an insertion at a run boundary cannot say which side of it the text belongs
    to. That is refusal U5, and it is also why the §5.4 table has to reverse-engineer `apply`'s
    attachment rule instead of reading an intent the operation declared.
-3. **Operations do not carry the identities they cause to be minted.** A run split by a
-   formatting change gets its id from `RunIds`, so two replicas assign different ids to the
-   same run. No operation in the set addresses a run, so nothing breaks *today* — but the
-   deterministic snapshot (`25`) is not byte-identical across replicas, which defeats "a
-   snapshot can be verified rather than trusted" (`opencalc` `docs/56`) the moment collaboration
-   is persisted. Closing it means the operation carrying the new run's id, as
-   `SplitParagraph` already carries `new_id`.
+3. ~~**Operations do not carry the identities they cause to be minted.**~~ **Closed** — see
+   §9.4 and ADR-051. `apply` no longer holds an id generator at all; an operation travels with
+   the *space* it mints in, and every replica applying it names the nodes it creates
+   identically.
+
+### 9.4 How §9.3 was closed, and why not the way §9.3 proposed
+
+§9.3 proposed "the operation carrying the new run's id, as `SplitParagraph` already carries
+`new_id`". **That form cannot work, and the reason is structural rather than a matter of
+effort.**
+
+The *number* of identities an operation mints depends on the document it lands on.
+`ensure_run_boundary` mints one id, or none, according to whether a run straddles the offset;
+`split_inlines` mints one per nested wrapper it has to divide. And an operation is
+**transformed** before a remote replica applies it, so the state it lands on there is not the
+state its author saw — §5.4 and §5.8 both change where a range begins. An enumeration is a
+count fixed at authoring time; the truth is a count discovered at application time. There is
+no enumeration an author could write that would still be right on the receiver.
+
+**A space is the only declaration that survives the transform.** So the unit carried is a
+`Mint`: a private, aligned run of `NodeId` counters. `apply(document, mint, op)` derives every
+identity it creates from it, in order, and holds no generator — which makes "this function
+cannot name a node the operation did not pay for" a **compile-time** property rather than a
+review rule, and makes `apply` a pure function of `(document, mint, operation)`.
+
+The established pattern is named in `casual-doc-edit`'s `mint` module: **deterministic
+identity derived from the creating operation**, which is Yjs's `(client, clock)` and
+Automerge's `(actor, counter)`. `casual_doc_model::IdSpace` already partitions the *namespace*
+half of a `NodeId` per participant (§4.2 of `152`); this partitions the *counter* half per
+operation, and the two compose — an id minted inside a lane is still in its author's
+`IdSpace`, so `WireOperation::localise`'s space check extends to the mint with no new
+vocabulary.
+
+| Level | Width | What it separates |
+| --- | --- | --- |
+| namespace (`IdSpace`) | 2⁶⁴ | participants, and the document's own and offline spaces |
+| block | 1024 counters | one operation from the next |
+| lane | 128 counters | an operation from its inverse, and a `KeepMany`'s pieces from each other |
+
+Three consequences worth stating plainly:
+
+- **`Mint::inverse` is an involution**, so undo followed by redo re-mints exactly the
+  identities the original edit created. A comment anchored to a run an undo destroyed finds
+  *that* run when the redo brings it back, rather than a stranger in its place.
+- **A lane is a bound, not a hope.** An operation wanting more than 128 identities — about
+  thirty times the worst case in the set — earns `EditError::IdExhausted`. It does not wrap
+  into the next lane.
+- **Where an author reserves is now the same place a transaction is built**, and there is
+  exactly one such place in the facade, pinned by
+  `every_document_mutation_is_a_transaction`. Identity enters a document through the choke
+  point or not at all.
+
+**What this does *not* make true.** The TP1 diamond in `transform_tests` still compares
+documents modulo run ids, and that is correct rather than a leftover: the two sides of a
+diamond apply *different operation sequences* (one applies `a` whole, the other applies the
+pieces `a` rebased into), so they have no reason to mint alike. Convergence with identity is a
+property of the **protocol**, where every replica applies the same `(mint, operation)` pairs in
+the relay's order — and that is where it is now asserted, with no quotient, by
+`a_run_an_edit_split_off_carries_the_same_identity_on_both_replicas` and
+`a_replay_over_a_remote_edit_leaves_both_replicas_naming_every_node_alike` in `152`'s session
+suite.
 
    **Updated 2026-10-01 — narrowed, not closed.** This section had two causes tangled
    together, and one of them is gone. Until the identity partition landed (`152` §4.4,

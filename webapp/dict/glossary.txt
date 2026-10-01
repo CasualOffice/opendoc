@@ -529,6 +529,7 @@ submenu
 subpaths
 subsetter
 subsetting
+substitutable
 subtree
 summarization
 superset
@@ -564,6 +565,7 @@ unlocalised
 unmapped
 unmerged
 unmodeled
+unobservable
 unreferenced
 unrepresentable
 unresolvable

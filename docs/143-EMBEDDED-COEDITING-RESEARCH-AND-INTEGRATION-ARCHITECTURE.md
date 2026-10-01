@@ -31,7 +31,13 @@ signalling system. The correct product boundary is therefore:
   rendering, editing, diff projection, and export remain in Rust/WASM;
 - **single-user editing needs no server:** the current local-first property is a
   release gate, not a fallback mode;
-- **remote co-editing uses an optional host-selected collaboration provider:**
+- **remote co-editing uses a host-selected collaboration provider.** *Optional* in the
+  **standalone** mode only: a document opened from a file needs no provider and never will.
+  A **shared or embedded** document joins a room from its first open even with one participant
+  — "one doc, one room" — so for it the provider is structural rather than an extra, and the
+  host creates the room. Owner decision 2026-10-01; `152` §2a and ADR-047's amendment carry
+  the reasoning and the measured cost to a lone writer.
+- **the provider contract:**
   it authenticates a session, orders and fans out bounded operation envelopes,
   provides catch-up, and distributes ephemeral presence;
 - **the provider is not a DOCX server:** it does not download the source file,

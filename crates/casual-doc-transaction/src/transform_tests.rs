@@ -29,7 +29,7 @@
 //! byte-identical would mean operations carrying the identities they cause to be minted,
 //! which is an op-set change and therefore a finding, not a licence.
 
-use casual_doc_edit::{FormatDelta, Operation, Pos, Range as EditRange, RunIds};
+use casual_doc_edit::{FormatDelta, Operation, Pos, Range as EditRange};
 use casual_doc_model::v1::{
     BlockNode, Definitions, GridColumn, InlineNode, Paragraph, ParagraphProperties, Run,
     RunProperties, Table, TableCell, TableCellProperties, TableProperties, TableRow,
@@ -382,10 +382,14 @@ fn canonicalise_inlines(inlines: &mut [InlineNode], next: &mut u128) {
 /// Applies one operation, returning its inverse.
 fn apply_one(
     document: &mut Document,
-    ids: &mut dyn RunIds,
+    ids: &mut IdGenerator,
     operation: &Operation,
 ) -> Result<Operation, casual_doc_edit::EditError> {
-    casual_doc_edit::apply(document, ids, operation)
+    casual_doc_edit::apply(
+        document,
+        casual_doc_edit::Mint::reserve(ids, 1).expect("an identity space"),
+        operation,
+    )
 }
 
 /// One side of the diamond: apply `first`, rebase `second` past it, apply what survives.
@@ -868,34 +872,36 @@ fn a_commit_without_inverses_cannot_be_a_concurrent_change() {
     let mut log = RevisionLog::default();
     let mut ids = replica_ids();
     let node = seed.paragraphs[0];
-    let transaction = Transaction::new(
+    let transaction = Transaction::reserve(
         TransactionId::new(1),
         log.head(),
         "Typing",
+        &mut ids,
         vec![Operation::InsertText {
             at: Pos::new(node, 0),
             text: "a".to_owned(),
         }],
-    );
-    log.apply(&mut seed.document, &mut ids, transaction)
-        .expect("applies");
+    )
+    .expect("identity spaces");
+    log.apply(&mut seed.document, transaction).expect("applies");
     assert!(
         log.commits().last().expect("a commit").changes().is_some(),
         "an ordinary commit can serve as a concurrent change"
     );
 
-    let transaction = Transaction::new(
+    let transaction = Transaction::reserve(
         TransactionId::new(2),
         log.head(),
         "Typing",
+        &mut ids,
         vec![Operation::InsertText {
             at: Pos::new(node, 1),
             text: "b".to_owned(),
         }],
     )
+    .expect("identity spaces")
     .coalescing(Coalesce::ContinueKeepingFirstInverse);
-    log.apply(&mut seed.document, &mut ids, transaction)
-        .expect("applies");
+    log.apply(&mut seed.document, transaction).expect("applies");
     assert!(
         log.commits().last().expect("a commit").changes().is_none(),
         "a commit that kept no inverse cannot say what it destroyed (doc 150 §10 Q2)"

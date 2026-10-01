@@ -18,7 +18,7 @@
 //! round-tripping through a real encoded string — with populated payloads — as the codec
 //! lane's first obligation rather than an afterthought.
 
-use casual_doc_edit::{Operation, Pos, Range as EditRange};
+use casual_doc_edit::{FormatDelta, Mint, Operation, Pos, Range as EditRange};
 use casual_doc_model::v1::{
     BlockNode, Definitions, Document, InlineNode, Paragraph, ParagraphProperties, Run,
     RunProperties, Style, StyleId, StyleKind,
@@ -34,17 +34,38 @@ use crate::{Coalesce, RevisionLog, Transaction, TransactionId};
 
 use super::{ClientSession, ServerSession, SessionError};
 
+/// An identity space, where the test is about something other than identity.
+///
+/// The relay does not inspect a mint — only a receiving client does — so a server-side test
+/// needs a well-formed one and nothing more.
+fn any_mint() -> Mint {
+    Mint::reserve(&mut IdGenerator::new(0x0A11_0000), 1).expect("a mint")
+}
+
+/// The identity space a sender in `space` would have reserved for one operation.
+///
+/// Every well-formed arrival carries one, so a test that is about a *payload* collision has
+/// to supply a valid one or it would be refused for the wrong reason.
+fn sender_mint(space: IdSpace) -> Mint {
+    Mint::reserve(&mut IdGenerator::new(space.get()), 1).expect("a mint")
+}
+
 /// A document of three one-run paragraphs, each carrying the same text so an offset tie is
 /// hit on purpose rather than by luck.
 fn seed() -> (Document, Vec<NodeId>) {
+    seed_sized(3)
+}
+
+/// [`seed`] with `paragraphs` paragraphs, for the guards that double the document.
+fn seed_sized(paragraphs: usize) -> (Document, Vec<NodeId>) {
     let mut ids = IdGenerator::new(7);
     let document_id = ids.next_id().expect("id");
     let mut blocks = Vec::new();
-    let mut paragraphs = Vec::new();
-    for _ in 0..3 {
+    let mut ids_out = Vec::new();
+    for _ in 0..paragraphs {
         let id = ids.next_id().expect("id");
         let run = ids.next_id().expect("id");
-        paragraphs.push(id);
+        ids_out.push(id);
         blocks.push(BlockNode::Paragraph(Paragraph {
             id,
             properties: ParagraphProperties::default().into(),
@@ -57,7 +78,7 @@ fn seed() -> (Document, Vec<NodeId>) {
     }
     let document =
         Document::new(document_id, blocks, Definitions::default()).expect("a valid document");
-    (document, paragraphs)
+    (document, ids_out)
 }
 
 /// One participant: its own copy of the document, its own id allocator, its own log.
@@ -106,15 +127,20 @@ impl Replica {
         coalesce: Coalesce,
     ) {
         self.next_transaction += 1;
-        let transaction = Transaction::new(
+        // `reserve`, not `new`: the identity spaces come out of *this replica's* generator,
+        // which is in this replica's own `IdSpace`, so what it mints travels and nobody
+        // else's replica re-mints it.
+        let transaction = Transaction::reserve(
             TransactionId::new(self.next_transaction),
             self.log.head(),
             label,
+            &mut self.ids,
             operations,
         )
+        .expect("identity spaces")
         .coalescing(coalesce);
         self.log
-            .apply(&mut self.document, &mut self.ids, transaction)
+            .apply(&mut self.document, transaction)
             .expect("the edit applies");
     }
 
@@ -178,6 +204,24 @@ fn canonicalise(document: &mut Document) {
             }
         }
     }
+}
+
+/// Every run identity in the body, in document order.
+///
+/// Node identities are what this file's identity guards are about, so they are read straight
+/// rather than through a comparison that has already normalised them away.
+fn run_ids(document: &Document) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for block in document.body() {
+        if let BlockNode::Paragraph(paragraph) = block {
+            for inline in &paragraph.inlines {
+                if let InlineNode::Run(run) = inline {
+                    out.push(run.id);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn plain_text(document: &Document) -> String {
@@ -419,7 +463,10 @@ fn an_identity_minted_in_the_document_s_own_space_is_refused() {
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
         client: ClientId::new(0),
-        operations: vec![WireOperation::of(operation)],
+        operations: vec![WireOperation::of(
+            operation,
+            sender_mint(wire::space_of(document_space, ClientId::new(0)).expect("a space")),
+        )],
     };
     let error = receiver
         .receive(&arrival)
@@ -456,10 +503,13 @@ fn an_arriving_definition_at_an_id_this_replica_already_holds_is_refused() {
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
         client: ClientId::new(0),
-        operations: vec![WireOperation::of(Operation::SetStyleDefinition {
-            id: contested,
-            style: Some(Box::new(style("the sender's"))),
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetStyleDefinition {
+                id: contested,
+                style: Some(Box::new(style("the sender's"))),
+            },
+            sender_mint(sender_space),
+        )],
     };
 
     let error = receiver
@@ -569,7 +619,7 @@ fn each_new_definition_table_refuses_an_arrival_at_an_id_the_receiver_already_ho
             }
         }
 
-        let operation = WireOperation::of(build(contested));
+        let operation = WireOperation::of(build(contested), sender_mint(sender_space));
         assert_eq!(
             operation.declared(),
             [contested],
@@ -599,20 +649,26 @@ fn an_operation_that_under_declares_what_it_introduces_is_refused() {
     let minted = IdGenerator::new(space.get()).next_id().expect("id");
 
     // An operation prepared honestly, then stripped of its declaration.
-    let honest = WireOperation::of(Operation::SplitParagraph {
-        at: Pos::new(paragraphs[0], 4),
-        new_id: minted,
-        properties: None,
-    });
-    assert_eq!(honest.declared(), [minted]);
-    let stripped = WireOperation::of(Operation::DeleteText {
-        range: EditRange {
-            start: Pos::new(paragraphs[0], 0),
-            end: Pos::new(paragraphs[0], 1),
+    let honest = WireOperation::of(
+        Operation::SplitParagraph {
+            at: Pos::new(paragraphs[0], 4),
+            new_id: minted,
+            properties: None,
         },
-    });
+        sender_mint(space),
+    );
+    assert_eq!(honest.declared(), [minted]);
+    let stripped = WireOperation::of(
+        Operation::DeleteText {
+            range: EditRange {
+                start: Pos::new(paragraphs[0], 0),
+                end: Pos::new(paragraphs[0], 1),
+            },
+        },
+        sender_mint(space),
+    );
     assert!(stripped.declared().is_empty());
-    let liar = WireOperation::forged(honest.operation().clone(), Vec::new());
+    let liar = WireOperation::forged(honest.operation().clone(), honest.mint(), Vec::new());
 
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
@@ -665,11 +721,14 @@ fn an_identity_minted_in_the_offline_space_is_refused_from_a_session() {
     let arrival = crate::protocol::Arrival {
         revision: Revision::new(1),
         client: ClientId::new(0),
-        operations: vec![WireOperation::of(Operation::SplitParagraph {
-            at: Pos::new(paragraphs[0], 4),
-            new_id: minted,
-            properties: None,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SplitParagraph {
+                at: Pos::new(paragraphs[0], 4),
+                new_id: minted,
+                properties: None,
+            },
+            any_mint(),
+        )],
     };
     let error = receiver
         .receive(&arrival)
@@ -864,6 +923,87 @@ fn a_probe_leaves_the_document_exactly_as_it_found_it() {
     );
 }
 
+/// The pair transforms one arrival costs a replica holding `unordered` unacknowledged
+/// commits, in a document of `paragraphs` paragraphs.
+///
+/// Set up and measured here once so the two B2 guards below vary exactly one thing each.
+fn transforms_for_one_arrival(unordered: usize, paragraphs: usize) -> u64 {
+    let (document, ids) = seed_sized(paragraphs);
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    // Ada's one edit is what arrives. Grace's `unordered` edits are the concurrency.
+    ada.edit(
+        "Typing",
+        vec![Operation::InsertText {
+            at: Pos::new(ids[0], 0),
+            text: "A".to_owned(),
+        }],
+    );
+    for step in 0..unordered {
+        grace.edit(
+            "Typing",
+            vec![Operation::InsertText {
+                at: Pos::new(ids[1], step as u32),
+                text: "g".to_owned(),
+            }],
+        );
+    }
+    assert_eq!(grace.log.unordered_commits(), unordered);
+
+    let from_ada = ada.exchange(&mut server);
+    assert_eq!(from_ada.len(), 1);
+    crate::transform::reset_transforms();
+    grace.receive(&from_ada[0]).expect("the arrival merges");
+    crate::transform::transforms()
+}
+
+#[test]
+fn receiving_one_arrival_transforms_once_per_concurrent_commit_and_not_once_per_log_entry() {
+    // `107` §4 B2: the cost of one incoming remote operation is O(the operations concurrent
+    // with it) — never O(the log). Asserted as a RATIO at `k` and `2k`, because that is the
+    // only shape that separates linear from quadratic. A threshold in milliseconds cannot,
+    // and would need a machine to be believed.
+    let four = transforms_for_one_arrival(4, 3);
+    let eight = transforms_for_one_arrival(8, 3);
+    assert!(
+        four > 0,
+        "the meter read zero, so this guard is measuring nothing"
+    );
+    // Doubling the concurrency doubles the work: the driver rebases the arrival forward to
+    // each commit's base and each commit back over the arrival, so it is two passes over `k`.
+    assert!(
+        (eight as f64) < 2.5 * (four as f64),
+        "transform work grew faster than the concurrency: {four} at k=4, {eight} at k=8 — a \
+         super-linear term here is O(log) or worse, which is what B2 forbids"
+    );
+    assert!(
+        (eight as f64) > 1.5 * (four as f64),
+        "transform work did not grow with the concurrency at all ({four} at k=4, {eight} at \
+         k=8), so the arrival is not being rebased over every concurrent commit and this \
+         guard would pass over a driver that skipped them"
+    );
+}
+
+#[test]
+fn receiving_one_arrival_transforms_the_same_amount_in_a_document_twice_the_size() {
+    // The other half of B2, and the half a keystroke guard cannot state: the work must not
+    // grow with the DOCUMENT. `transform` is documented as O(1) in document size; this is
+    // what holds the whole receive path to it.
+    //
+    // What it deliberately does not claim: `ClientSession::receive` still has two O(document)
+    // terms — one document clone and one `BlockIndex` build, both on the contended path only
+    // (doc 152 §10 Q1). This guard is about the transform count, and says so.
+    let small = transforms_for_one_arrival(4, 3);
+    let large = transforms_for_one_arrival(4, 6);
+    assert_eq!(
+        small, large,
+        "doubling the document changed the transform count from {small} to {large}: the \
+         rebase is reading the document where it should read only the two operations"
+    );
+}
+
 #[test]
 fn two_replicas_editing_one_paragraph_converge() {
     let (document, paragraphs) = seed();
@@ -937,6 +1077,124 @@ fn two_replicas_editing_one_paragraph_converge() {
     assert_eq!(
         plain_text(&ada.document).lines().next(),
         Some("abcdAGgefgh")
+    );
+}
+
+#[test]
+fn a_replay_over_a_remote_edit_leaves_both_replicas_naming_every_node_alike() {
+    // The contended path, where the identity discipline is hardest: Grace's own commit is
+    // rolled BACK (destroying the runs it split off), the arrival lands, and the commit is
+    // REPLAYED as a rebased expression of the same step. The replay mints again, so the
+    // identities Grace's own runs carry after it are not the ones she first gave them — and
+    // the only way Ada can agree is if what Grace *resubmits* declares the spaces the replay
+    // actually used, not the ones the original commit had.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    let bold = |paragraph: NodeId| Operation::FormatText {
+        range: EditRange {
+            start: Pos::new(paragraph, 2),
+            end: Pos::new(paragraph, 6),
+        },
+        delta: FormatDelta {
+            bold: Some(true),
+            ..FormatDelta::default()
+        },
+    };
+
+    // Different paragraphs, so the transform keeps both intentions whole and the test is
+    // about identity rather than about the transform.
+    ada.edit("Formatting", vec![bold(paragraphs[0])]);
+    grace.edit("Formatting", vec![bold(paragraphs[1])]);
+    let graces_first_names = run_ids(&grace.document);
+
+    let from_ada = ada.exchange(&mut server);
+    assert_eq!(from_ada.len(), 1);
+    let reception = grace.receive(&from_ada[0]).expect("the arrival merges");
+    assert_eq!(reception.replayed, 1, "Grace's own step must be replayed");
+    assert_ne!(
+        run_ids(&grace.document),
+        graces_first_names,
+        "the precondition: the rollback destroyed the runs the split created and the replay \
+         minted them again, so this guard is about identities that really did move"
+    );
+
+    for arrival in grace.exchange(&mut server) {
+        ada.receive(&arrival).expect("the arrival merges");
+    }
+
+    assert_eq!(
+        run_ids(&ada.document),
+        run_ids(&grace.document),
+        "the replay renamed Grace's own nodes and Ada did not follow"
+    );
+    assert_eq!(
+        ada.document, grace.document,
+        "identical INCLUDING node identities, with no quotient"
+    );
+}
+
+#[test]
+fn a_run_an_edit_split_off_carries_the_same_identity_on_both_replicas() {
+    // Doc 150 §9.3. `apply` MINTS identities: bolding the middle of a run splits it into
+    // three, and two of those three are nodes that did not exist before. While those came
+    // from whoever *applied* the operation, the two replicas ended up with the same document
+    // under different node names — which is why every convergence assertion in this crate
+    // had to normalise run ids away before comparing, and why doc 25's "a snapshot can be
+    // verified rather than trusted" was not true across replicas.
+    //
+    // The condition is created on purpose rather than inherited: an `InsertText` inside a run
+    // mints nothing at all, so a guard written on typing would pass under either mechanism
+    // and prove nothing. The precondition below asserts the split really happened.
+    let (document, paragraphs) = seed();
+    let mut server = ServerSession::default();
+    let mut ada = Replica::join(&document, &mut server, "ada", "ada");
+    let mut grace = Replica::join(&document, &mut server, "grace", "grace");
+
+    let before = run_ids(&ada.document);
+    ada.edit(
+        "Formatting",
+        vec![Operation::FormatText {
+            range: EditRange {
+                start: Pos::new(paragraphs[0], 2),
+                end: Pos::new(paragraphs[0], 6),
+            },
+            delta: FormatDelta {
+                bold: Some(true),
+                ..FormatDelta::default()
+            },
+        }],
+    );
+    let after = run_ids(&ada.document);
+    let minted: Vec<NodeId> = after
+        .iter()
+        .copied()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert_eq!(
+        minted.len(),
+        2,
+        "the precondition: this edit has to create two run identities, or the guard is          testing nothing. Before: {before:?}, after: {after:?}"
+    );
+    assert!(
+        minted.iter().all(|id| ada.session.id_space().holds(*id)),
+        "a minted identity must be in the author's own space, so the check `localise` makes          on an arriving mint is the same check it makes on a declared id"
+    );
+
+    for arrival in ada.exchange(&mut server) {
+        grace.receive(&arrival).expect("the arrival merges");
+    }
+
+    assert_eq!(
+        run_ids(&grace.document),
+        after,
+        "the receiver named the nodes the operation created differently from its author"
+    );
+    assert_eq!(
+        ada.document, grace.document,
+        "the two replicas must be identical INCLUDING node identities, with no quotient"
     );
 }
 
@@ -1208,9 +1466,10 @@ fn a_chained_chunk_from_a_client_with_nothing_accepted_is_refused_not_guessed_at
         client: ClientId::new(3),
         seq: Seq::new(1),
         base: Base::Chained,
-        operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-            enabled: true,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: true },
+            any_mint(),
+        )],
     });
     assert_eq!(
         outcome,
@@ -1229,9 +1488,10 @@ fn a_resend_of_an_ordered_chunk_answers_where_it_landed_the_first_time() {
         client: ClientId::new(1),
         seq: Seq::new(1),
         base: Base::Revision(Revision::new(0)),
-        operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-            enabled: true,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: true },
+            any_mint(),
+        )],
     };
     assert_eq!(
         server.commit(&submission),
@@ -1244,9 +1504,10 @@ fn a_resend_of_an_ordered_chunk_answers_where_it_landed_the_first_time() {
         client: ClientId::new(2),
         seq: Seq::new(1),
         base: Base::Revision(Revision::new(1)),
-        operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-            enabled: false,
-        })],
+        operations: vec![WireOperation::of(
+            Operation::SetEvenAndOddHeaders { enabled: false },
+            any_mint(),
+        )],
     });
     assert_eq!(
         server.commit(&submission),
@@ -1435,9 +1696,12 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
             } else {
                 Base::Chained
             },
-            operations: vec![WireOperation::of(Operation::SetEvenAndOddHeaders {
-                enabled: seq % 2 == 0,
-            })],
+            operations: vec![WireOperation::of(
+                Operation::SetEvenAndOddHeaders {
+                    enabled: seq % 2 == 0,
+                },
+                any_mint(),
+            )],
         });
         assert!(matches!(outcome, Outcome::Ordered { .. }), "{outcome:?}");
     }
@@ -1754,4 +2018,147 @@ fn a_single_writer_is_never_refused_by_the_ordering_rule() {
         run.refused
     );
     assert_eq!(run.worst_attempts, 1, "a lone writer had to retry");
+}
+
+#[test]
+fn the_session_suite_count_in_the_design_doc_is_derived() {
+    // `SKILL` §8: counts in docs must be derived, not hand-maintained. Doc 152 §7 opens with
+    // the size of this suite, and a hand-kept number in a published document has drifted into
+    // a false public claim here before (`104` read 114/47 against an actual 146/54). So the
+    // document carries a machine-readable marker and this test is what keeps it true.
+    //
+    // The count is of `#[test]` in THIS file, which is exactly "the session suite" the
+    // sentence is about — the transform suite and the log suite are counted nowhere and
+    // claimed nowhere.
+    const MARKER: &str = "<!-- session-suite-count: ";
+
+    // `\r\n` normalised before anything is matched: a committed file read on a machine with
+    // `core.autocrlf` would otherwise make the marker's line end part of the number.
+    let suite = include_str!("session_tests.rs").replace("\r\n", "\n");
+    let design = include_str!("../../../docs/152-COLLABORATION-PROTOCOL-SESSION-AND-IDENTITY.md")
+        .replace("\r\n", "\n");
+
+    let actual = suite
+        .lines()
+        .filter(|line| line.trim() == "#[test]")
+        .count();
+    assert!(
+        actual > 20,
+        "only {actual} tests found, so the counter is not seeing this file"
+    );
+
+    let claimed: usize = design
+        .split_once(MARKER)
+        .and_then(|(_, rest)| rest.split_once(" -->"))
+        .map(|(value, _)| value.trim())
+        .unwrap_or_else(|| panic!("doc 152 §7 has no `{MARKER}…  -->` marker to derive from"))
+        .parse()
+        .expect("the marker holds a decimal count");
+
+    assert_eq!(
+        claimed, actual,
+        "doc 152 §7 claims {claimed} tests over the state machines and this file holds \
+         {actual}. Update the marker AND the sentence beside it — a published count that \
+         drifts is how `104` came to read 114/47 against an actual 146/54"
+    );
+    assert!(
+        design.contains(&format!("**{actual} tests** over the state machines")),
+        "the marker and the prose disagree: the sentence must read \"**{actual} tests** over \
+         the state machines\", or a reader sees one number and the guard checks another"
+    );
+}
+
+#[test]
+fn work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operations() {
+    // The owner's two modes (`152` §2a): standalone editing with no room, and a shared
+    // document that joins a room from its first open. The question that closes the hole is
+    // what happens to work done in mode 1 when the document later enters mode 2.
+    //
+    // It must travel as the SNAPSHOT the room is created from, never as operations — because
+    // `IdSpace::local` is a reserved space no participant number can be handed, so an
+    // operation introducing an offline-minted id is refused by every receiver
+    // (`an_identity_minted_in_the_offline_space_is_refused_from_a_session`). If a join could
+    // flush pre-join work, those two rules would contradict each other and a shared document's
+    // first exchange would fail.
+    //
+    // They do not, and this is the line that makes it so: `ClientSession::joined` settles the
+    // log at `head`, and `flush`'s floor is `max(flushed, horizon)`. Asserted rather than
+    // assumed, because it is the whole lifecycle answer resting on one call.
+    let (document, paragraphs) = seed();
+
+    // Mode 1. No session, no room, no server. The generator is the one `open_document` builds:
+    // the document's own space reserved for the importer, the offline space for this replica.
+    let offline = IdSpace::local(wire::document_space(&document));
+    let mut ids = IdGenerator::new(offline.get());
+    let mut standalone = document.clone();
+    let mut log = RevisionLog::default();
+    for step in 0..3_u32 {
+        let transaction = Transaction::reserve(
+            TransactionId::new(u128::from(step) + 1),
+            log.head(),
+            "Typing",
+            &mut ids,
+            vec![Operation::InsertText {
+                at: Pos::new(paragraphs[0], step),
+                text: "x".to_owned(),
+            }],
+        )
+        .expect("identity spaces");
+        log.apply(&mut standalone, transaction)
+            .expect("standalone editing needs no session");
+    }
+    assert_eq!(
+        log.commits().len(),
+        3,
+        "the standalone edits are in the log"
+    );
+    assert!(
+        run_ids(&standalone)
+            .iter()
+            .any(|id| offline.holds(*id) || wire::document_space(&standalone).holds(*id)),
+        "the standalone replica minted somewhere; this fixes which space that was"
+    );
+
+    // Mode 2. The document is shared, so it joins a room — even though nobody else is in it.
+    let mut server = ServerSession::default();
+    let message = server.join(&ClientMessage::Join(Join {
+        protocol: PROTOCOL_VERSION,
+        identity: Identity::new("ada").expect("an identity"),
+        resume: None,
+    }));
+    let mut session =
+        ClientSession::joined(&standalone, &message, &mut log).expect("the join lands");
+
+    assert_eq!(
+        log.unordered_commits(),
+        0,
+        "joining left pre-room commits above the horizon, so the next flush would offer \
+         offline-space ids the receiver is required to refuse"
+    );
+    assert!(
+        session.flush(&log).is_none(),
+        "the join flushed work done before the room existed; it must travel in the snapshot \
+         the room was created from, not as operations"
+    );
+    assert_eq!(
+        log.commits().len(),
+        3,
+        "the pre-room commits were discarded, so the reader lost their undo history on sharing"
+    );
+
+    // And the transition re-points the generator without reissuing anything: the counter is
+    // kept, so an id minted offline can never be minted again under a participant number.
+    let before = ids.next_counter();
+    ids.rebase(session.id_space().get());
+    assert_eq!(
+        ids.next_counter(),
+        before,
+        "re-pointing the generator at the participant space rewound the counter, so the \
+         standalone work's ids are handed out a second time"
+    );
+    assert_ne!(
+        session.id_space(),
+        offline,
+        "a participant was handed the reserved offline space"
+    );
 }

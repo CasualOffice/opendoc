@@ -475,7 +475,7 @@ pub fn section_break_ops(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EditError, Operation, apply, block_visits, reset_block_visits};
+    use crate::{EditError, Mint, Operation, block_visits, reset_block_visits};
     use casual_doc_model::IdGenerator;
     use casual_doc_model::v1::{
         BlockSdt, Comment, CommentId, DefinitionMap, Definitions, HeaderFooter, HeaderFooterId,
@@ -486,6 +486,16 @@ mod tests {
 
     fn ids() -> IdGenerator {
         IdGenerator::new(9)
+    }
+
+    /// `crate::apply`, with the mint taken from the generator the caller supplies — the
+    /// same one-mint-per-operation rule the real envelope follows.
+    fn apply(
+        doc: &mut Document,
+        ids: &mut IdGenerator,
+        op: &Operation,
+    ) -> Result<Operation, EditError> {
+        crate::apply(doc, Mint::reserve(ids, 1).expect("a mint"), op)
     }
 
     fn n(counter: u64) -> NodeId {

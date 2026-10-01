@@ -19,6 +19,12 @@ and why, and §3 records the one place its answer is wrong for us.
 binary, presence and cursors, collaborative undo, and any change to `casual-doc-wasm`. §9
 says why each is out and what it is waiting for.
 
+**Two modes, not one mode with an optional extra.** §2a records the owner's decision of
+2026-10-01: standalone editing needs no server and never will, and a **shared** document joins
+a room from its first open even with one participant — "one doc, one room". Wherever
+collaboration is called *optional* in these documents, it is optional in the standalone mode
+and structural in the shared one.
+
 ---
 
 ## 1. The established pattern, named before any code
@@ -59,6 +65,181 @@ The relay, when it exists, is a workspace member under `server/`, and **nothing 
 "no mandatory server" — the other half being that `casual-doc-wasm` does not reach these
 modules at all, which `the_live_editor_has_no_collaboration_dependency` now fails the build
 over.
+
+---
+
+## 2a. Two modes, and why "optional" was the wrong word
+
+Owner decision, 2026-10-01. This closes a hole in what the earlier wording *claimed*, not in
+what is built — §4.4's identity partition already had the right shape, and §7's new lifecycle
+guard is what proves it rather than asserting it.
+
+### The hole
+
+The design said collaboration is "additive and optional" and that no server is required. The
+owner asked the question that breaks that phrasing: **if a replica is not connected, how does
+it ever learn that a second person started editing?**
+
+It cannot, and no mechanism could give it that. Presence requires a connection by construction.
+If a room came into being when the *second* participant appeared, the transition would be
+unobservable from the first participant's side: they hold no socket, so nothing can reach them.
+"Optional collaboration" therefore described a lifecycle that cannot work — a shared document
+sitting outside a room, discovering company somehow.
+
+### The decision: two modes, not one mode with an extra
+
+| | **1 — standalone / serverless** | **2 — deployed, embedded, or shared: one doc, one room** |
+| --- | --- | --- |
+| How it is reached | Open a file | A link, or a host embedding the document |
+| Room | None | **From the first open, even with one participant** |
+| Presence, sharing, co-editing | None | Available |
+| Server | **Never required** — the local-first guarantee stays absolute | The relay is part of what a shared document *is* |
+| Minting space | `IdSpace::local` — reserved, no participant number can be handed it | `IdSpace::participant(base, number)` |
+
+The owner's framing: *"one user doesn't connect to server is the case of just editing and saving
+one user's edit. And one creates a document and shares a link, creates a room — but for real
+editing even a single user gets a room. It's one doc, one room."*
+
+So "optional" is true of **mode 1 only**, and every place the documents say collaboration is
+optional now has to say which mode it means. A room is not an upgrade a document acquires when
+a second person arrives; it is where a shared document lives from the first open.
+
+### What this does not change, verified rather than assumed
+
+The identity partition already drew exactly this line, and it was checked in the code before
+this section was written:
+
+- `open_document` builds its generator as `IdGenerator::new(IdSpace::local(IdSpace::of_document(id)).get())` — **mode 1 mints in the offline space**;
+- `adopt_participant_identity(number)` rebases it to `IdSpace::participant(base, number)`, keeping the counter — **mode 2, and that call is the mode-1-to-mode-2 transition**;
+- `IdSpace::participant` can never return the offline space (the participant number that would alias it is refused), so a participant can never mint over an offline replica's ids.
+
+So this is a **lifecycle and wording change, not a rework**.
+
+### What it opens, and the answers
+
+**Who creates the room.** The **host**, at embed or share time, and not the first client. A
+client cannot: `protocol::Join` carries an opaque `Identity` and the relay assigns the
+participant number, so a client has no way to name a room it has not been told about, and
+letting it invent one would make the room id a client-controlled value — which §10 Q4's
+host-signed grant exists to prevent. `143` §5 already puts access with the host; this makes
+creation explicit rather than implied.
+
+**What a room costs a lone writer.** Measured, in the terms `107` §4 uses:
+
+| Cost | A room with one participant |
+| --- | --- |
+| Transforms per keystroke | **0.** `transform` is never called with nothing concurrent — §5.3's uncontended path goes straight down `RevisionLog::apply`, the same call a keystroke makes |
+| Document clones per keystroke | **0.** The one clone is on the *contended* path — a remote edit arriving while this replica has unacknowledged work |
+| Round trips before an edit is visible locally | **0.** Editing is optimistic; the relay orders, it does not admit |
+| Extra bytes per operation | One `Mint` (ADR-051) and the ids the operation declares, both charged in `carried_bytes` |
+| Startup | One `Join`, one `Welcome`, and `ClientSession::joined` settling the log — no document walk |
+
+`a_replica_with_nothing_pending_does_not_roll_back` is the guard that keeps the first two at
+zero, and it was driven red. **The common case does not pay for the rare one**, which is the
+condition the owner attached to this decision.
+
+**A standalone document that is later shared.** Its work travels as the **snapshot the room is
+created from**, never as operations, and this is forced rather than chosen: an operation
+introducing an offline-space id is refused by every receiver
+(`an_identity_minted_in_the_offline_space_is_refused_from_a_session`), so if a join could flush
+pre-join work the two rules would contradict each other and a shared document's first exchange
+would fail.
+
+They do not contradict, and the whole lifecycle answer rests on one line:
+`ClientSession::joined` calls `log.settle(log.head())`, and `flush`'s floor is
+`max(flushed, horizon)`. Every pre-join commit is therefore below the horizon and is never
+offered. The pre-join commits **stay in the log**, so the reader does not lose undo history by
+sharing, and `IdGenerator::rebase` keeps the counter, so nothing minted offline is handed out
+again under a participant number.
+`work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operations` asserts all
+four of those, and goes red on removing that one `settle` call — with three pre-room commits
+left above the horizon, which is exactly the shape that would have sent them.
+
+**What is still open.** How the host is *told* a room exists — the grant of §10 Q4 — and what a
+relay does with a room nobody is in. Neither is decided here, and neither blocks the wording.
+
+---
+
+## 2b. Presence — built 2026-10-01
+
+`107` 6.6's other half, and the one part of it the byte codec does not block: presence needs no
+`transform`, no inverse and no position in the total order, so it is genuinely separable. Under
+§2a's two modes it is also no longer a late nicety — a **shared** document joins a room on its
+first open, so the roster exists from the moment it opens.
+
+### The pattern, and the source that was read rather than the documentation
+
+**Yjs's awareness protocol**: one entry per client, **overwritten wholesale**, never merged,
+never persisted, never replayed. Because nothing merges, nothing transforms.
+
+**ONLYOFFICE independently has the same shape**, from their checked-out source rather than
+their marketing:
+
+| What their code does | Where |
+| --- | --- |
+| `this._participants = participantsNew;` — the roster is a **complete list from the server, replaced wholesale**, not per-client deltas | `sdkjs/common/docscoapi.js`, `_onParticipantsChanged` |
+| A list whose `participantsTimestamp` is not newer is **ignored** | same, `_onFirstLoadChangesEnd`'s caller |
+| `sendCursor` sends `{"type": "cursor", "cursor": <string>}` and **nothing else**, while the received message carries `'user'` and `'useridoriginal'` — **the client never states who it is** | `sendCursor`, and `word/api.js`'s `Update_ForeignCursor` |
+| `Update_ForeignCursor` reads `e[e.length - 1]` — the **last wins**, no merge | `word/api.js` |
+| `Remove_ForeignCursor(e['id'])` on a connection-state change — presence dies with the connection | `word/api.js` |
+
+Three independent sources agreeing — Yjs, ONLYOFFICE, and this document's own earlier design —
+is the strongest reason to take a shape rather than invent one. **Their AGPL source is cited,
+never copied.**
+
+### The identity rule, held by the type system
+
+`ClientMessage::Presence(PresenceUpdate)` carries a clock and an opaque payload and **no
+identity field at all**. The participant number is attached by the receiver from the session
+the message arrived on, and the fan-out — `ServerMessage::Awareness { client, update }` — is
+the only place the two travel together. A client that wants to claim to be somebody else has
+nowhere to write the claim, which is stronger than validating a field: there is no field.
+
+`a_presence_update_has_no_field_a_client_could_claim_an_identity_in` is a source scan, because
+a scan is the only way to assert the *absence* of a field — a constructor listing every field
+still compiles when a defaulted one is added. Driven red by adding `pub client: ClientId` **and
+fixing the three literals so it compiled**, since the first attempt failed to build and that
+would have proved the compiler worked rather than the guard.
+
+### What it deliberately is not
+
+Not a **typed** cursor. `107` P-4 owes an anchor mapping before a remote caret can survive a
+concurrent structural edit, so a typed position would promise what the engine cannot keep. The
+payload is opaque and bounded: the host fills it, the engine carries it, and when P-4 lands a
+typed caret is a payload *shape* rather than a protocol change. ONLYOFFICE's cursor is an opaque
+string too.
+
+### Bounds, and why a refusal rather than a truncation
+
+A roster is unbounded input from the network, so both axes are capped with typed refusals:
+`MAX_PRESENCE_BYTES` = 4 KiB per entry and `MAX_PARTICIPANTS` = 128 per room. A truncated
+**opaque** payload is a payload whose meaning changed silently, which is worse than a refusal,
+and the roster is fanned out to everyone — the *n*-th participant's cost is paid *n* times. A
+participant already in a full room may still **move**: the cap is on membership, not on
+movement, or every caret in a busy room would freeze.
+
+### Presence does not reach the log, and that is structural
+
+`presence_is_never_written_to_the_revision_log` scans the production half of `lib.rs` and
+`session.rs` for `Roster`, `PresenceUpdate` and `presence::` and fails if any appears. It is
+why `session.rs` never sees a presence message at all: the session orders *edits*, and presence
+has nothing to order. Driven red by storing a `Roster` on `Commit` — which would have made it
+persisted and replayed, the two things §9 said it must never be.
+
+### `PROTOCOL_VERSION` 2 → 3
+
+Required by this document's own rule: an added optional field is not a bump, but a **new enum
+variant is a hard break**, because a tagged enum with an unknown tag does not deserialize at
+all. A version-2 peer would drop an `Awareness` frame rather than skip a field. Nothing about
+edits changed.
+
+### Still owed by the editor chrome
+
+`doc.adoptParticipantIdentity(welcome.client)` on joining — the one call Phase 6 needs from
+`webapp/`, and under §2a it is now on the **first** open of a shared document rather than when a
+second participant arrives. A roster with nothing rendering it is built and unreachable, which
+is the pattern `SKILL` §9.4 names; this is reported with every increment of this lane until the
+chrome lands.
 
 ---
 
@@ -473,7 +654,12 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-25 tests over the state machines, driving **two replicas and a relay in one process**. The
+<!-- session-suite-count: 37 -->
+**37 tests** over the state machines, driving **two replicas and a relay in one process**. The
+number is **derived, not maintained**: `the_session_suite_count_in_the_design_doc_is_derived`
+counts the suite and fails if this line disagrees, because a hand-kept count in a published
+document has twice drifted into a false public claim here (`104` read 114/47 against an actual
+146/54). The
 sibling's recorded lesson about where its own collaboration bugs were is *"both sides were
 individually correct and no test put them in a room together"* — a WASM binding that sent a
 bare submission instead of a tagged message, and integer-keyed maps that were undeliverable,
@@ -579,9 +765,9 @@ Each is out for a reason, not for lack of time.
 
 | Not built | Why, and what it waits for |
 | --- | --- |
-| **The byte codec** | `casual-doc-edit` has no `serde` at all, and the op-set lane is about to move the operation shapes (node-addressed blocks, `Pos` affinity, minted run ids — `150` §9.1–§9.3). Freezing bytes over shapes that are about to change is the one thing a compatibility surface must not do. `107` §8 Q5, `150` §10 Q5. |
+| **The byte codec** | `casual-doc-edit` has no `serde` at all. Of the three op-set findings that were about to move the shapes, **`150` §9.3 is now closed** — and it moved no `Operation` variant at all: the mint travels on the envelope (`Transaction`, and `WireOperation` on the wire), because the number of identities an operation mints is discovered at application time and cannot be enumerated at authoring time (`150` §9.4, ADR-051). What still moves the shapes is `150` §9.1 (node-addressed block operations) and §9.2 (`Pos` affinity). Freezing bytes over those is the one thing a compatibility surface must not do. `107` §8 Q5, `150` §10 Q5. |
 | **The relay binary** | It is a workspace member under `server/`, not a crate, and it needs the codec and a transport first. The state machine it will drive is here and is testable without it, which is the point of a state machine over supplied bytes. |
-| **Presence and cursors** | Yjs's awareness protocol, adopted not invented: one entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed. It needs no transform and no order, so it is genuinely separable — and it needs the anchor mapping `107` P-4 owes before a remote cursor can survive a structural edit. |
+| ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. The relay's fan-out of it waits on the relay. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |
 | ~~**Any `casual-doc-wasm` change**~~ | **Done 2026-10-01** (§4.4). The editor mints through the model's `IdSpace`, not through the collaboration modules, so `the_live_editor_has_no_collaboration_dependency` still holds unchanged — which is the reason the partition was put in `casual-doc-model` rather than in `wire`. |
 
@@ -651,6 +837,12 @@ Each is out for a reason, not for lack of time.
 5. **Access enforcement at the operation.** The sibling enforces read-only *at the operation*
    rather than by hiding a toolbar, including inside a batch. `Refusal::ReadOnlyAccess` exists
    and nothing sends it yet, because there is no token to read an access level from.
+   **Half answered, from the other direction** (ADR-052): the *document's own*
+   `w:documentProtection` is now enforced at the operation, in `casual-doc-edit`, and a batch
+   is judged whole — so the shape the relay needs exists and is reusable by it. What is still
+   missing is the **session's** access level, which needs the token of Q4; a document that
+   asks not to be edited and a participant who is not allowed to edit it are two different
+   questions with one enforcement point.
 6. **Durability.** The relay's retained tail is in memory and bounded by count. A durable
    ordered log, snapshots and compaction are `107` 6.1, and the sibling's warning transfers
    directly: retained/unmodelled bytes are inert, so store them **once** with the document and
@@ -685,6 +877,15 @@ Each is out for a reason, not for lack of time.
 9. **Tracked changes and the order of wrapping.** `107` §8 Q3 and `150` §10 Q4 are untouched
    here, and §5.3's suggesting-mode blocker is now a second reason they have to be settled
    before collaboration ships.
+10. **§5.3's blocker has a diagnosis, and it is not in the session** (ADR-054, proposed).
+    Review typing is an `UpdateReviewState` — a whole-paragraph rewrite — so its inverse is a
+    paragraph snapshot per character, which is the only reason the coalescing mode that
+    *drops* inverses exists. `107` §4 **B4** already forbids a paragraph rewrite on the typing
+    path, so the violation and the blocker are one thing rather than two. Expressed granularly,
+    every commit can afford to keep its inverse and the rollback driver needs no change at all.
+    The **second** reason suggesting mode cannot join — colliding revision `w:id` strings
+    across replicas, Q7 above — is genuinely separate: ADR-051's partition covers `NodeId`
+    and not a producer string.
 
 ---
 
@@ -697,5 +898,7 @@ Each is out for a reason, not for lack of time.
 | `150` §10 Q1 | Base-state placement is "the sharpest edge in this design"; callers should pass `NoPlacement` and take the refusal | Closed. The rollback driver *is* at the base state when the placement is needed, so it builds one there and nowhere else. |
 | `147` §3.3 | The log has one position, `head` | Two: `head` and `horizon`. A commit above the horizon is provisional and may be re-expressed; "nothing rewrites a commit" holds for everything below it, which is everything anybody else has seen. |
 | `107` §8 Q6 | "`site_id` allocation without a mandatory server, and collision behaviour" — open | Answered by §4.2 and by a property rather than by a probability: the participant number the relay assigns *is* the site id, and `IdSpace::participant` is injective in it. **And answered for the no-server case too** (§4.4): with no relay there is no site id, so a replica mints in a reserved offline space no participant number can be handed. |
+| `106` line 366 | Step 6.3's tie-break is `(revision, site_id)` | There is no `site_id` in `transform.rs` and never was: the tie-break is `Side::Earlier`/`Later`, taken from the relay's total order. Corrected in place. `104` HF-068 and `139` VH-007 carry the same stale phrase and belong to other owners, so they are reported rather than edited. |
+| `150` §9.3 | Operations do not carry the identities they cause to be minted — reported, not taken | **Taken.** `150` §9.4 / ADR-051: `apply` holds no id generator, an operation travels with the *space* it mints in, and the two session convergence guards compare documents with node identities intact instead of normalising them away. |
 | `152` §4.4 (this document, previous revision) | "The live editor still derives its minting namespace from the document… the fix is the next increment's first item" | Done, 2026-10-01. §4.4 records the mechanism, the id families, the backward-compatibility case, and the four mutation proofs (§7). |
 | `152` §4.2 (this document, previous revision) | `space(c) = base ^ (K · (c + 1))`, one refused participant number | `space(c) = base ^ (K · (c + 2))`, two refused participant numbers, `base ^ K` reserved for an offline replica. `PROTOCOL_VERSION` 1 → 2, because the space is derived and two versions would disagree about it silently. |

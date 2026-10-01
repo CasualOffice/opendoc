@@ -1663,6 +1663,26 @@ ADR-033's decision and ADR-045's transform. Answers `143` §16 Q1 and `107` §8 
    replicas cannot mint the same id. Ids an operation merely *names* are safe because the
    session is totally ordered.
 
+**Amended 2026-10-01 (owner), and it changes what this ADR claims rather than what it built.**
+The relay is substitutable and a standalone document needs none — but "collaboration is
+optional" was the wrong phrasing for the lifecycle. A replica with no connection cannot learn
+that a second person began editing, so a room that came into being on the *second* participant
+would make that transition unobservable from the first participant's side. There are therefore
+**two modes**: standalone editing with no room at all, where no server is required and never
+will be; and a **shared** document — reached by a link, or embedded by a host — which **joins a
+room from its first open even with one participant**. One doc, one room.
+
+The room is created by the **host**, not by the first client: a client cannot name a room it
+has not been told about, and letting it invent one would make the room id client-controlled,
+which the host-signed grant exists to prevent. A lone writer in a room pays **no** transform,
+**no** document clone and **no** round trip before its own edit is visible, so the common case
+does not pay for the rare one. Work done standalone travels as the **snapshot the room is
+created from** and never as operations, which is forced rather than chosen: the offline mint
+space is reserved, so an operation introducing an offline-minted id is refused by every
+receiver — and `ClientSession::joined` settling the log at `head` is the single line that keeps
+those two rules from contradicting each other. `152` §2a records the measurements, the open
+questions and the guard.
+
 **Why a dumb relay, given the sibling engine transforms server-side.** Our `transform` takes
 its concurrent operation as a `Change` — the operation *and the inverse `apply` returned for
 it* (ADR-045, `150` §2.3) — because our deletes name their victims by identity rather than by
@@ -2042,6 +2062,251 @@ costed against a fallback that does not exist.
   (`155` Q-B — recommended yes, on their evidence), and floating `wp:anchor` charts, which are
   a pre-existing `EmbeddedObject` limit shared with SmartArt and OLE rather than a chart one
   (`155` Q-C).
+
+## ADR-051 — An operation carries the identity *space* it mints in, and `apply` holds no generator
+
+- **Status:** Accepted, implemented.
+- **Date:** 2026-10-01.
+- **Context:** `150` §9.3 / `152` §10 Q8. `casual_doc_edit::apply` does not only move bytes:
+  some operations **create nodes**. A `FormatText` whose range starts mid-run splits that run
+  and the tail half is a new `Run`; so do `DeleteText`, `SplitParagraph`, `CreateBookmark`,
+  `InsertField`, `InsertInlineObject`, `InsertFieldRange` and `InsertNote`. Those identities
+  came from the *applier's* generator, so two replicas produced the same document under
+  **different names for the same run**. Nothing broke at once, because no operation in the set
+  addresses a run — but `25`'s deterministic snapshot was then not byte-identical across
+  replicas, which defeats *"a snapshot can be verified rather than trusted"*; every convergence
+  assertion in `casual-doc-transaction` had to normalise run ids away before comparing; and it
+  is the reason `152` §9 refused to freeze a byte codec.
+- **Decision:** An operation travels with a **`Mint`** — a private, aligned run of `NodeId`
+  counters — and `apply(document, mint, operation)` derives every identity it creates from it.
+  `apply` takes **no** `RunIds`, so it cannot name a node the operation did not pay for, and it
+  is a pure function of `(document, mint, operation)`: replayable, and therefore verifiable.
+- **Prior art, named:** deterministic identity derived from the creating operation — Yjs's
+  `(client, clock)`, Automerge's `(actor, counter)`. `casual_doc_model::IdSpace` (ADR-047)
+  partitions the namespace half of a `NodeId` per participant; this partitions the counter half
+  per operation. They compose: an id minted in a lane is still in its author's `IdSpace`, so
+  `WireOperation::localise` checks an arriving mint with the same rule it already applied to a
+  declared id.
+- **Rejected: enumeration.** `150` §9.3 proposed the operation carrying the new run's id, as
+  `SplitParagraph` carries `new_id`. It cannot work. The *number* of identities an operation
+  mints depends on the document it lands on, and an operation is **transformed** before a remote
+  replica applies it, so the state it lands on there is not the state its author saw. An
+  enumeration is a count fixed at authoring time; the truth is discovered at application time. A
+  *space* is the only declaration that survives a transform. A consequence worth stating: **no
+  `Operation` variant changed**, so the codec's remaining blockers are `150` §9.1 and §9.2 alone.
+- **Rejected: re-mapping on receipt.** Rewriting an arriving id into a local one is what the
+  sibling does for an interned *value*. Here the id **is** the identity, so the two replicas
+  would disagree about the name of one logical node permanently — the very thing this closes.
+- **Shape.** Three nested levels, all bit fields rather than hashes, so distinctness is by
+  construction:
+
+  | Level | Width | Separates |
+  | --- | --- | --- |
+  | namespace (`IdSpace`) | 2⁶⁴ | participants, plus the document's own and offline spaces |
+  | block | 1024 counters | one operation from the next |
+  | lane | 128 counters | an operation from its inverse, and a `Rebase::KeepMany`'s pieces from each other |
+
+  `Mint::inverse` flips one bit and is therefore an **involution**: undo followed by redo
+  re-mints exactly the identities the original edit created, so an anchor into a destroyed run
+  finds that run again when the redo restores it. A lane is a **bound**: an operation wanting
+  more than 128 identities — about thirty times the worst case in the set — earns
+  `EditError::IdExhausted` rather than wrapping into the next lane.
+- **Consequences.**
+  - `Transaction` and `Commit` carry one `Mint` per operation; `Transaction::reserve` is the one
+    place an author's generator is touched on the edit path, and it is inside the facade's single
+    choke point, pinned by `every_document_mutation_is_a_transaction`. `RevisionLog::apply` lost
+    its `ids` parameter: **the log cannot mint.**
+  - `WireOperation::of` takes the mint, and `localise` refuses a mint outside the sender's space.
+  - A rebased commit declares the spaces the **replay** used, not the template's — proved by
+    mutation, because declaring the template's is exactly the plausible mistake.
+  - `Document::node_ids` is public, because "what identities does this document hold" stopped
+    being inferable from "what did the allocator advance past" — a reserved block is 1024
+    counters and an operation spends two or three. Two wasm guards were reading the allocator
+    and now read the document, which is the guarantee they were always about.
+  - Unchanged: the TP1 diamond still compares modulo run ids, correctly — its two sides apply
+    *different* operation sequences. Convergence *with* identity is a protocol property and is
+    where it is now asserted, with no quotient.
+- **Mutation proofs.** (1) Receiver mints from its own generator instead of the carried mint →
+  `a_run_an_edit_split_off_carries_the_same_identity_on_both_replicas` fails with the two split
+  ids differing while the three pre-existing ids match. (2) A rebased commit stores
+  `template.mints` → `a_replay_over_a_remote_edit_leaves_both_replicas_naming_every_node_alike`
+  fails with Ada naming Grace's replayed runs one block away from Grace's own.
+- **Not decided here:** identities inside a carried subtree (`152` §10 Q2) are still covered by
+  the id-space rule at the mint and by `Document::validate`, not by an enumerating walk.
+
+## ADR-052 — Document protection is enforced at the operation, by projection equality, and it is policy rather than security
+
+- **Status:** Accepted, implemented for `readOnly`, `comments` and `trackedChanges`.
+- **Date:** 2026-10-01.
+- **Context:** `107` 6.7. The model has carried `DocumentProtection` with all four editing
+  levels since Layer 1, and import and export round-trip `w:documentProtection`'s three policy
+  attributes. Exactly one level was ever *enforced*: `w:edit="forms"`, at the facade's mutation
+  choke point. `readOnly`, `comments` and `trackedChanges` were modelled, exported, and
+  **ignored** — so a document a reader could see was protected was fully editable. That is the
+  "modeled is not shipped" failure the working contract calls this repository's most expensive
+  recurring pattern. (`153` reports the whole feature as missing, which overstates it in the
+  other direction.)
+- **Decision:** Enforce at the **operation**, in `casual-doc-edit`, not in the facade.
+  - An operation is the only thing that can be judged; a toolbar says what a host offered.
+  - The relay will need the same judgement on an *arriving* operation (`152` §10 Q5), and a
+    rule written in the facade could not be reused by it.
+  - `Operation` lives in that crate, so the classification is an **exhaustive match**: a 59th
+    operation is a compile error rather than a permission hole. A `_ =>` arm is exactly how one
+    would arrive exempt from every restriction.
+  - `w:edit="forms"` stays in the facade, alone, because its answer needs state the engine
+    cannot see — whether the reader is inside an enabled text form field *right now*.
+    `protection::forms` decides "is a restriction in force" so that half is not duplicated.
+- **The hard part: `comments` and `trackedChanges` are not variant-level questions.**
+  Commenting, suggesting a change, and accepting one **all travel as
+  `Operation::UpdateReviewState`**, whose payload is a replacement inline list per paragraph
+  plus an optional comments table. No rule that looks at *which* operation arrived can tell
+  them apart, so it would have to allow or forbid all three.
+- **Answered by projection equality — exact, with no heuristic and no tolerance:**
+  - **`comments`**: strip every comment marker from the current inlines and from the
+    replacement; allow it if the remainders are equal. A comment anchor adds markers and
+    nothing else; a character left behind in the remainder is refused.
+  - **`trackedChanges`**: project both to *the text as it stood before the change* — content
+    outside a revision, plus content inside a `Deletion`/`MoveFrom` (still present, struck
+    through), and not content inside an `Insertion`/`MoveTo` — and require equality **plus**
+    that no revision now in the document is missing from the replacement.
+
+    The second condition is what catches a **rejection**, and it is not redundant: rejecting an
+    insertion restores the before-state, so the projection alone is satisfied, and only the
+    vanished revision distinguishes it from nothing having happened. A mutation removing that
+    condition reddens exactly the reject case and nothing else. Accepting, in either direction,
+    changes the projection; so does untracked typing. Four review decisions and one untracked
+    edit, refused by two conditions rather than five special cases.
+  - Word's tracked-changes restriction permits comments, so that level is a **superset** of the
+    comments level and the projection drops comment markers too.
+- **A batch is judged whole**, on its worst operation and not its first — the sibling's rule,
+  so a permitted comment cannot carry an edit in behind it.
+- **An operation naming a paragraph that is not there is refused**, not waved through: the rule
+  the forms check already followed, because an unplaceable write into a locked document is
+  exactly where guessing is wrong.
+- **Complexity:** O(the inlines the operation names). `readOnly` resolves nothing, and an
+  **unprotected** document costs no document walk at all — asserted with `block_visits`, because
+  this runs on the keystroke path and `107` §4 B1 forbids a document walk there.
+- **This is policy, not security, and that must be said out loud.** Nothing here authenticates
+  anybody. It stops a *host* and a *user* doing what the document asks not to be done; it does
+  not stop a program that edits the model directly, and it never could — a local-first engine
+  hands the reader the bytes. Access control against an untrusted client belongs to the relay
+  and to a host-signed grant (`152` §10 Q4/Q5), and this ADR is not it.
+- **Password material: deliberately not modelled, and the decision is recorded rather than
+  deferred silently.** `w:documentProtection` can carry `w:cryptProviderType`, `w:hash`,
+  `w:salt`, `w:cryptAlgorithmSid` and `w:cryptSpinCount`. Verifying one would let a host offer
+  "unprotect", and would invite the claim that the restriction is enforced against an
+  adversary. It is not: the legacy hash is trivially removable by editing one attribute in the
+  XML, and Word documents it as a deterrent. So opendoc **will not** implement password
+  verification as a security boundary. What it may implement is the *shape* Word has — prompt,
+  compare, lift — labelled as a deterrent, and only once a host asks for it.
+- **A loss to report, in another lane's crates.** Derived from the code rather than from a
+  fixture run: `casual-doc-import`'s settings parser builds `DocumentProtection` from `w:edit`,
+  `w:enforcement` and `w:formatting` and returns *handled*, so the five crypto attributes are
+  neither modelled nor reported; `casual-doc-export`'s semantic writer emits those same three.
+  A **semantic** round trip therefore returns a password-protected restriction as a
+  password-less one — the protection survives and becomes liftable in Word with no password,
+  silently. Retention mode keeps the original part bytes, so the loss is semantic-mode only.
+  That is `AGENTS.md`'s no-silent-data-loss rule, and it belongs to the import/export lane.
+- **Also not built here:** there is no operation that *sets* protection, so a reader cannot
+  restrict or unrestrict editing from the product at all — protection can only arrive from a
+  file. Closing that means a new definitions operation (ADR-030 I2), which is a decision and
+  not an oversight.
+- **Mutation proofs.** (1) `readOnly` falls through with `none` — the behaviour before this
+  module — and the read-only guard fails on `InsertText`. (2) The revision-id condition is
+  removed and **only** the reject case fails, proving it is load-bearing. (3) Only the first
+  operation of a batch is judged and the batch guard fails. (4) A `Revision`'s children are
+  cloned instead of projected and the container-set equivalence guard fails.
+
+## ADR-053 — O(1) paragraph resolution is a session-owned identity index maintained at the choke point, not a cache on the document
+
+- **Status:** **Proposed.** The decision is recorded; the work is not done here.
+- **Date:** 2026-10-01.
+- **Context:** `107` §4 **B1** requires per-keystroke work to be O(1) in document size, and
+  §4.1 records that **no editing path meets it** — `blocks_owning_mut` and
+  `find_paragraph_mut` walk the surfaces to find a paragraph by id, so every keystroke is
+  O(document). HF-111 was the *review-specific* part of that general fact. Measured: an
+  ordinary keystroke on 200 paragraphs costs 400 block visits, i.e. two full walks, so
+  resolution is essentially the whole per-keystroke document cost.
+- **How large the masked cost is, stated rather than implied.** Editing is refused above
+  `MAX_WHOLE_LAYOUT_BLOCKS` = 262,144 top-level blocks, because a windowed body cannot
+  re-paginate after a mutation. So the worst editable document today costs about **524,000
+  block visits per character**, and the 1.3-million-paragraph case is masked by a refusal
+  rather than served. **That inverts the priority order**: windowed *editing* (`113`) cannot
+  be built on O(document) resolution, so this is a prerequisite for it and not an
+  optimisation of it.
+- **Named prior art, and why four of five candidates are rejected.**
+
+  | Candidate | Verdict |
+  | --- | --- |
+  | **Positional index** — store `(Surface, path of child indices)` per id | **Rejected.** Every block insert or delete shifts its later siblings' indices, so the index needs the band arithmetic that `150` §2 says `NodeId` anchors were chosen to escape. It reintroduces coordinate fragility to fix an identity lookup. |
+  | **Rebuild-on-demand cache with a dirty flag** | **Rejected, and worth recording because it is the obvious idea.** A keystroke *is* a mutation, so it invalidates the cache it was about to use: the hit rate on the typing path is zero. |
+  | **Reference index on the document** (`ParagraphIndex` stored beside the paragraphs) | **Rejected.** It borrows the paragraphs it points at, so storing it in the document is self-referential. This is the obstacle §4.1 already names. |
+  | **Generational arena plus handle map** — the model's nodes move into an arena, the tree holds handles (Yjs's `StructStore`, and every ECS) | **Right end state, wrong increment.** It is the textbook answer and it makes staleness structurally impossible, because a handle is not a position. It also re-founds `casual-doc-model`, touches import, export, layout and render, and is not a change one lane can make safely. |
+  | **Session-owned id→location index, maintained at the mutation choke point** | **Chosen.** |
+
+- **Decision.** The index is owned by the **editing session**, not by the document, and it is
+  **maintained incrementally at the one mutation choke point** rather than rebuilt.
+  - The self-reference disappears: the index lives beside the document, not inside it.
+  - Staleness is structurally bounded by ADR-030 **I1**: every mutation goes through
+    `casual_doc_edit::apply`, so an index updated there cannot miss a change without a
+    compile-visible change to the choke point.
+  - The deltas it needs are **already produced**. `apply` returns the inverse and the envelope
+    already derives `MappingStep`/`PositionMap` from the pair to move *positions* across a
+    commit; an id→location index consumes the same structural facts. One mechanism extended,
+    not a second one added — which is the rule the windowed paginator followed.
+  - It carries a **verification mode**: rebuild with `ParagraphIndex` and compare. A stale
+    index is a correctness bug where a rebuilt one is merely O(n), so the guard has to be able
+    to see disagreement rather than trust the maintenance.
+- **What it does not fix.** Resolution becomes O(1); the *rest* of a keystroke does not. §4.1's
+  remaining 2× on a suggested keystroke (the facade resolves the paragraph to build the review
+  projection, then the edit crate resolves it again) is a separate item, and it becomes
+  cheaper rather than moot.
+- **Owner decision needed:** whether to take this increment at all before windowed editing is
+  wanted. B1 is an owner constraint and is currently met by nothing, so the alternative is to
+  restate B1 as "O(1) above the windowing threshold, linear below it" — which is a weaker
+  promise honestly kept, and is the only other coherent position.
+
+## ADR-054 — A tracked keystroke must be a granular operation, and that — not the session — is what unblocks suggesting mode
+
+- **Status:** **Proposed.** It changes the operation set, which ADR-030 I2 reserves to the
+  owner.
+- **Date:** 2026-10-01.
+- **Context:** `150` §6 and `152` §11 record a blocker: a `Coalesce::ContinueKeepingFirstInverse`
+  commit records **no inverse**, so `Commit::changes()` is `None`, so it cannot be rolled back
+  — and `152` §5.3 concludes that **suggesting mode cannot take part in a session at all**,
+  because the rollback-and-replay driver needs every unacknowledged commit's inverse.
+- **The finding: this is a symptom, not an independent problem.** Review typing is expressed as
+  `Operation::UpdateReviewState` — a **whole-paragraph rewrite**. Its inverse is therefore a
+  whole-paragraph snapshot, one per character, which is the only reason the coalescing mode
+  that *drops* inverses exists. And `107` §4 **B4** already forbids exactly this: *"No
+  operation on the typing path rewrites a paragraph. `SetInlines` is a paragraph-rewrite
+  vehicle and must stay off that path."* Review typing violates B4, and the session blocker is
+  that violation's consequence.
+- **Decision (proposed).** Express a tracked keystroke granularly — text inserted *inside* a
+  revision wrapper — so its inverse is a `DeleteText`-sized delta rather than a paragraph
+  snapshot. Then:
+  - every commit can afford to keep its inverse, so `ContinueKeepingFirstInverse` is not needed
+    on the typing path and the rollback driver has what it needs;
+  - **`152` §5.3's blocker closes without any change to the session**, which is the strongest
+    argument that this is the right place to fix it;
+  - B4 holds for the review path as it already does for the plain one;
+  - the transform gets a granular subject to rebase instead of a paragraph rewrite, which
+    `150` §5 refuses against a concurrent split or join — so it also removes refusals.
+- **Rejected alternative: group-granular rollback.** Roll the whole undo group back using its
+  first commit's snapshot. It restores the paragraph correctly, but the driver needs the state
+  at *each* commit's own base to compute the arrival's image there, and a group-granular
+  rollback cannot produce those intermediate states. It would trade a refusal for a
+  divergence.
+- **Rejected alternative: keep the snapshots.** Correct, and it costs one whole-paragraph copy
+  per character — the memory the coalescing mode was invented to avoid. On a long paragraph
+  that is the quadratic-feeling cost `147` records the flat history stacks having had.
+- **The second reason suggesting mode cannot join is separate and still open**: `w:id`
+  collisions between replicas (`152` §10 Q7). Two replicas minting revision `w:id`s
+  independently produce colliding opaque ids on export. ADR-051's identity partition covers
+  `NodeId`s and **not** `w:id`, which is a producer string. Recorded here so the two reasons are
+  not mistaken for one.
+- **Owner decision needed:** whether to add the operation. Until then suggesting mode stays
+  out of a session, with the refusal code `152` §5.3 gives it.
 
 ## Pending ADRs
 

@@ -223,12 +223,12 @@ The owner constraint, made measurable. These are exit gates for Phase 6, not gui
 | Budget | Rule | Why |
 | --- | --- | --- |
 | **B1** | Per-keystroke work is **O(1) in document size**. No whole-document validation, re-layout, or re-projection per keystroke | `HF-111`'s named half is **closed 2026-10-01** — see §4.1, which also measures what is left |
-| **B2** | Transform cost per incoming remote operation is **O(concurrent ops since its base revision)**, never O(log length) and never O(document) | Bounded by the relay's ordering plus snapshot compaction (§5.2) |
+| **B2** | Transform cost per incoming remote operation is **O(concurrent ops since its base revision)**, never O(log length) and never O(document) | **Held by two guards since 2026-10-01** — see §4.3 |
 | **B3** | Typing **coalesces** into one transaction per run, split on caret discontinuity, ~500 ms idle, or a structural op | Partly built: `typing_history` already requires exact caret continuity to coalesce. One commit per character would make the log, undo, and the network all quadratic in felt cost |
 | **B4** | No operation on the typing path rewrites a paragraph. `SetInlines` is a paragraph-rewrite vehicle and must stay off that path — it is an undo/inverse mechanism, not an edit primitive | A rewrite op defeats both OT granularity and B1 |
 | **B5** | Snapshots are **periodic, never per-operation**; the steady-state write is one appended operation | Snapshot cost is amortised, not per-keystroke |
 | **B6** | Layout invalidation stays incremental. `incremental.rs` and `dirty_pages` already exist; a remote operation must use them, not force a full repaginate | A remote keystroke must cost what a local one costs |
-| **B7** | The log is **bounded**: compaction (§5.2) caps replay work and memory, and the bound is explicit like the `HARD_MAX_*` package limits | `21-PARSER-LIMITS.md` precedent; unbounded growth is a resource-exhaustion bug |
+| **B7** | The log is **bounded**: compaction (§5.2) caps replay work and memory, and the bound is explicit like the `HARD_MAX_*` package limits | **Bound closed 2026-10-01** — it bounded undo *steps* and not commits. See §4.3 |
 
 Benchmarks to add to the existing harness (`29`), since none of the four committed baseline
 cases covers layout, render, or repaint (`105` EV-002): local keystroke latency, remote-op
@@ -276,18 +276,40 @@ Three costs were removed, and each is now held by a guard that was driven red:
 - **Resolution is O(document) on *every* keystroke, review or not.** `blocks_owning_mut` and
   `find_paragraph_mut` walk the surfaces to find a paragraph by id, so B1's "O(1) in document
   size" is not met by any editing path — HF-111 was the *review-specific* part of a general
-  fact. Making it O(1) needs a node index the document deliberately does not cache
-  (`ParagraphIndex` borrows the paragraphs it points at, so storing it beside them would be
-  self-referential, and a stale index is a correctness bug where a rebuilt one is merely
-  O(n)). That is a design question, not an optimisation, and it is the honest next item for
-  B1. Both existing guards therefore hold **linearity**, not O(1), and say so.
-- **Accepting every change is quadratic.** `UpdateReviewState` with N paragraphs resolves
-  each one separately — a lookup-by-id inside a loop over ids, the exact shape that made
-  `documentOutline` never return. The index built for that path prevents the *prevalidation*
-  from being quadratic; the mutation loop after it is not fixed. Closing it means one walk
-  that swaps every target paragraph, keyed by a set.
+  fact. Both existing guards therefore hold **linearity**, not O(1), and say so.
+  **Decided, not built: ADR-053.** A session-owned id→location index, maintained at the one
+  mutation choke point rather than rebuilt, verified against a `ParagraphIndex` rebuild. The
+  four rejected candidates are listed there with reasons, including the two that look obvious
+  — a positional index (it reintroduces the coordinate arithmetic `150` §2 chose identity to
+  escape) and a dirty-flag cache (a keystroke is a mutation, so it invalidates the cache it
+  was about to use, and the hit rate on the typing path is zero).
 
-### 4.2 The benchmark gate does not exist, and the baseline cannot run
+  **How much is masked, and why it inverts the priority.** Editing is refused above
+  `MAX_WHOLE_LAYOUT_BLOCKS` = 262,144 top-level blocks, because a windowed body cannot
+  re-paginate after a mutation. So the worst *editable* document costs about **524,000 block
+  visits per character**, and the 1.3-million-paragraph case is masked by a refusal rather
+  than served. Windowed editing (`113`) therefore cannot be built on top of O(document)
+  resolution: this is its prerequisite, not its optimisation.
+- ~~**Accepting every change is quadratic.**~~ **Closed 2026-10-01.** `UpdateReviewState`
+  resolved each of its N paragraphs separately — a lookup-by-id inside a loop over ids, the
+  exact shape that made `documentOutline` never return — so on the owner's 1.3-million-
+  paragraph file "accept all changes" was 1.3M × 1.3M block visits. It is now one walk that
+  swaps every target paragraph, keyed by a set, which is the fix this row asked for.
+  Measured, as a ratio at *n* and *2n*:
+
+  | accept-all over every paragraph | 100 ¶ | 200 ¶ | ratio |
+  | --- | ---: | ---: | ---: |
+  | before | 20,100 | 80,200 | **3.99×** — quadratic |
+  | after | 200 | 400 | **2.00×** — linear |
+
+  The guard asserts the ratio rather than the number, so it cannot be satisfied by a faster
+  machine and cannot pass over an operation that swapped nothing (it holds a floor as well as
+  a ceiling). The mutation that restores the old loop reddens it with exactly the numbers
+  above. The walk mirrors `ParagraphIndex`'s descent deliberately — a surface one reaches and
+  the other does not is the one way a refusal could return after a partial swap — and a
+  second guard drives a replacement into a table cell to hold that mirror.
+
+### 4.2 The benchmark harness: what was broken, what is fixed, and what a clock cannot gate
 
 Measured 2026-10-01, because §4 says "each gets a benchmark" and that had never been checked:
 
@@ -295,18 +317,95 @@ Measured 2026-10-01, because §4 says "each gets a benchmark" and that had never
   (`benchmarks/baselines/mac16-12-m4-10c-16gb.json`, source revision `7581d68`) holds **4**.
   `compare_reports` errors when the key sets differ, so the documented `--compare` invocation
   **fails outright today** and there is no regression gate for anything.
+  **Fixed 2026-10-01**, in the direction that keeps the gate rather than the one that drops
+  it: a case the baseline does not cover is *reported* per case and skipped, so the four it
+  does cover are still gated, while a baseline holding a case the harness no longer defines
+  stays a hard error — a stale baseline is evidence for work that no longer exists. Both
+  directions are guarded and both guards were driven red. The baseline is also stale in
+  content: `docx.package_open.minimal`'s output checksum has moved since `7581d68`, which the
+  restored comparison now says out loud.
 - **Zero of B1–B7 has a benchmark.** The closest, `sdk.typing.100_graphemes`, types into a
   *blank* document and the two layout cases run at one fixed size — so none of them varies
   document size, which is the only thing that could test an O(1)-in-document-size claim. No
   case touches `transform`, coalescing, snapshot cost or replay.
 - None of the five benchmarks this section names exists.
 
-The guards in §4.1 are the interim answer and are deliberately of a different kind: they
-count work (block visits, validations, index entries) and assert **ratios at n and 2n**, so
-they run in the ordinary test job, need no baseline file, and cannot be made green by a faster
-machine. A benchmark gate measures how long something takes; these measure what it does, and
-for B1–B7 that is the property being claimed.
+The guards in §4.1 and §4.3 are the answer, and they are deliberately of a different kind:
+they count work (block visits, validations, index entries, transforms) and assert **ratios at
+n and 2n**, so they run in the ordinary test job, need no baseline file, and cannot be made
+green by a faster machine. A benchmark gate measures how long something takes; these measure
+what it does, and for B1–B7 that is the property being claimed.
 
+**And a timing ratio was tried, measured, and rejected — with numbers.** A ratio gate inside
+the harness looked like the obvious way to give B1/B6 a benchmark: add
+`layout.repaginate.keystroke_480_paragraphs` beside the 240 case and fail if the larger costs
+more than 2.8× the smaller, which needs no baseline and cannot be greened by a fast machine.
+It was built and run seven times on the named environment. Nine measurements of the 240 case's
+median, in the order taken: **50.9, 65.3, 54.7, 50.0, 49.5, 49.8, 69.5, 175.4, 128.3 ms** — a
+**3.5× spread** on one machine and one binary, tracking `uptime`'s load average (1.5 when
+quiet, **14.6** on ten cores while another lane built). The ratio came out 1.84×, 1.90×, 1.99×,
+2.01× on the quiet runs and **2.84×** and **5.96×** on contended ones.
+
+Two conclusions, and the second is why the case was removed again rather than kept:
+
+1. **The path is linear**, which is the honest expectation: a cached re-pagination after a
+   one-paragraph edit still assembles every page. The 5.96× was contention, not a defect — one
+   run would have been reported as a layout regression, and repeating it is the only reason it
+   was not.
+2. **A timing ratio is clock-bound, so it cannot be a gate here.** It false-failed twice in
+   seven runs, and the house rule is that retries do not help a clock-bound check. Armed wide
+   enough to survive contention (7×) it can no longer tell linear from quadratic, which is the
+   only thing it was for. So it is not in the tree: a gate that has to be believed selectively
+   is worse than none, because it gets cited.
+
+The consequence for B1/B6 is stated rather than worked around: **a layout complexity gate needs
+a work counter inside the layout crate** — pages assembled, galleys shaped — exactly as
+`block_visits` is one inside `casual-doc-edit`. That is the layout lane's to add, and it is the
+only instrument that would make B6 real. Until then B6 has no gate and this table says so.
+
+### 4.3 Which budgets have a gate, and what kind
+
+Updated 2026-10-01. **Every row says what instrument holds it**, because "B2 is satisfied"
+with nothing behind it is the shape §4.1 was written to stop.
+
+| Budget | Gate | Kind | Where |
+| --- | --- | --- | --- |
+| B1 | keystroke block visits at *n* and *2n*; suggested-keystroke ratio pinned at 2× | work count | `casual-doc-wasm` (§4.1) |
+| B2 | transforms per arrival at *k* and *2k*; and identical at document *n* and *2n* | work count | `casual-doc-transaction::session_tests` |
+| B3 | one undo group per coalesced run | structural | `casual-doc-transaction` |
+| B4 | — | **none** | `SetInlines` off the typing path is prose only |
+| B5 | — | **none** | there is no snapshot yet (6.1) |
+| B6 | — | **none** | layout invalidation; another lane's crate |
+| B7 | commit ceiling derived from the two bounds, plus "never evict unordered work" | structural | `casual-doc-transaction` |
+
+**B2, stated as the guards state it.** `transform_placed` now increments a thread-local
+counter, and two guards read it. Doubling the concurrency from four to eight unacknowledged
+commits roughly doubles the count (the driver rebases the arrival forward to each commit's
+base, then each commit back over the arrival — two passes over *k*), and both bounds are
+asserted: a super-linear term fails, and *no* growth also fails, because a driver that skipped
+the concurrent commits would otherwise satisfy a one-sided check. Doubling the **document**
+must leave the count **identical**, and does. Neither claims more than the transform: the two
+O(document) terms on the contended path — one document clone and one `BlockIndex` build — are
+`152` §10 Q1 and are unaffected.
+
+**B7 was not met, and the reason was recorded in the code that did not meet it.**
+`DEFAULT_MAX_UNDO_GROUPS` bounds *steps*, deliberately — a 60-character word is one step and
+sixty commits — which left the **commit** count unbounded: one coalescing gesture is one group
+and one commit per keystroke, so a long dictation grew the log without limit while the group
+bound looked satisfied. Capping the log directly would have been worse, because a group is
+dropped whole and a cap the current group exceeded would delete the gesture the reader is
+making. So the cap is on the **group**: `MAX_COMMITS_PER_GROUP = 200`, past which a coalescing
+transaction opens a new undo step — which is what Word and Google Docs both do with a long
+typing run — and the existing group bound evicts as it always has. One mechanism, not two.
+`RevisionLog::commit_ceiling` then *derives* the bound (`2 × max_groups ×
+MAX_COMMITS_PER_GROUP`, 102,400 at the defaults, about 20 MB) rather than restating it.
+
+Closing that exposed a second, latent defect and fixed it: eviction never consulted the
+**horizon**, so the group bound could drop a commit no relay had ordered — precisely the input
+the rollback-and-replay driver reads, which would leave it unable to reach the state an arrival
+must be applied at. Eviction now yields to the horizon once a session has settled the log, and
+a guard proves it: with the bound at one group and six unacknowledged commits, five of the six
+were being evicted.
 ---
 
 ## 5. Snapshot, replay, and versioning
@@ -392,7 +491,7 @@ Sequenced so each step is independently valuable and none is a big-bang merge.
 | **6.4** | T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | Yes — completes the transform set. **The rebase and the `Tombstoned` outcome landed with 6.3**; what remains is the *reporting* — routing a tombstone into the disposition taxonomy (`35`), which has no caller until 6.6 |
 | **6.5** | Compare and combine documents | **Yes** — closes OO-007 |
 | **6.6** | Relay adapter, presence, per-user cursors, author identity on the wire | Collaboration ships. **The foundation landed 2026-09-30** (`152`, ADR-047): the wire vocabulary, the two session state machines, the identity discipline and the rollback/replay rebase driver, all in `casual-doc-transaction` and all with no transport. What remains is the byte codec, the relay binary, presence, the host-signed grant, and durability — plus the one prerequisite `152` §4.4 names, which is a live editor that mints in a session-supplied identity space instead of a document-derived one |
-| **6.7** | Roles and permission enforcement, against the Phase 4 permissions object | Closes OO-018 |
+| **6.7** | Roles and permission enforcement, against the Phase 4 permissions object. **The document's own `w:documentProtection` is enforced as of 2026-10-01** — `readOnly`, `comments` and `trackedChanges` at the operation, by projection equality, ADR-052. Still open: the *session's* access level, which needs `152` §10 Q4's token, and an operation that lets a reader set protection at all | Closes OO-018 |
 
 Note 6.0–6.5 deliver four tracker rows and **no** networking. If collaboration were cancelled
 tomorrow, everything through 6.5 would still be the right work.

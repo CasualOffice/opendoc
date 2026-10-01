@@ -901,6 +901,29 @@ USAGE:
             .map_err(|error| AppError::new(format!("baseline report is invalid: {error}")))
     }
 
+    /// Compares a run against a baseline, case by case.
+    ///
+    /// # The two ways the ID sets can differ, and why only one is an error
+    ///
+    /// This used to refuse outright whenever the sets were not equal, which made the
+    /// documented `--compare` invocation fail on the committed baseline: the harness defines
+    /// six workloads and that baseline holds four, so **there was no regression gate for
+    /// anything at all** (`107` §4.2 measured it). Refusing is right in one direction and
+    /// wrong in the other:
+    ///
+    /// - **A case the baseline does not cover** is a case added since the baseline was taken.
+    ///   Refusing the whole comparison over it throws away the gate on every other case,
+    ///   which is strictly worse than reporting it. Each one is printed as `not covered`, so
+    ///   it cannot be missed and cannot be mistaken for a pass — a silently skipped case
+    ///   would be a hole, and a named one is a to-do.
+    /// - **A case the baseline holds and the harness no longer defines** is a *stale
+    ///   baseline*, and it stays an error. Comparing against evidence for work that no
+    ///   longer exists is how a baseline outlives the thing it measured.
+    ///
+    /// # Errors
+    ///
+    /// A stale baseline, incomparable metadata, a workload whose definition changed, or a
+    /// regression past the allowance.
     fn compare_reports(
         current: &BenchmarkReport,
         baseline: &BenchmarkReport,
@@ -909,16 +932,36 @@ USAGE:
         validate_comparable_metadata(current, baseline)?;
         let current_cases = case_map(&current.cases, "current")?;
         let baseline_cases = case_map(&baseline.cases, "baseline")?;
-        if current_cases.keys().collect::<Vec<_>>() != baseline_cases.keys().collect::<Vec<_>>() {
-            return Err(AppError::new(
-                "current and baseline workload ID sets do not match",
-            ));
+
+        let retired: Vec<&str> = baseline_cases
+            .keys()
+            .copied()
+            .filter(|id| !current_cases.contains_key(id))
+            .collect();
+        if !retired.is_empty() {
+            return Err(AppError::new(format!(
+                "baseline holds workloads this harness no longer defines: {}. The baseline is                  stale — regenerate it rather than comparing against retired evidence.",
+                retired.join(", ")
+            )));
         }
+        let uncovered: Vec<&str> = current_cases
+            .keys()
+            .copied()
+            .filter(|id| !baseline_cases.contains_key(id))
+            .collect();
+        for id in &uncovered {
+            println!("workload {id} not covered: the baseline predates it and gates nothing");
+        }
+        println!(
+            "baseline covers {} of {} workloads",
+            current_cases.len() - uncovered.len(),
+            current_cases.len()
+        );
 
         for (id, current_case) in current_cases {
-            let baseline_case = baseline_cases
-                .get(id)
-                .ok_or_else(|| AppError::new(format!("baseline workload {id} is missing")))?;
+            let Some(baseline_case) = baseline_cases.get(id) else {
+                continue;
+            };
             if current_case.work_units != baseline_case.work_units
                 || current_case.iterations_per_sample != baseline_case.iterations_per_sample
                 || current_case.output_checksum != baseline_case.output_checksum
@@ -1120,6 +1163,45 @@ USAGE:
 
             let missing = report("other-case", 1_000);
             assert!(compare_reports(&missing, &baseline, None).is_err());
+        }
+
+        #[test]
+        fn a_baseline_that_predates_a_workload_still_gates_the_ones_it_holds() {
+            // The defect this closes, which `107` §4.2 measured: the harness defines six
+            // workloads and the committed baseline holds four, and refusing the whole
+            // comparison over the difference meant `--compare` gated NOTHING. So the
+            // condition below is the real one — a current run with a case the baseline never
+            // saw — and the assertion is that the case it DID see is still gated.
+            let baseline = report("covered", 1_000);
+            let mut current = report("covered", 1_000);
+            current.cases.push(case("added-since", 42));
+
+            compare_reports(&current, &baseline, None)
+                .expect("a baseline older than a workload must still gate the rest");
+
+            let mut regressed = report("covered", 1_300);
+            regressed.cases.push(case("added-since", 42));
+            assert!(
+                compare_reports(&regressed, &baseline, None).is_err(),
+                "the covered workload stopped being gated, so skipping the uncovered one \
+                 swallowed the whole comparison"
+            );
+        }
+
+        #[test]
+        fn a_baseline_holding_a_retired_workload_is_refused_as_stale() {
+            // The other direction, and it stays an error: evidence for work that no longer
+            // exists cannot be compared against, and quietly ignoring it is how a baseline
+            // outlives the thing it measured.
+            let mut baseline = report("covered", 1_000);
+            baseline.cases.push(case("retired", 1_000));
+            let current = report("covered", 1_000);
+            let error = compare_reports(&current, &baseline, None)
+                .expect_err("a stale baseline must be refused");
+            assert!(
+                error.to_string().contains("retired"),
+                "the refusal must name the retired workload: {error}"
+            );
         }
 
         #[test]
