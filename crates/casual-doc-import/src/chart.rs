@@ -181,6 +181,17 @@ pub(crate) struct ChartPartOutcome {
     /// Local names of the constructs inside the part the projection did not
     /// represent, deduplicated and ordered.
     pub(crate) unconsumed: BTreeSet<String>,
+    /// The out-of-scope chart family that made the reader decline, when that is
+    /// why it declined.
+    ///
+    /// Reported in its own right because the whole-part row says only that
+    /// `word/charts/chart1.xml` was not modeled; naming `bar3DChart` is the
+    /// difference between that and an answer to "what about my chart did you not
+    /// understand?". The other decline reasons (malformed, over-bound, nothing to
+    /// project) add nothing the part row does not already carry, so they are not
+    /// propagated — `35`'s rule that a finding must describe a loss the reader can
+    /// act on.
+    pub(crate) out_of_scope_family: Option<String>,
 }
 
 /// Reads every chart part a chart node in `body` references, in document order.
@@ -218,24 +229,28 @@ pub(crate) fn build_charts(
             continue;
         };
         let read = read_chart_part(&source.bytes, object, &source.rels, config);
-        if let Some(chart) = read.projection {
-            let id = ChartId::new(
-                ids.next_id()
-                    .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?,
-            );
-            charts.insert(id, chart);
-            parts.push(ChartPartOutcome {
-                part_name,
-                projected: true,
-                unconsumed: read.unconsumed,
-            });
-        } else {
-            parts.push(ChartPartOutcome {
-                part_name,
-                projected: false,
-                unconsumed: read.unconsumed,
-            });
-        }
+        let out_of_scope_family = match &read.declined {
+            Some(ChartDecline::OutOfScopeFamily(family)) => Some(family.clone()),
+            Some(ChartDecline::Malformed | ChartDecline::OverBound(_) | ChartDecline::NothingToProject)
+            | None => None,
+        };
+        let projected = match read.projection {
+            Some(chart) => {
+                let id = ChartId::new(
+                    ids.next_id()
+                        .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?,
+                );
+                charts.insert(id, chart);
+                true
+            }
+            None => false,
+        };
+        parts.push(ChartPartOutcome {
+            part_name,
+            projected,
+            unconsumed: read.unconsumed,
+            out_of_scope_family,
+        });
     }
     Ok(ChartProjections { charts, parts })
 }
@@ -1525,4 +1540,389 @@ fn unsigned(element: &BytesStart<'_>) -> Option<u32> {
 /// A `@val` read as a signed integer.
 fn signed(element: &BytesStart<'_>) -> Option<i32> {
     attribute_value(element, b"val").and_then(|value| value.trim().parse::<i32>().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A node id to anchor a test projection to.
+    fn anchor() -> NodeId {
+        IdGenerator::new(1).next_id().expect("an id")
+    }
+
+    /// Wraps chart-group markup in a minimal `c:chartSpace`.
+    fn chart_space(inner: &str) -> Vec<u8> {
+        format!(
+            r#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea><c:layout/>{inner}</c:plotArea></c:chart></c:chartSpace>"#
+        )
+        .into_bytes()
+    }
+
+    /// A bar group with one series whose values are cached, spelled exactly as
+    /// `fixtures/generated/chart.docx` spells them.
+    const CACHED_BAR: &str = r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:cat><c:strRef><c:f>Sheet1!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart>"#;
+
+    fn read(xml: &[u8]) -> ChartRead {
+        read_chart_part(xml, anchor(), &BTreeMap::new(), ImportConfig::default())
+    }
+
+    fn projection(xml: &[u8]) -> Chart {
+        read(xml).projection.expect("a projection")
+    }
+
+    /// The cached data table, not the formula, is what the projection carries —
+    /// `docs/155` §5.2. A reader that read `c:f` and left the cache behind would
+    /// have no numbers to plot at all, and the only way to get them would be to
+    /// open the workbook, which is the line this programme does not cross.
+    #[test]
+    fn chart_projection_reads_cached_series() {
+        let chart = projection(&chart_space(CACHED_BAR));
+        let group = &chart.plot_area.groups[0];
+        let series = &group.series[0];
+        assert_eq!(series.values.point_count, 2);
+        assert_eq!(
+            series.values.points,
+            vec![
+                (0, ChartValue::Number("4.30".to_owned())),
+                (1, ChartValue::Number("2.5".to_owned())),
+            ],
+            "the numeric cache is the data"
+        );
+        assert_eq!(
+            series.categories.as_ref().expect("cached categories").points,
+            vec![
+                (0, ChartValue::Text("Q1".to_owned())),
+                (1, ChartValue::Text("Q2".to_owned())),
+            ],
+            "a string cache yields text, not numbers"
+        );
+        assert_eq!(
+            series.values.number_format.as_deref(),
+            Some("General"),
+            "c:formatCode belongs to the range it formats"
+        );
+    }
+
+    /// A cached number keeps the producer's spelling, and `as_f64` is the only
+    /// place it becomes a float.
+    ///
+    /// `4.30` and `4.3` are the same number and different documents (`docs/155`
+    /// §8.2). This is the guard that would catch a projection that parsed a value
+    /// into an `f64` and re-rendered it, which no numeric assertion can see.
+    #[test]
+    fn a_cached_number_keeps_its_source_spelling() {
+        let chart = projection(&chart_space(CACHED_BAR));
+        let (_, first) = &chart.plot_area.groups[0].series[0].values.points[0];
+        assert_eq!(
+            first,
+            &ChartValue::Number("4.30".to_owned()),
+            "the trailing zero is part of the document"
+        );
+        assert_eq!(
+            first.as_f64(),
+            Some(4.3),
+            "a consumer still gets the number, through the one helper that parses"
+        );
+        let ChartValue::Number(lexical) = first else {
+            panic!("expected a cached number");
+        };
+        assert_eq!(lexical, "4.30");
+    }
+
+    /// `c:f` survives verbatim and is never interpreted.
+    ///
+    /// The assertion is deliberately on an awkward formula: a sheet name with a
+    /// space and quotes, and a range. Any reader that split on `!`, stripped
+    /// quotes, normalised case or re-rendered the reference would change it.
+    #[test]
+    fn chart_formula_is_carried_but_never_parsed() {
+        let formula = "'Sheet One'!$B$2:$B$3";
+        let xml = chart_space(&CACHED_BAR.replace("Sheet1!$B$2:$B$3", formula));
+        let chart = projection(&xml);
+        assert_eq!(
+            chart.plot_area.groups[0].series[0].values.formula.as_deref(),
+            Some(formula),
+            "the formula is an opaque string, re-emitted exactly"
+        );
+    }
+
+    /// The embedded workbook is a pointer: a relationship id, a relationship type
+    /// and a part name. Never bytes, and nothing opens it (`docs/155` §5.2).
+    #[test]
+    fn the_embedded_workbook_is_a_typed_pointer_only() {
+        let mut rels = BTreeMap::new();
+        rels.insert(
+            "rId3".to_owned(),
+            EmbeddedRel {
+                relationship_type:
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package"
+                        .to_owned(),
+                part_name: "word/embeddings/Microsoft_Excel_Worksheet1.xlsx".to_owned(),
+            },
+        );
+        let xml = format!(
+            r#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea>{CACHED_BAR}</c:plotArea></c:chart><c:externalData r:id="rId3"><c:autoUpdate val="0"/></c:externalData></c:chartSpace>"#
+        );
+        let read = read_chart_part(xml.as_bytes(), anchor(), &rels, ImportConfig::default());
+        let chart = read.projection.expect("a projection");
+        let part = chart.external_data.expect("the workbook pointer");
+        assert_eq!(part.relationship_id, "rId3");
+        assert_eq!(
+            part.part_name,
+            "word/embeddings/Microsoft_Excel_Worksheet1.xlsx"
+        );
+        // `EmbeddedPart` has three string fields and no byte field, so "never
+        // bytes" is a property of the type rather than of this call. What this
+        // asserts is that reading a chart needed no workbook at all: the
+        // projection carries data while this test supplied no `.xlsx`.
+        assert!(!chart.plot_area.groups[0].series[0].values.points.is_empty());
+    }
+
+    /// A combo chart and a secondary axis are the absence of a restriction, not
+    /// features: two groups in one plot area, and a group naming its own axis ids
+    /// (`docs/155` §4.2).
+    #[test]
+    fn a_combo_chart_with_a_secondary_axis_projects_as_two_groups() {
+        let inner = format!(
+            r#"{CACHED_BAR}<c:lineChart><c:grouping val="standard"/><c:ser><c:idx val="1"/><c:order val="1"/><c:val><c:numRef><c:f>Sheet1!$C$2</c:f><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>4</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:marker val="1"/><c:axId val="1"/><c:axId val="3"/></c:lineChart><c:catAx><c:axId val="1"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="1"/></c:valAx><c:valAx><c:axId val="3"/><c:axPos val="r"/><c:crossAx val="1"/></c:valAx>"#
+        );
+        let chart = projection(&chart_space(&inner));
+        assert_eq!(
+            chart.plot_area.groups.len(),
+            2,
+            "a combo chart is two groups"
+        );
+        assert!(matches!(
+            chart.plot_area.groups[0].kind,
+            ChartGroupKind::Bar { .. }
+        ));
+        assert!(matches!(
+            chart.plot_area.groups[1].kind,
+            ChartGroupKind::Line { marker: true, .. }
+        ));
+        assert_eq!(chart.plot_area.groups[1].axis_ids, vec![1, 3]);
+        let axis_ids: Vec<u32> = chart.plot_area.axes.iter().map(|axis| axis.id).collect();
+        assert_eq!(
+            axis_ids,
+            vec![1, 2, 3],
+            "the secondary axis is a third entry"
+        );
+        assert_eq!(chart.plot_area.axes[0].kind, AxisKind::Category);
+        assert_eq!(chart.plot_area.axes[1].kind, AxisKind::Value);
+        assert!(chart.plot_area.axes[1].major_gridlines);
+        assert_eq!(chart.plot_area.axes[2].position, Some(AxisPosition::Right));
+    }
+
+    /// An out-of-scope family yields NO projection. It is preserved and reported
+    /// exactly as it is today (`docs/155` §4.3, §6.2), because a partial
+    /// projection of a 3-D or stock chart would be *drawn wrongly* rather than not
+    /// drawn, which is worse than the placeholder it replaces.
+    #[test]
+    fn out_of_scope_chart_yields_no_projection_and_reports_it() {
+        for family in [
+            "bar3DChart",
+            "line3DChart",
+            "area3DChart",
+            "pie3DChart",
+            "surface3DChart",
+            "surfaceChart",
+            "stockChart",
+            "radarChart",
+            "bubbleChart",
+            "ofPieChart",
+        ] {
+            let inner = format!(r#"<c:{family}><c:ser><c:idx val="0"/></c:ser></c:{family}>"#);
+            let read = read(&chart_space(&inner));
+            assert!(
+                read.projection.is_none(),
+                "{family} must not project: a family outside tier 1 declines whole"
+            );
+            assert_eq!(
+                read.declined,
+                Some(ChartDecline::OutOfScopeFamily(family.to_owned())),
+                "{family} must decline by naming itself, so the report can say which"
+            );
+        }
+    }
+
+    /// Every construct `docs/155` §4.3 puts out of scope produces a finding.
+    ///
+    /// This asserts the **guarantee** — any construct the projection does not
+    /// represent is named — and not the circumstance that some fixture happened to
+    /// raise three findings. It is driven by the §4.3 table rather than by a list
+    /// of what the reader currently happens to skip, which is the only version of
+    /// this test that can fail when a construct stops being reported.
+    ///
+    /// A family that graduates INTO tier 1 must be removed from this table in the
+    /// same change that projects it, which is the intended coupling: the table is
+    /// the out-of-scope list, so it changes when the list does.
+    #[test]
+    fn every_out_of_scope_construct_is_enumerated() {
+        let in_series = [
+            (
+                r#"<c:trendline><c:trendlineType val="linear"/></c:trendline>"#,
+                "trendline",
+            ),
+            (
+                r#"<c:errBars><c:errBarType val="both"/></c:errBars>"#,
+                "errBars",
+            ),
+            (r#"<c:dPt><c:idx val="0"/></c:dPt>"#, "dPt"),
+            (r#"<c:explosion val="25"/>"#, "explosion"),
+            (
+                r#"<c:spPr><a:gradFill><a:gsLst/></a:gradFill></c:spPr>"#,
+                "gradFill",
+            ),
+            (
+                r#"<c:spPr><a:blipFill><a:blip/></a:blipFill></c:spPr>"#,
+                "blipFill",
+            ),
+            (
+                r#"<c:spPr><a:pattFill><a:fgClr/></a:pattFill></c:spPr>"#,
+                "pattFill",
+            ),
+            (
+                r#"<c:spPr><a:effectLst><a:outerShdw/></a:effectLst></c:spPr>"#,
+                "effectLst",
+            ),
+        ];
+        for (markup, expected) in in_series {
+            let inner = CACHED_BAR.replace("</c:ser>", &format!("{markup}</c:ser>"));
+            let read = read(&chart_space(&inner));
+            assert!(
+                read.unconsumed.contains(expected),
+                "{expected} must be named as unconsumed; got {:?}",
+                read.unconsumed
+            );
+            assert_eq!(
+                read.projection.expect("a projection").coverage,
+                ChartCoverage::Partial,
+                "{expected} is a construct the projection does not hold, so coverage is partial"
+            );
+        }
+        for (markup, expected) in [
+            (
+                r#"<c:dTable><c:showHorzBorder val="1"/></c:dTable>"#,
+                "dTable",
+            ),
+            (r#"<c:spPr><a:solidFill/></c:spPr>"#, "spPr"),
+        ] {
+            let inner = format!("{CACHED_BAR}{markup}");
+            let read = read(&chart_space(&inner));
+            assert!(
+                read.unconsumed.contains(expected),
+                "{expected} must be named as unconsumed; got {:?}",
+                read.unconsumed
+            );
+        }
+        // `c:view3D` sits under `c:chart`, beside the plot area.
+        let xml = format!(
+            r#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:view3D><c:rotX val="15"/></c:view3D><c:plotArea>{CACHED_BAR}</c:plotArea></c:chart></c:chartSpace>"#
+        );
+        let read = read(xml.as_bytes());
+        assert!(
+            read.unconsumed.contains("view3D"),
+            "c:view3D must be named; got {:?}",
+            read.unconsumed
+        );
+    }
+
+    /// A chart whose every construct is modeled is `Complete`, which is what
+    /// licenses regeneration. The counterpart of the test above: if everything were
+    /// reported partial the coverage gate would be a constant.
+    #[test]
+    fn a_fully_modeled_chart_is_complete_coverage() {
+        let read = read(&chart_space(CACHED_BAR));
+        assert!(
+            read.unconsumed.is_empty(),
+            "nothing in this chart is outside the projection; got {:?}",
+            read.unconsumed
+        );
+        let chart = read.projection.expect("a projection");
+        assert_eq!(chart.coverage, ChartCoverage::Complete);
+        assert!(
+            chart.coverage.permits_regeneration(),
+            "a complete projection is the only one a writer may regenerate from"
+        );
+    }
+
+    /// A malformed, truncated or non-chart part declines rather than failing.
+    /// `docs/155` §6.1 consequence 3: a projection failure is never a document
+    /// failure. `read_chart_part` returns no `Result`, so this is a property of the
+    /// signature as much as of the body — and the assertion is that each of these
+    /// inputs still produces an answer.
+    #[test]
+    fn a_malformed_chart_part_does_not_fail_the_import() {
+        for (name, xml) in [
+            ("truncated", b"<c:chartSpace><c:chart>".as_slice()),
+            ("not xml at all", b"PK\x03\x04 this is a zip".as_slice()),
+            ("empty", b"".as_slice()),
+            (
+                "a doctype",
+                br#"<!DOCTYPE c:chartSpace><c:chartSpace/>"#.as_slice(),
+            ),
+            (
+                "the wrong root element",
+                br#"<cx:chartSpace xmlns:cx="urn:chartex"><cx:chart/></cx:chartSpace>"#.as_slice(),
+            ),
+        ] {
+            let read = read(xml);
+            assert!(
+                read.projection.is_none(),
+                "{name}: a part that cannot be read must not yield a projection"
+            );
+            assert!(
+                read.declined.is_some(),
+                "{name}: the decline must be stated, not implied"
+            );
+        }
+        // An empty but well-formed chart space is not malformed — it simply holds
+        // no chart to project. The distinction matters because the two get
+        // different report treatment.
+        let read = read(br#"<c:chartSpace xmlns:c="urn:c"/>"#);
+        assert_eq!(read.declined, Some(ChartDecline::NothingToProject));
+    }
+
+    /// A no-op construct raises nothing, and its populated form still does.
+    ///
+    /// Both halves, as `crate::noop`'s header requires: `<c:layout/>` is automatic
+    /// layout and a populated `c:layout` is a manual one this projection does not
+    /// carry. Silencing the populated form would hide a real loss, which is worse
+    /// than the false one the rule removes.
+    #[test]
+    fn a_chart_no_op_is_silent_and_its_populated_form_is_not() {
+        let empty = read(&chart_space(CACHED_BAR));
+        assert!(
+            !empty.unconsumed.contains("layout"),
+            "an empty c:layout is automatic layout, not a loss"
+        );
+        let manual = format!(
+            r#"<c:layout><c:manualLayout><c:x val="0.1"/></c:manualLayout></c:layout>{CACHED_BAR}"#
+        );
+        let read = read(&chart_space(&manual));
+        assert!(
+            read.unconsumed.contains("layout"),
+            "a manual c:layout IS a loss; got {:?}",
+            read.unconsumed
+        );
+    }
+
+    /// A list beyond its `docs/155` §8.4 bound declines instead of building an
+    /// unbounded projection — and still does not fail the import.
+    #[test]
+    fn an_over_bound_chart_declines_rather_than_growing() {
+        let points: String = (0..MAX_CHART_DATA_POINTS + 1)
+            .map(|index| format!(r#"<c:pt idx="{index}"><c:v>1</c:v></c:pt>"#))
+            .collect();
+        let inner = format!(
+            r#"<c:barChart><c:ser><c:idx val="0"/><c:val><c:numRef><c:numCache><c:ptCount val="1"/>{points}</c:numCache></c:numRef></c:val></c:ser></c:barChart>"#
+        );
+        let read = read(&chart_space(&inner));
+        assert!(read.projection.is_none());
+        assert_eq!(
+            read.declined,
+            Some(ChartDecline::OverBound("chart.dataRange.points"))
+        );
+    }
 }

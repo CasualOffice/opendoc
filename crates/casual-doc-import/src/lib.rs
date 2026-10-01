@@ -741,18 +741,30 @@ fn chart_construct_dispositions(
 ) -> Vec<(PartDisposition, String, Disposition, Option<LedgerId>)> {
     let mut entries = Vec::new();
     for outcome in outcomes {
+        let ledger_id = ledger.opaque_part_record(&outcome.part_name);
+        let part = || PartDisposition {
+            part_name: outcome.part_name.clone(),
+            content_type: None,
+        };
         if !outcome.projected {
-            // No projection: the part keeps today's whole-part `omitted` +
-            // `preserved` row, which already says everything true about it.
+            // No projection, so the part keeps today's whole-part `omitted` +
+            // `preserved` row. One construct is still worth naming beside it: the
+            // chart FAMILY that was out of scope, because "we do not model
+            // `bar3DChart`" is information the part row cannot carry and is the
+            // actionable half of the finding.
+            if let Some(family) = &outcome.out_of_scope_family {
+                entries.push((
+                    part(),
+                    family.clone(),
+                    Disposition::OmittedPreserved,
+                    ledger_id,
+                ));
+            }
             continue;
         }
-        let ledger_id = ledger.opaque_part_record(&outcome.part_name);
         for construct in &outcome.unconsumed {
             entries.push((
-                PartDisposition {
-                    part_name: outcome.part_name.clone(),
-                    content_type: None,
-                },
+                part(),
                 construct.clone(),
                 Disposition::DegradedPreserved,
                 ledger_id,

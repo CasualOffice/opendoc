@@ -10011,3 +10011,221 @@ fn collect_anchors(inlines: &[InlineNode], out: &mut Vec<String>) {
         }
     }
 }
+
+// --- the typed chart projection, end to end through a package (`docs/155` §9
+// increments 2 and 3) -------------------------------------------------------
+
+/// The main-document relationship every chart test below resolves through.
+const CHART_REL: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+
+/// A body whose single paragraph holds an inline chart graphic frame.
+const CHART_BODY: &str = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="5486400" cy="3200400"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+
+/// One cached bar series, tier 1 throughout.
+const TIER_ONE_CHART: &[u8] = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+
+/// The same chart plus an out-of-scope `c:trendline`, as the committed
+/// `chart.docx` fixture carries.
+const MIXED_CHART: &[u8] = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val><c:trendline><c:trendlineType val="linear"/></c:trendline></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+
+fn import_with_chart(chart: &[u8]) -> Import {
+    import_bytes(&build_package(
+        CHART_BODY.as_bytes(),
+        CHART_REL,
+        &[("word/charts/chart1.xml", chart)],
+    ))
+}
+
+/// The projection anchors to the `EmbeddedObject` node it describes, and the
+/// chart part's bytes are still in the side-table.
+///
+/// `docs/45` invariant I3: the anchor is a `NodeId`. A projection whose anchor did
+/// not resolve would be a `ModelError`, so the import below also proves validation
+/// accepted it — `Document::new` validates.
+#[test]
+fn a_chart_projection_anchors_to_its_embedded_object_node() {
+    let import = import_with_chart(TIER_ONE_CHART);
+    let object = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::EmbeddedObject(object) => Some(object),
+            _ => None,
+        })
+        .expect("the chart imports as an embedded object");
+    let charts = &import.document.definitions().charts;
+    assert_eq!(charts.len(), 1, "one chart part, one projection");
+    let (_, chart) = charts.iter().next().expect("the projection");
+    assert_eq!(
+        chart.object,
+        object.id,
+        "the projection must name the node it projects"
+    );
+    assert_eq!(
+        chart.plot_area.groups[0].series[0].values.points,
+        vec![
+            (0, casual_doc_model::v1::ChartValue::Number("4.30".to_owned())),
+            (1, casual_doc_model::v1::ChartValue::Number("2.5".to_owned())),
+        ],
+        "the cache is the data, carried verbatim"
+    );
+    // Adding a projection does not stop the part being preserved: the bytes are
+    // still the authority (`docs/155` §6.1).
+    assert!(
+        import
+            .retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == "word/charts/chart1.xml"),
+        "a projected chart part must still be retained byte-for-byte"
+    );
+}
+
+/// A chart the projection understood completely raises NOTHING.
+///
+/// `35`: `mapped` is unreachable in a report by construction, so the whole-part
+/// `omitted` row the chart used to produce is gone rather than restated. Twenty
+/// rows describing no loss is the HF-174 defect; one row claiming a loss that did
+/// not happen is the same defect with a smaller number.
+#[test]
+fn a_fully_projected_chart_part_raises_no_finding() {
+    let import = import_with_chart(TIER_ONE_CHART);
+    assert_eq!(
+        import.document.definitions().charts.len(),
+        1,
+        "the chart must actually have been projected, or this test is vacuous"
+    );
+    let about_the_chart: Vec<&str> = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.feature.starts_with("chart.")
+                || entry.feature == "word/charts/chart1.xml"
+        })
+        .map(|entry| entry.feature.as_str())
+        .collect();
+    assert!(
+        about_the_chart.is_empty(),
+        "a fully understood chart is `mapped` + `preserved`, which doc 35 never \
+         enumerates; got {about_the_chart:?}"
+    );
+    // The preservation record still exists, so the claim stays auditable even
+    // though nothing is enumerated.
+    assert!(
+        import
+            .ledger
+            .records()
+            .iter()
+            .any(|record| record.covers.as_deref() == Some("word/charts/chart1.xml")),
+        "the part is still preserved and the ledger must still say so"
+    );
+}
+
+/// A chart mixing tier 1 with an out-of-scope construct is enumerated **by
+/// construct**, not by part (`docs/155` §6.2).
+///
+/// This is the row that makes the work a fidelity improvement rather than only a
+/// rendering one: before it, a chart with a trendline reported one line about a
+/// whole part; after it, the report names the construct.
+#[test]
+fn a_partly_projected_chart_is_enumerated_by_construct() {
+    let import = import_with_chart(MIXED_CHART);
+    let charts = &import.document.definitions().charts;
+    let (_, chart) = charts.iter().next().expect("a projection");
+    assert_eq!(
+        chart.coverage,
+        casual_doc_model::v1::ChartCoverage::Partial,
+        "an unmodelled construct makes the projection partial"
+    );
+    assert!(
+        !chart.coverage.permits_regeneration(),
+        "a partial projection must not license regeneration (docs/155 §6.1)"
+    );
+
+    let trendline = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "chart.trendline")
+        .expect("the trendline must be named");
+    assert_eq!(
+        trendline.disposition,
+        crate::Disposition::DegradedPreserved
+    );
+    assert_eq!(
+        trendline.location.part_name.as_deref(),
+        Some("word/charts/chart1.xml"),
+        "the finding is charged to the part it was found in"
+    );
+    assert_eq!(trendline.location.element.as_deref(), Some("trendline"));
+    assert!(
+        trendline.ledger_id.is_some(),
+        "a `preserved` claim must cite the record that licenses it"
+    );
+    // And the one-line-about-a-part row it replaces is gone.
+    assert!(
+        !features(&import).contains(&"word/charts/chart1.xml"),
+        "the construct findings replace the whole-part row, not duplicate it: {:?}",
+        features(&import)
+    );
+}
+
+/// An out-of-scope chart family yields no projection, keeps today's whole-part
+/// row, and is additionally named — because "we do not model `bar3DChart`" is
+/// information the part row cannot carry.
+#[test]
+fn an_out_of_scope_chart_family_is_named_beside_its_part_row() {
+    let chart = br#"<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:view3D><c:rotX val="15"/></c:view3D><c:plotArea><c:bar3DChart><c:barDir val="col"/><c:ser><c:idx val="0"/></c:ser></c:bar3DChart></c:plotArea></c:chart></c:chartSpace>"#;
+    let import = import_with_chart(chart);
+    assert!(
+        import.document.definitions().charts.is_empty(),
+        "a 3-D chart declines projection whole (docs/155 §4.3)"
+    );
+    let family = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "chart.bar3DChart")
+        .expect("the declined family must be named");
+    assert_eq!(family.disposition, crate::Disposition::OmittedPreserved);
+    assert!(
+        features(&import).contains(&"word/charts/chart1.xml"),
+        "an unprojected part keeps its whole-part row: {:?}",
+        features(&import)
+    );
+    assert!(
+        import
+            .retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == "word/charts/chart1.xml"),
+        "declining to project must not cost retention"
+    );
+}
+
+/// A malformed chart part does not fail the import, and does not cost the chart
+/// its reference or its bytes (`docs/155` §6.1 consequence 3).
+#[test]
+fn a_malformed_chart_part_does_not_fail_the_package_import() {
+    let import = import_with_chart(b"<c:chartSpace><c:chart>");
+    assert!(
+        import.document.definitions().charts.is_empty(),
+        "no projection from a part that cannot be read"
+    );
+    assert!(
+        paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::EmbeddedObject(_))),
+        "the chart reference must survive a projection failure"
+    );
+    assert!(
+        import
+            .retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == "word/charts/chart1.xml"),
+        "and so must the bytes"
+    );
+}
