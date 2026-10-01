@@ -277,6 +277,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         package(&wrap_text_sides_entries())?,
     )?;
 
+    fs::write(
+        output.join("themed-shape.docx"),
+        package(&themed_shape_entries())?,
+    )?;
+
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((
         "customXml/item1.xml".to_owned(),
@@ -531,6 +536,70 @@ fn note_reference_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
 /// deliberate and it is the point: `155` §5 says we never open it, so a fixture
 /// whose workbook we could parse would be testing something this design promises
 /// not to do. What must hold is that its bytes come back unchanged.
+/// `themed-shape.docx` content types, including the theme part's `Override`.
+///
+/// Word writes that override, so the fixture carries it. It is NOT what makes the part
+/// reachable, though, and the comment here used to claim it was: removing the override
+/// and regenerating leaves the theme resolving perfectly, because discovery is by
+/// RELATIONSHIP TYPE. Breaking the relationship type is what makes the part vanish.
+/// Recorded because the wrong version of this note would have sent the next reader
+/// looking in the wrong place.
+const THEMED_SHAPE_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#;
+
+/// `themed-shape.docx` document relationships: the theme, reachable from the body
+/// part exactly as Word writes it.
+const THEMED_SHAPE_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/></Relationships>"#;
+
+/// `themed-shape.docx` theme part.
+///
+/// The format scheme is deliberately NOT uniform. Entry 1 of each list is the
+/// `a:phClr` case Word's Shape Styles gallery actually writes; entry 2 is a GRADIENT,
+/// which this engine does not model, and it is there so a fixture can prove an
+/// unmodeled entry holds its index rather than shifting entry 3; entry 3 is a colour
+/// the theme fixes itself, which is the one case that must ignore the shape's own
+/// colour. A theme whose entries were all alike could not tell any of those apart.
+const THEMED_SHAPE_THEME: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Fixture"><a:themeElements><a:clrScheme name="Fixture"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fontScheme name="Fixture"><a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="Fixture"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"/></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill><a:solidFill><a:srgbClr val="C0FFEE"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="dash"/></a:ln><a:ln w="12700"><a:gradFill><a:gsLst/></a:gradFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#;
+
+/// `themed-shape.docx` body: three anchored shapes, none of which declares an `spPr`
+/// fill or outline, so the theme is the only possible source of their appearance.
+///
+/// Shape 1 references the `a:phClr` entries and names `accent2`, so a correct
+/// resolution paints orange, not the accent1 a wrong palette index would pick.
+/// Shape 2 references the gradient entry, which must resolve to NOTHING rather than
+/// to a neighbouring solid. Shape 3 references entry 3, whose colour the theme fixes,
+/// so the shape's own `srgbClr` must be ignored.
+const THEMED_SHAPE_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><w:body><w:p><w:r><w:t>Themed shapes.</w:t></w:r><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="10" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Placeholder styled"/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvPr id="2" name="Shape 1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:style><a:lnRef idx="1"><a:schemeClr val="accent2"/></a:lnRef><a:fillRef idx="1"><a:schemeClr val="accent2"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent6"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></wps:style><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="11" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>2743200</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="3" name="Gradient styled"/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvPr id="4" name="Shape 2"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:style><a:lnRef idx="2"><a:schemeClr val="accent1"/></a:lnRef><a:fillRef idx="2"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></wps:style><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="12" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>4572000</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="5" name="Theme-fixed styled"/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvPr id="6" name="Shape 3"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:style><a:lnRef idx="1"><a:schemeClr val="accent3"/></a:lnRef><a:fillRef idx="3"><a:schemeClr val="accent3"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent3"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></wps:style><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+
+fn themed_shape_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            THEMED_SHAPE_DOCUMENT.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            THEMED_SHAPE_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            THEMED_SHAPE_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/theme/theme1.xml".to_owned(),
+            THEMED_SHAPE_THEME.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+    ]
+}
+
 fn chart_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
     vec![
         (
