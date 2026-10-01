@@ -48,6 +48,12 @@ test("the Review tab exposes Word's tracking, changes and comments groups", asyn
     // quotes were the entire content of a `Tools` menu, and the ribbon chrome has
     // no menu bar (docs/122), so they needed a band face.
     "Proofing",
+    // Compare, last, which is where Word keeps it: their Review tab reads
+    // Proofing | Comments | Tracking | Changes | Compare with Compare rightmost.
+    // `docs/153` `review.compare-documents`; the band button, the Review menu's
+    // own Compare band and the left rail are its three faces, and
+    // `compare.spec.mjs` drives the comparison each of them opens.
+    "Compare",
   ]);
   for (const id of [
     "#reviewTrackBtn",

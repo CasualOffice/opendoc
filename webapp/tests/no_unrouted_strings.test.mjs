@@ -140,7 +140,14 @@ const CEILINGS = new Map([
   ["src/command_menu.mjs", 6],
   ["src/command_taxonomy.mjs", 8],
   ["src/compact_toolbar.mjs", 18],
-  ["src/export_commands.mjs", 6],
+  // 6 -> 0. The six `label:` literals naming a format in English are gone: a row
+  // holds its id, icon, keywords and format, and the label is composed at
+  // registry-build time from one catalogue pattern and the ONE name the format
+  // catalogue carries. This ceiling was the reason three shipped writers had no
+  // command at all — three more rows would have put the file at nine, and a
+  // ceiling is paid down rather than raised, so the honest way to add a format
+  // was to stop the file owning any English. MEASURED from the routed file.
+  ["src/export_commands.mjs", 0],
   // The six field-kind labels and their picker notes ("Page number", "Today's
   // date", …). They were six of `main.js`'s 348 and moved here with the table,
   // so this is the same debt relocated, not a new one — main.js came down by
@@ -148,7 +155,12 @@ const CEILINGS = new Map([
   ["src/field_kinds.mjs", 6],
   ["src/fidelity.js", 5],
   ["src/file_pane.mjs", 12],
-  ["src/format_io.mjs", 6],
+  // 6 -> 0, the other half of the same change. Every format's NAME moved from
+  // this frozen table into `format.*` in the catalogue, so the table holds a
+  // `labelKey`, an extension and a media type and no English at all. Nine
+  // formats' names are now translated in eighteen languages, where before none
+  // of them was in any language but English.
+  ["src/format_io.mjs", 0],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
   // 342 → 338 in `109` UX-005: the table-style chooser's "No table style" became

@@ -219,10 +219,19 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("file.new", "new"),
   exact("file.open", "open"),
   exact("file.save", "save"),
+  // Every export writes a file the visitor keeps, so all nine are the one
+  // `download` grant. Whether the ENGINE can write a given format is a different
+  // question and belongs to the registry's `enabled`/`disabledReason` — "not
+  // right now" — which is why `file.export.rtf` is declared here although RTF is
+  // import-only: the host's permission to download is not conditional on which
+  // writers this build happens to register.
   exact("file.export.pdf", "download"),
   exact("file.export.docx", "download"),
+  exact("file.export.dotx", "download"),
   exact("file.export.odt", "download"),
   exact("file.export.rtf", "download"),
+  exact("file.export.html", "download"),
+  exact("file.export.markdown", "download"),
   exact("file.export.text", "download"),
   exact("file.export.json", "download"),
   exact("file.print", "print"),
@@ -316,6 +325,18 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.orientation", "mutate"),
   exact("layout.size", "mutate"),
   exact("layout.columns", "mutate"),
+  // The six breaks. `mutate`, like every other page-setup command: a break
+  // changes the document. Declared EXACTLY rather than as a `layout.break.`
+  // family because the set is closed and knowable — two forced breaks and the
+  // four section start types the engine accepts — and a family is for a roster
+  // generated from the document, the font inventory or markup. An exact row also
+  // makes a host's `commands` list name each break it can drive.
+  exact("layout.break.page", "mutate"),
+  exact("layout.break.column", "mutate"),
+  exact("layout.break.section.nextPage", "mutate"),
+  exact("layout.break.section.continuous", "mutate"),
+  exact("layout.break.section.evenPage", "mutate"),
+  exact("layout.break.section.oddPage", "mutate"),
   exact("layout.indent", "mutate"),
   exact("layout.spacing", "mutate"),
   // Tab stops mutate the paragraph, so they need the same grant the rest of this
@@ -412,6 +433,18 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("review.next", null),
   exact("review.previous", null),
   exact("review.toggle", null),
+  // Comparing changes NOTHING. It opens a panel, reads the document out through
+  // the export path it already has, parses a second document in a throwaway
+  // engine job and lists the differences — `casual-doc-diff`'s facade
+  // "references nothing in the live editing session" and produces a sidecar, not
+  // a merged document. So `null`, for the same reason `file.properties` is null:
+  // the document is already on screen and nothing is being written.
+  //
+  // The FILE route inside the panel is a different question and is gated where it
+  // belongs: the button that opens a file picker is disabled with its reason when
+  // the host withheld `open`, so a host that wanted review without file access
+  // still gets the version-history comparison rather than losing the capability.
+  exact("review.compare", null),
 
   // ---- style --------------------------------------------------------------
   // Both write to the document's style table, so both are mutations. Declared

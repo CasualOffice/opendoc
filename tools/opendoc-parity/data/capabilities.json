@@ -1004,7 +1004,7 @@
         "control": "btnBlankPage"
       },
       "rank": 3,
-      "note": "It depends on page breaks, which are also unreachable."
+      "note": "Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed."
     },
     {
       "id": "page.bookmarks",
@@ -1041,45 +1041,39 @@
       "area": "page",
       "title": "Column break",
       "ours": {
-        "absent": [
-          "insert.columnBreak"
-        ]
+        "command": "layout.break.column"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textInsColumnBreak"
       },
       "rank": 3,
-      "note": "insertBreak('column') exists in the wasm binding with no caller."
+      "note": "`insertBreak('column')` had no caller; it is the second row of the same `Breaks` dropdown now, beside the page break, which is where theirs is (`Toolbar.js:2385`)."
     },
     {
       "id": "page.break.page",
       "area": "page",
       "title": "Page break",
       "ours": {
-        "absent": [
-          "insert.pageBreak"
-        ]
+        "command": "layout.break.page"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textInsPageBreak"
       },
       "rank": 1,
-      "note": "The engine has insertBreak('page') and nothing in webapp/ calls it, so the most-used break in a word processor is unreachable."
+      "note": "Both put it on Insert and both bind Ctrl+Enter. Ours is one `Breaks` dropdown on the Insert band plus a `Breaks` submenu in the Insert menu, so it is reachable in the compact chrome where the ribbon is hidden, and the chord is one row in `keymap.mjs` rather than a second path through the editor's key handler (`docs/104` HF-127). Refused outside the body's own block list by the engine, by name."
     },
     {
       "id": "page.break.section",
       "area": "page",
       "title": "Section break (next page, continuous, even, odd)",
       "ours": {
-        "absent": [
-          "insert.sectionBreak"
-        ]
+        "command": "layout.break.section.nextPage"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textInsSectionBreak"
       },
       "rank": 2,
-      "note": "insertSectionBreak takes all four start types and has no caller, so a document can only ever have the sections it was imported with."
+      "note": "All four start types ship: `layout.break.section.continuous`, `evenPage` and `oddPage` are the other three, each its own command and its own row in the same dropdown theirs uses (`Toolbar.js:2372-2380`). Guarded on the EFFECT: the four are inserted into one document and the `sectionType` each wrote is read back out of a normalized-JSON export, so a chrome that sent one start type four times fails."
     },
     {
       "id": "page.captions",
@@ -3329,9 +3323,15 @@
       "area": "review",
       "title": "Compare two documents",
       "ours": {
-        "absent": [
-          "review.compare"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/compare_documents.mjs",
+              "literal": "runComparison"
+            }
+          },
+          "missing": "the merged THIRD DOCUMENT. Theirs, and Word's, write the differences into a new document as real tracked changes that can be accepted and rejected; `casual-doc-diff` returns a typed sidecar, so ours is a change LIST in a side panel - Google Docs' answer - and the panel says so before a file is picked rather than leaving a reader to discover it. Turning a sidecar into a merged document is a construction with its own questions (who authors a change, what happens to a move) and is not started."
+        }
       },
       "theirs": {
         "gated": {
@@ -3342,7 +3342,7 @@
         }
       },
       "rank": 2,
-      "note": "The engine half exists: crates/casual-doc-diff plus the diffVersions binding in crates/casual-doc-wasm/src/diff.rs. Nothing in the editor calls it, so there is no compare command and no result view."
+      "note": "The engine half was never the gap: `crates/casual-doc-diff` plus `beginVersionDiff` / `step` / `cancel` / `blocksProjected` in `crates/casual-doc-wasm/src/diff.rs` were complete and `webapp/` called none of them, while the version panel disabled Show changes saying the structural diff was not built. `review.compare` now reaches it from the Review band, the Review menu and the left rail, and the version panel's Show changes compares a stored checkpoint with the open document - Word's route and Google Docs' route over one engine call. It runs in slices on the main thread with real progress and a Cancel, because there is no Worker in this tree yet and `diff.rs` says why. Guarded on the EFFECT and on the DIRECTION: a paragraph only this document has must be reported as an addition, which a count cannot check and a swapped comparison would get exactly wrong."
     },
     {
       "id": "review.digital-signature",
@@ -4108,21 +4108,13 @@
       "area": "shell",
       "title": "Save as a Word template (DOTX)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-io/src/dotx.rs",
-              "literal": "DotxAdapter"
-            }
-          },
-          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.dotx`"
-        }
+        "command": "file.export.dotx"
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 4,
-      "note": "ECMA-376 gives a template its own main-part content type and changes nothing else, so this is a `PackageKind` on the existing DOCX writer rather than a second writer. Registered in the built-in registry, so the Save selector offers it; what is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs` for the label, and a `file.export.*` contract row so a host can drive it."
+      "note": "ECMA-376 gives a template its own main-part content type and changes nothing else, so this is a `PackageKind` on the existing DOCX writer rather than a second writer. `file.export.dotx` is the File-menu row that drives it."
     },
     {
       "id": "shell.export-epub",
@@ -4144,21 +4136,13 @@
       "area": "shell",
       "title": "Export as HTML",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-io/src/html.rs",
-              "literal": "HtmlAdapter"
-            }
-          },
-          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.html`"
-        }
+        "command": "file.export.html"
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 3,
-      "note": "Theirs is HTML (Zipped): the markup plus every picture as a sibling file, in an archive a reader unpacks first. Ours is ONE file - pictures as `data:` URLs, the stylesheet inline, nothing referenced off the disk - and it carries merged table cells as `colspan`/`rowspan`, underline, super/subscript, colour, bookmarks as anchors and tracked changes as `<ins>`/`<del>`. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs` for the selector's label, and a `file.export.*` contract row so a host can drive it."
+      "note": "Theirs is HTML (Zipped): the markup plus every picture as a sibling file, in an archive a reader unpacks first. Ours is ONE file - pictures as `data:` URLs, the stylesheet inline, nothing referenced off the disk - and it carries merged table cells as `colspan`/`rowspan`, underline, super/subscript, colour, bookmarks as anchors and tracked changes as `<ins>`/`<del>`. `file.export.html` is the File-menu row that drives it; the name a person picks is Word's, which is Web Page."
     },
     {
       "id": "shell.export-json-snapshot",
@@ -4180,21 +4164,13 @@
       "area": "shell",
       "title": "Export as Markdown",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-io/src/markdown.rs",
-              "literal": "MarkdownAdapter"
-            }
-          },
-          "missing": "a catalogue label and a File-page export row, both in `webapp/`; the Save selector already offers it and names the download `.md`"
-        }
+        "command": "file.export.markdown"
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 3,
-      "note": "A bounded CommonMark writer is registered in the built-in registry, so `availableExportFormats()` offers it and the download takes its name from the artifact's own suggested extension. What is left is one `FORMAT_CATALOG` entry in `webapp/src/format_io.mjs`, without which the Save selector labels the option with the raw format id, and a `file.export.*` contract row so a host can drive it."
+      "note": "A bounded CommonMark writer is registered in the built-in registry and `file.export.markdown` is the File-menu row that drives it, named from the catalogue's `format.markdown` in all eighteen locales. The Save selector labelled the option with the raw format id until that key existed."
     },
     {
       "id": "shell.export-odt",
@@ -4242,13 +4218,21 @@
       "area": "shell",
       "title": "Export as RTF",
       "ours": {
-        "command": "file.export.rtf"
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/export_commands.mjs",
+              "literal": "file.export.rtf"
+            }
+          },
+          "missing": "an RTF writer. `crates/casual-doc-io/src/rtf.rs` declares `can_export: false` and registers no exporter, so the id is absent from `availableExportFormats()` and the File row is disabled carrying that as its reason rather than running an export that throws. RTF IMPORTS fully."
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_DownloadAs"
       },
       "rank": 4,
-      "note": "Their RTF row is FileMenuPanels.js:64."
+      "note": "Their RTF row is FileMenuPanels.js:64. Ours reads RTF and cannot write it, which this row recorded as parity until the writer list was consulted."
     },
     {
       "id": "shell.export-txt",
@@ -5131,16 +5115,21 @@
       "area": "table",
       "title": "Border width and line style",
       "ours": {
-        "absent": [
-          "table.border.width",
-          "table.border.style"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/table_cell_chrome.mjs",
+              "literal": "BORDER_WEIGHTS_EIGHTH_POINTS"
+            }
+          },
+          "missing": "line style. `border_edge` in `crates/casual-doc-wasm` hard-codes the `single` token and no setter takes a style argument, so dashed, dotted and double cannot be authored however the control were drawn - and a permanently dead dropdown is the pattern this tree has just finished removing. The model stores any token, the layout already paints five non-solid patterns and the exporter writes them verbatim, so what is left is one argument in three Rust functions."
+        }
       },
       "theirs": {
         "control": "cmbBorderSize"
       },
       "rank": 2,
-      "note": "Every border we write is hard-coded to 8 eighth-points (1 pt) solid; the engine's setCellBorder and setTableBorder already take a size argument, so the gap is the control. Line style (dashed, double, art) is unreachable on both the UI and the engine side here."
+      "note": "WIDTH now ships, and it is their whole anchor: `cmbBorderSize` offers seven widths and no style, and their advanced table dialog is the same control again. Ours is one pen for the cell presets and the table presets together, which is Word's shape, and it defaults to half a point - the value Word, their `TableSettings` and our own `insertTable` already used, where the chrome used to send one point and silently double the gridlines it had just drawn. Guarded on the EFFECT rather than the control: the width is read back out of a real normalized-JSON export, because the only border read-back the facade offers is a presence bitmask."
     },
     {
       "id": "table.borders-dialog",

@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1464],
-  ["de", 1464],
-  ["es", 1464],
-  ["fr", 1464],
-  ["hi", 1464],
-  ["id", 1464],
-  ["it", 1464],
-  ["ja", 1464],
-  ["ko", 1464],
-  ["nl", 1464],
-  ["pl", 1464],
-  ["pt-BR", 1464],
-  ["ru", 1464],
-  ["tr", 1464],
-  ["uk", 1464],
-  ["vi", 1464],
-  ["zh-Hans", 1464],
-  ["zh-Hant", 1464],
+  ["ar", 1559],
+  ["de", 1559],
+  ["es", 1559],
+  ["fr", 1559],
+  ["hi", 1559],
+  ["id", 1559],
+  ["it", 1559],
+  ["ja", 1559],
+  ["ko", 1559],
+  ["nl", 1559],
+  ["pl", 1559],
+  ["pt-BR", 1559],
+  ["ru", 1559],
+  ["tr", 1559],
+  ["uk", 1559],
+  ["vi", 1559],
+  ["zh-Hans", 1559],
+  ["zh-Hant", 1559],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -253,7 +253,78 @@ const COVERAGE = new Map([
  *  RE-MEASURED from the merged catalogues rather than added to the previous figure.
  *  The old number was measured on 2026-09-25 and the catalogues had gained keys
  *  since without it moving, so 1,391 + 51 would have been wrong and would have
- *  published a floor no locale had ever sat at. */
+ *  published a floor no locale had ever sat at.
+ *
+ *  1,464 -> 1,486 is the FORMAT NAMES. Every format the chrome can offer — nine
+ *  of them — now names itself from `format.*` in the catalogue instead of from an
+ *  English literal in `format_io.mjs`'s frozen table, and the File menu's export
+ *  rows compose `filePane.export.as` around that name. ELEVEN of the twenty-two
+ *  are this change, translated into all eighteen languages in the commit that
+ *  routed them, because a format name is script-side: the Save-as picker builds
+ *  its options with `t()` and has no English in the markup to fall back on, so a
+ *  locale that could not answer one would print `format.docx` in a dropdown.
+ *
+ *  Four of the eleven are the same string in every locale on purpose — PDF, DOCX,
+ *  ODT and Markdown are initialisms and a product name, not words — which is the
+ *  decision `en_strings.mjs` records beside them and the same one this catalogue
+ *  already makes for "GitHub".
+ *
+ *  The other ELEVEN were already translated and were never recorded: the rows
+ *  read 1,464 while the catalogues answered 1,475. A floor cannot notice work
+ *  that was done, so it drifts downwards away from the truth every time a surface
+ *  lands translated without the row being moved — which is why this is MEASURED
+ *  from the merged catalogues and not 1,464 + 11.
+ *
+ *  1,501 -> 1,559 is COMPARE DOCUMENTS (`docs/153` `review.compare-documents`,
+ *  rank 2): the whole Compare panel — its intro, its file chooser, the sentence
+ *  that says the differences are a LIST and not tracked changes, the progress and
+ *  cancellation states, the twelve construct families, the six change kinds, the
+ *  six story names, both refusals, and the Review band's and the rail's labels —
+ *  plus the four LOSS REPORTS the engine aggregates (`FindingCode`) and the
+ *  narrower "no differences in what could be compared", which is what the panel
+ *  says instead of "No differences" when something could not be read. Fifty-eight
+ *  keys, translated into all eighteen languages in the commit that routed them.
+ *
+ *  Forty-eight of the fifty-eight are SCRIPT-side and therefore forced by this gate:
+ *  the panel is built entirely in script and has no English in the markup to fall
+ *  back on, so a locale that could not answer `compare.family.text` would print
+ *  the dotted key where a change count belongs.
+ *
+ *  The twelve family sentences are twelve keys and not one template with a family
+ *  name interpolated, and that is a translation decision rather than a
+ *  convenience: a language that inflects the noun after a number cannot be served
+ *  by "{family}: {count}", and twelve short keys are cheaper than one sentence
+ *  that is wrong in half the catalogues.
+ *
+ *  1,488 -> 1,501 is BREAKS (`docs/153` `page.break.page` rank 1,
+ *  `page.break.section` rank 2): the six break names, the three sentences a
+ *  successful break says, the menu band's name and the dropdown's three ribbon
+ *  strings. Thirteen keys, translated into all eighteen languages in the commit
+ *  that routed them.
+ *
+ *  Only four of the thirteen are forced by this ratchet — the three `break.inserted.*`
+ *  announcements and `menuGroup.breaks` are script-side with no English in the
+ *  markup to fall back on, and a locale that could not answer `menuGroup.breaks`
+ *  would announce a dotted key to a screen reader as the band's name. The other
+ *  nine are markup keys and were translated anyway, because the floor is a floor
+ *  and not a target.
+ *
+ *  Nothing here is identical across locales: unlike the format initialisms, every
+ *  one of these is a real word in every language, and the four section start
+ *  types are where the languages diverge most — Japanese says "from the next
+ *  page" where English says "(next page)", and Russian and Ukrainian say "on the
+ *  current page" for continuous. Those are each locale's own vocabulary for the
+ *  same OOXML `w:type`, taken from what Word and ONLYOFFICE already call them
+ *  there rather than translated from the English.
+ *
+ *  1,486 -> 1,488 is the table border PEN (`docs/153` `table.border-width-style`):
+ *  the line-weight control's visible label and its accessible name. Both are
+ *  markup keys with the English beside them, so this ratchet does not force them
+ *  — they were translated into all eighteen languages anyway, because the floor is
+ *  a floor and not a target. The seven WIDTHS themselves carry no catalogue entry
+ *  at all and deliberately so: they are built with `Intl` from a number and the
+ *  bare unit symbol, so a French reader sees "0,5 pt" rather than a translation of
+ *  "0.5 pt" that could not get the decimal separator right. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];

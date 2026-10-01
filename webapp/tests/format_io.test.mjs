@@ -10,10 +10,18 @@ import {
   downloadNameForFormat,
   ensureDocumentExtension,
   formatInfo,
+  formatLabel,
   isKnownFormat,
 } from "../src/format_io.mjs";
+import { EN_STRINGS } from "../src/en_strings.mjs";
+import { setCatalogue, setLocale } from "../src/i18n.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// A format's name comes out of the catalogue now, so these tests need one
+// installed — the same `EN_STRINGS` the extractor builds `locales/en.json` from.
+setCatalogue("en", { ...EN_STRINGS });
+setLocale("en");
 
 test("format catalog exposes stable labels and extensions", () => {
   assert.deepEqual(formatInfo("org.oasis.opendocument.text"), {
@@ -28,6 +36,77 @@ test("format catalog exposes stable labels and extensions", () => {
   });
 });
 
+// THE DEFECT THIS FILE EXISTS TO PREVENT, now that the name is a key.
+//
+// Markdown, HTML and the Word template shipped in the engine, were registered,
+// worked, appeared in the Save-as picker — and were labelled `text.markdown` and
+// `org.openxmlformats.wordprocessingml.template`, because nothing named them.
+// The owner's report was "i dont see export of other formats", and that is
+// exactly right: a capability that ships with no name is a capability that did
+// not arrive (`SKILL` §9 rule 4 — "built" is not "reachable").
+//
+// So the assertion is BOTH directions. Every format the chrome can name really
+// resolves to a name — a `labelKey` pointing at a key no catalogue answers would
+// put the dotted key itself on screen, which is worse than the raw id — and no
+// format is left without one.
+test("every format in the catalogue resolves to a real name, not a key or an id", () => {
+  const unnamed = [];
+  for (const [formatId, entry] of Object.entries(FORMAT_CATALOG)) {
+    if (!entry.labelKey) unnamed.push(`${formatId} declares no labelKey`);
+    else if (!Object.hasOwn(EN_STRINGS, entry.labelKey)) {
+      unnamed.push(`${formatId}: ${entry.labelKey} is in no string table`);
+    } else if (formatLabel(formatId) === entry.labelKey || formatLabel(formatId) === formatId) {
+      unnamed.push(`${formatId} renders as its ${entry.labelKey === formatLabel(formatId) ? "key" : "id"}`);
+    }
+  }
+  assert.deepEqual(unnamed, []);
+  // The three that had no name at all, asserted by value: this is the line that
+  // changes the day one of them is renamed, and the line that fails if a name is
+  // dropped again.
+  assert.equal(formatLabel("text.markdown"), "Markdown");
+  assert.equal(formatLabel("text.html"), "Web Page");
+  assert.equal(formatLabel("org.openxmlformats.wordprocessingml.template"), "Word Template");
+});
+
+// How a MISSING name degrades, which is a different question from whether one is
+// missing (the guard above) and has to be asked separately.
+//
+// The mutation proof for this change dropped `text.markdown`'s `labelKey` and the
+// Save picker rendered an EMPTY option — `t(undefined)` has no answer, so the
+// dropdown offered a blank row. That is strictly worse than the raw id it
+// replaced: a reader can report "it says text.markdown" and cannot report a row
+// that is not there. Both failure shapes now end at the id.
+test("a format whose name cannot be resolved falls back to its id, never to a blank", () => {
+  const catalogue = { ...EN_STRINGS };
+  delete catalogue["format.markdown"];
+  setCatalogue("en", catalogue);
+  try {
+    // The key is declared on the entry and answered by nothing: `t()` returns the
+    // key, and a dotted key on screen helps nobody.
+    assert.equal(formatLabel("text.markdown"), "text.markdown");
+    assert.equal(formatInfo("text.markdown").label, "text.markdown");
+    assert.notEqual(formatLabel("text.markdown"), "");
+    // A format this build has never heard of, which is the original case and must
+    // keep working: a checkpoint written by a newer build is still downloadable.
+    assert.equal(formatLabel("org.example.formatFromTheFuture"), "org.example.formatFromTheFuture");
+  } finally {
+    setCatalogue("en", { ...EN_STRINGS });
+  }
+});
+
+// An export-only format still needs its extension to behave like every other
+// one, and that is a filename rather than a rendered surface — which is why it
+// is asserted here and not in the browser spec.
+test("the three export-only formats name their files properly", () => {
+  assert.equal(downloadNameForFormat("notes.txt", "md"), "notes.md");
+  assert.equal(downloadNameForFormat("notes.md", "docx"), "notes.docx");
+  assert.equal(downloadNameForFormat("notes.txt", "html"), "notes.html");
+  assert.equal(downloadNameForFormat("notes.html", "docx"), "notes.docx");
+  assert.equal(downloadNameForFormat("notes.docx", "dotx"), "notes.dotx");
+  assert.equal(downloadNameForFormat("notes.dotx", "docx"), "notes.docx");
+  assert.equal(ensureDocumentExtension("notes.md", "docx"), "notes.md");
+});
+
 // The media types in `FORMAT_CATALOG` are a copy of the engine's, kept for the
 // one caller that has bytes and no artifact: a version downloaded out of the
 // checkpoint store (`docs/139` VH-007). A copy drifts, so this reads the
@@ -40,7 +119,10 @@ test("format catalog exposes stable labels and extensions", () => {
 const RUST_MIME = Object.freeze({
   "application.pdf": ["crates/casual-doc-io/src/pdf.rs", "PDF_MIME"],
   "org.openxmlformats.wordprocessingml.document": ["crates/casual-doc-io/src/docx.rs", "DOCX_MIME"],
+  "org.openxmlformats.wordprocessingml.template": ["crates/casual-doc-io/src/dotx.rs", "DOTX_MIME"],
   "org.casualoffice.normalized-json": ["crates/casual-doc-io/src/normalized_json.rs", "JSON_MIME"],
+  "text.markdown": ["crates/casual-doc-io/src/markdown.rs", "MARKDOWN_MIME"],
+  "text.html": ["crates/casual-doc-io/src/html.rs", "HTML_MIME"],
   "text.plain": ["crates/casual-doc-io/src/text.rs", "TEXT_MIME"],
   "org.oasis.opendocument.text": ["crates/casual-doc-odf/src/package.rs", "ODT_MIME"],
   "application.rtf": ["crates/casual-doc-rtf/src/lib.rs", "RTF_MIME"],
@@ -50,8 +132,13 @@ test("every format's media type is the one the engine writes on its artifact", (
   const drift = [];
   for (const [formatId, [path, constant]] of Object.entries(RUST_MIME)) {
     const source = readFileSync(join(REPO, path), "utf8");
+    // `\s*` after the `=`, because a long media type is wrapped onto the next
+    // line by rustfmt — `DOTX_MIME` is, and a regex that required the value on
+    // the same line would have reported the engine as no longer declaring the
+    // constant at all. A guard that cannot read half its own inputs is a guard
+    // that passes for the wrong reason.
     const declared = new RegExp(
-      `(?:pub )?const ${constant}: &str = "([^"]+)"`,
+      `(?:pub )?const ${constant}: &str =\\s*"([^"]+)"`,
     ).exec(source);
     assert.ok(declared, `${path} no longer declares ${constant}`);
     const ours = FORMAT_CATALOG[formatId]?.mime;
@@ -131,6 +218,7 @@ test("RTF is a named format, and a .rtf name is rewritten rather than appended t
     extension: "rtf",
     mime: "application/rtf",
   });
+  assert.equal(formatLabel("application.rtf"), "Rich Text Format");
   assert.equal(downloadNameForFormat("report.rtf", "docx"), "report.docx");
   assert.equal(downloadNameForFormat("report.rtf", "odt"), "report.odt");
   assert.equal(ensureDocumentExtension("report.rtf", "docx"), "report.rtf");

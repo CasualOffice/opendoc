@@ -27,7 +27,7 @@
 // | A ⋮ menu on every entry carrying that entry's actions | same | — (see "The row actions" below: this row USED to read "an action bar below the list", and that difference is what the owner rejected) |
 // | Restore also offered prominently while previewing | on the preview bar, beside "Back to current" | — |
 // | Restore this version, current state kept as a version | same | Docs restores without confirming; this asks once, because the confirmation is where the reader is TOLD their current work is kept — see `confirmRestore` |
-// | "Show changes" diff toggle | present and disabled, with the reason | the structural diff is `docs/140` H3 and is not built. SKILL §10: a command that does not exist yet ships disabled with a reason, never as a button that does nothing |
+// | "Show changes" diff toggle | present and LIVE: it compares this version with the document on screen and lists the differences in the Compare panel | Docs paints its differences into the preview; ours lists them beside it, because `casual-doc-diff` returns a typed sidecar and not a merged document, and the Compare panel says so rather than implying otherwise. The head row refuses with a reason, because comparing the current state with itself reports nothing |
 // | Make a copy | same, and it replaces the document in the tab | Docs opens the copy as a NEW file in Drive and leaves yours alone. There is no document manager here, so the copy arrives where the reader is — which is a real difference and is therefore CONFIRMED, and the current document becomes a version of its own first so nothing is left in neither place |
 // | Download this version | same | the bytes are the checkpoint's, handed over unchanged; see `downloadVersion` for why that is the whole point |
 //
@@ -87,7 +87,7 @@
 //   Name            the row menu, and **F2** on the focused row
 //   Delete          the row menu, and **Delete** on the focused row
 //   Keep            the row menu, and the row's right-click / Shift+F10 menu
-//   Show changes    the same pair, both disabled with the reason
+//   Show changes    the same pair, live on every row but the head
 //   Clear history   the panel footer (it acts on the timeline, not on a row)
 //
 // F2 and Delete are the two keys a list carries everywhere, and they are
@@ -236,6 +236,12 @@ export function createVersionHistory({
   confirm,
   promptName,
   onOpenChange = () => {},
+  // Google Docs' "Show changes", handed the checkpoint's bytes and its label.
+  // Optional, and that is not laziness: `version_panel.test.mjs` builds this
+  // module without a comparison surface, and a row that assumed one would make
+  // every such caller throw instead of seeing the row disabled with its reason —
+  // which is also exactly what a host that withheld the capability gets.
+  showChanges = null,
   storeOptions = {},
 }) {
   const panel = document.getElementById("versionPanel");
@@ -766,7 +772,9 @@ export function createVersionHistory({
    *
    * Every row that cannot run says WHY, exactly as the bar this replaced did:
    * the head is not restorable and not deletable because it is the document,
-   * and Show changes is `docs/140` H3 and is not built.
+   * and Show changes is refused on the head because the head IS the document on
+   * screen. (It used to say Show changes "is not built" — the diff was built the
+   * whole time and the PANEL was not; `compare_documents.mjs` is it now.)
    */
   function rowMenuEntries(row) {
     const id = row.versionId;
@@ -822,12 +830,25 @@ export function createVersionHistory({
         run: () => void queue(() => setPinned(id, !row.pinned)),
       },
       {
+        // Google Docs' "Show changes": this version against the document on
+        // screen. It is LIVE now, and the row's old reason — that the structural
+        // diff "is not built yet" — was wrong about which half was missing:
+        // `crates/casual-doc-diff` and `crates/casual-doc-wasm/src/diff.rs` were
+        // both complete and `webapp/` called neither. What was missing was the
+        // panel, and `compare_documents.mjs` is it.
+        //
+        // Refused on the HEAD row, because the head IS the document on screen and
+        // comparing it with itself would report no differences and teach the
+        // reader nothing. Refused without a host that granted the comparison, for
+        // the reason the copy and download rows are.
         id: "version.changes",
         group: "edit",
         label: t("versionPanel.showChanges"),
-        enabled: false,
-        disabledReason: t("versionHistory.action.showChangesUnavailable"),
-        run: () => {},
+        enabled: !isHead && typeof showChanges === "function",
+        disabledReason: isHead
+          ? t("versionHistory.headNotComparable")
+          : t("versionHistory.action.showChangesUnavailable"),
+        run: () => void queue(() => showChangesFor(id)),
       },
       {
         id: "version.delete",
@@ -1190,6 +1211,40 @@ export function createVersionHistory({
    * explicit act. It never touches the live document and never walks the
    * timeline.
    */
+  /**
+   * Show changes: this version against the document on screen.
+   *
+   * Reads the checkpoint and hands the bytes to the comparison surface. Nothing
+   * about the live document is touched — a comparison is two byte arrays, and
+   * `casual-doc-diff`'s facade references nothing in the editing session — so
+   * this is as safe as a download and is gated the same way, except that it
+   * writes no file and therefore needs no `download` grant.
+   *
+   * The checkpoint is read on EVERY invocation rather than cached. A cached
+   * checkpoint would be a second copy of a multi-megabyte document held for a
+   * panel nobody may open again, and reading it is one store round trip on an
+   * explicit act.
+   *
+   * Complexity: O(version bytes) for the read; the comparison itself is the
+   * engine's and is driven in slices by the surface that received the bytes.
+   */
+  async function showChangesFor(versionId) {
+    if (typeof showChanges !== "function") {
+      return void publish(t("versionHistory.action.showChangesUnavailable"), "error");
+    }
+    const ready = await ensureStore();
+    const row = rows.find((candidate) => candidate.versionId === versionId);
+    if (!ready || !row) return;
+    const loaded = await ready.readCheckpoint(row.checkpointId);
+    if (!loaded.ok) return void report(loaded);
+    // Named by WHEN it was, not by its file name: every version of a document
+    // shares one file name, so "opendoc-demo.docx" on a comparison against a
+    // version would tell the reader nothing about which version they are looking
+    // at. The timestamp is the only thing that distinguishes them, and it is
+    // formatted in the reader's own locale by the same helper the rows use.
+    showChanges(loaded.bytes, versionRowText(row, { isHead: false }).timestamp);
+  }
+
   async function downloadVersion(versionId) {
     if (!allows("download")) return void publish(t("capability.notGranted"), "error");
     const ready = await ensureStore();

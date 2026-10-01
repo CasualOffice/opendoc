@@ -20,10 +20,19 @@ pages are not cited anywhere below; every claim is `file:line` into one of:
 
 Our side is cited into this repository. **A control existing is not a feature working**
 (`SKILL.md` §9.4), so every "we have this" claim below names where the command is *declared*
-and — where it matters — whether it is `enabled` or ships disabled-with-a-reason. Three of our
-ribbon controls ship **permanently** disabled with a reason, through the `requires: "missing"`
-contract, and are marked as such rather than counted as present: `layout.arrange.bringForward`,
-`reference.tableOfContents`, `reference.updateFields` (§10).
+and — where it matters — whether it is `enabled` or ships disabled-with-a-reason.
+
+**CORRECTED 2026-10-01: no ribbon control ships permanently disabled any more.** This paragraph
+used to name three — `layout.arrange.bringForward`, `reference.tableOfContents` and
+`reference.updateFields` — as permanently disabled through the `requires: "missing"` contract.
+All three are live, and `requires: "missing"` now appears **zero** times in `webapp/src/`
+(the machinery survives in `ribbon_surface.mjs` for the next such case and no row uses it).
+Each is gated on a real precondition, which is the never-a-dead-control contract working
+rather than a gap: `bringForward` on `requires: "object"`, `tableOfContents` on
+`requires: "bodyCaret"`, `updateFields` on `requires: "tocField"`. §10 and the three rows
+below carry the detail, and `SKILL` §9 rule 6 is why this is corrected rather than left:
+understating is also false, and a reason left standing after the gap it describes has closed
+is the same lie as a claim that is too generous.
 
 **Our side is cited by grep anchor, not by line number, and that is a correction.** The first
 draft of this document cited `webapp/src/main.js` by line in about thirty places. `main.js` is
@@ -406,7 +415,7 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 | **Hyphenation** (none / auto / custom) | `:1540-1572`; engine is complete — `sdkjs/word/Editor/Paragraph/TextHyphenator.js`, breaker `Paragraph_Recalculate.js:4335`, painted `RunContent/Text.js:405` | — | **Absent** · needs **engine** — FID-L-02 / OO-006 |
 | indent left/right, spacing before/after spinners | `:694-783` | `layoutIndentFieldsBtn`, `layoutSpacingFieldsBtn` | **Present** |
 | Wrapping (8 modes + edit wrap boundary) | `:2336-2337`, menu `:2544-2606` | `layout.arrange.wrap` → object inspector | **Reachable** — no wrap-boundary editor |
-| **Bring Forward / Send Backward** (front/forward, back/backward) | `:1655-1678`, menus `:2395-2419` | `layout.arrange.bringForward` **ships disabled** — `main.js`, `id: "layout.arrange.bringForward"`, reason *"needs a z-order operation the engine does not expose yet"* | **Absent** · needs **engine** — §4.5 |
+| **Bring Forward / Send Backward** (front/forward, back/backward) | `:1655-1678`, menus `:2395-2419` | **LIVE** (corrected 2026-10-01) — `object_arrange_commands.mjs`, `command: "layout.arrange.bringForward"`, `requires: "object"`, over `setObjectZOrder` in `crates/casual-doc-wasm/src/objects.rs`. `sendBackward`, `bringToFront`, `sendToBack`, `group` and `ungroup` are declared beside it. This row read *ships disabled … needs a z-order operation the engine does not expose yet*; the operation exists | **Parity** on z-order · align and distribute still absent — §4.5 |
 | **Align** (6 alignments + distribute h/v + align to page / margin / objects) | `:1619-1629`, menu `:2459-2494` | — | **Absent** · needs **engine** — §4.5 |
 | **Group / Ungroup** | `:1631-1641`, menu `:2529-2539` | — | **Absent** · needs **engine** — §4.5 |
 | **Merge Shapes** (union, combine, fragment, intersect, subtract) | `:1643-1653`, menu `:2497-2526` | — | **Absent** · needs **engine** |
@@ -419,7 +428,7 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 
 | Theirs | file:line | Ours | Verdict |
 | --- | --- | --- | --- |
-| **Table of Contents** (2 previews + settings + remove) | `Links.js:172-174`, menu `:289-297` | `reference.tableOfContents` **ships disabled** — `main.js`, `id: "reference.tableOfContents"` | **Absent** · needs **engine** — OO-001 |
+| **Table of Contents** (2 previews + settings + remove) | `Links.js:172-174`, menu `:289-297` | **LIVE** (corrected 2026-10-01) — `main.js`, `command: "reference.tableOfContents"`, `requires: "bodyCaret"` because `insertTableOfContents` refuses a caret outside the body as Word does. `table-of-contents.spec.mjs` drives it and asserts the entry reaches the document. This row read *ships disabled* | **Partial** — insertion ships; their style gallery, settings and Remove do not — OO-001 |
 | **Add Text** (don't show in TOC / level *n*) | `Links.js:197-209`, built `:441-460` | — | **Absent** · needs **engine** — part of OO-001 |
 | **Update Table** (all / page numbers only) | `Links.js:183-194`, menu `:313-318` | — | **Absent** · needs **engine** — part of OO-001 |
 | Footnote / Endnote, **convert to endnotes / to footnotes / swap**, **delete all notes**, **note settings**, go-to next/prev note | `Links.js:175-177`, menu `:332-398` | `insert.footnote`, `insert.endnote` | **Weaker** · needs **facade + engine** — §4.6 |
@@ -429,7 +438,7 @@ templates shipped in #596/#542. Recent files, Protect and History are the remain
 | Cross-reference | `Links.js:236-245` | `reference.crossReference` (`main.js`, in `REFERENCE_SURFACE`) | **Present** — shipped |
 | **Table of Figures** + its Update | `Links.js:248-257`, `:260-269` | — | **Absent** · needs **engine** — OO-001 |
 | — | — | `reference.updateCaptionNumbers` (`main.js`, in `REFERENCE_SURFACE`) | **Ahead** — they renumber on field update, we offer it explicitly |
-| — | — | `reference.updateFields` **ships disabled** (`main.js`, `requires: "missing"`) | — |
+| — | — | **LIVE** (corrected 2026-10-01) — `main.js`, `command: "reference.updateFields"`, `requires: "tocField"`, so it is offered once the document carries a generated contents field and says `toc.noneToUpdate` before that. Word's two modes are commands of their own, `reference.updateToc.pageNumbers` and `reference.updateToc.entire`. This row read *ships disabled … `requires: "missing"`* | — |
 
 ### 2.6 Review (ours) vs Collaboration (theirs) — theirs 16, ours 15
 
@@ -605,12 +614,31 @@ distribute horizontally/vertically + align-to page / margin / objects
 (`Toolbar.js:1619-1629`, menu `:2459-2494`), Group / Ungroup (`:1631-1641`), Merge Shapes
 with 5 boolean operations (`:1643-1653`).
 
-Ours: `layout.arrange.bringForward` is declared and **ships disabled with a reason**
-(`main.js`, `id: "layout.arrange.bringForward"`) — *"`objectOrder()` READS paint order; nothing writes it, and there is
-no z-order op in the wasm facade"*. There is no align, distribute, group or merge command at
-all; `object.selectNext` / `object.selectPrevious` (`main.js`, `id: "object.selectNext"` / `id: "object.selectPrevious"`) are the only
-object commands outside the inspector. `SetGroupGeometry` exists
-(`casual-doc-edit/src/lib.rs:517`) so groups can be *resized*, not *formed*.
+Ours, **corrected 2026-10-01**. This paragraph read: *`layout.arrange.bringForward` is declared
+and ships disabled with a reason — "`objectOrder()` READS paint order; nothing writes it, and
+there is no z-order op in the wasm facade". There is no align, distribute, group or merge command
+at all … `SetGroupGeometry` exists so groups can be resized, not formed.* Two of those three
+sentences are now false.
+
+**Z-order ships.** `setObjectZOrder` is in `crates/casual-doc-wasm/src/objects.rs` and
+`object_arrange_commands.mjs` declares all four commands over it —
+`layout.arrange.bringForward`, `sendBackward`, `bringToFront`, `sendToBack` — each
+`requires: "object"`. `object-arrange.spec.mjs` asserts the page really repaints when a shape
+is restacked, and that an in-line object is refused with the reason.
+
+**Group and ungroup ship.** `layout.arrange.group` and `layout.arrange.ungroup` are declared
+beside them, over `groupObjects` / `ungroupObject` / `canGroupObjects`, so groups can be formed
+and not only resized.
+
+**Rotation and flip ship**, which this section did not claim either way:
+`layout.arrange.rotateRight`, `rotateLeft`, `flipHorizontal` and `flipVertical`, over
+`setObjectRotation` / `setObjectFlip`, reachable from the object chip's rotate menu, the
+properties inspector's numeric field and a drag handle.
+
+**Still absent:** align (the six, plus align-to page / margin / objects), distribute, and Merge
+Shapes' five boolean operations. There is no align or distribute command of any kind, which is
+what `docs/153` files as `object.align-objects`, `object.align-to-page-margin` and
+`object.distribute`.
 
 ### 4.6 Note management — facade + UI
 
@@ -747,8 +775,12 @@ exported `casual-doc-export/src/semantic.rs:7933-7934`.
   *evaluate* far fewer: `PAGE` and `NUMPAGES` recompute at pagination
   (`casual-doc-layout/src/text.rs:346-353`, `flow.rs:4287-4289`) and `SEQ` renumbers on the
   caption path (`casual-doc-edit/src/references.rs:711`, `:744`); everything else is
-  passthrough from the producer's cached result. `reference.updateFields` ships disabled for
-  exactly this reason (`main.js`, `requires: "missing"`).
+  passthrough from the producer's cached result. **Corrected 2026-10-01:** this sentence read
+  *`reference.updateFields` ships disabled for exactly this reason* and it no longer does. The
+  command is live on `requires: "tocField"`, and it updates the CONTENTS field specifically —
+  Word's two modes, page numbers only or the entire table, are `reference.updateToc.pageNumbers`
+  and `reference.updateToc.entire`. The field-recomputation gap above is unchanged and is still
+  RM-01; what changed is that it is no longer the reason a control is dark.
 
 The honest framing is: **they recognise 16 field instructions and evaluate them; we classify
 10 and recompute 3.** RM-01 is still the right work; its justification is not.
@@ -862,14 +894,14 @@ already do.
 
 | # | Gap | Needs | Existing row |
 | ---: | --- | --- | --- |
-| 1 | **Insert a page break** (and column break, and section break with 4 kinds) | **engine** — no break-insert operation exists among the 50; `BreakKind` is already modelled — then facade, then UI | **new** |
+| 1 | ~~**Insert a page break** (and column break, and section break with 4 kinds)~~ **CLOSED 2026-10-01** | This row read "**engine** — no break-insert operation exists among the 50". That was already wrong when it was written, or became so soon after: `insertBreak` and `insertSectionBreak` were both in the facade with their own refusals and engine tests, and nothing in `webapp/` called either — the whole gap was the chrome. Six commands now ship (`layout.break.page`, `layout.break.column` and the four `layout.break.section.*`) on one Insert-band dropdown, an Insert-menu submenu and Ctrl/Cmd+Enter | closed; `docs/153` `page.break.page` / `page.break.section` / `page.break.column` are Parity, and `page.blankPage` is narrowed to the two-breaks-in-one-step command it still needs |
 | 2 | **Show formatting marks** (¶, space dot, tab arrow, page-break rule) + hidden table borders | **engine** — a display-list layer; then UI + a chord | **new** |
-| 3 | **Table of contents and table of figures**, with Add Text and Update Table | engine (paragraph-spanning `TOC` field) + UI | OO-001 (open; control already ships disabled) |
+| 3 | **Table of figures**, and Add Text — the contents table itself, and Update Table, LANDED (corrected 2026-10-01) | UI for Add Text; references collection for the figure table | OO-001 (narrowed: `reference.tableOfContents` and `reference.updateFields` are live, so the remaining gap is the figure table, the style gallery, the settings dialog and Remove) |
 | 4 | **Paragraph direction LTR/RTL** | **facade + UI only** — the operation already carries `bidi` | **new** — and we ship `ar.json` |
 | 5 | **Hyphenation** | engine (line breaker) + UI | FID-L-02, OO-006 |
 | 6 | **Section/page properties with no UI** — now only **gutter position, mirror margins, page borders, page colour**. Header/footer distance, gutter, page vertical alignment and page numbering format + start-at all **shipped** while this document was being written (§4.4) | **facade + UI** for page colour (the model setter exists, no WASM export does); **engine op field** for page borders; **model + UI** for gutter position; **UI** for mirror margins over the existing document setting | the header/footer half landed; **new** for the four that remain |
 | 7 | **Advanced character formatting**: small caps, all caps, character spacing, character position | **engine** — `FormatDelta` carries none of the four — then facade, then UI. All four already lay out | **new** (distinct from OO-021's ligature clause) |
-| 8 | **Object arrangement**: z-order, align (6), distribute (2), align-to page/margin/objects, group/ungroup | **engine** (no z-order or group operation) + UI. `layout.arrange.bringForward` already ships disabled with this reason | **new** |
+| 8 | **Object arrangement**: align (6), distribute (2), align-to page/margin/objects, and Merge Shapes. Z-ORDER, GROUP/UNGROUP and ROTATE/FLIP LANDED (corrected 2026-10-01) | **UI + facade** for align and distribute; the engine op is the question Merge Shapes raises. The "no z-order or group operation" this row claimed is wrong: `setObjectZOrder`, `groupObjects`, `ungroupObject`, `setObjectRotation` and `setObjectFlip` all exist and all have commands | **new** (narrowed) |
 | 9 | **Word count dialog and selection-scoped counts** | UI only — `documentStats` already exposes words/characters/paragraphs (`main.js`, `documentStats`) | HF-051 / OO-015 |
 | 10 | **Recent files** | UI + a host storage contract | OO-002 remainder, RM-03 |
 | 11 | **Note management**: convert to endnotes/footnotes, swap, delete all notes, note settings, go-to next/previous note | facade (delete-all; `RemoveNote` exists) + engine (convert/swap) + UI | **new** |
@@ -939,7 +971,7 @@ work.
 | OO-025 | Audit | P3 | S | Section properties still with no UI after the header-and-footer lane landed: **gutter position and mirror margins only**. Header/footer distance, gutter, page vertical alignment and page numbering format + start-at all shipped — re-check §4.4 before filing, because this row shrank twice in one day | 6 |
 | ~~OO-026~~ | — | — | — | **Withdrawn — already filed as `HF-193`** (PR #641): page borders are modelled, imported, laid out, painted *and* exported with no UI at all. The finding stands and this document's §4.4 and §5.4 are its competitive half — ONLYOFFICE has no page-borders dialog either, so this is a **lead**, not parity, and one of the cheapest wins on the board. Do not file a second row | 6 |
 | OO-027 | Audit | P2 | M | `FormatDelta` cannot carry small caps, all caps, character spacing or character position, all four of which already lay out | 7 |
-| OO-028 | Audit | P2 | M | No object arrangement: no z-order operation (so `layout.arrange.bringForward` ships disabled), no align, no distribute, no group/ungroup | 8 |
+| OO-028 | Audit | P2 | M | **Narrowed 2026-10-01.** Read: "no object arrangement: no z-order operation (so `layout.arrange.bringForward` ships disabled), no align, no distribute, no group/ungroup". Z-order, group/ungroup and rotate/flip all ship with commands and specs; what remains is align, distribute and align-to page/margin/objects | 8 |
 | OO-029 | Audit | P2 | S | Notes can be inserted and nothing else — no convert to endnote/footnote, no swap, no delete-all, no note settings, no go-to next/previous note | 11 |
 | OO-030 | Audit | P2 | S | Comments have only the current scope — no "resolve mine", "resolve all", "remove mine" or "remove all", while changes already have both scopes | 14 |
 | ~~OO-031~~ | — | — | — | **Withdrawn — already filed as `HF-192`** (PR #641), with the lossless deep-copy helper it waits on as `HF-191`. "A section's header/footer cannot be unlinked from the previous section" is real, but it is designed in `docs/129-LINK-TO-PREVIOUS-DESIGN.md` and the control already ships disabled with that reason. Filing it again would duplicate, and the first draft's effort estimate would have been wrong: the blocker is a lossless deep clone, not a facade call | 15 |
@@ -1037,11 +1069,27 @@ generator derives, today` — and regenerating returned it to 10/10. `npm run te
   `object.selectPrevious` by design (Tab and Shift+Tab *are* the affordance), and
   `review.acceptAtCaret` / `review.rejectAtCaret`, which are the recorded gap HF-190 — we
   have the Accept/Reject faces and no split-button dropdown behind them.
-- **Disabled controls, corrected.** The first draft said "five ... three permanently, two on
-  selection". The probe reports **13** controls disabled in the measured state, of which **3**
-  are permanent: `layout.arrange.bringForward`, `reference.tableOfContents` and
-  `reference.updateFields`, via the `requires: "missing"` contract (`main.js`,
-  `requires: "missing"` — three occurrences, one per control). The other ten are
+- **Disabled controls, corrected TWICE.** The first draft said "five ... three permanently, two
+  on selection". The second said **13** disabled in the measured state, of which **3** were
+  permanent — `layout.arrange.bringForward`, `reference.tableOfContents` and
+  `reference.updateFields`, via the `requires: "missing"` contract, "three occurrences, one per
+  control".
+
+  **That is now wrong on both halves (2026-10-01).** `requires: "missing"` appears **zero**
+  times in `webapp/src/`: no row uses it, and the machinery is kept in
+  `ribbon_surface.mjs:31` and `:50` for the next case rather than because there is one. All
+  three of those controls are live and state-gated —
+  `layout.arrange.bringForward` on `requires: "object"` over `setObjectZOrder`,
+  `reference.tableOfContents` on `requires: "bodyCaret"` because the engine refuses a contents
+  field outside the body as Word does, `reference.updateFields` on `requires: "tocField"` —
+  and `table-of-contents.spec.mjs`, `object-arrange.spec.mjs` and
+  `layout-references-surface.spec.mjs` each drive one and assert the document moved. The count
+  of **13** is a measurement of a tree three of these controls have since left, so it is not
+  restated here: it would be a derived number quoted from memory, which is the defect this
+  section exists to correct. `SKILL` §9 rule 6 — understating is also false, and a reason left
+  standing after its gap closed is the same lie as an overstatement.
+
+  The other ten were, and still are,
   **state-dependent and correct**: `edit.redo` (nothing to redo), `paragraph.list.restart` and
   `paragraph.list.continue` (caret not in a list), `layout.arrange.wrap` and
   `layout.arrange.position` (no object selected), `reference.updateCaptionNumbers` (nothing
