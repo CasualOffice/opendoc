@@ -171,7 +171,7 @@ impl Seq {
 /// increment carries no token, so "the identity it was issued to" is
 /// [`Join::identity`] — doc 152 §9 records the host-signed grant as the next increment's
 /// work, and §5.5 records why the key alone must never be enough.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ResumeKey(String);
 
 impl ResumeKey {
@@ -200,7 +200,7 @@ impl ResumeKey {
 /// rather than used alone: otherwise anyone holding a valid session could adopt another
 /// participant's [`ClientId`] and have that participant's submissions suppressed as
 /// duplicates.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Identity(String);
 
 impl Identity {
@@ -251,7 +251,7 @@ pub struct Submission {
 }
 
 /// A client's opening message. **Nothing else is accepted before it.**
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct Join {
     /// The version this client speaks, compared for equality with [`PROTOCOL_VERSION`].
     pub protocol: u32,
@@ -262,7 +262,7 @@ pub struct Join {
 }
 
 /// What a reconnecting client offers so the server can recognise it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct Resume {
     /// The key this client presented on its previous join.
     pub key: ResumeKey,
@@ -271,7 +271,7 @@ pub struct Resume {
 }
 
 /// Client to server.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub enum ClientMessage {
     /// The opening message.
     Join(Join),
@@ -301,7 +301,7 @@ pub struct Arrival {
 }
 
 /// Server to client.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub enum ServerMessage {
     /// A first join: the participant's identity and where the document is.
     Welcome {
@@ -385,7 +385,7 @@ pub enum ServerMessage {
 /// saved, copy your work out*. The sibling engine answered an unparseable message with
 /// `CannotMerge` — naming the transform, the one part that was working — and lost a live
 /// debugging session to it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Refusal {
     /// The two ends do not speak the same protocol. Always terminal.

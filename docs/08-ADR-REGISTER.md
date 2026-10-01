@@ -2469,6 +2469,72 @@ costed against a fallback that does not exist.
   with the collaboration-module list, which is the point of the list.
 
 
+## ADR-058 — The relay is a workspace member under `server/`, and its durability is a checkpoint plus a write-ahead tail
+
+- **Status:** Accepted, implemented. Transport is std-only by deliberate choice, below.
+- **Date:** 2026-10-02.
+- **Context:** `107` 6.1 (durability) and 6.6 (the relay binary). Both were blocked on the byte
+  codec, which was blocked on the operation shapes; ADR-056 and ADR-057 cleared both.
+- **Decision 1: `server/`, not `crates/`.** **No mandatory server** is a structural property of
+  this project rather than a preference (`10`, `AGENTS.md`), and a relay that `crates/` *could*
+  depend on is a relay that becomes required by accident, one `use` at a time. So the direction
+  of the dependency is a build-level fact: `server/` sees the engine and the engine cannot see
+  `server/`. `nothing_under_crates_depends_on_the_relay` reads the **manifests**, because a
+  `path` dependency is how it would actually happen, and it asserts it read at least ten of them
+  so it cannot pass by looking at nothing.
+- **Decision 2: durability is a checkpoint plus a write-ahead tail.** Named before built: this is
+  what every database does, and the alternative — rewrite the whole state per change — is what
+  makes a relay O(history) per edit. Compaction renames a freshly written file over the old one,
+  because a compaction that truncates in place is the operation that loses the data.
+- **What is durable is remarkably little, and that follows from ADR-047.** A dumb relay holds no
+  document, so the only state it can lose is **the order it imposed** plus the dedupe table that
+  stops a retried chunk landing twice. A relay that persisted a document would be a relay that
+  could disagree with its clients about one.
+- **Decision 3: recovery verifies rather than trusts.** A record carries the submission *and the
+  revision the relay ordered it at*, and recovery hands the submission back to
+  `ServerSession::commit` and **checks the answer matches**. Replaying the *outcome* instead —
+  writing the ordered entry straight into the history — would make every recovery "succeed",
+  including one where the ordering rule had changed under the file; and a relay whose order is
+  not the order its clients were acknowledged against has diverged everybody silently. Same
+  argument as ADR-051's: verifiable, not trusted.
+- **A torn tail is expected; a torn middle is not.** A process can die between appends, so the
+  last frame may be partial: that is discarded **and counted**, because the count is the only
+  evidence the previous run did not shut down cleanly. A frame that fails anywhere else is
+  refused, because the records after it belong to an order the file can no longer describe.
+- **Decision 4: journal first, answer second.** A client drops a chunk from its outstanding set
+  the moment it is acknowledged, so an acknowledgement that outlives its record loses the work
+  outright, while an un-acknowledged chunk is simply retried. The asymmetry is why `Room::commit`
+  returns the journal's **error** rather than the relay's answer when the write fails.
+- **Decision 5: the transport is `std` only, thread-per-connection — and that is a limit, not a
+  claim.** An async runtime is a dependency decision (`tokio` is a tree, and
+  `dependency-policy` runs `cargo deny`, a gate this lane cannot run), so it is left to the
+  owner. Thread-per-connection costs a thread per participant and suits tens per room, not
+  thousands. It is also the right shape for a *dumb* relay, whose per-message work is "append,
+  number, write to N sockets" and never a document: there is no computation to overlap, only i/o.
+  Moving to async is an optimisation of a working mechanism.
+  **This adds no new package at all** — `std::net`, `std::thread`, and the codec's own frame.
+- **`Frames` exists because a stream has no record boundaries.** Reading one message is: read
+  until the frame its own header measures is complete, decode, keep the remainder. Assuming one
+  `read` is one message, or scanning for a delimiter a payload may contain, is the bug every
+  hand-rolled framing has, so it is written once.
+- **Mutation proofs.** (1) Answer before journalling → `a_chunk_is_durable_before_the_room_says_
+  it_is_ordered` fails `left: 0, right: 1`. (2) Recovery accepts any ordered replay → `recovery_
+  checks_the_decision_and_refuses_a_journal_that_disagrees` fails, returning `Ok` with a
+  recovered relay. (3) Skip a corrupt frame instead of refusing → `a_corrupt_frame_in_the_middle_
+  is_refused_rather_than_skipped` fails with `Err(DecisionDiffers { logged: Revision(2),
+  replayed: None })` — the damage surfacing later and in the wrong vocabulary, which is the point.
+  (4) Add `opendoc-relay` to `casual-doc-edit`'s dev-dependencies →
+  `nothing_under_crates_depends_on_the_relay` names the manifest and both strings.
+- **Stated rather than implied:** the durability guard proves the **ordering** of the write
+  against the answer, not the `fsync`. A second `open` in the same process reads the page cache,
+  so removing `sync_data` leaves it green. Durability against power loss is not observable from a
+  unit test in one process, so that line is reviewed rather than tested — recorded here because a
+  guard claimed to prove more than it does is how this repository has been bitten before.
+- **Not built here:** fan-out to the other participants (the relay answers the sender and holds
+  the order; a roster-driven broadcast is the next increment), presence fan-out, and the
+  host-signed grant (`152` §10 Q4) that an access level would be read from.
+
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

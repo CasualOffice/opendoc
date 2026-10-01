@@ -944,7 +944,7 @@ pub struct Ordered {
 /// it costs is written down in doc 152 §6: a submission written against a position the
 /// document has moved past is refused with [`Refusal::StaleBase`] and the client rebases it
 /// and resubmits, so a contended document pays a round trip per collision.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ServerSession {
     revision: Revision,
     oldest: Revision,

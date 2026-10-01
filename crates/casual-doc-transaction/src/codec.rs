@@ -210,12 +210,16 @@ impl core::error::Error for CodecError {}
 
 /// Encodes `record` as one frame.
 ///
+/// Generic because a frame is a frame: a wire chunk, a relay's ordered entry and a journal
+/// record are the same envelope around different payloads, and giving each its own framing
+/// would be three definitions of one layout.
+///
 /// # Panics
 ///
 /// Never, for the records this module exposes: every one of them serialises infallibly, and a
 /// payload over [`MAX_FRAME_BYTES`] is a *decode* refusal rather than an encode one, so a
 /// writer that genuinely produced one still writes a frame a reader will name.
-fn encode<T: Serialize>(record: &T) -> Vec<u8> {
+pub fn encode_frame<T: Serialize>(record: &T) -> Vec<u8> {
     let payload = serde_json::to_vec(record).unwrap_or_else(|error| {
         // A record of ours that cannot serialise is a programming error, not a runtime
         // condition, and the only shapes `serde_json` refuses are ones none of these records
@@ -240,12 +244,15 @@ fn encode<T: Serialize>(record: &T) -> Vec<u8> {
 
 /// Decodes one frame, which must be the whole of `bytes`.
 ///
+/// For a stream or a log file, where frames are concatenated, take the first
+/// [`frame_len`] bytes and pass those.
+///
 /// # Errors
 ///
 /// [`CodecError`], naming what was expected. Checks are in the order that keeps an
 /// attacker-controlled length from being allocated: magic, version, encoding, declared length
 /// against [`MAX_FRAME_BYTES`], then the bytes actually present.
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, CodecError> {
+pub fn decode_frame<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, CodecError> {
     if bytes.len() < HEADER_BYTES {
         return Err(CodecError::TooShort {
             got: bytes.len(),
@@ -294,7 +301,7 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, CodecError> {
 /// Encodes a client's chunk for the wire.
 #[must_use]
 pub fn encode_submission(submission: &Submission) -> Vec<u8> {
-    encode(submission)
+    encode_frame(submission)
 }
 
 /// Decodes a client's chunk.
@@ -308,13 +315,13 @@ pub fn encode_submission(submission: &Submission) -> Vec<u8> {
 ///
 /// [`CodecError`].
 pub fn decode_submission(bytes: &[u8]) -> Result<Submission, CodecError> {
-    decode(bytes)
+    decode_frame(bytes)
 }
 
 /// Encodes a relay's fan-out for the wire.
 #[must_use]
 pub fn encode_arrival(arrival: &Arrival) -> Vec<u8> {
-    encode(arrival)
+    encode_frame(arrival)
 }
 
 /// Decodes a relay's fan-out. Untrusted, as [`decode_submission`] is.
@@ -323,7 +330,7 @@ pub fn encode_arrival(arrival: &Arrival) -> Vec<u8> {
 ///
 /// [`CodecError`].
 pub fn decode_arrival(bytes: &[u8]) -> Result<Arrival, CodecError> {
-    decode(bytes)
+    decode_frame(bytes)
 }
 
 /// Encodes one ordered entry of a relay's history — the durable log's record type.
@@ -332,7 +339,7 @@ pub fn decode_arrival(bytes: &[u8]) -> Result<Arrival, CodecError> {
 /// relay holds no document, so the only durable state it has *is* the order it imposed.
 #[must_use]
 pub fn encode_ordered(ordered: &Ordered) -> Vec<u8> {
-    encode(ordered)
+    encode_frame(ordered)
 }
 
 /// Decodes one ordered entry. Untrusted, as [`decode_submission`] is.
@@ -341,7 +348,53 @@ pub fn encode_ordered(ordered: &Ordered) -> Vec<u8> {
 ///
 /// [`CodecError`].
 pub fn decode_ordered(bytes: &[u8]) -> Result<Ordered, CodecError> {
-    decode(bytes)
+    decode_frame(bytes)
+}
+
+/// How many bytes the first frame in `bytes` occupies, header included.
+///
+/// The one function a **stream** and a **log file** both need, and the reason the frame carries
+/// an explicit length at all: neither a socket nor a crashed append gives you record
+/// boundaries, and scanning for a delimiter in a payload that may contain it is the bug every
+/// hand-rolled framing has.
+///
+/// # Errors
+///
+/// [`CodecError::Truncated`] when the frame is not yet complete — which a reader treats as
+/// *wait for more bytes*, not as a failure. Every other error is a real refusal and means the
+/// stream or the file cannot be read on.
+pub fn frame_len(bytes: &[u8]) -> Result<usize, CodecError> {
+    if bytes.len() < HEADER_BYTES {
+        return Err(CodecError::Truncated {
+            declared: HEADER_BYTES,
+            available: bytes.len(),
+        });
+    }
+    if bytes[..4] != FRAME_MAGIC {
+        return Err(CodecError::NotAFrame);
+    }
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version != FRAME_VERSION {
+        return Err(CodecError::UnsupportedFrameVersion {
+            got: version,
+            supported: FRAME_VERSION,
+        });
+    }
+    let declared = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    if declared > MAX_FRAME_BYTES {
+        return Err(CodecError::TooLarge {
+            declared,
+            limit: MAX_FRAME_BYTES,
+        });
+    }
+    let total = HEADER_BYTES + declared;
+    if bytes.len() < total {
+        return Err(CodecError::Truncated {
+            declared: total,
+            available: bytes.len(),
+        });
+    }
+    Ok(total)
 }
 
 /// A pinned encoding of one minimal chunk, as a hex string.

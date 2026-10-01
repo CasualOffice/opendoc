@@ -58,6 +58,7 @@
 //! O(1) per update — one map write. O(participants) to read the roster. **Nothing here touches
 //! the document**, so presence cannot cost a keystroke anything (`107` §4 B1).
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::protocol::ClientId;
@@ -89,7 +90,9 @@ pub const MAX_PARTICIPANTS: usize = 128;
 /// roster that arrives out of order would otherwise move a caret backwards and leave it there.
 /// A clock is used rather than a wall-clock timestamp because the engine does not read a clock
 /// (`protocol`'s module docs), and because a counter cannot be skewed between two machines.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Deserialize, Serialize, Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
 pub struct PresenceClock(u64);
 
 impl PresenceClock {
@@ -120,7 +123,7 @@ impl PresenceClock {
 /// **There is no identity field, and that is the point** — see the module docs. Adding one
 /// would let a client claim to be somebody else, and the guard in this module's tests fails
 /// the build if the shape grows one.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct PresenceUpdate {
     /// The sender's own monotonic count of its presence updates.
     pub clock: PresenceClock,
