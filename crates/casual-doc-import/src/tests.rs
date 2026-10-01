@@ -10057,15 +10057,20 @@ fn a_chart_projection_anchors_to_its_embedded_object_node() {
     assert_eq!(charts.len(), 1, "one chart part, one projection");
     let (_, chart) = charts.iter().next().expect("the projection");
     assert_eq!(
-        chart.object,
-        object.id,
+        chart.object, object.id,
         "the projection must name the node it projects"
     );
     assert_eq!(
         chart.plot_area.groups[0].series[0].values.points,
         vec![
-            (0, casual_doc_model::v1::ChartValue::Number("4.30".to_owned())),
-            (1, casual_doc_model::v1::ChartValue::Number("2.5".to_owned())),
+            (
+                0,
+                casual_doc_model::v1::ChartValue::Number("4.30".to_owned())
+            ),
+            (
+                1,
+                casual_doc_model::v1::ChartValue::Number("2.5".to_owned())
+            ),
         ],
         "the cache is the data, carried verbatim"
     );
@@ -10100,8 +10105,7 @@ fn a_fully_projected_chart_part_raises_no_finding() {
         .entries
         .iter()
         .filter(|entry| {
-            entry.feature.starts_with("chart.")
-                || entry.feature == "word/charts/chart1.xml"
+            entry.feature.starts_with("chart.") || entry.feature == "word/charts/chart1.xml"
         })
         .map(|entry| entry.feature.as_str())
         .collect();
@@ -10149,10 +10153,7 @@ fn a_partly_projected_chart_is_enumerated_by_construct() {
         .iter()
         .find(|entry| entry.feature == "chart.trendline")
         .expect("the trendline must be named");
-    assert_eq!(
-        trendline.disposition,
-        crate::Disposition::DegradedPreserved
-    );
+    assert_eq!(trendline.disposition, crate::Disposition::DegradedPreserved);
     assert_eq!(
         trendline.location.part_name.as_deref(),
         Some("word/charts/chart1.xml"),
@@ -10201,6 +10202,73 @@ fn an_out_of_scope_chart_family_is_named_beside_its_part_row() {
             .iter()
             .any(|part| part.part_name == "word/charts/chart1.xml"),
         "declining to project must not cost retention"
+    );
+}
+
+/// A chart part the side-table refuses to preserve must not make the document
+/// refuse to open.
+///
+/// The reachable case is a crafted package: a chart part declared with a
+/// *digital-signature* content type. `opaque::is_signature_part` matches on the
+/// content type, so retention is deliberately refused — but the reader still reads
+/// the bytes and still builds a projection, and there is no opaque-part ledger
+/// record behind it. A per-construct finding claiming `preserved` would then fail
+/// `CompatibilityReport::validate`, and `35` makes that an `ImportError` rather
+/// than a report entry: the document would not open at all.
+///
+/// So the finding reports the weaker, true disposition. Two facts decided in
+/// different passes must not be able to combine into a refused open.
+#[test]
+fn a_chart_part_with_no_preservation_record_does_not_fail_the_import() {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    // The chart part is declared as signature machinery, so retention refuses it.
+    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml"/></Types>"#;
+    let root_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", root_rels.as_slice()),
+        ("word/document.xml", CHART_BODY.as_bytes()),
+        ("word/_rels/document.xml.rels", CHART_REL),
+        ("word/charts/chart1.xml", MIXED_CHART),
+    ] {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).expect("it opens");
+    let import = import_package(&mut package, ImportConfig::default())
+        .expect("a chart part retention refuses must not fail the import");
+
+    // The projection is still built — reading is independent of retaining.
+    assert_eq!(import.document.definitions().charts.len(), 1);
+    // And the construct is still named, with the honest disposition: nothing
+    // retains it on this path, so it does not claim to be preserved.
+    let trendline = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "chart.trendline")
+        .expect("the construct is still named");
+    assert_eq!(
+        trendline.disposition,
+        crate::Disposition::DegradedNotRetained,
+        "with no preservation record the claim must be the weaker, true one"
+    );
+    assert!(
+        trendline.ledger_id.is_none(),
+        "and it must not cite a record that does not exist"
     );
 }
 

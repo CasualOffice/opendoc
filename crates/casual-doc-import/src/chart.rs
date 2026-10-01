@@ -49,20 +49,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_model::v1::{
     Axis, AxisKind, AxisOrientation, AxisPosition, BarDirection, BarGrouping, Chart, ChartCoverage,
-    ChartGroup, ChartGroupKind, ChartLine, ChartText, ChartTitle, ChartValue, Color, DataLabelPosition,
-    DataLabels, DataRange, DisplayBlanks, EmbeddedPart, Grouping, Legend, LegendPosition,
-    MAX_CHART_AXES, MAX_CHART_DATA_POINTS, MAX_CHART_FORMULA_BYTES, MAX_CHART_GROUPS,
-    MAX_CHART_NUMBER_BYTES, MAX_CHART_SERIES_PER_GROUP, MAX_CHART_TEXT_BYTES, PlotArea,
-    ScatterStyle, Series, ThemeColor, ThemeColorRef, TickLabelPosition, TickMark,
+    ChartGroup, ChartGroupKind, ChartLine, ChartText, ChartTitle, ChartValue, Color,
+    DataLabelPosition, DataLabels, DataRange, DisplayBlanks, EmbeddedPart, Grouping, Legend,
+    LegendPosition, MAX_CHART_AXES, MAX_CHART_DATA_POINTS, MAX_CHART_FORMULA_BYTES,
+    MAX_CHART_GROUPS, MAX_CHART_NUMBER_BYTES, MAX_CHART_SERIES_PER_GROUP, MAX_CHART_TEXT_BYTES,
+    PlotArea, ScatterStyle, Series, ThemeColor, ThemeColorRef, TickLabelPosition, TickMark,
 };
+use casual_doc_model::{IdGenerator, NodeId};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding model imports do not collide in one list.
 use casual_doc_model::v1::{BlockNode, ChartId, DefinitionMap, EmbeddedKind, InlineNode};
-use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use quick_xml::events::{BytesStart, Event};
 
 use crate::body::EmbeddedRel;
 use crate::config::ImportConfig;
@@ -231,7 +231,11 @@ pub(crate) fn build_charts(
         let read = read_chart_part(&source.bytes, object, &source.rels, config);
         let out_of_scope_family = match &read.declined {
             Some(ChartDecline::OutOfScopeFamily(family)) => Some(family.clone()),
-            Some(ChartDecline::Malformed | ChartDecline::OverBound(_) | ChartDecline::NothingToProject)
+            Some(
+                ChartDecline::Malformed
+                | ChartDecline::OverBound(_)
+                | ChartDecline::NothingToProject,
+            )
             | None => None,
         };
         let projected = match read.projection {
@@ -417,7 +421,9 @@ fn chart_noop(local: &[u8], element: &BytesStart<'_>, self_closing: bool) -> boo
         // `val="0"` is the schema default and the state the model already has, so
         // its presence says nothing. A `val="1"` does.
         b"roundedCorners" | b"date1904" | b"autoUpdate" | b"invertIfNegative" | b"bubble3D"
-        | b"noMultiLvlLbl" | b"showDLblsOverMax" => !is_true(attribute_value(element, b"val").as_deref()),
+        | b"noMultiLvlLbl" | b"showDLblsOverMax" => {
+            !is_true(attribute_value(element, b"val").as_deref())
+        }
         _ => false,
     }
 }
@@ -735,7 +741,8 @@ impl Parser {
                 Ok(Step::Push(Scope::Title))
             }
             (Scope::Chart, b"autoTitleDeleted") => {
-                self.chart.auto_title_deleted = is_true(attribute_value(element, b"val").as_deref());
+                self.chart.auto_title_deleted =
+                    is_true(attribute_value(element, b"val").as_deref());
                 Ok(Step::Leaf)
             }
             (Scope::Chart, b"plotArea") => {
@@ -791,14 +798,15 @@ impl Parser {
             // A `c:rich` body's paragraph scaffolding: the text inside it is
             // collected, the formatting is out of scope by `docs/155` §4.2
             // ("cached rich text only") and so is not a loss to name.
-            (Scope::TextSource, b"bodyPr" | b"lstStyle" | b"p" | b"pPr" | b"r" | b"rPr"
-            | b"endParaRPr" | b"defRPr" | b"fld") => Ok(Step::Push(Scope::TextSource)),
+            (
+                Scope::TextSource,
+                b"bodyPr" | b"lstStyle" | b"p" | b"pPr" | b"r" | b"rPr" | b"endParaRPr" | b"defRPr"
+                | b"fld",
+            ) => Ok(Step::Push(Scope::TextSource)),
             // ---- plot area ----
-            (Scope::PlotArea, _) if out_of_scope_family(local) => {
-                Err(ChartDecline::OutOfScopeFamily(
-                    String::from_utf8_lossy(local).into_owned(),
-                ))
-            }
+            (Scope::PlotArea, _) if out_of_scope_family(local) => Err(
+                ChartDecline::OutOfScopeFamily(String::from_utf8_lossy(local).into_owned()),
+            ),
             (
                 Scope::PlotArea,
                 b"barChart" | b"lineChart" | b"areaChart" | b"pieChart" | b"doughnutChart"
@@ -1249,11 +1257,7 @@ impl Parser {
     }
 
     /// Appends decoded character data to the open text-carrying leaf.
-    fn push_value_text(
-        &mut self,
-        decoded: &str,
-        config: ImportConfig,
-    ) -> Result<(), ChartDecline> {
+    fn push_value_text(&mut self, decoded: &str, config: ImportConfig) -> Result<(), ChartDecline> {
         if let Some(open) = self.value_text.as_mut() {
             if open.len().saturating_add(decoded.len()) > config.max_text_bytes {
                 return Err(ChartDecline::OverBound("chart.text"));
@@ -1598,7 +1602,11 @@ mod tests {
             "the numeric cache is the data"
         );
         assert_eq!(
-            series.categories.as_ref().expect("cached categories").points,
+            series
+                .categories
+                .as_ref()
+                .expect("cached categories")
+                .points,
             vec![
                 (0, ChartValue::Text("Q1".to_owned())),
                 (1, ChartValue::Text("Q2".to_owned())),
@@ -1649,7 +1657,10 @@ mod tests {
         let xml = chart_space(&CACHED_BAR.replace("Sheet1!$B$2:$B$3", formula));
         let chart = projection(&xml);
         assert_eq!(
-            chart.plot_area.groups[0].series[0].values.formula.as_deref(),
+            chart.plot_area.groups[0].series[0]
+                .values
+                .formula
+                .as_deref(),
             Some(formula),
             "the formula is an opaque string, re-emitted exactly"
         );
@@ -1983,7 +1994,6 @@ mod tests {
             "an extension list must not make a projection partial"
         );
     }
-
 
     /// A list beyond its `docs/155` §8.4 bound declines instead of building an
     /// unbounded projection — and still does not fail the import.
