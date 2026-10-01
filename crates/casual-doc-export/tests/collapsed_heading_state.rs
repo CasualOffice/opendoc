@@ -101,11 +101,11 @@ fn heading_states(document: &Document) -> (Vec<Option<u8>>, Vec<Option<bool>>) {
     let mut levels = Vec::new();
     let mut folds = Vec::new();
     for block in document.body() {
-        if let BlockNode::Paragraph(paragraph) = block {
-            if paragraph.properties.outline_level.is_some() {
-                levels.push(paragraph.properties.outline_level);
-                folds.push(paragraph.properties.collapsed);
-            }
+        if let BlockNode::Paragraph(paragraph) = block
+            && paragraph.properties.outline_level.is_some()
+        {
+            levels.push(paragraph.properties.outline_level);
+            folds.push(paragraph.properties.collapsed);
         }
     }
     (levels, folds)
