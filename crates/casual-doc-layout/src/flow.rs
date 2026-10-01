@@ -76,6 +76,8 @@ use crate::text::{
 };
 // Own line (anti-conflict): the inline picture's `a:xfrm` carrier.
 use crate::text::InlineTransform;
+// Own line (anti-conflict): the recorded advance of each resolved tab.
+use crate::text::TabExtent;
 use crate::units::{Point, Size, Twip};
 
 /// One page-derived edge exclusion applied at the start of a body paragraph.
@@ -1847,6 +1849,12 @@ fn collapse_drop_cap_fragment(
         if frame.mode == DropCapMode::Margin {
             for run in &mut line.runs {
                 run.origin.x = run.origin.x - width;
+            }
+            // Tab geometry moves with the runs it separates, or a painted tab
+            // arrow would be left behind in the pre-shift coordinates.
+            for extent in &mut line.tab_extents {
+                extent.start = extent.start - width;
+                extent.end = extent.end - width;
             }
         }
     }
@@ -4812,6 +4820,7 @@ fn image_line(
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
+        tab_extents: Vec::new(),
     }
 }
 
@@ -4833,6 +4842,7 @@ fn math_line(size: Size, runs: Vec<GlyphRun>, rules: Vec<InlineRule>, range: Mod
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules,
+        tab_extents: Vec::new(),
     }
 }
 
@@ -4855,6 +4865,7 @@ fn float_barrier_line(height: Twip, range: ModelRange) -> Line {
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
+        tab_extents: Vec::new(),
     }
 }
 
@@ -4892,6 +4903,7 @@ fn textbox_line(
             content_layout,
         }],
         rules: Vec::new(),
+        tab_extents: Vec::new(),
     }
 }
 
@@ -4916,6 +4928,7 @@ fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: vec![rule],
+        tab_extents: Vec::new(),
     }
 }
 
@@ -5993,6 +6006,10 @@ fn layout_fielded_line(
 
     let mut runs: Vec<GlyphRun> = Vec::new();
     let mut fields: Vec<FieldMarker> = Vec::new();
+    // The advance each tab on this line covered — geometry the tab resolver is the
+    // only place that knows, recorded for `crate::formatting_marks` and never
+    // measured from (`TabExtent`).
+    let mut tab_extents: Vec<TabExtent> = Vec::new();
     let mut pen = first_line_indent.raw().max(0);
 
     for (i, seg) in measured.iter().enumerate() {
@@ -6010,6 +6027,10 @@ fn layout_fielded_line(
             if l < pen {
                 l = pen;
             }
+            tab_extents.push(TabExtent {
+                start: Twip(pen),
+                end: Twip(l),
+            });
             l
         };
         place_segment(seg, Twip(left), baseline, &mut runs, &mut fields);
@@ -6063,6 +6084,7 @@ fn layout_fielded_line(
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
+        tab_extents,
     }
 }
 
@@ -7364,6 +7386,7 @@ fn ensure_nonempty_paragraph(
         line.fields.clear();
         line.text_boxes.clear();
         line.bars.clear();
+        line.tab_extents.clear();
         line.range = range;
         line.line_break = LineBreak::ParagraphEnd;
         layout.lines.push(line);
@@ -8110,6 +8133,7 @@ mod tests {
             notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
+            tab_extents: Vec::new(),
         };
         // The shaper has already made the second baseline paragraph-relative.
         let mut out = Vec::new();
@@ -14602,6 +14626,7 @@ mod tests {
                         notes: Vec::new(),
                         text_boxes: Vec::new(),
                         rules: Vec::new(),
+                        tab_extents: Vec::new(),
                     }],
                 },
                 box_metrics: BoxMetrics::default(),
