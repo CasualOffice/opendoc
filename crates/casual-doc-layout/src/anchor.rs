@@ -45,11 +45,14 @@ use crate::page::{
     AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
 };
 use crate::paginate::PageConfig;
+use crate::shape_guide::{GuideBox, guide_value};
+// Own line (anti-conflict): the theme style resolution types.
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
     Point, Rect, Size, Twip, emu_to_twip_extent, emu_to_twip_offset, emu_to_twip_rounded,
     twip_rounded,
 };
+use casual_doc_model::v1::{Definitions, StyleColor};
 
 /// Places every floating object in the document (body and header/footer bands)
 /// onto the pages their anchors landed on, with a resolved rectangle and stacking
@@ -967,15 +970,16 @@ fn place_group_children(
                 // attaches a path when the authored `a:custGeom` is inside the
                 // drawable subset, and `geometry` stays `Other` beside it
                 // (docs/119 §6).
+                let (fill, stroke) = themed_appearance(shape, ctx.document.definitions());
                 let content = if let Some(path) = shape.path.as_ref() {
-                    custom_path_content(path, rect, shape)
+                    custom_path_content(path, rect, fill, stroke)
                 } else {
                     preset_geometry_content(
                         shape.geometry,
                         &shape.adjustments,
                         rect,
-                        shape.fill.as_ref(),
-                        shape.stroke,
+                        fill.as_ref(),
+                        stroke,
                     )
                 };
                 push(
@@ -1024,24 +1028,39 @@ fn place_group_children(
 /// Resolves the common `roundRect` `adj` guide. DrawingML uses 100000-based
 /// percentages; the preset default is 16667 (one sixth of the shorter side).
 fn rounded_rectangle_radius(adjustments: &[ShapeAdjustment], rect: Rect) -> Twip {
-    let adjustment = adjustment_value(adjustments, "adj", 16_667).clamp(0, 50_000);
+    let guides = GuideBox::new(
+        f64::from(rect.size.width.raw()),
+        f64::from(rect.size.height.raw()),
+    );
+    let adjustment = adjustment_value(adjustments, "adj", 16_667, guides).clamp(0, 50_000);
     let shorter = i64::from(rect.size.width.raw().min(rect.size.height.raw()).max(0));
     Twip((shorter * adjustment / 100_000).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
 /// Resolves one `a:avLst` adjustment guide by name, falling back to the preset's
-/// documented default when the document authors none — or authors one this build
-/// cannot read, since every guide in the modeled preset set is a literal
-/// `val N`, never a computed formula.
+/// documented default when the document authors none, or authors one that cannot be
+/// read at all. A guide that COMPUTES its value — `*/ h 1 2`, say — is evaluated
+/// through [`crate::shape_guide`] rather than passed over, which it previously was:
+/// every guide in the modeled preset set is a literal `val N`, so an authored formula
+/// hit the default and the shape drew with proportions nobody chose.
 ///
 /// Complexity: O(g) over the shape's own guides, bounded by
 /// `MAX_SHAPE_ADJUSTMENTS` (32) at import — O(1) in document size.
-fn adjustment_value(adjustments: &[ShapeAdjustment], name: &str, default: i64) -> i64 {
-    adjustments
-        .iter()
-        .find(|guide| guide.name == name)
-        .and_then(|guide| guide.formula.strip_prefix("val "))
-        .and_then(|value| value.trim().parse::<i64>().ok())
+fn adjustment_value(
+    adjustments: &[ShapeAdjustment],
+    name: &str,
+    default: i64,
+    shape: GuideBox,
+) -> i64 {
+    // Through the formula evaluator rather than a `val ` prefix match, so an
+    // authored guide that computes its value is honoured instead of silently losing
+    // to the preset default. `val N` is simply the one-operand case.
+    //
+    // The unit convention is unchanged: a preset's `adj` is a 100000-based fraction
+    // and the caller scales it the same way whether it arrived as a literal or as an
+    // expression.
+    guide_value(adjustments, name, shape)
+        .map(|value| value.round() as i64)
         .unwrap_or(default)
 }
 
@@ -1111,6 +1130,9 @@ fn preset_polygon(
     rect: Rect,
 ) -> Option<Vec<Point>> {
     let g = PresetBox::new(rect);
+    // Guide formulas resolve in the shape's OWN space, so the environment carries
+    // the extents only, never the absolute page position.
+    let guides = GuideBox::new(g.w, g.h);
     // `ss`-relative guide lengths are clamped to the box so a hostile or simply
     // out-of-range `a:avLst` cannot push a vertex outside the shape.
     let along = |value: f64, span: f64| value.clamp(0.0, span.max(0.0));
@@ -1144,7 +1166,7 @@ fn preset_polygon(
         }
         ShapeGeometry::Hexagon => {
             let inset = along(
-                g.ss * adjustment_value(adjustments, "adj", 25_000) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj", 25_000, guides) as f64 / 100_000.0,
                 g.w / 2.0,
             );
             vec![
@@ -1157,7 +1179,8 @@ fn preset_polygon(
             ]
         }
         ShapeGeometry::Octagon => {
-            let cut = g.ss * adjustment_value(adjustments, "adj", 29_289).clamp(0, 50_000) as f64
+            let cut = g.ss
+                * adjustment_value(adjustments, "adj", 29_289, guides).clamp(0, 50_000) as f64
                 / 100_000.0;
             let (dx, dy) = (along(cut, g.w / 2.0), along(cut, g.h / 2.0));
             vec![
@@ -1171,16 +1194,20 @@ fn preset_polygon(
                 g.at(g.l, g.b - dy),
             ]
         }
-        ShapeGeometry::Star5 => star_points(g, &PENTAGRAM, star_ratio(adjustments, 19_098)),
-        ShapeGeometry::Star4 => star_points(g, &FOUR_POINT_STAR, star_ratio(adjustments, 12_500)),
+        ShapeGeometry::Star5 => star_points(g, &PENTAGRAM, star_ratio(adjustments, 19_098, guides)),
+        ShapeGeometry::Star4 => {
+            star_points(g, &FOUR_POINT_STAR, star_ratio(adjustments, 12_500, guides))
+        }
         ShapeGeometry::RightArrow | ShapeGeometry::LeftArrow => {
             let shaft = along(
-                g.h * adjustment_value(adjustments, "adj1", 50_000).clamp(0, 100_000) as f64
+                g.h * adjustment_value(adjustments, "adj1", 50_000, guides).clamp(0, 100_000)
+                    as f64
                     / 200_000.0,
                 g.h / 2.0,
             );
             let head = along(
-                g.ss * adjustment_value(adjustments, "adj2", 50_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj2", 50_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.w,
             );
             let (y1, y2) = (g.vc - shaft, g.vc + shaft);
@@ -1210,12 +1237,14 @@ fn preset_polygon(
         }
         ShapeGeometry::UpArrow | ShapeGeometry::DownArrow => {
             let shaft = along(
-                g.w * adjustment_value(adjustments, "adj1", 50_000).clamp(0, 100_000) as f64
+                g.w * adjustment_value(adjustments, "adj1", 50_000, guides).clamp(0, 100_000)
+                    as f64
                     / 200_000.0,
                 g.w / 2.0,
             );
             let head = along(
-                g.ss * adjustment_value(adjustments, "adj2", 50_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj2", 50_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.h,
             );
             let (x1, x2) = (g.hc - shaft, g.hc + shaft);
@@ -1245,12 +1274,14 @@ fn preset_polygon(
         }
         ShapeGeometry::LeftRightArrow => {
             let shaft = along(
-                g.h * adjustment_value(adjustments, "adj1", 50_000).clamp(0, 100_000) as f64
+                g.h * adjustment_value(adjustments, "adj1", 50_000, guides).clamp(0, 100_000)
+                    as f64
                     / 200_000.0,
                 g.h / 2.0,
             );
             let head = along(
-                g.ss * adjustment_value(adjustments, "adj2", 50_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj2", 50_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.w / 2.0,
             );
             let (y1, y2) = (g.vc - shaft, g.vc + shaft);
@@ -1270,7 +1301,8 @@ fn preset_polygon(
         }
         ShapeGeometry::Parallelogram => {
             let lean = along(
-                g.ss * adjustment_value(adjustments, "adj", 25_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj", 25_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.w,
             );
             vec![
@@ -1282,7 +1314,8 @@ fn preset_polygon(
         }
         ShapeGeometry::Trapezoid => {
             let inset = along(
-                g.ss * adjustment_value(adjustments, "adj", 25_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj", 25_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.w / 2.0,
             );
             vec![
@@ -1294,7 +1327,8 @@ fn preset_polygon(
         }
         ShapeGeometry::Chevron => {
             let point = along(
-                g.ss * adjustment_value(adjustments, "adj", 50_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj", 50_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.w,
             );
             vec![
@@ -1308,7 +1342,8 @@ fn preset_polygon(
         }
         ShapeGeometry::HomePlate => {
             let point = along(
-                g.ss * adjustment_value(adjustments, "adj", 50_000).max(0) as f64 / 100_000.0,
+                g.ss * adjustment_value(adjustments, "adj", 50_000, guides).max(0) as f64
+                    / 100_000.0,
                 g.w,
             );
             vec![
@@ -1320,7 +1355,8 @@ fn preset_polygon(
             ]
         }
         ShapeGeometry::Plus => {
-            let arm = g.ss * adjustment_value(adjustments, "adj", 25_000).clamp(0, 50_000) as f64
+            let arm = g.ss
+                * adjustment_value(adjustments, "adj", 25_000, guides).clamp(0, 50_000) as f64
                 / 100_000.0;
             let (dx, dy) = (along(arm, g.w / 2.0), along(arm, g.h / 2.0));
             let (x1, x2) = (g.l + dx, g.r - dx);
@@ -1407,8 +1443,8 @@ static FOUR_POINT_STAR: StarShape = StarShape {
 
 /// The `adj` guide of a star preset as the inner/outer radius ratio it encodes
 /// (`adj / 50000`, clamped to the closed unit range).
-fn star_ratio(adjustments: &[ShapeAdjustment], default: i64) -> f64 {
-    adjustment_value(adjustments, "adj", default).clamp(0, 50_000) as f64 / 50_000.0
+fn star_ratio(adjustments: &[ShapeAdjustment], default: i64, guides: GuideBox) -> f64 {
+    adjustment_value(adjustments, "adj", default, guides).clamp(0, 50_000) as f64 / 50_000.0
 }
 
 /// Interleaves a star's outer points and inner notches into one closed outline.
@@ -1879,10 +1915,68 @@ impl GroupMapper {
 ///
 /// The path is closed only if it authored an `a:close`; an open path stays open,
 /// which is what Word's own VML fallback writes for these shapes (docs/119 §4).
+/// A shape's effective fill and outline: its own where it declares them, otherwise
+/// the theme style its `wps:style` names (`156` §6 row 0.2).
+///
+/// Resolution happens HERE, at layout, and not at import, so the model keeps saying
+/// what the file said: the shape has no `spPr` fill, it has a style reference. Baking
+/// the resolved colour into the model would make export write an explicit fill where
+/// the file carried a style link, which is a different document.
+///
+/// An explicit fill always wins — a shape that says `a:noFill` means it — and an
+/// index the format scheme does not model resolves to nothing rather than to a
+/// neighbouring entry, so an unsupported gradient style stays unfilled instead of
+/// quietly becoming a solid.
+///
+/// Complexity: O(1) — two map lookups and an index.
+fn themed_appearance(
+    shape: &GroupShape,
+    definitions: &Definitions,
+) -> (Option<Fill>, Option<ShapeStroke>) {
+    let mut fill = shape.fill.clone();
+    let mut stroke = shape.stroke;
+    let Some(reference) = definitions.shape_styles.get(&shape.id) else {
+        return (fill, stroke);
+    };
+    let Some(scheme) = definitions.format_scheme.as_ref() else {
+        return (fill, stroke);
+    };
+    if fill.is_none()
+        && let Some(idx) = reference.fill_idx
+        && let Some(style) = scheme.fill_style(idx)
+    {
+        // `a:phClr` takes the colour the reference names; without one there is
+        // nothing to substitute and the entry stays unresolved.
+        let color = match style.color {
+            StyleColor::Fixed(color) => Some(color),
+            StyleColor::Placeholder => reference.fill_color,
+        };
+        fill = color.map(Fill::Solid);
+    }
+    if stroke.is_none()
+        && let Some(idx) = reference.line_idx
+        && let Some(style) = scheme.line_style(idx)
+    {
+        let color = match style.color {
+            StyleColor::Fixed(color) => Some(color),
+            StyleColor::Placeholder => reference.line_color,
+        };
+        stroke = color.map(|color| ShapeStroke {
+            color,
+            width_emu: style.width_emu,
+            dash: style.dash,
+            head_end: None,
+            tail_end: None,
+        });
+    }
+    (fill, stroke)
+}
+
 fn custom_path_content(
     path: &casual_doc_model::v1::ShapePath,
     rect: Rect,
-    shape: &GroupShape,
+    fill: Option<Fill>,
+    stroke: Option<ShapeStroke>,
 ) -> AnchorContent {
     use casual_doc_model::v1::ShapePathCommand;
 
@@ -1946,8 +2040,8 @@ fn custom_path_content(
     AnchorContent::Path {
         commands,
         closed,
-        fill: shape.fill.clone(),
-        stroke: shape_stroke(shape.stroke),
+        fill,
+        stroke: shape_stroke(stroke),
     }
 }
 

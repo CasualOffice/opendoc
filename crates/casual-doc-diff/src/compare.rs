@@ -73,6 +73,8 @@ pub const DEFINITION_FIELDS: &[&str] = &[
     "fontScheme",
     "colorScheme",
     "formatSchemeXml",
+    "formatScheme",
+    "shapeStyles",
     "settings",
     "people",
 ];
@@ -87,6 +89,10 @@ pub const OPAQUE_CONSTRUCTS: &[&str] = &[
     "abstractNumbering",
     "numbering",
     "fieldRanges",
+    // Shape theme-style references are keyed by a `NodeId` the parse minted, so two
+    // files' tables cannot be paired — the same reason `numbering` and `fieldRanges`
+    // are here. A difference is therefore located, not characterised.
+    "shapeStyles",
     // A chart projection, for both of the reasons this list exists at once. It is
     // keyed by a `ChartId` the parse minted, so two files' projections cannot be
     // paired — the same reason `numbering` and `fieldRanges` are here. And it is a
@@ -438,6 +444,24 @@ pub fn compare_definitions(
         &mut changes,
         findings,
     );
+    // Shape theme-style references: located, not characterised, per
+    // `OPAQUE_CONSTRUCTS` above.
+    compare_field(
+        "shapeStyles",
+        &left_definitions.shape_styles,
+        &right_definitions.shape_styles,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // `formatScheme` is deliberately NOT compared here, and that is the whole story
+    // for it. It is a read projection of `formatSchemeXml`, which IS compared a few
+    // lines above and is itself opaque, so a change to the theme's style lists is
+    // already reported once. Comparing the projection as well would report one
+    // authored change twice — as a `formatSchemeXml` difference and again as a
+    // `formatScheme` difference — which is a worse answer than reporting it once.
+    // It is listed in `DEFINITION_FIELDS` so the structural guard can see that this
+    // decision was made rather than forgotten.
     compare_field(
         "documentDefaults",
         &left_definitions.document_defaults,

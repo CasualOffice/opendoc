@@ -1430,7 +1430,9 @@ pub(crate) fn import_with_sources(
         font_table,
         font_scheme: theme.font_scheme,
         color_scheme: theme.color_scheme,
+        format_scheme: theme.format_scheme,
         format_scheme_xml: theme.format_scheme_xml,
+        shape_styles: parsed_defs.shape_styles,
         settings,
         people,
     };

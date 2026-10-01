@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AbstractNumberingId, BlockNode, BookmarkId, BorderEdge, ColorScheme, CommentId, DefinitionMap,
-    FontDescriptor, FontScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId,
-    ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind, TableCellProperties,
-    TableProperties, TableRowProperties, TextDirection,
+    FontDescriptor, FontScheme, FormatScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId,
+    ParagraphProperties, RunProperties, SectionId, ShapeStyleRef, StyleId, StyleKind,
+    TableCellProperties, TableProperties, TableRowProperties, TextDirection,
 };
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared model file.
@@ -21,6 +21,8 @@ use super::FieldUpdateState;
 use super::NumberingResolver;
 // Same rule: the typed chart projection's own imports go on their own line.
 use super::{Chart, ChartId};
+// Own line (anti-conflict): the shape theme-style side table's key.
+use crate::NodeId;
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -1403,6 +1405,27 @@ pub struct Definitions {
     /// full DrawingML modeling. Additive: omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_scheme_xml: Option<String>,
+    /// The modeled subset of that same format scheme, parsed for RESOLUTION while
+    /// `format_scheme_xml` stays the source of truth for export.
+    ///
+    /// Two representations of one part is deliberate and the division is strict:
+    /// the verbatim XML is what gets written back, so adding this changed no output
+    /// byte, while the typed form is what a shape's `wps:style` reference resolves
+    /// against. Parsing for export instead would have put every unmodeled entry —
+    /// gradients, patterns, effect styles — at risk of being rewritten as something
+    /// it is not. Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_scheme: Option<FormatScheme>,
+    /// Shape theme-style references (`wps:style`), keyed by the shape's node id.
+    ///
+    /// A side table rather than a field on `GroupShape`: this is authored content and
+    /// would sit naturally on the shape, but that struct has 23 literal construction
+    /// sites across six crates and a new field breaks every one with nothing for a
+    /// merge to conflict on (`SKILL` §5a shape 1) — the same reason `charts` is a side
+    /// table. Additive: omitted when empty so existing snapshots serialize
+    /// byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub shape_styles: DefinitionMap<NodeId, ShapeStyleRef>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
