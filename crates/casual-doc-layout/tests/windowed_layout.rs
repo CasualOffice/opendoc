@@ -95,6 +95,7 @@ fn line(owner: NodeId, height: Twip, page_break_after: bool) -> Line {
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
+        tab_extents: Vec::new(),
     }
 }
 

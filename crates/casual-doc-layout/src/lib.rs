@@ -11,10 +11,12 @@
 //!
 //! Layering (`43-…` §3):
 //! - [`units`] — device-independent geometry (everything computes in twips).
+//! - [`quantity`] — the user-facing unit boundary (cm/mm/in/pt/pica to twips).
 //! - [`text`] — line-level types + the [`text::LineShaper`] seam.
 //! - [`block`] — block/flow fragments (the galley).
 //! - [`page`] — immutable paginated output.
 //! - [`display`] — the backend-neutral paint list.
+//! - [`formatting_marks`] — the paint-only non-printing-character overlay.
 //! - [`model`] — layout-side anchors back into the document model.
 //! - [`hittest`] — the read-only editing bridge (pixel↔model position).
 //!
@@ -32,8 +34,10 @@ pub mod display;
 pub mod document_layout;
 pub mod flow;
 pub mod font_registry;
+// Own line (anti-conflict): the paint-only non-printing-character overlay.
 pub mod font_substitution;
 pub mod fonts;
+pub mod formatting_marks;
 pub mod hittest;
 pub mod incremental;
 mod line_number;
@@ -45,6 +49,8 @@ pub mod numbering;
 pub mod page;
 mod page_border;
 pub mod paginate;
+// Own line (anti-conflict): the user-facing measurement-unit layer.
+pub mod quantity;
 pub mod resolve;
 pub mod running;
 pub mod script;

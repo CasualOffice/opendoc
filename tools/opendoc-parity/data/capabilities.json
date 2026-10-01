@@ -4378,15 +4378,21 @@
       "area": "shell",
       "title": "Show non-printing characters",
       "ours": {
-        "absent": [
-          "view.formattingMarks"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-layout/src/formatting_marks.rs",
+              "literal": "FormattingMarks"
+            }
+          },
+          "missing": "the toggle in the chrome, and three of the marks"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.mniHiddenChars"
       },
       "rank": 2,
-      "note": "Pilcrows, tabs, spaces and section breaks. It is how anyone debugs a layout they did not author, and it is the first thing a Word user reaches for; we paint none of them."
+      "note": "The engine paints the pilcrow, the tab arrow, the space dot, the return arrow at a hard break and the rule at a page or column break, as a paint-only layer appended after a page's content: `crates/casual-doc-layout/tests/geometry_snapshot.rs` composes every fixture with every mark on and holds the geometry golden byte-identical, so a mark provably moves nothing and cannot export. The chrome reaches it in one call — pass a non-empty `FormattingMarks` in `ComposeOptions` to `compose_page_with` — which `casual-doc-wasm` has to offer beside its existing `compose_page`. Not drawn: the end-of-cell mark, the section-break rule (a section end is not visible from one page), and a separate mark for a no-break space."
     },
     {
       "id": "shell.go-to-page",
@@ -4492,15 +4498,21 @@
       "area": "shell",
       "title": "Choose measurement units (cm, points, inches)",
       "ours": {
-        "absent": [
-          "tools.units"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-layout/src/quantity.rs",
+              "literal": "MeasurementUnit"
+            }
+          },
+          "missing": "the preference in the chrome, and the ruler's own lattice"
+        }
       },
       "theirs": {
         "control": "cmbUnit"
       },
       "rank": 2,
-      "note": "Every dialog, the ruler and the object fields are inches only (units.mjs). docs/149 already grades customization.unit as unsupported and says why: it is every parser plus the ruler readout, not a flag. Outside the United States this is hit on the first page-setup dialog."
+      "note": "The engine now carries the conversion layer `docs/149` said this needs: `casual_doc_layout::quantity` parses and formats `cm`, `mm`, `in`, `pt` and `pica` against the twip by exact integer arithmetic, so `2.54 cm` is 1440 twips and not a floating-point approximation of it, and an exhaustive guard holds every displayable value to a `parse`-then-`format` fixed point. Theirs offers three units, pivots through a floating-point value, and rounds at ~170 separate call sites. The chrome reaches ours in one call each way — `parse_twips(text, unit)` and `format_twips(twips, unit, separator)` — plus `MeasurementUnit::for_region` for the first-run default. Not done: the chosen unit is not yet stored or offered anywhere in the chrome, and the ruler keeps its own tick lattice."
     },
     {
       "id": "shell.mobile-layout",

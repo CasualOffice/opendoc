@@ -28,6 +28,8 @@ use crate::text::{
     LineBreak, LineConstraints, LineLayout, LineShaper, NoteMarker, StyledRun, TextAlignment,
     TextBoxContentLayout, TextBoxStroke,
 };
+// Own line (anti-conflict): the recorded advance of each resolved tab.
+use crate::text::TabExtent;
 use crate::units::{Point, Size, Twip};
 
 /// Word's standard default tab-stop interval (720 twips = 0.5in), used when the
@@ -269,6 +271,10 @@ struct TabLine {
     ascent: Twip,
     descent: Twip,
     range: ModelRange,
+    /// The horizontal span each tab on this physical line advanced across.
+    /// Recorded here because tab resolution is the only code that knows it (see
+    /// [`TabExtent`]); read by nothing that measures.
+    tab_extents: Vec<TabExtent>,
 }
 
 #[derive(Clone, Copy)]
@@ -285,6 +291,7 @@ impl TabLine {
             ascent: Twip::ZERO,
             descent: Twip::ZERO,
             range: ModelRange::new(ModelPos::new(node, offset), ModelPos::new(node, offset)),
+            tab_extents: Vec::new(),
         }
     }
 
@@ -567,6 +574,18 @@ fn layout_tabbed_line(
                 left = pen;
             }
             leader = stop.leader;
+            // Record the advance this tab covered, on the line it covered it on,
+            // BEFORE the overflow branch below can start a continuation line.
+            // Geometry only: nothing downstream measures from it, and it is
+            // recorded whether or not marks are ever painted (`TabExtent`).
+            lines
+                .last_mut()
+                .expect("tabbed line list is never empty")
+                .tab_extents
+                .push(TabExtent {
+                    start: Twip(pen),
+                    end: Twip(left),
+                });
         }
 
         if let Some(leader) = leader
@@ -673,6 +692,7 @@ fn layout_tabbed_line(
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
+                tab_extents: work.tab_extents,
             };
             cursor_y = cursor_y + height;
             line
@@ -764,6 +784,10 @@ fn append_wrapped_tab_segment(out: &mut Vec<TabLine>, mut shaped: Vec<Line>, mer
             ascent: line.ascent,
             descent: line.descent,
             range: line.range,
+            // A continuation line produced by wrapping one tab segment carries no
+            // tab of its own: the tab that led to it was recorded on the line it
+            // advanced across.
+            tab_extents: Vec::new(),
         });
     }
 }
@@ -1113,6 +1137,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
+        tab_extents: Vec::new(),
     }
 }
 
