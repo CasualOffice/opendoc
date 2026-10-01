@@ -150,6 +150,26 @@ export const KEYMAP = [
   // line break, a table cell and a form field. The row is here so the chord is
   // still advertised from the one table rather than from a literal.
   { chord: "⇧⏎", command: "insert.lineBreak", scope: EDITOR_SCOPE },
+  // ⌘⏎ / Ctrl+Enter — THE page-break chord, in Word, in Google Docs and in
+  // ONLYOFFICE (`Shortcuts.js`, `InsertPageBreak`). `104` HF-127 recorded it as
+  // "inert — the chord is swallowed before the Enter branch", and that diagnosis
+  // was right about the symptom and could have led to the wrong fix.
+  //
+  // The swallowing is real: `main.js`'s editor key handler has an
+  // `if (mod) { breakTypingSession(); return; }` guard that leaves every ⌘/Ctrl
+  // chord to the browser, and it sits ABOVE the `key === "Enter"` branch — so a
+  // second path for Ctrl+Enter inside that handler would have to be written
+  // above the guard, as ⌘Backspace's line-delete already is, and the editor
+  // would then have two places that decide what a chord means. That is the shape
+  // this whole file exists to remove.
+  //
+  // The real cause is simpler: nothing CLAIMED the chord. The dispatcher
+  // (`document.addEventListener("keydown")` over `chordCommand`) is registered
+  // before the editor's own handler and calls `stopImmediatePropagation` on every
+  // chord it owns, so a row here is all that was missing — ⌘⌥⏎ has reached
+  // `review.acceptNext` through the same path all along, which is the proof that
+  // an Enter chord carrying a command modifier arrives here fine.
+  { chord: "⌘⏎", command: "layout.break.page", scope: EDITOR_SCOPE },
 
   // ---- Table sizing from the keyboard --------------------------------------
   // The keyboard half of the table chrome layer (`docs/141` D-1 §4.1.6): every

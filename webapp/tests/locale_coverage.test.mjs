@@ -92,24 +92,24 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1488],
-  ["de", 1488],
-  ["es", 1488],
-  ["fr", 1488],
-  ["hi", 1488],
-  ["id", 1488],
-  ["it", 1488],
-  ["ja", 1488],
-  ["ko", 1488],
-  ["nl", 1488],
-  ["pl", 1488],
-  ["pt-BR", 1488],
-  ["ru", 1488],
-  ["tr", 1488],
-  ["uk", 1488],
-  ["vi", 1488],
-  ["zh-Hans", 1488],
-  ["zh-Hant", 1488],
+  ["ar", 1501],
+  ["de", 1501],
+  ["es", 1501],
+  ["fr", 1501],
+  ["hi", 1501],
+  ["id", 1501],
+  ["it", 1501],
+  ["ja", 1501],
+  ["ko", 1501],
+  ["nl", 1501],
+  ["pl", 1501],
+  ["pt-BR", 1501],
+  ["ru", 1501],
+  ["tr", 1501],
+  ["uk", 1501],
+  ["vi", 1501],
+  ["zh-Hans", 1501],
+  ["zh-Hant", 1501],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;
@@ -274,6 +274,27 @@ const COVERAGE = new Map([
  *  that was done, so it drifts downwards away from the truth every time a surface
  *  lands translated without the row being moved — which is why this is MEASURED
  *  from the merged catalogues and not 1,464 + 11.
+ *
+ *  1,488 -> 1,501 is BREAKS (`docs/153` `page.break.page` rank 1,
+ *  `page.break.section` rank 2): the six break names, the three sentences a
+ *  successful break says, the menu band's name and the dropdown's three ribbon
+ *  strings. Thirteen keys, translated into all eighteen languages in the commit
+ *  that routed them.
+ *
+ *  Only four of the thirteen are forced by this ratchet — the three `break.inserted.*`
+ *  announcements and `menuGroup.breaks` are script-side with no English in the
+ *  markup to fall back on, and a locale that could not answer `menuGroup.breaks`
+ *  would announce a dotted key to a screen reader as the band's name. The other
+ *  nine are markup keys and were translated anyway, because the floor is a floor
+ *  and not a target.
+ *
+ *  Nothing here is identical across locales: unlike the format initialisms, every
+ *  one of these is a real word in every language, and the four section start
+ *  types are where the languages diverge most — Japanese says "from the next
+ *  page" where English says "(next page)", and Russian and Ukrainian say "on the
+ *  current page" for continuous. Those are each locale's own vocabulary for the
+ *  same OOXML `w:type`, taken from what Word and ONLYOFFICE already call them
+ *  there rather than translated from the English.
  *
  *  1,486 -> 1,488 is the table border PEN (`docs/153` `table.border-width-style`):
  *  the line-weight control's visible label and its accessible name. Both are

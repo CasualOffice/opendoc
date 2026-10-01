@@ -580,6 +580,22 @@
             </div>
             <span data-i18n="panelInsert.table" class="rgroup-label">Table</span>
           </div>
+          <!-- Breaks. ONE dropdown holding all six, which is ONLYOFFICE's shape
+               (`Toolbar.js:2382-2390`: one Breaks button, menu of Page Break /
+               Column Break / Insert Section Break ▸ four start types) and Word's
+               (Layout ▸ Page Setup ▸ Breaks). Six band buttons for six breaks
+               would spend the Insert band's whole remaining width on a group
+               nobody opens twice in a paragraph.
+               Placed second, after Table: Word's Insert tab opens with Pages and
+               ONLYOFFICE's Breaks button sits in their first Insert group, so
+               early is right, and the Table group is `data-ribbon-pinned` and
+               stays first. -->
+          <div class="rgroup" data-group="insert-breaks" data-ribbon-pinned>
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelInsert.insertBreak.title" data-i18n-label="panelInsert.breaks.label" id="insertBreaksBtn" type="button" class="fmt" title="Insert a page, column or section break" aria-label="Breaks" aria-haspopup="menu" aria-controls="insertBreaksMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">insert_page_break</span></button>
+            </div>
+            <span data-i18n="panelInsert.breaks" class="rgroup-label">Breaks</span>
+          </div>
           <div class="rgroup" data-group="illustrations" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertPictureFromFile.title" data-i18n-label="panelInsert.insertPicture.label" id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span data-i18n="insertPictureBtn.picture" class="fmt-big-label">Picture</span></button>
@@ -1551,6 +1567,25 @@
         </div>
         <label data-i18n-title="tableMenu.tableBorderColor.title" class="border-color" title="Table border color"><input data-i18n-label="tableMenu.tableBorderColor.label" id="tableBorderColor" type="color" value="#000000" aria-label="Table border color" /></label>
       </div>
+    </div>
+
+    <!-- The Breaks menu. FLAT, with the full name on every row, which is Google
+         Docs' Insert ▸ Break rather than Word's two headings with short names —
+         because the same label serves the command palette, where "Next Page"
+         alone says nothing, and one label per command is this chrome's rule.
+         Each row carries the command id it runs, so the markup and
+         `break_commands.mjs` cannot disagree about which row means which break.
+         `data-command` here is NOT read by the Insert surface-parity guard: that
+         one scans `.ribbon-panel .rgroup button[data-command]`, and a popover is
+         not inside a ribbon panel. -->
+    <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
+      <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
+      <button data-i18n="break.column" type="button" role="menuitem" class="menu-item" data-command="layout.break.column">Column break</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="break.section.nextPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.nextPage">Section break (next page)</button>
+      <button data-i18n="break.section.continuous" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.continuous">Section break (continuous)</button>
+      <button data-i18n="break.section.evenPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.evenPage">Section break (even page)</button>
+      <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
     </div>
 
     <!-- A size grid, not a menu: the container is a dialog holding a `role="grid"`

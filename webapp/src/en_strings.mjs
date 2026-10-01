@@ -248,6 +248,30 @@ export const EN_STRINGS = Object.freeze({
   // English literal in `file_pane.mjs`, so the one full-window surface in the
   // product stayed in English in all eighteen languages — the rest of the
   // chrome localises from `data-i18n`, but this page builds its rows in script.
+  // ---- Breaks ---------------------------------------------------------------
+  //
+  // The six NAMES are not here, and that is deliberate. They live beside their
+  // `data-i18n` attributes on the popover rows in `editor.html`, which is where
+  // markup's English belongs (`docs/124` §3.1) — and `build-locale.mjs` refuses a
+  // key declared in both places, correctly, because two declarations are two
+  // chances to disagree. `break_commands.mjs` reads them back through `t()` for
+  // the command palette, which works for the same reason every markup key works:
+  // the extractor puts them in `locales/en.json` and the fallback chain ends
+  // there.
+  //
+  // They are FLAT names with the kind spelled out — Google Docs' Insert ▸ Break
+  // rather than Word's "Section Breaks" heading over bare "Next Page" rows —
+  // because the same label has to serve the dropdown AND the palette, where
+  // "Next Page" alone says nothing about what it does.
+  //
+  // Said on SUCCESS, which a break needs more than most edits do: it is
+  // invisible at the caret, and on a short document it may move nothing on
+  // screen at all, so silence reads as "nothing happened" (`docs/67`). The
+  // refusals come from the engine, which names the container it refused in.
+  "break.inserted.page": "Page break inserted",
+  "break.inserted.column": "Column break inserted",
+  "break.inserted.section": "Section break inserted",
+  "menuGroup.breaks": "Breaks",
   "filePane.export.label": "Export",
   // ---- Format names ---------------------------------------------------------
   //

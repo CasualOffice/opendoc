@@ -894,7 +894,7 @@ already do.
 
 | # | Gap | Needs | Existing row |
 | ---: | --- | --- | --- |
-| 1 | **Insert a page break** (and column break, and section break with 4 kinds) | **engine** — no break-insert operation exists among the 50; `BreakKind` is already modelled — then facade, then UI | **new** |
+| 1 | ~~**Insert a page break** (and column break, and section break with 4 kinds)~~ **CLOSED 2026-10-01** | This row read "**engine** — no break-insert operation exists among the 50". That was already wrong when it was written, or became so soon after: `insertBreak` and `insertSectionBreak` were both in the facade with their own refusals and engine tests, and nothing in `webapp/` called either — the whole gap was the chrome. Six commands now ship (`layout.break.page`, `layout.break.column` and the four `layout.break.section.*`) on one Insert-band dropdown, an Insert-menu submenu and Ctrl/Cmd+Enter | closed; `docs/153` `page.break.page` / `page.break.section` / `page.break.column` are Parity, and `page.blankPage` is narrowed to the two-breaks-in-one-step command it still needs |
 | 2 | **Show formatting marks** (¶, space dot, tab arrow, page-break rule) + hidden table borders | **engine** — a display-list layer; then UI + a chord | **new** |
 | 3 | **Table of figures**, and Add Text — the contents table itself, and Update Table, LANDED (corrected 2026-10-01) | UI for Add Text; references collection for the figure table | OO-001 (narrowed: `reference.tableOfContents` and `reference.updateFields` are live, so the remaining gap is the figure table, the style gallery, the settings dialog and Remove) |
 | 4 | **Paragraph direction LTR/RTL** | **facade + UI only** — the operation already carries `bidi` | **new** — and we ship `ar.json` |

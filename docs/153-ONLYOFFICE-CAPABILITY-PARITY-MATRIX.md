@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 144 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 150 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 174 | both products ship it, and both anchors resolve |
+| Parity | 177 | both products ship it, and both anchors resolve |
 | Ours, ungated | 26 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
 | Partial | 63 | we ship part of it; the row says what is missing |
-| Gap | 105 | their standalone browser session ships it and we do not |
+| Gap | 102 | their standalone browser session ships it and we do not |
 | Theirs, gated | 17 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -160,12 +160,10 @@ least two surfaces (`SKILL` §10).
 | Rank | Capability | Id | Theirs | Note |
 | --- | --- | --- | --- | --- |
 | 1 | Insert a chart | `object.insert-chart` | `btnInsertChart` | We have no chart authoring of any kind. |
-| 1 | Page break | `page.break.page` | `DE.Views.Toolbar.textInsPageBreak` | The engine has insertBreak('page') and nothing in webapp/ calls it, so the most-used break in a word processor is unreachable. |
 | 2 | Align selected objects to each other | `object.align-objects` | `mniAlignObjects` | Their Align dropdown offers the six alignments plus an align-to-each-other mode; we have no align command at all. |
 | 2 | Edit a chart's data | `object.chart-edit-data` | `btnEditData` | Their Edit data opens an embedded spreadsheet editor over the chart's cached data. |
 | 2 | Chart elements — title, legend, labels, gridlines | `object.chart-elements` | `btnChartElements` | Their Chart tab drives title, legend position, data labels and both axes. |
 | 2 | Change chart type and style | `object.chart-type-style` | `btnChartType` | cmbChartStyle is the style half. |
-| 2 | Section break (next page, continuous, even, odd) | `page.break.section` | `DE.Views.Toolbar.textInsSectionBreak` | insertSectionBreak takes all four start types and has no caller, so a document can only ever have the sections it was imported with. |
 | 2 | Footnote and endnote settings | `page.note.settings` | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
 | 2 | Page size presets (A4, Letter, Legal) | `page.size.presets` | `DE.Views.PageSizeDialog.textPreset` | Their size dialog leads with a named paper list; ours has only the two number fields, so a user has to know A4 in inches. |
 | 2 | Right-to-left paragraph direction | `para.direction.rtl` | `DE.Views.ParagraphSettingsAdvanced.textDirRtl` | We import, render and round-trip w:bidi and run the Unicode bidi algorithm per line, but there is no way to set a paragraph's base direction from the editor. |
@@ -186,8 +184,7 @@ least two surfaces (`SKILL` §10).
 | 3 | Restore a picture to its original size | `object.original-size` | `btnOriginalSize` | The image's natural pixel size is read at insert time but is not kept anywhere a later command could restore it from. |
 | 3 | Replace a picture's bytes in place | `object.replace-image` | `asc_docs_api.ChangeImageFromFile` | We can delete and re-insert, which loses the object's size, wrap and position. The engine has no replace-bytes op. |
 | 3 | Reset crop | `object.reset-crop` | `btnResetCrop` | Committing a crop session with every inset back at zero does clear the crop, but there is no one-gesture reset from a cropped picture. |
-| 3 | Insert blank page | `page.blankPage` | `btnBlankPage` | It depends on page breaks, which are also unreachable. |
-| 3 | Column break | `page.break.column` | `DE.Views.Toolbar.textInsColumnBreak` | insertBreak('column') exists in the wasm binding with no caller. |
+| 3 | Insert blank page | `page.blankPage` | `btnBlankPage` | Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed. |
 | 3 | Page colour | `page.color` | `btnPageColor` | We import and round-trip w:background but nothing can set it. |
 | 3 | Content controls / structured document tags | `page.contentControls` | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
 | 3 | Remove header or footer | `page.header.remove` | `DE.Views.Toolbar.mniRemoveHeader` | There is no removeRunningContent binding, so a band that exists can be emptied but not deleted. |
@@ -518,12 +515,12 @@ that stops resolving fails the build rather than quietly downgrading a row.
 
 | Capability | Verdict | Ours | Theirs | Note |
 | --- | --- | --- | --- | --- |
-| Insert blank page | Gap | none (`insert.blankPage` undeclared) | `btnBlankPage` | It depends on page breaks, which are also unreachable. |
+| Insert blank page | Gap | none (`insert.blankPage` undeclared) | `btnBlankPage` | Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed. |
 | Bookmarks | Parity | `insert.bookmark` | `btnBookmarks` | Create, rename, delete and go to, each one undoable action. |
 | Page borders | Neither | none (`layout.pageBorders` undeclared) | none (searched `No PageBorders view file in web-apps/apps/documenteditor/main/app/view, no PageBorder localeKey and no PageBorder apiMethod in the snapshot; sdkjs touches pgBorders only in fromToJSON.js serialisation.`) | Neither product ships a page-borders dialog although both model the property; we import and export w:pgBorders too. |
-| Column break | Gap | none (`insert.columnBreak` undeclared) | `DE.Views.Toolbar.textInsColumnBreak` | insertBreak('column') exists in the wasm binding with no caller. |
-| Page break | Gap | none (`insert.pageBreak` undeclared) | `DE.Views.Toolbar.textInsPageBreak` | The engine has insertBreak('page') and nothing in webapp/ calls it, so the most-used break in a word processor is unreachable. |
-| Section break (next page, continuous, even, odd) | Gap | none (`insert.sectionBreak` undeclared) | `DE.Views.Toolbar.textInsSectionBreak` | insertSectionBreak takes all four start types and has no caller, so a document can only ever have the sections it was imported with. |
+| Column break | Parity | `layout.break.column` | `DE.Views.Toolbar.textInsColumnBreak` | `insertBreak('column')` had no caller; it is the second row of the same `Breaks` dropdown now, beside the page break, which is where theirs is (`Toolbar.js:2385`). |
+| Page break | Parity | `layout.break.page` | `DE.Views.Toolbar.textInsPageBreak` | Both put it on Insert and both bind Ctrl+Enter. Ours is one `Breaks` dropdown on the Insert band plus a `Breaks` submenu in the Insert menu, so it is reachable in the compact chrome where the ribbon is hidden, and the chord is one row in `keymap.mjs` rather than a second path through the editor's key handler (`docs/104` HF-127). Refused outside the body's own block list by the engine, by name. |
+| Section break (next page, continuous, even, odd) | Parity | `layout.break.section.nextPage` | `DE.Views.Toolbar.textInsSectionBreak` | All four start types ship: `layout.break.section.continuous`, `evenPage` and `oddPage` are the other three, each its own command and its own row in the same dropdown theirs uses (`Toolbar.js:2372-2380`). Guarded on the EFFECT: the four are inserted into one document and the `sectionType` each wrote is read back out of a normalized-JSON export, so a chrome that sent one start type four times fails. |
 | Insert caption | Parity | `reference.caption` | `btnCaption` | Label, position, exclude label, number format, chapter level and separator, with a live preview of the composed caption. |
 | Update caption numbers | Ours only | `reference.updateCaptionNumbers` | none (searched `No caption-update control in the snapshot's controls (only btnContentsUpdate and btnTableFiguresUpdate) and no caption-renumber localeKey under DE.Views.Links.`) | Ours exists because deleting a caption deliberately does not renumber; they have no equivalent command. |
 | Page colour | Gap | none (`layout.pageColor` undeclared) | `btnPageColor` | We import and round-trip w:background but nothing can set it. |

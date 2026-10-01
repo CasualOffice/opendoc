@@ -272,6 +272,27 @@ export const APP_MENU_SECTIONS = {
   // while the menu had them on Insert.
   insert: [
     band("menuGroup.table", "insert.table"),
+    // Breaks. A SUBMENU, because six rows of "… break" would make this menu long
+    // for a group nobody opens twice in a paragraph — the same argument the
+    // Export band makes on the File surface, and the shape ONLYOFFICE uses for
+    // the same six (`Toolbar.js:2382-2390`).
+    //
+    // The ids are `layout.*` because a break IS page setup — Word files them
+    // under Layout ▸ Page Setup — while Insert is where people look for them,
+    // which is exactly why the three running-content rows below are `layout.*`
+    // on this menu too. The menu home MATTERS and is not decoration: in compact
+    // chrome the ribbon is hidden, so a command with only a band face is
+    // palette-only there, which is the hole the References menu was added to
+    // close.
+    sub(
+      "menuGroup.breaks",
+      "layout.break.page",
+      "layout.break.column",
+      "layout.break.section.nextPage",
+      "layout.break.section.continuous",
+      "layout.break.section.evenPage",
+      "layout.break.section.oddPage",
+    ),
     band("menuGroup.illustrations", "insert.image", "insert.shape"),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),

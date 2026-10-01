@@ -15,6 +15,7 @@ import {
 } from "./web_fonts.mjs";
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import { escapeHtml } from "./text_rules.mjs";
+import { bindBreaksMenu, breakSurfaceRows } from "./break_commands.mjs";
 import { EXPORT_COMMANDS, exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
@@ -309,7 +310,6 @@ const spacingBtn = document.getElementById("spacingBtn");
 const paraOptsBtn = document.getElementById("paraOptsBtn");
 const paragraphPropertiesPanel = document.getElementById("paragraphPropertiesPanel");
 const paragraphPropertiesContext = document.getElementById("paragraphPropertiesContext");
-const paragraphPropertiesCloseBtn = document.getElementById("paragraphPropertiesClose");
 const paraPanelStyle = document.getElementById("paraPanelStyle");
 const paraPanelAlign = document.getElementById("paraPanelAlign");
 const paraLineSpacing = document.getElementById("paraLineSpacing");
@@ -326,13 +326,11 @@ const indentLeftInput = document.getElementById("indentLeft");
 const indentRightInput = document.getElementById("indentRight");
 const indentSpecialSel = document.getElementById("indentSpecial");
 const indentSpecialByInput = document.getElementById("indentSpecialBy");
-const borderColorInput = document.getElementById("borderColor");
 const tableBtn = document.getElementById("tableBtn");
 const tableFmtMenu = document.getElementById("tableMenu");
-const cellShade = document.getElementById("cellShade");
-const cellShadeNone = document.getElementById("cellShadeNone");
-const cellVAlign = document.getElementById("cellVAlign");
-// The border controls are looked up where they are PASSED: three module-level names for one reader.
+// Every control the cell-format popover owns is looked up where it is PASSED to
+// `bindCellFormatMenu`, which is its only reader: six module-level names in the
+// widest scope in the product, for one consumer, bought nothing.
 const tableAlign = document.getElementById("tableAlign");
 const tableContext = document.getElementById("tableContext");
 const tableRibbon = document.querySelector(".table-ribbon");
@@ -346,7 +344,6 @@ const tableStyleBtn = document.getElementById("tableStyleBtn");
 const tableStyleMenu = document.getElementById("tableStyleMenu");
 const tablePropertiesPanel = document.getElementById("tablePropertiesPanel");
 const tablePropertiesContext = document.getElementById("tablePropertiesContext");
-const tablePropertiesCloseBtn = document.getElementById("tablePropertiesClose");
 const tableColumnWidthNote = document.getElementById("tableColumnWidthNote");
 const mergeCellsBtn = document.getElementById("mergeCellsBtn");
 const splitCellBtn = document.getElementById("splitCellBtn");
@@ -7773,6 +7770,7 @@ const INSERT_SURFACE = [
 //                reason, because a control that silently does nothing is the one
 //                thing docs/63 forbids outright, and hiding it would make the
 //                gap invisible to the person deciding what to build next.
+const BREAK_IO = { doc: () => doc, caret: () => selection?.focus ?? null, runEdit: (thunk, options) => runEdit(thunk, options), setStatus: (text) => setStatus(text) };
 const LAYOUT_SURFACE = [
   // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
   // into the same section geometry; each one opens the dialog with its own
@@ -7818,6 +7816,7 @@ const LAYOUT_SURFACE = [
   { command: "layout.headerFooterSettings", buttons: () => [headerFooterSettingsBtn], requires: "doc", run: () => headerFooterSettings.open(true) },
   { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
   { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
+  ...breakSurfaceRows(BREAK_IO),
   ...arrangeSurfaceRows(objectArrange, {
     bringForward: () => layoutBringForwardBtn,
     sendBackward: () => layoutSendBackwardBtn,
@@ -10439,7 +10438,7 @@ paraOptsBtn.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleParagraphProperties();
 });
-paragraphPropertiesCloseBtn.addEventListener("click", () =>
+document.getElementById("paragraphPropertiesClose").addEventListener("click", () =>
   toggleParagraphProperties(false),
 );
 document.addEventListener("keydown", (event) => {
@@ -10458,7 +10457,7 @@ document.addEventListener("keydown", (event) => {
 // 1 pt single line (8 eighth-points).
 for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
   onButton(b, () => {
-    const [r, g, bl] = hexToRgb(borderColorInput.value);
+    const [r, g, bl] = hexToRgb(document.getElementById("borderColor").value);
     runToolbarEdit((a, x, c, d) => doc.setParagraphBorder(a, x, c, d, b.dataset.border, r, g, bl, 8));
     reflectParagraphProperties();
   });
@@ -10535,9 +10534,9 @@ function runNodeEdit(thunk) {
 // caret's own node passed twice is a one-cell range, so one path serves both.
 const cellFormatMenu = bindCellFormatMenu({
   menu: tableFmtMenu,
-  shade: cellShade,
-  shadeNone: cellShadeNone,
-  vAlign: cellVAlign,
+  shade: document.getElementById("cellShade"),
+  shadeNone: document.getElementById("cellShadeNone"),
+  vAlign: document.getElementById("cellVAlign"),
   cellBorderColor: document.getElementById("cellBorderColor"),
   tableBorderColor: document.getElementById("tableBorderColor"),
   borderWeight: document.getElementById("borderWeight"),
@@ -10551,6 +10550,7 @@ const cellFormatMenu = bindCellFormatMenu({
   hexToRgb,
 });
 const tablePopover = registerPopover(tableBtn, tableFmtMenu, () => cellFormatMenu.reflect());
+bindBreaksMenu(BREAK_IO);
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -10692,7 +10692,7 @@ tableFormulaApply.addEventListener("click", () => {
   if (!selection || !doc || !tableFormula.value.trim()) return;
   runNodeEdit((node) => doc.calculateTableFormula(node, tableFormula.value));
 });
-tablePropertiesCloseBtn.addEventListener("click", () => toggleTableProperties(false));
+document.getElementById("tablePropertiesClose").addEventListener("click", () => toggleTableProperties(false));
 const tableAlignGroup = bindRadioGroup(tableAlign, {
   attr: "data-talign",
   onSelect: () => commitTableProperties(),

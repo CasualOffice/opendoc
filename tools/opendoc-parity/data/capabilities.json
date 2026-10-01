@@ -1004,7 +1004,7 @@
         "control": "btnBlankPage"
       },
       "rank": 3,
-      "note": "It depends on page breaks, which are also unreachable."
+      "note": "Word's Insert blank page is TWO page breaks in one undoable step. The page break it depends on now ships (`layout.break.page`), so what is left is a command that applies two of them as one action and one undo entry - this row read 'it depends on page breaks, which are also unreachable' and that half is closed."
     },
     {
       "id": "page.bookmarks",
@@ -1041,45 +1041,39 @@
       "area": "page",
       "title": "Column break",
       "ours": {
-        "absent": [
-          "insert.columnBreak"
-        ]
+        "command": "layout.break.column"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textInsColumnBreak"
       },
       "rank": 3,
-      "note": "insertBreak('column') exists in the wasm binding with no caller."
+      "note": "`insertBreak('column')` had no caller; it is the second row of the same `Breaks` dropdown now, beside the page break, which is where theirs is (`Toolbar.js:2385`)."
     },
     {
       "id": "page.break.page",
       "area": "page",
       "title": "Page break",
       "ours": {
-        "absent": [
-          "insert.pageBreak"
-        ]
+        "command": "layout.break.page"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textInsPageBreak"
       },
       "rank": 1,
-      "note": "The engine has insertBreak('page') and nothing in webapp/ calls it, so the most-used break in a word processor is unreachable."
+      "note": "Both put it on Insert and both bind Ctrl+Enter. Ours is one `Breaks` dropdown on the Insert band plus a `Breaks` submenu in the Insert menu, so it is reachable in the compact chrome where the ribbon is hidden, and the chord is one row in `keymap.mjs` rather than a second path through the editor's key handler (`docs/104` HF-127). Refused outside the body's own block list by the engine, by name."
     },
     {
       "id": "page.break.section",
       "area": "page",
       "title": "Section break (next page, continuous, even, odd)",
       "ours": {
-        "absent": [
-          "insert.sectionBreak"
-        ]
+        "command": "layout.break.section.nextPage"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.textInsSectionBreak"
       },
       "rank": 2,
-      "note": "insertSectionBreak takes all four start types and has no caller, so a document can only ever have the sections it was imported with."
+      "note": "All four start types ship: `layout.break.section.continuous`, `evenPage` and `oddPage` are the other three, each its own command and its own row in the same dropdown theirs uses (`Toolbar.js:2372-2380`). Guarded on the EFFECT: the four are inserted into one document and the `sectionType` each wrote is read back out of a normalized-JSON export, so a chrome that sent one start type four times fails."
     },
     {
       "id": "page.captions",

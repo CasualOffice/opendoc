@@ -325,6 +325,18 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.orientation", "mutate"),
   exact("layout.size", "mutate"),
   exact("layout.columns", "mutate"),
+  // The six breaks. `mutate`, like every other page-setup command: a break
+  // changes the document. Declared EXACTLY rather than as a `layout.break.`
+  // family because the set is closed and knowable — two forced breaks and the
+  // four section start types the engine accepts — and a family is for a roster
+  // generated from the document, the font inventory or markup. An exact row also
+  // makes a host's `commands` list name each break it can drive.
+  exact("layout.break.page", "mutate"),
+  exact("layout.break.column", "mutate"),
+  exact("layout.break.section.nextPage", "mutate"),
+  exact("layout.break.section.continuous", "mutate"),
+  exact("layout.break.section.evenPage", "mutate"),
+  exact("layout.break.section.oddPage", "mutate"),
   exact("layout.indent", "mutate"),
   exact("layout.spacing", "mutate"),
   // Tab stops mutate the paragraph, so they need the same grant the rest of this
