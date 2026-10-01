@@ -1069,6 +1069,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -1102,6 +1103,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,

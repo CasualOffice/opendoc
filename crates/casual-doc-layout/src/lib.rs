@@ -14,6 +14,7 @@
 //! - [`quantity`] — the user-facing unit boundary (cm/mm/in/pt/pica to twips).
 //! - [`text`] — line-level types + the [`text::LineShaper`] seam.
 //! - [`block`] — block/flow fragments (the galley).
+//! - [`chart`] — DrawingML chart composition from the typed projection (`docs/155`).
 //! - [`page`] — immutable paginated output.
 //! - [`display`] — the backend-neutral paint list.
 //! - [`formatting_marks`] — the paint-only non-printing-character overlay.
@@ -28,6 +29,8 @@
 pub mod anchor;
 pub mod block;
 pub mod cascade;
+// Own line (anti-conflict): chart composition from the typed projection.
+pub mod chart;
 pub mod columns;
 pub mod compose;
 pub mod display;
