@@ -19,6 +19,8 @@ use super::{FieldKind, FieldRangeId};
 use super::FieldUpdateState;
 // Same rule: the one numbering resolver (`v1::numbering`) goes on its own line.
 use super::NumberingResolver;
+// Same rule: the typed chart projection's own imports go on their own line.
+use super::{Chart, ChartId};
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -1363,6 +1365,19 @@ pub struct Definitions {
     /// omitted when empty so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub field_ranges: DefinitionMap<FieldRangeId, FieldRange>,
+    /// Typed chart projections by id — a **read projection of a retained part**,
+    /// never a replacement for it (`docs/155` §6.1). A `Chart` names the
+    /// `EmbeddedObject` node it describes through `Chart::object`; the chart
+    /// part's bytes stay in the import side-table and are re-emitted verbatim.
+    ///
+    /// A side table rather than a field on `EmbeddedObject` for two reasons:
+    /// derived data about an opaque part does not belong in the node model
+    /// (`docs/45` invariants I3/I4), and a new field on that struct is a breaking
+    /// change to every one of its literals across the workspace with nothing for
+    /// a merge to conflict on (`SKILL` §5a shape 1). Additive: omitted when empty
+    /// so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub charts: DefinitionMap<ChartId, Chart>,
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,

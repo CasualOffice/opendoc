@@ -146,6 +146,14 @@ pub enum ModelError {
     SdtNestingTooDeep(NodeId),
     /// A DrawingML group nested deeper than the supported bound (v1).
     GroupNestingTooDeep(NodeId),
+    /// A typed chart projection named a node that is not an embedded chart object
+    /// (v1). Carries the `Chart::object` anchor that did not resolve.
+    ///
+    /// A projection is derived data *about* a retained part, so it is only
+    /// meaningful while the node it describes is still a chart: a projection left
+    /// behind by a deleted object, or pointed at a picture, describes nothing.
+    /// Refused for the same reason [`ModelError::DanglingMediaRef`] is.
+    DanglingChartObjectRef(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -295,6 +303,12 @@ impl fmt::Display for ModelError {
                 write!(
                     formatter,
                     "group {id} nests deeper than the supported bound"
+                )
+            }
+            Self::DanglingChartObjectRef(id) => {
+                write!(
+                    formatter,
+                    "chart projection anchor {id} is not an embedded chart object"
                 )
             }
         }

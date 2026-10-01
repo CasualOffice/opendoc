@@ -282,6 +282,7 @@ impl Document {
         self.validate_people()?;
         self.validate_bookmarks()?;
         self.validate_field_ranges()?;
+        self.validate_charts()?;
         self.validate_font_table()?;
         self.validate_font_scheme()?;
         self.validate_color_scheme()?;
@@ -672,6 +673,13 @@ impl Document {
         // duplicate from `validate` and would have let a reopened snapshot's generator
         // reissue one. Enumerating families, not successes (`SKILL` §9.3).
         for (id, _) in self.definitions.field_ranges.iter() {
+            visit(id.node_id())?;
+        }
+        // A `ChartId` is a `NodeId` the importer mints, so it belongs to this walk
+        // for both of its readings: leaving it out would hide a duplicate from
+        // `validate` and let a reopened snapshot's generator reissue one.
+        // Enumerating families, not successes (`SKILL` §9.3).
+        for (id, _) in self.definitions.charts.iter() {
             visit(id.node_id())?;
         }
         for block in &self.body {
@@ -1971,6 +1979,75 @@ impl Document {
         Ok(())
     }
 
+    /// Validates every typed chart projection: its bounds, and that its anchor
+    /// still names an embedded chart object (`docs/155` §8.4).
+    ///
+    /// # Why this is a walk of its own, and why it costs nothing without charts
+    ///
+    /// "Does this anchor name a chart?" is a question about a node somewhere in
+    /// *some* block container, and `validate_inlines` has no mutable state
+    /// threaded through the block recursion to collect candidates into — the same
+    /// reason `validate_field_ranges` is a separate walk, recorded there.
+    ///
+    /// The walk therefore only happens when the document actually holds a
+    /// projection: `charts` is empty for every document without a chart, and the
+    /// early return keeps the common case at O(1). With charts it is O(document)
+    /// once per validation, which is the cost `validate` already pays several
+    /// times over; it never runs per keystroke.
+    fn validate_charts(&self) -> Result<(), ModelError> {
+        if self.definitions.charts.is_empty() {
+            return Ok(());
+        }
+        for (_, chart) in self.definitions.charts.iter() {
+            check_chart(chart)?;
+        }
+        let mut anchors = BTreeSet::new();
+        self.visit_chart_object_ids(&mut anchors);
+        for (_, chart) in self.definitions.charts.iter() {
+            if !anchors.contains(&chart.object) {
+                return Err(ModelError::DanglingChartObjectRef(chart.object));
+            }
+        }
+        Ok(())
+    }
+
+    /// Collects the node id of every `EmbeddedObject` of kind `Chart`, in every
+    /// block container (body, notes, headers, footers, comments).
+    ///
+    /// Every container is walked, not just the body: a chart can be placed in a
+    /// header or a footnote, and a validator that only knew about the body would
+    /// reject a legitimate projection there (`SKILL` §9.3 — enumerate families).
+    fn visit_chart_object_ids(&self, found: &mut BTreeSet<NodeId>) {
+        for block in &self.body {
+            record_chart_object_ids(block, found);
+        }
+        for (_, note) in self
+            .definitions
+            .footnotes
+            .iter()
+            .chain(self.definitions.endnotes.iter())
+        {
+            for block in &note.blocks {
+                record_chart_object_ids(block, found);
+            }
+        }
+        for (_, header_footer) in self
+            .definitions
+            .headers
+            .iter()
+            .chain(self.definitions.footers.iter())
+        {
+            for block in &header_footer.blocks {
+                record_chart_object_ids(block, found);
+            }
+        }
+        for (_, comment) in self.definitions.comments.iter() {
+            for block in &comment.blocks {
+                record_chart_object_ids(block, found);
+            }
+        }
+    }
+
     fn validate_snapshot_limits(&self, limits: SnapshotLimits) -> Result<(), SnapshotError> {
         let mut blocks = 0_usize;
         let mut scalar_values = 0_usize;
@@ -2764,6 +2841,247 @@ fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
     for props in [&section.footnote_props, &section.endnote_props] {
         check_note_props(props)?;
     }
+    Ok(())
+}
+
+/// Records the node id of every `EmbeddedObject` whose kind is `Chart` reachable
+/// from `block`, recursing through every nested container the way
+/// [`record_block_ids`] does.
+fn record_chart_object_ids(block: &BlockNode, found: &mut BTreeSet<NodeId>) {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            for inline in &paragraph.inlines {
+                record_chart_object_ids_in_inline(inline, found);
+            }
+        }
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for nested in &cell.blocks {
+                        record_chart_object_ids(nested, found);
+                    }
+                }
+            }
+        }
+        BlockNode::Sdt(sdt) => {
+            for nested in &sdt.blocks {
+                record_chart_object_ids(nested, found);
+            }
+        }
+        BlockNode::AltChunk(_) => {}
+    }
+}
+
+/// The inline half of [`record_chart_object_ids`].
+fn record_chart_object_ids_in_inline(inline: &InlineNode, found: &mut BTreeSet<NodeId>) {
+    match inline {
+        InlineNode::EmbeddedObject(object) => {
+            if object.kind == EmbeddedKind::Chart {
+                found.insert(object.id);
+            }
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                record_chart_object_ids_in_inline(child, found);
+            }
+        }
+        InlineNode::Field(field) => {
+            for child in &field.inlines {
+                record_chart_object_ids_in_inline(child, found);
+            }
+        }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                record_chart_object_ids_in_inline(child, found);
+            }
+        }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                record_chart_object_ids_in_inline(child, found);
+            }
+        }
+        InlineNode::TextBox(text_box) => {
+            for block in &text_box.blocks {
+                record_chart_object_ids(block, found);
+            }
+        }
+        InlineNode::Group(group) => {
+            record_chart_object_ids_in_group(group, found);
+        }
+        _ => {}
+    }
+}
+
+/// The group half of [`record_chart_object_ids`]: a group holds no embedded
+/// object directly, but a text box inside one holds ordinary block content.
+fn record_chart_object_ids_in_group(group: &WordprocessingGroup, found: &mut BTreeSet<NodeId>) {
+    for child in &group.children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    record_chart_object_ids(block, found);
+                }
+            }
+            GroupChild::Group(nested) => record_chart_object_ids_in_group(nested, found),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
+/// Validates one typed chart projection's bounds (`docs/155` §8.4).
+///
+/// A chart part is attacker-controlled input, so every list and every string has
+/// a finite ceiling. The importer declines to project a chart that exceeds one
+/// (reporting the loss instead of failing the import, `docs/155` §6.1
+/// consequence 3); this is the model-side floor that makes an over-bound
+/// projection unrepresentable however it was constructed.
+fn check_chart(chart: &Chart) -> Result<(), ModelError> {
+    check_domain(
+        chart.plot_area.groups.len() <= MAX_CHART_GROUPS,
+        "chart.plotArea.groups",
+    )?;
+    check_domain(
+        chart.plot_area.axes.len() <= MAX_CHART_AXES,
+        "chart.plotArea.axes",
+    )?;
+    if let Some(title) = &chart.title
+        && let Some(text) = &title.text
+    {
+        check_chart_text(text, "chart.title")?;
+    }
+    if let Some(part) = &chart.external_data {
+        check_embedded_part_shape(part, "chart.externalData")?;
+    }
+    for group in &chart.plot_area.groups {
+        check_domain(
+            group.series.len() <= MAX_CHART_SERIES_PER_GROUP,
+            "chart.group.series",
+        )?;
+        check_domain(
+            group.axis_ids.len() <= MAX_CHART_AXES,
+            "chart.group.axisIds",
+        )?;
+        match group.kind {
+            ChartGroupKind::Bar {
+                gap_width, overlap, ..
+            } => {
+                check_domain(gap_width <= 500, "chart.group.gapWidth")?;
+                check_domain((-100..=100).contains(&overlap), "chart.group.overlap")?;
+            }
+            ChartGroupKind::Pie { first_slice_angle } => {
+                check_domain(first_slice_angle <= 360, "chart.group.firstSliceAngle")?;
+            }
+            ChartGroupKind::Doughnut {
+                first_slice_angle,
+                hole_size,
+            } => {
+                check_domain(first_slice_angle <= 360, "chart.group.firstSliceAngle")?;
+                check_domain((1..=90).contains(&hole_size), "chart.group.holeSize")?;
+            }
+            ChartGroupKind::Line { .. }
+            | ChartGroupKind::Area { .. }
+            | ChartGroupKind::Scatter { .. } => {}
+        }
+        for series in &group.series {
+            if let Some(name) = &series.name {
+                check_chart_text(name, "chart.series.name")?;
+            }
+        }
+    }
+    // Every range in one place, so a field added to `Series` that holds one is
+    // covered without this check being remembered — `Chart::data_ranges` is the
+    // single enumeration.
+    for range in chart.data_ranges() {
+        check_data_range(range)?;
+    }
+    for axis in &chart.plot_area.axes {
+        for bound in [axis.minimum.as_deref(), axis.maximum.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            check_domain(
+                !bound.is_empty() && bound.len() <= MAX_CHART_NUMBER_BYTES,
+                "chart.axis.scaling",
+            )?;
+        }
+        if let Some(format) = &axis.number_format {
+            check_domain(
+                !format.is_empty() && format.len() <= MAX_CHART_TEXT_BYTES,
+                "chart.axis.numberFormat",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Validates one cached data range's bounds.
+fn check_data_range(range: &DataRange) -> Result<(), ModelError> {
+    check_domain(
+        range.points.len() <= MAX_CHART_DATA_POINTS,
+        "chart.dataRange.points",
+    )?;
+    if let Some(formula) = &range.formula {
+        check_domain(
+            !formula.is_empty() && formula.len() <= MAX_CHART_FORMULA_BYTES,
+            "chart.dataRange.formula",
+        )?;
+    }
+    if let Some(format) = &range.number_format {
+        check_domain(
+            !format.is_empty() && format.len() <= MAX_CHART_TEXT_BYTES,
+            "chart.dataRange.numberFormat",
+        )?;
+    }
+    for (_, value) in &range.points {
+        match value {
+            ChartValue::Number(text) => check_domain(
+                !text.is_empty() && text.len() <= MAX_CHART_NUMBER_BYTES,
+                "chart.dataRange.point.number",
+            )?,
+            ChartValue::Text(text) => check_domain(
+                text.len() <= MAX_CHART_TEXT_BYTES,
+                "chart.dataRange.point.text",
+            )?,
+            ChartValue::Blank => {}
+        }
+    }
+    Ok(())
+}
+
+/// Validates one piece of cached chart text (a title or a series name).
+fn check_chart_text(text: &ChartText, property: &'static str) -> Result<(), ModelError> {
+    check_domain(text.text.len() <= MAX_CHART_TEXT_BYTES, property)?;
+    if let Some(formula) = &text.formula {
+        check_domain(
+            !formula.is_empty() && formula.len() <= MAX_CHART_FORMULA_BYTES,
+            property,
+        )?;
+    }
+    Ok(())
+}
+
+/// Validates an [`EmbeddedPart`] pointer's own field domains.
+///
+/// `Document::check_embedded_part` additionally resolves the part against the
+/// document's relationship bookkeeping; a chart's `c:externalData` pointer is a
+/// pointer into the *chart part's* own relationships, which this model does not
+/// hold, so only the shape is checked here.
+fn check_embedded_part_shape(
+    part: &EmbeddedPart,
+    property: &'static str,
+) -> Result<(), ModelError> {
+    check_domain(
+        !part.relationship_id.is_empty() && part.relationship_id.len() <= 255,
+        property,
+    )?;
+    check_domain(
+        !part.relationship_type.is_empty() && part.relationship_type.len() <= 2048,
+        property,
+    )?;
+    check_domain(
+        !part.part_name.is_empty() && part.part_name.len() <= 2048,
+        property,
+    )?;
     Ok(())
 }
 

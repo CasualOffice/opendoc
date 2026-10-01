@@ -7,6 +7,7 @@
 //! (`38-NORMALIZED-SCHEMA-V1-DESIGN.md`, ADR-027).
 
 mod body;
+mod chart;
 mod definitions;
 mod document;
 mod ids;
@@ -18,6 +19,7 @@ mod properties;
 mod table;
 
 pub use body::*;
+pub use chart::*;
 pub use definitions::*;
 pub use document::*;
 pub use ids::*;

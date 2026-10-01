@@ -35,6 +35,7 @@
 #![forbid(unsafe_code)]
 
 mod body;
+mod chart;
 mod comments_ext;
 mod config;
 mod coverage;
@@ -134,6 +135,13 @@ pub struct Import {
     /// referencing relationship is emitted by the writer from the node — so the
     /// side-table must NOT re-add it as an orphan (that would double-emit it).
     pub(crate) embedded_part_names: std::collections::BTreeSet<String>,
+    /// What reading each referenced chart part produced, in document order.
+    ///
+    /// Carried out of the semantic pass because the *disposition* of a chart
+    /// construct cannot be decided here: its retention outcome is "the opaque
+    /// side-table holds the part", and the ledger record that licenses that claim
+    /// is minted later, by `build_retained_parts`. `import_package` joins the two.
+    pub(crate) chart_parts: Vec<crate::chart::ChartPartOutcome>,
 }
 
 /// Imports the main document of an admitted DOCX package into a v1 document,
@@ -388,6 +396,44 @@ pub fn import_package(
         })
         .collect();
 
+    // The chart parts the body can reference, each with its OWN relationships (a
+    // chart's workbook, colour style and chart style hang off
+    // `word/charts/_rels/chartN.xml.rels`, not the document's). Read here because
+    // only this entry point has a package; the parts stay in the opaque side-table
+    // and the embedded workbook is never opened (`docs/155` §5.2).
+    let mut chart_part_sources: std::collections::BTreeMap<String, crate::chart::ChartPartSource> =
+        std::collections::BTreeMap::new();
+    let chart_part_names: Vec<String> = embedded_index
+        .values()
+        .filter(|rel| rel.relationship_type.ends_with("/chart"))
+        .map(|rel| rel.part_name.clone())
+        .collect();
+    for part_name in chart_part_names {
+        if chart_part_sources.contains_key(&part_name) {
+            continue;
+        }
+        let bytes = package
+            .read_part(&part_name)
+            .map_err(ImportError::Package)?;
+        let rels = package
+            .part_relationships(&part_name)
+            .map_err(ImportError::Package)?
+            .iter()
+            .filter(|relationship| !relationship.id.is_empty())
+            .filter_map(|relationship| {
+                let part = relationship.resolved_part.clone()?;
+                Some((
+                    relationship.id.clone(),
+                    EmbeddedRel {
+                        relationship_type: relationship.relationship_type.clone(),
+                        part_name: part,
+                    },
+                ))
+            })
+            .collect();
+        chart_part_sources.insert(part_name, crate::chart::ChartPartSource { bytes, rels });
+    }
+
     let mut import = import_with_sources(
         &document_bytes,
         styles_bytes.as_deref(),
@@ -404,6 +450,7 @@ pub fn import_package(
         &media_sources,
         &hyperlink_rels,
         &embedded_index,
+        &chart_part_sources,
         config,
     )?;
 
@@ -482,15 +529,30 @@ pub fn import_package(
     //     `not-retained` ("intentionally and reportably dropped"). Retention
     //     mode's byte floor still keeps the bytes verbatim, so it is `preserved`
     //     there.
+    let projected_chart_parts: std::collections::BTreeSet<String> = import
+        .chart_parts
+        .iter()
+        .filter(|outcome| outcome.projected)
+        .map(|outcome| outcome.part_name.clone())
+        .collect();
     let (retained_parts, dispositions) = build_retained_parts(
         package,
         &consumed,
         &import.embedded_part_names,
+        &projected_chart_parts,
         config,
         &mut import.ledger,
     )?;
     import.retained_parts = retained_parts;
+    // A chart part whose projection succeeded is enumerated by CONSTRUCT rather
+    // than as one line about a part: `docs/155` §6.2. A fully-projected chart is
+    // `mapped` + `preserved`, which `35` says is never a finding, so it raises
+    // nothing at all; a partly-projected one is `degraded` + `preserved` once per
+    // construct the projection did not represent, each charged to the part and
+    // each licensed by the part's own opaque-part ledger record.
+    let chart_constructs = chart_construct_dispositions(&import.chart_parts, &import.ledger);
     import.report.add_part_dispositions(dispositions);
+    import.report.add_chart_constructs(chart_constructs);
     import
         .report
         .validate(&import.ledger)
@@ -512,6 +574,7 @@ fn build_retained_parts(
     package: &mut DocxPackage<'_>,
     consumed: &std::collections::BTreeSet<String>,
     embedded_part_names: &std::collections::BTreeSet<String>,
+    projected_chart_parts: &std::collections::BTreeSet<String>,
     config: ImportConfig,
     ledger: &mut PreservationLedger,
 ) -> Result<(RetainedParts, Vec<WholePartDisposition>), ImportError> {
@@ -595,7 +658,16 @@ fn build_retained_parts(
             .len()
             .saturating_add(rels.as_ref().map_or(0, |rels| rels.bytes.len()));
         let ledger_id = ledger.record_opaque_part(name, retained_bytes);
-        dispositions.push((part, Disposition::OmittedPreserved, Some(ledger_id)));
+        // A chart part the projection READ is no longer an `omitted` part: it is
+        // `mapped` or `degraded` (`docs/155` §6.2), and `35` says a `mapped`
+        // construct is never enumerated while a `degraded` one is enumerated by
+        // the construct that was lost, not by the part. Both are emitted by
+        // `chart_construct_dispositions`, so the whole-part row is suppressed here
+        // rather than contradicted there. The ledger record is still created, so
+        // the preservation claim those findings make still resolves.
+        if !projected_chart_parts.contains(name) {
+            dispositions.push((part, Disposition::OmittedPreserved, Some(ledger_id)));
+        }
         parts.push(RetainedPart {
             part_name: name.clone(),
             content_type,
@@ -649,6 +721,61 @@ fn build_retained_parts(
         },
         dispositions,
     ))
+}
+
+/// Builds one `degraded` + `preserved` finding per construct a successful chart
+/// projection did not represent (`docs/155` §6.2).
+///
+/// A chart part whose projection captured everything produces **nothing**: `35`
+/// makes `mapped` unreachable in a report, and twenty rows that describe no
+/// additional loss are the HF-174 defect the `Reporter` doc comment warns about.
+///
+/// Every finding claims `preserved`, which is true for a reason worth stating: the
+/// part's bytes are in the opaque side-table with their own ledger record, and
+/// export copies them. So a construct this projection did not understand is still
+/// in the saved file — which is the whole of `docs/155` §6.1 and the thing a
+/// convert-through-an-intermediate-model pipeline cannot say.
+fn chart_construct_dispositions(
+    outcomes: &[crate::chart::ChartPartOutcome],
+    ledger: &PreservationLedger,
+) -> Vec<(PartDisposition, String, Disposition, Option<LedgerId>)> {
+    let mut entries = Vec::new();
+    for outcome in outcomes {
+        let ledger_id = ledger.opaque_part_record(&outcome.part_name);
+        // Without a record the retention half of the claim is not evidenced, and
+        // `35` says an unevidenced `preserved` must fail the import rather than be
+        // reported. Reporting the weaker, true disposition keeps a bookkeeping
+        // mismatch from turning into a document that will not open.
+        let (degraded, omitted) = match ledger_id {
+            Some(_) => (
+                Disposition::DegradedPreserved,
+                Disposition::OmittedPreserved,
+            ),
+            None => (
+                Disposition::DegradedNotRetained,
+                Disposition::OmittedNotRetained,
+            ),
+        };
+        let part = || PartDisposition {
+            part_name: outcome.part_name.clone(),
+            content_type: None,
+        };
+        if !outcome.projected {
+            // No projection, so the part keeps today's whole-part `omitted` +
+            // `preserved` row. One construct is still worth naming beside it: the
+            // chart FAMILY that was out of scope, because "we do not model
+            // `bar3DChart`" is information the part row cannot carry and is the
+            // actionable half of the finding.
+            if let Some(family) = &outcome.out_of_scope_family {
+                entries.push((part(), family.clone(), omitted, ledger_id));
+            }
+            continue;
+        }
+        for construct in &outcome.unconsumed {
+            entries.push((part(), construct.clone(), degraded, ledger_id));
+        }
+    }
+    entries
 }
 
 /// Appends every relationship in `relationships` that targets a preserved part
@@ -788,6 +915,9 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         None,
         &[],
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        // No package, so no chart parts to read: a chart reference still
+        // round-trips, it just has no projection on this path.
         &std::collections::BTreeMap::new(),
         config,
     )
@@ -1081,6 +1211,7 @@ pub(crate) fn import_with_sources(
     media_sources: &[MediaSource],
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
     embedded_index: &std::collections::BTreeMap<String, EmbeddedRel>,
+    chart_parts: &std::collections::BTreeMap<String, crate::chart::ChartPartSource>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
@@ -1258,6 +1389,12 @@ pub(crate) fn import_with_sources(
     // stamp belongs to. This is why `build_section_boundary` cannot set it.
     watermark::lift_header_watermarks(&mut sections, &header_watermarks);
 
+    // The typed chart projections (`docs/155` §8): a READ projection of parts that
+    // stay byte-preserved, built after the body parse because each one is anchored
+    // to the `EmbeddedObject` node the body minted. Ids come from the same
+    // generator, immediately after the body's, so the sequence stays deterministic.
+    let projected_charts = chart::build_charts(&body, chart_parts, &mut ids, config)?;
+
     if body.is_empty() {
         // A body with no paragraphs yields a single empty paragraph so the v1
         // document has a non-empty body.
@@ -1287,6 +1424,7 @@ pub(crate) fn import_with_sources(
         comments: comments_map,
         bookmarks: parsed_defs.bookmarks,
         field_ranges: parsed_defs.field_ranges,
+        charts: projected_charts.charts,
         document_defaults,
         latent_styles,
         font_table,
@@ -1317,6 +1455,7 @@ pub(crate) fn import_with_sources(
         // `import_package` populates the side-table when a package is available.
         retained_parts: RetainedParts::default(),
         embedded_part_names,
+        chart_parts: projected_charts.parts,
     })
 }
 

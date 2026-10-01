@@ -5774,3 +5774,312 @@ fn r2_an_unbalanced_field_range_inside_a_text_box_is_rejected() {
         "the box's start cannot pair with the body's end: {document:?}"
     );
 }
+
+// --- the typed chart projection (`docs/155` §8) ------------------------------
+
+/// A chart part pointer, as an `EmbeddedObject` carries one.
+fn chart_part_pointer() -> EmbeddedPart {
+    EmbeddedPart {
+        relationship_id: "rId5".to_owned(),
+        relationship_type:
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart".to_owned(),
+        part_name: "word/charts/chart1.xml".to_owned(),
+    }
+}
+
+/// A paragraph holding one embedded object of `kind`.
+fn embedded_object_paragraph(
+    paragraph_id: NodeId,
+    object_id: NodeId,
+    kind: EmbeddedKind,
+) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: paragraph_id,
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+            id: object_id,
+            kind,
+            part: chart_part_pointer(),
+            extra_parts: Vec::new(),
+            preview: None,
+            extent: Extent {
+                width_emu: 5_486_400,
+                height_emu: 3_200_400,
+            },
+            prog_id: None,
+        }))],
+    })
+}
+
+/// A minimal projection of a one-series bar chart, anchored to `object`.
+fn chart_projection(object: NodeId) -> Chart {
+    Chart {
+        object,
+        coverage: ChartCoverage::Complete,
+        title: None,
+        auto_title_deleted: false,
+        plot_area: PlotArea {
+            groups: vec![ChartGroup {
+                kind: ChartGroupKind::Bar {
+                    direction: BarDirection::Column,
+                    grouping: BarGrouping::Clustered,
+                    gap_width: 150,
+                    overlap: 0,
+                },
+                series: vec![Series {
+                    index: 0,
+                    order: 0,
+                    values: DataRange {
+                        formula: Some("Sheet1!$B$2:$B$3".to_owned()),
+                        point_count: 2,
+                        points: vec![
+                            (0, ChartValue::Number("4.30".to_owned())),
+                            (1, ChartValue::Number("2.5".to_owned())),
+                        ],
+                        number_format: Some("General".to_owned()),
+                    },
+                    ..Series::default()
+                }],
+                axis_ids: vec![1, 2],
+                vary_colors: false,
+            }],
+            axes: Vec::new(),
+        },
+        legend: None,
+        plot_visible_only: true,
+        display_blanks_as: DisplayBlanks::Gap,
+        vary_colors: false,
+        external_data: None,
+    }
+}
+
+/// A document whose body holds one embedded object of `kind` and whose `charts`
+/// table holds one projection anchored to `anchor`.
+fn document_with_chart(kind: EmbeddedKind, anchor: NodeId) -> Result<Document, ModelError> {
+    let object = tid(2);
+    let mut definitions = Definitions::default();
+    definitions
+        .charts
+        .insert(ChartId::new(tid(3)), chart_projection(anchor));
+    Document::new(
+        tid(99),
+        vec![embedded_object_paragraph(tid(1), object, kind)],
+        definitions,
+    )
+}
+
+/// A projection must name an embedded object that is actually a chart.
+///
+/// Three cases, because each fails for its own reason and a validator that caught
+/// only the first would still admit a projection describing a diagram: an anchor
+/// that resolves to nothing, an anchor that resolves to a *diagram*, and the
+/// well-formed case that must still be accepted.
+#[test]
+fn a_chart_projection_must_anchor_to_an_embedded_chart_object() {
+    // Accepted: the anchor names the chart object in the body.
+    document_with_chart(EmbeddedKind::Chart, tid(2)).expect("a chart projection resolves");
+
+    // Refused: no node by that id exists at all.
+    assert_eq!(
+        document_with_chart(EmbeddedKind::Chart, tid(77)),
+        Err(ModelError::DanglingChartObjectRef(tid(77))),
+        "a projection of a node that does not exist describes nothing"
+    );
+
+    // Refused: the node exists but is a SmartArt diagram, not a chart. This is the
+    // case a presence-only check would pass.
+    assert_eq!(
+        document_with_chart(EmbeddedKind::Diagram, tid(2)),
+        Err(ModelError::DanglingChartObjectRef(tid(2))),
+        "a chart projection of a diagram is not a chart projection"
+    );
+}
+
+/// A `ChartId` is a `NodeId`, so it joins the one walk of the document's
+/// identities: a duplicate must be caught, and a reopened snapshot's generator
+/// must be seeded above it.
+#[test]
+fn a_chart_id_joins_the_document_id_walk() {
+    // A projection keyed with the id the body's paragraph already uses.
+    let object = tid(2);
+    let mut definitions = Definitions::default();
+    definitions
+        .charts
+        .insert(ChartId::new(tid(1)), chart_projection(object));
+    assert_eq!(
+        Document::new(
+            tid(99),
+            vec![embedded_object_paragraph(
+                tid(1),
+                object,
+                EmbeddedKind::Chart
+            )],
+            definitions,
+        ),
+        Err(ModelError::DuplicateNodeId(tid(1))),
+        "a chart id colliding with a body node must be refused"
+    );
+
+    // And the id is visible to the generator seed, so a reopened document cannot
+    // reissue it.
+    let document = document_with_chart(EmbeddedKind::Chart, tid(2)).expect("a valid document");
+    assert!(
+        document.node_ids().contains(&tid(3)),
+        "the chart id must be one of the document's identities"
+    );
+    assert_eq!(
+        document.highest_counter_in(crate::IdSpace::new(1)),
+        99,
+        "the chart id shares the body's space, whose highest counter the walk sees"
+    );
+}
+
+/// The `charts` table is additive: a document without one serializes exactly as
+/// it did before the table existed.
+#[test]
+fn the_charts_table_is_omitted_from_a_snapshot_when_empty() {
+    let document = Document::new(
+        tid(99),
+        vec![paragraph_block(tid(1))],
+        Definitions::default(),
+    )
+    .expect("a valid document");
+    let json = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert!(
+        !json.contains("charts"),
+        "an empty chart table must not appear in a snapshot: {json}"
+    );
+}
+
+/// A cached number survives a snapshot round trip in its source spelling.
+///
+/// The model holds no `f64`, so this is the property that makes a byte-faithful
+/// rewrite possible: `4.30` is not normalised to `4.3` by storing it, by
+/// serializing it, or by reading it back (`docs/155` §8.2).
+#[test]
+fn a_cached_chart_number_survives_a_snapshot_round_trip_verbatim() {
+    let document = document_with_chart(EmbeddedKind::Chart, tid(2)).expect("a valid document");
+    let json = document.to_json().expect("the snapshot writes");
+    let text = String::from_utf8(json.clone()).unwrap();
+    assert!(
+        text.contains("\"4.30\""),
+        "the cached value must be stored as text, verbatim: {text}"
+    );
+    let reopened =
+        Document::from_json(&json, SnapshotLimits::default()).expect("the snapshot reopens");
+    assert_eq!(
+        reopened, document,
+        "a chart projection must be a fixed point of the snapshot round trip"
+    );
+    let (_, chart) = reopened
+        .definitions()
+        .charts
+        .iter()
+        .next()
+        .expect("the chart");
+    let (_, first) = &chart.plot_area.groups[0].series[0].values.points[0];
+    assert_eq!(first, &ChartValue::Number("4.30".to_owned()));
+    assert_eq!(first.as_f64(), Some(4.3));
+}
+
+/// `ChartValue::as_f64` is the one place a cached value becomes a float, and it
+/// refuses what a renderer cannot place.
+#[test]
+fn a_cached_value_becomes_a_float_only_through_as_f64() {
+    assert_eq!(ChartValue::Number("4.30".to_owned()).as_f64(), Some(4.3));
+    assert_eq!(ChartValue::Number("-2".to_owned()).as_f64(), Some(-2.0));
+    assert_eq!(ChartValue::Number(" 7.5 ".to_owned()).as_f64(), Some(7.5));
+    assert_eq!(ChartValue::Text("Q1".to_owned()).as_f64(), None);
+    assert_eq!(ChartValue::Blank.as_f64(), None);
+    // Producer-supplied input a renderer cannot place: refused at the boundary
+    // rather than propagated into axis scaling.
+    assert_eq!(ChartValue::Number("NaN".to_owned()).as_f64(), None);
+    assert_eq!(ChartValue::Number("1e400".to_owned()).as_f64(), None);
+    assert_eq!(ChartValue::Number("not a number".to_owned()).as_f64(), None);
+}
+
+/// Every list in a projection is bounded, and exceeding a bound is refused by the
+/// model however the projection was built (`docs/155` §8.4).
+#[test]
+fn a_chart_projection_beyond_its_bounds_is_refused() {
+    let mut chart = chart_projection(tid(2));
+    chart.plot_area.groups[0].series[0].values.points = (0..=MAX_CHART_DATA_POINTS as u32)
+        .map(|index| (index, ChartValue::Number("1".to_owned())))
+        .collect();
+    let mut definitions = Definitions::default();
+    definitions.charts.insert(ChartId::new(tid(3)), chart);
+    assert_eq!(
+        Document::new(
+            tid(99),
+            vec![embedded_object_paragraph(
+                tid(1),
+                tid(2),
+                EmbeddedKind::Chart
+            )],
+            definitions,
+        ),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "chart.dataRange.points"
+        }),
+    );
+
+    // A group's gap width is a percentage, not an arbitrary number.
+    let mut chart = chart_projection(tid(2));
+    chart.plot_area.groups[0].kind = ChartGroupKind::Bar {
+        direction: BarDirection::Column,
+        grouping: BarGrouping::Clustered,
+        gap_width: 501,
+        overlap: 0,
+    };
+    let mut definitions = Definitions::default();
+    definitions.charts.insert(ChartId::new(tid(3)), chart);
+    assert_eq!(
+        Document::new(
+            tid(99),
+            vec![embedded_object_paragraph(
+                tid(1),
+                tid(2),
+                EmbeddedKind::Chart
+            )],
+            definitions,
+        ),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "chart.group.gapWidth"
+        }),
+    );
+}
+
+/// A chart in a table cell, a text box or a footnote is still a chart.
+///
+/// The anchor walk covers every block container, not just the body: a validator
+/// that only knew about the body would refuse a legitimate projection of a chart
+/// in a cell, which is exactly where a chart in a real document often sits.
+#[test]
+fn a_chart_projection_resolves_inside_a_nested_container() {
+    let object = tid(2);
+    let nested = BlockNode::Table(Box::new(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        grid_change: None,
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: tid(11),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(
+                tid(12),
+                TableCellProperties::default(),
+                vec![embedded_object_paragraph(
+                    tid(1),
+                    object,
+                    EmbeddedKind::Chart,
+                )],
+            )],
+        }],
+    }));
+    let mut definitions = Definitions::default();
+    definitions
+        .charts
+        .insert(ChartId::new(tid(3)), chart_projection(object));
+    Document::new(tid(99), vec![nested], definitions)
+        .expect("a chart inside a table cell projects");
+}

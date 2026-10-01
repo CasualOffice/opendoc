@@ -236,3 +236,171 @@ fn saving_a_document_with_a_chart_changes_no_byte_of_the_chart_closure() {
         "the chart relationship must be emitted exactly once: {rels}"
     );
 }
+
+/// A package carrying one inline chart whose part is `chart`.
+///
+/// Built here rather than taken from the fixture corpus because the point of the
+/// second guard below is a chart the projection covers *completely*, and the
+/// committed fixture deliberately carries an out-of-scope `c:trendline` so that it
+/// exercises the partial case.
+fn package_with_chart(chart: &[u8]) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    let content_types = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>"#;
+    let root_rels = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="5486400" cy="3200400"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let document_rels = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", root_rels.as_slice()),
+        ("word/document.xml", document.as_slice()),
+        ("word/_rels/document.xml.rels", document_rels.as_slice()),
+        ("word/charts/chart1.xml", chart),
+    ] {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+/// A chart every construct of which the projection represents, so its coverage is
+/// `Complete` and `ChartCoverage::permits_regeneration` is true.
+const COMPLETE_CHART: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>4.30</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:gapWidth val="150"/><c:axId val="111"/><c:axId val="222"/></c:barChart><c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:catAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="111"/></c:valAx></c:plotArea><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>"#;
+
+/// Reads the chart projection out of an import, asserting there is exactly one.
+fn single_projection(import: &casual_doc_import::Import) -> &casual_doc_model::v1::Chart {
+    let charts = &import.document.definitions().charts;
+    assert_eq!(charts.len(), 1, "exactly one chart projection expected");
+    charts.iter().next().expect("the projection").1
+}
+
+/// Adding the typed projection changes **no output byte** — `docs/155` §6.1
+/// consequence 2, and the half of increment 4 a user can actually reach.
+///
+/// The guard above (`saving_a_document_with_a_chart_changes_no_byte_of_the_chart_closure`)
+/// predates the projection and asserts the closure survives. This one asserts the
+/// projection **exists** and the closure still survives, which is a different
+/// claim: a byte check alone passes vacuously once the reader declines, and a
+/// projection check alone says nothing about the output. Both, together, are the
+/// invariant.
+#[test]
+fn the_chart_projection_changes_no_byte_of_the_retained_part() {
+    let source = read_all(CHART_DOCX);
+    let mut package =
+        DocxPackage::open(CHART_DOCX, PackageLimits::default()).expect("the fixture opens");
+    let import = import_package(
+        &mut package,
+        ImportConfig {
+            mode: ImportMode::Semantic,
+            ..ImportConfig::default()
+        },
+    )
+    .expect("the fixture imports");
+
+    // The projection is real: the fixture's cached values are in the model, in
+    // their source spelling.
+    let chart = single_projection(&import);
+    assert_eq!(
+        chart.plot_area.groups.len(),
+        2,
+        "the fixture is a bar+line combo, so the projection holds two groups"
+    );
+    assert_eq!(
+        chart.plot_area.axes.len(),
+        3,
+        "and three axes, the third being the secondary value axis"
+    );
+    let first_value = &chart.plot_area.groups[0].series[0].values.points[0].1;
+    assert_eq!(
+        first_value,
+        &casual_doc_model::v1::ChartValue::Number("4.30".to_owned()),
+        "the cache is read verbatim"
+    );
+    // The fixture carries an out-of-scope `c:trendline`, so the projection is
+    // partial and regeneration is refused (`docs/155` §6.1 consequence 1).
+    assert_eq!(
+        chart.coverage,
+        casual_doc_model::v1::ChartCoverage::Partial,
+        "a chart carrying a construct the model does not hold is partial"
+    );
+    assert!(
+        !chart.coverage.permits_regeneration(),
+        "a partially projected chart must not be regenerated from the model"
+    );
+
+    // And every part of the closure still comes back byte-identical.
+    let written = write_document_with_retained_parts(
+        &import.document,
+        &BTreeMap::new(),
+        &import.retained_parts,
+    )
+    .expect("the document writes");
+    let reopened = read_all(&written);
+    for name in source.keys().filter(|name| !is_regenerated(name)) {
+        let before = &source[name];
+        let after = reopened
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is missing from the written package"));
+        assert_identical(name, before, after);
+    }
+}
+
+/// A chart the projection covers **completely** is still byte-copied.
+///
+/// This is the guard that the byte-copy is unconditional rather than a side effect
+/// of the reader declining. `ChartCoverage::Complete` is the state that *licenses*
+/// regeneration, so a chart in that state is the only input on which a writer
+/// could legitimately decide to rewrite the part — and it must still not, because
+/// nothing has modified the chart. "Clean" beats "licensed".
+#[test]
+fn a_completely_projected_chart_is_still_byte_copied() {
+    let source = package_with_chart(COMPLETE_CHART);
+    let mut package =
+        DocxPackage::open(&source, PackageLimits::default()).expect("the package opens");
+    let import = import_package(
+        &mut package,
+        ImportConfig {
+            mode: ImportMode::Semantic,
+            ..ImportConfig::default()
+        },
+    )
+    .expect("it imports");
+
+    let chart = single_projection(&import);
+    assert_eq!(
+        chart.coverage,
+        casual_doc_model::v1::ChartCoverage::Complete,
+        "this chart is entirely tier 1, or the test is not testing what it says"
+    );
+    assert!(
+        chart.coverage.permits_regeneration(),
+        "a complete projection is the state that licenses regeneration"
+    );
+
+    let written = write_document_with_retained_parts(
+        &import.document,
+        &BTreeMap::new(),
+        &import.retained_parts,
+    )
+    .expect("the document writes");
+    let mut reopened =
+        DocxPackage::open(&written, PackageLimits::default()).expect("the written package opens");
+    let after = reopened
+        .read_part("word/charts/chart1.xml")
+        .expect("the chart part reads");
+    assert_identical("word/charts/chart1.xml", COMPLETE_CHART, &after);
+    assert_eq!(
+        reopened.content_type("word/charts/chart1.xml"),
+        Some("application/vnd.openxmlformats-officedocument.drawingml.chart+xml"),
+        "and it keeps the content type that makes it readable again"
+    );
+}
