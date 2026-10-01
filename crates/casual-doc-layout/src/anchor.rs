@@ -47,6 +47,7 @@ use crate::paginate::PageConfig;
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
     Point, Rect, Size, Twip, emu_to_twip_extent, emu_to_twip_offset, emu_to_twip_rounded,
+    twip_rounded,
 };
 
 /// Places every floating object in the document (body and header/footer bands)
@@ -770,10 +771,19 @@ fn collect_inlines(
                 };
                 let (page_index, refs) =
                     target(layout, ctx, paragraph, scope, section, known_target);
-                let origin = resolve_anchor_rect(&anchor, group.extent, &refs).origin;
+                let group_box = resolve_anchor_rect(&anchor, group.extent, &refs);
+                let origin = group_box.origin;
                 let relative_height = group.relative_height.unwrap_or(0);
                 let behind_doc = anchor.behind_doc;
                 let mapper = GroupMapper::root(group);
+                // `GroupTransform`'s rot/flip were modelled and round-tripped but
+                // never applied, so a rotated Word group painted unrotated.
+                let pose = GroupPose::about(
+                    rect_center(group_box),
+                    group.transform.rotation.unwrap_or(0),
+                    group.transform.flip_h,
+                    group.transform.flip_v,
+                );
                 place_group_children(
                     layout,
                     ctx,
@@ -781,6 +791,7 @@ fn collect_inlines(
                     page_index,
                     origin,
                     &mapper,
+                    pose,
                     relative_height,
                     behind_doc,
                 );
@@ -849,6 +860,7 @@ fn place_group_children(
     page_index: usize,
     origin: Point,
     mapper: &GroupMapper,
+    pose: GroupPose,
     relative_height: u32,
     behind_doc: bool,
 ) {
@@ -859,7 +871,10 @@ fn place_group_children(
                     continue;
                 };
                 let media = media.part_name.clone();
-                let rect = mapper.child_rect(origin, picture.offset, picture.extent);
+                let rect =
+                    pose.reposition(mapper.child_rect(origin, picture.offset, picture.extent));
+                let (rotation, flip_h, flip_v) =
+                    pose.compose_child(picture.rotation, picture.flip_h, picture.flip_v);
                 let z = AnchorZ {
                     relative_height,
                     order: ctx.next_order(),
@@ -883,17 +898,19 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: picture.descr.clone(),
-                        transform: shape_transform(
-                            rect,
-                            picture.flip_h,
-                            picture.flip_v,
-                            picture.rotation,
-                        ),
+                        transform: shape_transform(rect, flip_h, flip_v, rotation),
                     },
                 );
             }
             GroupChild::TextBox(text_box) => {
-                let mut rect = mapper.child_rect(origin, text_box.offset, text_box.extent);
+                // Repositioned but NOT reoriented. `compose_anchor` hands
+                // `anchor.transform` to the box's backdrop, fill and border but
+                // composes its text blocks outside any layer, so a rotation here
+                // would spin the chrome and leave the glyphs behind — visibly worse
+                // than an unrotated box in the right place. Rotated text-box content
+                // is the already-tracked follow-up this waits on.
+                let mut rect =
+                    pose.reposition(mapper.child_rect(origin, text_box.offset, text_box.extent));
                 let flowed = flow_anchored_text_box(
                     ctx.document,
                     &text_box.blocks,
@@ -938,7 +955,9 @@ fn place_group_children(
                 );
             }
             GroupChild::Shape(shape) => {
-                let rect = mapper.child_rect(origin, shape.offset, shape.extent);
+                let rect = pose.reposition(mapper.child_rect(origin, shape.offset, shape.extent));
+                let (rotation, flip_h, flip_v) =
+                    pose.compose_child(shape.rotation, shape.flip_h, shape.flip_v);
                 let z = AnchorZ {
                     relative_height,
                     order: ctx.next_order(),
@@ -968,17 +987,23 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: None,
-                        transform: shape_transform(
-                            rect,
-                            shape.flip_h,
-                            shape.flip_v,
-                            shape.rotation,
-                        ),
+                        transform: shape_transform(rect, flip_h, flip_v, rotation),
                     },
                 );
             }
             GroupChild::Group(nested) => {
                 let nested_mapper = mapper.compose(nested);
+                // The nested group's own `a:xfrm` rot/flip act about ITS box centre,
+                // measured in the parent's UNROTATED space; the parent pose then
+                // applies on top, which is why these compose rather than add.
+                let nested_box =
+                    mapper.child_rect(origin, nested.transform.offset, nested.transform.extent);
+                let nested_pose = pose.after(GroupPose::about(
+                    rect_center(nested_box),
+                    nested.transform.rotation.unwrap_or(0),
+                    nested.transform.flip_h,
+                    nested.transform.flip_v,
+                ));
                 place_group_children(
                     layout,
                     ctx,
@@ -986,6 +1011,7 @@ fn place_group_children(
                     page_index,
                     origin,
                     &nested_mapper,
+                    nested_pose,
                     relative_height,
                     behind_doc,
                 );
@@ -1060,14 +1086,6 @@ impl PresetBox {
     fn at(self, x: f64, y: f64) -> Point {
         Point::new(twip_rounded(x), twip_rounded(y))
     }
-}
-
-fn twip_rounded(value: f64) -> Twip {
-    Twip(
-        value
-            .round()
-            .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
-    )
 }
 
 /// The closed outline of a polygonal preset geometry, in page-local twips, or
@@ -1601,6 +1619,184 @@ fn push(layout: &mut PaginatedLayout, page_index: usize, anchor: PlacedAnchor) {
     layout.pages[page_index].anchored.push(anchor);
 }
 
+/// A group's rigid pose in page space: the `a:xfrm` rotation and flips its
+/// children inherit, accumulated across nesting.
+///
+/// Stored as the affine `x -> L*x + t` with `L = R(rotation) * Flip`, NOT as a
+/// rotation about a remembered centre. That family is closed under composition, so
+/// nesting is one multiply; carrying a centre instead would mean solving for the
+/// composite's fixed point, which does not exist when two poses cancel.
+///
+/// Why a child can wear this on its own `ShapeTransform` rather than needing a
+/// group container in the placed output: the painter applies
+/// `T(c) * R * Flip * T(-c)` about whatever centre it is handed
+/// (`casual-doc-render`'s `object_transform`), and `c` is a free parameter. Placing
+/// the child's axis-aligned rect so its centre lands at `pose.apply(centre)` and
+/// handing the painter the composed linear part about that new centre reproduces
+/// the rigid group transform exactly — the rect position absorbs the translation,
+/// so no fixed point is needed there either.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GroupPose {
+    /// Clockwise rotation in 60000ths of a degree (`a:xfrm@rot`).
+    rotation: i32,
+    /// Mirror across the vertical axis (`a:xfrm@flipH`).
+    flip_h: bool,
+    /// Mirror across the horizontal axis (`a:xfrm@flipV`).
+    flip_v: bool,
+    /// Translation in twips, applied after the linear part.
+    tx: f64,
+    ty: f64,
+}
+
+impl GroupPose {
+    /// The pose that changes nothing.
+    const IDENTITY: Self = Self {
+        rotation: 0,
+        flip_h: false,
+        flip_v: false,
+        tx: 0.0,
+        ty: 0.0,
+    };
+
+    fn is_identity(self) -> bool {
+        self.rotation == 0 && !self.flip_h && !self.flip_v && self.tx == 0.0 && self.ty == 0.0
+    }
+
+    /// The pose of `rotation`/`flip_h`/`flip_v` applied about `center`, i.e.
+    /// `T(c) * R * Flip * T(-c)` flattened into `L` and `t`.
+    fn about(center: Point, rotation: i32, flip_h: bool, flip_v: bool) -> Self {
+        let bare = Self {
+            rotation,
+            flip_h,
+            flip_v,
+            tx: 0.0,
+            ty: 0.0,
+        };
+        if bare.rotation == 0 && !flip_h && !flip_v {
+            return Self::IDENTITY;
+        }
+        let cx = f64::from(center.x.raw());
+        let cy = f64::from(center.y.raw());
+        let (lx, ly) = bare.apply_linear(cx, cy);
+        Self {
+            tx: cx - lx,
+            ty: cy - ly,
+            ..bare
+        }
+    }
+
+    /// `self` applied AFTER `inner`, i.e. the composite `self ∘ inner`.
+    ///
+    /// `(L_s, t_s) ∘ (L_i, t_i) = (L_s*L_i, L_s*t_i + t_s)`.
+    fn after(self, inner: Self) -> Self {
+        if inner.is_identity() {
+            return self;
+        }
+        if self.is_identity() {
+            return inner;
+        }
+        let (rotation, flip_h, flip_v) = compose_linear(
+            (self.rotation, self.flip_h, self.flip_v),
+            (inner.rotation, inner.flip_h, inner.flip_v),
+        );
+        let (ix, iy) = self.apply_linear(inner.tx, inner.ty);
+        Self {
+            rotation,
+            flip_h,
+            flip_v,
+            tx: ix + self.tx,
+            ty: iy + self.ty,
+        }
+    }
+
+    /// The linear part alone: flip first, then rotate, matching DrawingML's order
+    /// and `object_transform`'s matrix.
+    fn apply_linear(self, x: f64, y: f64) -> (f64, f64) {
+        let x = if self.flip_h { -x } else { x };
+        let y = if self.flip_v { -y } else { y };
+        if self.rotation == 0 {
+            return (x, y);
+        }
+        // Positive `rot` is clockwise, and the painter builds the same matrix from
+        // `Transform::from_rotate`, whose `(c*x - s*y, s*x + c*y)` reads clockwise
+        // in a y-down space. Diverging in sign here would paint a plausible but
+        // mirrored result, so the two must be read together.
+        let radians = f64::from(self.rotation) / 60_000.0 * core::f64::consts::PI / 180.0;
+        let (sin, cos) = radians.sin_cos();
+        (cos * x - sin * y, sin * x + cos * y)
+    }
+
+    /// Where a point lands under the whole pose.
+    fn apply(self, point: Point) -> Point {
+        let (x, y) = self.apply_linear(f64::from(point.x.raw()), f64::from(point.y.raw()));
+        Point::new(twip_rounded(x + self.tx), twip_rounded(y + self.ty))
+    }
+
+    /// The child's rect, moved so its centre lands where the pose sends it. Size is
+    /// unchanged: the rect stays axis-aligned and the orientation rides the
+    /// `ShapeTransform` instead.
+    fn reposition(self, rect: Rect) -> Rect {
+        if self.is_identity() {
+            return rect;
+        }
+        let moved = self.apply(rect_center(rect));
+        Rect::new(
+            Point::new(
+                Twip(moved.x.raw() - rect.size.width.raw() / 2),
+                Twip(moved.y.raw() - rect.size.height.raw() / 2),
+            ),
+            rect.size,
+        )
+    }
+
+    /// The child's own `a:xfrm` rot/flip composed under this pose.
+    fn compose_child(
+        self,
+        rotation: Option<i32>,
+        flip_h: bool,
+        flip_v: bool,
+    ) -> (Option<i32>, bool, bool) {
+        if self.is_identity() {
+            return (rotation, flip_h, flip_v);
+        }
+        let (rot, fh, fv) = compose_linear(
+            (self.rotation, self.flip_h, self.flip_v),
+            (rotation.unwrap_or(0), flip_h, flip_v),
+        );
+        (Some(rot), fh, fv)
+    }
+}
+
+/// Composes two `R(rot) * Flip` linear parts, `outer` after `inner`.
+///
+/// Flips compose by XOR, since each axis is scaled by ±1 independently. The angles
+/// add, but `inner`'s is NEGATED when `outer` is a single-axis reflection, because a
+/// reflection anticommutes with a rotation (`F*R(θ) = R(-θ)*F`). A double flip is
+/// `R(180°)`, which commutes — hence the test is `outer.flip_h == outer.flip_v`
+/// rather than "either flip set".
+fn compose_linear(outer: (i32, bool, bool), inner: (i32, bool, bool)) -> (i32, bool, bool) {
+    let (outer_rot, outer_fh, outer_fv) = outer;
+    let (inner_rot, inner_fh, inner_fv) = inner;
+    let inner_rot = if outer_fh == outer_fv {
+        inner_rot
+    } else {
+        inner_rot.saturating_neg()
+    };
+    (
+        outer_rot.saturating_add(inner_rot),
+        outer_fh ^ inner_fh,
+        outer_fv ^ inner_fv,
+    )
+}
+
+/// A rectangle's centre, in twips.
+fn rect_center(rect: Rect) -> Point {
+    Point::new(
+        Twip(rect.origin.x.raw() + rect.size.width.raw() / 2),
+        Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
+    )
+}
+
 /// A group's child-space → page-twips mapping: an affine (in EMU) from child
 /// coordinates to the top group's box space, evaluated against the group's placed
 /// `origin`. Composed for nested groups.
@@ -2063,6 +2259,144 @@ fn align_vertical(align: VerticalAlign, vbox: Rect, height: Twip) -> Twip {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 90° clockwise, in `a:xfrm@rot`'s 60000ths of a degree.
+    const CW_90: i32 = 90 * 60_000;
+
+    #[test]
+    fn a_pose_rotates_a_point_clockwise_about_its_centre() {
+        // A point to the RIGHT of the centre must land BELOW it: y grows downward,
+        // so right -> down reads clockwise on screen, which is what positive
+        // `a:xfrm@rot` means and what the painter's matrix does.
+        let pose = GroupPose::about(Point::new(Twip(1_000), Twip(1_000)), CW_90, false, false);
+        assert_eq!(
+            pose.apply(Point::new(Twip(2_000), Twip(1_000))),
+            Point::new(Twip(1_000), Twip(2_000))
+        );
+        // Four quarter turns return to the start.
+        let mut p = Point::new(Twip(2_000), Twip(1_000));
+        for _ in 0..4 {
+            p = pose.apply(p);
+        }
+        assert_eq!(p, Point::new(Twip(2_000), Twip(1_000)));
+    }
+
+    #[test]
+    fn a_pose_mirrors_a_point_about_its_centre() {
+        let pose = GroupPose::about(Point::new(Twip(1_000), Twip(1_000)), 0, true, false);
+        assert_eq!(
+            pose.apply(Point::new(Twip(2_000), Twip(1_000))),
+            Point::new(Twip(0), Twip(1_000))
+        );
+        // flipV leaves x alone.
+        let pose = GroupPose::about(Point::new(Twip(1_000), Twip(1_000)), 0, false, true);
+        assert_eq!(
+            pose.apply(Point::new(Twip(2_000), Twip(1_500))),
+            Point::new(Twip(2_000), Twip(500))
+        );
+    }
+
+    #[test]
+    fn flips_compose_by_xor() {
+        assert_eq!(
+            compose_linear((0, true, false), (0, true, false)),
+            (0, false, false),
+            "two flipH cancel"
+        );
+        assert_eq!(
+            compose_linear((0, true, false), (0, false, true)),
+            (0, true, true)
+        );
+    }
+
+    #[test]
+    fn a_single_axis_reflection_negates_the_inner_rotation() {
+        // F*R(θ) = R(-θ)*F, so an outer reflection reverses the child's spin. This
+        // is the one piece of the algebra that is easy to get backwards, and
+        // getting it backwards mirrors the result plausibly rather than visibly.
+        assert_eq!(
+            compose_linear((0, true, false), (CW_90, false, false)),
+            (-CW_90, true, false)
+        );
+        assert_eq!(
+            compose_linear((0, false, true), (CW_90, false, false)),
+            (-CW_90, false, true)
+        );
+    }
+
+    #[test]
+    fn a_double_flip_is_a_half_turn_and_commutes() {
+        // flipH+flipV together are R(180°), which commutes with any rotation, so the
+        // inner angle must NOT be negated — hence the test is `flip_h == flip_v`
+        // rather than "either flip set".
+        assert_eq!(
+            compose_linear((0, true, true), (CW_90, false, false)),
+            (CW_90, true, true)
+        );
+        assert_eq!(
+            compose_linear((0, false, false), (CW_90, false, false)),
+            (CW_90, false, false)
+        );
+    }
+
+    #[test]
+    fn composing_a_pose_with_its_inverse_restores_the_point() {
+        let centre = Point::new(Twip(3_000), Twip(2_000));
+        let forward = GroupPose::about(centre, CW_90, false, false);
+        let back = GroupPose::about(centre, -CW_90, false, false);
+        let probe = Point::new(Twip(4_321), Twip(765));
+        assert_eq!(forward.after(back).apply(probe), probe);
+        assert_eq!(back.after(forward).apply(probe), probe);
+    }
+
+    #[test]
+    fn a_nested_pose_composes_rather_than_adding_about_the_wrong_centre() {
+        // Two 90° turns about DIFFERENT centres are not one 180° turn about either.
+        // Composing affines is what makes this come out right; remembering a single
+        // centre could not.
+        let outer = GroupPose::about(Point::new(Twip(0), Twip(0)), CW_90, false, false);
+        let inner = GroupPose::about(Point::new(Twip(1_000), Twip(0)), CW_90, false, false);
+        let probe = Point::new(Twip(2_000), Twip(0));
+        // inner: (2000,0) about (1000,0) -> (1000,1000). outer: about origin -> (-1000,1000).
+        assert_eq!(inner.apply(probe), Point::new(Twip(1_000), Twip(1_000)));
+        assert_eq!(
+            outer.after(inner).apply(probe),
+            Point::new(Twip(-1_000), Twip(1_000))
+        );
+    }
+
+    #[test]
+    fn reposition_moves_the_centre_and_keeps_the_size() {
+        let pose = GroupPose::about(Point::new(Twip(1_000), Twip(1_000)), CW_90, false, false);
+        let rect = Rect::new(
+            Point::new(Twip(1_800), Twip(900)),
+            Size::new(Twip(400), Twip(200)),
+        );
+        // Centre (2000, 1000) -> (1000, 2000); size unchanged, rect stays axis-aligned.
+        let moved = pose.reposition(rect);
+        assert_eq!(moved.size, rect.size);
+        assert_eq!(moved.origin, Point::new(Twip(800), Twip(1_900)));
+    }
+
+    #[test]
+    fn an_identity_pose_changes_nothing() {
+        // The fast path every unrotated group takes, which is why collecting this
+        // machinery moved no committed golden.
+        let pose = GroupPose::about(Point::new(Twip(500), Twip(500)), 0, false, false);
+        assert!(pose.is_identity());
+        assert_eq!(pose, GroupPose::IDENTITY);
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(20)),
+            Size::new(Twip(30), Twip(40)),
+        );
+        assert_eq!(pose.reposition(rect), rect);
+        assert_eq!(
+            pose.compose_child(Some(CW_90), true, false),
+            (Some(CW_90), true, false),
+            "an identity pose must hand the child's own transform back untouched"
+        );
+    }
+
     use casual_doc_model::v1::{
         AnchorHorizontal, AnchorVertical, GroupTransform, PointEmu, WrapMode,
     };

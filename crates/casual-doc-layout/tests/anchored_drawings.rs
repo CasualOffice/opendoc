@@ -240,6 +240,114 @@ fn a_non_integral_emu_anchor_rounds_rather_than_truncates() {
     assert_eq!(placed.rect.size, Size::new(Twip(1_575), Twip(1_575)));
 }
 
+/// A group with `a:xfrm@rot` turns its children, which it did not before: the
+/// rotation was modelled and round-tripped but never applied, so a rotated Word
+/// group painted unrotated (`156` §6 row 0.5).
+///
+/// The child's rect stays axis-aligned and MOVES to where the rotation sends its
+/// centre, while the orientation rides the `ShapeTransform` the painter already
+/// honours about a free centre. That is what lets a rigid group transform ride the
+/// existing per-object path instead of needing a group container in the placed
+/// output.
+#[test]
+fn a_rotated_group_turns_its_children_about_the_group_centre() {
+    let (_media_id, definitions) = media_defs();
+    // Group box: 2in x 1in at page (1in, 1in) -> origin (1440,1440) size (2880,1440),
+    // so its centre is (2880, 2160). The child is a 1in square at the group's own
+    // origin, centre (2160, 2160) — 720 twips LEFT of the group centre.
+    let group_extent = Extent {
+        width_emu: 1_828_800,
+        height_emu: 914_400,
+    };
+    let child_extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: node(31),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: child_extent,
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: None,
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    let group_with = |rotation: Option<i32>| {
+        InlineNode::Group(Box::new(WordprocessingGroup {
+            hyperlink: None,
+            id: node(30),
+            anchor: Some(page_anchor(914_400, 914_400)),
+            relative_height: None,
+            extent: group_extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: group_extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: group_extent,
+                flip_h: false,
+                flip_v: false,
+                rotation,
+            },
+            children: vec![child.clone()],
+        }))
+    };
+
+    let place = |rotation: Option<i32>| {
+        let para = BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(11, "Body text"), group_with(rotation)],
+        });
+        let doc = Document::new(node(1), vec![para], definitions.clone()).unwrap();
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &doc, &shaper, &cfg);
+        let placed = &layout.pages[0].anchored[0];
+        (placed.rect, placed.transform)
+    };
+
+    // Unrotated: the child sits at the group origin, untransformed. This is the
+    // identity fast path, and it is why adding the machinery moved no golden.
+    let (rect, transform) = place(None);
+    assert_eq!(rect.origin, Point::new(Twip(1_440), Twip(1_440)));
+    assert_eq!(rect.size, Size::new(Twip(1_440), Twip(1_440)));
+    assert!(
+        transform.is_none(),
+        "an unrotated group must add no transform"
+    );
+
+    // 90° clockwise about (2880, 2160): the child centre (2160, 2160) is 720 twips
+    // to the LEFT, so it lands 720 ABOVE at (2880, 1440) — left -> up is clockwise
+    // when y grows downward. Origin therefore (2880-720, 1440-720).
+    let (rect, transform) = place(Some(90 * 60_000));
+    assert_eq!(
+        rect.origin,
+        Point::new(Twip(2_160), Twip(720)),
+        "the child's rect must move to where the group rotation sends its centre"
+    );
+    assert_eq!(
+        rect.size,
+        Size::new(Twip(1_440), Twip(1_440)),
+        "size is rigid"
+    );
+    let transform = transform.expect("a rotated group must give its child a transform");
+    assert_eq!(transform.rotation, 90 * 60_000);
+    assert!(!transform.flip_h && !transform.flip_v);
+    assert_eq!(
+        transform.center,
+        Point::new(Twip(2_880), Twip(1_440)),
+        "the painter must turn the child about its NEW centre"
+    );
+}
+
 #[test]
 fn behind_doc_controls_the_paint_order_relative_to_text() {
     let (media_id, definitions) = media_defs();

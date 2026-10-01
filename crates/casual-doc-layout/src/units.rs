@@ -220,6 +220,20 @@ pub fn emu_to_twip_offset(emu: i64) -> Twip {
     )
 }
 
+/// Rounds a twip value computed in `f64` (a group affine's output) to a whole
+/// twip, half away from zero, clamped to the twip range.
+///
+/// The same rounding rule as the EMU converters above, for the case where the
+/// value is already in twips and only the quantisation is left.
+#[must_use]
+pub fn twip_rounded(twips: f64) -> Twip {
+    Twip(
+        twips
+            .round()
+            .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
+    )
+}
+
 /// Rounding EMU → twips for a value produced by a group affine, which is
 /// evaluated in `f64` because `a:ext`/`a:chExt` scaling is not integral.
 ///
