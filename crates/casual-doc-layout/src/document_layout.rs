@@ -82,7 +82,7 @@ use crate::paginate::{
 };
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
 use crate::text::InlineFloatSide;
-use crate::units::{Point, Rect, Size, Twip};
+use crate::units::{Point, Rect, Size, Twip, emu_to_twip_extent};
 use casual_doc_model::v1::SectionId;
 
 /// US-Letter page size in twips (8.5in × 11in), the fallback for a document that
@@ -1935,10 +1935,10 @@ fn paragraph_float_exclusions(
         if !body_order.contains_key(&wrap.source) && !body_table_ids.contains(&wrap.source) {
             continue;
         }
-        let left = wrap.rect.origin.x - emu_to_twip(wrap.distances.start_emu);
-        let right = wrap.rect.right() + emu_to_twip(wrap.distances.end_emu);
-        let top = wrap.rect.origin.y - emu_to_twip(wrap.distances.top_emu);
-        let bottom = wrap.rect.bottom() + emu_to_twip(wrap.distances.bottom_emu);
+        let left = wrap.rect.origin.x - emu_to_twip_extent(wrap.distances.start_emu);
+        let right = wrap.rect.right() + emu_to_twip_extent(wrap.distances.end_emu);
+        let top = wrap.rect.origin.y - emu_to_twip_extent(wrap.distances.top_emu);
+        let bottom = wrap.rect.bottom() + emu_to_twip_extent(wrap.distances.bottom_emu);
         for (page_index, paragraph, rect) in &paragraphs {
             // Page- and margin-relative objects can sit above their anchoring
             // paragraph (the right arrow in demo.docx is one such object), so
@@ -2065,10 +2065,6 @@ fn conservative_exclusions(
         }
     }
     result
-}
-
-fn emu_to_twip(emu: i64) -> Twip {
-    Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
 /// [`build_section_runs`], but the common **single-section** body is flowed through

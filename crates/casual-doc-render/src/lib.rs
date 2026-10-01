@@ -22,6 +22,8 @@ use std::io::Cursor;
 use casual_doc_layout::display::{DisplayList, PaintItem};
 // Own line (anti-conflict): the layer blend the watermark composites through.
 use casual_doc_layout::display::LayerBlend;
+// Own line (anti-conflict): the path primitive's command.
+use casual_doc_layout::display::PathCommand;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/geometry
 // display types the shape paint path consumes (`Color` aliased to avoid clashing
 // with `tiny_skia::Color`).
@@ -1496,6 +1498,12 @@ fn ellipse_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
 /// custom-geometry horizontal rule has (docs/119), so the minimum depends on
 /// `closed` — a fixed three-vertex floor silently dropped every two-point
 /// freeform.
+/// A closed vertex list as a path, for the FLAT [`PaintItem::Polygon`].
+///
+/// Deliberately not folded into [`command_path`]: the flat polygon is the simple
+/// solid-colour seam shading, borders and table furniture paint through, and it
+/// never carries a curve. Keeping it a point list avoids building a command vector
+/// per painted cell.
 fn polygon_path(points: &[Point], closed: bool, dpi: f32) -> Option<tiny_skia::Path> {
     let (first, rest) = points.split_first()?;
     if rest.len() < if closed { 2 } else { 1 } {
@@ -1505,6 +1513,52 @@ fn polygon_path(points: &[Point], closed: bool, dpi: f32) -> Option<tiny_skia::P
     builder.move_to(first.x.to_device_px(dpi), first.y.to_device_px(dpi));
     for point in rest {
         builder.line_to(point.x.to_device_px(dpi), point.y.to_device_px(dpi));
+    }
+    if closed {
+        builder.close();
+    }
+    builder.finish()
+}
+
+fn command_path(commands: &[PathCommand], closed: bool, dpi: f32) -> Option<tiny_skia::Path> {
+    let (first, rest) = commands.split_first()?;
+    // A figure needs two segments to enclose an area and one to be a visible open
+    // stroke, which is the same rule the vertex-list form used.
+    let segments = rest.iter().filter(|command| command.is_segment()).count();
+    if segments < if closed { 2 } else { 1 } {
+        return None;
+    }
+    let point = |p: Point| (p.x.to_device_px(dpi), p.y.to_device_px(dpi));
+    let mut builder = PathBuilder::new();
+    let start = first.endpoint();
+    let (x, y) = point(start);
+    builder.move_to(x, y);
+    for command in rest {
+        match *command {
+            PathCommand::MoveTo { point: p } => {
+                let (x, y) = point(p);
+                builder.move_to(x, y);
+            }
+            PathCommand::LineTo { point: p } => {
+                let (x, y) = point(p);
+                builder.line_to(x, y);
+            }
+            PathCommand::CubicTo {
+                control1,
+                control2,
+                point: p,
+            } => {
+                let (x1, y1) = point(control1);
+                let (x2, y2) = point(control2);
+                let (x, y) = point(p);
+                builder.cubic_to(x1, y1, x2, y2, x, y);
+            }
+            PathCommand::QuadTo { control, point: p } => {
+                let (cx, cy) = point(control);
+                let (x, y) = point(p);
+                builder.quad_to(cx, cy, x, y);
+            }
+        }
     }
     if closed {
         builder.close();
@@ -1626,9 +1680,9 @@ fn render_shape(
             rounded_rect_path(*rect, *radius, dpi),
             device_bounds(*rect, dpi),
         ),
-        ShapeGeometry::Polygon { points, closed } => (
-            polygon_path(points, *closed, dpi),
-            polygon_bounds(points, dpi),
+        ShapeGeometry::Path { commands, closed } => (
+            command_path(commands, *closed, dpi),
+            command_bounds(commands, dpi),
         ),
         ShapeGeometry::Line { from, to } => {
             let mut builder = PathBuilder::new();
@@ -1716,7 +1770,8 @@ fn device_bounds(rect: Rect, dpi: f32) -> Option<SkRect> {
 }
 
 /// The device-pixel bounding rectangle of a polygon's vertices.
-fn polygon_bounds(points: &[Point], dpi: f32) -> Option<SkRect> {
+fn command_bounds(commands: &[PathCommand], dpi: f32) -> Option<SkRect> {
+    let points = commands.iter().flat_map(|command| command.points());
     let mut min_x = f32::INFINITY;
     let mut min_y = f32::INFINITY;
     let mut max_x = f32::NEG_INFINITY;
@@ -3424,6 +3479,100 @@ mod tests {
         );
     }
 
+    /// A cubic Bézier bends, rather than being flattened to its chord
+    /// (`109` FID-G-02).
+    ///
+    /// Written in pixels for the same reason the open-path guard below is: the
+    /// failure this catches is "a curve paints as a straight line", and the only
+    /// assertion that separates those is whether ink appears where the curve goes
+    /// and NOT where the chord goes. Both controls are pulled to y=10, so the curve
+    /// peaks at exactly (50, 20) at t=0.5 while the chord sits flat at y=50.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_cubic_bezier_bends_away_from_its_chord() {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(Twip(10), Twip(50)),
+                    },
+                    PathCommand::CubicTo {
+                        control1: Point::new(Twip(10), Twip(10)),
+                        control2: Point::new(Twip(90), Twip(10)),
+                        point: Point::new(Twip(90), Twip(50)),
+                    },
+                ],
+                closed: false,
+            },
+            fill: None,
+            stroke: Some(ShapeOutline {
+                color: ShapeColor::BLACK,
+                width: 3.0,
+                dash: DashStyle::Solid,
+            }),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 60);
+        assert!(
+            pixel_at(&surface, 100, 50, 20)[0] < 100,
+            "the curve must be stroked at its apex (50,20) (got {:?})",
+            pixel_at(&surface, 100, 50, 20)
+        );
+        assert!(
+            pixel_at(&surface, 100, 50, 50)[0] > 200,
+            "the chord the curve does NOT follow must stay blank (got {:?})",
+            pixel_at(&surface, 100, 50, 50)
+        );
+    }
+
+    /// A quadratic Bézier bends too, and peaks at its own t=0.5 point rather than
+    /// the cubic's — so the two are not silently the same command.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_quadratic_bezier_bends_to_its_own_midpoint() {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(Twip(10), Twip(50)),
+                    },
+                    PathCommand::QuadTo {
+                        control: Point::new(Twip(50), Twip(10)),
+                        point: Point::new(Twip(90), Twip(50)),
+                    },
+                ],
+                closed: false,
+            },
+            fill: None,
+            stroke: Some(ShapeOutline {
+                color: ShapeColor::BLACK,
+                width: 3.0,
+                dash: DashStyle::Solid,
+            }),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 60);
+        // A quadratic with its control at (50,10) reaches y = 30 at t=0.5, NOT the
+        // y = 20 the cubic above reaches. Asserting the quadratic's own value is
+        // what stops the arm being wired to the cubic one by mistake.
+        assert!(
+            pixel_at(&surface, 100, 50, 30)[0] < 100,
+            "the quadratic must be stroked at (50,30) (got {:?})",
+            pixel_at(&surface, 100, 50, 30)
+        );
+        assert!(
+            pixel_at(&surface, 100, 50, 50)[0] > 200,
+            "its chord must stay blank (got {:?})",
+            pixel_at(&surface, 100, 50, 50)
+        );
+    }
+
     /// An OPEN custom-geometry path is stroked along the path, not around the
     /// box it lives in (docs/119, `109` FID-G-01).
     ///
@@ -3439,11 +3588,17 @@ mod tests {
         let polyline = |closed| {
             let mut list = DisplayList::new();
             list.push(PaintItem::Shape {
-                geometry: ShapeGeometry::Polygon {
-                    points: vec![
-                        Point::new(Twip(10), Twip(10)),
-                        Point::new(Twip(90), Twip(10)),
-                        Point::new(Twip(90), Twip(50)),
+                geometry: ShapeGeometry::Path {
+                    commands: vec![
+                        PathCommand::MoveTo {
+                            point: Point::new(Twip(10), Twip(10)),
+                        },
+                        PathCommand::LineTo {
+                            point: Point::new(Twip(90), Twip(10)),
+                        },
+                        PathCommand::LineTo {
+                            point: Point::new(Twip(90), Twip(50)),
+                        },
                     ],
                     closed,
                 },
@@ -3507,10 +3662,14 @@ mod tests {
     fn a_two_point_open_path_is_not_dropped_as_a_degenerate_polygon() {
         let mut list = DisplayList::new();
         list.push(PaintItem::Shape {
-            geometry: ShapeGeometry::Polygon {
-                points: vec![
-                    Point::new(Twip(5), Twip(10)),
-                    Point::new(Twip(95), Twip(10)),
+            geometry: ShapeGeometry::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(Twip(5), Twip(10)),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(Twip(95), Twip(10)),
+                    },
                 ],
                 closed: false,
             },

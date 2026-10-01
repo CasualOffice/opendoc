@@ -2308,6 +2308,77 @@ costed against a fallback that does not exist.
 - **Owner decision needed:** whether to add the operation. Until then suggesting mode stays
   out of a session, with the refusal code `152` §5.3 gives it.
 
+## ADR-055 — A second document class is additive: new crates, a second surface, and seams published in place
+
+**Status:** Accepted for the shared-core work only, 2026-10-01. Specified in
+`156-PRESENTATION-SUPPORT-AND-SHARED-DRAWING-CORE-DESIGN.md`. **Does not decide whether
+presentations are built**, which `106` §1 still answers "a future sibling"; it decides the shape
+any such work must take, so that the question can be answered late and cheaply. Charts and
+SmartArt are excluded and belong to ADR-050 / `155`, which landed while this branch was in
+flight.
+
+**Decision.** Five parts. The first is the one that makes the rest reversible.
+
+1. **`v1::Document` is never modified to accommodate another document class.** It keeps its exact
+   shape and its byte-identical serialization — the `skip_serializing_if` attributes on
+   `properties` and `background` exist for precisely that reason. A presentation is a **sibling
+   type in a new crate**, and the class discriminator lives at the **io boundary**
+   (`ImportArtifact`/`ExportRequest`, `casual-doc-io/src/artifact.rs`), which is already the one
+   place in the dispatch layer that names a concrete model type.
+2. **Shared capability is reached by publishing seams in place, not by extracting shared crates.**
+   The seams already exist: `flow_anchored_text_box` is a page-free "lay out a text body in a
+   rect" function (`casual-doc-layout/src/flow.rs`), `resolve_anchor_rect` is a pure anchor→rect
+   resolver, `GroupMapper` is a correct DrawingML child-space affine, and
+   `casual-doc-render::render` takes a display list and knows nothing of pages. A big-bang
+   extraction is the highest-risk, lowest-payoff move available; it waits for a **third**
+   consumer, which is also when `opencalc`'s independently reimplemented OPC layer becomes worth
+   paying down.
+3. **A second editor surface, not a modified one.** `webapp/src/main.js` is 16,190 lines with zero
+   exports and 333 import-time DOM bindings (HF-109 open), so a slide shell is its own page with
+   its own facade, embedded through the same `<opendoc-editor>` iframe with a different `src`.
+   The DOCX editor therefore carries **no** risk from presentation work. The cost is shell
+   duplication, and that cost is the argument for landing HF-085/HF-109 first rather than a
+   reason to defer them.
+4. **The shared-core corrections land as DOCX work, on their own merits.** Every row of `155` §6
+   is a defect in the shipped DOCX product — 22 of ~187 presets with the rest painting as
+   bounding rectangles, a rotated group that paints unrotated, `a:effectLst` unimplemented at
+   every layer, an autofit scale applied but never re-solved, a theme style matrix retained as an
+   opaque string. These are sequenced against the existing FID-R and OO-014 rows and require **no
+   decision about presentations**. If presentations are never built, none of it is wasted.
+5. **No AGPL code, structure, or transcription enters this repository.** ONLYOFFICE is read for
+   behaviour and scale only. The licence asymmetry is the wedge (`106` §2); importing their code
+   would end it.
+
+**Why additive rather than a unified model.** A `DocumentClass` discriminator inside `v1::Document`
+would put a presentation's shape tree in the same type the DOCX editor, exporter, 58 edit
+operations and five exhaustive `transform` matches all pattern-match on — so every presentation
+increment would be a breaking change to the shipped product. It would also be the **one-way**
+choice: a sibling type can move to another repository if `106` §1's "future sibling" answer stands,
+whereas a modified `Document` cannot be un-modified.
+
+**What makes this enforceable rather than aspirational.** Three guards already exist and were not
+added for this:
+
+- `casual-doc-model/tests/model_consumer_ledger.rs` caps typed-but-unreachable model rows with
+  `UNCONSUMED_CEILING = 17` as a ratchet, so a presentation model type **cannot land ahead of its
+  consumer**. That is the guard against `105`'s "modeled is not shipped", and it forbids exactly
+  how this kind of effort normally rots.
+- The oracle geometry gate (committed references under `fixtures/oracle/`, armed by
+  `the_oracle_gate_is_armed`) plus `geometry_snapshot.golden` catch an unintended geometry change
+  in part 4's work. A golden that moves must move intentionally, with the diff explained.
+- Adding a variant to `ShapeGeometry`, `Fill` or `ShapePathCommand` breaks every exhaustive match
+  and struct literal in the workspace — `E0063`, the §5a shape-1 failure. The absent `_` arms are
+  deliberate (`preset_token`'s match has no wildcard so a new preset *must* be handled) and are
+  kept. The mitigation is `cargo check --workspace --all-targets --all-features`, not crate tests.
+
+**What choosing this costs, stated plainly.** Shell duplication until HF-109 lands, and a second
+facade is a second large export surface with the same god-file risk `casual-doc-wasm` already
+carries. Transitionally, two EMU→twip rounding rules coexist in `casual-doc-layout::units` —
+collected into one module and pinned by a test that fails when they are converged, because
+converging them is a geometry change that moves goldens. This partially answers the standing
+pending question "whether layout uses fixed-point units internally": layout stays in twips, and
+EMU is a boundary unit with its rounding named at the boundary.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

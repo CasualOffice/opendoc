@@ -396,8 +396,10 @@ struct CustomGeometry {
     /// How many `a:path` children have been opened; more than one is out of
     /// scope for this slice.
     paths: usize,
-    /// The command an `a:pt` child will complete (`a:moveTo`/`a:lnTo`).
+    /// The command the `a:pt` children will complete.
     pending: Option<PathVertexKind>,
+    /// Points gathered for the open command, awaiting its full arity.
+    pending_points: Vec<PointEmu>,
     /// Something outside the modeled subset was seen.
     unsupported: bool,
 }
@@ -415,11 +417,30 @@ impl CustomGeometry {
     }
 }
 
-/// Which path command an `a:pt` inside an open `a:custGeom` completes.
+/// Which path command the `a:pt` children inside an open `a:custGeom` complete.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PathVertexKind {
     Move,
     Line,
+    /// `a:cubicBezTo` — two controls then the endpoint.
+    Cubic,
+    /// `a:quadBezTo` — one control then the endpoint.
+    Quad,
+}
+
+impl PathVertexKind {
+    /// How many `a:pt` children the command takes.
+    ///
+    /// DrawingML reads them POSITIONALLY, so a command with the wrong count is not
+    /// a curve with a missing control — it is a different curve. Arity is therefore
+    /// enforced rather than tolerated.
+    fn arity(self) -> usize {
+        match self {
+            Self::Move | Self::Line => 1,
+            Self::Quad => 2,
+            Self::Cubic => 3,
+        }
+    }
 }
 
 /// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
@@ -5196,13 +5217,33 @@ impl BodyParser<'_> {
                 geometry.width_emu = path_w.filter(|w| *w > 0).unwrap_or(0);
                 geometry.height_emu = path_h.filter(|h| *h > 0).unwrap_or(0);
             }
-            b"moveTo" => geometry.pending = Some(PathVertexKind::Move),
-            b"lnTo" => geometry.pending = Some(PathVertexKind::Line),
-            b"close" => geometry.push(ShapePathCommand::Close),
+            b"moveTo" | b"lnTo" | b"cubicBezTo" | b"quadBezTo" => {
+                // A command opening while the previous one is still short of its
+                // arity means the file nested or truncated them; refuse rather than
+                // emit a curve built from the wrong points.
+                if geometry.pending.is_some() {
+                    geometry.unsupported = true;
+                    return;
+                }
+                geometry.pending_points.clear();
+                geometry.pending = Some(match local {
+                    b"moveTo" => PathVertexKind::Move,
+                    b"lnTo" => PathVertexKind::Line,
+                    b"cubicBezTo" => PathVertexKind::Cubic,
+                    _ => PathVertexKind::Quad,
+                });
+            }
+            b"close" => {
+                if geometry.pending.is_some() {
+                    geometry.unsupported = true;
+                    return;
+                }
+                geometry.push(ShapePathCommand::Close);
+            }
             b"pt" => {
-                let Some(kind) = geometry.pending.take() else {
-                    // An `a:pt` outside a `a:moveTo`/`a:lnTo` belongs to a command
-                    // this slice does not model (an `a:arcTo` control point, say).
+                let Some(kind) = geometry.pending else {
+                    // An `a:pt` outside a modeled command belongs to one this slice
+                    // does not model (an `a:arcTo` control point, say).
                     geometry.unsupported = true;
                     return;
                 };
@@ -5214,13 +5255,28 @@ impl BodyParser<'_> {
                     geometry.unsupported = true;
                     return;
                 };
-                let point = PointEmu { x_emu, y_emu };
+                geometry.pending_points.push(PointEmu { x_emu, y_emu });
+                if geometry.pending_points.len() < kind.arity() {
+                    return;
+                }
+                // Positional, in authored order: controls first, endpoint last.
+                let points = core::mem::take(&mut geometry.pending_points);
+                geometry.pending = None;
                 geometry.push(match kind {
-                    PathVertexKind::Move => ShapePathCommand::MoveTo { point },
-                    PathVertexKind::Line => ShapePathCommand::LineTo { point },
+                    PathVertexKind::Move => ShapePathCommand::MoveTo { point: points[0] },
+                    PathVertexKind::Line => ShapePathCommand::LineTo { point: points[0] },
+                    PathVertexKind::Quad => ShapePathCommand::QuadBezTo {
+                        control: points[0],
+                        point: points[1],
+                    },
+                    PathVertexKind::Cubic => ShapePathCommand::CubicBezTo {
+                        control1: points[0],
+                        control2: points[1],
+                        point: points[2],
+                    },
                 });
             }
-            // Curves, arcs, guides, adjust handles, connection sites, extensions.
+            // Arcs, guide formulas, adjust handles, connection sites, extensions.
             _ => geometry.unsupported = true,
         }
     }
@@ -5242,16 +5298,18 @@ impl BodyParser<'_> {
             .filter(|command| matches!(command, ShapePathCommand::MoveTo { .. }))
             .count();
         let usable = !geometry.unsupported
+            // A command that never received its full arity leaves `pending` set.
+            && geometry.pending.is_none()
             && geometry.paths == 1
             && moves == 1
             && matches!(
                 geometry.commands.first(),
                 Some(ShapePathCommand::MoveTo { .. })
             )
-            && geometry
-                .commands
-                .iter()
-                .any(|command| matches!(command, ShapePathCommand::LineTo { .. }));
+            // Any drawing command, not `LineTo` specifically: a path that is a
+            // single cubic draws perfectly well, and testing for a line rejected
+            // every curve-only geometry.
+            && geometry.commands.iter().any(ShapePathCommand::is_segment);
         match (usable, self.pending_shape.as_mut()) {
             (true, Some(shape)) => {
                 shape.path = Some(ShapePath {

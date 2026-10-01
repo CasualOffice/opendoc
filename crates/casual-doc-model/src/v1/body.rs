@@ -987,11 +987,12 @@ pub const MAX_SHAPE_PATH_COMMANDS: usize = 1024;
 
 /// One command of a custom shape geometry path (`a:custGeom/a:pathLst/a:path`).
 ///
-/// Only the straight-line subset is modeled: `a:moveTo`, `a:lnTo` and
-/// `a:close`. Curves (`a:cubicBezTo`, `a:quadBezTo`, `a:arcTo`) and
-/// guide-formula coordinates are deliberately absent — a geometry using them is
-/// not imported as a path at all, so this enum never half-describes one
-/// (docs/119 §6).
+/// Modeled: `a:moveTo`, `a:lnTo`, `a:cubicBezTo`, `a:quadBezTo` and `a:close`.
+/// Still deliberately absent, and still `109` FID-G-02: `a:arcTo`, which needs
+/// `wR`/`hR`/`stAng`/`swAng` and an angle-to-Bézier conversion, and any coordinate
+/// that is a guide NAME rather than an integer, which needs the `a:gdLst` formula
+/// language. A geometry using either is not imported as a path at all, so this enum
+/// never half-describes one (docs/119 §6).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ShapePathCommand {
@@ -1005,8 +1006,66 @@ pub enum ShapePathCommand {
         /// The point, in the path's own coordinate space.
         point: PointEmu,
     },
+    /// Draw a cubic Bézier (`a:cubicBezTo`): two control points, then the
+    /// endpoint, in the authored order.
+    CubicBezTo {
+        /// The control point leaving the previous endpoint.
+        control1: PointEmu,
+        /// The control point entering `point`.
+        control2: PointEmu,
+        /// The curve's endpoint.
+        point: PointEmu,
+    },
+    /// Draw a quadratic Bézier (`a:quadBezTo`): one control point, then the
+    /// endpoint.
+    ///
+    /// Kept distinct from [`ShapePathCommand::CubicBezTo`] rather than promoted on
+    /// import, so the authored command round-trips as itself. A backend with no
+    /// quadratic operator promotes it instead; PDF does.
+    QuadBezTo {
+        /// The single control point.
+        control: PointEmu,
+        /// The curve's endpoint.
+        point: PointEmu,
+    },
     /// Close the subpath back to its starting point (`a:close`).
     Close,
+}
+
+impl ShapePathCommand {
+    /// Whether this command draws, as opposed to only moving the pen or closing.
+    ///
+    /// Import uses this to decide whether a path draws anything at all. It is a
+    /// method rather than a `matches!` at the call site because that call site
+    /// tested for `LineTo` specifically, which silently rejected every curve-only
+    /// geometry the moment curves existed.
+    #[must_use]
+    pub fn is_segment(&self) -> bool {
+        matches!(
+            self,
+            Self::LineTo { .. } | Self::CubicBezTo { .. } | Self::QuadBezTo { .. }
+        )
+    }
+
+    /// Every point the command names, control points included.
+    ///
+    /// Validation and layout's coordinate resolution both go through this rather
+    /// than re-enumerating the variants, because a missed control point would
+    /// validate a path and then paint it wrong — the two places that must agree on
+    /// what "every coordinate" means.
+    pub fn points(&self) -> impl Iterator<Item = PointEmu> + '_ {
+        let (a, b, c) = match *self {
+            Self::MoveTo { point } | Self::LineTo { point } => (Some(point), None, None),
+            Self::CubicBezTo {
+                control1,
+                control2,
+                point,
+            } => (Some(control1), Some(control2), Some(point)),
+            Self::QuadBezTo { control, point } => (Some(control), Some(point), None),
+            Self::Close => (None, None, None),
+        };
+        a.into_iter().chain(b).chain(c)
+    }
 }
 
 /// A custom shape geometry path (`a:custGeom/a:pathLst/a:path`): an ordered

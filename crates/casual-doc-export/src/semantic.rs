@@ -6907,19 +6907,27 @@ fn write_cust_geom(
     }
     w.write_event(Event::Start(path_element)).map_err(pkg)?;
     for command in &path.commands {
-        let (name, point) = match command {
-            ShapePathCommand::MoveTo { point } => ("a:moveTo", *point),
-            ShapePathCommand::LineTo { point } => ("a:lnTo", *point),
+        // A curve writes its points in the SAME order the model holds them, which
+        // is the authored order: controls first, endpoint last. DrawingML reads
+        // `a:cubicBezTo`'s three `a:pt` positionally, so a reordering here would
+        // round-trip a different curve while staying schema-valid.
+        let name = match command {
+            ShapePathCommand::MoveTo { .. } => "a:moveTo",
+            ShapePathCommand::LineTo { .. } => "a:lnTo",
+            ShapePathCommand::CubicBezTo { .. } => "a:cubicBezTo",
+            ShapePathCommand::QuadBezTo { .. } => "a:quadBezTo",
             ShapePathCommand::Close => {
                 w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
                 continue;
             }
         };
         w.write_event(Event::Start(start(name))).map_err(pkg)?;
-        let mut pt = start("a:pt");
-        pt.push_attribute(("x", point.x_emu.to_string().as_str()));
-        pt.push_attribute(("y", point.y_emu.to_string().as_str()));
-        w.write_event(Event::Empty(pt)).map_err(pkg)?;
+        for point in command.points() {
+            let mut pt = start("a:pt");
+            pt.push_attribute(("x", point.x_emu.to_string().as_str()));
+            pt.push_attribute(("y", point.y_emu.to_string().as_str()));
+            w.write_event(Event::Empty(pt)).map_err(pkg)?;
+        }
         w.write_event(Event::End(BytesEnd::new(name)))
             .map_err(pkg)?;
     }

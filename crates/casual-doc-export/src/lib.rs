@@ -1151,6 +1151,92 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the group survives write -> reopen");
     }
 
+    /// A curve survives the round trip with its control points in the authored
+    /// ORDER, not merely in the authored count (`109` FID-G-02).
+    ///
+    /// DrawingML reads `a:cubicBezTo`'s three `a:pt` positionally, so swapping a
+    /// control for the endpoint produces a different curve that is still
+    /// schema-valid and still round-trips to the same number of points. Only an
+    /// order-sensitive assertion on the written bytes can tell those apart, which is
+    /// why this checks the emitted substring rather than comparing models.
+    #[test]
+    fn a_curve_round_trips_with_its_control_points_in_order() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, PointEmu, ShapePathCommand};
+        use std::io::Read;
+
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/><a:chOff x="0" y="0"/><a:chExt cx="914400" cy="914400"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Curve"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:custGeom><a:avLst/><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:cubicBezTo><a:pt x="30" y="80"/><a:pt x="70" y="80"/><a:pt x="100" y="0"/></a:cubicBezTo><a:quadBezTo><a:pt x="50" y="100"/><a:pt x="0" y="0"/></a:quadBezTo><a:close/></a:path></a:pathLst></a:custGeom></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let path_of = |document: &casual_doc_model::v1::Document| {
+            let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+                panic!("expected a paragraph");
+            };
+            let InlineNode::Group(group) = &paragraph.inlines[0] else {
+                panic!("expected a group");
+            };
+            let GroupChild::Shape(shape) = &group.children[0] else {
+                panic!("expected a shape");
+            };
+            shape.path.clone().expect("the curve carries a path")
+        };
+
+        let expected = vec![
+            ShapePathCommand::MoveTo {
+                point: PointEmu { x_emu: 0, y_emu: 0 },
+            },
+            ShapePathCommand::CubicBezTo {
+                control1: PointEmu {
+                    x_emu: 30,
+                    y_emu: 80,
+                },
+                control2: PointEmu {
+                    x_emu: 70,
+                    y_emu: 80,
+                },
+                point: PointEmu {
+                    x_emu: 100,
+                    y_emu: 0,
+                },
+            },
+            ShapePathCommand::QuadBezTo {
+                control: PointEmu {
+                    x_emu: 50,
+                    y_emu: 100,
+                },
+                point: PointEmu { x_emu: 0, y_emu: 0 },
+            },
+            ShapePathCommand::Close,
+        ];
+        assert_eq!(path_of(&m1).commands, expected, "import");
+        assert_eq!(
+            path_of(&m2).commands,
+            expected,
+            "and again after export and re-import"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml_out = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml_out)
+            .unwrap();
+        // Order-sensitive, on the bytes: controls first, endpoint last.
+        assert!(
+            xml_out.contains(
+                r#"<a:cubicBezTo><a:pt x="30" y="80"/><a:pt x="70" y="80"/><a:pt x="100" y="0"/></a:cubicBezTo>"#
+            ),
+            "the cubic is written with its two controls then its endpoint: {xml_out}"
+        );
+        assert!(
+            xml_out.contains(
+                r#"<a:quadBezTo><a:pt x="50" y="100"/><a:pt x="0" y="0"/></a:quadBezTo>"#
+            ),
+            "the quadratic keeps its single control and is NOT promoted to a cubic on save"
+        );
+    }
+
     /// A recovered `a:custGeom` is re-emitted as `a:custGeom`, not rewritten to
     /// `prst="rect"` (docs/119 §2, `109` FID-G-01).
     ///
