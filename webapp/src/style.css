@@ -6549,13 +6549,51 @@ body.is-format-painting .page-wrap * {
    comments must not swallow the document. It scrolls itself (one card list, not
    a canvas-anchored layer), contains its overscroll so a flick inside it does
    not scroll the document behind it, and is dismissed with the Close button the
-   header already carries. */
+   header already carries.
+
+   IT STANDS OFF THE PERMANENT BOTTOM CHROME, rather than taking the bottom edge.
+   `inset: auto 0 0 0` is right on a shell whose commands are all at the top; it
+   is wrong on this one. Measured at 390x844 with one comment open: the sheet
+   occupied 645-844 while `#compactToolbar` is fixed at 773-814 and `.footer` at
+   814-844, so opening a comment hid the phone's ENTIRE command surface and its
+   status bar — every sampled point across the bar came back as review chrome.
+   The bar is how you act on what the sheet is talking about, so a sheet that
+   swallows it costs more than it gives.
+
+   `docs/148` §5's region table records the oversight in two adjacent rows: the
+   compact toolbar is "docked to the bottom, above the status bar, above the
+   keyboard", and four rows later the comment column is "bottom sheet (already,
+   at 700px) | HF-088, UNCHANGED". The rung that put a command surface at the
+   bottom edge never re-asked what was already parked there. The same table's
+   next row states the rule this fix follows — menus hung off the bottom bar open
+   as upward sheets, because "there is nothing below a bottom bar to open into".
+
+   Word for mobile stacks its bottom ribbon sheet above the command row and
+   Google Docs' sheets sit above the keyboard-attached row. ONLYOFFICE is NOT
+   the authority for this one and it would be misleading to cite them: their
+   phone chrome is a top Navbar plus toolbars INSIDE the sheet
+   (`apps/documenteditor/mobile/src/view/edit/Edit.jsx` opens a Framework7
+   `Sheet` at the bottom edge; `apps/common/mobile/resources/less/comments.less`
+   puts the comment surface's own toolbar inside it), so they have no global
+   bottom row to swallow. Our shell does, deliberately (`docs/148` §5.2), and
+   `narrow-review-column.spec.mjs` already declares it PERMANENT chrome that was
+   "never the sheet's to give back" — a claim that only holds if this rule holds.
+
+   The offset is the same expression the rest of the phone rung reserves —
+   `--phone-bottom-chrome`, the footer plus the command bar plus the keyboard and
+   safe-area insets — with `--h-footer` as the fallback for the 621-700px band,
+   where the sheet applies (`REVIEW_SHEET_MAX_WIDTH` 700) but `phone-mode` does
+   not (`PHONE_MAX_WIDTH` 620) and the footer is the only bottom chrome.
+
+   `max-height` loses the same amount, because "at most half the screen" is a
+   claim about the half, not about the sheet: without it a long comment list
+   would grow upward past 50vh by exactly the standoff. */
 .viewport.review-sheet.has-review-sidebar .review-sidebar {
   position: fixed;
-  inset: auto 0 0 0;
+  inset: auto 0 var(--phone-bottom-chrome, var(--h-footer)) 0;
   width: auto;
   min-width: 0;
-  max-height: 50vh;
+  max-height: calc(50vh - var(--phone-bottom-chrome, var(--h-footer)));
   padding: 0 10px 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -6577,7 +6615,18 @@ body.is-format-painting .page-wrap * {
 }
 
 /* Let the last page scroll clear of the sheet, so a comment anchored to the end
-   of the document can still be read with its text on screen. */
+   of the document can still be read with its text on screen.
+
+   `50vh + 12px` is the WORST CASE and it is now exactly that, rather than an
+   over-estimate: the sheet's own extent is at most `50vh - standoff` and it sits
+   `standoff` off the bottom, so the two sum back to 50vh whatever the rung.
+   A SHORT sheet is still over-reserved — one comment is a 200px sheet against a
+   434px reservation at 390x844, which is 234px of dead scroll below a short
+   document. Tightening that needs the sheet's MEASURED height, which CSS cannot
+   ask for; `phone_chrome.mjs` already publishes measured numbers as custom
+   properties (`--phone-keyboard-inset`) and is where a `--review-sheet-height`
+   would belong. Recorded rather than guessed at with a smaller constant, which
+   would trade dead scroll for an unreadable last comment. */
 .viewport.review-sheet.has-review-sidebar .pages {
   padding-bottom: calc(50vh + 12px);
 }

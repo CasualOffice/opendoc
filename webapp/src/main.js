@@ -121,7 +121,7 @@ import { closePopover, reflectOpenPopovers, registerPopover } from "./popover_ma
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom, fitZoomFactor, nextZoomStep, openingZoomMode, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
 import { createPhoneChrome } from "./phone_chrome.mjs";
-import { createTouchSelection } from "./touch_selection.mjs";
+import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
@@ -6143,7 +6143,7 @@ function onPointerDown(page, event) {
   // hit-testing just computed above.
   syncActiveReviewCommentToCaret(anchor);
   drawSelection();
-  startSelectionAutoScroll();
+  if (pointerDragSelects(event)) startSelectionAutoScroll(); // never under a finger
   event.preventDefault();
 }
 
@@ -6183,7 +6183,7 @@ function onPointerMove(page, event) {
 }
 
 function updateDragSelection(event) {
-  if (!dragging || !pointerGesture || !selection) return;
+  if (!dragging || !pointerGesture || !selection || !pointerDragSelects(event)) return;
   pointerGesture.lastClientX = event.clientX;
   pointerGesture.lastClientY = event.clientY;
   if (
