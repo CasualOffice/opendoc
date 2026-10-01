@@ -93,18 +93,38 @@ impl Room {
         ))
     }
 
-    /// Admits a client with `granted`, answering its opening message.
+    /// Admits a client with `granted`, **journals the admission, and only then answers**.
     ///
-    /// Not journalled: a participant number is handed out again on the next join and nothing
-    /// anybody was acknowledged for depends on it. What *is* durable is the resume table and the
-    /// grant table, and both ride along in the next checkpoint.
+    /// The same contract as [`Room::commit`], for the same reason, and the previous version of
+    /// this comment was simply wrong: it said "not journalled: a participant number is handed
+    /// out again on the next join and nothing anybody was acknowledged for depends on it". The
+    /// dedupe table is keyed on the participant number, so *everything* anybody was
+    /// acknowledged for depends on it — and `Journal::append_admission`'s doc comment records
+    /// what a crash actually did, measured rather than reasoned about.
+    ///
+    /// A refused join (a version mismatch, a malformed message, a resume that is too far behind)
+    /// changed nothing, so there is nothing to journal and nothing to fail on.
     ///
     /// `granted` is what the **boundary** got out of the grant it verified (ADR-060). This type
     /// does not verify anything: it holds a journal and an order, and a key does not belong
     /// beside either. [`Relay::handle`](crate::Relay::handle) is where the
     /// [`Access`](crate::Access) policy is consulted.
-    pub fn join(&mut self, message: &ClientMessage, granted: Capabilities) -> ServerMessage {
-        self.session.join(message, granted)
+    ///
+    /// # Errors
+    ///
+    /// [`RoomError::Journal`] when the admission could not be made durable. The caller must
+    /// **not** admit: a participant number handed out and not recorded is one that will be
+    /// handed out again.
+    pub fn join(
+        &mut self,
+        message: &ClientMessage,
+        granted: Capabilities,
+    ) -> Result<ServerMessage, RoomError> {
+        let (answer, admitted) = self.session.join(message, granted);
+        if let Some(admission) = admitted {
+            self.journal.append_admission(&admission)?;
+        }
+        Ok(answer)
     }
 
     /// Orders `submission`, **journals the decision, and only then returns it**.

@@ -374,7 +374,7 @@ with nothing behind it is the shape §4.1 was written to stop.
 | B2 | transforms per arrival at *k* and *2k*; and identical at document *n* and *2n* | work count | `casual-doc-transaction::session_tests` |
 | B3 | one undo group per coalesced run | structural | `casual-doc-transaction` |
 | B4 | — | **none** | `SetInlines` off the typing path is prose only |
-| B5 | — | **none** | there is no snapshot yet (6.1) |
+| B5 | `compaction_leaves_one_checkpoint_and_nothing_to_replay`, and `the_steady_state_write_is_one_frame_per_chunk` for the per-operation half | structural + work count | `opendoc-relay::journal` (ADR-058) |
 | B6 | — | **none** | layout invalidation; another lane's crate |
 | B7 | commit ceiling derived from the two bounds, plus "never evict unordered work" | structural | `casual-doc-transaction` |
 

@@ -13,8 +13,8 @@ use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_transaction::codec::decode_frame;
 use casual_doc_transaction::presence::{PresenceClock, PresenceUpdate};
 use casual_doc_transaction::protocol::{
-    Base, ClientId, ClientMessage, GrantToken, Identity, Join, PROTOCOL_VERSION, Refusal, Revision,
-    Seq, ServerMessage, Submission,
+    Base, ClientId, ClientMessage, GrantToken, Identity, Join, PROTOCOL_VERSION, Refusal, Resume,
+    ResumeKey, Revision, Seq, ServerMessage, Submission,
 };
 use casual_doc_transaction::wire::WireOperation;
 
@@ -627,10 +627,21 @@ fn a_room_that_requires_a_grant_admits_nobody_without_one() {
 }
 
 #[test]
-fn a_grant_dies_with_the_connection() {
-    // A grant left behind is a capability nobody is holding, and the next participant handed that
-    // number would inherit it before its own join had been verified. Presence already dies with
-    // the connection (`152` §2b); so does this.
+fn a_departed_participants_number_is_never_handed_to_anybody_else() {
+    // This guard REPLACES `a_grant_dies_with_the_connection`, and the replacement is deliberate
+    // rather than a concession to a failing test.
+    //
+    // That guard asserted a MECHANISM: `Relay::disconnected` removed the participant's entry
+    // from a connection-lifetime grant map, so a submission naming that number afterwards was
+    // refused `ReadOnlyAccess`. The GUARANTEE it was protecting is the sentence in its own
+    // comment — "the next participant handed that number would inherit it before its own join
+    // had been verified".
+    //
+    // ADR-058's `Record::Admitted` makes `next_client` a durable floor, so **there is no next
+    // participant handed that number**: the premise of the hazard is gone. Keeping the old guard
+    // would have meant keeping a second, connection-scoped grant table beside the durable one —
+    // two mechanisms for one rule, which disagree after a restart — so the guard now asserts the
+    // guarantee directly, both halves of it.
     let (path, mut relay, clients) =
         with_access("grant-lifetime", 1, Access::Open(Capabilities::editor()));
     let ada = clients[0];
@@ -649,9 +660,156 @@ fn a_grant_dies_with_the_connection() {
 
     relay.disconnected(ada);
 
-    // The same id, submitting again after the disconnect. The connection check would catch a
-    // reused `me`, so this passes `Some(ada)` deliberately: the question is whether the GRANT is
-    // still there, and the answer must be no.
+    // Half one: the number is not re-issued. Somebody else joining after ada left gets their own
+    // number, so they never inherit ada's dedupe entry or ada's `IdSpace` (ADR-051).
+    let mut writer = Some(Sink::default());
+    let handled = relay
+        .handle(
+            None,
+            &mut writer,
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("grace").expect("an identity"),
+                grant: None,
+                resume: None,
+            }),
+        )
+        .expect("handled");
+    let Some(ServerMessage::Welcome { client: grace, .. }) = handled.answer else {
+        panic!("grace must be welcomed: {:?}", handled.answer)
+    };
+    assert_ne!(
+        grace, ada,
+        "ada's participant number was handed out again after she left, so grace inherits her \
+         dedupe entry and her minting space"
+    );
+
+    // Half two: nobody else can submit AS ada, whatever they claim. This is the check that no
+    // pure state machine can make, and it is the one the old mechanism was standing in for.
+    let handled = relay
+        .handle(
+            Some(grace),
+            &mut None,
+            &ClientMessage::Submit(chunk(ada, 2, Base::Chained)),
+        )
+        .expect("handled");
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::Refused {
+            seq: Some(Seq::new(2)),
+            reason: Refusal::NotAuthorised,
+        }),
+        "another connection submitted as ada after she left"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_narrowed_grant_on_rejoin_beats_the_one_the_journal_remembers() {
+    // The revocation argument in `ServerSession::readmit`'s doc comment, asserted rather than
+    // reasoned about. The grant is now DURABLE, which looks like the hole `143` §10 names: a
+    // capability restored from a file resurrecting a right the room revoked. It is not, because
+    // every accepted join OVERWRITES the entry with the freshly verified grant — and this is
+    // what says so.
+    //
+    // THIS GUARD PASSED ON ITS FIRST WRITING and had to be rewritten, which is worth recording
+    // because it is `SKILL` §4's exact shape. The first version had ada rejoin with no resume
+    // key, so she was handed a NEW participant number — and the mutation under test
+    // (`granted.entry(..).or_insert(..)` instead of `insert`) behaves identically for a key that
+    // is not there yet. The guard was asserting a rule about overwriting while never creating an
+    // entry to overwrite.
+    //
+    // So it now CREATES the condition: ada carries a resume key, so the rejoin resolves to the
+    // SAME participant number, which is the only arrangement in which the journal's remembered
+    // grant and the freshly verified one collide at one map key. The precondition is asserted
+    // explicitly rather than assumed.
+    let path = scratch("narrowed-rejoin");
+    let key = ResumeKey::new("ada-key").expect("a key");
+    let room = Room::create(&path).expect("a new room");
+    let mut relay: Relay<Sink> = Relay::new(room, Access::Open(Capabilities::editor()));
+
+    let mut writer = Some(Sink::default());
+    let handled = relay
+        .handle(
+            None,
+            &mut writer,
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("ada").expect("an identity"),
+                grant: None,
+                resume: Some(Resume {
+                    key: key.clone(),
+                    revision: Revision::new(0),
+                }),
+            }),
+        )
+        .expect("handled");
+    let Some(ServerMessage::Welcome { client: ada, .. }) = handled.answer else {
+        panic!("ada must be welcomed")
+    };
+    let handled = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &ClientMessage::Submit(chunk(ada, 1, Base::Revision(Revision::new(0)))),
+        )
+        .expect("handled");
+    let Some(ServerMessage::Ack { revision, .. }) = handled.answer else {
+        panic!("an editor's chunk must be ordered: {:?}", handled.answer)
+    };
+    drop(relay);
+
+    // The room restarts and its policy is narrowed — a revocation, in the only form
+    // `Access::Open` can express one. The journal still holds `editor()` for ada's number, and
+    // that is the precondition this guard rests on.
+    let (room, _) = Room::open(&path).expect("recovery");
+    assert_eq!(
+        room.session().granted_for(ada),
+        Some(Capabilities::editor()),
+        "the journal did not remember the WIDER grant, so there is nothing here for a narrowed \
+         one to have to beat and this guard proves nothing"
+    );
+    let mut relay: Relay<Sink> = Relay::new(room, Access::Open(Capabilities::commenter()));
+
+    let mut writer = Some(Sink::default());
+    let handled = relay
+        .handle(
+            None,
+            &mut writer,
+            &ClientMessage::Join(Join {
+                protocol: PROTOCOL_VERSION,
+                identity: Identity::new("ada").expect("an identity"),
+                grant: None,
+                resume: Some(Resume { key, revision }),
+            }),
+        )
+        .expect("handled");
+    let Some(ServerMessage::Resumed {
+        client: ada_again, ..
+    }) = handled.answer
+    else {
+        panic!(
+            "ada must be RESUMED, not welcomed afresh: {:?}. A fresh welcome hands her a new \
+             participant number, and then the journal's entry and the new one are different map \
+             keys — which is how the first version of this guard passed against a relay that \
+             never overwrote anything.",
+            handled.answer
+        )
+    };
+    assert_eq!(
+        ada_again, ada,
+        "the resume did not hand back the same participant number, so the two grants are not at \
+         one map key and the overwrite is not under test"
+    );
+
+    // The load-bearing assertion. The `capabilities` field on `Resumed` is echoed from the
+    // argument and would stay right even if the table were wrong, so what is checked is the
+    // table the relay actually enforces against, and then the enforcement itself.
+    assert_eq!(
+        relay.room().session().granted_for(ada),
+        Some(Capabilities::commenter()),
+        "the journal's remembered grant survived a re-verified join"
+    );
     let handled = relay
         .handle(
             Some(ada),
@@ -665,7 +823,7 @@ fn a_grant_dies_with_the_connection() {
             seq: Some(Seq::new(2)),
             reason: Refusal::ReadOnlyAccess,
         }),
-        "a disconnected participant's grant outlived its connection"
+        "a revoked right survived a reconnect because the journal remembered the wider grant"
     );
     let _ = std::fs::remove_file(&path);
 }

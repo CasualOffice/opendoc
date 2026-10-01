@@ -906,12 +906,42 @@ construction rather than by promise. The op set derives `serde` — one schema d
    unpassworded restriction, because that is what Word does and what ADR-052's "policy, not
    security" rests on — from a room guest, who may not. No password material is modelled or
    verified, so that sentence stays literally true.
-6. **Durability.** The relay's retained tail is in memory and bounded by count. A durable
-   ordered log, snapshots and compaction are `107` 6.1, and the sibling's warning transfers
-   directly: retained/unmodelled bytes are inert, so store them **once** with the document and
-   have periodic snapshots carry only the mutable model and refer to them — `serde_json` writes
-   a `Vec<u8>` as an array of decimal numbers, which they measured at about **four times** the
-   size. That lands squarely on our verbatim-OOXML retention advantage.
+6. ~~**Durability.**~~ **Built 2026-10-02 (ADR-058) and corrected 2026-10-02.** The relay's
+   ordered log, its checkpoint and its compaction exist, recovery *re-takes* the ordering
+   decision and checks it, and a torn tail is counted while a torn middle is refused.
+
+   **Two things were wrong and both are fixed here rather than recorded for later.**
+
+   *The checkpoint's shape.* It embedded the relay's whole retained history, so one frame could
+   reach `DEFAULT_RETAINED_REVISIONS × CHUNK_BUDGET_BYTES` — about **1.2 GB** — against the
+   codec's 30 MB bound, and the journal carried a special derived bound to be able to read back
+   what it wrote. It now writes the state as one frame and **one bounded frame per retained
+   entry**, which is what every other record already was, so the special bound is **deleted**
+   rather than enlarged. What is left unbounded is the participant tables — one small entry per
+   participant ever admitted, nothing pruned — and that is stated rather than claimed away: it is
+   now the only term in a checkpoint's size, the 30 MB bound is reached at some 300,000 lifetime
+   participants, and reaching it refuses loudly. **Pruning a departed participant is the open
+   question this leaves**, and it is a real one: `accepted` cannot be pruned for a client that
+   might still retry, so the rule has to be tied to the retained window rather than to a
+   disconnect.
+
+   *A join was not durable, and that was a live defect rather than an untidiness.* §5.5's
+   resume, the dedupe table and ADR-051's identity partition all key on the participant number,
+   and `ServerSession::join` advanced it outside the journal. Measured on a restart: the number
+   was **handed out twice**, so the next holder's first chunk came back `Duplicate` and vanished;
+   the resume table regressed, so a client whose work had been acknowledged was answered
+   `Welcome` instead of `Resumed` — **silent** loss of exactly the unacknowledged work §5.5 says a
+   resume exists to preserve, with no `TooFarBehind` to announce it; and `has_assigned` regressed,
+   so the relay refused chunks from a participant the order had acknowledged.
+   `Record::Admitted(Admission)` closes all three, journalled before the join is answered, and it
+   is what let `ServerSession::commit` take the admission check back from the boundary.
+
+   The sibling's warning about snapshot *encoding* still stands and is untouched by this:
+   retained/unmodelled bytes are inert, so store them **once** with the document and have periodic
+   snapshots refer to them — `serde_json` writes a `Vec<u8>` as an array of decimal numbers, which
+   they measured at about **four times** the size. That is a *document* snapshot, which this relay
+   deliberately does not hold (ADR-047), so it lands on `107` 6.1's client half and on our
+   verbatim-OOXML retention advantage.
 7. **`w:id`, the OOXML revision serial, is *not* partitioned — the one identity family this
    change deliberately left alone.** `RevisionIdAllocator` in `casual-doc-wasm` seeds from the
    values a document already carries and mints the lowest free integer, so two replicas

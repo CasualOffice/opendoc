@@ -102,7 +102,7 @@ struct Replica {
 fn admit(server: &mut ServerSession, count: u64) -> Vec<ClientId> {
     (0..count)
         .map(|number| {
-            let answer = server.join(
+            let (answer, _) = server.join(
                 &ClientMessage::Join(Join {
                     protocol: PROTOCOL_VERSION,
                     identity: Identity::new(format!("participant-{number}")).expect("an identity"),
@@ -124,7 +124,7 @@ impl Replica {
     /// implies — which is the whole point of [`IdSpace`] and is why each replica's allocator
     /// is different here.
     fn join(document: &Document, server: &mut ServerSession, key: &str, who: &str) -> Self {
-        let message = server.join(
+        let (message, _) = server.join(
             &ClientMessage::Join(Join {
                 protocol: PROTOCOL_VERSION,
                 identity: Identity::new(who).expect("an identity"),
@@ -361,7 +361,7 @@ fn a_protocol_mismatch_stops_the_session_and_is_never_retried() {
 #[test]
 fn a_relay_answers_a_version_mismatch_with_a_stop_and_not_a_refusal() {
     let mut server = ServerSession::default();
-    let answer = server.join(
+    let (answer, _) = server.join(
         &ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION + 7,
             identity: Identity::new("ada").expect("an identity"),
@@ -1695,7 +1695,7 @@ fn a_resumed_participant_keeps_its_number_and_its_chunk_counter() {
     );
     ada.exchange(&mut server);
 
-    let answer = server.join(
+    let (answer, _) = server.join(
         &ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
@@ -1732,7 +1732,7 @@ fn a_resume_key_presented_by_a_different_identity_is_not_honoured() {
     let (document, _) = seed();
     let mut server = ServerSession::default();
     let ada = Replica::join(&document, &mut server, "shared-key", "ada");
-    let answer = server.join(
+    let (answer, _) = server.join(
         &ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("mallory").expect("an identity"),
@@ -1795,7 +1795,7 @@ fn a_participant_too_far_behind_is_told_before_anything_replaces_its_work() {
         }),
         Capabilities::owner(),
     );
-    let answer = server.join(
+    let (answer, _) = server.join(
         &ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
@@ -2203,7 +2203,7 @@ fn work_done_before_a_room_existed_travels_as_the_snapshot_and_never_as_operatio
 
     // Mode 2. The document is shared, so it joins a room — even though nobody else is in it.
     let mut server = ServerSession::default();
-    let message = server.join(
+    let (message, _) = server.join(
         &ClientMessage::Join(Join {
             protocol: PROTOCOL_VERSION,
             identity: Identity::new("ada").expect("an identity"),
