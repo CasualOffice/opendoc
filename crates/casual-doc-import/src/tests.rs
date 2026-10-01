@@ -10208,7 +10208,12 @@ fn an_out_of_scope_chart_family_is_named_beside_its_part_row() {
 /// its reference or its bytes (`docs/155` §6.1 consequence 3).
 #[test]
 fn a_malformed_chart_part_does_not_fail_the_package_import() {
-    let import = import_with_chart(b"<c:chartSpace><c:chart>");
+    // Genuinely malformed, which is narrower than it looks: `quick-xml` reaches
+    // `Eof` without an error on `<c:chartSpace><c:chart>` and on bytes containing
+    // no markup at all, so neither of those exercises the error path. A mismatched
+    // close tag does. This test stayed green under a mutation that made the reader
+    // panic on a malformed part until its input was corrected.
+    let import = import_with_chart(b"<c:chartSpace></wrong>");
     assert!(
         import.document.definitions().charts.is_empty(),
         "no projection from a part that cannot be read"

@@ -742,6 +742,20 @@ fn chart_construct_dispositions(
     let mut entries = Vec::new();
     for outcome in outcomes {
         let ledger_id = ledger.opaque_part_record(&outcome.part_name);
+        // Without a record the retention half of the claim is not evidenced, and
+        // `35` says an unevidenced `preserved` must fail the import rather than be
+        // reported. Reporting the weaker, true disposition keeps a bookkeeping
+        // mismatch from turning into a document that will not open.
+        let (degraded, omitted) = match ledger_id {
+            Some(_) => (
+                Disposition::DegradedPreserved,
+                Disposition::OmittedPreserved,
+            ),
+            None => (
+                Disposition::DegradedNotRetained,
+                Disposition::OmittedNotRetained,
+            ),
+        };
         let part = || PartDisposition {
             part_name: outcome.part_name.clone(),
             content_type: None,
@@ -753,22 +767,12 @@ fn chart_construct_dispositions(
             // `bar3DChart`" is information the part row cannot carry and is the
             // actionable half of the finding.
             if let Some(family) = &outcome.out_of_scope_family {
-                entries.push((
-                    part(),
-                    family.clone(),
-                    Disposition::OmittedPreserved,
-                    ledger_id,
-                ));
+                entries.push((part(), family.clone(), omitted, ledger_id));
             }
             continue;
         }
         for construct in &outcome.unconsumed {
-            entries.push((
-                part(),
-                construct.clone(),
-                Disposition::DegradedPreserved,
-                ledger_id,
-            ));
+            entries.push((part(), construct.clone(), degraded, ledger_id));
         }
     }
     entries

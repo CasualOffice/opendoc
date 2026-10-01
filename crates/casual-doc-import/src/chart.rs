@@ -631,6 +631,7 @@ impl Parser {
                             self.record_unconsumed(local);
                             self.skip_depth = 1;
                         }
+                        Step::SilentSkip => self.skip_depth = 1,
                     }
                 }
                 Event::Empty(element) => {
@@ -651,8 +652,8 @@ impl Parser {
                     if self.skip_depth > 0 {
                         continue;
                     }
-                    // An empty element opens no subtree, so `Skip` has nothing to
-                    // skip and `Push` nothing to enter — only the record stands.
+                    // An empty element opens no subtree, so no `Step` has anything
+                    // to enter or skip — only `Skip`'s record stands.
                     if let Step::Skip = self.on_start(local, element, true, chart_rels)? {
                         self.record_unconsumed(local);
                     }
@@ -702,7 +703,12 @@ impl Parser {
         chart_rels: &std::collections::BTreeMap<String, EmbeddedRel>,
     ) -> Result<Step, ChartDecline> {
         if chart_noop(local, element, self_closing) {
-            return Ok(Step::Leaf);
+            // `SilentSkip`, not `Leaf`: a no-op takes its subtree with it. `Leaf`
+            // descends, so the children of a `c:extLst` would each be
+            // dispositioned on their own and reported — findings describing losses
+            // that did not happen, which is the HF-174 defect in the one place the
+            // code is trying to avoid it.
+            return Ok(Step::SilentSkip);
         }
         let scope = self.scopes.last().copied().unwrap_or(Scope::ChartSpace);
         match (scope, local) {
@@ -1476,6 +1482,8 @@ enum Step {
     Leaf,
     /// Not represented: record the name and skip the subtree.
     Skip,
+    /// Carries no document meaning: skip the subtree and record **nothing**.
+    SilentSkip,
 }
 
 /// A DrawingML colour this projection can carry: an explicit `a:srgbClr`, or an
@@ -1854,17 +1862,64 @@ mod tests {
     /// inputs still produces an answer.
     #[test]
     fn a_malformed_chart_part_does_not_fail_the_import() {
-        for (name, xml) in [
-            ("truncated", b"<c:chartSpace><c:chart>".as_slice()),
-            ("not xml at all", b"PK\x03\x04 this is a zip".as_slice()),
-            ("empty", b"".as_slice()),
+        // Each case names the decline it expects, and the expectations are
+        // MEASURED rather than assumed: `quick-xml` is lenient in places, so
+        // "obviously malformed" and "the reader returns `Malformed`" are not the
+        // same set, and a test asserting merely "some decline" would have been
+        // satisfied by `NothingToProject` everywhere — which is how the
+        // package-level counterpart of this test stayed green under a mutation
+        // that made the reader panic on a malformed part.
+        for (name, xml, expected) in [
+            // Genuine parse failures.
             (
                 "a doctype",
                 br#"<!DOCTYPE c:chartSpace><c:chartSpace/>"#.as_slice(),
+                ChartDecline::Malformed,
             ),
             (
-                "the wrong root element",
+                "an unterminated tag",
+                b"<c:chartSpace".as_slice(),
+                ChartDecline::Malformed,
+            ),
+            (
+                "a mismatched close tag",
+                b"<c:chartSpace></wrong>".as_slice(),
+                ChartDecline::Malformed,
+            ),
+            (
+                "a part that is not a chart space at all",
+                br#"<w:document xmlns:w="urn:w"/>"#.as_slice(),
+                ChartDecline::Malformed,
+            ),
+            // Readable, but with no chart in it. A different decline because the
+            // two get different report treatment: a malformed part says nothing
+            // about the chart, an empty one says there was nothing to project.
+            (
+                "no elements at all",
+                b"PK\x03\x04 this is a zip".as_slice(),
+                ChartDecline::NothingToProject,
+            ),
+            ("nothing", b"".as_slice(), ChartDecline::NothingToProject),
+            (
+                "an unterminated chart space",
+                b"<c:chartSpace><c:chart>".as_slice(),
+                ChartDecline::NothingToProject,
+            ),
+            (
+                "a well-formed but empty chart space",
+                br#"<c:chartSpace xmlns:c="urn:c"/>"#.as_slice(),
+                ChartDecline::NothingToProject,
+            ),
+            (
+                // A `chartex` part. The root is matched by LOCAL name, so
+                // `cx:chartSpace` passes that check and then declines for want of
+                // a `c:plotArea` — the right outcome by a slightly indirect route.
+                // Recorded rather than smoothed over: a chartex part never reaches
+                // this reader anyway, because a `cx:chart` payload is not routed as
+                // an `EmbeddedKind::Chart` in the first place (`docs/155` §1).
+                "a chartex part",
                 br#"<cx:chartSpace xmlns:cx="urn:chartex"><cx:chart/></cx:chartSpace>"#.as_slice(),
+                ChartDecline::NothingToProject,
             ),
         ] {
             let read = read(xml);
@@ -1872,16 +1927,12 @@ mod tests {
                 read.projection.is_none(),
                 "{name}: a part that cannot be read must not yield a projection"
             );
-            assert!(
-                read.declined.is_some(),
-                "{name}: the decline must be stated, not implied"
+            assert_eq!(
+                read.declined,
+                Some(expected),
+                "{name}: the decline must be named, not merely present"
             );
         }
-        // An empty but well-formed chart space is not malformed — it simply holds
-        // no chart to project. The distinction matters because the two get
-        // different report treatment.
-        let read = read(br#"<c:chartSpace xmlns:c="urn:c"/>"#);
-        assert_eq!(read.declined, Some(ChartDecline::NothingToProject));
     }
 
     /// A no-op construct raises nothing, and its populated form still does.
@@ -1907,6 +1958,32 @@ mod tests {
             read.unconsumed
         );
     }
+
+    /// A no-op construct takes its whole subtree with it.
+    ///
+    /// `c:extLst` is the only chart no-op that can have children, and the first
+    /// version of this reader answered a no-op with "descend" — so `c:ext` and
+    /// whatever a producer put inside it were each reported as unconsumed. That is
+    /// HF-174 (findings describing losses that did not happen) reappearing inside
+    /// the code written to avoid it, which is why this has a guard of its own.
+    #[test]
+    fn a_chart_no_op_takes_its_subtree_with_it() {
+        let inner = format!(
+            r#"{CACHED_BAR}<c:extLst><c:ext uri="{{00000000-0000-0000-0000-000000000000}}" xmlns:c15="urn:c15"><c15:filteredSeriesTitle><c15:tx/></c15:filteredSeriesTitle></c:ext></c:extLst>"#
+        );
+        let read = read(&chart_space(&inner));
+        assert!(
+            read.unconsumed.is_empty(),
+            "nothing inside a c:extLst is a loss; got {:?}",
+            read.unconsumed
+        );
+        assert_eq!(
+            read.projection.expect("a projection").coverage,
+            ChartCoverage::Complete,
+            "an extension list must not make a projection partial"
+        );
+    }
+
 
     /// A list beyond its `docs/155` §8.4 bound declines instead of building an
     /// unbounded projection — and still does not fail the import.
