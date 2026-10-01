@@ -8,8 +8,14 @@
 //! `152` §9 refused to freeze bytes while `150` §9.1 and §9.2 were still about to move the
 //! operation shapes: *"the one thing a compatibility surface must not do"*. ADR-056 answered
 //! both on the **envelope** instead, so **no `Operation` variant changed and `Pos` is
-//! untouched**. The shapes are final, and this is the first increment that was waiting only on
-//! that.
+//! untouched** — the two findings that were about to move the *existing* shapes no longer do.
+//!
+//! That is **not** the same as the operation set being frozen for ever, and saying so would be an
+//! overstatement: ADR-054 and ADR-059 are both proposed additions to it. What makes bytes safe to
+//! write anyway is the **format**, not a promise about the future. A new variant is a new
+//! externally-tagged name, so an older decoder refuses it **by name** rather than misparsing it,
+//! and an added field is skipped. A compatibility surface has to survive the set *growing*; what
+//! it must not do is be frozen while the shapes it already carries are still moving.
 //!
 //! # The established pattern, named before any code
 //!

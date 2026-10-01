@@ -2336,7 +2336,11 @@ costed against a fallback that does not exist.
 - **The precedent, named:** ADR-051, one increment earlier, for identity. `150` §9.3 proposed
   that an operation enumerate the ids it mints; that could not work, and the answer was to
   carry the *space* on the envelope. This is the same move twice more, and the consequence is
-  the same one: the op shapes are now final, so the codec is unblocked **without a waiver**.
+  the same one: the two findings that were about to move the **existing** shapes no longer do, so
+  the codec is unblocked **without a waiver**. Not "the set is frozen", which would be an
+  overstatement — ADR-054 and ADR-059 both propose an addition to it. ADR-057's format is additive
+  under one by construction rather than by promise: an older decoder refuses an unknown variant by
+  name rather than misparsing it.
 - **Measured, not assumed.** Taking §9.2 in the op set was tried first: adding one field to
   `Pos` fails the build with two `E0063` in `casual-doc-wasm` (`lib.rs:2311`, `lib.rs:5712`) —
   a file another lane holds. That is precisely the "two green PRs can make `main` red" shape

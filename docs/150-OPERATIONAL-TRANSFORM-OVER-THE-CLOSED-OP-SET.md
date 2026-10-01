@@ -655,9 +655,15 @@ contract records. An envelope field is additive instead: a transaction that decl
 behaves exactly as it did, so the change is reversible, and if the op-set change is ever taken
 the declaration becomes redundant rather than wrong.
 
-**What this unblocks.** The op shapes are now final, which is what `152` §9 required before a
-byte codec could be written — the only thing standing in front of 6.4, and therefore in front of
-6.1 and 6.6.
+**What this unblocks.** The two findings that were about to move the **existing** op shapes no
+longer do, which is what `152` §9 required before a byte codec could be written — the only thing
+standing in front of 6.4, and therefore in front of 6.1 and 6.6.
+
+Not "the set is frozen", which would be an overstatement: ADR-054 and ADR-059 both propose an
+addition to it. What makes bytes safe to write is the **format** rather than a promise about the
+future — a new variant is a new externally-tagged name, so an older decoder refuses it *by name*
+instead of misparsing it. A compatibility surface has to survive the set growing; what it must not
+do is be frozen while the shapes it already carries are moving.
 
 
 ---
