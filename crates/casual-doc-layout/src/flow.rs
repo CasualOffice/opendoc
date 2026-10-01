@@ -1992,8 +1992,24 @@ fn flow_table<S: GalleySink + ?Sized>(
             if table.properties.tbl_bidi_visual {
                 mirror_cell_geometry(&mut margins, &mut borders, &mut table_borders, cell_width);
             }
-            let inner_width =
-                Twip((cell_width.raw() - margins.start.raw() - margins.end.raw()).max(1));
+            // A cell pays for its own top border always, and for its bottom only
+            // in the table's last row: border-conflict resolution hands the same
+            // winner to both cells abutting a horizontal boundary, so this charges
+            // each collapsed edge exactly once. Resolved after the bidi mirror, so
+            // `start`/`end` are the physical edges the content is inset from.
+            let border_reserve =
+                CellBorderReserve::resolve(&borders, row_index + 1 == table.rows.len());
+            // The vertical edges come off the content WIDTH, so a bordered cell
+            // wraps where Word and LibreOffice wrap it. Before this, a cell's
+            // borders took no horizontal space at all and its text ran on past
+            // where both of them break the line (`CellBorderReserve`).
+            let inner_width = Twip(
+                (cell_width.raw()
+                    - margins.start.raw()
+                    - margins.end.raw()
+                    - border_reserve.horizontal().raw())
+                .max(1),
+            );
             let merge_role = merge_roles[row_index][index];
             // Replace, rather than inherit, the enclosing cell's table layer.
             // This also clears an outer style when a nested table is unstyled.
@@ -2030,15 +2046,7 @@ fn flow_table<S: GalleySink + ?Sized>(
                 } else {
                     CellVerticalMerge::None
                 },
-                // A cell pays for its own top border always, and for its bottom
-                // only in the table's last row: border-conflict resolution hands
-                // the same winner to both cells abutting a horizontal boundary,
-                // so this charges each collapsed edge exactly once. See
-                // `CellBorderReserve`.
-                border_reserve: CellBorderReserve::resolve(
-                    &borders,
-                    row_index + 1 == table.rows.len(),
-                ),
+                border_reserve,
                 borders,
                 table_borders,
                 shading,
@@ -12927,6 +12935,177 @@ mod tests {
             bottom_cells[0].content_y_offset(*bottom_height).raw(),
             10 + bottom_cells[0].margins.top.raw(),
             "content clears the 10-twip insideH border above it"
+        );
+    }
+
+    /// A cell's **vertical** borders come off its content width, half of each
+    /// edge's thickness.
+    ///
+    /// # The defect
+    ///
+    /// The horizontal edges were fixed first; the vertical ones still took no
+    /// space at all, so a bordered cell's text ran on past where both Word and
+    /// LibreOffice break the line. Measured against LibreOffice 26.2.4.2 on a
+    /// single 6000-twip cell with zero margins, reading the content box off a
+    /// left-aligned and a right-aligned paragraph inside it, the content box
+    /// narrowed by:
+    ///
+    /// ```text
+    /// left + right, 120 twips each   ->  120   (60 + 60)
+    /// left only,    120 twips        ->   60
+    /// right only,   120 twips        ->   60
+    /// ```
+    ///
+    /// — i.e. **half** of each edge, which is the collapsed-border model (only
+    /// the inner half lies inside the cell). Confirmed at `w:sz` 4/8/16/24/48 and
+    /// for `double` at 4/8/16, where it is again half of the *total* 3× thickness.
+    /// The wrapping followed: a probe that wrapped 9/8/9/6 words against the
+    /// oracle's 8/8/8/8 now wraps 8/8/8/8 too.
+    #[test]
+    fn a_cells_vertical_borders_come_off_its_content_width() {
+        let edge = |sz: i32| ResolvedEdge {
+            color: [0, 0, 0, 255],
+            width: Twip(sz),
+            pattern: BorderPattern::Solid,
+        };
+
+        // Both edges at 120 twips: 60 each, 120 together.
+        let both = CellBorderReserve::resolve(
+            &CellBorders {
+                start: Some(edge(120)),
+                end: Some(edge(120)),
+                ..CellBorders::default()
+            },
+            false,
+        );
+        assert_eq!((both.start, both.end), (Twip(60), Twip(60)));
+        assert_eq!(both.horizontal(), Twip(120));
+
+        // One edge only: half of that edge and nothing for the absent one.
+        let leading = CellBorderReserve::resolve(
+            &CellBorders {
+                start: Some(edge(120)),
+                ..CellBorders::default()
+            },
+            false,
+        );
+        assert_eq!((leading.start, leading.end), (Twip(60), Twip::ZERO));
+        assert_eq!(leading.horizontal(), Twip(60));
+
+        // A `double` edge is half of its TOTAL 3x band, not half of `w:sz`.
+        let double = CellBorderReserve::resolve(
+            &CellBorders {
+                start: Some(ResolvedEdge {
+                    color: [0, 0, 0, 255],
+                    width: Twip(20),
+                    pattern: BorderPattern::Double,
+                }),
+                ..CellBorders::default()
+            },
+            false,
+        );
+        assert_eq!(double.start, Twip(30), "half of 3 x 20");
+
+        // The two axes take different shares, and confusing them is the mistake
+        // this pins: a horizontal edge charges its FULL thickness to the row.
+        let horizontal = CellBorderReserve::resolve(
+            &CellBorders {
+                top: Some(edge(120)),
+                bottom: Some(edge(120)),
+                ..CellBorders::default()
+            },
+            true,
+        );
+        assert_eq!((horizontal.top, horizontal.bottom), (Twip(120), Twip(120)));
+        assert_eq!(horizontal.total(), Twip(240));
+        assert_eq!(
+            horizontal.horizontal(),
+            Twip::ZERO,
+            "a top/bottom border takes no horizontal space"
+        );
+        assert_eq!(
+            both.total(),
+            Twip::ZERO,
+            "…and a left/right border takes no vertical space"
+        );
+    }
+
+    /// The width a bordered cell actually FLOWS at is reduced by its vertical
+    /// borders — not merely the reserve it records.
+    ///
+    /// # Why it is asserted this way
+    ///
+    /// The first version of this guard compared `border_reserve.horizontal()` and
+    /// passed with the subtraction removed from `inner_width`: the reserve being
+    /// right while the flow ignores it is exactly the state being fixed, so a
+    /// guard on the reserve alone cannot see it. A **right-aligned** paragraph
+    /// reads the flowed width back directly — its run starts at
+    /// `inner_width − advance`, so the run's own origin moves left by precisely
+    /// the reserve. That is the same quantity the LibreOffice probe measured, and
+    /// it is a value the cell cannot produce without using the narrower width.
+    #[test]
+    fn a_bordered_cell_flows_at_the_narrower_width() {
+        /// One cell holding a right-aligned word; `sz` in eighths of a point on
+        /// the table's start/end edges, or `None` for no borders at all.
+        fn run_origin(sz: Option<u32>) -> (Twip, Twip) {
+            let black = RgbColor { r: 0, g: 0, b: 0 };
+            let borders = sz.map_or_else(TableBorders::default, |sz| TableBorders {
+                start: Some(colored_edge("single", sz, black)),
+                end: Some(colored_edge("single", sz, black)),
+                ..TableBorders::default()
+            });
+            let right_aligned = ParagraphProperties {
+                alignment: Some(Alignment::End),
+                ..ParagraphProperties::default()
+            };
+            let table = Table {
+                id: node(70),
+                grid: vec![GridColumn {
+                    width_twips: Some(4000),
+                }],
+                grid_change: None,
+                properties: TableProperties {
+                    borders,
+                    ..TableProperties::default()
+                },
+                rows: vec![ModelRow {
+                    id: node(71),
+                    properties: TableRowProperties::default(),
+                    cells: vec![TableCell {
+                        id: node(80),
+                        properties: TableCellProperties::default(),
+                        blocks: vec![BlockNode::Paragraph(Paragraph {
+                            id: node(81),
+                            properties: right_aligned.into(),
+                            inlines: vec![run_node(82, "R", RunProperties::default())],
+                        })],
+                    }],
+                }],
+            };
+            let rows = flow_table_rows(table, Twip(9000));
+            let [BlockFragment::TableRow { cells, .. }] = rows.as_slice() else {
+                panic!("expected one table row");
+            };
+            let [BlockFragment::Paragraph { lines, .. }] = cells[0].blocks.as_slice() else {
+                panic!("expected one paragraph in the cell");
+            };
+            let origin = lines.lines[0].runs[0].origin.x;
+            (origin, cells[0].border_reserve.horizontal())
+        }
+
+        let (plain, plain_reserve) = run_origin(None);
+        assert_eq!(plain_reserve, Twip::ZERO, "no borders, no reserve");
+
+        // `w:sz="48"` is 120 twips on each of the two vertical edges, so half of
+        // each: 60 + 60 = 120 off the width.
+        let (narrowed, reserve) = run_origin(Some(48));
+        assert_eq!(reserve, Twip(120));
+        assert_eq!(
+            plain.raw() - narrowed.raw(),
+            120,
+            "the right-aligned run must start 120 twips further left, which it \
+             can only do if the cell flowed at the narrower width: {plain:?} -> \
+             {narrowed:?}"
         );
     }
 

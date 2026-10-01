@@ -306,13 +306,44 @@ impl CellContentMargins {
 /// The shared boundary between two rows is then charged to the lower row's top,
 /// and the table's bottom perimeter to the final row. `top` and `bottom` here are
 /// already resolved that way by the producer, so consumers just add them.
+/// # The two axes take different shares, and that is measured, not assumed
+///
+/// A horizontal edge charges the row its **full** thickness; a vertical edge
+/// charges the cell's content width **half** of its own. Measured against
+/// LibreOffice 26.2.4.2 on a single 6000-twip cell with zero margins, reading the
+/// content box off a left-aligned and a right-aligned paragraph in it:
+///
+/// ```text
+///                            row grows by     content narrows by
+/// left+right, 120 twips      0                120   (60 + 60)
+/// left only,  120 twips      0                 60
+/// right only, 120 twips      0                 60
+/// top+bottom, 120 twips      240               0
+/// ```
+///
+/// So the vertical total for a one-row table is 2× the thickness and the
+/// horizontal total for a cell with both edges is 1×. The asymmetry is the
+/// oracle's; it is recorded rather than rationalised.
+///
+/// LibreOffice also narrows the content box **without moving its left edge** — a
+/// 120-twip left border does not shift the text right at all (its `x0` is
+/// unchanged at every width tested). That is what `start`/`end` reserve here too:
+/// they come off the *width*, so line breaking matches, and no text moves
+/// horizontally. Physically the inner half of a collapsed left border does
+/// overlap the first glyph, and Word may well inset instead; that is an open
+/// question rather than something to invent, because only the width is measurable
+/// against this oracle.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellBorderReserve {
-    /// The band this cell's top border occupies.
+    /// The band this cell's top border occupies — its full thickness.
     pub top: Twip,
-    /// The band this cell's bottom border occupies — zero unless the cell's row
-    /// is the last in its table (see the type docs).
+    /// The band this cell's bottom border occupies — its full thickness, and zero
+    /// unless the cell's row is the last in its table (see the type docs).
     pub bottom: Twip,
+    /// Half the leading edge's thickness, taken from the content width.
+    pub start: Twip,
+    /// Half the trailing edge's thickness, taken from the content width.
+    pub end: Twip,
 }
 
 impl CellBorderReserve {
@@ -328,6 +359,8 @@ impl CellBorderReserve {
     /// bottom edge is conditional).
     #[must_use]
     pub fn resolve(borders: &CellBorders, last_in_table: bool) -> Self {
+        let half =
+            |edge: Option<ResolvedEdge>| Twip(edge.map_or(0, |e| e.total_thickness().raw()) / 2);
         Self {
             top: borders
                 .top
@@ -339,13 +372,21 @@ impl CellBorderReserve {
             } else {
                 Twip::ZERO
             },
+            start: half(borders.start),
+            end: half(borders.end),
         }
     }
 
-    /// The total vertical space the two edges take from the row.
+    /// The total vertical space the horizontal edges take from the row.
     #[must_use]
     pub fn total(&self) -> Twip {
         self.top + self.bottom
+    }
+
+    /// The total width the vertical edges take from the cell's content box.
+    #[must_use]
+    pub fn horizontal(&self) -> Twip {
+        self.start + self.end
     }
 }
 
