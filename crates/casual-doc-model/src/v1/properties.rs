@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BorderEdge, NumberingInstanceId, RevisionGroup, SectionId, Shading, StyleId, TextDirection,
+    BorderEdge, DashStyle, NumberingInstanceId, RevisionGroup, Rgba, SectionId, Shading, StyleId,
+    TextDirection,
 };
 
 /// A format-change tracked revision (`w:rPrChange`, `w:pPrChange`,
@@ -727,6 +728,126 @@ pub enum SchemeColor {
 impl Default for SchemeColor {
     fn default() -> Self {
         SchemeColor::Srgb(RgbColor::default())
+    }
+}
+
+/// A colour inside a theme format-scheme entry.
+///
+/// `a:phClr` is a **formal parameter**, not a colour: the matrix entry says "fill
+/// with whatever the referencing shape names", and the shape's `a:fillRef`/`a:lnRef`
+/// supplies the argument. Modelling it as a distinct variant rather than resolving
+/// it to a default at parse time is what makes a style reference reusable across
+/// shapes of different accent colours — collapsing it would give every styled shape
+/// in the document the same fill.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum StyleColor {
+    /// `a:phClr` — substituted by the referencing shape's own colour.
+    Placeholder,
+    /// A colour fixed by the theme itself.
+    Fixed(Rgba),
+}
+
+/// One `a:fillStyleLst` entry of the theme format scheme, as far as this build
+/// models it: a solid fill.
+///
+/// A gradient, pattern or picture entry is NOT guessed at — the list keeps a `None`
+/// in its place so index arithmetic still lines up, and a shape referencing it keeps
+/// today's behaviour and is reported. Silently substituting a solid for a gradient
+/// would be worse than no fill, because it looks deliberate.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FillStyle {
+    /// The solid fill's colour.
+    pub color: StyleColor,
+}
+
+/// One `a:lnStyleLst` entry of the theme format scheme: a width, a solid colour and
+/// an optional preset dash.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineStyle {
+    /// `a:ln@w` in EMU; `0` means the theme states no width.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub width_emu: i64,
+    /// The outline colour.
+    pub color: StyleColor,
+    /// `a:prstDash@val`, when the entry declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<DashStyle>,
+}
+
+fn is_zero_i64(value: &i64) -> bool {
+    *value == 0
+}
+
+/// The theme format scheme (`a:fmtScheme`) style lists, as far as they are modeled.
+///
+/// Positional by construction: `a:fillRef@idx` is **one-based** into
+/// [`FormatScheme::fill_styles`], `0` means "no fill", and an index at or above
+/// `1000` selects the background fill list — which this build does not model, so such
+/// a reference resolves to nothing rather than to the wrong entry.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatScheme {
+    /// `a:fillStyleLst` entries in order; `None` where the entry is not modeled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fill_styles: Vec<Option<FillStyle>>,
+    /// `a:lnStyleLst` entries in order; `None` where the entry is not modeled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub line_styles: Vec<Option<LineStyle>>,
+}
+
+/// A shape's theme style reference (`wps:style`): which format-scheme entry supplies
+/// its fill and outline, and the colour each substitutes for `a:phClr`.
+///
+/// Held in a side table keyed by the shape's node id rather than as a field on
+/// `GroupShape`. The reason is practical, not semantic — this IS authored content and
+/// would sit naturally on the shape — but `GroupShape` has 23 literal construction
+/// sites across six crates, and adding a field to it is a breaking change to every
+/// one with nothing for a merge to conflict on (`SKILL` §5a shape 1). The `charts`
+/// side table took the same route for the same reason.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShapeStyleRef {
+    /// `a:fillRef@idx`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_idx: Option<u32>,
+    /// The colour `a:fillRef` names, substituted for `a:phClr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_color: Option<Rgba>,
+    /// `a:lnRef@idx`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_idx: Option<u32>,
+    /// The colour `a:lnRef` names, substituted for `a:phClr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_color: Option<Rgba>,
+}
+
+impl FormatScheme {
+    /// The modeled fill style a one-based `a:fillRef@idx` selects.
+    ///
+    /// `None` for index `0` ("no fill"), for an index past the list, and for an
+    /// index at or above `1000` (the background fill list, not modeled) — so a
+    /// reference this build cannot honour resolves to nothing rather than to a
+    /// neighbouring entry that happens to exist.
+    #[must_use]
+    pub fn fill_style(&self, idx: u32) -> Option<FillStyle> {
+        Self::entry(&self.fill_styles, idx)
+    }
+
+    /// The modeled line style a one-based `a:lnRef@idx` selects, with the same
+    /// index rules as [`FormatScheme::fill_style`].
+    #[must_use]
+    pub fn line_style(&self, idx: u32) -> Option<LineStyle> {
+        Self::entry(&self.line_styles, idx)
+    }
+
+    fn entry<T: Copy>(list: &[Option<T>], idx: u32) -> Option<T> {
+        if idx == 0 || idx >= 1000 {
+            return None;
+        }
+        list.get(usize::try_from(idx).ok()? - 1).copied().flatten()
     }
 }
 

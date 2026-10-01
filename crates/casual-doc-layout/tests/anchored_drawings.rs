@@ -2047,6 +2047,145 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 // --- Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01 --------
 
 /// A custom path resolves to a polyline inside the shape's box, and the two
+/// A shape with no `spPr` fill resolves its appearance from the theme style its
+/// `wps:style` names (`156` §6 row 0.2).
+///
+/// Word's Shape Styles gallery writes exactly this shape: no explicit fill or
+/// outline, just `a:fillRef`/`a:lnRef` into the theme's format scheme with the colour
+/// each substitutes for the entry's `a:phClr`. Those references were suppressed at
+/// import and the scheme was retained only as opaque XML, so such a shape arrived with
+/// no fill and no outline at all — it drew as an empty rectangle.
+///
+/// Resolution is at LAYOUT, so the model still says what the file said. The control
+/// case matters as much as the resolved one: an explicit fill must still win, or a
+/// shape that says `a:noFill` would be overridden by its own style reference.
+#[test]
+fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
+    use casual_doc_layout::page::AnchorContent;
+    use casual_doc_model::v1::{
+        DashStyle, Definitions, FillStyle, FormatScheme, LineStyle, Rgba, ShapeStyleRef, StyleColor,
+    };
+
+    let green = Rgba {
+        r: 0,
+        g: 255,
+        b: 0,
+        a: 255,
+    };
+    let red = Rgba {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let shape_id = node(91);
+
+    let place = |explicit_fill: Option<casual_doc_model::v1::Fill>| {
+        let child = GroupChild::Shape(GroupShape {
+            hyperlink: None,
+            id: shape_id,
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 914_400,
+            },
+            geometry: ShapeGeometry::Rectangle,
+            preset: None,
+            adjustments: Vec::new(),
+            path: None,
+            fill: explicit_fill,
+            stroke: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        });
+        let extent = Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        };
+        let group = InlineNode::Group(Box::new(WordprocessingGroup {
+            hyperlink: None,
+            id: node(90),
+            anchor: Some(page_anchor(914_400, 914_400)),
+            relative_height: Some(11),
+            extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            children: vec![child],
+        }));
+        let mut definitions = Definitions {
+            format_scheme: Some(FormatScheme {
+                fill_styles: vec![Some(FillStyle {
+                    color: StyleColor::Placeholder,
+                })],
+                line_styles: vec![Some(LineStyle {
+                    width_emu: 6_350,
+                    color: StyleColor::Placeholder,
+                    dash: Some(DashStyle::Dash),
+                })],
+            }),
+            ..Definitions::default()
+        };
+        definitions.shape_styles.insert(
+            shape_id,
+            ShapeStyleRef {
+                fill_idx: Some(1),
+                fill_color: Some(green),
+                line_idx: Some(1),
+                line_color: Some(red),
+            },
+        );
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(11, "Body"), group],
+        });
+        let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &document, &shaper, &cfg);
+        layout.pages[0].anchored[0].content.clone()
+    };
+
+    let AnchorContent::Rectangle { fill, stroke } = place(None) else {
+        panic!("expected a rectangle");
+    };
+    assert_eq!(
+        fill,
+        Some(casual_doc_model::v1::Fill::Solid(green)),
+        "the fillRef's colour is substituted for the entry's phClr"
+    );
+    let stroke = stroke.expect("the lnRef resolves an outline");
+    assert_eq!(stroke.color, [255, 0, 0, 255], "the lnRef's colour");
+    assert_eq!(stroke.width, Twip(10), "6350 EMU is 10 twips");
+    assert_eq!(stroke.dash, DashStyle::Dash, "the entry's preset dash");
+
+    // The control: an explicit fill is the shape's own statement and must win.
+    let explicit = casual_doc_model::v1::Fill::Solid(Rgba {
+        r: 1,
+        g: 2,
+        b: 3,
+        a: 255,
+    });
+    let AnchorContent::Rectangle { fill, .. } = place(Some(explicit.clone())) else {
+        panic!("expected a rectangle");
+    };
+    assert_eq!(
+        fill,
+        Some(explicit),
+        "an explicit spPr fill must not be overridden by the style reference"
+    );
+}
+
 /// An adjustment guide that COMPUTES its value is honoured, not passed over for the
 /// preset default (`109` FID-G-02 / FID-L-04 groundwork).
 ///

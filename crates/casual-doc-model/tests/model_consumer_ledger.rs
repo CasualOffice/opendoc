@@ -76,7 +76,7 @@ const UNCONSUMED_CEILING: usize = 17;
 /// The inventory is two tables of Tier-1 and Tier-2 rows; far fewer than this
 /// means the parser stopped matching the document and the guard has gone vacuous,
 /// which is the failure mode that makes a green test worthless.
-const MINIMUM_ROWS: usize = 40;
+const MINIMUM_ROWS: usize = 42;
 
 /// What one inventory row declares about who consumes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -397,7 +397,10 @@ mod tests {
         let tracker = tracker_text();
         let (rows, malformed) = parse_rows(&tracker);
         assert!(malformed.is_empty(), "{malformed:?}");
-        // Tier 1 (21) + Tier 2 (19).
-        assert_eq!(rows.len(), 40, "docs/136 inventory size changed");
+        // Tier 1 (23) + Tier 2 (19). Tier 1 grew by two on 2026-10-02: the theme
+        // format scheme and the shape theme-style reference, both consumed by
+        // `anchor.rs`'s `themed_appearance` (`156` §6 row 0.2). Raised deliberately,
+        // which is what this pin exists to force.
+        assert_eq!(rows.len(), 42, "docs/136 inventory size changed");
     }
 }

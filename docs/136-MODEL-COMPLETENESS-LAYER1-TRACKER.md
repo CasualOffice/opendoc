@@ -23,6 +23,8 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 
 | Done | Item | OOXML | Prev | Scope | Consumer |
 |---|---|---|---|---|---|
+| ✅ | Theme format scheme, modeled for resolution | `a:fmtScheme/a:fillStyleLst`, `a:lnStyleLst` | common | M | `format_scheme` → `crates/casual-doc-layout/src/anchor.rs`#`fn themed_appearance` |
+| ✅ | Shape theme-style reference | `wps:style/a:fillRef`, `a:lnRef` | common | M | `shape_styles` → `crates/casual-doc-layout/src/anchor.rs`#`fn themed_appearance` |
 | ✅ | Abstract `multiLevelType` | `w:multiLevelType` | ubiquitous | S | unconsumed `multi_level_type` (FID-P-04) |
 | ✅ | Level restart trigger | `w:lvlRestart` | common | S | `lvl_restart` → `crates/casual-doc-layout/src/numbering.rs`#`fn resolve` |
 | ✅ | Run text color "auto" | `w:color@val=auto` | ubiquitous | S | `Color::Auto` → `crates/casual-doc-layout/src/flow.rs`#`fn run_color` |
@@ -110,7 +112,7 @@ Legend: ✅ merged · 🔄 in flight · ⬜ not started. **All Tier 1 complete (
 
 A read-only sweep classified all 139 `reporter.report(...)` sites in `casual-doc-import` against the disposition taxonomy, then cross-checked each against the model on `main`. **No common-or-above construct remains unmodeled.** Every genuinely-unmodeled construct is occasional-or-niche and retained verbatim by the byte-floor:
 
-- **Niche, retained-not-typed (do NOT model):** `w:ruby`/`w:rt` phonetic text and `w:eastAsianLayout` (CJK-only), `w:effect` text animation (legacy), `w:background@themeColor` (rare theme variant), `w:fitText`, non-drop-cap `w:framePr`, and the ~43 dynamic catch-all sites (shape-geometry internals like `custGeom`/`gd`, sdt `dataBinding`/`lock`, unmapped `docProps`/`settings` toggles).
+- **Niche, retained-not-typed (do NOT model):** `w:ruby`/`w:rt` phonetic text and `w:eastAsianLayout` (CJK-only), `w:effect` text animation (legacy), `w:background@themeColor` (rare theme variant), `w:fitText`, non-drop-cap `w:framePr`, and the ~43 dynamic catch-all sites (shape-geometry internals (`custGeom` and `gd` have SINCE been modeled — see `119` and `109` FID-G-02; this line predates them), sdt `dataBinding`/`lock`, unmapped `docProps`/`settings` toggles).
 
 ### Tier 3 — none.
 

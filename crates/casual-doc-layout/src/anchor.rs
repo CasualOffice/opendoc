@@ -46,11 +46,13 @@ use crate::page::{
 };
 use crate::paginate::PageConfig;
 use crate::shape_guide::{GuideBox, guide_value};
+// Own line (anti-conflict): the theme style resolution types.
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
     Point, Rect, Size, Twip, emu_to_twip_extent, emu_to_twip_offset, emu_to_twip_rounded,
     twip_rounded,
 };
+use casual_doc_model::v1::{Definitions, StyleColor};
 
 /// Places every floating object in the document (body and header/footer bands)
 /// onto the pages their anchors landed on, with a resolved rectangle and stacking
@@ -968,15 +970,16 @@ fn place_group_children(
                 // attaches a path when the authored `a:custGeom` is inside the
                 // drawable subset, and `geometry` stays `Other` beside it
                 // (docs/119 §6).
+                let (fill, stroke) = themed_appearance(shape, ctx.document.definitions());
                 let content = if let Some(path) = shape.path.as_ref() {
-                    custom_path_content(path, rect, shape)
+                    custom_path_content(path, rect, fill, stroke)
                 } else {
                     preset_geometry_content(
                         shape.geometry,
                         &shape.adjustments,
                         rect,
-                        shape.fill.as_ref(),
-                        shape.stroke,
+                        fill.as_ref(),
+                        stroke,
                     )
                 };
                 push(
@@ -1912,10 +1915,68 @@ impl GroupMapper {
 ///
 /// The path is closed only if it authored an `a:close`; an open path stays open,
 /// which is what Word's own VML fallback writes for these shapes (docs/119 §4).
+/// A shape's effective fill and outline: its own where it declares them, otherwise
+/// the theme style its `wps:style` names (`156` §6 row 0.2).
+///
+/// Resolution happens HERE, at layout, and not at import, so the model keeps saying
+/// what the file said: the shape has no `spPr` fill, it has a style reference. Baking
+/// the resolved colour into the model would make export write an explicit fill where
+/// the file carried a style link, which is a different document.
+///
+/// An explicit fill always wins — a shape that says `a:noFill` means it — and an
+/// index the format scheme does not model resolves to nothing rather than to a
+/// neighbouring entry, so an unsupported gradient style stays unfilled instead of
+/// quietly becoming a solid.
+///
+/// Complexity: O(1) — two map lookups and an index.
+fn themed_appearance(
+    shape: &GroupShape,
+    definitions: &Definitions,
+) -> (Option<Fill>, Option<ShapeStroke>) {
+    let mut fill = shape.fill.clone();
+    let mut stroke = shape.stroke;
+    let Some(reference) = definitions.shape_styles.get(&shape.id) else {
+        return (fill, stroke);
+    };
+    let Some(scheme) = definitions.format_scheme.as_ref() else {
+        return (fill, stroke);
+    };
+    if fill.is_none()
+        && let Some(idx) = reference.fill_idx
+        && let Some(style) = scheme.fill_style(idx)
+    {
+        // `a:phClr` takes the colour the reference names; without one there is
+        // nothing to substitute and the entry stays unresolved.
+        let color = match style.color {
+            StyleColor::Fixed(color) => Some(color),
+            StyleColor::Placeholder => reference.fill_color,
+        };
+        fill = color.map(Fill::Solid);
+    }
+    if stroke.is_none()
+        && let Some(idx) = reference.line_idx
+        && let Some(style) = scheme.line_style(idx)
+    {
+        let color = match style.color {
+            StyleColor::Fixed(color) => Some(color),
+            StyleColor::Placeholder => reference.line_color,
+        };
+        stroke = color.map(|color| ShapeStroke {
+            color,
+            width_emu: style.width_emu,
+            dash: style.dash,
+            head_end: None,
+            tail_end: None,
+        });
+    }
+    (fill, stroke)
+}
+
 fn custom_path_content(
     path: &casual_doc_model::v1::ShapePath,
     rect: Rect,
-    shape: &GroupShape,
+    fill: Option<Fill>,
+    stroke: Option<ShapeStroke>,
 ) -> AnchorContent {
     use casual_doc_model::v1::ShapePathCommand;
 
@@ -1979,8 +2040,8 @@ fn custom_path_content(
     AnchorContent::Path {
         commands,
         closed,
-        fill: shape.fill.clone(),
-        stroke: shape_stroke(shape.stroke),
+        fill,
+        stroke: shape_stroke(stroke),
     }
 }
 

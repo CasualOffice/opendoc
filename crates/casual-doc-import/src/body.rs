@@ -43,6 +43,8 @@ use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
+// Own line (anti-conflict): the shape theme-style side table's value.
+use casual_doc_model::v1::ShapeStyleRef;
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -463,6 +465,11 @@ enum ColorDest {
     /// A lone inline/anchored picture's `pic:spPr/a:ln` frame color (no open shape
     /// builder — routed to [`BodyParser::picture_border_color`]).
     PictureBorder,
+    /// The color an `a:fillRef` names, which the theme's format scheme substitutes
+    /// for its `a:phClr` placeholder. NOT the shape's own fill.
+    StyleRefFill,
+    /// The color an `a:lnRef` names, substituted the same way for the outline.
+    StyleRefLine,
 }
 
 /// A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`) being accumulated,
@@ -1113,6 +1120,12 @@ struct BodyParser<'a> {
     /// `a:fontRef` in `wps:style`). A `schemeClr` inside one selects a theme style
     /// index, NOT the shape's actual fill/stroke, so color capture is suppressed.
     style_ref_depth: u32,
+    /// Which style reference is open, so a color inside it lands on the right half of
+    /// the shape's reference instead of on the shape's own fill or stroke. `None`
+    /// inside `a:effectRef`/`a:fontRef`, which stay suppressed.
+    style_ref_dest: Option<ColorDest>,
+    /// The `wps:style` reference being gathered for the open shape.
+    pending_style_ref: Option<ShapeStyleRef>,
     /// The text of an open `wp14:pctWidth`/`wp14:pctHeight` — a drawing's size as
     /// a percentage of its `wp14:sizeRelH`/`sizeRelV` reference edge, in
     /// thousandths of a percent.
@@ -1434,6 +1447,8 @@ impl<'a> BodyParser<'a> {
             pending_picture_border: None,
             picture_border_color: None,
             style_ref_depth: 0,
+            style_ref_dest: None,
+            pending_style_ref: None,
             relative_size_pct: None,
             pending_color: None,
             palette,
@@ -1516,6 +1531,10 @@ pub(crate) struct ParsedDefinitions {
     /// Paragraph-spanning complex field instructions by id, shared by each
     /// `FieldRangeStart`/`FieldRangeEnd` pair.
     pub field_ranges: DefinitionMap<FieldRangeId, FieldRange>,
+    /// Shape theme-style references (`wps:style`) by shape node id. A side table for
+    /// the reason `Definitions::shape_styles` records: `GroupShape` has 23 literal
+    /// sites across six crates and a new field on it breaks every one.
+    pub shape_styles: DefinitionMap<NodeId, ShapeStyleRef>,
 }
 
 impl ParsedDefinitions {
@@ -1524,6 +1543,7 @@ impl ParsedDefinitions {
         Self {
             bookmarks: DefinitionMap::default(),
             field_ranges: DefinitionMap::default(),
+            shape_styles: DefinitionMap::default(),
         }
     }
 }
@@ -2817,6 +2837,8 @@ impl BodyParser<'_> {
                     self.xfrm_target = XfrmTarget::None;
                     self.ln_depth = 0;
                     self.style_ref_depth = 0;
+                    self.style_ref_dest = None;
+                    self.pending_style_ref = None;
                     self.relative_size_pct = None;
                     self.pending_color = None;
                 }
@@ -3385,6 +3407,59 @@ impl BodyParser<'_> {
             // theme style index, not the shape's own fill/stroke — suppress capture.
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.pending_shape.is_some() => {
                 self.style_ref_depth += 1;
+                // `a:effectRef`/`a:fontRef` keep today's behaviour: counted so their
+                // colors stay suppressed, but not captured.
+                self.style_ref_dest = match local {
+                    b"fillRef" => Some(ColorDest::StyleRefFill),
+                    b"lnRef" => Some(ColorDest::StyleRefLine),
+                    _ => None,
+                };
+                let idx = attribute_value(element, b"idx")
+                    .as_deref()
+                    .and_then(|value| value.parse::<u32>().ok());
+                let reference = self.pending_style_ref.get_or_insert_with(Default::default);
+                match local {
+                    b"fillRef" => reference.fill_idx = idx,
+                    b"lnRef" => reference.line_idx = idx,
+                    _ => {}
+                }
+            }
+            // A color inside an open `a:fillRef`/`a:lnRef` is the argument the theme's
+            // `a:phClr` placeholder takes, so it is captured to the shape's style
+            // reference rather than suppressed. Inside `a:effectRef`/`a:fontRef`
+            // `style_ref_dest` is `None` and the guard still refuses, as before.
+            b"srgbClr" | b"schemeClr" | b"sysClr"
+                if self.pending_shape.is_some()
+                    && self.pending_color.is_none()
+                    && self.style_ref_depth > 0
+                    && self.style_ref_dest.is_some() =>
+            {
+                let base = match local {
+                    b"srgbClr" => attribute_value(element, b"val")
+                        .and_then(|hex| parse_rgb(&hex))
+                        .map(|rgb| [rgb.r, rgb.g, rgb.b, 255]),
+                    b"schemeClr" => attribute_value(element, b"val")
+                        .as_deref()
+                        .and_then(scheme_slot_index)
+                        .map(|index| self.palette[index]),
+                    _ => Some([0, 0, 0, 255]),
+                };
+                if let (Some(base), Some(dest)) = (base, self.style_ref_dest) {
+                    // Every field named rather than defaulted: a style-ref color
+                    // carries no outline width and no modifiers of its own, and
+                    // saying so is what keeps a later field from being silently
+                    // zero here.
+                    self.pending_color = Some(PendingColor {
+                        dest,
+                        base,
+                        lum_mod: None,
+                        lum_off: None,
+                        tint: None,
+                        shade: None,
+                        alpha: None,
+                        stroke_width_emu: 0,
+                    });
+                }
             }
             b"srgbClr" | b"schemeClr" | b"sysClr"
                 if (self.pending_shape.is_some() || self.capturing_picture_border)
@@ -4816,6 +4891,7 @@ impl BodyParser<'_> {
                 }
             }
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
+                self.style_ref_dest = None;
                 self.style_ref_depth = self.style_ref_depth.saturating_sub(1);
             }
             b"avLst" if self.pending_shape.is_some() => {
@@ -5145,6 +5221,18 @@ impl BodyParser<'_> {
             // A lone picture's frame color: no shape builder is open; the border is
             // finalized (with its width) when the `a:ln` closes.
             ColorDest::PictureBorder => self.picture_border_color = Some(rgba),
+            // The argument for the theme entry's `a:phClr`. Through the same fold as
+            // every other color, so `lumMod`/`lumOff`/`tint`/`shade` on a style
+            // reference are honoured rather than needing a second code path.
+            ColorDest::StyleRefFill | ColorDest::StyleRefLine => {
+                let fill = matches!(color.dest, ColorDest::StyleRefFill);
+                let reference = self.pending_style_ref.get_or_insert_with(Default::default);
+                if fill {
+                    reference.fill_color = Some(rgba);
+                } else {
+                    reference.line_color = Some(rgba);
+                }
+            }
             // A gradient stop color: attach it to the open stop position rather than
             // the flat fill. Access the gradient buffers before borrowing the shape.
             ColorDest::Fill if self.in_grad_fill => {
@@ -5326,6 +5414,15 @@ impl BodyParser<'_> {
         let Some(mut shape) = self.pending_shape.take() else {
             return Ok(());
         };
+        // The `wps:style` reference goes to the side table keyed by this shape's id.
+        // Only when it carries something: an empty reference would make every styled
+        // and unstyled shape alike look like it had a theme style.
+        if let Some(reference) = self.pending_style_ref.take()
+            && reference != ShapeStyleRef::default()
+        {
+            self.parsed_defs.shape_styles.insert(shape.id, reference);
+        }
+        self.style_ref_dest = None;
         if shape.is_picture {
             // The picture's `a:blip@r:embed` flowed through the shared
             // `pending_embed`; take it so the next sibling picture captures its own.
@@ -8005,7 +8102,7 @@ fn cell_merge_annotation(value: Option<&str>) -> Option<CellMergeAnnotation> {
 
 /// Maps an `a:prstDash@val` (`ST_PresetLineDashVal`) token to a [`DashStyle`].
 /// An unrecognized token yields `None` (the outline stays solid).
-fn parse_dash_style(token: &str) -> Option<DashStyle> {
+pub(crate) fn parse_dash_style(token: &str) -> Option<DashStyle> {
     Some(match token {
         "solid" => DashStyle::Solid,
         "dot" => DashStyle::Dot,

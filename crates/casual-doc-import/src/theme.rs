@@ -20,7 +20,8 @@
 use std::io::Cursor;
 
 use casual_doc_model::v1::{
-    ColorScheme, FontCollection, FontScheme, SchemeColor, ScriptFont, SystemColor, ThemeFontEntry,
+    ColorScheme, DashStyle, FillStyle, FontCollection, FontScheme, FormatScheme, LineStyle, Rgba,
+    SchemeColor, ScriptFont, StyleColor, SystemColor, ThemeFontEntry,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -39,6 +40,9 @@ pub(crate) struct ParsedTheme {
     pub color_scheme: Option<ColorScheme>,
     /// The theme format scheme (`a:fmtScheme`), retained verbatim, if present.
     pub format_scheme_xml: Option<String>,
+    /// The modeled subset of that same format scheme, for resolution. Parsed from the
+    /// retained string, so the string stays byte-for-byte what export writes back.
+    pub format_scheme: Option<FormatScheme>,
 }
 
 /// Whether the traversal should descend into an element's children. An element
@@ -163,7 +167,7 @@ pub(crate) fn parse(
         }
         buffer.clear();
     }
-    Ok(parser.into_parsed())
+    Ok(parser.into_parsed(&config))
 }
 
 impl Parser {
@@ -310,10 +314,17 @@ impl Parser {
         self.capture_depth = 0;
     }
 
-    fn into_parsed(self) -> ParsedTheme {
+    fn into_parsed(self, config: &ImportConfig) -> ParsedTheme {
         ParsedTheme {
             font_scheme: self.found_font.then_some(self.font_scheme),
             color_scheme: self.found_clr.then_some(self.color_scheme),
+            // Parsed from the retained string rather than alongside the streaming
+            // capture, so the string export writes back is on exactly the path it
+            // already was.
+            format_scheme: self
+                .format_scheme_xml
+                .as_deref()
+                .and_then(|xml| parse_format_scheme(xml, config)),
             format_scheme_xml: self.format_scheme_xml,
         }
     }
@@ -420,4 +431,212 @@ fn bump(elements: &mut u64, max: u64) -> Result<(), ImportError> {
         });
     }
     Ok(())
+}
+
+/// Which `a:fmtScheme` style list the parser is inside.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StyleList {
+    Fill,
+    Line,
+}
+
+/// The fields gathered for one style-list entry before it is pushed.
+#[derive(Default)]
+struct StyleEntry {
+    /// The entry's solid colour, if it declared one.
+    color: Option<StyleColor>,
+    /// Whether the entry itself is an `a:solidFill` (the only modeled fill kind).
+    solid_fill: bool,
+    /// `a:ln@w`.
+    width_emu: i64,
+    /// `a:prstDash@val`.
+    dash: Option<DashStyle>,
+}
+
+/// Whether an element name is a fill kind, and so begins an `a:fillStyleLst` entry.
+fn is_fill_kind(local: &[u8]) -> bool {
+    matches!(
+        local,
+        b"solidFill" | b"gradFill" | b"blipFill" | b"pattFill" | b"noFill" | b"grpFill"
+    )
+}
+
+/// Parses the modeled subset of a captured `a:fmtScheme` subtree.
+///
+/// Reads the CAPTURED string rather than hooking the streaming theme parse, which
+/// keeps `format_scheme_xml` — the thing export writes back — on exactly the path it
+/// was already on. Adding resolution therefore changed no output byte, and a failure
+/// to parse here costs resolution only, never fidelity.
+///
+/// Entries are recognised by the list they sit in, not by their own name alone: an
+/// `a:solidFill` inside `a:lnStyleLst` is a line's COLOUR, while the same element
+/// inside `a:fillStyleLst` is an entry. `a:effectStyleLst` and `a:bgFillStyleLst` are
+/// skipped entirely rather than contributing entries that index arithmetic would then
+/// mis-select.
+///
+/// An unmodeled entry becomes `None` in place, so a later entry keeps its index. A
+/// reference to it resolves to nothing, which is the honest answer — substituting a
+/// solid for a gradient would look deliberate.
+///
+/// Complexity: O(n) in the captured subtree, bounded by the import element cap.
+pub(crate) fn parse_format_scheme(xml: &str, config: &ImportConfig) -> Option<FormatScheme> {
+    let mut reader = Reader::from_str(xml);
+    let mut list: Option<StyleList> = None;
+    let mut entry: Option<StyleEntry> = None;
+    let mut fill_styles: Vec<Option<FillStyle>> = Vec::new();
+    let mut line_styles: Vec<Option<LineStyle>> = Vec::new();
+    let mut elements = 0_u64;
+
+    loop {
+        let event = reader.read_event().ok()?;
+        let (element, empty) = match &event {
+            Event::Eof => break,
+            Event::Start(element) => (Some(element), false),
+            Event::Empty(element) => (Some(element), true),
+            Event::End(element) => {
+                let local = element.local_name();
+                match local.as_ref() {
+                    b"fillStyleLst" | b"lnStyleLst" | b"effectStyleLst" | b"bgFillStyleLst" => {
+                        list = None;
+                        entry = None;
+                    }
+                    other => {
+                        if let (Some(kind), Some(open)) = (list, entry.take()) {
+                            let closes = match kind {
+                                StyleList::Fill => is_fill_kind(other),
+                                StyleList::Line => other == b"ln",
+                            };
+                            if closes {
+                                push_entry(kind, open, &mut fill_styles, &mut line_styles);
+                            } else {
+                                entry = Some(open);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        let Some(element) = element else { continue };
+        elements += 1;
+        if elements > config.max_elements {
+            return None;
+        }
+        let local = element.local_name();
+        match local.as_ref() {
+            b"fillStyleLst" => {
+                list = Some(StyleList::Fill);
+                entry = None;
+            }
+            b"lnStyleLst" => {
+                list = Some(StyleList::Line);
+                entry = None;
+            }
+            // Not modeled, and deliberately not counted: an entry here would shift
+            // nothing, but a colour inside one must not land on an open entry.
+            b"effectStyleLst" | b"bgFillStyleLst" => {
+                list = None;
+                entry = None;
+            }
+            b"schemeClr" | b"srgbClr" => {
+                // Only the FIRST colour of an entry: for an `a:ln` that is the one in
+                // its `a:solidFill`, and a later colour inside a dash or line end must
+                // not overwrite it.
+                if let Some(open) = entry.as_mut()
+                    && open.color.is_none()
+                {
+                    open.color = style_color(element, local.as_ref());
+                }
+            }
+            b"prstDash" => {
+                if let Some(open) = entry.as_mut() {
+                    open.dash = attribute_value(element, b"val")
+                        .as_deref()
+                        .and_then(crate::body::parse_dash_style);
+                }
+            }
+            other => {
+                let Some(kind) = list else { continue };
+                let begins = match kind {
+                    StyleList::Fill => is_fill_kind(other),
+                    StyleList::Line => other == b"ln",
+                };
+                if !begins {
+                    continue;
+                }
+                // A nested entry name cannot occur in the modeled lists, so an open
+                // entry here means the previous one never closed; push it rather than
+                // dropping it silently.
+                if let Some(previous) = entry.take() {
+                    push_entry(kind, previous, &mut fill_styles, &mut line_styles);
+                }
+                let mut open = StyleEntry {
+                    solid_fill: other == b"solidFill",
+                    ..StyleEntry::default()
+                };
+                if kind == StyleList::Line {
+                    open.width_emu = attribute_value(element, b"w")
+                        .as_deref()
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .unwrap_or(0);
+                }
+                if empty {
+                    push_entry(kind, open, &mut fill_styles, &mut line_styles);
+                } else {
+                    entry = Some(open);
+                }
+            }
+        }
+    }
+
+    (!fill_styles.is_empty() || !line_styles.is_empty()).then_some(FormatScheme {
+        fill_styles,
+        line_styles,
+    })
+}
+
+/// `a:phClr` is the placeholder; `a:srgbClr` is a colour the theme fixes itself. A
+/// `a:schemeClr` naming anything else inside a style entry is a theme-relative colour
+/// this build does not resolve here, so the entry stays unmodeled.
+fn style_color(element: &BytesStart<'_>, local: &[u8]) -> Option<StyleColor> {
+    let value = attribute_value(element, b"val")?;
+    if local == b"schemeClr" {
+        return (value == "phClr").then_some(StyleColor::Placeholder);
+    }
+    let rgb = parse_rgb(&value)?;
+    Some(StyleColor::Fixed(Rgba {
+        r: rgb.r,
+        g: rgb.g,
+        b: rgb.b,
+        a: 255,
+    }))
+}
+
+/// Pushes one gathered entry, as a modeled style or as a `None` placeholder that
+/// keeps every later entry's index correct.
+fn push_entry(
+    kind: StyleList,
+    entry: StyleEntry,
+    fill_styles: &mut Vec<Option<FillStyle>>,
+    line_styles: &mut Vec<Option<LineStyle>>,
+) {
+    match kind {
+        StyleList::Fill => {
+            let modeled = entry
+                .solid_fill
+                .then_some(entry.color)
+                .flatten()
+                .map(|color| FillStyle { color });
+            fill_styles.push(modeled);
+        }
+        StyleList::Line => {
+            let modeled = entry.color.map(|color| LineStyle {
+                width_emu: entry.width_emu,
+                color,
+                dash: entry.dash,
+            });
+            line_styles.push(modeled);
+        }
+    }
 }

@@ -564,6 +564,159 @@ fn what_the_font_table_cannot_carry_is_reported() {
 }
 
 #[test]
+fn the_format_scheme_is_parsed_into_resolvable_styles_beside_the_retained_xml() {
+    use casual_doc_model::v1::{DashStyle, FillStyle, LineStyle, Rgba, StyleColor};
+
+    // Entry 2 of each list is deliberately an UNMODELED kind, so the test proves the
+    // index of entry 3 survives it. An implementation that skipped unmodeled entries
+    // instead of holding their place would shift every later index by one and resolve
+    // `idx="3"` to the wrong style — which still draws, and still looks deliberate.
+    let xml = br#"<a:theme xmlns:a="urn:a"><a:themeElements>
+        <a:clrScheme name="Office"><a:dk1><a:srgbClr val="000000"/></a:dk1></a:clrScheme>
+        <a:fmtScheme name="Office">
+          <a:fillStyleLst>
+            <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+            <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"/></a:gs></a:gsLst></a:gradFill>
+            <a:solidFill><a:srgbClr val="112233"/></a:solidFill>
+          </a:fillStyleLst>
+          <a:lnStyleLst>
+            <a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="dash"/></a:ln>
+            <a:ln w="12700"><a:gradFill><a:gsLst/></a:gradFill></a:ln>
+          </a:lnStyleLst>
+          <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
+          <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
+        </a:fmtScheme>
+    </a:themeElements></a:theme>"#;
+    let mut reporter = crate::report::Reporter::new(crate::report::SourceRetention::Regenerated);
+    let parsed = crate::theme::parse(xml, &mut reporter, ImportConfig::default()).unwrap();
+
+    // The verbatim retention is untouched — it is still what export writes back.
+    assert!(parsed.format_scheme_xml.is_some());
+
+    let scheme = parsed.format_scheme.expect("the format scheme is parsed");
+    assert_eq!(
+        scheme.fill_styles,
+        vec![
+            Some(FillStyle {
+                color: StyleColor::Placeholder
+            }),
+            None,
+            Some(FillStyle {
+                color: StyleColor::Fixed(Rgba {
+                    r: 0x11,
+                    g: 0x22,
+                    b: 0x33,
+                    a: 255
+                })
+            }),
+        ],
+        "an unmodeled gradient holds its place so later indices stay correct"
+    );
+    assert_eq!(
+        scheme.line_styles,
+        vec![
+            Some(LineStyle {
+                width_emu: 6_350,
+                color: StyleColor::Placeholder,
+                dash: Some(DashStyle::Dash),
+            }),
+            None,
+        ],
+    );
+    // One-based, and the out-of-range rules.
+    assert_eq!(
+        scheme.fill_style(1),
+        Some(FillStyle {
+            color: StyleColor::Placeholder
+        })
+    );
+    assert_eq!(scheme.fill_style(2), None, "the unmodeled entry");
+    assert_eq!(scheme.fill_style(0), None, "idx 0 means no fill");
+    assert_eq!(scheme.fill_style(4), None, "past the list");
+    assert_eq!(
+        scheme.fill_style(1001),
+        None,
+        "1000+ selects the background list, which is not modeled"
+    );
+    // The background list contributed NOTHING to the fill list, and the effect list
+    // contributed nothing at all.
+    assert_eq!(scheme.fill_styles.len(), 3);
+}
+
+#[test]
+fn a_shapes_wps_style_reference_is_captured_with_its_substituted_colour() {
+    use casual_doc_model::v1::{GroupChild, Rgba};
+
+    // `a:fillRef`/`a:lnRef` name an index AND the colour the theme entry's `a:phClr`
+    // takes. Both halves matter: the index alone would pick a style with no colour to
+    // put in it.
+    let import =
+        import_standalone_drawingml_shape(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#);
+    // The bare shape has no style reference at all.
+    assert!(
+        import.document.definitions().shape_styles.is_empty(),
+        "a shape with no wps:style must not get an entry"
+    );
+
+    let import = import_standalone_drawingml_shape_with_style(
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#,
+        r#"<wps:style><a:lnRef idx="2"><a:srgbClr val="FF0000"/></a:lnRef><a:fillRef idx="3"><a:srgbClr val="00FF00"/></a:fillRef><a:effectRef idx="1"><a:srgbClr val="0000FF"/></a:effectRef><a:fontRef idx="minor"><a:srgbClr val="FFFF00"/></a:fontRef></wps:style>"#,
+    );
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    // The refs must NOT have become the shape's own fill or outline — that is what
+    // the suppression existed to prevent, and it still holds.
+    assert!(shape.fill.is_none(), "a fillRef is not an spPr fill");
+    assert!(shape.stroke.is_none(), "a lnRef is not an spPr outline");
+
+    let reference = import
+        .document
+        .definitions()
+        .shape_styles
+        .get(&shape.id)
+        .copied()
+        .expect("the shape carries a style reference");
+    assert_eq!(reference.fill_idx, Some(3));
+    assert_eq!(
+        reference.fill_color,
+        Some(Rgba {
+            r: 0,
+            g: 255,
+            b: 0,
+            a: 255
+        })
+    );
+    assert_eq!(reference.line_idx, Some(2));
+    assert_eq!(
+        reference.line_color,
+        Some(Rgba {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255
+        })
+    );
+    // `a:effectRef` and `a:fontRef` stay suppressed: neither index nor colour is
+    // captured, because neither is modeled. Their blue and yellow must appear nowhere.
+    for color in [reference.fill_color, reference.line_color] {
+        assert_ne!(
+            color,
+            Some(Rgba {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255
+            }),
+            "an effectRef colour must not leak into the fill or line"
+        );
+    }
+}
+
+#[test]
 fn theme_font_color_and_format_schemes_are_parsed() {
     use casual_doc_model::v1::{RgbColor, SchemeColor};
 
@@ -2917,6 +3070,19 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
     );
     // The whole group is fully modeled, not reported-dropped.
     assert!(!features(&import).contains(&"drawing"));
+}
+
+/// A standalone anchored shape with a `wps:style` reference and, deliberately, NO
+/// `spPr` fill or outline of its own — so the theme style is the only possible source
+/// and a resolution test cannot pass on the explicit fill the sibling helper writes.
+fn import_standalone_drawingml_shape_with_style(geometry: &str, style: &str) -> Import {
+    let drawing = format!(
+        r#"<w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>457200</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Styled shape"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>{geometry}</wps:spPr>{style}<wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#
+    );
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r>{drawing}</w:r></w:p></w:body></w:document>"#
+    );
+    import(document.as_bytes())
 }
 
 fn import_standalone_drawingml_shape(geometry: &str) -> Import {
