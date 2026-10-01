@@ -68,6 +68,16 @@ id_newtype!(
     BookmarkId
 );
 id_newtype!(
+    /// Stable identity of a typed chart projection, resolving in
+    /// `Definitions::charts`.
+    ///
+    /// A projection is derived data *about* a retained package part, so it gets a
+    /// definition id of its own rather than living on the `EmbeddedObject` node it
+    /// describes (`docs/45` invariant I4, `docs/155` §8.1). The node is named by
+    /// `Chart::object`, which is the anchor (invariant I3).
+    ChartId
+);
+id_newtype!(
     /// Stable identity of a paragraph-spanning complex field (shared by its
     /// start/end markers), resolving in `Definitions::field_ranges`.
     ///
