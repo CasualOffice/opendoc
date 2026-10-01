@@ -1924,23 +1924,68 @@ citation and §7 lists every claim that could not be verified.
 
 ## ADR-049 — Folding is a per-viewer block visibility filter keyed on the outline, not a layout view
 
-**Status:** **Proposed, 2026-10-01 — nothing built, and still nothing built as of
-2026-10-02.** Raised by the owner ("collapsible and expandable based on outlines like VS
-Code does with code") and specified in `154` §5.3. Independent of ADR-046 and ADR-048 by
-design; that independence is the decision — and it was honoured in practice: ADR-048 was
-implemented on 2026-10-02 with **no folding work and no folding seam**, which is what this
-ADR's independence claim was for. Folding remains a separate lane and this ADR stays
-Proposed until that lane runs.
+**Status:** **ACCEPTED, 2026-10-02**, on the owner's instruction not to wait for a decision
+but to settle it from ONLYOFFICE's source and confirm it. Proposed 2026-10-01, specified in
+`154` §5.3; the evidence that closed it is `157-ONLYOFFICE-LARGE-DOCUMENT-AND-FOLDING-SOURCE-FINDINGS.md`.
+Raised by the owner ("collapsible and expandable based on outlines like VS Code does with
+code"). Independent of ADR-046 and ADR-048 by design; that independence is the decision —
+and it was honoured in practice: ADR-048 was implemented on 2026-10-02 with **no folding
+work and no folding seam**.
 
-**The gap.** There is no folding anywhere: `webapp/src/outline_panel.mjs` renders a **flat**
-list of buttons with `lvl-1`…`lvl-6` classes, no disclosure, no `aria-expanded`, no
-`role="tree"`; no fold state exists in `webapp/src`; and **`w15:collapsed` is not parsed**
-— the `CT_OnOff` element in a heading's `w:pPr`, Word's `w15` namespace, by which Word
-persists a collapsed heading and which Microsoft's Open Specifications define. No `.docx`
-in the repository carries one (38 packages, every XML part, zero hits), so the
-loss-coverage gate has never had the opportunity to flag the drop. Word has folding; Google
-has folding; **ONLYOFFICE has none** (zero `collapsed` hits anywhere in `sdkjs/word/`, and
-`CDocumentOutline` exposes no Collapse or Expand).
+**Built as of 2026-10-02, and this supersedes the earlier "nothing built" status line:** the
+**persistence tier** is done — `ParagraphProperties::collapsed`, the import arm, the export
+writer with its `w15` namespace declarations, `fixtures/generated/collapsed-headings.docx`
+(the first `.docx` in the repository to carry `w15:collapsed`), and six guards in
+`casual-doc-export/tests/collapsed_heading_state.rs`, each driven red by a production
+mutation. The **behaviour tier** (`casual-doc-layout`) and the **affordance tier**
+(`webapp/`) are **not started**: `grep -rin "foldset\|fold_set" crates webapp/src` returns
+zero hits. §"What layout owes" below is the specification for the first, written here
+deliberately rather than implemented, because `casual-doc-layout` is another lane's tonight.
+
+**Why it is Accepted rather than still Proposed.** The Proposed status was waiting on a
+competitive answer and there is one, read from `reference/sdkjs` at `72b0421` and
+`reference/web-apps` at `9c0ca53` and re-verified rather than taken from a report:
+
+- **ONLYOFFICE do not fold.** `grep -rinI "collaps" sdkjs/word` → **0 hits** across the
+  whole 232-file Word engine, and the complete exported outline API
+  (`word/Editor/DocumentOutline.js:501-512`) has no Collapse or Expand, so their panel has
+  nothing to call.
+- **They ignore `w15:collapsed`, structurally.** No `Collapsed` in the `CParaPr` constructor
+  (`word/Editor/Styles.js:16232`, whose only outline field is
+  `this.OutlineLvl = undefined; // Для TableOfContents`); none in the x2t↔sdkjs interchange
+  enum `word/Editor/Serialize2.js:243 c_oSerProp_pPrType` (values 0–49, only
+  `outlineLvl: 34`); an unallocated record reaches `Serialize2.js:9411 default: res =
+  c_oSerConstants.ReadUnknown;` and is discarded. The state cannot survive an edit round-trip
+  through their editor.
+- **Word is therefore the standard**, which is the house rule where a competitor's code has
+  nothing — and Word's behaviour settles the only branch that mattered: **collapsed content
+  occupies no pages.** ONLYOFFICE's pagination loop (`word/Editor/Document.js:3707`) has no
+  visibility filter at the block tier at all, so their architecture confirms the negative: a
+  panel-only fold cannot reproduce Word.
+- **The fold range is pinned by their own arithmetic**, which they compute for *selection*:
+  `private_GetNextSiblingOrHigher` (`word/Editor/DocumentOutline.js:400`) scans forward to
+  the first following heading whose level number is `<=` the fold's.
+
+**The one thing in this ADR that was wrong, and it is an implication rather than a
+decision.** "Orthogonal to `LayoutView`" and "not part of reflow" are both right. But this
+ADR and `154` §5.3 together read as though the mechanism were nearly local, because the
+three precedents it reuses all exist. **It is an engine change**, unambiguously, and saying
+so is the correction.
+
+**The gap, as it stood on 2026-10-01.** There was no folding anywhere:
+`webapp/src/outline_panel.mjs` renders a **flat** list of buttons with `lvl-1`…`lvl-6`
+classes, no disclosure, no `aria-expanded`, no `role="tree"`; no fold state exists in
+`webapp/src`; and **`w15:collapsed` was not parsed** — the `CT_OnOff` element in a heading's
+`w:pPr`, Word's `w15` namespace, by which Word persists a collapsed heading and which
+Microsoft's Open Specifications define. No `.docx` in the repository carried one (38
+packages, every XML part, zero hits), so the loss-coverage gate had never had the
+opportunity to flag the drop. Word has folding; Google has folding; **ONLYOFFICE has none**
+(zero `collaps` hits anywhere in `sdkjs/word/`, and `CDocumentOutline` exposes no Collapse or
+Expand).
+
+**Of that gap, the `w15:collapsed` half is closed as of 2026-10-02** — parsed, modelled
+tri-state, written, round-tripped, with a fixture and six mutation-proven guards. The two
+`webapp/src` sentences still stand, and so does the absence of any layout filter.
 
 **Decision.**
 
@@ -1997,16 +2042,154 @@ scrollable, and the question it answers — "where am I and what else is there" 
 property of the outline, not of the page. That is also why it must work in both layout
 views: the heading tree does not change when the paper goes away.
 
+**The fold range, now stated exactly** (it was not, and `157` §3.4 derives it). The
+collapsed heading's **own paragraph stays visible**; the hidden range is every block from
+`heading_index + 1` through `next_sibling_or_higher − 1` inclusive — all following content up
+to but excluding the next heading whose outline-level *number* is the same or lower,
+transitively including deeper headings inside it. A fold with no following sibling runs to
+the end of its container. This agrees with Microsoft's Open Specifications wording for the
+attribute ("immediately subsequent paragraphs with a higher heading level number appear
+collapsed"), and it is **derived from the outline, never stored** — storing it would duplicate
+a fact the heading tree already carries and let the two disagree after an edit.
+
+### What `casual-doc-layout` owes — the specification, written here and deliberately not implemented
+
+`casual-doc-layout` and `casual-doc-render` were **not touched** by the branch that accepted
+this ADR; the filter lands in the same `flow.rs` block iteration another lane is editing, so
+it is specified rather than built. Eight decisions, each with its reason:
+
+1. **`FoldSet` is a layout INPUT, not derived — and this is a real decision, not a
+   formality.** It is the set of **collapsed heading `NodeId`s** only: O(folded headings),
+   which is a handful, and it is per-viewer state the shell already owns. It is threaded as
+   the third view parameter beside `ReviewView` (`crates/casual-doc-layout/src/flow.rs:106`)
+   and `LayoutView` (`crates/casual-doc-layout/src/document_layout.rs:162`), defaulting to
+   empty so every existing caller is byte-for-byte unchanged and `geometry_snapshot.golden`
+   does not move. **Deriving the set inside layout would mean walking the document to find
+   collapsed headings, which is O(document) per pass and breaches `107` B1** — so it is
+   passed in.
+2. **The hidden RANGE, by contrast, is derived — but inside the walk that already happens,
+   never in a second pass.** The named pattern is a **lexer resume state** (an incremental
+   tokenizer's line-start state; equally, the paginator's existing continuation state). The
+   flow pass already visits blocks in document order, so suppression is a one-integer state
+   machine on that walk: on reaching a block whose `NodeId` is in the `FoldSet`, record
+   `suppress_above_level = its outline level` and emit the heading normally; thereafter skip
+   every block until one whose `outline_level` is `Some(l)` with `l <= suppress_above_level`,
+   at which point suppression clears (and may immediately re-arm if that block is itself
+   folded). Nested folds inside a suppressed range need no stack: the outer level already
+   dominates. **This is why it is not a second flow path** — it is a `continue` and an
+   integer.
+3. **The windowed paginator needs that integer as part of its resume token.** A window that
+   starts mid-document cannot know whether its first block is inside a folded range, and
+   recomputing it from the start would be the O(document) cost item 1 avoids. So
+   `suppress_above_level` joins whatever continuation state the windowed paginator already
+   carries across window boundaries (section, numbering). **If it does not carry one, that is
+   the finding, and folding must not invent a parallel one** (`SKILL` §8: one mechanism, not
+   two). A fold toggle invalidates layout from the toggled heading forward, which
+   `incremental.rs`/`dirty_pages` already expresses.
+4. **Skip BEFORE measurement, not measure-then-clip.** The filter sits at the top of the
+   per-block iteration, before shaping, before height computation, before any fragment is
+   produced — the same position as the run-tier precedent, `push_styled_runs`
+   (`crates/casual-doc-layout/src/flow.rs:6527`, returning at `:6539` on
+   `effective.hidden == Some(true)`). *(That corrects `154` §5.3, which cites `flow.rs:6500`.)*
+   A filter that measured and then clipped would pay the whole cost of the content it hides,
+   which is the opposite of the point, and would be invisible in any correctness test —
+   which is exactly how an O(n²) shipped here before.
+5. **Reflow, not blanking.** A hidden block contributes **no fragments and no height**, so
+   pagination closes up and the page count falls. A filter that merely skipped *painting*
+   would leave Word's behaviour unreached and leave a blank band where the content was. This
+   is the one wrong answer with a plausible shape, and it is the one ONLYOFFICE's
+   architecture would force.
+6. **A hidden block's page break is hidden with it; a visible heading's is not.** A
+   `w:pageBreakBefore` on a block inside the folded range contributes nothing, because the
+   break belongs to the block and an unlaid block lays nothing out — otherwise folding a
+   section leaves a blank page, which is visible evidence of invisible content and worse than
+   either alternative. A `w:pageBreakBefore` on the **collapsed heading itself** is honoured
+   normally: the heading is visible and folding must never move it.
+7. **Folding filters CONTENT, never DOCUMENT STRUCTURE.** This is one rule with several
+   consequences and it is the subtle half of the design. A hidden block still
+   **closes its section** if its `properties.section_break` says so — dropping it would change
+   the page geometry, columns and header/footer of *visible* pages that precede the fold,
+   which is a change to content the user did not fold. By the same rule hidden blocks still
+   advance list counters, footnote/endnote numbering, bookmark and field state. The guard:
+   fold a range containing a section break and assert every visible page's geometry and
+   running content are unchanged; fold a range inside a numbered list and assert the visible
+   items keep their numbers.
+   **The one thing that does change is page numbers**, necessarily — collapsed content
+   occupies no pages, so the on-screen page count is lower than the printed one. Word has the
+   same property. Print, PDF and DOCX export are always fully expanded (below), so the
+   *printed* numbers are the true ones; telling the reader that on screen is the chrome
+   lane's item, listed below, and it is related to `151` §6.5's refusal to print a tile index
+   as a page number.
+8. **Complexity, stated honestly rather than optimistically.** The state machine is **O(1)
+   extra per visited block**, so a full pass stays O(blocks) and a window stays
+   O(blocks in the window) — *plus the hidden blocks it must step over to find the next
+   visible one*. Stepping is cheap (one outline-level read, no shaping, no allocation) but it
+   is **O(hidden blocks)**, so a single fold over a million paragraphs is a million cheap
+   visits and the pass is **not** O(viewport) in that pathological case. **Do not claim
+   O(viewport); claim O(viewport + hidden blocks stepped).** If that proves too slow the
+   escape hatch is the textbook one and should be taken deliberately rather than discovered:
+   a **skip list over fold boundaries**, rebuilt on a fold toggle (a user gesture, which may
+   be O(document) off the main thread) rather than on a keystroke. The guard is a doubling
+   test, not a millisecond threshold: fold a document of *n* and *2n* headings and assert the
+   laid-out block count and the page count fall proportionally.
+
+**Print, PDF and DOCX export are always fully expanded**, and the rule is enforced in the
+wrapper rather than by each caller: `print.mjs`'s `withPagedLayout` already forces `Paged`
+with the restore in a `finally`, and forcing "unfolded" belongs beside it, because a rule
+enforced next to the thing it is a rule about cannot be forgotten by the next caller.
+
+### What `webapp/` owes
+
+Not built, and not to be built by the layout lane. The chrome lane owns it.
+
+- **`outline_panel.mjs` becomes a real tree.** Today it is a flat list of buttons with
+  `lvl-1`…`lvl-6` classes and `aria-current="location"`, with no disclosure, no
+  `aria-expanded`, no `role="tree"`. It needs `role="tree"` / `role="treeitem"` /
+  `aria-expanded` / `aria-level`. **ONLYOFFICE is the floor here and not the ceiling:** their
+  `TreeView` sets `aria-expanded` and `aria-level`
+  (`web-apps/apps/common/main/lib/component/TreeView.js:243`, `:253`) but `role="tree"` has
+  **zero hits** in `web-apps/apps`, so matching them is not enough.
+- **Keyboard model**, which is theirs plus the part they are missing. On a tree row:
+  Right expands, Left collapses (theirs, `TreeView.js:345-350`), Up/Down move, Home/End to
+  ends, Enter/Space navigates to the heading, `*` expands all under the focused row. The
+  disclosure must be a real focusable control — their caret is a bare `<div
+  class="tree-caret …">` (`TreeView.js:181`) with no role and no `tabindex`, which is the
+  mistake to avoid, and this ADR's own `aria-expanded` requirement cannot be met by a `div`.
+- **An in-body disclosure chevron** at the heading, which is Word's affordance and which
+  ONLYOFFICE does not have at all, revealed on hover and on keyboard focus of the heading.
+- **One state, two surfaces:** the panel's disclosure and the body chevron drive the **same**
+  `FoldSet`.
+- **Command ids**, in the register's existing `view.*` shape (beside `view.outline`,
+  `view.reflow`): `view.fold.toggle` (fold/unfold the heading at the caret),
+  `view.fold.all`, `view.fold.none`, and `view.fold.level` (a level picker). Each must be
+  reachable from ≥2 surfaces, and until the layout tier lands each must ship **disabled with
+  a reason** rather than as a control that does nothing (`SKILL` §10: never a dead control).
+- **The live per-viewer fold state lives beside `docReflow` in `prefs.mjs`** and a viewer's
+  toggling is never written into the file.
+- **`a11y_mirror.mjs` is filtered by the same set**, and a collapsed heading announces how
+  much is hidden.
+- **Say that the on-screen page count is not the printed one while anything is folded**
+  (layout item 7).
+
 **Consequences.**
 
-- **Add a `.docx` fixture carrying `w15:collapsed` before anything else here.** It converts
-  an unknown — whether the drop is reported or silent — into either a report or a red gate,
-  and it is the cheapest item on the list.
+- ~~**Add a `.docx` fixture carrying `w15:collapsed` before anything else here.**~~
+  **Discharged 2026-10-02**: `fixtures/generated/collapsed-headings.docx`. It converted the
+  unknown into a measurement, and the answer was the better of the two — the drop was
+  **already reported** (`OmittedNotRetained`, 3 occurrences) rather than silent, through
+  `body.rs`'s generic `w:pPr` long-tail arm. `154` §3.4 recorded this as unknowable for want
+  of a fixture; it is now known. A reported loss is still a loss, so the state is now
+  modelled and round-tripped, and the loss gate is armed for the element family — proven by
+  driving `source_element_coverage` red with a writer that drops it.
 - A `FoldSet` is a third view parameter on one mechanism. If it ever needs a second flow
   path, the abstraction is wrong and the design should stop.
-- **Open:** whether `Fold Level N` and `Fold All` / `Unfold All` ship in the first version
-  (VS Code has them; neither Word nor Docs exposes a level control), and whether folding
-  gets a keyboard binding — no competitor documents one.
+- **Open:** whether `view.fold.level` and `view.fold.all` / `view.fold.none` ship in the
+  first version (VS Code has them; neither Word nor Docs exposes a level control), and what
+  the keyboard binding is — no competitor documents one, and ONLYOFFICE's Left/Right is a
+  tree-row binding rather than a document one.
+- **Open, and it is the layout lane's to answer first:** whether the windowed paginator
+  already carries a per-window continuation state that `suppress_above_level` can join
+  (specification item 3). If it does not, folding must not invent a parallel one.
 
 ## ADR-050 — A chart is a typed read projection of a retained part; the cache is the data, and the curve primitive is the shape lane's
 
@@ -2326,6 +2509,74 @@ costed against a fallback that does not exist.
   wanted. B1 is an owner constraint and is currently met by nothing, so the alternative is to
   restate B1 as "O(1) above the windowing threshold, linear below it" — which is a weaker
   promise honestly kept, and is the only other coherent position.
+
+  **Addendum, 2026-10-02 — ONLYOFFICE's source answers this, and it adds a third option. The
+  status stays Proposed; the false choice is removed.** Full evidence and citations in
+  `157-ONLYOFFICE-LARGE-DOCUMENT-AND-FOLDING-SOURCE-FINDINGS.md` §2, read from
+  `reference/sdkjs` at `72b0421` and re-verified rather than taken from a report.
+
+  - **They have no document-size ceiling in the editor at all.** `MAX_PARAGRAPH_COUNT`,
+    `MaxParagraphs`, `MAX_ELEMENTS`, `c_oAscMaxLength` → **zero hits** in `sdkjs`; no
+    page-count cap outside spreadsheet printing; no "document too large" string. The only hard
+    refusal is **server-side at open** on file size
+    (`c_oAscServerError.ConvertLIMITS` → `ConvertationOpenLimitError`, threshold not in the
+    tree), and the only in-editor valve is on accumulated *edit volume*
+    (`baseEditorsApi.prototype.checkChangesSize`, `common/apiBase.js:1776`), **disabled by
+    default** (`maxChangesSize = 0`). During editing, nothing happens at any size: no refusal,
+    no warning, no mode change. **So this ADR's `MAX_WHOLE_LAYOUT_BLOCKS` = 262,144 editing
+    refusal has no analogue in the product we are replacing**, and it cannot be defended as
+    normal for the category.
+  - **Their per-keystroke cost is O(current paragraph), with no term in document size — and
+    they get there WITHOUT an identity index.** Resolution on the typing path is a cached
+    integer per nesting level: `CDocument.CurPos.ContentPos` dereferenced directly
+    (`word/Editor/Document.js:20023`, `var Item = this.Content[nContentPos];`), then
+    `Paragraph.CurPos.ContentPos` (`Paragraph.js:4614`), then `ParaRun.State.ContentPos`
+    (`Run.js:860`). The reverse direction is a cached `Index` on each block, repaired by a
+    **lazy suffix reindex** armed only by structural edits
+    (`Update_ContentIndexing`, `DocumentContentBase.js:118`; `private_ReindexContent`,
+    `:345`). Typing a character leaves `ReindexStartPos === -1` and the repair costs nothing.
+    They *do* have an id→object map (`CTableId`, `common/TableId.js:95`) — **the shape this
+    ADR proposes** — and it serves serialisation and co-editing, not resolution.
+  - **Recalculation is three tiers** — run-range, whole paragraph, then a page-at-a-time sweep
+    time-sliced at 10 ms / 50 pages (`Document.js:2881-2890`, `IsContinueRecalculateOnTimer`
+    at `:4335`, `GetCalculateTimeLimit` in `word/Editor/Layout/Base.js:189`). An ordinary
+    keystroke takes tier 1 and repaints one page.
+  - **Virtualised painting with real eviction (`m_lDrawingFirst`/`m_lDrawingEnd`,
+    `StopRenderingPage`, `CCacheManager`); virtualised LAYOUT nowhere** — geometry is computed
+    for the whole document and never discarded, and loading is eager and synchronous. So
+    `113`'s windowed layout is ahead of them, not catching up.
+
+  **What this changes.**
+
+  1. **It argues against the second alternative.** Weakening B1 to "O(1) above the windowing
+     threshold, linear below it" would document a limitation as a design, on a constraint the
+     competitor meets in its strong form. Keep B1 as written.
+  2. **The inversion of priority in this ADR stands**, unchanged: windowed editing cannot be
+     built on O(document) resolution, whichever mechanism replaces it.
+  3. **The mechanism is open again — and this ADR's own rejection of a positional index is the
+     reason to look again rather than to switch.** That rejection ("every block insert or
+     delete shifts its later siblings' indices") is correct and is not withdrawn. What the
+     competitor shows is that the shift is affordable **when it is a lazy suffix repair armed
+     only by structural operations** — O(n − insertion point) on an Enter, nothing on a
+     character. It was weighed here as a *replacement* for identity anchors, which it must not
+     be: `150` §2 chose `NodeId` for OT and that is not reopened. The narrower question, for
+     the owner:
+
+     > Is per-keystroke resolution better removed by **caching the caret's location beside the
+     > session** (a chain of child indices, invalidated by the structural operations that
+     > already pass through the one choke point), by **this ADR's id→location index**, or by
+     > both — the cache for the caret, the index for everything that arrives by id (a remote
+     > operation, a comment anchor, a find hit)?
+
+     `157` poses that question and deliberately does not answer it: it is an architecture
+     decision about our own mutation path with ADR-030 I1/I3 in it, and the measurement that
+     would settle it — how often a real session takes a structural operation versus a
+     character — has not been made. **Unverified:** whether a cached chain can be maintained at
+     `casual_doc_edit::apply` as cheaply as the index can.
+  4. **One caution against over-reading the comparison.** Absence of a ceiling in their source
+     is **not** evidence that they survive documents at the scale of our refusal. Nothing was
+     executed, and their own 10 ms time-slicing exists precisely because a large document is
+     slow.
 
 ## ADR-054 — A tracked keystroke must be a granular operation, and that — not the session — is what unblocks suggesting mode
 

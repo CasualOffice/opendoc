@@ -69,6 +69,58 @@ const CHART_STYLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="
 /// test written against it would pass for the wrong reason. What must hold of these
 /// bytes is only that they come back identical.
 const CHART_WORKBOOK: &[u8] = b"PK\x03\x04opendoc-fixture-opaque-workbook";
+/// `collapsed-headings.docx` — the only fixture in the repository that carries
+/// `w15:collapsed`, Word's persisted "this heading is folded" state.
+///
+/// # Why it exists
+///
+/// Word writes a collapsed heading as a `CT_OnOff` element in the heading
+/// paragraph's `w:pPr`, in the `w15` namespace
+/// (`http://schemas.microsoft.com/office/word/2012/wordml`): *"When a collapsed
+/// element is added to a paragraph (pPr) of a particular heading level and its
+/// value is true/on/1, immediately subsequent paragraphs with a higher heading
+/// level number appear collapsed when the document is opened"*
+/// (Microsoft Open Specifications, MS-DOCX). Before this fixture **no `.docx` in
+/// `fixtures/` carried the element at all** — 38 packages, every XML part, zero
+/// hits — so the loss-coverage gate
+/// (`casual-doc-export/tests/source_element_coverage.rs`) had never had the
+/// opportunity to say whether the drop is reported or silent. `docs/154` §3.4 and
+/// ADR-049 both name adding it as the cheapest item in the folding lane, because it
+/// converts an unknown into either a report or a red gate.
+///
+/// # What it discriminates
+///
+/// Four headings, each a different state of the same `CT_OnOff` axis, so a reader
+/// that collapses the tri-state cannot pass:
+///
+/// 1. `w15:collapsed w:val="1"` — folded, the ordinary case.
+/// 2. `w15:collapsed` with **no** `w:val` — `CT_OnOff` defaults to on when the
+///    attribute is absent (ECMA-376 §17.17.4), so this is also folded. A reader
+///    that requires `w:val="1"` loses it.
+/// 3. `w15:collapsed w:val="0"` — an **explicit** unfolded, which is a different
+///    statement from the element being absent: it cancels whatever a style chain
+///    contributed. This is the same tri-state trap `ParagraphProperties::
+///    contextual_spacing` documents at length, and it is the one a plain `bool`
+///    cannot represent.
+/// 4. No `w15:collapsed` at all — absent, inherit.
+///
+/// Each heading is followed by a body paragraph, so the subtree a fold would hide
+/// is real content rather than an empty heading, and the headings carry
+/// `w:outlineLvl` directly rather than through a `w:pStyle`: heading level is what
+/// folding keys on, the fixture must not also depend on a styles part resolving,
+/// and `w:outlineLvl` is already modelled so it cannot confuse the loss gate with a
+/// second new name.
+///
+/// The `w15` prefix is declared on the root exactly as Word declares it, under
+/// `mc:Ignorable="w15"` — also as Word declares it, and deliberately, because that
+/// directive is a licence for an old consumer to ignore the element and the fixture
+/// should prove our reader does not take it. `body.rs` acts only on
+/// `mc:AlternateContent` branches and documents that `mc:Ignorable` is plumbing
+/// rather than a skip instruction; this fixture is what makes that checkable.
+///
+/// Note the namespace: it is `w15:collapsed`, **not** the bare `w:collapsed` this
+/// project's own earlier notes guessed.
+const COLLAPSED_HEADINGS_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w15"><w:body><w:p><w:pPr><w:outlineLvl w:val="0"/><w15:collapsed w:val="1"/></w:pPr><w:r><w:t>Folded heading, explicit on</w:t></w:r></w:p><w:p><w:r><w:t>Body under the folded heading.</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="1"/><w15:collapsed/></w:pPr><w:r><w:t>Folded subheading, implied on</w:t></w:r></w:p><w:p><w:r><w:t>Body under the implied-on subheading.</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="0"/><w15:collapsed w:val="0"/></w:pPr><w:r><w:t>Unfolded heading, explicit off</w:t></w:r></w:p><w:p><w:r><w:t>Body under the explicitly unfolded heading.</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Heading with no collapsed state</w:t></w:r></w:p><w:p><w:r><w:t>Body under the heading that says nothing.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>"#;
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
 const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -149,6 +201,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     fs::write(output.join("chart.docx"), package(&chart_entries())?)?;
+
+    fs::write(
+        output.join("collapsed-headings.docx"),
+        package(&entries_with_document(COLLAPSED_HEADINGS_DOCUMENT))?,
+    )?;
 
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((

@@ -5,9 +5,14 @@ because the owner's instruction was competitive analysis first and `SKILL.md` §
 the established solution before inventing one. **§5.1 and §5.2 BUILT 2026-10-02** on the
 owner's instruction to fix it: the cap, the four-step per-viewer control, the centred
 column, and the ceiling that closes §3.3's refusal. ADR-048 is now **Accepted** and carries
-the record of what implementation changed about it. **§5.3 (folding) is NOT built and was
-not started** — ADR-049 stays Proposed, which is the independence claim §5.3 makes being
-honoured rather than merely asserted. §8 below marks each item.
+the record of what implementation changed about it. **§5.3 (folding): ADR-049 is **Accepted** as of
+2026-10-02 and its PERSISTENCE tier is built** — `w15:collapsed` parsed, modelled
+tri-state, written, round-tripped, with `fixtures/generated/collapsed-headings.docx` and six
+mutation-proven guards. The layout filter and the chrome are **not** started. Up to that
+point ADR-049 stayed Proposed while ADR-048 was implemented, which is the independence claim
+§5.3 makes being honoured rather than merely asserted. §8 below marks each item.
+**Corrected and extended by** `157-ONLYOFFICE-LARGE-DOCUMENT-AND-FOLDING-SOURCE-FINDINGS.md`
+— three citation/enumeration corrections (its §6) and the evidence that closed ADR-049.
 **Opened:** 2026-10-01.
 **Proposes:** [ADR-048](08-ADR-REGISTER.md) (the measure is capped; two width policies over
 one layout mechanism) and [ADR-049](08-ADR-REGISTER.md) (folding is a per-viewer block
@@ -254,7 +259,19 @@ returns hits only in `cell/` (spreadsheet row/column outline grouping) and in th
 version-history UI. **Zero hits in `word/`.** `CDocumentOutline`
 (`word/Editor/DocumentOutline.js:42-488`) exposes
 `SetUse`/`UpdateAll`/`GoTo`/`Demote`/`Promote`/`InsertHeader`/`SelectContent` and no
-Collapse or Expand at all. Their Navigation panel's Expand/Collapse menu items
+Collapse or Expand at all.
+
+> **Two enumeration corrections, 2026-10-02 (`157` §6); the conclusion is unchanged and was
+> re-verified.** (a) The sdkjs hits are **exclusively** under `cell/`; the `web-apps` hits
+> are help text, locale strings, `border-collapse` CSS, ribbon/toolbar fold
+> (`Mixtbar.js`), the macros dialog, and the panel `TreeView` — the *widget* is shared with
+> `History.js` but the literal term is not in it. (b) `DocumentOutline.js` is **512** lines
+> and its export block at `:501-512` lists **twelve** methods, not seven; still no Collapse
+> or Expand. Also stronger than stated here: `grep -rinI "collaps" sdkjs/word` is **0 hits**
+> for the substring, not just for the word, across all 232 `.js` files — and the absence of
+> `w15:collapsed` from their *model* is measured against three closed lists (`CParaPr`'s
+> constructor, its `Write_ToBinary` bitmap, and the `c_oSerProp_pPrType` interchange enum),
+> which is why `157` §3.2 can close §7's open question 14. Their Navigation panel's Expand/Collapse menu items
 (`main/app/controller/Navigation.js:314-339`) call `expandAll`/`collapseAll`/`expandToLevel`
 on `apps/common/main/lib/component/TreeView.js` — **the same generic tree widget the version
 history panel and the hyperlink dialog use.** It collapses the panel's list; no code path
@@ -437,6 +454,17 @@ never approach 22in — which is an argument for the cap that does not depend on
 
 ### 3.4 Folding: nothing, anywhere
 
+> **Superseded in part, 2026-10-02.** The model/import/export half of this section is
+> **fixed**: `ParagraphProperties::collapsed` exists, `apply_paragraph_property` has a
+> `b"collapsed"` arm, the writer emits `w15:collapsed`, and
+> `fixtures/generated/collapsed-headings.docx` is the fixture this section asked for. The
+> second bullet's "unknown" is now **measured**, and the answer was the better of the two:
+> the drop was already **reported** (`OmittedNotRetained`, 3 occurrences) through `body.rs`'s
+> generic `w:pPr` long-tail arm, not silent — so the coverage gate had stayed green rather
+> than being blind. A reported loss is still a loss, which is why it is now modelled. The
+> third bullet (the shell) and the first clause of this section's title still stand: nothing
+> hides a folded subtree. `157` §4.3 has the record.
+
 - **Not in the layout or the model.** `collapsed` has no hits as a parsed property in
   `crates/`; `crates/casual-doc-import` never reads a `collapsed` element. Word persists a
   collapsed heading as **`w15:collapsed`** (`CT_OnOff`, namespace
@@ -616,10 +644,12 @@ repository, all of which it should reuse rather than parallel:
 
 1. **The filter itself already exists one tier down.** `flow.rs`'s `push_styled_runs`
    returns early when the cascade-resolved `w:vanish` is on
-   (`crates/casual-doc-layout/src/flow.rs:6500`), so a run in the model contributes nothing
+   (`crates/casual-doc-layout/src/flow.rs:6500` — **corrected 2026-10-02:** the function is
+   at `:6527` and the early return at `:6539`), so a run in the model contributes nothing
    to the layout. Folding is that filter at the **block** tier. Not a second flow path.
 2. **The per-viewer view parameter already exists, twice.** `ReviewView`
-   (`flow.rs:102`) and `LayoutView` (`document_layout.rs:162`) are both threaded to the one
+   (`flow.rs:102` — **corrected:** `pub enum ReviewView` is at `:106`) and `LayoutView`
+   (`document_layout.rs:162`) are both threaded to the one
    place that consumes them, both default to today's behaviour, and both leave every
    existing caller byte-for-byte unchanged. A `FoldSet` is the third, and it is a third
    parameter on one mechanism, not a third mechanism.
@@ -641,7 +671,9 @@ repository, all of which it should reuse rather than parallel:
 | Live per-viewer state | what this reader has folded right now | beside `docReflow` in `prefs.mjs`; **not** persisted into the file by a viewer's toggling |
 
 That is Google's model verbatim [1P, §2.1] and it is also the only model that can honour a
-Word file. Parsing `w15:collapsed` is **independently required** of any folding UI: today it
+Word file. **Both halves of that table are now decided and the first is built** — see the
+note at the head of §3.4 and ADR-049's Accepted record. Parsing `w15:collapsed` is
+**independently required** of any folding UI: today it
 is dropped, and §3.4 shows the loss-coverage gate has never had a fixture that could catch
 it. **Adding a fixture that carries `w15:collapsed` is worth doing before any of this**,
 because it converts an unknown into either a report or a red gate.
@@ -768,10 +800,17 @@ finds all of them together. **No part of §5 depends on any row in this list.**
 
 **Could not confirm from the ONLYOFFICE source available:**
 
-14. Whether their OOXML converter parses or round-trips `w:collapsed`/`w15:collapsed`. The
-    converter is `x2t`/`DesktopEditor`, a separate C++ project **not present** in either
-    checked-out tree. What *is* established: `sdkjs`'s own paragraph model has no
-    `Collapsed` field anywhere, so it has nowhere to carry one. **[SRC, by absence]**
+14. ~~Whether their OOXML converter parses or round-trips `w:collapsed`/`w15:collapsed`.~~
+    **Closed for the editor path, 2026-10-02 (`157` §3.2).** The converter itself
+    (`x2t`/`DesktopEditor`) is still **not present** in either tree, so its internals remain
+    unverified. But the x2t↔sdkjs contract *is* in the tree: `c_oSerProp_pPrType`
+    (`word/Editor/Serialize2.js:243`) is a closed enum of values 0–49 whose only outline code
+    is `outlineLvl: 34`, an unallocated record reaches
+    `Serialize2.js:9411 default: res = c_oSerConstants.ReadUnknown;` and is discarded, and
+    the writer can only emit allocated codes. **So `w15:collapsed` cannot survive an edit
+    round-trip through their editor whatever x2t does, and the mechanism of the loss is
+    literally `ReadUnknown`.** The absence from the model is measured against three closed
+    lists rather than by grep. **[SRC]**
 15. Whether a hardware keyboard can insert text while `CDocumentReadView` is active on
     mobile. No code-level block was found and no live caret path was traced. §2.3(d)'s
     conclusion — that reader mode is not *wired* to a read-only gate — does not depend on
@@ -783,10 +822,14 @@ finds all of them together. **No part of §5 depends on any row in this list.**
 
 **Unverified about our own tree:**
 
-18. **Whether a `w15:collapsed` in a real Word file is reported or silently dropped.** It is
-    not modelled; whether the loss-coverage gate would flag it is untested because **no
-    fixture in the repository carries one** (38 `.docx`, every XML part, zero hits). This is
-    a known-unknown with a cheap resolution: add the fixture.
+18. ~~**Whether a `w15:collapsed` in a real Word file is reported or silently dropped.**~~
+    **ANSWERED 2026-10-02 by adding the fixture, exactly as this item proposed:
+    `fixtures/generated/collapsed-headings.docx`. It was REPORTED, not silent** — one finding
+    keyed `collapsed`, disposition `OmittedNotRetained`, `occurrences = 3`, produced by
+    `body.rs`'s generic `w:pPr` long-tail arm, so the coverage gate had been correct rather
+    than blind. A reported loss is still a loss, so it is now modelled, written and
+    round-tripped, and the gate is armed for the element family — proven by driving
+    `source_element_coverage` red with a writer that drops it. `157` §4.3.
 19. **The characters-per-line figures in §3.2 are arithmetic on a measured mean advance, not
     a shaped line count.** The advance is measured (§9); the division assumes a mean and
     ignores kerning, ligatures, justification and per-line variance. Treat them as accurate
@@ -840,11 +883,15 @@ finds all of them together. **No part of §5 depends on any row in this list.**
    `COMMAND_CONTRACT`.
 4. **The Reading-view preset** (§5.2 item 3). **Still open and deliberately not built**: it
    sets reduced chrome, which is another lane's surface.
-5. **`w15:collapsed`**: parse, model, round-trip, export — **and add a fixture that carries
-   it**, which is worth doing before anything else in §5.3 because it turns §7 item 18 from
-   an unknown into either a report or a red gate.
+5. ~~**`w15:collapsed`**: parse, model, round-trip, export — **and add a fixture that carries
+   it**~~ — **BUILT 2026-10-02**, fixture first as this item said, and §7 item 18 is answered.
 6. **Folding** (§5.3): `FoldSet`, the flow filter, the byte-space projection, the outline
-   tree, the a11y mirror filter, print/export expansion.
+   tree, the a11y mirror filter, print/export expansion. **Still open, and now specified
+   rather than only proposed**: ADR-049 is Accepted and carries the layout specification
+   (where the filter sits, `FoldSet` as a layout input rather than derived, the resume state a
+   windowed pass needs, page breaks and section breaks inside a folded range, and the real
+   complexity bound) plus what `webapp/` owes. The filter itself belongs to
+   `casual-doc-layout` and is not started.
 7. **WCAG 1.4.8 item 3** — there is no mechanism to un-justify a justified document in the
    reading view. New, out of scope here, and a reading-view concern rather than a fidelity
    one.

@@ -210,6 +210,7 @@ VLM
 VML
 Vello
 Viewport
+Virtualised
 Virtualized
 Vue
 WAI
@@ -534,6 +535,7 @@ subpaths
 subsetter
 subsetting
 substitutable
+substring
 subtree
 summarization
 superset
@@ -554,6 +556,7 @@ trendline
 tri
 twip
 twips
+unallocated
 unauthorable
 uncached
 unclipped
