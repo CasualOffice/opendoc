@@ -57,10 +57,17 @@
 //! the rest), so a styled table arrives with the GUID and none of the appearance;
 //! a cell's diagonal borders and `a:tcPr@vert`;
 //! gradient, picture and pattern fills on a shape; effects; `a:arcTo`;
-//! `p14:sectionLst`; `a:fontRef` (neither the collection it names nor its colour
-//! has a field); `a:satMod` and the hue/gamma/channel colour modifiers; the theme
-//! part's `a:objectDefaults`, `a:extraClrSchemeLst` and `a:custClrLst`; and
-//! `a:bgFillStyleLst`, so a `p:bgRef` still resolves to nothing.
+//! `p14:sectionLst`; the hue, gamma and channel-wise colour modifiers, which the
+//! shared fold applies none of; `a:fontRef`, which is **read** — the collection it
+//! names and its colour both reach `ShapeStyleRef::font_ref` — and still
+//! unpainted, because nothing applies a shape-scoped text default, so the report
+//! names it with the half that was lost rather than naming a dropped attribute;
+//! the theme part's `a:objectDefaults`, `a:extraClrSchemeLst` and `a:custClrLst`;
+//! and `a:bgFillStyleLst`, so a `p:bgRef` still resolves to nothing.
+//!
+//! `a:satMod` has left that list: `v1::ColorTransform` carries a saturation field
+//! and the shared `v1::fold_color_modifiers` folds it, so the reader now keeps the
+//! value instead of reporting it.
 //!
 //! # One theme per deck, and what that costs
 //!
@@ -70,8 +77,13 @@
 //! master naming a DIFFERENT theme part is reported rather than silently resolved
 //! against the wrong palette. Every colour in the deck therefore resolves against
 //! one theme, which is consistent with what the model says and honest about what
-//! it cannot say. The fix is a presentation-side theme table keyed by master; it
-//! is additive and it is not built here.
+//! it cannot say.
+//!
+//! The model half of the fix now EXISTS: `v1::Definitions::themes` is a table
+//! keyed by `ThemeId` behind a single `Definitions::theme(Option<ThemeId>)`
+//! accessor. What is missing is this importer keying it — reading each master's own
+//! theme part into that table and carrying the id on the master — which is why the
+//! `degraded_attribute` below still fires. Representable is not populated.
 
 use std::collections::BTreeMap;
 
@@ -100,7 +112,8 @@ use crate::shapes::Surface;
 use crate::table::read_table_styles_part;
 // Own line (anti-conflict): the theme half of the import.
 use crate::theme::{
-    Resolver, ThemePart, read_color_map_of, read_theme_part, report_unpaintable_style_refs,
+    Resolver, ThemePart, read_color_map_of, read_theme_part, report_unapplied_font_refs,
+    report_unpaintable_style_refs,
 };
 
 /// A `.pptx` imported into the presentation model, with its fidelity report.
@@ -463,6 +476,14 @@ pub fn import_pptx(
     if let Some(scheme) = theme.format_scheme.as_ref() {
         report_unpaintable_style_refs(scheme, &definitions.shape_styles, &mut reporter);
     }
+    // `a:fontRef` is classified here too, and NOT inside the `format_scheme`
+    // guard: a shape can reference the font collection of a theme that states no
+    // `a:fmtScheme` at all, and the loss is just as real.
+    report_unapplied_font_refs(
+        theme.font_scheme.as_ref(),
+        &definitions.shape_styles,
+        &mut reporter,
+    );
 
     // Every admitted part the reference graph did not reach. A whole-part
     // disposition each, because absence from a report is an overstatement by

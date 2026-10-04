@@ -234,14 +234,30 @@ fn the_colour_map_override_chain_gives_one_token_three_different_answers() {
     assert_eq!(
         run_fill,
         StyleColor::Fixed(Rgba {
-            r: 0x5B,
-            g: 0x9B,
-            b: 0xD5,
+            r: 57,
+            g: 157,
+            b: 247,
             a: 102
         }),
-        "slide 10's own a:overrideClrMapping rebinds accent2 to a:accent5, and \
-         a:alpha val=40000 is 40% of 255"
+        "slide 10's own a:overrideClrMapping rebinds accent2 to a:accent5, \
+         a:satMod val=155000 scales its saturation by 1.55, and a:alpha \
+         val=40000 is 40% of 255"
     );
+    // The arithmetic, written out, because this assertion CHANGED when `a:satMod`
+    // stopped being a loss and a changed expectation is only trustworthy if it is
+    // derived rather than copied from the new output. The override resolves
+    // accent2 to a:accent5 = #5B9BD5 = (91, 155, 213). Lightness is
+    // (max + min) / 2 = (213 + 91) / 2 = 152, and an exact saturation scaling
+    // about it is c' = L + (c - L) * 1.55:
+    //
+    //   r: 152 + (91  - 152) * 1.55 = 152 - 94.55 = 57.45  -> 57
+    //   g: 152 + (155 - 152) * 1.55 = 152 +  4.65 = 156.65 -> 157
+    //   b: 152 + (213 - 152) * 1.55 = 152 + 94.55 = 246.55 -> 247
+    //
+    // and the chroma ceiling does not bind: min(2L, 510 - 2L) = min(304, 206)
+    // = 206, while the scaled chroma is (213 - 91) * 1.55 = 189.1. The previous
+    // expectation was the UNMODULATED base, which is to say it asserted the loss
+    // this change removes.
 
     // And the side table records only what each part STATES, so an inherited
     // mapping stays distinguishable from one that happens to equal it.

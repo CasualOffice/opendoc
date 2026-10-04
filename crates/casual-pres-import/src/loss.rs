@@ -126,6 +126,29 @@ impl Reporter {
         );
     }
 
+    /// Reports a construct on a SHAPE that resolves and still cannot be painted,
+    /// with `reason` naming which half was lost.
+    ///
+    /// The same feature name and the same `Degraded` disposition the DOCX reader
+    /// uses for the same construct, deliberately: `a:fontRef` is one DrawingML
+    /// element, so a host comparing a document's report with a deck's must not
+    /// have to learn two names for one loss.
+    ///
+    /// No part name, for the reason `theme_style_unpainted` gives: the thing that
+    /// cannot be painted is a property of the THEME while the reference is on a
+    /// shape in some other part, so charging it to either is the wrong half.
+    pub(crate) fn shape_appearance_unpainted(&mut self, construct: &str, reason: &str) {
+        self.inner.record(
+            format!("shape/{construct}"),
+            FeatureLocation {
+                part_name: None,
+                element: Some(construct.to_owned()),
+                attribute: Some(reason.to_owned()),
+            },
+            Finding::Degraded,
+        );
+    }
+
     /// Reports a whole admitted package part the semantic model does not consume.
     ///
     /// The feature identifier is the part name, which is what

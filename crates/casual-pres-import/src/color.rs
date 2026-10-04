@@ -220,12 +220,18 @@ pub(crate) fn read_transform_if_any(
 /// Values stay in the per-100000 units the file states; the single division lives
 /// in `ColorTransform::apply`.
 ///
-/// `a:satMod` is reported rather than applied, and that is deliberate rather than
-/// an omission: `ColorTransform` has no saturation field because
-/// `casual_doc_model::v1::fold_color_modifiers` applies none, and adding a
-/// half-correct saturation fold here would change every colour this build already
-/// resolves — on the document side too, since the arithmetic is shared. The same
-/// goes for the hue, gamma and channel-wise modifiers.
+/// `a:satMod` IS applied, as of the shared-model theme lane: `ColorTransform` now
+/// carries a saturation field and `casual_doc_model::v1::fold_color_modifiers`
+/// folds it as an exact HSL saturation scaling about the lightness, between the
+/// luminance pair and the blends — so reading it here changes nothing about the
+/// arithmetic and only stops throwing the value away. An earlier revision of this
+/// comment called the omission deliberate on the ground that the model had no
+/// field; that ground is gone.
+///
+/// The hue, gamma and channel-wise modifiers are still reported rather than
+/// applied, and for the original reason: the shared fold applies none of them, and
+/// a half-correct fold here would change every colour this build already resolves
+/// on the document side too, since the arithmetic is shared.
 pub(crate) fn read_color_transform(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
@@ -237,6 +243,7 @@ pub(crate) fn read_color_transform(
         let field = match local {
             b"lumMod" => &mut transform.lum_mod,
             b"lumOff" => &mut transform.lum_off,
+            b"satMod" => &mut transform.sat_mod,
             b"tint" => &mut transform.tint,
             b"shade" => &mut transform.shade,
             b"alpha" => &mut transform.alpha,

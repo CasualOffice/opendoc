@@ -736,16 +736,15 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         // blank is loss — and `TableCellProperties` has four edges and no
         // diagonal.
         "lnTlToBr",
-        // `a:satMod` has no field on `ColorTransform`, because
-        // `v1::fold_color_modifiers` applies no saturation modifier. Reported
-        // rather than half-applied — adding an approximate fold would change every
-        // colour the document side already resolves, since the arithmetic is one
-        // function shared by both.
-        "satMod",
-        // `a:fontRef` names a font COLLECTION and a colour, and `ShapeStyleRef`
-        // has a field for neither, so a shape whose text takes its typeface from
-        // the theme loses it.
-        "style/@fontRef",
+        // `a:fontRef` is READ now — the collection it names and its colour both
+        // reach `ShapeStyleRef::font_ref` — and still unpainted, because nothing
+        // applies a shape-scoped text default: a slide run resolves its typeface
+        // through the placeholder cascade, never through the shape's own
+        // `p:style`. So the finding moved from `style/@fontRef` ("the attribute
+        // was dropped", now false) to `shape/fontRef` with a reason naming which
+        // half went unpainted — the same feature name the DOCX reader uses for the
+        // same element, so a host comparing two reports sees one name.
+        "shape/fontRef",
         // `a:bgFillStyleLst` is not modelled, so a `p:bgRef` still resolves to
         // nothing. Reported on the list rather than only on the reference, because
         // the list is what is dropped.
@@ -787,6 +786,18 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         "tableStyleId",
         "lnL",
         "lnB",
+        // `a:satMod` is APPLIED now, on both document classes: `ColorTransform`
+        // carries a saturation field and the shared `v1::fold_color_modifiers`
+        // folds it as an exact HSL saturation scaling about the lightness. The
+        // reader used to throw the value away on the stated ground that the model
+        // had no field; that ground is gone, and
+        // `the_colour_map_override_chain_gives_one_token_three_different_answers`
+        // asserts the modulated colour with its arithmetic written out.
+        "satMod",
+        // The old feature name for an `a:fontRef`, asserted ABSENT: the attribute
+        // is no longer dropped, so a report still saying so would be describing a
+        // loss that no longer happens. The new name is asserted PRESENT above.
+        "style/@fontRef",
         // `tableStyles.xml` is consumed, so it is no longer a whole-part loss.
         // The separate guard below asserts the entries actually arrived — this
         // one alone could be "fixed" by deleting the part.
@@ -846,6 +857,16 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         ("fmtScheme/fillStyleLst", "pattern"),
         ("fmtScheme/lnStyleLst", "unmodeled"),
         ("fmtScheme/effectStyleLst", "effect-not-rendered"),
+        // `a:fontRef` is in this list and not in the one above, because the
+        // REASON is the whole value of reading it: an uncaptured reference could
+        // only say "the attribute was dropped". The fixture's two references are
+        // `idx="minor"` with an `a:schemeClr val="lt1"` and `idx="major"` with
+        // `val="dk1"`, so each names a collection the theme's font scheme
+        // resolves AND a colour — both halves unpainted. Reading `@idx` with the
+        // wrong grammar, or against the wrong collection, changes this string to
+        // `colour-not-applied` while the feature name stays identical, which is
+        // why the name alone is not the assertion.
+        ("shape/fontRef", "typeface-and-colour-not-applied"),
     ] {
         let entry = imported
             .report
@@ -864,6 +885,19 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
             "the shape is still drawn, it just is not wearing the right appearance"
         );
     }
+    // And once per REFERENCE, not once per deck: the fixture carries two
+    // `a:fontRef`s on two different shapes, and collapsing them would make a deck
+    // that loses a typeface on forty shapes look like one that loses it on one.
+    assert_eq!(
+        imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "shape/fontRef")
+            .map(|entry| entry.occurrences),
+        Some(2),
+        "one finding per reference: {features:?}"
+    );
 
     // Nothing may claim `preserved`: there is no presentation writer, so no
     // verbatim byte floor exists to license the claim.

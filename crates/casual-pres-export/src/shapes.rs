@@ -687,9 +687,20 @@ pub(crate) fn style_color_xml(color: &StyleColor) -> String {
 
 /// The colour-transform children of a scheme colour, in thousandths of a percent.
 ///
-/// Written in `CT_SchemeColor`'s own child order. `a:satMod` has no field — the
-/// model carries five transforms, not six — so a saturation modulation on a slide
-/// is a loss the importer reports rather than one this writer invents a value for.
+/// `EG_ColorTransform` is a repeatable CHOICE, so the file states no required
+/// order and this is simply one canonical order — chosen once here so writing a
+/// deck twice gives identical bytes. It is deliberately not the order the fold
+/// APPLIES them in (`lumMod, lumOff, satMod, tint, shade, alpha`, which is what
+/// `casual_doc_model::v1::fold_color_modifiers` documents): each modifier lands in
+/// its own field on the way in, so the order it was written in cannot reach the
+/// arithmetic, and reordering these five would churn every exported deck's bytes
+/// for nothing.
+///
+/// `a:satMod` is written here as of the shared-model theme lane. Before it, this
+/// comment said the modifier "has no field — the model carries five transforms,
+/// not six"; it carries six now, the importer reads it, and the shared fold
+/// applies it, so a saturation modulation survives a round trip instead of being
+/// a loss this writer had no value for.
 fn transform_children(transform: &ColorTransform) -> String {
     let mut xml = String::new();
     for (tag, value) in [
@@ -698,6 +709,7 @@ fn transform_children(transform: &ColorTransform) -> String {
         ("a:alpha", transform.alpha),
         ("a:lumMod", transform.lum_mod),
         ("a:lumOff", transform.lum_off),
+        ("a:satMod", transform.sat_mod),
     ] {
         if let Some(value) = value {
             xml.push_str(&format!(r#"<{tag} val="{value}"/>"#));

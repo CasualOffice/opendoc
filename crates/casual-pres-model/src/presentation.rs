@@ -609,6 +609,14 @@ impl Presentation {
         }
         self.default_text_style.validate()?;
         self.table_styles.validate()?;
+        // The theme's own bounds, through the SHARED rule rather than a copy of
+        // it. `Definitions::validate_theme` walks every theme in force — the
+        // primary one and every keyed entry — so a bound that holds for a DOCX
+        // holds for a deck by construction, and a deck could not previously fail
+        // one at all: nothing here validated the theme.
+        self.definitions
+            .validate_theme()
+            .map_err(PresentationError::Model)?;
         for slide in &self.slides {
             slide.shapes.validate(&self.definitions)?;
         }

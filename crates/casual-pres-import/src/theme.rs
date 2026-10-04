@@ -40,9 +40,10 @@
 //! place the division by 100000 happens. `a:ln@w` is EMU.
 
 use casual_doc_model::v1::{
-    ColorScheme, ColorTransform, DashStyle, EffectStyle, FillStyle, FontCollection, FontScheme,
-    FormatScheme, GradientKind, GradientStyle, GradientStyleStop, LineStyle, PatternStyle, Rgba,
-    SchemeColor, ScriptFont, ShapeStyleRef, StyleColor, SystemColor, ThemeFontEntry,
+    ColorScheme, ColorTransform, DashStyle, EffectStyle, FillStyle, FontCollection,
+    FontCollectionIndex, FontReference, FontScheme, FormatScheme, GradientKind, GradientStyle,
+    GradientStyleStop, LineStyle, PatternStyle, Rgba, SchemeColor, ScriptFont, ShapeStyleRef,
+    StyleColor, SystemColor, ThemeFontAxis, ThemeFontEntry,
 };
 use casual_pres_model::{ColorMap, ColorRole, THEME_COLOR_SLOTS, ThemeColorSlot, ThemePalette};
 use quick_xml::events::BytesStart;
@@ -789,13 +790,21 @@ pub(crate) fn read_shape_style(
             // carries an effect), not so it renders.
             b"effectRef" => (&mut style.effect_idx, None),
             b"fontRef" => {
+                // Handled on its own and NOT through the shared arm below, because
                 // `a:fontRef@idx` is `ST_FontCollectionIndex` (`none`/`major`/
-                // `minor`), not a numeric index into a style list, and
-                // `ShapeStyleRef` has no field for either it or its colour. So a
-                // shape whose text takes its typeface and colour from the theme
-                // loses both — reported, not guessed.
-                reporter.degraded_attribute(&part, b"style", b"fontRef");
-                return Ok(false);
+                // `minor`) rather than a numeric index into a style list — reading
+                // it with the numeric grammar parses nothing and reports every
+                // real reference as invalid.
+                let consumed = read_font_reference(
+                    cursor,
+                    reporter,
+                    element,
+                    empty,
+                    &part,
+                    resolver,
+                    &mut style.font_ref,
+                )?;
+                return Ok(consumed);
             }
             b"extLst" => return Ok(false),
             other => {
@@ -826,6 +835,118 @@ pub(crate) fn read_shape_style(
         Ok(consumed)
     })?;
     Ok(style)
+}
+
+/// Reads an `a:fontRef`: the theme font collection a shape's text takes, and the
+/// colour it takes with it.
+///
+/// # Why this is read at all, when nothing applies it
+///
+/// For the reason `ShapeStyleRef::effect_idx` is captured: so the reference
+/// RESOLVES. Nothing in this build applies a shape-scoped text default — a slide
+/// run still resolves its typeface through the placeholder cascade and the theme's
+/// font scheme — so a themed typeface and a themed text colour both go unpainted.
+/// But an uncaptured reference cannot say WHICH half was lost, and that is the
+/// difference between a report naming a typeface and one naming an element.
+///
+/// Whether anything was LOST is decided later, by `report_unapplied_font_refs`,
+/// for the reason `report_unpaintable_style_refs` is a post-pass too: the answer
+/// needs the theme's font scheme as well as the reference, and a reader holding
+/// only the reference would have to overstate — a `major` reference against a
+/// theme with no font scheme asked for a typeface that does not exist, and
+/// reporting it as unpainted would be a finding about nothing.
+///
+/// A token outside `ST_FontCollectionIndex` is reported as a degraded attribute
+/// rather than defaulted to `minor`: guessing the body collection would give a
+/// shape's text a typeface and look deliberate.
+fn read_font_reference(
+    cursor: &mut Cursor<'_>,
+    reporter: &mut Reporter,
+    element: &BytesStart<'_>,
+    empty: bool,
+    part: &str,
+    resolver: Resolver,
+    slot: &mut Option<FontReference>,
+) -> Result<bool, ImportError> {
+    let index = match attribute(element, b"idx", cursor.part())?
+        .as_deref()
+        .map(FontCollectionIndex::from_token)
+    {
+        Some(Some(index)) => index,
+        // Absent: `ST_FontCollectionIndex` has no default in the schema, and the
+        // attribute is required on `a:fontRef`, so an absent one is as invalid as
+        // an unrecognised one.
+        Some(None) | None => {
+            reporter.degraded_attribute(part, b"fontRef", b"idx");
+            FontCollectionIndex::None
+        }
+    };
+    let mut argument: Option<StyleColor> = None;
+    let consumed = enter(cursor, empty, |cursor, child, child_empty| {
+        read_scheme_argument(
+            cursor,
+            reporter,
+            child,
+            child_empty,
+            part,
+            resolver,
+            &mut argument,
+        )
+    })?;
+    let color = argument.and_then(|argument| argument.resolve(None));
+    *slot = Some(FontReference { index, color });
+    Ok(consumed)
+}
+
+/// Reports every `a:fontRef` that resolves and still goes unpainted.
+///
+/// Run after the parts are read, beside `report_unpaintable_style_refs`, and for
+/// the same reason: the finding needs BOTH the reference and the theme's font
+/// scheme, because "the shape asked for a typeface" and "the theme names one" are
+/// different facts and only their conjunction is a loss.
+///
+/// # What is and is not a loss
+///
+/// `idx="none"` with no colour child is **not** a loss: the shape is saying its
+/// text takes no theme typeface and no theme colour, and that is honoured exactly
+/// — the same rule as an `@idx` of `0` on the other three references.
+///
+/// Everything else is, because nothing in this build applies a shape-scoped text
+/// default: a slide run resolves its typeface through the placeholder cascade and
+/// the theme's font scheme, never through the shape's own `p:style`. The three
+/// reasons are the DOCX reader's own, so one DrawingML element has one vocabulary
+/// across both document classes and a host need not learn two names for one loss:
+///
+/// * `typeface-and-colour-not-applied` — a resolvable collection AND a colour.
+/// * `typeface-not-applied` — a resolvable collection, no colour.
+/// * `colour-not-applied` — a colour, and a collection resolving to nothing.
+///
+/// # Complexity
+///
+/// O(styled shapes) — one O(1) resolution per reference, no scan of the deck.
+pub(crate) fn report_unapplied_font_refs(
+    font_scheme: Option<&FontScheme>,
+    shape_styles: &casual_doc_model::v1::DefinitionMap<casual_doc_model::NodeId, ShapeStyleRef>,
+    reporter: &mut Reporter,
+) {
+    for (_, reference) in shape_styles.iter() {
+        let Some(font) = reference.font_ref else {
+            continue;
+        };
+        // The Latin axis, because that is the axis a slide run resolves on unless
+        // it states otherwise, and the entry falls back to Latin anyway.
+        let typeface = font_scheme
+            .and_then(|scheme| font.typeface(scheme, ThemeFontAxis::Latin))
+            .is_some();
+        let reason = match (typeface, font.color.is_some()) {
+            (true, true) => "typeface-and-colour-not-applied",
+            (true, false) => "typeface-not-applied",
+            (false, true) => "colour-not-applied",
+            // `idx="none"` with no colour: the shape asked for nothing.
+            (false, false) => continue,
+        };
+        reporter.shape_appearance_unpainted("fontRef", reason);
+    }
 }
 
 /// Reads the colour a `a:fillRef`/`a:lnRef`/`a:effectRef` supplies as its `a:phClr`

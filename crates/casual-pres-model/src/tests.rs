@@ -2261,3 +2261,71 @@ fn a_cell_merge_role_knows_how_many_grid_units_it_owns() {
          cell's width out of the sum"
     );
 }
+
+/// A deck's theme is validated, through the SHARED rule rather than a copy.
+///
+/// Before `Definitions::validate_theme` was public, nothing in this crate
+/// validated the theme at all — so a deck carrying a font scheme past the model's
+/// own bound validated clean while the identical DOCX was refused. One rule, two
+/// document classes, and this is the guard that says the delegation happened
+/// rather than that the bound exists somewhere.
+#[test]
+fn deck_validation_delegates_to_the_shared_theme_rule() {
+    use casual_doc_model::v1::{Definitions, FontCollection, FontScheme, ThemeFontEntry};
+
+    let over_long = "x".repeat(600);
+    let scheme = FontScheme {
+        major: FontCollection {
+            latin: ThemeFontEntry {
+                typeface: over_long.clone(),
+                ..ThemeFontEntry::default()
+            },
+            ..FontCollection::default()
+        },
+        ..FontScheme::default()
+    };
+    let definitions = Definitions {
+        font_scheme: Some(scheme),
+        ..Definitions::default()
+    };
+
+    // Through `Presentation::new`, which validates: a deck that fails validation
+    // must not exist as a value at all, which is the same contract
+    // `the_smallest_deck_validates_and_stamps_the_schema_version` rests on.
+    let master = SlideMaster {
+        id: SlideMasterId::new(id(10)),
+        shapes: tree(id(11), vec![SlideNode::new(shape(id(12)))]),
+        name: None,
+        background: None,
+        text_styles: TextStyles::default(),
+    };
+    let layout = SlideLayout {
+        id: SlideLayoutId::new(id(20)),
+        master: master.id,
+        kind: LayoutKind::Object,
+        shapes: tree(id(21), vec![SlideNode::new(shape(id(22)))]),
+        name: None,
+        background: None,
+    };
+    let slide = Slide {
+        id: SlideId::new(id(30)),
+        layout: layout.id,
+        shapes: tree(id(31), vec![SlideNode::new(shape(id(32)))]),
+        name: None,
+        hidden: false,
+        background: None,
+    };
+    let error = Presentation::new(
+        id(1),
+        SlideSize::DEFAULT_16X9,
+        vec![master],
+        vec![layout],
+        vec![slide],
+        definitions,
+    )
+    .expect_err("an over-long theme typeface must be refused");
+    assert!(
+        format!("{error:?}").contains("fontScheme"),
+        "and refused BY THE THEME RULE, naming the field it broke: {error:?}"
+    );
+}

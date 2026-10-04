@@ -974,3 +974,100 @@ fn a_written_deck_relates_and_declares_its_table_styles_part() {
         "the fixture keeps the two disagreeing, so resolving through @def cannot pass"
     );
 }
+
+/// A saturation modifier survives a save, which it could not before the shared
+/// model carried one.
+///
+/// Asserted as a DIFFERENCE between the two halves of the round trip rather than
+/// against a literal: a reader that threw the modifier away on the way in and a
+/// writer that dropped it on the way out are two different bugs, and comparing the
+/// reopened deck with the original catches either one while a literal would have to
+/// be re-derived whenever the fixture's base colour changes.
+///
+/// # What this does NOT prove, measured rather than assumed
+///
+/// It does not exercise the writer's `a:satMod` child. An `a:schemeClr` on a slide
+/// is FOLDED at import — the model has no scheme-slot variant, so the run carries
+/// a concrete `StyleColor::Fixed` — and the writer emits a literal `a:srgbClr`.
+/// `transform_children` is reached only through `StyleColor::Placeholder`, which in
+/// a deck means an `a:phClr` inside the theme's style matrix, and the theme part is
+/// RETAINED byte-for-byte rather than regenerated. So the writer's arm is covered
+/// by `a_phclr_carries_its_saturation_modifier` below instead, and this guard was
+/// first written claiming the transform was re-emitted here. It is not. Deleting
+/// the writer's arm leaves this test GREEN, which is exactly why the other one
+/// exists.
+#[test]
+fn a_saturation_modifier_survives_a_save() {
+    let (first, second) = round_trip();
+
+    /// The themed run colour on the deck's THIRD slide, which is the one carrying
+    /// the modifier. The deck's first themed run is slide 1's title, an
+    /// `a:srgbClr` with no transform at all — so a search over every slide finds
+    /// a colour this guard says nothing about.
+    fn themed_run_fill(
+        presentation: &casual_pres_model::Presentation,
+    ) -> Option<casual_doc_model::v1::StyleColor> {
+        presentation
+            .slides()
+            .get(2)?
+            .shapes
+            .children
+            .iter()
+            .filter_map(|node| node.text.as_ref())
+            .flat_map(|body| body.paragraphs.iter())
+            .flat_map(|paragraph| paragraph.runs.iter())
+            .find_map(|run| run.properties().and_then(|properties| properties.fill))
+    }
+
+    let before = themed_run_fill(&first.presentation).expect("the fixture carries a themed run");
+    let after = themed_run_fill(&second.presentation).expect("so does the reopened deck");
+    assert_eq!(
+        after, before,
+        "a:satMod is read, folded and re-emitted, so one save does not change the \
+         colour and two saves do not compound it"
+    );
+
+    // And it is actually MODULATED, not merely stable. A reader and a writer that
+    // both dropped the modifier agree with each other perfectly, so the equality
+    // above passes for exactly the bug this guard exists to catch — the fixture's
+    // base is a:accent5 = #5B9BD5 = (91, 155, 213), and 155% saturation about its
+    // lightness of 152 gives (57, 157, 247).
+    assert_eq!(
+        after,
+        casual_doc_model::v1::StyleColor::Fixed(casual_doc_model::v1::Rgba {
+            r: 57,
+            g: 157,
+            b: 247,
+            a: 102
+        }),
+        "the saturation modifier is applied, not just carried"
+    );
+}
+
+/// An `a:phClr`'s saturation modifier is written back.
+///
+/// Directly on the writer, because nothing in a deck ROUND-TRIPS one: the only
+/// `a:phClr` carriers are the theme's style matrix entries, and the theme part is
+/// retained byte-for-byte rather than regenerated, so `a_saturation_modifier_survives_a_save`
+/// stays green with this arm deleted. The arm is still correct and still needed —
+/// the moment anything regenerates a construct holding a formal-parameter colour,
+/// a dropped modifier is a silent loss — and a guard that cannot be driven red is
+/// worth less than this one, which can.
+#[test]
+fn a_phclr_carries_its_saturation_modifier() {
+    use casual_doc_model::v1::{ColorTransform, StyleColor};
+
+    let written = crate::shapes::style_color_xml(&StyleColor::Placeholder(ColorTransform {
+        sat_mod: Some(155_000),
+        lum_mod: Some(110_000),
+        ..ColorTransform::default()
+    }));
+    // Both modifiers, so the assertion cannot be satisfied by a writer that emits
+    // one child and calls it a day — and the full element, so a writer that
+    // emitted the children outside the `a:schemeClr` fails too.
+    assert_eq!(
+        written,
+        r#"<a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="155000"/></a:schemeClr>"#,
+        "a:phClr keeps every modifier the model carries"
+    );
+}
