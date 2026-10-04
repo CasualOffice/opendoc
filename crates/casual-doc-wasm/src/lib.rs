@@ -2220,7 +2220,7 @@ impl WasmDocument {
             .object_boxes()
             .into_iter()
             .find(|candidate| candidate.root == object)
-            .ok_or_else(|| to_js("object is not currently placed".into()))?;
+            .ok_or_else(|| to_js(objects::NOT_PLACED.into()))?;
         let left = bounded_emu(left_emu, -MAX_EMU, MAX_EMU, "object left")?;
         let top = bounded_emu(top_emu, -MAX_EMU, MAX_EMU, "object top")?;
         let width = bounded_emu(width_emu, MIN_OBJECT_EMU, MAX_EMU, "object width")?;
@@ -2229,12 +2229,12 @@ impl WasmDocument {
 
         if let Some(group) = object_group_any_surface(&self.document, object) {
             if !group_resize_supported(group) {
-                return Err(to_js("group geometry cannot be resized exactly".into()));
+                return Err(to_js(objects::GROUP_RESIZE_INEXACT.into()));
             }
             let placed_width = i64::from(placed.rect.size.width.raw()) * EMU_PER_TWIP_I64;
             let placed_height = i64::from(placed.rect.size.height.raw()) * EMU_PER_TWIP_I64;
             if placed_width <= 0 || placed_height <= 0 {
-                return Err(to_js("group has a degenerate placed rectangle".into()));
+                return Err(to_js(objects::GROUP_DEGENERATE.into()));
             }
             let scale_x = width as f64 / placed_width as f64;
             let scale_y = height as f64 / placed_height as f64;
@@ -2248,12 +2248,12 @@ impl WasmDocument {
             transform.extent.width_emu = scale_positive_emu(transform.extent.width_emu, scale_x)?;
             transform.extent.height_emu = scale_positive_emu(transform.extent.height_emu, scale_y)?;
             let bounds = group_content_bounds(group, transform)
-                .ok_or_else(|| to_js("group has no bounded child geometry".into()))?;
+                .ok_or_else(|| to_js(objects::GROUP_UNBOUNDED.into()))?;
             let anchor = page_anchor_at(
                 group
                     .anchor
                     .clone()
-                    .ok_or_else(|| to_js("group is not floating".into()))?,
+                    .ok_or_else(|| to_js(objects::GROUP_NOT_FLOATING.into()))?,
                 checked_page_offset(left as f64 - bounds.left, "group left")?,
                 checked_page_offset(top as f64 - bounds.top, "group top")?,
             );
@@ -2270,9 +2270,7 @@ impl WasmDocument {
             if object_resize_handles_any_surface(&self.document, object).handles
                 != FLOAT_RESIZE_HANDLES
             {
-                return Err(to_js(
-                    "floating object geometry cannot be resized exactly".into(),
-                ));
+                return Err(to_js(objects::FLOAT_RESIZE_INEXACT.into()));
             }
             operations.push(Operation::SetExtent {
                 object,
@@ -2289,16 +2287,14 @@ impl WasmDocument {
             if object_resize_handles_any_surface(&self.document, object).handles
                 != INLINE_RESIZE_HANDLES
             {
-                return Err(to_js(
-                    "inline object geometry cannot be resized exactly".into(),
-                ));
+                return Err(to_js(objects::INLINE_RESIZE_INEXACT.into()));
             }
             let current_left = i64::from(placed.rect.origin.x.raw()) * EMU_PER_TWIP_I64;
             let current_top = i64::from(placed.rect.origin.y.raw()) * EMU_PER_TWIP_I64;
             if (left - current_left).abs() > EMU_PER_TWIP_I64
                 || (top - current_top).abs() > EMU_PER_TWIP_I64
             {
-                return Err(to_js("inline resize cannot move its flow anchor".into()));
+                return Err(to_js(objects::INLINE_RESIZE_MOVED.into()));
             }
             operations.push(Operation::SetExtent {
                 object,
@@ -2353,7 +2349,7 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
         let mut anchor = object_anchor_any_surface(&self.document, object)
-            .ok_or_else(|| to_js("not a movable floating object".into()))?;
+            .ok_or_else(|| to_js(objects::NOT_FLOATING_MOVE.into()))?;
         anchor.horizontal = AnchorHorizontal {
             relative_from: HorizontalAnchor::Page,
             position: HorizontalPosition::Offset(
@@ -2432,12 +2428,12 @@ impl WasmDocument {
         }
         let paragraph = self
             .paragraph_containing_inline_deep(child)
-            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+            .ok_or_else(|| objects::NOT_A_GROUP_CHILD.to_owned())?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+            .ok_or_else(|| objects::NOT_A_GROUP_CHILD.to_owned())?;
         let mut inlines = source.inlines.clone();
         if !move_group_child_in_inlines(&mut inlines, child, dx_emu, dy_emu) {
-            return Err("not a shape inside a group".to_owned());
+            return Err(objects::NOT_A_GROUP_CHILD.to_owned());
         }
         let caret = Pos {
             node: paragraph,
@@ -2526,15 +2522,11 @@ impl WasmDocument {
     ) -> Result<EditResult, String> {
         let (anchor, origin) = {
             let model = object_group_any_surface(&self.document, group)
-                .ok_or_else(|| "not a shape inside a group".to_owned())?;
-            let anchor = model.anchor.clone().ok_or_else(|| {
-                refused!(
-                    "object.lone-shape-inline",
-                    "This shape sits in the line of text, so it has no position to drag. \
-                     Make it floating with Wrap Text first."
-                )
-                .to_owned()
-            })?;
+                .ok_or_else(|| objects::NOT_A_GROUP_CHILD.to_owned())?;
+            let anchor = model
+                .anchor
+                .clone()
+                .ok_or_else(|| objects::LONE_SHAPE_INLINE.to_owned())?;
             let needs_origin = matches!(anchor.horizontal.position, HorizontalPosition::Align(_))
                 || matches!(anchor.vertical.position, VerticalPosition::Align(_));
             let origin = if needs_origin {
@@ -2542,25 +2534,13 @@ impl WasmDocument {
                 // rectangle is the one its CONTENT occupies, and content sits at
                 // `origin + bounds`, which is the same correction
                 // `resize_object` applies when it re-anchors a scaled group.
-                let bounds = group_content_bounds(model, model.transform).ok_or_else(|| {
-                    refused!(
-                        "object.group-unbounded",
-                        "This shape's group has no member with a size, so there is nothing \
-                         to position."
-                    )
-                    .to_owned()
-                })?;
+                let bounds = group_content_bounds(model, model.transform)
+                    .ok_or_else(|| objects::GROUP_UNBOUNDED.to_owned())?;
                 let placed = self
                     .object_boxes()
                     .into_iter()
                     .find(|candidate| candidate.root == group)
-                    .ok_or_else(|| {
-                        refused!(
-                            "object.not-placed",
-                            "This object is not laid out on a page yet, so it cannot be moved."
-                        )
-                        .to_owned()
-                    })?;
+                    .ok_or_else(|| objects::NOT_PLACED.to_owned())?;
                 Some((
                     f64::from(placed.rect.origin.x.raw()) * EMU_PER_TWIP - bounds.left,
                     f64::from(placed.rect.origin.y.raw()) * EMU_PER_TWIP - bounds.top,
@@ -2633,7 +2613,7 @@ impl WasmDocument {
     pub fn set_object_wrap(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
         let mut anchor = object_anchor_any_surface(&self.document, object)
-            .ok_or_else(|| to_js("not a floating object".into()))?;
+            .ok_or_else(|| to_js(objects::NOT_FLOATING_WRAP.into()))?;
         match mode {
             "square" => anchor.wrap = WrapMode::Square,
             "tight" => anchor.wrap = WrapMode::Tight,

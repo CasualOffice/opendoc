@@ -53,6 +53,264 @@ use wasm_bindgen::prelude::*;
 use crate::{EMU_PER_TWIP_I64, EditResult, HistoryKind, WasmDocument, to_js};
 
 // ---------------------------------------------------------------------------
+// The object-geometry refusal family
+//
+// `webapp/src/edit_errors.mjs` passes a refusal through verbatim when it is
+// MARKED and replaces every other one with a single generic sentence — "That
+// edit isn't supported for this selection yet". Every refusal in this family was
+// a bare `String`, so two dozen different causes — an object in the line of
+// text, a group whose members have no size of their own, a position dialog asked
+// to restack — all reached the reader as that one unactionable sentence, about a
+// selection that is usually fine. This is the family the owner hit while
+// dragging shapes.
+//
+// Each entry carries a sentence a reader can act on and a stable dotted code a
+// host routes through its own catalogue, so a non-English reader gets the
+// specific reason too (`casual_doc_edit::refusal`).
+//
+// They are `const`s rather than inline `refused!` calls because most have
+// several call sites and some are shared with `lib.rs`: one CAUSE must reach the
+// reader as one sentence, and a code is a published routing key, so the same
+// code must never carry two sentences.
+// `no_object_geometry_refusal_reaches_a_reader_without_a_code` fails the build
+// if a bare literal joins the family again.
+// ---------------------------------------------------------------------------
+
+/// The node a geometry command names is not a selectable object at all.
+pub(crate) const NOT_AN_OBJECT: &str = refused!(
+    "object.not-selectable",
+    "This isn't a picture, shape or text box, so there is nothing to change here."
+);
+
+/// Named for ungrouping, but it is not a group.
+const NOT_A_GROUP: &str = refused!(
+    "object.not-a-group",
+    "This isn't a group, so there is nothing to ungroup."
+);
+
+/// A group that sits in the line of text, where the anchor every group command
+/// edits does not exist.
+pub(crate) const GROUP_NOT_FLOATING: &str = refused!(
+    "object.group-not-floating",
+    "This group is in the line of text rather than floating, so it has no anchor to \
+     change. Give it a text wrap first."
+);
+
+/// A group with no members — nothing to ungroup, and no content bounds.
+const GROUP_EMPTY: &str = refused!(
+    "object.group-empty",
+    "This group has no members, so there is nothing to ungroup."
+);
+
+/// An object inside a hyperlink, a content control or another group: grouping
+/// or ungrouping it would have to rewrite the thing around it, which is a
+/// different edit.
+const GROUP_IN_WRAPPER: &str = refused!(
+    "object.group-in-wrapper",
+    "An object inside a link, a content control or another group cannot be grouped or \
+     ungrouped on its own. Take it out of the one around it first."
+);
+
+/// A member of a group has no measurable child geometry, so no position for it
+/// can be computed.
+pub(crate) const GROUP_UNBOUNDED: &str = refused!(
+    "object.group-unbounded",
+    "A group here has no member with a size of its own, so its position cannot be \
+     worked out."
+);
+
+/// One of the objects named is not laid out on a page, so grouping would have to
+/// move it without being asked.
+const GROUP_UNPLACED: &str = refused!(
+    "object.group-unplaced",
+    "One of these objects is not laid out on the page yet, so it cannot be grouped."
+);
+
+/// Part of a group is not laid out, so ungrouping cannot keep its members where
+/// they are drawn.
+const GROUP_PARTLY_UNPLACED: &str = refused!(
+    "object.group-partly-unplaced",
+    "Part of this group is not laid out on a page, so ungrouping it would move its \
+     members."
+);
+
+/// Grouping needs the members to share an anchor paragraph; a group has one
+/// anchor and cannot keep two.
+const GROUP_NOT_SIBLING: &str = refused!(
+    "object.group-not-sibling",
+    "Objects can only be grouped when they are anchored to the same paragraph."
+);
+
+/// Grouping an object that sits in the line of text.
+///
+/// The sentence says "in line with text" because that is Word's own name for
+/// the state, and `grouping_refuses_with_a_reason_a_host_can_show` asserts the
+/// reason names it.
+const GROUP_INLINE: &str = refused!(
+    "object.group-inline",
+    "Only floating objects can be grouped. An object that sits in line with text has to \
+     be given a text wrap first."
+);
+
+/// A group has one anchor, so members laid out on different pages cannot all
+/// keep their position.
+const GROUP_ACROSS_PAGES: &str = refused!(
+    "object.group-across-pages",
+    "Objects on different pages cannot be grouped."
+);
+
+/// Grouping needs two objects.
+const GROUP_TOO_FEW: &str = refused!(
+    "object.group-too-few",
+    "Select at least two objects to group."
+);
+
+/// An object whose model carries no rotation or flip.
+const NO_ROTATION: &str = refused!(
+    "object.no-rotation",
+    "This object has no rotation or flip to change."
+);
+
+/// One of the ids handed to a grouping command no longer resolves.
+const GROUP_MEMBER_MISSING: &str = refused!(
+    "object.group-member-missing",
+    "One of these objects is no longer in the document, so they cannot be grouped."
+);
+
+/// The subject is not a shape inside a group — the gesture that moves a group
+/// member, or adds text to a shape.
+pub(crate) const NOT_A_GROUP_CHILD: &str = refused!(
+    "object.not-group-child",
+    "This isn't a shape inside a group, so that change doesn't apply to it."
+);
+
+/// A lone shape whose group has no anchor: there is no position to drag.
+pub(crate) const LONE_SHAPE_INLINE: &str = refused!(
+    "object.lone-shape-inline",
+    "This shape sits in the line of text, so it has no position to drag. Give it a text \
+     wrap first."
+);
+
+/// A freeform shape asked to hold text: its custom geometry has no text body
+/// this build can flow without flattening the outline to a rectangle.
+const FREEFORM_NO_TEXT: &str = refused!(
+    "object.freeform-no-text",
+    "A freeform shape cannot hold text yet — its custom outline would be flattened to a \
+     rectangle. Put a text box over it instead."
+);
+
+/// Restacking something that is not in the floating z-order.
+const NOT_RESTACKABLE: &str = refused!(
+    "object.not-restackable",
+    "Only a floating object can be brought forward or sent back; an object in the line \
+     of text stacks with the text around it."
+);
+
+/// The z-order rank space is exhausted.
+const TOO_MANY_FLOATS: &str = refused!(
+    "object.too-many-floats",
+    "There are too many floating objects here to restack another."
+);
+
+/// A rotation that is not a number.
+const ROTATION_NOT_FINITE: &str = refused!(
+    "object.rotation-not-finite",
+    "A rotation has to be a number of degrees."
+);
+
+/// A position axis given both an alignment and an offset.
+const POSITION_H_AMBIGUOUS: &str = refused!(
+    "object.position-h-ambiguous",
+    "A horizontal position is either an alignment or an offset, not both."
+);
+
+/// A position axis given both an alignment and an offset.
+const POSITION_V_AMBIGUOUS: &str = refused!(
+    "object.position-v-ambiguous",
+    "A vertical position is either an alignment or an offset, not both."
+);
+
+/// The position surface asked to put an object back in the line of text, which
+/// is a different command.
+const POSITION_NOT_INLINE: &str = refused!(
+    "object.position-not-inline",
+    "Use Wrap Text, In Line with Text, to put this object back into the text; the \
+     position controls only move a floating object."
+);
+
+/// Positioning an object that has no anchor of its own.
+const POSITION_NOT_FLOATING: &str = refused!(
+    "object.position-not-floating",
+    "Only a floating object has a position of its own. Give this one a text wrap first."
+);
+
+/// The position surface asked to restack, which is a different command.
+const POSITION_NOT_RESTACK: &str = refused!(
+    "object.position-not-restack",
+    "Use Bring Forward or Send Backward to change which object is in front; the \
+     position controls do not restack."
+);
+
+/// Floating a picture whose size the document never recorded: the float would
+/// have to invent one.
+const PICTURE_NO_SIZE: &str = refused!(
+    "object.picture-no-size",
+    "This picture has no size recorded in the document, so it cannot be made floating \
+     without changing how it looks."
+);
+
+/// An object that is not laid out on a page, so it has no geometry to replace.
+pub(crate) const NOT_PLACED: &str = refused!(
+    "object.not-placed",
+    "This object is not laid out on a page yet, so its position and size cannot be set."
+);
+
+/// A group whose members cannot be scaled exactly, so the whole group cannot be.
+pub(crate) const GROUP_RESIZE_INEXACT: &str = refused!(
+    "object.group-resize-inexact",
+    "This group cannot be resized exactly — one of its members has no size of its own, \
+     or sizes itself to its text. Resize its members individually."
+);
+
+/// A group with no measurable rectangle on the page.
+pub(crate) const GROUP_DEGENERATE: &str = refused!(
+    "object.group-degenerate",
+    "This group has no measurable size on the page, so it cannot be scaled."
+);
+
+/// A floating object whose shape has no exact size inverse.
+pub(crate) const FLOAT_RESIZE_INEXACT: &str = refused!(
+    "object.float-resize-inexact",
+    "This object's size cannot be set exactly, so the document was left as it was."
+);
+
+/// An in-line object whose shape has no exact size inverse.
+pub(crate) const INLINE_RESIZE_INEXACT: &str = refused!(
+    "object.inline-resize-inexact",
+    "This in-line object's size cannot be set exactly, so the document was left as it \
+     was."
+);
+
+/// An in-line object dragged by a size handle that also moved it.
+pub(crate) const INLINE_RESIZE_MOVED: &str = refused!(
+    "object.inline-resize-moved",
+    "An object in the line of text can be resized but not moved — the text decides \
+     where it sits. Give it a text wrap to move it freely."
+);
+
+/// Moving something that has no anchor to move.
+pub(crate) const NOT_FLOATING_MOVE: &str = refused!(
+    "object.not-floating-move",
+    "Only a floating object can be moved freely. Give this one a text wrap first."
+);
+
+/// Changing the wrap of something that has no wrap.
+pub(crate) const NOT_FLOATING_WRAP: &str = refused!(
+    "object.not-floating-wrap",
+    "Only a floating object has text wrapping to change."
+);
+
+// ---------------------------------------------------------------------------
 // OOXML tokens
 //
 // One table per enum, both directions, so a token this build writes is a token
@@ -340,7 +598,7 @@ fn apply_horizontal(
     };
     let position = match (want.align.as_deref(), want.offset_emu) {
         (Some(_), Some(_)) => {
-            return Err("a horizontal position is an alignment OR an offset, not both".to_owned());
+            return Err(POSITION_H_AMBIGUOUS.to_owned());
         }
         (Some(token), None) => HorizontalPosition::Align(
             parse_horizontal_align(token)
@@ -366,7 +624,7 @@ fn apply_vertical(current: AnchorVertical, want: &AxisWrite) -> Result<AnchorVer
     };
     let position = match (want.align.as_deref(), want.offset_emu) {
         (Some(_), Some(_)) => {
-            return Err("a vertical position is an alignment OR an offset, not both".to_owned());
+            return Err(POSITION_V_AMBIGUOUS.to_owned());
         }
         (Some(token), None) => VerticalPosition::Align(
             parse_vertical_align(token)
@@ -922,24 +1180,19 @@ impl WasmDocument {
             serde_json::from_str(position).map_err(|error| format!("bad position: {error}"))?;
         let paragraph = self
             .paragraph_of_object(object)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let found =
-            top_level_anchor(&source.inlines, object).ok_or_else(|| "not an object".to_owned())?;
+            top_level_anchor(&source.inlines, object).ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         if want.floating == Some(false) {
-            return Err(
-                "setObjectPosition cannot make an object inline; use setObjectAnchorKind"
-                    .to_owned(),
-            );
+            return Err(POSITION_NOT_INLINE.to_owned());
         }
-        let mut anchor = found.ok_or_else(|| {
-            "not a floating object; float it with setObjectAnchorKind first".to_owned()
-        })?;
+        let mut anchor = found.ok_or_else(|| POSITION_NOT_FLOATING.to_owned())?;
         if let Some(z) = want.z_order
             && top_level_z(&source.inlines, object) != Some(z)
         {
-            return Err("setObjectPosition cannot restack; use setObjectZOrder".to_owned());
+            return Err(POSITION_NOT_RESTACK.to_owned());
         }
         if let Some(axis) = want.horizontal.as_ref() {
             anchor.horizontal = apply_horizontal(anchor.horizontal, axis)?;
@@ -1019,14 +1272,14 @@ impl WasmDocument {
             .map_err(|_| "invalid node id".to_owned())?;
         let paragraph = self
             .paragraph_of_object(object)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
         let changed = with_top_level(&mut inlines, object, &mut |inline| {
             convert_anchor_kind(inline, floating)
         })
-        .ok_or_else(|| "not an object".to_owned())??;
+        .ok_or_else(|| NOT_AN_OBJECT.to_owned())??;
         if !changed {
             // Already the requested kind. Report success without an undo entry:
             // a radio group that re-asserts the current choice should not fill
@@ -1093,7 +1346,7 @@ impl WasmDocument {
     fn group_objects_inner(&mut self, nodes: &str) -> Result<EditResult, String> {
         let (paragraph, ids) = self.group_members(nodes)?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
 
         // The placed rectangles, collected in ONE pass over the object boxes —
@@ -1105,11 +1358,7 @@ impl WasmDocument {
             .filter(|placed| ids.contains(&placed.root))
             .collect();
         if boxes.len() != ids.len() {
-            return Err(refused!(
-                "object.group-unplaced",
-                "One of these objects is not laid out on the page yet, so it cannot be grouped."
-            )
-            .to_owned());
+            return Err(GROUP_UNPLACED.to_owned());
         }
 
         // Document order, which is paint order, which is the child order. The
@@ -1144,11 +1393,7 @@ impl WasmDocument {
             taken.is_none()
         });
         if members.len() != ids.len() {
-            return Err(refused!(
-                "object.group-not-sibling",
-                "Objects can only be grouped when they are anchored to the same paragraph."
-            )
-            .to_owned());
+            return Err(GROUP_NOT_SIBLING.to_owned());
         }
 
         let left = members.iter().map(|m| m.left_emu).min().unwrap_or(0);
@@ -1195,7 +1440,7 @@ impl WasmDocument {
             let offset = match &member.inline {
                 InlineNode::Group(group) => {
                     let bounds = crate::group_content_bounds(group, group.transform)
-                        .ok_or_else(|| "a grouped group has no bounded content".to_owned())?;
+                        .ok_or_else(|| GROUP_UNBOUNDED.to_owned())?;
                     PointEmu {
                         x_emu: group.transform.offset.x_emu + member.left_emu
                             - round_emu(bounds.left)
@@ -1215,14 +1460,8 @@ impl WasmDocument {
                 height_emu: member.height_emu.max(1),
             };
             children.push(
-                into_group_child(member.inline, offset, child_extent).ok_or_else(|| {
-                    refused!(
-                        "object.group-inline",
-                        "Only floating objects can be grouped. An object that sits in the line \
-                         of text has to be made floating first."
-                    )
-                    .to_owned()
-                })?,
+                into_group_child(member.inline, offset, child_extent)
+                    .ok_or_else(|| GROUP_INLINE.to_owned())?,
             );
         }
 
@@ -1290,7 +1529,7 @@ impl WasmDocument {
             .map_err(|_| "invalid node id".to_owned())?;
         let paragraph = self
             .paragraph_of_object(object)
-            .ok_or_else(|| "not a group".to_owned())?;
+            .ok_or_else(|| NOT_A_GROUP.to_owned())?;
 
         // Positions come from where layout PAINTED each child, not from
         // arithmetic on the group's own rect. A group root's placed rect is the
@@ -1309,15 +1548,24 @@ impl WasmDocument {
             })
             .collect();
 
-        let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not a group".to_owned())?;
+        let source =
+            find_paragraph_any(&self.document, paragraph).ok_or_else(|| NOT_A_GROUP.to_owned())?;
         let mut inlines = source.inlines.clone();
 
         let at = inlines
             .iter()
             .position(|inline| matches!(inline, InlineNode::Group(group) if group.id == object))
+            // Two different causes used to arrive here as one message: an object
+            // that is not a group at all, and a group nested inside a hyperlink
+            // or a content control. They need different sentences, so the model
+            // is asked which it is rather than the reader being told the wrong
+            // one.
             .ok_or_else(|| {
-                "only a group sitting directly in a paragraph can be ungrouped".to_owned()
+                if crate::object_group_any_surface(&self.document, object).is_some() {
+                    GROUP_IN_WRAPPER.to_owned()
+                } else {
+                    NOT_A_GROUP.to_owned()
+                }
             })?;
         let InlineNode::Group(group) = inlines.remove(at) else {
             unreachable!("matched immediately above");
@@ -1326,9 +1574,9 @@ impl WasmDocument {
         let anchor = group
             .anchor
             .clone()
-            .ok_or_else(|| "not a floating group".to_owned())?;
+            .ok_or_else(|| GROUP_NOT_FLOATING.to_owned())?;
         if group.children.is_empty() {
-            return Err("the group has no children".to_owned());
+            return Err(GROUP_EMPTY.to_owned());
         }
         // The child space the group scaled its children by. Coming out of the
         // group, each child's own extent is in THAT space, so it is scaled into
@@ -1340,7 +1588,7 @@ impl WasmDocument {
         let mut replacements = Vec::with_capacity(group.children.len());
         for child in group.children {
             let (left, top) = child_page_origin(&child, &placed)
-                .ok_or_else(|| "the group is not fully placed on the page".to_owned())?;
+                .ok_or_else(|| GROUP_PARTLY_UNPLACED.to_owned())?;
             // The anchor goes on the content corner, so a nested group keeps
             // the offset between its declared box and its content — the same
             // correction grouping applies, in reverse. A leaf has no such
@@ -1348,7 +1596,7 @@ impl WasmDocument {
             let child = match child {
                 GroupChild::Group(nested) => {
                     let bounds = crate::group_content_bounds(&nested, nested.transform)
-                        .ok_or_else(|| "a nested group has no bounded content".to_owned())?;
+                        .ok_or_else(|| GROUP_UNBOUNDED.to_owned())?;
                     let inset = PointEmu {
                         x_emu: -round_emu(
                             (bounds.left - nested.transform.offset.x_emu as f64) * scale.0,
@@ -1467,9 +1715,9 @@ impl WasmDocument {
             .map_err(|_| "invalid node id".to_owned())?;
         let paragraph = self
             .paragraph_containing_inline_deep(object)
-            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+            .ok_or_else(|| NOT_A_GROUP_CHILD.to_owned())?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+            .ok_or_else(|| NOT_A_GROUP_CHILD.to_owned())?;
         let mut inlines = source.inlines.clone();
         let body = self
             .edit_ids
@@ -1480,7 +1728,7 @@ impl WasmDocument {
             // Already a text-bearing shape. Report success with the existing
             // body's caret and no undo entry.
             AddText::Already(existing) => return Ok(self.finish_edit(Pos::new(existing, 0))),
-            AddText::NotAShape => return Err("not a shape inside a group".to_owned()),
+            AddText::NotAShape => return Err(NOT_A_GROUP_CHILD.to_owned()),
         }
         self.apply_action_caret_as(
             vec![Operation::SetInlines {
@@ -1560,7 +1808,7 @@ impl WasmDocument {
             None => None,
             Some(value) => {
                 if !value.is_finite() {
-                    return Err("the rotation is not a finite number".to_owned());
+                    return Err(ROTATION_NOT_FINITE.to_owned());
                 }
                 let normalised = value.rem_euclid(360.0) * 60_000.0;
                 #[allow(clippy::cast_possible_truncation)] // < 360 * 60000 < i32::MAX
@@ -1643,31 +1891,25 @@ impl WasmDocument {
             }
         }
         if ids.len() < 2 {
-            return Err(refused!(
-                "object.group-too-few",
-                "Select at least two objects to group."
-            )
-            .to_owned());
+            return Err(GROUP_TOO_FEW.to_owned());
         }
 
         let mut paragraph = None;
         for id in &ids {
             let owner = self
                 .paragraph_of_object(*id)
-                .ok_or_else(|| "one of the objects is not in the document".to_owned())?;
+                .ok_or_else(|| GROUP_MEMBER_MISSING.to_owned())?;
             match paragraph {
                 None => paragraph = Some(owner),
                 Some(first) if first == owner => {}
                 Some(_) => {
-                    return Err(
-                        "objects anchored to different paragraphs cannot be grouped".to_owned()
-                    );
+                    return Err(GROUP_NOT_SIBLING.to_owned());
                 }
             }
         }
         let paragraph = paragraph.expect("at least two ids");
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "one of the objects is not in the document".to_owned())?;
+            .ok_or_else(|| GROUP_MEMBER_MISSING.to_owned())?;
 
         for id in &ids {
             if !source
@@ -1675,20 +1917,14 @@ impl WasmDocument {
                 .iter()
                 .any(|inline| top_level_object_id(inline) == Some(*id))
             {
-                return Err(
-                    "an object inside a hyperlink or a content control cannot be grouped"
-                        .to_owned(),
-                );
+                return Err(GROUP_IN_WRAPPER.to_owned());
             }
             match top_level_anchor(&source.inlines, *id) {
                 Some(Some(_)) => {}
                 Some(None) => {
-                    return Err(
-                        "an object in line with text cannot be grouped; give it a wrap first"
-                            .to_owned(),
-                    );
+                    return Err(GROUP_INLINE.to_owned());
                 }
-                None => return Err("one of the objects is not in the document".to_owned()),
+                None => return Err(GROUP_MEMBER_MISSING.to_owned()),
             }
         }
 
@@ -1706,20 +1942,12 @@ impl WasmDocument {
                 None => page = Some(object.page),
                 Some(first) if first == object.page => {}
                 Some(_) => {
-                    return Err(refused!(
-                        "object.group-across-pages",
-                        "Objects on different pages cannot be grouped."
-                    )
-                    .to_owned());
+                    return Err(GROUP_ACROSS_PAGES.to_owned());
                 }
             }
         }
         if placed != ids.len() {
-            return Err(refused!(
-                "object.group-unplaced",
-                "One of these objects is not laid out on the page yet, so it cannot be grouped."
-            )
-            .to_owned());
+            return Err(GROUP_UNPLACED.to_owned());
         }
         Ok((paragraph, ids))
     }
@@ -1741,7 +1969,7 @@ impl WasmDocument {
             return Ok(None);
         };
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
         if !restack_child_in_inlines(&mut inlines, object, step) {
             return Ok(None);
@@ -1776,7 +2004,7 @@ impl WasmDocument {
             collect_floats(&paragraph.inlines, paragraph.id, &mut floats);
         });
         let Some(position) = floats.iter().position(|float| float.id == object) else {
-            return Err("not a restackable object".to_owned());
+            return Err(NOT_RESTACKABLE.to_owned());
         };
         let band = floats[position].behind_doc;
 
@@ -1787,7 +2015,7 @@ impl WasmDocument {
             .collect();
         order.sort_by_key(|i| (floats[*i].z, *i));
         let Some(at) = order.iter().position(|i| *i == position) else {
-            return Err("not a restackable object".to_owned());
+            return Err(NOT_RESTACKABLE.to_owned());
         };
         let last = order.len() - 1;
         let target = match step {
@@ -1808,7 +2036,7 @@ impl WasmDocument {
         let mut wanted: Vec<(NodeId, NodeId, u32)> = Vec::new();
         for (rank, index) in order.into_iter().enumerate() {
             let float = &floats[index];
-            let rank = u32::try_from(rank).map_err(|_| "too many floating objects".to_owned())?;
+            let rank = u32::try_from(rank).map_err(|_| TOO_MANY_FLOATS.to_owned())?;
             if float.z != rank {
                 wanted.push((float.paragraph, float.id, rank));
             }
@@ -1830,7 +2058,7 @@ impl WasmDocument {
         let mut operations = Vec::with_capacity(paragraphs.len());
         for paragraph in paragraphs {
             let source = find_paragraph_any(&self.document, paragraph)
-                .ok_or_else(|| "not an object".to_owned())?;
+                .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
             let mut inlines = source.inlines.clone();
             for (owner, id, rank) in &wanted {
                 if *owner == paragraph {
@@ -1855,16 +2083,12 @@ impl WasmDocument {
         let paragraph = self
             .paragraph_of_object(object)
             .or_else(|| self.paragraph_containing_inline_deep(object))
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not an object".to_owned())?;
+            .ok_or_else(|| NOT_AN_OBJECT.to_owned())?;
         let mut inlines = source.inlines.clone();
         if !edit_transform_in_inlines(&mut inlines, object, edit) {
-            return Err(refused!(
-                "object.no-rotation",
-                "This object has no rotation or flip to change."
-            )
-            .to_owned());
+            return Err(NO_ROTATION.to_owned());
         }
         self.apply_action_caret_as(
             vec![Operation::SetInlines {
@@ -2048,11 +2272,7 @@ fn add_text_in_group(
             }
             GroupChild::Shape(shape) if shape.id == object => {
                 if shape.path.is_some() {
-                    return Err(
-                        "a freeform shape cannot hold text in this build; its custom \
-                         geometry would be flattened to a rectangle"
-                            .to_owned(),
-                    );
+                    return Err(FREEFORM_NO_TEXT.to_owned());
                 }
                 *child = GroupChild::TextBox(GroupTextBox {
                     id: shape.id,
@@ -2137,9 +2357,7 @@ fn anchor_at_page(mut anchor: DrawingAnchor, left_emu: i64, top_emu: i64) -> Dra
 fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, String> {
     match inline {
         InlineNode::Drawing(drawing) if floating => {
-            let extent = drawing.extent.ok_or_else(|| {
-                "the picture has no authored size, so it cannot be floated exactly".to_owned()
-            })?;
+            let extent = drawing.extent.ok_or_else(|| PICTURE_NO_SIZE.to_owned())?;
             let drawing = drawing.as_ref().clone();
             *inline = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
                 id: drawing.id,
@@ -2198,7 +2416,7 @@ fn convert_anchor_kind(inline: &mut InlineNode, floating: bool) -> Result<bool, 
             Ok(true)
         }
         InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) => Ok(false),
-        _ => Err("not an object".to_owned()),
+        _ => Err(NOT_AN_OBJECT.to_owned()),
     }
 }
 
@@ -2777,11 +2995,26 @@ mod tests {
             "an inline object reports no anchor: {read}"
         );
 
-        // Positioning an inline object refuses, and says what to call.
+        // Positioning an inline object refuses, and says what to do instead.
+        //
+        // This asserted `error.contains("setObjectAnchorKind")` — it pinned the
+        // refusal to naming a JS METHOD, which is the one thing a refusal must
+        // never show a reader (`webapp/tests/edit_errors.test.mjs`: "no engine
+        // error name ever reaches the user"). What matters is that the sentence
+        // names the gesture and carries a code a host can translate.
         let error = document
             .set_object_position_inner(&object, r#"{"wrap":"square"}"#)
             .expect_err("an inline object has no anchor");
-        assert!(error.contains("setObjectAnchorKind"), "{error}");
+        let (sentence, code) = casual_doc_edit::refusal::split(&error);
+        assert_eq!(code, Some("object.position-not-floating"), "{error}");
+        assert!(
+            sentence.contains("wrap"),
+            "it names the gesture: {sentence}"
+        );
+        assert!(
+            !sentence.contains("setObject"),
+            "and not the method: {sentence}"
+        );
 
         document
             .set_object_anchor_kind_inner(&object, "floating")
@@ -3631,6 +3864,278 @@ mod tests {
                 .is_err(),
             "and the facade refuses to rotate it, which is what the missing grip says"
         );
+    }
+
+    /// The text of a module before its test module — the only half that ships.
+    fn production(source: &str) -> &str {
+        source
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(source, |(head, _)| head)
+    }
+
+    /// The byte index of the closing quote of the string literal that starts at
+    /// `start`, honouring `\"`.
+    fn literal_end(span: &str, start: usize) -> Option<usize> {
+        let bytes = span.as_bytes();
+        (start..bytes.len()).find(|i| bytes[*i] == b'"' && bytes[i - 1] != b'\\')
+    }
+
+    /// The string literal whose closing quote sits at `close`, honouring `\"`.
+    fn literal_ending_at(span: &str, close: usize) -> Option<&str> {
+        let bytes = span.as_bytes();
+        let mut at = close;
+        while at > 0 {
+            at -= 1;
+            if bytes[at] == b'"' && (at == 0 || bytes[at - 1] != b'\\') {
+                return Some(&span[at + 1..close]);
+            }
+        }
+        None
+    }
+
+    /// Every string literal `span` hands to an error constructor as a BARE
+    /// literal — `to_js("…")`, `"…".to_owned()`, `"…".to_string()` — rather than
+    /// through `refused!` or a `const` built from it.
+    ///
+    /// Textual, and that is what makes it a cheap build-time rule: a
+    /// `refused!(…)` or a named const reaches `.to_owned()` through a `)` or an
+    /// identifier, never through a closing quote, so the two are told apart
+    /// without parsing Rust.
+    fn bare_error_literals(span: &str) -> Vec<&str> {
+        let bytes = span.as_bytes();
+        let mut out = Vec::new();
+        for call in [".to_owned()", ".to_string()"] {
+            let mut from = 0;
+            while let Some(found) = span[from..].find(call) {
+                let at = from + found;
+                from = at + call.len();
+                let mut back = at;
+                while back > 0 && bytes[back - 1].is_ascii_whitespace() {
+                    back -= 1;
+                }
+                if back > 0
+                    && bytes[back - 1] == b'"'
+                    && let Some(literal) = literal_ending_at(span, back - 1)
+                {
+                    out.push(literal);
+                }
+            }
+        }
+        let mut from = 0;
+        while let Some(found) = span[from..].find("to_js(\"") {
+            let start = from + found + "to_js(\"".len();
+            match literal_end(span, start) {
+                Some(end) => {
+                    out.push(&span[start..end]);
+                    from = end;
+                }
+                None => from = start,
+            }
+        }
+        out
+    }
+
+    /// Every `#[wasm_bindgen(js_name = …)]` method in `source` that belongs to
+    /// the object surface, paired with the text of the method that follows it.
+    ///
+    /// DERIVED from the source rather than hand-listed, so a new object entry
+    /// point joins the scan by existing (`SKILL` section 8 — counts and lists
+    /// are derived). The surface names itself: all fifteen of its exports carry
+    /// `Object`, plus `moveGroupChildBy`, the group-member mover. `Group` alone
+    /// would also catch `decideRevisionGroup`, which is a review command and
+    /// another family's conversion.
+    ///
+    /// A method's text ends at the first `}` closed at method indent, which is
+    /// this file's one and only shape for a method body.
+    fn object_geometry_spans(source: &str) -> Vec<(&str, &str)> {
+        const ATTRIBUTE: &str = "#[wasm_bindgen(js_name = ";
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(found) = source[from..].find(ATTRIBUTE) {
+            let at = from + found + ATTRIBUTE.len();
+            let Some(close) = source[at..].find(')') else {
+                break;
+            };
+            from = at + close;
+            let name = &source[at..at + close];
+            if !(name.contains("Object") || name.contains("GroupChild")) {
+                continue;
+            }
+            let end = source[at..]
+                .find("\n    }\n")
+                .map_or(source.len(), |offset| at + offset);
+            out.push((name, &source[at..end]));
+        }
+        out
+    }
+
+    /// The object-geometry family may not grow a refusal the reader cannot act
+    /// on.
+    ///
+    /// `webapp/src/edit_errors.mjs` replaces every UNMARKED refusal with one
+    /// generic sentence, so a bare `Err("not a floating object")` reaches the
+    /// reader as "That edit isn't supported for this selection yet" — about a
+    /// selection that is fine. The whole family was like that, which is the
+    /// second thing the owner hit while dragging shapes.
+    ///
+    /// This is the mirror of `casual_doc_edit::refusal`'s
+    /// `no_module_of_this_crate_writes_the_marker_by_hand`: that one stops a
+    /// hand-written marker from appearing without a code, this one stops a
+    /// refusal from appearing without the marker at all.
+    ///
+    /// It does NOT claim to cover every refusal in `lib.rs` — the other
+    /// families (paste, tables, fields) are their own conversions. It covers the
+    /// object module in full and, in `lib.rs`, every method whose exported name
+    /// mentions an object or a group.
+    #[test]
+    fn no_object_geometry_refusal_reaches_a_reader_without_a_code() {
+        // Internal vocabulary, deliberately generic. A malformed node id or a
+        // malformed JSON payload is a HOST programming error, not something a
+        // reader can act on, and the id space is 2^32 node ids — a bound no
+        // document reaches. `{"can":true}` is a JSON answer, not an error.
+        const INTERNAL: &[&str] = &[
+            "invalid node id",
+            "id space exhausted",
+            "expected a JSON array of node ids",
+            "{\\\"can\\\":true}",
+        ];
+
+        let mut offenders: Vec<(&str, &str)> =
+            bare_error_literals(production(include_str!("objects.rs")))
+                .into_iter()
+                .map(|literal| ("objects.rs", literal))
+                .collect();
+        for (name, span) in object_geometry_spans(production(include_str!("lib.rs"))) {
+            offenders.extend(
+                bare_error_literals(span)
+                    .into_iter()
+                    .map(|literal| (name, literal)),
+            );
+        }
+        offenders.retain(|(_, literal)| !INTERNAL.contains(literal));
+
+        assert!(
+            offenders.is_empty(),
+            "these object refusals reach the reader as the generic \"that edit isn't \
+             supported for this selection\" sentence; give each one a sentence and a \
+             code with `refused!` (the family's table is at the top of objects.rs), or \
+             add it to INTERNAL with a reason: {offenders:#?}"
+        );
+    }
+
+    /// One cause, one code, one sentence.
+    ///
+    /// A code is a published routing key a host translates, so the same code
+    /// carrying two different sentences would make the translation wrong for one
+    /// of them. Every `object.` code is defined exactly once — which is what the
+    /// `const` table buys and what keeps it from drifting back into inline
+    /// duplicates (there were seven, two of them already duplicated).
+    #[test]
+    fn every_object_refusal_code_is_defined_exactly_once() {
+        let mut codes: Vec<&str> = Vec::new();
+        for source in [
+            production(include_str!("objects.rs")),
+            production(include_str!("lib.rs")),
+        ] {
+            let mut from = 0;
+            while let Some(found) = source[from..].find("refused!(") {
+                let at = from + found + "refused!(".len();
+                let Some(quote) = source[at..].find('"') else {
+                    break;
+                };
+                let start = at + quote + 1;
+                let Some(end) = literal_end(source, start) else {
+                    break;
+                };
+                from = end;
+                let code = &source[start..end];
+                if code.starts_with("object.") {
+                    codes.push(code);
+                }
+            }
+        }
+        assert!(
+            codes.len() >= 25,
+            "the object refusal family is the table at the top of objects.rs; \
+             {} codes is too few to be it",
+            codes.len()
+        );
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        let mut duplicates: Vec<&&str> = Vec::new();
+        for pair in sorted.windows(2) {
+            if pair[0] == pair[1] && !duplicates.contains(&&pair[0]) {
+                duplicates.push(&pair[0]);
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            "an object refusal code is defined more than once, so one cause can \
+             reach the reader as two sentences: {duplicates:?}"
+        );
+        for code in &codes {
+            assert!(
+                code.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '.' || c == '-'),
+                "a routing code is stable, dotted and machine-shaped: {code:?}"
+            );
+        }
+    }
+
+    /// And the sentences actually reach the boundary, marked.
+    ///
+    /// The source scans above are build-time rules about text; this drives three
+    /// real refusals from three different entry points and asserts each arrives
+    /// as a reader's sentence plus a routable code, because a rule about source
+    /// text is not evidence that the behaviour is reachable (`SKILL` section 9
+    /// rule 4).
+    #[test]
+    fn a_refused_object_edit_arrives_with_a_sentence_and_a_code() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        let inserted = document
+            .insert_text_box(&paragraph, 0)
+            .expect("insert a text box")
+            .node;
+        let text_box = owner_box(&document, &inserted);
+
+        let refusals = [
+            (
+                "position a paragraph",
+                document
+                    .set_object_position_inner(&paragraph, "{}")
+                    .expect_err("a paragraph has no position"),
+                "object.not-selectable",
+            ),
+            (
+                "move a top-level box inside a group",
+                document
+                    .move_group_child_by_inner(&text_box, 1_000.0, 0.0)
+                    .expect_err("it is in no group"),
+                "object.not-group-child",
+            ),
+            (
+                "ungroup a text box",
+                document
+                    .ungroup_object_inner(&text_box)
+                    .expect_err("it is not a group"),
+                "object.not-a-group",
+            ),
+        ];
+        for (gesture, message, expected) in refusals {
+            let (sentence, code) = casual_doc_edit::refusal::split(&message);
+            assert_eq!(
+                code,
+                Some(expected),
+                "refusing to {gesture} carries its routing code: {message:?}"
+            );
+            assert!(
+                sentence.starts_with("refused: ")
+                    && sentence.len() > "refused: ".len() + 20
+                    && sentence.ends_with('.'),
+                "and a sentence a reader can act on: {sentence:?}"
+            );
+        }
     }
 
     /// Where the text of `paragraph`'s first painted line starts, in the painted
