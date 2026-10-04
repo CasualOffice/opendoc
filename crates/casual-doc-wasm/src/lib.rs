@@ -540,15 +540,16 @@ pub struct WasmDocument {
     /// all, which is how ADR-005 came to be honoured nowhere: the flat stacks
     /// carried the inverses, the forward operations were thrown away, and
     /// nothing could replay, rebase or transform them.
-    /// The shared-session protocol state, present only while this replica has joined a room.
-    ///
-    /// `None` is the standalone mode and the only honest default (`152` §2a): a document opened
-    /// from a file has no room, nobody to order its edits and nobody to tell. The browser's
-    /// transport installs one by feeding a `Welcome` to
-    /// [`WasmDocument::collab_receive_frame`]; see [`crate::collab`] for why the socket is the
-    /// host's and the session is the engine's.
-    session: Option<casual_doc_transaction::session::ClientSession>,
     log: RevisionLog,
+    /// The shared-session protocol state, present only while this replica has
+    /// joined a room.
+    ///
+    /// `None` is the standalone mode and the only honest default (`152` §2a): a
+    /// document opened from a file has no room, nobody to order its edits and
+    /// nobody to tell. The browser's transport installs one by feeding a
+    /// `Welcome` to `collab_receive_frame`; the `collab` module's header records
+    /// why the socket is the host's and the session is the engine's.
+    session: Option<casual_doc_transaction::session::ClientSession>,
     /// Mints transaction identities for this session. Monotonic and never
     /// reused, including after Undo — the same rule `edit_ids` and
     /// `revision_ids` follow, and for the same reason: an id that comes back is
@@ -34224,7 +34225,7 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5d),
             session: None,
-        log: RevisionLog::default(),
+            log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -34672,7 +34673,7 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5c),
             session: None,
-        log: RevisionLog::default(),
+            log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -34975,7 +34976,7 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5b),
             session: None,
-        log: RevisionLog::default(),
+            log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -38834,7 +38835,7 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
             session: None,
-        log: RevisionLog::default(),
+            log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -41008,7 +41009,7 @@ mod tests {
             default_config,
             edit_ids: IdGenerator::new(0x5a),
             session: None,
-        log: RevisionLog::default(),
+            log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,

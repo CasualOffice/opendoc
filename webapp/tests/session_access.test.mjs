@@ -25,6 +25,7 @@ const source = (...parts) => readFileSync(join(ROOT, ...parts), "utf8");
 const {
   ACCESS_REFUSAL_KEYS,
   COLLABORATION_REFUSAL_KEYS,
+  CONNECTION_LOST,
   GRANT_UNREADABLE,
   PARTICIPANT_CAPABILITIES,
   PARTICIPANT_GATED_COMMANDS,
@@ -32,6 +33,7 @@ const {
   REFUSAL_KEYS,
   capabilityForCommand,
   narrowCommandsToGrant,
+  narrowedToWire,
   participantAllowsMode,
   participantGrant,
   participantModeCeiling,
@@ -367,4 +369,131 @@ test("an unroutable code keeps the engine's own sentence rather than a generic o
   assert.equal(refusalKey("ODC-7010"), "collab.roomFull");
   assert.equal(sessionAccess({}, keys).sentenceFor("table.unmerge-not-merged"), "");
   assert.equal(sessionAccess({}, keys).sentenceFor("session.read-only-access"), "session.readOnly");
+});
+
+// ---- The grant arriving on the wire ---------------------------------------
+
+/** **A grant that arrives on the wire narrows this participant and cannot widen
+ *  them.**
+ *
+ *  Until the transport existed the grant arrived on the URL, which `152` §9
+ *  recorded as safe-by-construction rather than trusted because
+ *  `adoptParticipantCapabilities` intersects. `Welcome` and `Resumed` now carry
+ *  what the RELAY decided (`143` §10: a resume REPLACES the grant, so a
+ *  revocation cannot be undone by reconnecting), and this is the chrome's half
+ *  of the same intersection — a control must disable itself for exactly the
+ *  reason a submission would be refused.
+ *
+ *  The widening direction is the security property and the narrowing direction
+ *  is the one that silently stops working, so both are driven. */
+test("a grant arriving on the wire narrows the chrome and cannot widen it", () => {
+  const editor = participantGrant({ granted: "comment,edit", participant: 3 });
+
+  // Narrowing: the relay says comment-only, and the chrome agrees.
+  const narrowed = sessionAccess(narrowedToWire(editor, ["comment"], 3), keys);
+  assert.deepEqual([...narrowed.grant.names], ["comment"]);
+  assert.equal(narrowed.grant.decide("edit").allowed, false);
+  assert.equal(narrowed.grant.decide("edit").code, "session.comments-only-access");
+
+  // Widening: the relay claims owner for a participant holding two capabilities.
+  const widened = sessionAccess(
+    narrowedToWire(narrowed.grant, ["comment", "edit", "review", "suggest", "manageProtection"], 3),
+    keys,
+  );
+  assert.deepEqual(
+    [...widened.grant.names],
+    ["comment"],
+    "a value arriving on the wire WIDENED the chrome's grant, so the wire is a way to " +
+      "escalate and the intersection has become a replacement",
+  );
+});
+
+/** **A standalone replica takes the wire's list whole, and that is the
+ *  intersection rather than an exception to it.**
+ *
+ *  A document with no room holds everything, like `Capabilities::local` (`152`
+ *  §2a mode 1), so intersecting with it is the identity — which is exactly what
+ *  `adopt_participant_capabilities_internal` does in the engine when a first
+ *  `Welcome` lands on a document opened from a file. Getting this wrong the
+ *  other way is the subtle one: intersecting against an empty `names` would
+ *  leave every shared document a viewer and look like a working read-only mode.
+ */
+test("a standalone replica adopts the wire's grant whole", () => {
+  const standalone = participantGrant({});
+  assert.equal(standalone.shared, false);
+  const joined = sessionAccess(narrowedToWire(standalone, ["comment", "edit"], 7), keys);
+  assert.equal(joined.grant.shared, true);
+  assert.deepEqual([...joined.grant.names], ["comment", "edit"]);
+  assert.equal(joined.grant.participant, 7, "and the participant number is the relay's");
+});
+
+/** **A capability name this build does not know fails closed, with a reason.**
+ *
+ *  Passed straight through to `participantGrant` rather than filtered out here,
+ *  because `adoptParticipantCapabilities` refuses the WHOLE call on an unknown
+ *  name: dropping it and keeping the rest would leave the chrome and the engine
+ *  disagreeing about what this participant may do, with the chrome the more
+ *  permissive of the two. */
+test("an unknown capability on the wire narrows to a viewer and says so", () => {
+  const editor = participantGrant({ granted: "comment,edit", participant: 3 });
+  const access = sessionAccess(narrowedToWire(editor, ["edit", "teleport"], 3), keys);
+  assert.deepEqual([...access.grant.names], []);
+  assert.equal(access.grant.problem, GRANT_UNREADABLE);
+  assert.equal(access.problemMessage(), "session.grantUnreadable");
+});
+
+/** **A frame carrying no capability list leaves the grant exactly as it was.**
+ *
+ *  An `Ack`, an `Apply` and an `Awareness` carry no grant, so the transport hands
+ *  this `undefined` on every frame but two. Re-deriving the grant from nothing
+ *  must therefore be the identity, or every acknowledgement silently demotes the
+ *  reader to a viewer. */
+test("a frame with no capability list does not change the grant", () => {
+  for (const absent of [undefined, null, "edit"]) {
+    const editor = participantGrant({ granted: "comment,edit", participant: 3 });
+    const same = sessionAccess(narrowedToWire(editor, absent), keys);
+    assert.deepEqual([...same.grant.names], ["comment", "edit"], `for ${JSON.stringify(absent)}`);
+    assert.equal(same.grant.participant, 3);
+  }
+  // And a standalone document stays standalone rather than becoming a viewer.
+  const alone = sessionAccess(narrowedToWire(participantGrant({}), undefined), keys);
+  assert.equal(alone.grant.shared, false);
+  assert.equal(alone.grant.decide("edit").allowed, true);
+});
+
+/** **The connection-lost code is in the one table, and the engine never sends
+ *  it.**
+ *
+ *  The same shape as `session.grant-unreadable` and for a sharper reason: an
+ *  eviction IS a failed write, so there is no socket left to carry a refusal and
+ *  `protocol::Refusal` has no variant for it — which is also why it must NOT
+ *  appear in `docs/20`, where `every_refusal_code_has_a_row_in_the_register`
+ *  would fail the other way for a row no variant carries. Asserted in both
+ *  directions here, because a code with no sentence is a status bar showing a
+ *  key and a code the engine does send is a code this table should not invent.
+ */
+test("the connection-lost code is routed by the chrome and minted by nothing else", () => {
+  assert.equal(refusalKey(CONNECTION_LOST), "session.connectionLost");
+  assert.ok(EN_STRINGS["session.connectionLost"]);
+  const access = source("crates", "casual-doc-edit", "src", "access.rs");
+  const protection = source("crates", "casual-doc-edit", "src", "protection.rs");
+  const wasm = source("crates", "casual-doc-wasm", "src", "lib.rs");
+  const collab = source("crates", "casual-doc-wasm", "src", "collab.rs");
+  const register = source("docs", "20-ERROR-CODE-REGISTRY.md");
+  for (const [name, text] of [
+    ["access.rs", access],
+    ["protection.rs", protection],
+    ["lib.rs", wasm],
+    ["collab.rs", collab],
+    ["docs/20", register],
+  ]) {
+    assert.ok(
+      !text.includes(CONNECTION_LOST),
+      `${name} mentions ${CONNECTION_LOST}; a code the engine can produce does not belong ` +
+        "in the chrome-only half of this table, and one the wire can never carry does not " +
+        "belong in the register",
+    );
+  }
+  // The scan can see what it looks for.
+  assert.ok(`a ${CONNECTION_LOST} b`.includes(CONNECTION_LOST));
 });

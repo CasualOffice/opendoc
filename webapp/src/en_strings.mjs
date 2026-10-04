@@ -1178,6 +1178,12 @@ export const EN_STRINGS = Object.freeze({
   // SO, because silently granting less is a bug that looks like a working
   // read-only mode (`casual-doc-wasm`'s own reasoning, one layer up).
   "session.grantUnreadable": "This session's permissions could not be read, so the document is open read-only",
+  // The connection itself, which is the chrome's to report because the engine
+  // never sees one. An eviction IS a failed write, so there is no socket left to
+  // refuse down and no wire code to route — see `session_access.mjs`'s
+  // `CONNECTION_LOST`. It says only what is known: the connection is gone, so
+  // this copy may be behind. It deliberately does not guess at why.
+  "session.connectionLost": "The connection to this shared document was lost, so this copy may be behind",
   // The DOCUMENT's own `w:documentProtection`, which is the other authority and
   // asks the same of everyone (ADR-052). Reachable on a document opened from a
   // file with no room at all, and until these keys existed every one of them
@@ -1202,5 +1208,15 @@ export const EN_STRINGS = Object.freeze({
   "collab.idCollision": "A change from someone else named something this copy already has, so it was not applied",
   "collab.staleBase": "The document moved on while that change was in flight — it is being sent again",
   "collab.roomFull": "This document already has as many people editing as it allows — try again shortly",
+  // The three connection states `collab_transport.mjs` reports, which are a
+  // different question from the refusals above: a refusal explains one message,
+  // and these describe where the reader's typing is going right now. Each names
+  // the consequence rather than the mechanism — "not shared yet" is what a
+  // reader can act on, "the socket closed" is not. `reconnecting` covers a first
+  // connection that has not landed as well as a lost one, because to the reader
+  // they are the same fact.
+  "collab.connected": "Shared — your changes are reaching everyone in this document",
+  "collab.reconnecting": "Connection lost — reconnecting. Changes you make now are not shared yet",
+  "collab.stopped": "Not connected to this shared document — your changes are staying on this device",
 
 });

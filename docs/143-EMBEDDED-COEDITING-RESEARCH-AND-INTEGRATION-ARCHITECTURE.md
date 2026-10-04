@@ -1,7 +1,15 @@
 # 143 — Embedded Co-Editing Research and Integration Architecture
 
-**Status:** Proposed architecture; research and documentation only. Real-time
-collaboration is not implemented or supported.
+**Status:** Proposed architecture. ~~Research and documentation only. Real-time
+collaboration is not implemented or supported.~~ **Overtaken by implementation,
+2026-10-04:** ADR-033/047 are accepted, the transform and the two session state
+machines are built (`150`, `152`), the relay is a workspace binary with a journal
+(ADR-058), and ADR-063 selected the wire transport. §14's C5 gate is **half met** —
+two clients converge through one relay, proven character-for-character against
+offline `combine` — and the §8.4 provider state machine is partly built, with three
+of its states reaching a reader. What is NOT implemented, and must not be read out
+of this status line: five-client convergence, token expiry, role loss under load,
+remote cursors, and any call site in the editor chrome (`109` RM-16).
 
 **Reviewed:** 2026-09-28.
 
@@ -15,8 +23,12 @@ This document answers two different questions:
    document engine into a mandatory document server.
 
 It refines the integration and deployment parts deliberately left open by doc
-107. It does not accept ADR-033, select a wire transport, reserve a package name,
-or authorize implementation.
+107. ~~It does not accept ADR-033, select a wire transport, reserve a package
+name, or authorize implementation.~~ **Two of those four have since happened
+elsewhere, and the ordering this document recommended in §17 was the one actually
+followed:** ADR-033 was accepted and superseded in detail by ADR-047, and ADR-063
+selected the wire transport after C0–C2 closed and after convergence had been
+proven without a network. A package name is still unreserved (§16 Q7).
 
 ---
 
@@ -100,6 +112,19 @@ different editor implementations.
 7. **No sync-state UX or observability.** Connected, catching up, offline,
    reconnecting, rejected, conflicted, and desynchronized states need host events
    and accessible editor feedback.
+
+   **Partly closed 2026-10-04, and the part that is closed is smaller than the
+   list above.** `webapp/src/collab_transport.mjs` reports **three** reader-facing
+   states — `connected`, `reconnecting`, `stopped` — each with a translated
+   sentence in all nineteen locales, and hands the host every engine outcome
+   (`refused`, `stopped`, tombstone dispositions, the `desynced` latch) verbatim
+   with its stable `ODC-7xxx` code. Three and not seven is a decision rather than
+   a shortfall: *catching up* is a `Resumed` the reader cannot act on differently,
+   *offline* and *reconnecting* are one fact about where their typing is going,
+   and *rejected* and *incompatible* are terminal stops whose own code is more
+   specific than a fourth label. **Still owed:** a host EVENT surface (the states
+   reach a callback, not the embed contract), and the accessible editor feedback —
+   nothing in `webapp/src/main.js` renders any of it yet, which is `109` RM-16.
 8. **The public docs conflicted at audit start.** Doc 83 named a Yjs adapter
    although the later owner decision selected OT; doc 45 called the choice
    deferred; and the package README's limitations section predated the

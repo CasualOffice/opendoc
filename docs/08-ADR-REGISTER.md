@@ -3791,3 +3791,47 @@ left to send a refusal down. That is why no `Refusal` variant was added for it a
 version was not bumped: the reader-facing state is a transport state, routed the way
 `session.grant-unreadable` already is in `webapp/src/session_access.mjs` — a code in the chrome's
 one table that the engine never produces, because the engine is never handed the condition.
+
+### Addendum, 2026-10-04 — the browser half, and the one thing it changed about this decision
+
+Built in the same branch: `casual-doc-wasm/src/collab.rs` (the session, sans-I/O) and
+`webapp/src/collab_transport.mjs` (the socket, with its opener, timers and randomness injected).
+Both are **not yet reachable from the product** — `webapp/src/main.js` has no call site — and
+that is stated here rather than implied, because a capability recorded as built and not
+reachable is the most expensive recurring pattern in this repository (`SKILL` §9.4, `109` RM-16).
+
+The division above survived contact. One thing about it did not, and it is worth recording
+because the obvious implementation of the browser half is wrong:
+
+> **`ClientSession::flush` advances its mark AS IT HANDS A CHUNK OVER, and no path rewinds it
+> except a `Refused` the client actually received.** `flush` sets `self.flushed = upto` and
+> pushes to `self.sent` before returning; `resumed` replaces the capabilities and sets
+> `awaiting`, and rewinds neither.
+
+So the reasonable-sounding design — "the engine holds the unacknowledged work, therefore the
+browser needs no queue, and anything queued may be dropped on a reconnect" — loses data. A
+chunk the browser takes from `collabNextChunk()` and fails to write is offered by nothing ever
+again. `152` §5.4 says "the log is the pending queue" and that remains true of what has *not
+been flushed*; it is not true of what has. The transport therefore holds **custody**, not a
+cache: it never polls while the socket is shut (a poll is a handover), it keeps a frame until
+`send` returns, and it replays the queue in order ahead of anything new on the next connection.
+Replaying a chunk the relay may already hold is the designed recovery rather than a hazard —
+`(client, seq)` suppresses the duplicate, or `ODC-7009 StaleBase` comes back and
+`ClientSession::refused` rewinds the mark so the engine re-offers a rebased chunk.
+
+Two consequences follow for anyone writing a second client:
+
+- the browser must not treat `collabNextChunk()` as idempotent or cheap to discard;
+- a `Join` is the exception — it is rebuilt per connection from `collabState.revision`, so a
+  join whose write failed must **not** be held, or the next connection sends two.
+
+The reader-facing state is three values with a sentence each (`collab.connected`,
+`collab.reconnecting`, `collab.stopped`) plus the chrome-only `session.connection-lost` this
+ADR's previous section specifies, and the backoff is full jitter per AWS's "Exponential Backoff
+And Jitter", guarded as a doubling ratio rather than against a clock (`107` §4). Twenty-one
+mutations were run across the two new guard files and every one reddened its guard; two guards
+had to be rewritten first, because the mutation exposed the guard rather than the code — one
+asserted a join ordering a queue-everything implementation also satisfies, and one drove only
+the phases whichever of two redundant gates happened to check first. The second of those is now
+**one** gate in `connect`, for the reason `SKILL` §8 gives about two mechanisms for one rule: a
+gate split in two is a gate whose halves cannot both be driven red.

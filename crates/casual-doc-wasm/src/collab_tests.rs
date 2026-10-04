@@ -256,9 +256,20 @@ fn the_opening_frame_carries_the_key_and_refuses_what_it_cannot_use() {
 /// rather than left to review: an arrival is applied by `ClientSession::receive`, which goes
 /// down `RevisionLog::apply` inside the engine crate, and a direct operation here would be an
 /// edit the revision chain never sees.
+///
+/// The scan looks at **code**, not at prose. The first draft of this pair scanned raw source
+/// and the facade's own header quoted `.apply` with its arguments while explaining why the
+/// choke point is not bypassed — so the guard reddened on the paragraph that documents the
+/// rule, which is a guard pinned to its circumstance rather than to its guarantee. `lib.rs`
+/// avoids that by convention (its prose writes `casual_doc_edit::apply` without a
+/// parenthesis), and a convention an author has to remember is one that breaks; this one is
+/// mechanical instead. [`facade_code`] drops only lines that are a comment in their
+/// ENTIRETY, so it can never remove a line that carries code, and the positive controls at
+/// the bottom assert both halves of that.
 #[test]
 fn the_collab_facade_applies_nothing_outside_the_session() {
-    let source = include_str!("collab.rs");
+    let source = facade_code(include_str!("collab.rs"));
+    let source = source.as_str();
     for forbidden in [
         "casual_doc_edit::apply(",
         "apply_edit(",
@@ -280,6 +291,35 @@ fn the_collab_facade_applies_nothing_outside_the_session() {
         1,
         "an arrival must be merged in exactly one place; a second would be a second rebase"
     );
-    // And the scan can see what it forbids, so it cannot pass by failing to look.
-    assert!("let x = self.document.definitions_mut();".contains("definitions_mut("));
+    // And the scan can see what it forbids, so it cannot pass by failing to look. Three
+    // controls, because the stripper is now part of what has to be trusted: it keeps code,
+    // it drops a whole-line comment, and it does not take the code beside a trailing one.
+    assert!(
+        facade_code("let x = self.document.definitions_mut();").contains("definitions_mut("),
+        "the scan must keep a line of code that carries what it forbids"
+    );
+    assert!(
+        !facade_code("//! `.apply(&mut self.document, transaction)` is the forbidden call")
+            .contains(".apply(&mut self.document"),
+        "a whole-line comment must be dropped, or prose quoting the rule reddens this guard"
+    );
+    assert!(
+        facade_code("self.document.body_mut(); // not body_mut( really").contains("body_mut();"),
+        "a trailing comment must not take the code beside it out of the scan"
+    );
+}
+
+/// The facade's source with its whole-line comments removed, so the choke-point scan reads
+/// code and not the paragraph that explains the rule.
+///
+/// Conservative by construction, and that is the entire design: a line is dropped **only**
+/// when it is a comment in its entirety, so no line carrying any code can be removed and a
+/// trailing `//` cannot be used to blind the scan. The three shapes this matters for — `//!`,
+/// `///` and a standalone `//` — are all whole-line, which is to say they are prose.
+fn facade_code(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

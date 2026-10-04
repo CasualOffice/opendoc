@@ -908,6 +908,18 @@ export function hostConfig(view = globalThis) {
     // intersects, so a value from this side can only ever narrow.
     granted: params?.get("granted") ?? null,
     participant: params?.get("participant") ?? null,
+    // THE ROOM ITSELF, read here for the same reason the two above are: a host's
+    // configuration arrives in one place or it arrives in two. `152` §2a — the
+    // HOST creates the room at embed or share time, not the first client — so
+    // the endpoint is a host input and `null` is the standalone mode rather
+    // than a room that failed to resolve.
+    //
+    // Returned VERBATIM, like every other field here. This function reads; it
+    // does not decide. `collab_transport.mjs`'s `roomUrl` is what refuses
+    // anything that is not a `ws:`/`wss:` URL, and it is there rather than here
+    // because a transport's own input belongs to the transport — and because a
+    // refusal is only useful where there is something to say it to.
+    room: params?.get("room") ?? null,
     framed,
   };
 }

@@ -1108,12 +1108,30 @@ fn the_keystroke_path_runs_no_transform() {
 fn the_live_editor_has_no_collaboration_dependency() {
     // The second half of `107` exit gate 7, and the half a source scan of THIS crate can
     // never see: `casual-doc-wasm` is the live editing path, and it must not reach the
-    // collaboration modules at all. A lone editor then cannot execute one line of them, which
-    // is a stronger statement than "the keystroke path does not call transform" — it is
+    // collaboration modules. A lone editor then cannot execute one line of them, which is a
+    // stronger statement than "the keystroke path does not call transform" — it is
     // "collaboration is something a session acquires, not a mode the engine is built in".
     //
-    // Doc 152 §9 states the scope this pins: `casual-doc-wasm` is deliberately unchanged by
-    // that increment, so this guard is what stops the next one changing it by accident.
+    // ## NARROWED 2026-10-04, from a file-count to a file-BOUNDARY (ADR-063)
+    //
+    // This guard used to read "`casual-doc-wasm` does not reach these modules AT ALL", and
+    // `152` §2 said so in prose. ADR-063 made that false by design: the browser owns the
+    // socket and the ENGINE owns the session, so `collab.rs` is the session facade the
+    // browser's transport drives, and it necessarily names `ClientSession`, the codec and the
+    // protocol. The guard failed, correctly, on the lane that landed it.
+    //
+    // A guard pinned to "the crate does not mention these names" was pinned to the
+    // CIRCUMSTANCE. The guarantee is that a lone editor executes none of it, and what secures
+    // that is a boundary rather than a count: **the collaboration surface of the live editor
+    // is exactly one module.** `collab.rs` may name the machinery; nothing else may. So a
+    // keystroke path cannot reach a session, a presence reader cannot grow one, and the
+    // 26,000-line facade cannot acquire a second route to the wire — which is what the old
+    // reading actually bought, and it is bought here too.
+    //
+    // The standalone guarantee is structural and not scanned for: `WasmDocument::session` is
+    // an `Option` that `open_document_bounded` sets to `None`, and every `collab_*` entry
+    // point needs a `Welcome` to fill it. `152` §2a mode 1 is a document with no room, and
+    // `a_replica_with_nothing_pending_does_not_roll_back` is what holds its cost at zero.
     //
     // ## The one exception, and why it is narrow rather than convenient
     //
@@ -1150,12 +1168,44 @@ fn the_live_editor_has_no_collaboration_dependency() {
     const PROTOCOL: &str = "casual_doc_transaction::protocol";
     const PROTOCOL_CLIENT_ID: &str = "casual_doc_transaction::protocol::ClientId";
 
+    // The ONE module that may hold the session, and its test file. A FILE boundary and not a
+    // re-export or a type alias, for exactly the reason the `ClientId` note below gives: an
+    // alias in `collab.rs` would let any file in the crate reach `ClientSession` while this
+    // scan reported clean, which is a guard that lies. Naming the real path in the one place
+    // that is allowed to is what keeps the scan honest.
+    const FACADE: [&str; 2] = ["collab.rs", "collab_tests.rs"];
+
+    // `lib.rs` declares the session SLOT, and that is the one thing it cannot delegate: the
+    // field sits beside the document, the log and the id generator that the facade borrows
+    // mutably. So it is admitted by exact TEXT and by COUNT — one declaration, nothing else —
+    // and the rest of `lib.rs` is then held to the same rule as every other file. A second
+    // mention anywhere in those 26,000 lines offends.
+    const SESSION_SLOT: &str =
+        "    session: Option<casual_doc_transaction::session::ClientSession>,\n";
+
     let editor = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("casual-doc-wasm")
         .join("src");
     let mut offenders = Vec::new();
+    let mut facade_seen = Vec::new();
     for (name, text) in sources(&editor) {
+        if FACADE.contains(&name.as_str()) {
+            facade_seen.push(name);
+            continue;
+        }
+        let text = if name == "lib.rs" {
+            let declared = text.matches(SESSION_SLOT).count();
+            if declared != 1 {
+                offenders.push(format!(
+                    "lib.rs declares the session slot {declared} times, not once — the \
+                     admitted declaration has moved or been duplicated"
+                ));
+            }
+            text.replace(SESSION_SLOT, "")
+        } else {
+            text
+        };
         for forbidden in FORBIDDEN {
             if text.contains(forbidden) {
                 offenders.push(format!("{name} reaches `{forbidden}`"));
@@ -1175,12 +1225,30 @@ fn the_live_editor_has_no_collaboration_dependency() {
     }
     assert!(
         offenders.is_empty(),
-        "the live editor now reaches the collaboration modules: {offenders:?}"
+        "the live editor now reaches the collaboration modules outside its one facade module: \
+         {offenders:?}"
+    );
+    // The exception must be covering something that exists. A `FACADE` naming a file that is
+    // no longer there is an exception the next lane can move the session back under, and the
+    // guard would report clean while the boundary had dissolved.
+    facade_seen.sort();
+    assert_eq!(
+        facade_seen,
+        FACADE.to_vec(),
+        "the facade module this guard excepts is not in the crate, so the exception is \
+         covering nothing"
     );
     let planted = "use casual_doc_transaction::session::ClientSession;";
     assert!(
         FORBIDDEN.iter().any(|item| planted.contains(item)),
         "the scan cannot see a dependency it is supposed to forbid"
+    );
+    // And the admitted declaration is stripped by exact text, so a SECOND use of the type in
+    // `lib.rs` is still caught — the exception is one line, not a licence for the file.
+    let twice = format!("{SESSION_SLOT}    let s: ClientSession = todo!();");
+    assert!(
+        twice.replace(SESSION_SLOT, "").contains("ClientSession"),
+        "stripping the admitted declaration must not blind the scan to a second mention"
     );
     // The narrowed half has to be able to fail too, or the exception would have quietly
     // readmitted the whole module: a `use` list pairing the admitted type with a forbidden one

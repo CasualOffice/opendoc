@@ -38,14 +38,22 @@
 //!
 //! # The choke point is not bypassed, and here is why
 //!
-//! `every_document_mutation_is_a_transaction` scans `lib.rs` and requires exactly one
-//! `.apply(&mut self.document, transaction)` call site, inside `apply_group`. Nothing here adds
-//! a second: an arrival is applied by
+//! `every_document_mutation_is_a_transaction` scans `lib.rs` and requires the envelope's one
+//! document-mutating call to sit inside `apply_group` and nowhere else. Nothing here adds a
+//! second: an arrival is applied by
 //! [`ClientSession::receive`](casual_doc_transaction::session::ClientSession::receive), which
 //! goes down `RevisionLog::apply` **inside the engine crate** — the same envelope, one layer
 //! further in. That is the point of ADR-005 rather than an exception to it, and
 //! `the_collab_facade_applies_nothing_outside_the_session` holds the line for this module the
 //! way the lib.rs guard holds it for that one.
+//!
+//! That paragraph deliberately does not spell the forbidden call out, and `lib.rs`'s own prose
+//! follows the same rule — it writes `casual_doc_edit::apply` without its parenthesis. Both
+//! guards scan source text, so a sentence quoting what it forbids reddens the guard on prose
+//! rather than on code. This header's first draft did exactly that, which is why the scan now
+//! drops whole-line comments before it looks: a convention an author has to remember is a
+//! convention that breaks, and dropping a line that is a comment in its entirety cannot hide
+//! any code.
 //!
 //! # What is deliberately still owed
 //!
@@ -206,7 +214,9 @@ impl WasmDocument {
 
     /// Feeds one frame from the relay to the session, and applies whatever it carried.
     ///
-    /// Returns an [`Outcome`] as JSON. A **refusal is not an error**: it is an outcome with a
+    /// Returns an `Outcome` as JSON — named in code text and not as a link, because the type
+    /// is private and `RUSTDOCFLAGS="-D warnings"` refuses a public item linking to one.
+    /// A **refusal is not an error**: it is an outcome with a
     /// code, because the connection survives one and a transport that caught it as an exception
     /// would have to decide what to do with a `StaleBase` — which is exactly the decision this
     /// module exists to keep. The only errors are a frame that could not be read and an arrival
@@ -262,12 +272,15 @@ impl WasmDocument {
         let state = State {
             joined: self.session.is_some(),
             participant: self.session.as_ref().map(|s| s.client().get()),
-            revision: self
+            revision: self.session.as_ref().map_or(0, |s| s.revision().get()),
+            unacknowledged: self
                 .session
                 .as_ref()
-                .map_or(0, |s| s.revision().get()),
-            unacknowledged: self.session.as_ref().is_some_and(ClientSession::has_unacknowledged),
-            desynced: self.session.as_ref().is_some_and(ClientSession::is_desynced),
+                .is_some_and(ClientSession::has_unacknowledged),
+            desynced: self
+                .session
+                .as_ref()
+                .is_some_and(ClientSession::is_desynced),
             stopped: self
                 .session
                 .as_ref()
@@ -344,7 +357,10 @@ impl WasmDocument {
             } => {
                 let session = ClientSession::joined(&self.document, message, &mut self.log)
                     .map_err(|error| {
-                        marked(error.refusal().code(), &format!("Joining the shared session failed: {error}."))
+                        marked(
+                            error.refusal().code(),
+                            &format!("Joining the shared session failed: {error}."),
+                        )
                     })?;
                 let participant = session.client().get();
                 self.session = Some(session);
@@ -371,7 +387,10 @@ impl WasmDocument {
                     ));
                 };
                 session.resumed(message).map_err(|error| {
-                    marked(error.refusal().code(), &format!("Resuming the shared session failed: {error}."))
+                    marked(
+                        error.refusal().code(),
+                        &format!("Resuming the shared session failed: {error}."),
+                    )
                 })?;
                 let participant = session.client().get();
                 self.collab_adopt(participant, *capabilities)?;
@@ -416,7 +435,10 @@ impl WasmDocument {
                 session
                     .acknowledge(*through, *revision, &mut self.log)
                     .map_err(|error| {
-                        marked(error.refusal().code(), &format!("The shared session refused an acknowledgement: {error}."))
+                        marked(
+                            error.refusal().code(),
+                            &format!("The shared session refused an acknowledgement: {error}."),
+                        )
                     })?;
                 let mut outcome = Outcome::of("ack");
                 outcome.revision = revision.get();
@@ -445,7 +467,10 @@ impl WasmDocument {
                     return Err(malformed_state("a refusal"));
                 };
                 session.refused(*seq, *reason, &self.log).map_err(|error| {
-                    marked(error.refusal().code(), &format!("The shared session has stopped: {error}."))
+                    marked(
+                        error.refusal().code(),
+                        &format!("The shared session has stopped: {error}."),
+                    )
                 })?;
                 let mut outcome = Outcome::of("refused");
                 outcome.code = Some(reason.code());

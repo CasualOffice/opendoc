@@ -16,6 +16,16 @@ lane writes the rule and proves it converges. Everything that *calls* the rule i
 > machines and the rollback/replay driver that invokes `transform`. It corrects §6's last row
 > and §10 Q1/Q2 in place, and adds §10 Q2a. Read it with §6 and §10 below.
 
+> **And it reaches a socket, 2026-10-04.** The exclusions above now hold only of this
+> document's own scope, not of the tree: the transport is ADR-063 and the relay is
+> `opendoc-relay`, so `transform` runs against operations that crossed a process boundary
+> rather than a function call. `two_clients_through_one_relay_converge_on_one_document`
+> compares the merged text character-for-character against this document's offline `combine`
+> answer, which is the first time §5's convergence claim has been checked end to end rather
+> than in one process. §1's "single-user needs no server and never has" is unchanged and
+> still binding — read with `152` §2a, it is the statement about **mode 1**, the document
+> opened from a file; a *shared* document joins a room from its first open.
+
 **The sibling is the reference.** `opencalc` (`/services/opencalc`) accepted the same
 decision in its ADR-011 / `docs/56` and has a working `transform` over a closed op set. The
 shape, the vocabulary (`Side`, `subject`/`against`, refuse-rather-than-guess, TP1 as a
