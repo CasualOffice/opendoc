@@ -22,9 +22,11 @@ use std::collections::BTreeMap;
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{Definitions, Fill};
+// Own line (anti-conflict): the `p:defaultTextStyle` tier's type.
+use casual_pres_model::ListStyle;
 use casual_pres_model::{
     LayoutKind, ShapeTree, Slide, SlideId, SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId,
-    SlideSize, SlideSizeKind,
+    SlideSize, SlideSizeKind, TextStyles,
 };
 
 use crate::ImportError;
@@ -33,6 +35,9 @@ use crate::loss::Reporter;
 use crate::media::MediaResolver;
 use crate::opc::{PresentationPackage, Relationships};
 use crate::shapes::{Surface, read_background, read_shape_tree};
+// Own line (anti-conflict): the master's `p:txStyles` tiers share the
+// `a:lstStyle` reader.
+use crate::text::read_list_style;
 use crate::xml::{Cursor, attribute, boolean_attribute, children, integer_attribute, local_name};
 
 /// What `ppt/presentation.xml` declares.
@@ -44,6 +49,9 @@ pub(crate) struct PresentationPart {
     pub(crate) slide_relationship_ids: Vec<String>,
     /// `p:sldMasterIdLst`'s relationship ids, in declaration order.
     pub(crate) master_relationship_ids: Vec<String>,
+    /// `p:defaultTextStyle`: the LAST tier of the text cascade, below every
+    /// master's `p:txStyles`.
+    pub(crate) default_text_style: ListStyle,
 }
 
 /// Reads `ppt/presentation.xml`.
@@ -55,6 +63,7 @@ pub(crate) fn read_presentation_part(
     bytes: &[u8],
     part: &str,
     reporter: &mut Reporter,
+    ids: &mut Ids,
     limits: crate::limits::ImportLimits,
 ) -> Result<PresentationPart, ImportError> {
     let mut cursor = Cursor::new(bytes, part, limits);
@@ -62,6 +71,7 @@ pub(crate) fn read_presentation_part(
     let mut slide_size: Option<SlideSize> = None;
     let mut slide_relationship_ids: Vec<String> = Vec::new();
     let mut master_relationship_ids: Vec<String> = Vec::new();
+    let mut default_text_style = ListStyle::default();
 
     children(&mut cursor, |cursor, element, empty| {
         let local = local_name(element);
@@ -111,13 +121,14 @@ pub(crate) fn read_presentation_part(
                 Ok(false)
             }
             b"defaultTextStyle" => {
-                // The last tier of the text cascade (slide, layout, master,
-                // THEN this). Not modelled, and its absence means a run with no
-                // stated size has no size anywhere in the chain.
-                if !empty {
-                    reporter.omitted(part, local);
+                // The last tier of the text cascade (shape, layout, master's
+                // `p:txStyles`, THEN this). A `CT_TextListStyle` like every other
+                // tier, so it goes through the one reader.
+                if empty {
+                    return Ok(false);
                 }
-                Ok(false)
+                default_text_style = read_list_style(cursor, reporter, ids)?;
+                Ok(true)
             }
             b"sldLayoutIdLst" | b"photoAlbum" | b"custShowLst" | b"kinsoku"
             | b"embeddedFontLst" | b"modifyVerifier" => {
@@ -142,6 +153,7 @@ pub(crate) fn read_presentation_part(
         slide_size: slide_size.ok_or(ImportError::MissingSlideSize)?,
         slide_relationship_ids,
         master_relationship_ids,
+        default_text_style,
     })
 }
 
@@ -222,6 +234,12 @@ pub(crate) struct CommonSlideData {
     pub(crate) name: Option<String>,
     pub(crate) background: Option<Fill>,
     pub(crate) shapes: ShapeTree,
+    /// The master's `p:txStyles`, which is a SIBLING of `p:cSld` rather than a
+    /// child of it, and is therefore empty for a layout or a slide. Carried out
+    /// through the same struct because `read_root_children` is what walks both and
+    /// a second return value would thread an always-empty tier set through two
+    /// readers that cannot use it.
+    pub(crate) text_styles: TextStyles,
 }
 
 /// Reads a slide, layout or master part's `p:cSld`, plus the root attributes the
@@ -286,6 +304,9 @@ fn read_common_slide_data(
         name,
         background,
         shapes,
+        // `p:txStyles` is a sibling of `p:cSld`, not a child, so this reader never
+        // sees one. `read_root_children` substitutes what it read.
+        text_styles: TextStyles::default(),
     })
 }
 
@@ -360,6 +381,7 @@ pub(crate) fn read_master(
         shapes: common.shapes,
         name: common.name,
         background: common.background,
+        text_styles: common.text_styles,
     })
 }
 
@@ -398,6 +420,7 @@ fn read_root_children(
     surface: Surface,
 ) -> Result<CommonSlideData, ImportError> {
     let mut common: Option<CommonSlideData> = None;
+    let mut text_styles = TextStyles::default();
     let PartContext {
         reporter,
         ids,
@@ -445,11 +468,17 @@ fn read_root_children(
                 Ok(false)
             }
             b"txStyles" => {
-                // The master's three text-style tiers (title, body, other), each
-                // nine levels deep. The cascade's largest single contribution,
-                // and `casual-pres-model` names it as deliberately unmodelled.
-                reporter.omitted(part, local);
-                Ok(false)
+                // The master's three text-style tiers (title, body, other), each a
+                // nine-level `CT_TextListStyle` — the cascade's largest single
+                // contribution, and the reason a slide's runs have a resolvable
+                // font size at all. Only on a MASTER: `p:txStyles` is not a child
+                // of `p:sldLayout` or `p:sld`, so a layout carrying one is
+                // malformed and keeps falling through to the report.
+                if empty {
+                    return Ok(false);
+                }
+                text_styles = read_text_styles(cursor, reporter, ids)?;
+                Ok(true)
             }
             b"hf" => {
                 reporter.omitted(part, local);
@@ -463,16 +492,62 @@ fn read_root_children(
         }
     })?;
     match common {
-        Some(common) => Ok(common),
+        Some(common) => Ok(CommonSlideData {
+            text_styles,
+            ..common
+        }),
         None => {
             reporter.invalid(part, b"cSld");
             Ok(CommonSlideData {
                 name: None,
                 background: None,
                 shapes: ShapeTree::empty(ids.next()?, surface.width_emu, surface.height_emu),
+                // A part with no `p:cSld` is already being reported as invalid;
+                // whatever `p:txStyles` it carried is not worth salvaging onto a
+                // master with no shapes.
+                text_styles: TextStyles::default(),
             })
         }
     }
+}
+
+/// Reads a master's `p:txStyles` into the three tiers.
+///
+/// Each tier is a `CT_TextListStyle`, the same grammar `a:lstStyle` uses, so this
+/// delegates to the one reader rather than growing a second. `p:titleStyle`,
+/// `p:bodyStyle` and `p:otherStyle` are the only children ECMA-376 allows; an
+/// `p:extLst` is scaffolding and anything else is reported.
+///
+/// O(levels), bounded at nine per tier by `ListStyle::validate`.
+fn read_text_styles(
+    cursor: &mut Cursor<'_>,
+    reporter: &mut Reporter,
+    ids: &mut Ids,
+) -> Result<TextStyles, ImportError> {
+    let part = cursor.part().to_owned();
+    let mut styles = TextStyles::default();
+    children(cursor, |cursor, element, empty| {
+        let local = local_name(element);
+        let tier = match local {
+            b"titleStyle" => &mut styles.title,
+            b"bodyStyle" => &mut styles.body,
+            b"otherStyle" => &mut styles.other,
+            b"extLst" => return Ok(false),
+            other => {
+                reporter.omitted(&part, other);
+                return Ok(false);
+            }
+        };
+        // An empty tier states nothing, which is what `TextStyles::default` already
+        // holds — and `enter`ing a self-closing element would consume its sibling's
+        // events as its children.
+        if empty {
+            return Ok(false);
+        }
+        *tier = read_list_style(cursor, reporter, ids)?;
+        Ok(true)
+    })?;
+    Ok(styles)
 }
 
 /// Resolves one `r:id` against a part's relationships to an admitted part name.

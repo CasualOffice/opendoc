@@ -226,6 +226,26 @@ impl ListStyle {
     pub fn is_empty(&self) -> bool {
         self.levels.iter().all(Option::is_none)
     }
+
+    /// Refuses a list style with more than [`TEXT_LEVELS`] levels, and validates
+    /// each level it does declare.
+    ///
+    /// Lives here rather than at each call site because there are now four kinds of
+    /// `a:lstStyle` in the model — a shape's, a placeholder's, each of a master's
+    /// three `p:txStyles` tiers, and the presentation's `p:defaultTextStyle` — and
+    /// a per-site copy of one rule is a rule the next site forgets. The nine-level
+    /// ceiling is `ST_TextIndentLevelType`'s own, so it is the same everywhere.
+    ///
+    /// O(levels), which is bounded by the ceiling it enforces.
+    pub fn validate(&self) -> Result<(), PresentationError> {
+        if self.levels.len() > TEXT_LEVELS {
+            return Err(PresentationError::TooManyTextLevels(self.levels.len()));
+        }
+        for properties in self.levels.iter().flatten() {
+            properties.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// A shape's text (`a:txBody`).
@@ -303,14 +323,7 @@ impl TextBody {
         if self.paragraphs.is_empty() {
             return Err(PresentationError::EmptyTextBody);
         }
-        if self.list_style.levels.len() > TEXT_LEVELS {
-            return Err(PresentationError::TooManyTextLevels(
-                self.list_style.levels.len(),
-            ));
-        }
-        for properties in self.list_style.levels.iter().flatten() {
-            properties.validate()?;
-        }
+        self.list_style.validate()?;
         for paragraph in &self.paragraphs {
             paragraph.validate()?;
         }

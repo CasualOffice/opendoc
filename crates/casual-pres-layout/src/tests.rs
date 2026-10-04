@@ -9,6 +9,7 @@ use casual_doc_model::v1::{
     Definitions, Extent, GroupChild, GroupPicture, GroupShape, GroupTransform, MediaId,
     MediaReference, PointEmu, ShapeGeometry, WordprocessingGroup,
 };
+use casual_pres_model::TextStyles;
 use casual_pres_model::{
     LayoutKind, Presentation, ShapeTree, Slide, SlideId, SlideLayout, SlideLayoutId, SlideMaster,
     SlideMasterId, SlideNode, SlideSize,
@@ -79,6 +80,9 @@ fn three_tier_deck() -> Presentation {
         ),
         name: None,
         background: None,
+        // No `p:txStyles`: slide TEXT is not laid out yet, so no tier here can
+        // change what this fixture paints.
+        text_styles: TextStyles::default(),
     };
     let layout = SlideLayout {
         id: SlideLayoutId::new(id(20)),
@@ -297,6 +301,9 @@ fn a_picture_resolves_its_media_part_and_an_unresolvable_one_paints_nothing() {
         shapes: tree(id(11), Vec::new(), size),
         name: None,
         background: None,
+        // No `p:txStyles`: slide TEXT is not laid out yet, so no tier here can
+        // change what this fixture paints.
+        text_styles: TextStyles::default(),
     };
     let layout = SlideLayout {
         id: SlideLayoutId::new(id(20)),
@@ -357,6 +364,9 @@ fn laying_out_one_slide_does_not_depend_on_the_decks_length() {
             shapes: tree(id(11), Vec::new(), size),
             name: None,
             background: None,
+            // No `p:txStyles`: slide TEXT is not laid out yet, so no tier here can
+            // change what this fixture paints.
+            text_styles: TextStyles::default(),
         };
         let layout = SlideLayout {
             id: SlideLayoutId::new(id(20)),
@@ -492,6 +502,9 @@ fn a_slide_shape_with_a_custom_geometry_paints_its_path_not_its_preset() {
         shapes: tree(id(11), Vec::new(), size),
         name: None,
         background: None,
+        // No `p:txStyles`: slide TEXT is not laid out yet, so no tier here can
+        // change what this fixture paints.
+        text_styles: TextStyles::default(),
     };
     let layout = SlideLayout {
         id: SlideLayoutId::new(id(20)),

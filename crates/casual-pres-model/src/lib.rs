@@ -46,6 +46,7 @@ mod text_body;
 mod text_bullet;
 mod text_paragraph;
 mod text_run;
+mod text_styles;
 
 pub use error::{PresentationError, SlideAxis};
 pub use ids::{SlideId, SlideLayoutId, SlideMasterId};
@@ -67,6 +68,7 @@ pub use text_run::{
     MAX_FONT_SIZE_HUNDREDTHS, MAX_SPACING_HUNDREDTHS, MIN_FONT_SIZE_HUNDREDTHS, TextCaps,
     TextCharacterProperties, TextStrike, TextUnderline, Typeface,
 };
+pub use text_styles::TextStyles;
 
 #[cfg(test)]
 mod tests;

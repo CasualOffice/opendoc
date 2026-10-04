@@ -714,9 +714,6 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         // the presentation path yet.
         "timing",
         "transition",
-        // Two tiers of the text cascade.
-        "txStyles",
-        "defaultTextStyle",
         // The colour map, which is why a scheme colour cannot be resolved.
         "clrMap",
         // Fills and effects outside the modelled subset.
@@ -732,6 +729,17 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         assert!(
             features.contains(&expected),
             "the report must name {expected}; it named {features:?}"
+        );
+    }
+
+    // The two cascade tiers are READ now, so naming either would be claiming a
+    // loss that did not happen. Asserted as absent rather than merely dropped from
+    // the list above, because a list is satisfied by a report that says nothing.
+    for recovered in ["txStyles", "defaultTextStyle"] {
+        assert!(
+            !features.contains(&recovered),
+            "{recovered} is modelled now, so reporting it would overstate the loss: \
+             {features:?}"
         );
     }
 
@@ -1000,5 +1008,251 @@ fn importing_the_same_package_twice_is_deterministic() {
     assert_eq!(
         first.presentation.node_ids().len(),
         second.presentation.node_ids().len()
+    );
+}
+
+/// The two cascade tiers arrive with their authored values, in their authored
+/// units, and the tier selection is the one PowerPoint uses.
+///
+/// This is the half that the absence of a loss finding cannot prove: a reader that
+/// consumed `p:txStyles` and threw it away reports nothing either. So every value
+/// is checked, and the title and body tiers are checked to be DIFFERENT, because a
+/// reader that put the same `ListStyle` in all three would satisfy any single-tier
+/// assertion.
+#[test]
+fn the_master_text_style_tiers_and_the_default_text_style_are_read() {
+    use casual_pres_model::PlaceholderKind;
+
+    let imported = import_fixture();
+    let master = &imported.presentation.masters()[0];
+
+    // `a:defRPr@sz` is HUNDREDTHS of a point, so 4400 is 44pt. A reader that
+    // treated it as `w:sz`'s half-points would land on 2200 hundredths — 22pt —
+    // and a title at half size still looks like a title.
+    let title = master
+        .text_styles
+        .title
+        .level(0)
+        .expect("the title tier states level 1");
+    assert_eq!(
+        title.alignment,
+        Some(casual_pres_model::TextAlign::Center),
+        "p:titleStyle's lvl1 is centred"
+    );
+    assert_eq!(
+        title
+            .default_character
+            .as_ref()
+            .and_then(|character| character.size_hundredths_point),
+        Some(4400),
+        "44pt, in hundredths of a point"
+    );
+
+    let body = master
+        .text_styles
+        .body
+        .level(0)
+        .expect("the body tier states level 1");
+    assert_eq!(body.margin_left_emu, Some(228_600), "a:lvl1pPr@marL in EMU");
+    assert_eq!(
+        body.indent_emu,
+        Some(-228_600),
+        "a hanging indent is NEGATIVE"
+    );
+    assert_eq!(
+        body.default_character
+            .as_ref()
+            .and_then(|character| character.size_hundredths_point),
+        Some(2800),
+        "28pt body text"
+    );
+    assert!(
+        body.bullet.is_some(),
+        "the body tier's authored a:buChar must survive"
+    );
+
+    // The tiers are distinct, which is what proves three readers were not one.
+    assert_ne!(
+        master.text_styles.title.level(0),
+        master.text_styles.body.level(0),
+        "a title is 44pt centred and a body is 28pt bulleted; one ListStyle in \
+         both slots would pass every assertion above"
+    );
+
+    // `p:defaultTextStyle` is the LAST tier, on the presentation rather than the
+    // master, and 18pt is PowerPoint's own default body size.
+    assert_eq!(
+        imported
+            .presentation
+            .default_text_style()
+            .level(0)
+            .and_then(|level| level.default_character.as_ref())
+            .and_then(|character| character.size_hundredths_point),
+        Some(1800),
+        "p:defaultTextStyle's lvl1 is 18pt"
+    );
+
+    // Tier selection. The entry that matters is the LAST one: a shape in no slot
+    // takes the BODY tier, not the other tier, which is the reading the element
+    // names do not give you.
+    for (slot, expected) in [
+        (Some(PlaceholderKind::Title), &master.text_styles.title),
+        (Some(PlaceholderKind::CtrTitle), &master.text_styles.title),
+        (Some(PlaceholderKind::Body), &master.text_styles.body),
+        (Some(PlaceholderKind::SubTitle), &master.text_styles.body),
+        (Some(PlaceholderKind::Object), &master.text_styles.body),
+        (Some(PlaceholderKind::Footer), &master.text_styles.other),
+        (
+            Some(PlaceholderKind::SlideNumber),
+            &master.text_styles.other,
+        ),
+        (None, &master.text_styles.body),
+    ] {
+        assert_eq!(
+            master.text_styles.tier(slot),
+            expected,
+            "{slot:?} resolves to the wrong tier"
+        );
+    }
+}
+
+/// A SELF-CLOSING `a:rPr` keeps its attributes.
+///
+/// `<a:rPr lang="en-US" sz="2400" i="1"/>` is the commonest run-properties form
+/// PowerPoint writes — a childless element whose whole content is attributes — and
+/// every one of the four character-property call sites used to answer
+/// `TextCharacterProperties::default()` for it. So a stated size, weight, italic,
+/// underline or spacing on a childless element was dropped, which is most of the
+/// stated formatting in most real decks.
+///
+/// The existing size guard could not catch it: the title's `a:rPr` has an
+/// `a:solidFill` and an `a:latin` child, so it takes the non-empty path. This one
+/// is pinned to the subtitle, whose `a:rPr` is self-closing, and asserts the
+/// fixture still carries that form — otherwise the row proves nothing.
+#[test]
+fn a_self_closing_run_properties_element_keeps_its_attributes() {
+    assert!(
+        String::from_utf8_lossy(
+            &deck::deck_parts()
+                .into_iter()
+                .find(|(name, _)| name == "ppt/slides/slide1.xml")
+                .expect("the fixture carries slide1.xml")
+                .1
+        )
+        .contains(r#"<a:rPr lang="en-US" sz="2400" i="1"/>"#),
+        "the fixture must still carry a self-closing a:rPr with attributes, or \
+         this guard is vacuous"
+    );
+
+    let imported = import_fixture();
+    let slide = &imported.presentation.slides()[0];
+    let subtitle = slide
+        .shapes
+        .children
+        .iter()
+        .find(|child| {
+            child
+                .placeholder
+                .is_some_and(|slot| slot.kind == casual_pres_model::PlaceholderKind::SubTitle)
+        })
+        .expect("the title slide fills the subTitle slot");
+    let properties = subtitle
+        .text
+        .as_ref()
+        .and_then(|body| body.paragraphs.first())
+        .and_then(|paragraph| paragraph.runs.first())
+        .and_then(|run| run.properties())
+        .expect("the subtitle's first run states properties");
+
+    assert_eq!(
+        properties.size_hundredths_point,
+        Some(2_400),
+        "24pt, from a self-closing a:rPr"
+    );
+    assert_eq!(
+        properties.italic,
+        Some(true),
+        "i=\"1\" from the same element"
+    );
+    assert_eq!(
+        properties.language.as_deref(),
+        Some("en-US"),
+        "and @lang, which is on every a:rPr Word or PowerPoint writes"
+    );
+}
+
+/// A self-closing `a:endParaRPr` keeps its attributes too — the third call site.
+///
+/// Worth its own row rather than folded into the `a:rPr` one: the four
+/// character-property call sites share a helper and nothing else, so reverting any
+/// one of them leaves the others green. `a:endParaRPr` carries the formatting of
+/// the paragraph MARK, which is what gives an empty trailing paragraph its height
+/// — a 14pt mark read as "no properties" collapses the blank line a deck's author
+/// put there deliberately.
+#[test]
+fn a_self_closing_paragraph_mark_keeps_its_attributes() {
+    let imported = import_fixture();
+    let body = imported
+        .presentation
+        .slides()
+        .get(1)
+        .and_then(|slide| slide.shapes.slot(PlaceholderKind::Object, 1))
+        .and_then(|node| node.text.as_ref())
+        .expect("slide 2's content placeholder carries text");
+    let last = body
+        .paragraphs
+        .last()
+        .expect("the body ends with the empty paragraph");
+    assert!(
+        last.runs.is_empty(),
+        "the last paragraph is the empty one, whose only content is its mark"
+    );
+    let mark = last
+        .end_properties
+        .as_deref()
+        .expect("a:endParaRPr states the mark's properties");
+    assert_eq!(
+        mark.size_hundredths_point,
+        Some(1_400),
+        "14pt, from a self-closing a:endParaRPr"
+    );
+}
+
+/// And a line break's `a:rPr`, which is the fourth and last call site.
+///
+/// `<a:br><a:rPr sz="1200"/></a:br>` is how a deck sets the height of the blank it
+/// is inserting: the break carries run properties of its own, and a 12pt break in a
+/// 24pt paragraph is a deliberately tighter gap. Read as "no properties" it becomes
+/// a full-size line and the layout the author tuned is gone.
+#[test]
+fn a_line_breaks_run_properties_are_read() {
+    use casual_pres_model::TextRun;
+
+    let imported = import_fixture();
+    let subtitle = imported.presentation.slides()[0]
+        .shapes
+        .children
+        .iter()
+        .find(|child| {
+            child
+                .placeholder
+                .is_some_and(|slot| slot.kind == PlaceholderKind::SubTitle)
+        })
+        .and_then(|node| node.text.as_ref())
+        .expect("the title slide's subtitle carries text");
+    let break_properties = subtitle
+        .paragraphs
+        .iter()
+        .flat_map(|paragraph| paragraph.runs.iter())
+        .find_map(|run| match run {
+            TextRun::LineBreak(line_break) => Some(line_break),
+            _ => None,
+        })
+        .and_then(|line_break| line_break.properties.as_deref())
+        .expect("the subtitle's a:br states its own properties");
+    assert_eq!(
+        break_properties.size_hundredths_point,
+        Some(1_200),
+        "12pt, from the break's own self-closing a:rPr"
     );
 }

@@ -45,11 +45,12 @@
 //!
 //! **It does not render text.** `casual-pres-layout` consumes a validated
 //! [`Presentation`](casual_pres_model::Presentation) and turns its shapes into a
-//! display list, so a deck imported here can be laid out. The placeholder
-//! *text* cascade — the chain that gives a run with no stated size its font size,
-//! through the layout, the master's `p:txStyles` and `p:defaultTextStyle` — is
-//! not built, and this importer reads neither of the last two tiers. So the text
-//! model arrives complete and nothing yet draws it (`SKILL` §9.4: modelled is not
+//! display list, so a deck imported here can be laid out. Every TIER of the
+//! placeholder text cascade now arrives — the shape's `a:lstStyle`, the
+//! placeholder's on the layout and the master, the master's `p:txStyles` and the
+//! presentation's `p:defaultTextStyle` — but the RESOLVER that folds them into one
+//! effective property set per paragraph is not built, so a run with no stated size
+//! still has no resolved size and nothing draws it (`SKILL` §9.4: modelled is not
 //! shipped).
 //!
 //! # Where the security boundary is

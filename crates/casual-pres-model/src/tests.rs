@@ -16,7 +16,7 @@ use crate::{
     LayoutKind, MAX_SLIDE_EMU, MIN_SLIDE_EMU, Placeholder, PlaceholderKind, PlaceholderOrientation,
     PlaceholderSize, Presentation, PresentationError, SCHEMA_VERSION, ShapeTree, Slide, SlideAxis,
     SlideId, SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId, SlideNode, SlideSize,
-    SlideSizeKind,
+    SlideSizeKind, TextStyles,
 };
 
 /// A node id from a small counter, so a fixture reads as `id(7)`.
@@ -110,6 +110,9 @@ fn deck() -> Presentation {
         shapes: tree(id(11), vec![SlideNode::new(shape(id(12)))]),
         name: None,
         background: None,
+        // No `p:txStyles`: this fixture predates the text cascade, and empty
+        // tiers are exactly what a master with no `p:txStyles` carries.
+        text_styles: TextStyles::default(),
     };
     let layout = SlideLayout {
         id: SlideLayoutId::new(id(20)),
@@ -349,6 +352,9 @@ fn a_layout_naming_a_master_that_does_not_exist_is_refused() {
         shapes: tree(id(11), Vec::new()),
         name: None,
         background: None,
+        // No `p:txStyles`: this fixture predates the text cascade, and empty
+        // tiers are exactly what a master with no `p:txStyles` carries.
+        text_styles: TextStyles::default(),
     };
     let layout = SlideLayout {
         id: SlideLayoutId::new(id(20)),
@@ -544,6 +550,9 @@ fn a_slot_resolves_through_slide_then_layout_then_master() {
         shapes: tree(id(11), vec![SlideNode::new(shape(id(12))).in_slot(slot)]),
         name: None,
         background: None,
+        // No `p:txStyles`: this fixture predates the text cascade, and empty
+        // tiers are exactly what a master with no `p:txStyles` carries.
+        text_styles: TextStyles::default(),
     };
     let layout = SlideLayout {
         id: SlideLayoutId::new(id(20)),
@@ -615,6 +624,9 @@ fn a_slot_resolves_through_slide_then_layout_then_master() {
             shapes: tree(id(11), vec![SlideNode::new(shape(id(12))).in_slot(slot)]),
             name: None,
             background: None,
+            // No `p:txStyles`: this fixture predates the text cascade, and empty
+            // tiers are exactly what a master with no `p:txStyles` carries.
+            text_styles: TextStyles::default(),
         }],
         vec![bare_layout],
         vec![bare.clone()],
@@ -792,6 +804,9 @@ fn the_id_walk_is_linear_in_the_deck_rather_than_quadratic() {
             shapes: tree(id(11), Vec::new()),
             name: None,
             background: None,
+            // No `p:txStyles`: this fixture predates the text cascade, and empty
+            // tiers are exactly what a master with no `p:txStyles` carries.
+            text_styles: TextStyles::default(),
         };
         let layout = SlideLayout {
             id: SlideLayoutId::new(id(20)),
@@ -1429,5 +1444,43 @@ fn spacing_as_a_percentage_and_as_points_are_distinct_representations() {
     assert_eq!(
         serde_json::to_value(points).expect("serializable")["unit"],
         "points"
+    );
+}
+
+/// A `p:defaultTextStyle` deeper than nine levels is refused, like every other
+/// `a:lstStyle` in the model.
+///
+/// The bottom tier arrives through `with_default_text_style` AFTER construction, so
+/// it misses `Presentation::new`'s validation unless the builder re-validates. It
+/// does, and this is what says so — otherwise the nine-level ceiling would hold for
+/// a shape's list style and not for the one every shape inherits through.
+#[test]
+fn a_default_text_style_deeper_than_nine_levels_is_refused() {
+    use crate::{TEXT_LEVELS, TextParagraphProperties};
+
+    let presentation = deck();
+    let mut levels: Vec<Option<TextParagraphProperties>> = (0..=TEXT_LEVELS)
+        .map(|_| Some(TextParagraphProperties::default()))
+        .collect();
+    assert_eq!(levels.len(), TEXT_LEVELS + 1, "one level too many");
+
+    let refused = presentation
+        .clone()
+        .with_default_text_style(crate::ListStyle {
+            levels: levels.clone(),
+        });
+    assert!(
+        matches!(refused, Err(PresentationError::TooManyTextLevels(count)) if count == TEXT_LEVELS + 1),
+        "a tenth level must be refused, not stored: {refused:?}"
+    );
+
+    // The control: exactly nine is accepted, so the guard is bounding the ceiling
+    // rather than refusing every default text style.
+    levels.pop();
+    assert!(
+        presentation
+            .with_default_text_style(crate::ListStyle { levels })
+            .is_ok(),
+        "nine levels is the ceiling, not an error"
     );
 }

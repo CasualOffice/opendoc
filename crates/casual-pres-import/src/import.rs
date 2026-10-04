@@ -28,10 +28,14 @@
 //! `a:r`/`a:rPr`, `a:br` and `a:fld`. Media reachable from an `a:blip@r:embed`
 //! is registered in `Definitions::media`.
 //!
+//! The two tiers of the text cascade above the shape are read too: a master's
+//! `p:txStyles` (title, body and other, nine levels each) and the presentation's
+//! `p:defaultTextStyle`, both through the one `CT_TextListStyle` reader
+//! `a:lstStyle` uses.
+//!
 //! **Not read, and reported:** the theme part — so every `a:schemeClr`,
 //! `p:style` reference and `p:clrMap` is a reported gap and no shape gets a
-//! themed fill; `p:txStyles` and `p:defaultTextStyle`, which are two tiers of the
-//! text cascade; `p:transition` and `p:timing`; notes and handout masters;
+//! themed fill; `p:transition` and `p:timing`; notes and handout masters;
 //! `p:graphicFrame`, so tables, charts and SmartArt do not arrive at all;
 //! gradient, picture and pattern fills; effects; `a:tbl`; `a:arcTo`; and
 //! `p14:sectionLst`.
@@ -130,6 +134,7 @@ pub fn import_pptx(
         &presentation_bytes,
         &presentation_part,
         &mut reporter,
+        &mut ids,
         limits,
     )?;
     let presentation_relationships = package.relationships_of(&presentation_part)?;
@@ -315,7 +320,11 @@ pub fn import_pptx(
         layouts,
         slides,
         definitions,
-    )?;
+    )?
+    // The bottom tier of the text cascade, attached after construction because it
+    // is an optional part and a seventh positional argument would be a breaking
+    // change to every caller for something most packages omit.
+    .with_default_text_style(declaration.default_text_style)?;
     let (report, ledger) = reporter.finish()?;
     Ok(ImportedPresentation {
         presentation,

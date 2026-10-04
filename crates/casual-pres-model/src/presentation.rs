@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     LayoutKind, PlaceholderKind, PresentationError, ShapeTree, SlideId, SlideLayoutId,
-    SlideMasterId, SlideSize,
+    SlideMasterId, SlideSize, TextStyles,
 };
+// Own line (anti-conflict): the presentation-wide bottom tier of the text cascade.
+use crate::text_body::ListStyle;
 
 /// The schema version stamped on a presentation.
 ///
@@ -86,6 +88,15 @@ pub struct SlideMaster {
     /// The master background, the last fallback in the cascade.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Fill>,
+    /// The three text-style tiers (`p:txStyles`) every shape on a slide using this
+    /// master inherits its text properties from, after its own shape and its
+    /// layout.
+    ///
+    /// Carried on the master and NOT resolved into each shape, for the same reason
+    /// the placeholder geometry is not: a round trip must not turn inheritance into
+    /// authorship. [`TextStyles::tier`] picks which of the three applies.
+    #[serde(default, skip_serializing_if = "TextStyles::is_empty")]
+    pub text_styles: TextStyles,
 }
 
 /// A normalized presentation.
@@ -109,10 +120,15 @@ pub struct SlideMaster {
 /// # What this does not yet model
 ///
 /// Stated rather than left ambiguous (`SKILL` §8): notes slides and handout masters,
-/// `a:txBody` slide text (the interim carrier is the document model's `BlockNode`
-/// inside a text box), the `p:txStyles` master text-style tiers, transitions
-/// (`p:transition`), animation (`p:timing`), and slide sections (`p14:sectionLst`).
-/// None of them are forward-incompatible with this envelope; each is additive.
+/// transitions (`p:transition`), animation (`p:timing`), and slide sections
+/// (`p14:sectionLst`). None of them are forward-incompatible with this envelope;
+/// each is additive.
+///
+/// The `p:txStyles` tiers and `p:defaultTextStyle` **are** modelled now
+/// ([`SlideMaster::text_styles`], [`Presentation::default_text_style`]), so every
+/// tier of the text cascade is carried. What is not built is the RESOLVER that
+/// folds them — a run with no stated size still has no resolved size, and
+/// `casual-pres-layout` still draws no glyphs.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Presentation {
@@ -123,6 +139,8 @@ pub struct Presentation {
     layouts: Vec<SlideLayout>,
     slides: Vec<Slide>,
     definitions: Definitions,
+    #[serde(default, skip_serializing_if = "ListStyle::is_empty")]
+    default_text_style: ListStyle,
 }
 
 impl Presentation {
@@ -152,9 +170,35 @@ impl Presentation {
             layouts,
             slides,
             definitions,
+            // The bottom tier is set through `with_default_text_style` rather than
+            // taken here. Adding a seventh positional argument would be a breaking
+            // change to every caller for a part most packages do not carry, and
+            // `docs/156` §5a is about exactly that kind of churn.
+            default_text_style: ListStyle::default(),
         };
         presentation.validate()?;
         Ok(presentation)
+    }
+
+    /// Attaches the presentation-wide `p:defaultTextStyle`: the LAST tier a run's
+    /// properties resolve through before the engine's own defaults.
+    ///
+    /// Re-validates, because a list style deeper than nine levels is refused
+    /// wherever it appears and this one arrives after construction.
+    pub fn with_default_text_style(
+        mut self,
+        default_text_style: ListStyle,
+    ) -> Result<Self, PresentationError> {
+        self.default_text_style = default_text_style;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// The presentation-wide `p:defaultTextStyle`, empty when the package carries
+    /// none.
+    #[must_use]
+    pub const fn default_text_style(&self) -> &ListStyle {
+        &self.default_text_style
     }
 
     /// The schema version (always [`SCHEMA_VERSION`] for a valid presentation).
@@ -367,6 +411,19 @@ impl Presentation {
         for layout in &self.layouts {
             layout.shapes.validate(&self.definitions)?;
         }
+        for master in &self.masters {
+            // All three `p:txStyles` tiers, not just the one a given shape reads:
+            // an unvalidated tier is a nine-level invariant that holds only for the
+            // shapes that happen to use the tier somebody checked.
+            for tier in [
+                &master.text_styles.title,
+                &master.text_styles.body,
+                &master.text_styles.other,
+            ] {
+                tier.validate()?;
+            }
+        }
+        self.default_text_style.validate()?;
         for slide in &self.slides {
             slide.shapes.validate(&self.definitions)?;
         }

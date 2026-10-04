@@ -35,7 +35,9 @@ use crate::ImportError;
 use crate::color::read_solid_fill;
 use crate::ids::Ids;
 use crate::loss::Reporter;
-use crate::xml::{Cursor, attribute, boolean_attribute, children, integer_attribute, local_name};
+use crate::xml::{
+    Cursor, attribute, boolean_attribute, children, enter, integer_attribute, local_name,
+};
 
 /// Reads an `a:txBody`, having just entered it.
 ///
@@ -196,10 +198,14 @@ fn read_body_properties(
 /// Reads `a:lstStyle`'s `a:lvl1pPr` … `a:lvl9pPr` into the zero-based level
 /// vector.
 ///
-/// A level beyond nine is refused rather than stored: `TextBody::validate`
+/// A level beyond nine is refused rather than stored: `ListStyle::validate`
 /// bounds the vector at [`TEXT_LEVELS`], and a tenth level is markup no
 /// conforming producer writes.
-fn read_list_style(
+///
+/// Shared with the master's `p:txStyles` tiers, which are `CT_TextListStyle` too —
+/// the element name differs and the content model does not, so reading them through
+/// a second function would be two readers of one grammar.
+pub(crate) fn read_list_style(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     ids: &mut Ids,
@@ -279,11 +285,7 @@ fn read_paragraph(
                 Ok(consumed)
             }
             b"endParaRPr" => {
-                let read = if empty {
-                    TextCharacterProperties::default()
-                } else {
-                    read_character_properties(cursor, reporter, element)?
-                };
+                let read = read_character_properties(cursor, reporter, element, empty)?;
                 if !read.is_empty() {
                     end_properties = Some(Box::new(read));
                 }
@@ -328,11 +330,7 @@ fn read_run(
             if !empty {
                 children(cursor, |cursor, child, child_empty| {
                     if local_name(child) == b"rPr" {
-                        let read = if child_empty {
-                            TextCharacterProperties::default()
-                        } else {
-                            read_character_properties(cursor, reporter, child)?
-                        };
+                        let read = read_character_properties(cursor, reporter, child, child_empty)?;
                         if !read.is_empty() {
                             properties = Some(Box::new(read));
                         }
@@ -354,11 +352,8 @@ fn read_run(
                 children(cursor, |cursor, child, child_empty| {
                     match local_name(child) {
                         b"rPr" => {
-                            let read = if child_empty {
-                                TextCharacterProperties::default()
-                            } else {
-                                read_character_properties(cursor, reporter, child)?
-                            };
+                            let read =
+                                read_character_properties(cursor, reporter, child, child_empty)?;
                             if !read.is_empty() {
                                 properties = Some(Box::new(read));
                             }
@@ -529,11 +524,7 @@ fn read_paragraph_properties(
                 Ok(true)
             }
             b"defRPr" => {
-                let read = if empty {
-                    TextCharacterProperties::default()
-                } else {
-                    read_character_properties(cursor, reporter, child)?
-                };
+                let read = read_character_properties(cursor, reporter, child, empty)?;
                 if !read.is_empty() {
                     properties.default_character = Some(Box::new(read));
                 }
@@ -621,17 +612,35 @@ fn read_tab_stops(
     Ok(stops)
 }
 
-/// Reads `a:rPr` / `a:defRPr` / `a:endParaRPr` and its children.
+/// Reads `a:rPr` / `a:defRPr` / `a:endParaRPr`: its attributes always, and its
+/// children when it has any.
+///
+/// # Why `empty` is a parameter rather than the caller's business
+///
+/// It was the caller's business, and all four call sites got it wrong the same
+/// way: each wrote `if empty { default() } else { read(..) }`, which discards the
+/// **attributes** of a self-closing element. `<a:rPr lang="en-US" sz="2000" b="1"/>`
+/// is the commonest run-properties form PowerPoint writes, and `<a:defRPr sz="2800"/>`
+/// is what nearly every `p:txStyles` level carries — so every stated size, weight
+/// and typeface on a childless element was being dropped, which is most of them.
+/// The guard was there because this function used to call `children`
+/// unconditionally, and doing that on a self-closing element consumes the following
+/// sibling's events.
+///
+/// Taking `empty` here and entering through [`enter`] makes the guarded form the
+/// only form, which is the same fix and the same reasoning `enter`'s own
+/// documentation records for `a:avLst`.
 ///
 /// Every field stays `Option`, and that is not tidiness: on a slide an unset
-/// property **inherits** through the placeholder cascade (slide, then layout,
-/// then master, then `p:defaultTextStyle`), so collapsing "unset" into "the
-/// default value" freezes inherited text at the wrong tier. It is the single
+/// property **inherits** through the placeholder cascade (shape, then layout, then
+/// master's `p:txStyles`, then `p:defaultTextStyle`), so collapsing "unset" into
+/// "the default value" freezes inherited text at the wrong tier. It is the single
 /// easiest way to make a whole deck render in the wrong font.
 fn read_character_properties(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     element: &BytesStart<'_>,
+    empty: bool,
 ) -> Result<TextCharacterProperties, ImportError> {
     let part = cursor.part().to_owned();
     let mut properties = TextCharacterProperties {
@@ -665,7 +674,7 @@ fn read_character_properties(
         dirty: boolean_attribute(element, b"dirty", &part)?.unwrap_or(false),
     };
 
-    children(cursor, |cursor, child, empty| {
+    enter(cursor, empty, |cursor, child, empty| {
         let local = local_name(child);
         match local {
             b"latin" => {

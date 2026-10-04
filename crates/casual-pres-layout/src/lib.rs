@@ -25,11 +25,13 @@
 //! **It does not lay out text.** A slide's `a:txBody` is modeled
 //! ([`casual_pres_model::TextBody`]) and is deliberately not shaped here: slide text
 //! needs the placeholder inheritance cascade resolved through
-//! `a:lstStyle` → layout → master → `p:defaultTextStyle` before a single run has a
-//! font size, and that cascade is not built. Emitting unshaped text would put
-//! something on screen that is not what the file says, which is worse than a shape
-//! with no text in it. Shapes, pictures, fills, outlines, preset geometry, groups and
-//! the three-tier paint order do render.
+//! `a:lstStyle` → layout → master's `p:txStyles` → `p:defaultTextStyle` before a
+//! single run has a font size. Every one of those tiers is now modelled and
+//! imported; what is missing is the fold that turns them into one effective
+//! property set per paragraph. Emitting unshaped text would put something on screen
+//! that is not what the file says, which is worse than a shape with no text in it.
+//! Shapes, pictures, fills, outlines, preset geometry, groups and the three-tier
+//! paint order do render.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
