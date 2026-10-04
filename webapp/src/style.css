@@ -3137,7 +3137,8 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  /* The shell's inset — see `.version-foot`. */
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -6646,8 +6647,12 @@ body.is-format-painting .page-wrap * {
   max-width: min(320px, calc(100vw - 52px));
 }
 
+/* A BAND of the panel shell, so it takes the shell's inset like the head and
+   the body above and below it. At 12px it put the "Only named versions"
+   checkbox 4px to the left of the title it sits under, which is the same
+   defect the head and body had, one row further down (HF-265 D2). */
 .version-filter {
-  padding: 7px 12px;
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-bottom: 1px solid var(--line);
 }
 
@@ -6804,8 +6809,11 @@ body.is-format-painting .page-wrap * {
   color: inherit;
 }
 
+/* The shell's inset, for the reason `.version-filter` takes it: this is the
+   "flow bottom" half of the report — the footer's text started 4px inside the
+   body's. */
 .version-foot {
-  padding: 8px 12px 10px;
+  padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-top: 1px solid var(--line);
 }
 

@@ -151,6 +151,11 @@ test("no panel re-states the shell's padding for itself", () => {
     "table-properties-body",
     "properties-panel-head",
     "table-properties-head",
+    // The BANDS between head and body, which are part of the same shell: a
+    // filter row, two footers. All three were 12px under a 16px head.
+    "version-filter",
+    "version-foot",
+    "glyph-panel-foot",
   ];
   const offenders = [];
   for (const part of PANEL_PARTS) {
