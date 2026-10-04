@@ -5,7 +5,8 @@
 // the wiring needs one. Everything here is event handlers and element writes;
 // no slide arithmetic, no unit conversion, no rendering policy.
 
-import { t } from "./i18n.mjs";
+import { setCatalogue, t } from "./i18n.mjs";
+import { EN_STRINGS } from "./en_strings.mjs";
 // The same locale seam the public site pages use. The editor's
 // `startLocalisation` wants a picker, a settings object and a popover registry —
 // editor chrome this page does not have — while this one takes an optional
@@ -198,6 +199,24 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
 /// Starts the page: loads the facade, applies translations, wires the DOM.
 async function start() {
   const elements = resolveElements();
+  // THE ENGLISH SCRIPT STRINGS GO IN FIRST, and synchronously.
+  //
+  // `startSiteLocalisation` deliberately loads NO catalogue for English — a site
+  // page's English is the markup it was authored with, so fetching one would be a
+  // request for strings the page already has. This page is the first outside the
+  // editor with SCRIPT-side strings too, and a script has no markup to be
+  // authored in, so without this a lookup returns the key itself. Measured, not
+  // reasoned: the position readout rendered the literal "slides.position" until
+  // this line existed.
+  //
+  // (That sentence is phrased around the call rather than showing it, because
+  // `i18n_params.test.mjs`'s scanner reads comments as well as code and read a
+  // `t(…)` written here as a real call site with no parameters. Worth knowing
+  // before writing the next one.)
+  //
+  // `locale_boot.startLocalisation` seeds the same way for the same reason; this
+  // is that one line rather than the editor's whole picker-and-popover contract.
+  setCatalogue("en", EN_STRINGS);
   // Localise BEFORE the engine request, not after: the catalogue is a small JSON
   // fetch and the engine is megabytes of WebAssembly, so awaiting the engine
   // first would leave the chrome in English for the whole download on every

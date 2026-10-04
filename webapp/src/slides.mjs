@@ -131,6 +131,8 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     const css = cssSize(availableWidth);
     if (css.width === 0) return false;
     const bitmap = state.deck.renderSlide(state.index, dpiFor(css.width));
+    // Dimensions before pixels, for the reason `paintThumbnail` records: `rgba`
+    // moves the bitmap out and frees the handle.
     const width = bitmap.widthPx;
     const height = bitmap.heightPx;
     // The backing store is device pixels; the CSS box is the layout size. Setting
@@ -153,15 +155,24 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
   function paintThumbnail(canvas, index) {
     if (!state.deck) return false;
     const bitmap = state.deck.renderSlide(index, THUMBNAIL_DPI);
-    canvas.width = bitmap.widthPx;
-    canvas.height = bitmap.heightPx;
+    // THE DIMENSIONS COME FIRST, ALWAYS. `rgba` is a MOVE across the boundary —
+    // it takes the bitmap by value so paging a deck does not duplicate a
+    // full-slide buffer per frame — so reading it frees the handle and every
+    // later getter hits a dropped pointer. An earlier version of this function
+    // read it as the first argument of `new ImageData(...)`, where JS evaluates
+    // left to right, and the next `bitmap.widthPx` threw "null pointer passed to
+    // rust". Nothing on the page caught it: the first thumbnail threw, the loop
+    // stopped, and the deck simply never painted.
+    //
+    // `pixelsAfterDimensions` in the guards drives this ordering directly, so the
+    // rule is asserted rather than left to this comment.
+    const width = bitmap.widthPx;
+    const height = bitmap.heightPx;
+    canvas.width = width;
+    canvas.height = height;
     const context = canvas.getContext("2d");
     if (!context) return false;
-    context.putImageData(
-      new ImageData(new Uint8ClampedArray(bitmap.rgba), bitmap.widthPx, bitmap.heightPx),
-      0,
-      0,
-    );
+    context.putImageData(new ImageData(new Uint8ClampedArray(bitmap.rgba), width, height), 0, 0);
     return true;
   }
 

@@ -125,6 +125,18 @@ cp "$repo/fixtures/corpus/real-producer-rich.docx" "$here/demo.docx"
 cp "$repo/sample.docx" "$here/sample.docx"
 cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 
+# The deck the slides page and its browser specs open.
+#
+# GENERATED here rather than committed, which is the rule `SKILL` §9.1 states and
+# the generator's own doc comment repeats: a committed binary fixture drifts from
+# the code that claims to produce it, and then the test and the source disagree
+# about what is being tested. The builder is the same `src/tests/deck.rs` the
+# importer's own guards use, so the browser opens exactly the package those
+# guards assert against — three slides named out of lexical order, a hidden
+# slide, a theme with a dark colour map, a picture, a group, an unadjusted preset
+# and a custom geometry.
+cargo run --quiet -p casual-pres-import --example generate_pptx_fixture -- "$here/demo.pptx"
+
 # --- Static multi-page site -----------------------------------------------
 # Inline the shared header/footer partials into every *.page.html template and
 # write the flat *.html that GitHub Pages serves. `--check` then fails the build
