@@ -1173,6 +1173,8 @@
   "reflow.rulerWithheld": "Il righello misura una pagina e i suoi margini, e nel flusso continuo non ce ne sono. Tabulazioni e rientri sono nella scheda Layout.",
   "reflow.unavailable": "Questo documento è troppo grande per essere impaginato per intero, quindi viene mostrato una finestra di pagine alla volta e non può essere riflussato.",
   "reflow.withholds": "Nel flusso continuo non ci sono pagine, quindi il righello e il pannello Pagine non sono disponibili.",
+  "reflowNotes.command": "Che cosa approssima questa vista",
+  "reflowNotes.none": "Niente: ogni parte di questo documento è impaginata esattamente come il documento richiede.",
   "review.comment.needsRange": "Seleziona il testo che vuoi commentare",
   "reviewBulkActions.acceptAll": "Accetta tutto",
   "reviewBulkActions.acceptAllChanges.title": "Accetta tutte le modifiche",

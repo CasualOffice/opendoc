@@ -119,6 +119,18 @@ export const EN_STRINGS = Object.freeze({
   // a windowed body is already read-only. Disabled WITH this, never dead.
   "reflow.unavailable":
     "This document is too large to lay out whole, so it is shown one page-window at a time and cannot be reflowed.",
+  // What the view is approximating, on demand (`docs/151` §8 item 8). The command is
+  // enabled in BOTH views, because "nothing" is an answer and a greyed row is
+  // not: a reader asking what the page view is withholding has earned being told
+  // that it is withholding nothing.
+  //
+  // The individual sentences are NOT here. They come from the engine
+  // (`LayoutView::approximations`), which has no catalogue, so they are English
+  // in every locale — a pre-existing gap recorded rather than papered over. Only
+  // the label and the empty answer are routed.
+  "reflowNotes.command": "What this view approximates",
+  "reflowNotes.none":
+    "Nothing: every part of this document is laid out the way the document asks for it.",
   // -- Text width (`docs/154` §5.1, ADR-048) ---------------------------------
   // Four steps for one measure, each labelled by what it does rather than by a
   // number: "Wide" tells a reader nothing and "80" tells them nothing until they

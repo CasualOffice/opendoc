@@ -1172,6 +1172,8 @@
   "reflow.rulerWithheld": "De liniaal meet een pagina en de marges, en die zijn er niet bij doorlopende tekst. Tabstops en inspringingen staan op het tabblad Indeling.",
   "reflow.unavailable": "Dit document is te groot om in zijn geheel op te maken, wordt daarom per paginavenster getoond en kan niet doorlopend worden opgemaakt.",
   "reflow.withholds": "Bij doorlopende tekst zijn er geen pagina’s, dus de liniaal en het paneel Pagina’s zijn niet beschikbaar.",
+  "reflowNotes.command": "Wat deze weergave benadert",
+  "reflowNotes.none": "Niets: elk onderdeel van dit document wordt precies zo opgemaakt als het document vraagt.",
   "review.comment.needsRange": "Selecteer de tekst waarop je een opmerking wilt plaatsen",
   "reviewBulkActions.acceptAll": "Alles accepteren",
   "reviewBulkActions.acceptAllChanges.title": "Alle wijzigingen accepteren",

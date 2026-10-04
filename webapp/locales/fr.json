@@ -1173,6 +1173,8 @@
   "reflow.rulerWithheld": "La règle mesure une page et ses marges, et le flux continu n’en a pas. Les taquets de tabulation et les retraits sont sous l’onglet Mise en page.",
   "reflow.unavailable": "Ce document est trop volumineux pour être mis en page entièrement ; il est affiché une fenêtre de pages à la fois et ne peut pas passer en flux continu.",
   "reflow.withholds": "Il n’y a pas de pages en flux continu : la règle et le volet Pages sont donc indisponibles.",
+  "reflowNotes.command": "Ce que cette vue approxime",
+  "reflowNotes.none": "Rien : chaque partie de ce document est mise en page exactement comme le document le demande.",
   "review.comment.needsRange": "Sélectionnez le texte que vous souhaitez commenter",
   "reviewBulkActions.acceptAll": "Tout accepter",
   "reviewBulkActions.acceptAllChanges.title": "Accepter toutes les modifications",

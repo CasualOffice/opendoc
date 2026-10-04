@@ -1171,6 +1171,8 @@
   "reflow.rulerWithheld": "Thước đo một trang và lề của nó, mà ở chế độ dòng liên tục thì không có. Điểm dừng tab và thụt lề nằm ở thẻ Bố cục.",
   "reflow.unavailable": "Tài liệu này quá lớn để dàn toàn bộ nên chỉ hiển thị từng cửa sổ trang một và không thể dùng dòng liên tục.",
   "reflow.withholds": "Không có trang nào ở chế độ dòng liên tục, nên thước và bảng Trang không khả dụng.",
+  "reflowNotes.command": "Những gì chế độ xem này làm gần đúng",
+  "reflowNotes.none": "Không có gì: mọi phần của tài liệu này đều được dàn trang đúng như tài liệu yêu cầu.",
   "review.comment.needsRange": "Chọn văn bản bạn muốn nhận xét",
   "reviewBulkActions.acceptAll": "Chấp nhận tất cả",
   "reviewBulkActions.acceptAllChanges.title": "Chấp nhận mọi thay đổi",

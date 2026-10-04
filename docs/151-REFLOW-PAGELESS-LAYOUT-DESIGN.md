@@ -443,7 +443,7 @@ now, because the design's own version would have shipped visible defects.
 | 3 | ~~`casual-doc-layout/src/paginate.rs`~~ (paginators) | **CORRECTED: the paginators need no edit.** The constraints are suspended by clearing the galley's break flags **once**, in the driver, before any paginator sees it (`suspend_page_break_constraints`) — which covers all **three** paginators (`paginate`, `ColPaginator`, `paginate_section_footnotes`) without a line changing in any. Two tiers had to be cleared, not one: a paragraph's `BreakControl` (`w:pageBreakBefore`/`keepNext`/`keepLines`/`widowControl`) **and** a line's `page_break_after`, because `flow.rs`'s `apply_section_break` stamps a `nextPage` section break onto the last line using the same flag an explicit `<w:br w:type="page"/>` uses — so without the second tier a section break still cut a tile. `LineBreak::Page` is left alone, so a page break becomes a line break, which is what Pageless does with one. **CORRECTED on the field half too:** the design wanted the `PAGE`/`NUMPAGES` approximation flagged on `PaginatedLayout`. That struct has 7 literals across two crates and adding a field to it is the `SKILL.md` §5a hazard. The refusal belongs in the labels instead — `resolve_fields_labeled` already takes per-page `PAGE` strings, so reflow passes a refusal token, and only `NUMPAGES`'s total needed widening from `u32` to `&str`. The token is an em dash, and the engine refuses rather than printing a tile count because a host cannot un-print a number the engine already shaped into a glyph run |
 | 4 | `casual-doc-layout/src/running.rs`, `page_border.rs`, `line_number.rs`, `watermark.rs` | suppressed under reflow — **and none of those files was edited either.** Headers, footers and page borders are suppressed by building an **empty `SectionPlan`**, so the passes that place them find nothing and are already correct for a section that declares none. Line numbers and the watermark are skipped in `post_pagination_passes`, along with section `w:vAlign` (which distributes slack inside a page, on a tile whose height is about to be trimmed to its content) |
 | 5 | `casual-doc-layout/src/anchor.rs` | **Unchanged, and still open.** Page- and margin-relative floats keep their paper-relative positions. Rather than pick an answer quietly, the view **reports** it: `LayoutView::approximations()` returns the sentence, `setLayoutView` hands it to the host. §8 item 1 stands |
-| 6 | `casual-doc-layout/src/flow.rs` | **untouched**, as designed. §6.3's wide-table decision remains a shell decision |
+| 6 | `casual-doc-layout/src/flow.rs` | **CORRECTED, 2026-10-05.** This row read "untouched, as designed — §6.3's wide-table decision remains a shell decision", and it was wrong in a way that lost content: a shell cannot contain an overflow the engine laid out past the raster, because nothing outside the raster is painted. `flow.rs` now carries `MeasureFit`; §6.3b is the behaviour |
 | 7 | ~~`casual-doc-layout/src/windowed.rs`, `measure.rs`~~ | **CORRECTED: an honest refusal, not a variant.** The design argued a refusal "means a large document loses reflow, which on a phone is the wrong way round". That reasoning misses what a windowed body already is: **read-only.** `apply_group` refuses every one of the 55 operations on one (`windowed_not_available("Editing")`). Reflow's defining promise — and the whole of §3.2, where we diverge from ONLYOFFICE — is that the document stays editable in it, so that promise cannot hold on a windowed body whatever the layout looks like. A variant would have been a second, read-only reflow with different guarantees, sold under the same name. `setLayoutView` refuses above `MAX_WHOLE_LAYOUT_BLOCKS` with the reason; clearing the view stays available, so a host that persisted the preference is not stuck on an error |
 | 8 | `casual-doc-wasm/src/lib.rs` | `setLayoutView(contentWidthTwip, tileHeightTwip, gutterTwip)` returning the view as JSON (with its approximations), plus a `layoutView` getter; a `layout_view` field on `WasmDocument`; honoured by `repaginate`, `finish_edit_with` and `set_show_changes_inner`. Issues no `Operation`, bumps no document revision, never reaches the export path (§3.1). A mode change **discards the galley cache and rebuilds whole**, never resuming a layout built in the other view. **CORRECTED on where the arms go:** `page_size_inner` needs no arm of its own, but `page_box` — which it and `render_page_inner` both call — absolutely does, and it was the one place that mattered. `page_box` looks a tile's size up **by its section id**, not off `Page::page_size`, so without a reflow arm every tile would be reported *and rasterised* at Letter size and the trim would have bought nothing. `page_ruler_geometry_inner` needs one for the same reason (it reads `SectionBoundary`); until §6.4 hides the ruler, the honest answer is the tile's own geometry |
 | 9 | tests | `casual-doc-layout/tests/reflow.rs` (17 cases) and eight cases in `casual-doc-wasm`. `geometry_snapshot.golden` does **not** move. One thing found by mutating rather than assumed: the inertness comparison is only **half** a guard, because both of its sides run the same driver and a driver that reflowed unconditionally would move both and leave it green. The golden is the other half — it is a committed artifact and cannot move with the code — and `tests/reflow.rs` now says so rather than claiming inertness on its own |
@@ -719,15 +719,144 @@ gives a table too wide to fit, and honest for the same reason. The
 no-horizontal-scroll guarantee is stated at the zoom a phone actually opens at,
 which `FIT_ON_OPEN_FLOOR` pins at 100%.
 
-### 6.3 Wide tables keep their own scroller
+### 6.3 Content too wide for the measure — CORRECTED, and now shipped as a fit
 
-Google's answer (§2.2), and this shell's own existing arbitration: the overflow is
-contained to the element that genuinely cannot fit rather than handed to the page.
-A table whose minimum width exceeds the reflow width gets a horizontal scroller of
-its own. **This is the one place a horizontal scroll survives, and it is a
-different thing from the one being retired:** the reader can see that a *table* is
-wider than the screen, which is true, rather than that the *document* is, which
-is a lie about the document.
+**This subsection described an intention and was read as behaviour, including by
+this document's own §4.5 row 6 ("untouched, as designed").** What shipped was
+neither: a table with an explicit `w:tblW` in `dxa`, and an inline image with a
+declared extent, were laid out at their declared width *past the tile's raster* —
+and nothing outside the raster is painted, so the overflow was **not drawn at
+all**. No scrollbar, no edge cue, no report, and `approximations` did not mention
+it either. The pageless-surface competitive study on branch
+`research/pageless-surface-competitive-study` read the code and ranked it R-1,
+flagging its own reading as unverified; the experiment below measured it.
+
+The original text, kept because it is the design the scroller spike inherits:
+
+> Google's answer (§2.2), and this shell's own existing arbitration: the overflow
+> is contained to the element that genuinely cannot fit rather than handed to the
+> page. A table whose minimum width exceeds the reflow width gets a horizontal
+> scroller of its own. **This is the one place a horizontal scroll survives, and
+> it is a different thing from the one being retired:** the reader can see that a
+> *table* is wider than the screen, which is true, rather than that the
+> *document* is, which is a lie about the document.
+
+#### 6.3a The measurement
+
+A fixture with `w:tblW` of 12,960 twips (9in) over a four-column grid of 3,240
+each, laid out in the engine test file's 5,400-twip reflow column:
+
+```text
+tile 1: raster width 6120 / column+gutter 5760 / painted 360..10526
+tile 1 paints out to 10526 past its own 6120 raster — the part past the edge is
+not drawn
+```
+
+Three facts compose into it:
+
+1. `solve_column_widths` resolved `WidthSpec::Dxa(v)` to `v.max(1)`. `available`
+   was consulted for `Auto` and `Pct` and **ignored** for `Dxa`, and
+   `distribute_width` only shrinks when `sum > target`, so nothing clamped that
+   path. `Auto` under `TableLayout::Fixed` has the same hole — it takes
+   `grid_sum` verbatim.
+2. A tile's raster is exactly `content_width + 2 × gutter` (§4.4a), and nothing
+   outside it is painted.
+3. The scroll band is the tile's width and §6.2's quantised bucket never exceeds
+   `clientWidth`, so `scrollWidth === clientWidth`. There is nothing to scroll
+   sideways with — the no-horizontal-scroll guarantee working exactly as designed.
+
+**And the engine test that should have caught it could not.**
+`a_table_reflows_into_the_column_and_its_tiles_still_trim` used a fixture whose
+grid was 2,600 + 2,600 = 5,200 against a `COLUMN` of 5,400 and declared no
+`w:tblW` at all — so it was an `Auto`/`Autofit` table, the one arm the solver has
+always clamped, and **it fitted**. Its assertion was satisfied by arithmetic.
+`SKILL.md` §4 names exactly this shape, and it is why the gap survived two design
+documents. The fixture is now the 12,960-twip one above.
+
+#### 6.3b What ships: fit to the measure (`MeasureFit`)
+
+The field offers three answers and we had a fourth nobody chose:
+
+| | answer to "this is wider than the measure" |
+| --- | --- |
+| Google Docs | contain the overflow in the element — the table gets its own horizontal scroller (the pageless study §5 **[G1]**/**[G2]**) |
+| ONLYOFFICE | **scale the table down** — `GetScaleBySection`, `min(W/origW, H/origH)` clamped at 1, multiplied into the table grid and the cell min/max widths; on a 3× phone a wide table draws at about a third size while the body type is unscaled (the pageless study §5 **[O]**) |
+| Word | Read Mode refits the layout with columns and larger type, both reader-adjustable |
+| us, before this | **drop the part that does not fit** |
+
+`MeasureFit` (`casual-doc-layout/src/flow.rs`) is the fourth per-viewer view
+parameter, and the only one **derived from `LayoutView` rather than chosen**:
+`Bleed` on paper, `Fit` in a reflowed column. The distinction is geometric, not
+aesthetic. On paper the measure is the *text column* and there is paper beyond it,
+so an over-wide table bleeds into the margin and the page raster still holds it —
+which is what Word and ONLYOFFICE's editing view both do, so fidelity requires it.
+In a reflowed column the measure **is** the surface, and `Fit` is the difference
+between showing the author's content and losing it.
+
+The established name for this is not new: it is `max-width: 100%`, the rule every
+browser already applies to tables and replaced elements, scoped to the surface
+that needs it.
+
+Under `Fit`:
+
+- `solve_column_widths` clamps its resolved `target` to `available`, covering both
+  over-wide arms. The deficit comes out of each column's slack above its content
+  minimum first, because that is what `distribute_width` already did: this is
+  **Word's AutoFit-to-window**, and unlike ONLYOFFICE's scale it keeps the type at
+  full size — which matters most on the device that needs the fit.
+- `image_item` resolves the declared extent against the width it is being flowed
+  at, scaled with the aspect ratio preserved and never cropped. This is Google's
+  documented pageless behaviour (*"images will adjust to your screen size"*), and
+  `hr_item` eight lines below it in the same file already did exactly this with
+  its own `width` parameter. Only the image did not.
+
+The policy is **threaded, not assumed**, through every container that flows block
+content — the body galley fresh and cached, note bodies, positioned tables and
+their wrap rectangles — so a footnote band gets the same answer about the measure
+as the body does and there is no context-limited feature set. The
+windowed/measure tier takes it too and is given `Bleed` explicitly, with the
+reason at the call site: `windowed.rs` builds its plans with `LayoutView::Paged`
+and `setLayoutView` refuses reflow above the window threshold, so a windowed body
+is paged by construction — and the seam is right the day that changes.
+
+**What the fit does not fix.** A single unbreakable word wider than its fitted
+column still overflows that cell; that is the shaper's existing behaviour, it is
+not made worse here, and it is not the same thing as dropping a column.
+
+#### 6.3c Why not the scroller, and what the spike inherits
+
+**A per-element interactive scroll region over a canvas raster is a spike, not a
+task.** Our body is one `<canvas>` with no DOM node per table — and so is
+ONLYOFFICE's (`HtmlPage.paint`), which is *why* neither of us has a per-table
+scroller, while Docs, whose editor is also canvas-based, evidently does. We have
+no component in the tree that overlays an interactive scroll region on a page
+raster, and the work is at least: a display-list clip/group primitive so a
+sub-region can be painted at a horizontal offset; a per-table scroll offset keyed
+on `NodeId` that survives re-layout; an overlay scrollbar layer whose hit test is
+`O(1)` and not `O(tables)` (`docs/107` §4); and the caret, selection-drag,
+Find-reveal and screen-reader integration that makes it a feature rather than a
+trap. The pageless study §10 item 7 names it as the technical unknown that decides
+this defect's cost.
+
+So R-1 ships as the fit, which is cheap, lossless and needs no new paint
+primitive. **The scroller is not cancelled** — it is strictly better than a fit
+for a wide data table, because a fit narrows columns the author chose. When it is
+picked up, five interaction questions no source answers are already decided. They
+are recorded here **as assumptions, each with the experiment that would overturn
+it**, so the spike inherits decisions rather than re-making them:
+
+| # | Decision (the owner's) | The experiment that would overturn it |
+| --- | --- | --- |
+| A-1 | The caret **drags the table's scroller with it**. A scroller the caret does not follow is a trap, not a feature. | In a pageless Docs document with a ~15-column table, click the leftmost cell and hold **Right arrow**. If the table's own scroller does not follow the caret, Docs has a different model and ours has to be argued rather than assumed. |
+| A-2 | A selection dragged past the edge **auto-scrolls** the table. | Drag a selection from the first cell rightwards past the visible edge in pageless Docs. If it does not auto-scroll — or scrolls the page instead — the composition rule is different. Record the rate as well as the fact; a rate is a design input. |
+| A-3 | The scrollbar is **visible whenever the table overflows**, not only on hover. | Move the pointer well away from an overflowing table in pageless Docs and look. Note that this one is decided this way **even if Docs hides it**: a hover-only scrollbar is an invisible affordance for the one thing a reader must discover. Overturning it needs an accessibility argument, not just Docs' behaviour. |
+| A-4 | **`Home` from inside a scrolled table returns the view to the left edge.** | Scroll a table fully right, put the caret in a cell, press **Home**. If Docs moves the caret to the start of the cell's line without moving the scroller, the two behaviours have to be separated — ours keeps them together deliberately, because a caret at a line start that is off-screen is the trap A-1 exists to prevent. |
+| A-5 | The **page does not scroll horizontally while the pointer is over an overflowing table.** | Put the pointer over the table and scroll sideways (trackpad, shift-wheel) in pageless Docs. If the page scrolls too, the two scrollers compose; ours do not, because the page has no horizontal scroll to give (§6.2). |
+
+**None of the five is sourced.** The pageless study §5 **[U]** records that no first-party or
+secondary source covers any of them, and ONLYOFFICE has no scroller to study. They
+are the owner's decisions, written down here rather than left in a brief so the
+spike cannot quietly choose otherwise.
 
 ### 6.4 What the chrome does differently
 
@@ -885,12 +1014,18 @@ Opened by the shell half, 2026-10-01:
    exactly the same predicate. That is faithful, not a guess, and the call site
    still catches the throw — but the engine owning its own sentence is better,
    and this lane does not own `crates/**`. Reported rather than made.
-8. **The engine's `approximations` list is collected and not yet surfaced.**
-   `setLayoutView` returns what reflow approximates — a page-anchored drawing
-   keeping its paper-relative position, a footnote at a tile bottom, a `PAGE`
-   field refusing — and `reflow_chrome.mjs` holds them. They are not yet shown to
-   the reader anywhere. Recorded so that "the engine reports its approximations"
-   is not read as "the product does".
+8. **CLOSED — the `approximations` list is derived and surfaced, and it was worse
+   than this item said.** It was not only unsurfaced: it was a fixed `vec![]` of
+   three literals keyed on nothing but `is_reflow()`, so a document with no
+   footnotes was told where its footnotes go, and the one approximation that lost
+   content (§6.3) was not in it at all. It is now derived from the document at the
+   current measure (`reflow_report::survey`, `O(document)`, short-circuiting once
+   all four answers are known, run once per view change and never on an edit
+   path), the over-wide case is in it, and `view.reflowApproximations` speaks it
+   through the status channel from the View menu and the palette. A plain-prose
+   document reports nothing, which is the point. The sentences are the engine's
+   own English and are **not** routed through `i18n` — `casual-doc-layout` has no
+   catalogue; recorded as a gap rather than hidden.
 
 Opened by the competitive re-analysis, 2026-10-01 (`154` §8 is the live list):
 

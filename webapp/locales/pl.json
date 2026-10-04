@@ -1174,6 +1174,8 @@
   "reflow.rulerWithheld": "Linijka mierzy stronę i jej marginesy, a w układzie ciągłym ich nie ma. Tabulatory i wcięcia znajdziesz na karcie Układ.",
   "reflow.unavailable": "Ten dokument jest zbyt duży, aby złożyć go w całości, więc jest pokazywany po jednym oknie stron i nie może korzystać z układu ciągłego.",
   "reflow.withholds": "W układzie ciągłym nie ma stron, więc linijka i panel Strony są niedostępne.",
+  "reflowNotes.command": "Co ten widok przybliża",
+  "reflowNotes.none": "Nic: każda część tego dokumentu jest rozmieszczona dokładnie tak, jak wymaga dokument.",
   "review.comment.needsRange": "Zaznacz tekst, który chcesz skomentować",
   "reviewBulkActions.acceptAll": "Zaakceptuj wszystko",
   "reviewBulkActions.acceptAllChanges.title": "Zaakceptuj wszystkie zmiany",

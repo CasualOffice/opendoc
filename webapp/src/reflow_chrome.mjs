@@ -406,8 +406,8 @@ export function createReflowChrome({
      *  does not have. Declared here rather than in `main.js` because the labels,
      *  the state and the refusal all live with the control; `main.js` spreads the
      *  result into its registry. */
-    commands: () =>
-      REFLOW_WIDTH_STEPS.map((step) => ({
+    commands: () => [
+      ...REFLOW_WIDTH_STEPS.map((step) => ({
         id: `view.textWidth.${step.id}`,
         label: t(step.commandKey),
         group: "View",
@@ -416,6 +416,44 @@ export function createReflowChrome({
         disabledReason: t("textWidth.pagedWithheld"),
         run: () => setWidth(step.id),
       })),
+      // What the view is approximating, said out loud. Until now the engine
+      // collected this list and NOTHING asked for it: `approximations()` above
+      // had no caller in the product, so a reader was never told that a
+      // page-anchored drawing had moved, that a footnote had landed at a tile
+      // boundary, or — the one that loses content — that a table had been fitted
+      // to the measure (`docs/151` §8 item 8 and §6.3).
+      //
+      // ENABLED IN BOTH VIEWS, never disabled. On paper the honest answer is
+      // "nothing", and that is an answer rather than a refusal — a greyed row
+      // here would be the "never a dead control" rule broken the quiet way, and
+      // a reader asking "what is this view not showing me?" about the page view
+      // deserves to be told it is showing everything.
+      //
+      // THE STATUS CHANNEL, not a dialog, and the reason is competitive: the
+      // nearest prior art in the field is ONLYOFFICE's snackbar naming a mode
+      // change, Google Docs put theirs on a help page, and `docs/151` §6.3c
+      // records that no product has a "what this view is withholding" surface at
+      // all. A modal for a question a reader asks in passing is heavier than
+      // either reference, and `createStatusChannel` already routes one message to
+      // the live region, the toast and the status line — so this is spoken to a
+      // screen reader as well as shown, which a tooltip would not be.
+      //
+      // The sentences themselves are the ENGINE's English and are not routed
+      // through `i18n` — a pre-existing gap recorded rather than hidden: they are
+      // built in `casual-doc-layout`, which has no catalogue. Only the two
+      // sentences this module owns are localised.
+      {
+        id: "view.reflowApproximations",
+        label: t("reflowNotes.command"),
+        group: "View",
+        kw: "approximations approximate reflow pageless missing withheld report what is not shown fidelity notes wide table image fitted",
+        enabled: true,
+        run: () => {
+          const found = approximations;
+          setStatus(found.length ? found.join(" ") : t("reflowNotes.none"));
+        },
+      },
+    ],
     // Two withholdings, two sentences. One shared "reflow withholds things"
     // string would be cheaper and would tell a reader who reached for the ruler
     // about a panel they were not reaching for; each control says what IT is and
@@ -426,7 +464,8 @@ export function createReflowChrome({
     rulerWithheldReason: () => (isOn() ? t("reflow.rulerWithheld") : ""),
     /** Paintable surface beside the measure, per side, in CSS px. See above. */
     surfaceSlackPx,
-    /** What the engine says reflow approximates — surfaced, not hidden. */
+    /** What the engine says reflow approximates, for THIS document at THIS
+     *  measure — surfaced, not hidden. */
     approximations: () => approximations,
     setEnabled: reflect,
   };

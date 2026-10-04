@@ -1171,6 +1171,8 @@
   "reflow.rulerWithheld": "ルーラーはページと余白を測るものですが、リフローにはどちらもありません。タブ位置とインデントはレイアウトタブにあります。",
   "reflow.unavailable": "この文書は全体を組むには大きすぎるため、ページウィンドウ単位で表示されており、リフローできません。",
   "reflow.withholds": "リフローにはページがないため、ルーラーとページパネルは利用できません。",
+  "reflowNotes.command": "このビューが近似している点",
+  "reflowNotes.none": "ありません。この文書のすべての部分が、文書の指定どおりにレイアウトされています。",
   "review.comment.needsRange": "コメントするテキストを選択してください",
   "reviewBulkActions.acceptAll": "すべて反映",
   "reviewBulkActions.acceptAllChanges.title": "すべての変更を反映",

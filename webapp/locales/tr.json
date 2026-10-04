@@ -1172,6 +1172,8 @@
   "reflow.rulerWithheld": "Cetvel bir sayfayı ve kenar boşluklarını ölçer; sürekli akışta bunlar yoktur. Sekme durakları ve girintiler Düzen sekmesindedir.",
   "reflow.unavailable": "Bu belge bütün olarak yerleştirilemeyecek kadar büyük; her seferinde bir sayfa penceresi gösterildiği için sürekli akışa geçirilemez.",
   "reflow.withholds": "Sürekli akışta sayfa yoktur, bu nedenle cetvel ve Sayfalar paneli kullanılamaz.",
+  "reflowNotes.command": "Bu görünümün yaklaştırdıkları",
+  "reflowNotes.none": "Hiçbir şey: bu belgenin her bölümü, belgenin istediği biçimde yerleştirilmiştir.",
   "review.comment.needsRange": "Yorum yapmak istediğiniz metni seçin",
   "reviewBulkActions.acceptAll": "Tümünü kabul et",
   "reviewBulkActions.acceptAllChanges.title": "Tüm değişiklikleri kabul et",
