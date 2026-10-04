@@ -8,6 +8,13 @@
 
 mod body;
 mod chart;
+// The inline container set, declared once for the whole workspace (`docs/109`
+// HF-212). Its own module for the reason the `docs/109` row gives: the exhaustive
+// match that makes a new `InlineNode` variant a COMPILE ERROR is one screen rather
+// than buried in `body.rs`, and the three descent axes are documented where a
+// reader will find them. `crate::container_audit` is the guard that holds every
+// consumer to it.
+mod containers;
 mod definitions;
 mod document;
 mod ids;
@@ -20,6 +27,7 @@ mod table;
 
 pub use body::*;
 pub use chart::*;
+pub use containers::*;
 pub use definitions::*;
 pub use document::*;
 pub use ids::*;

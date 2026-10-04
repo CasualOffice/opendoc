@@ -2317,43 +2317,33 @@ fn record_block_ids(
     Ok(())
 }
 
-/// Records an inline's id and, for a wrapper (hyperlink or field) or a text box,
-/// its children's ids recursively.
+/// Records an inline's id and, for every inline CONTAINER, its children's ids
+/// recursively.
+///
+/// Descent is the one declared container set ([`inline_descent`]). It has to be:
+/// this is the walk that puts every node into the document-wide uniqueness set, so
+/// a container it did not enter would be a subtree whose ids nothing checks — and
+/// an editing position inside it, addressable by an id the model never saw.
+///
+/// **O(nodes in this subtree)**, once per validation.
 fn record_inline_ids(
     inline: &InlineNode,
     visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
 ) -> Result<(), ModelError> {
     visit(inline.id())?;
-    match inline {
-        InlineNode::Hyperlink(link) => {
-            for child in &link.inlines {
+    match inline_descent(inline) {
+        InlineDescent::Inlines(children) => {
+            for child in children {
                 record_inline_ids(child, visit)?;
             }
         }
-        InlineNode::Field(field) => {
-            for child in &field.inlines {
-                record_inline_ids(child, visit)?;
-            }
-        }
-        InlineNode::TextBox(text_box) => {
-            for block in &text_box.blocks {
+        InlineDescent::Blocks(blocks) => {
+            for block in blocks {
                 record_block_ids(block, visit)?;
             }
         }
-        InlineNode::Group(group) => {
-            record_group_ids(group, visit)?;
-        }
-        InlineNode::Revision(revision) => {
-            for child in &revision.inlines {
-                record_inline_ids(child, visit)?;
-            }
-        }
-        InlineNode::Sdt(sdt) => {
-            for child in &sdt.inlines {
-                record_inline_ids(child, visit)?;
-            }
-        }
-        _ => {}
+        InlineDescent::Group(children) => record_group_ids(children, visit)?,
+        InlineDescent::Leaf => {}
     }
     Ok(())
 }
@@ -2363,10 +2353,10 @@ fn record_inline_ids(
 /// id is recorded by the caller ([`record_inline_ids`] via `inline.id()`, or the
 /// parent group for a nested one), so it is not re-inserted here.
 fn record_group_ids(
-    group: &WordprocessingGroup,
+    children: &[GroupChild],
     visit: &mut dyn FnMut(NodeId) -> Result<(), ModelError>,
 ) -> Result<(), ModelError> {
-    for child in &group.children {
+    for child in children {
         match child {
             GroupChild::Picture(picture) => visit(picture.id)?,
             GroupChild::TextBox(text_box) => {
@@ -2378,7 +2368,7 @@ fn record_group_ids(
             GroupChild::Shape(shape) => visit(shape.id)?,
             GroupChild::Group(nested) => {
                 visit(nested.id)?;
-                record_group_ids(nested, visit)?;
+                record_group_ids(&nested.children, visit)?;
             }
         }
     }
@@ -2643,6 +2633,14 @@ fn check_field_range_blocks(
 /// blocks are their own container and are reached from
 /// `check_field_range_blocks`'s table/`Document`-level walk instead — descending
 /// into them here would let a range cross a container boundary unnoticed.
+//
+// container-set: five of the six, and the one left out is named. `Hyperlink`,
+// `Revision` and `Sdt` are transparent range wrappers and are entered; `TextBox`
+// and `Group` are entered as their OWN containers, through
+// `check_field_range_container`, because a range may not cross a container
+// boundary. `Field` is deliberately not entered: its cached result is validated
+// leaf-only, so a marker cannot be in there to find, and descending would make a
+// shape the validator has already refused look reachable.
 fn check_field_range_inlines(
     inlines: &[InlineNode],
     tally: &mut FieldRangeTally,
@@ -2945,58 +2943,51 @@ fn record_chart_object_ids(block: &BlockNode, found: &mut EmbeddedObjectIds) {
 }
 
 /// The inline half of [`record_chart_object_ids`].
+///
+/// Descent is the one declared container set ([`inline_descent`]): a chart in a
+/// text box in a shape group inside a tracked insertion is still a chart on the
+/// page, and a projection anchored to it is live. A walk that stopped short would
+/// report its anchor as naming nothing (`validate_charts` state 3), which is the
+/// state that used to refuse an unrelated edit.
+///
+/// **O(nodes in this subtree)**, and only for a document that holds a projection.
 fn record_chart_object_ids_in_inline(inline: &InlineNode, found: &mut EmbeddedObjectIds) {
-    match inline {
-        InlineNode::EmbeddedObject(object) => {
-            if object.kind == EmbeddedKind::Chart {
-                found.charts.insert(object.id);
-            } else {
-                found.others.insert(object.id);
-            }
+    if let InlineNode::EmbeddedObject(object) = inline {
+        if object.kind == EmbeddedKind::Chart {
+            found.charts.insert(object.id);
+        } else {
+            found.others.insert(object.id);
         }
-        InlineNode::Hyperlink(link) => {
-            for child in &link.inlines {
+    }
+    match inline_descent(inline) {
+        InlineDescent::Inlines(children) => {
+            for child in children {
                 record_chart_object_ids_in_inline(child, found);
             }
         }
-        InlineNode::Field(field) => {
-            for child in &field.inlines {
-                record_chart_object_ids_in_inline(child, found);
-            }
-        }
-        InlineNode::Revision(revision) => {
-            for child in &revision.inlines {
-                record_chart_object_ids_in_inline(child, found);
-            }
-        }
-        InlineNode::Sdt(sdt) => {
-            for child in &sdt.inlines {
-                record_chart_object_ids_in_inline(child, found);
-            }
-        }
-        InlineNode::TextBox(text_box) => {
-            for block in &text_box.blocks {
+        InlineDescent::Blocks(blocks) => {
+            for block in blocks {
                 record_chart_object_ids(block, found);
             }
         }
-        InlineNode::Group(group) => {
-            record_chart_object_ids_in_group(group, found);
-        }
-        _ => {}
+        InlineDescent::Group(children) => record_chart_object_ids_in_group(children, found),
+        InlineDescent::Leaf => {}
     }
 }
 
 /// The group half of [`record_chart_object_ids`]: a group holds no embedded
 /// object directly, but a text box inside one holds ordinary block content.
-fn record_chart_object_ids_in_group(group: &WordprocessingGroup, found: &mut EmbeddedObjectIds) {
-    for child in &group.children {
+fn record_chart_object_ids_in_group(children: &[GroupChild], found: &mut EmbeddedObjectIds) {
+    for child in children {
         match child {
             GroupChild::TextBox(text_box) => {
                 for block in &text_box.blocks {
                     record_chart_object_ids(block, found);
                 }
             }
-            GroupChild::Group(nested) => record_chart_object_ids_in_group(nested, found),
+            GroupChild::Group(nested) => {
+                record_chart_object_ids_in_group(&nested.children, found);
+            }
             GroupChild::Picture(_) | GroupChild::Shape(_) => {}
         }
     }
