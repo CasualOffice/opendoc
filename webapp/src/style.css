@@ -1810,8 +1810,23 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
      A flat 13rem instead. The label column is `minmax(0, max-content)`, so a
      label that does not fit a track WRAPS inside it and cannot paint across the
      next column — which is what makes a narrower track safe here, and it is
-     already the reason that spelling was chosen. Measured after: 11 groups
-     balance into four columns of 211px, 404px of content in a 560px box. */
+     already the reason that spelling was chosen.
+
+     MEASURED AFTER, and the two steps reported separately because they are not
+     the same size: four columns of 211px take the eleven groups from 643px to
+     540px, and the group margin below takes 540 to 532, in a body whose ceiling
+     on this viewport is 560. The balance cannot go much under that whatever the
+     track is — `break-inside: avoid` means no column is shorter than the tallest
+     group, and Paragraph alone is 281px — so a narrower track buys almost
+     nothing: measured at 10rem and 9rem it is 517, five columns and all. The
+     28px of headroom is therefore the honest figure, and it is smaller than the
+     margin `dialog-fit.spec.mjs`'s other rows sit inside. What makes it safe
+     rather than lucky is that this card's type is SELF-HOSTED — Inter and
+     Material Symbols are served from `fonts.css`, which `chrome_fonts.test.mjs`
+     asserts — so the Linux runner lays these rows out in the same faces a Mac
+     does. Letting a group break across columns would buy 57px more and is not
+     taken: a keymap is read by scanning a group, and a group split down a column
+     boundary is the thing multicol is being asked not to do. */
   columns: auto;
   column-width: 13rem;
   column-gap: var(--space-6);
@@ -1843,13 +1858,11 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   align-items: baseline;
   column-gap: clamp(8px, 1vw, 16px);
   row-gap: 6px;
-  /* One step down from `--space-5`. Eleven groups paid that margin eleven
-     times — 220px of the body's height, which is most of the 83px this dialog
-     was over its own box by after the track was corrected (HF-265 D3). At
-     `--space-4` the uppercase group heading still separates the groups (it is
-     the only thing that ever did) and the measured content comes down to 490px
-     in a 560px box, which leaves the margin the Linux runner's substituted
-     faces need. */
+  /* One step down from `--space-5` (HF-265 D3). Eleven groups paid that margin
+     eleven times — 220px spread over four columns — and the uppercase group
+     heading is what separates the groups anyway, as it always was. Measured:
+     540px of content to 532px, in a 560px box. A small step, reported as one:
+     the track correction above is what did the work, this is the last 8px. */
   margin: 0 0 var(--space-4);
 }
 
