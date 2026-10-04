@@ -482,25 +482,41 @@ test("how much English the reference pages put on the site, measured and publish
   // lie than leaving it in English. The shared chrome cost nothing on either
   // side, which is the direction this figure actually watches.
   //
-  // 2,090 -> 2,093, AND THIS ONE WAS ALREADY RED ON `origin/main`. Measured on a
-  // clean checkout of `bd5b5ca2` with no local change at all: the committed pages
-  // are byte-identical to a fresh generation — regenerating them changes nothing —
-  // so the figure, not the pages, is what drifted. The three sentences are in
-  // `error-code-registry.html` (131 -> 134), which is `ODC-7010`'s row from #756:
-  // that branch regenerated the page and did not re-measure this number, which is
-  // precisely the trap the paragraph above describes, one merge later. Recorded
-  // here rather than left for whoever next runs the suite, because a number that
-  // is wrong on `main` makes every open branch look like it broke something.
+  // 2093 -> 2502 with `docs/162`, the deployment guide (`109` RM-11), published as
+  // `reference/deployment-containers-and-configuration.html`. MEASURED per page
+  // against `origin/main`'s committed bytes rather than calculated, and the
+  // movement decomposes exactly:
+  //
+  //   the new page                                        0 -> 395
+  //   reference/index.html (its row in the listing)      49 -> 52
+  //   every other page, +1 each (11 pages)                     +11
+  //
+  // The +1 is the new entry in the shared reference navigation, which these pages
+  // inline — an unrouted link label, like the eleven already there. The 392 is
+  // ARTICLE BODY in a published design document, which is the region this figure
+  // deliberately does not route, for the reason the paragraph above gives.
+  //
+  // RE-MEASURED FROM THE MERGED TREE, and the detour is worth recording because it
+  // is `SKILL.md` §5a's trap in miniature. This branch first measured 2090 -> 2501
+  // against `6f0c7efc`, where the committed pages actually totalled 2093 against
+  // the 2090 then declared — the figure was 3 stale and the assertion was red on
+  // `main`, which this branch found by re-measuring rather than carrying a number
+  // forward. #759 then landed the same correction from the other side (2090 ->
+  // 2093, ODC-7010's row in `20-ERROR-CODE-REGISTRY.md`), this branch rebased onto
+  // it, and the figure was measured AGAIN on the merged tree. 2093 + 409 = 2502,
+  // which is the same total either way — but only because the measurement was
+  // retaken; arithmetic on this branch's own baseline would have published 2499.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2093,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2093). That ` +
+    2502,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2502). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
-      `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
+      `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
+      `the new figure here — do not calculate it. Per page: ` +
       JSON.stringify(sites),
   );
   // The site's own hand-authored pages are still exactly what the string table

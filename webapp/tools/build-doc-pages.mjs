@@ -91,6 +91,15 @@ export const PUBLISHED = [
     nav: "PDF export and print",
   },
   {
+    // `docs/162`, `109` RM-11. Published because it is the one document a person
+    // deploying this needs and the embedding guide links to it — a deployment
+    // guide reachable only as raw Markdown on github.com is a guide nobody reads.
+    source: "docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md",
+    slug: "deployment-containers-and-configuration",
+    group: "Architecture",
+    nav: "Deployment and containers",
+  },
+  {
     source: "docs/05-SDK-API-SPEC.md",
     slug: "sdk-api-spec",
     group: "SDK",

@@ -113,6 +113,45 @@ function captionedFile(caption) {
   return path;
 }
 
+test("every section of the page is reachable from the page's own contents list", () => {
+  // A section nobody can navigate to is the single-surface defect `SKILL.md` §10
+  // names, applied to a document instead of to a command. Found by adding one:
+  // the deployment section (`docs/162`, `109` RM-11) landed with an `id`, a
+  // heading and no entry in "On this page" — and so, it turned out, had
+  // `#white-label`, which had been unreachable from the contents list since it
+  // shipped. Both are listed now, and this is what stops the third one.
+  //
+  // In DOCUMENT ORDER, because a contents list that does not match the order of
+  // the page is a different kind of wrong, and because the order is free to
+  // assert once the membership is.
+  const sections = [...page.matchAll(/<h2 id="([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(sections.length > 5, "the page must carry several identified sections");
+
+  const toc = page.slice(page.indexOf('class="doc-toc-list"'));
+  const listed = [...toc.slice(0, toc.indexOf("</ul>")).matchAll(/href="#([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+
+  const missing = sections.filter((id) => !listed.includes(id));
+  assert.deepEqual(
+    missing,
+    [],
+    "these sections have an id and a heading and no entry in the contents list, so a " +
+      'reader can only reach them by scrolling past everything above: add an <li> to ' +
+      '"On this page", reusing the heading\'s own data-i18n key',
+  );
+
+  const dangling = listed.filter((id) => id !== "embed-the-editor" && !sections.includes(id));
+  assert.deepEqual(dangling, [], "the contents list links an anchor the page does not have");
+
+  const inOrder = listed.filter((id) => sections.includes(id));
+  assert.deepEqual(
+    inOrder,
+    sections,
+    "the contents list is not in the page's own order",
+  );
+});
+
 test("the page is what a fresh generation produces", () => {
   // The same shape `build_site.test.mjs` and `embed_package.test.mjs` use: run
   // the generator's `--check` and let a non-zero exit fail the test. NOT piped

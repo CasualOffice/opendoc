@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Two separable deployments, and this file keeps them separate on purpose
+# (`docs/162`).
+#
+#   docker compose up editor                  the editor, alone. No server.
+#   docker compose --profile relay up         the editor and an optional relay.
+#
+# THE EDITOR NEEDS NO RELAY. It is a static, local-first web app: format I/O is in
+# the WebAssembly module, so it opens, edits and writes a DOCX with nothing
+# running behind it. The `relay` service exists for the second deployment — a room
+# several people edit at once — it holds no document, and it is behind a compose
+# PROFILE so that `docker compose up` cannot start it by accident. Delete the
+# `relay*` services and the `volumes:` block and this file still works.
+#
+# CONFIGURATION IS COMMAND ARGUMENTS, NOT ENVIRONMENT VARIABLES, and that is a
+# fact about the binary rather than a style choice. `server/src/main.rs` matches
+# on `std::env::args()` and reads no variable at all:
+#
+#     opendoc-relay create  <journal>
+#     opendoc-relay inspect <journal>
+#     opendoc-relay serve   <journal> <addr> <viewer|commenter|suggester|editor|owner>
+#
+# so every knob below is positional, and `webapp/tests/deployment_contract.test.mjs`
+# parses this file and asserts the subcommands, the argument order and the role
+# names still match that source. Env-var configuration is a follow-up recorded in
+# `docs/162` §9, with the exact change it needs; inventing `RELAY_ADDR` here would
+# be documenting an interface that does not exist.
+
+services:
+  # ── The editor ──────────────────────────────────────────────────────────────
+  # The whole product, for one person or for a thousand people editing their own
+  # documents. Static files over HTTP.
+  editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    image: opendoc/editor:dev
+    # 8099 on the host because that is the port `webapp/serve.py` uses, so the
+    # URL in the development instructions is the URL here. 8080 inside, because
+    # nginx runs as an unprivileged user and cannot bind 80.
+    ports:
+      - "8099:8080"
+    # Nothing in this container writes to disk: the site is read from the image
+    # and nginx's temporary paths are configured into /tmp
+    # (`deploy/editor-nginx.conf`), which is the tmpfs below. A read-only root
+    # filesystem is therefore free, and it is the strongest statement available
+    # that this deployment stores nothing.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # ── The optional relay ──────────────────────────────────────────────────────
+  # Behind a profile. `docker compose up` does not start it; only
+  # `docker compose --profile relay up` does.
+  relay:
+    profiles:
+      - relay
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    image: opendoc/relay:dev
+    # The whole command, including the ROLE — the image deliberately ships no
+    # `CMD`, because `serve` refuses to start without a role and "a default would
+    # be a permission nobody chose".
+    #
+    # THE ROLE IS THE ROOM'S CEILING, and this binary verifies no grants, so it
+    # cannot tell two participants apart: every participant in this room gets
+    # exactly this role. `editor` is a room people write in; `viewer` is a
+    # read-only broadcast room; `commenter` is a review link; `suggester` is
+    # suggestion mode; `owner` is what an unauthenticated relay used to be, now
+    # said out loud. Change this line to change the room's policy — and read
+    # `docs/162` §8 before choosing `owner`.
+    command:
+      - serve
+      - /var/lib/opendoc-relay/room.journal
+      - 0.0.0.0:7070
+      - editor
+    ports:
+      - "7070:7070"
+    # The journal is the room's durable log. Losing it loses the room's ordered
+    # history, and `Room::open` refuses to start from an empty one rather than
+    # silently dropping chunks it has already acknowledged — so it is a NAMED
+    # VOLUME, never a container layer. The volume holds the directory, not the
+    # file, because compaction writes a new journal beside the old one and
+    # renames it into place.
+    volumes:
+      - opendoc-relay-journal:/var/lib/opendoc-relay
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    depends_on:
+      relay-create:
+        condition: service_completed_successfully
+        required: false
+
+  # ── Creating the room, once ─────────────────────────────────────────────────
+  # `create` is a separate subcommand because `docs/152` records that the HOST
+  # creates the room, not the first client — a relay that created one on first
+  # connection would be a relay that made the rule unenforceable. So this is a
+  # one-shot service in its own profile:
+  #
+  #     docker compose --profile relay-init run --rm relay-create
+  #
+  # It is idempotent in the only sense that matters: run twice it FAILS, because
+  # `Journal::create` refuses to write over an existing journal — "creating over a
+  # room's order would destroy the only copy of it".
+  relay-create:
+    profiles:
+      - relay-init
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    image: opendoc/relay:dev
+    command:
+      - create
+      - /var/lib/opendoc-relay/room.journal
+    volumes:
+      - opendoc-relay-journal:/var/lib/opendoc-relay
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  # ── Reading the room back ───────────────────────────────────────────────────
+  # `inspect` replays the journal and reports what it holds. It is the
+  # verification step for a backup or a restore (`docs/162` §6): a durable log
+  # that cannot be read without starting a server is a log nobody will check.
+  #
+  #     docker compose --profile relay-tools run --rm relay-inspect
+  #
+  # STOP THE RELAY FIRST, or inspect a COPY. `Journal::open` reopens the file in
+  # append mode, so two processes holding one journal is two writers on one
+  # append-only log. Its own profile, so `up` can never start it.
+  relay-inspect:
+    profiles:
+      - relay-tools
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    image: opendoc/relay:dev
+    command:
+      - inspect
+      - /var/lib/opendoc-relay/room.journal
+    volumes:
+      - opendoc-relay-journal:/var/lib/opendoc-relay
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+volumes:
+  # Named, so `docker compose down` keeps it and only `docker compose down
+  # --volumes` destroys it. That asymmetry is the point: the journal outlives the
+  # containers.
+  opendoc-relay-journal:

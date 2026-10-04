@@ -368,6 +368,75 @@ function resolveFor({ mode, can }</code></pre>
         </div>
         <!-- @end resolve-first -->
 
+        <h2 id="self-host" class="doc-h2" data-i18n="site.embedding.serveItYourself">Serve it yourself</h2>
+        <p class="doc-body" data-i18n="site.embedding.theElementsEditorSrc">
+          The element's <code>editor-src</code> points at an origin, and that
+          origin is a directory of static files. There is no server behind the
+          editor: the format work is in the WebAssembly module the browser
+          downloads, so a host serves the editor the way it serves its own assets
+          — a bucket, a CDN, its existing web server, or the container image in
+          this repository. Nothing here phones home, and nothing here needs a
+          licence check.
+        </p>
+        <p class="doc-body" data-i18n="site.embedding.thatAlsoMeansRelay">
+          That also means the collaboration relay is a second, separate
+          deployment rather than part of installing this. A host embedding a
+          document for one reader needs no server at all; a host running a room
+          several people edit at once adds one, and it holds no document even
+          then. The compose file keeps the two apart, which is what the table
+          below is reading:
+        </p>
+        <!-- @generated container-services -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div data-i18n="site.column.service">Service</div>
+            <div data-i18n="site.column.whatItIs">What it is</div>
+            <div data-i18n="site.column.composeProfile">Compose profile</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>editor</code></div>
+            <div class="disp-cell" data-i18n="site.service.editor">The product: a static file server, with nothing behind it.</div>
+            <div class="disp-cell"><span data-i18n="site.service.noProfile">none, so it starts by default</span></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>relay</code></div>
+            <div class="disp-cell" data-i18n="site.service.relay">The optional relay. It orders chunks, holds no document, and is not needed to edit.</div>
+            <div class="disp-cell"><code>relay</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>relay-create</code></div>
+            <div class="disp-cell" data-i18n="site.service.relaycreate">Creates the room's durable log, once. The host creates a room, not the first client.</div>
+            <div class="disp-cell"><code>relay-init</code></div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>relay-inspect</code></div>
+            <div class="disp-cell" data-i18n="site.service.relayinspect">Replays that log and reports what it holds. Run it on a stopped room, or on a copy.</div>
+            <div class="disp-cell"><code>relay-tools</code></div>
+          </div>
+        </div>
+        <!-- @end container-services -->
+        <p class="doc-body" data-i18n="site.embedding.commandsBelowGenerated">
+          The commands below are generated from that same compose file, so a
+          renamed service or profile changes them here rather than leaving a page
+          that tells you to run something that does not exist. The full
+          deployment story — the journal's backup and restore, TLS termination,
+          what can be monitored, honest sizing, and upgrading without losing a
+          room's history — is
+          <a class="doc-link" href="./reference/deployment-containers-and-configuration.html" data-i18n="site.embedding.deploymentGuide">the deployment guide</a>.
+        </p>
+        <!-- @generated container-commands -->
+        <div class="code-panel">
+          <pre><code># docker-compose.yml — generated from it, so a renamed profile changes this.
+
+# The editor on its own. No server, nothing to create, nothing to back up.
+docker compose up --build editor
+
+# Adding the optional relay: create the room's journal once, then serve it.
+docker compose --profile relay-init run --rm relay-create
+docker compose --profile relay up --build</code></pre>
+        </div>
+        <!-- @end container-commands -->
+
         <h2 id="capabilities" class="doc-h2" data-i18n="site.embedding.capabilitiesFiveRoles">Capabilities, and the five roles</h2>
         <p class="doc-body" data-i18n="site.embedding.there">
           There are <span data-claim="capability-count">9</span> capabilities. A
@@ -1491,12 +1560,14 @@ brand.json was refused:
             <li><a href="#embed-the-editor" aria-current="true" data-i18n="site.embedding.embedEditor">Embed the editor</a></li>
             <li><a href="#install" data-i18n="site.embedding.install">Install it</a></li>
             <li><a href="#mount" data-i18n="site.embedding.mount">Mount it</a></li>
+            <li><a href="#self-host" data-i18n="site.embedding.serveItYourself">Serve it yourself</a></li>
             <li><a href="#capabilities" data-i18n="site.embedding.capabilitiesRoles">Capabilities and roles</a></li>
             <li><a href="#per-capability" data-i18n="site.embedding.perCapabilityNotPer">Per capability, not per tier</a></li>
             <li><a href="#presentations" data-i18n="site.embedding.previewNotReadonly">preview is not readonly</a></li>
             <li><a href="#enforcement" data-i18n="site.embedding.threeLayersEnforcement">Three layers of enforcement</a></li>
             <li><a href="#licence" data-i18n="site.embedding.nothingHereGated">Nothing here is gated</a></li>
             <li><a href="#commanding" data-i18n="site.embedding.commanding">Commanding it</a></li>
+            <li><a href="#white-label" data-i18n="site.embedding.makeYourProduct">Make it your product</a></li>
             <li><a href="#evidence" data-i18n="site.embedding.howPageKeptHonest2">How this page is kept honest</a></li>
             <li><a href="#not-yet" data-i18n="site.embedding.whatDoesNotDo">What this does not do yet</a></li>
           </ul>

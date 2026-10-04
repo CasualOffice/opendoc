@@ -190,6 +190,8 @@ SharedArrayBuffer
 Skia
 SmartArt
 TBL
+TCP
+TLS
 TOC
 TXT
 Tauri
