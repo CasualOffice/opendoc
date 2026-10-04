@@ -84,6 +84,10 @@ use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_model::v1::BreakKind;
 // The start type a section break gives the section that follows it.
 use casual_doc_model::v1::DrawingHyperlink;
+// The embedded-object kinds object selection and the chart insert path discriminate on.
+// Its own `use` line, per the parallel-lane import rule.
+use casual_doc_model::v1::EmbeddedKind;
+// The typed chart projection `insertChart` installs (`docs/155`). Its own `use` line.
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::MediaId;
 use casual_doc_model::v1::SectionType;
@@ -102,6 +106,11 @@ use casual_doc_model::v1::{
     TableCellProperties, TableLayout, TableProperties, TableRow, TableWidth, TextBoxAutoFit,
     TextBoxBodyProperties, UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge,
     VerticalPosition, WordprocessingGroup, WrapMode,
+};
+use casual_doc_model::v1::{
+    Axis, AxisKind, AxisPosition, BarDirection, BarGrouping, Chart, ChartCoverage, ChartGroup,
+    ChartGroupKind, ChartText, ChartValue, DataRange, DisplayBlanks, Grouping, Legend,
+    LegendPosition, PlotArea, ScatterStyle, Series,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 // The editing restriction `setDocumentProtection` installs or lifts (ADR-059). Its own `use`
@@ -733,6 +742,7 @@ enum HistoryKind {
     ObjectAltText,
     ObjectDelete,
     ObjectInsert,
+    ChartInsert,
     DocumentProperties,
     PageSetup,
     StyleChange,
@@ -769,6 +779,9 @@ impl HistoryKind {
             Self::ObjectAltText => "Alt text",
             Self::ObjectDelete => "Delete object",
             Self::ObjectInsert => "Insert image",
+            // Its own label, not `ObjectInsert`'s: that one reads "Insert image", and an
+            // undo entry has to name the thing the user actually inserted.
+            Self::ChartInsert => "Insert chart",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::StyleChange => "Style change",
@@ -845,6 +858,10 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
             HistoryKind::ListFormatting
         }
         Operation::SetMediaReference { .. } => HistoryKind::Edit,
+        // A projection write leads no user action either — `insert_chart` inserts the
+        // object first, so the label comes from `InsertInlineObject` — but the honest
+        // label if one ever did is the chart one, not "Edit".
+        Operation::SetChartDefinition { .. } => HistoryKind::ChartInsert,
         Operation::InsertField { .. }
         | Operation::RemoveField { .. }
         | Operation::InsertFieldRange { .. }
@@ -3032,6 +3049,100 @@ impl WasmDocument {
         let object = node_id(node)?;
         self.apply_action(vec![Operation::DeleteObject { object }])
             .map_err(to_js)
+    }
+
+    /// Word's Insert ▸ Chart: an inline chart at the caret `(node, offset)`, with
+    /// Word's own sample data, as one undoable action.
+    ///
+    /// `kind` is one of `bar`, `column`, `line`, `area`, `scatter`, `pie`,
+    /// `doughnut` — **the seven families this build paints** (tier 1A #744 and
+    /// tier 1B #753). A family that is modeled but not painted, or not modeled at
+    /// all, is refused with a sentence rather than inserted: a chart with no
+    /// drawable projection paints a labelled placeholder by design, so inserting
+    /// one would put an object on the page whose whole content is the words
+    /// `[chart]`.
+    ///
+    /// # Two operations, in this order
+    ///
+    /// A chart is an `InlineNode::EmbeddedObject` **and** a
+    /// `Definitions::charts` projection anchored to it; the node alone paints the
+    /// placeholder. The node is inserted first because `Document::validate`
+    /// refuses a projection whose anchor does not exist yet, and both land in one
+    /// transaction, so one undo removes both.
+    ///
+    /// # What this does not yet do
+    ///
+    /// The DOCX chart part is not written. Import keeps a chart's source bytes in
+    /// the retained-parts side table and export emits the relationship from
+    /// there, so an inserted chart has no part to point at and saving the
+    /// document would reference one that is not in the package. The projection is
+    /// marked [`ChartCoverage::Complete`], which is precisely the flag that tells
+    /// a writer it may regenerate the part from the projection
+    /// (`ChartCoverage::permits_regeneration`), and writing it is `109` HF-256
+    /// in `casual-doc-export`. **Until that lands this is an engine capability
+    /// with no safe save path, and no host surface should offer it.**
+    ///
+    /// # Errors
+    ///
+    /// When `kind` names no painted family, when `node`/`offset` is not a valid
+    /// caret, or when the id space is exhausted.
+    #[wasm_bindgen(js_name = insertChart)]
+    pub fn insert_chart(
+        &mut self,
+        node: &str,
+        offset: u32,
+        kind: &str,
+    ) -> Result<EditResult, JsValue> {
+        use casual_doc_model::v1::{ChartId, EmbeddedObject, EmbeddedPart, Extent};
+
+        let group =
+            chart_group_for_kind(kind).ok_or_else(|| to_js(unpainted_chart_refusal(kind)))?;
+        let owner = node_id(node)?;
+        let exhausted = || to_js("id space exhausted".into());
+        let object_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let chart_id = ChartId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        // 5" x 3", Word's own default chart frame, which fits a 6.5" text column
+        // at every margin preset this editor offers.
+        let extent = Extent {
+            width_emu: 4_572_000,
+            height_emu: 2_743_200,
+        };
+        // The part name and relationship id are derived from the object's own
+        // identity rather than counted, so two inserts — including two concurrent
+        // ones on different replicas — cannot mint the same name. A writer that
+        // regenerates the part (CHART-002) assigns the package's own ids at write
+        // time; these exist so the model is self-consistent in the meantime.
+        let object = EmbeddedObject {
+            id: object_id,
+            kind: EmbeddedKind::Chart,
+            part: EmbeddedPart {
+                relationship_id: format!("rIdChart{object_id}"),
+                relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
+                part_name: format!("word/charts/chart{object_id}.xml"),
+            },
+            extra_parts: Vec::new(),
+            // No cached preview: the projection draws, and a preview would be a
+            // second, stale picture of the same data.
+            preview: None,
+            extent,
+            prog_id: None,
+        };
+        let projection = default_chart_projection(object_id, group);
+        self.apply_action_caret_as(
+            vec![
+                Operation::InsertInlineObject {
+                    at: Pos::new(owner, offset),
+                    node: Box::new(InlineNode::EmbeddedObject(Box::new(object))),
+                },
+                Operation::SetChartDefinition {
+                    id: chart_id,
+                    chart: Some(Box::new(projection)),
+                },
+            ],
+            Pos::new(owner, offset),
+            HistoryKind::ChartInsert,
+        )
+        .map_err(to_js)
     }
 
     /// The current wrap mode of a floating object as one of the
@@ -14332,6 +14443,9 @@ impl WasmDocument {
         // and keeps every id in a session unique (the same rule `revision_ids`
         // and `next_transaction` already follow).
         self.next_transaction = self.next_transaction.saturating_add(1);
+        // Removing content that CONTAINS a chart also removes the chart's projection —
+        // the referential cascade below. See `cascade_chart_projections`.
+        let ops = self.cascade_chart_projections(ops);
         // The identity spaces are reserved HERE, once, from this replica's own generator, and
         // travel with the transaction. Everything downstream — `apply`, the log, an undo, a
         // remote replica replaying this step — works from them, which is what makes the same
@@ -14342,7 +14456,7 @@ impl WasmDocument {
             self.log.head(),
             label,
             &mut self.edit_ids,
-            ops.to_vec(),
+            ops,
         )
         .ok_or_else(|| "id space exhausted".to_owned())?
         .coalescing(coalesce)
@@ -14380,6 +14494,79 @@ impl WasmDocument {
             (None, _) => Pos::new(self.document.id(), 0),
         };
         Ok(caret)
+    }
+
+    /// `ops` with the chart-projection removals it makes necessary prepended.
+    ///
+    /// # The rule, and whose rule it is
+    ///
+    /// `Definitions::charts` is a sidecar keyed by the object it projects, and
+    /// `Document::validate` refuses a projection whose anchor is gone. So
+    /// removing a projected chart is two operations, and they have to be in this
+    /// order: the projection first (a projection-less chart object is valid, a
+    /// projection-less *document* is what the removal then leaves), the node
+    /// second. The reverse order fails as `DeleteObject` applies, which is
+    /// exactly the refusal that made `can_delete: true` a lie for a chart.
+    ///
+    /// Composed HERE, at the atomic choke point, rather than in `delete_object`:
+    /// every facade path that emits one of these operations is covered by the
+    /// one rule, and the cascade travels in the same transaction, so undo
+    /// restores the projection and the node together.
+    ///
+    /// # What it does NOT cover, and why that is recorded rather than hidden
+    ///
+    /// Only the operations that *declare* which object they remove are resolved.
+    /// A removal whose footprint is positional — `DeleteBlocks` over a paragraph
+    /// that contains a chart, `SetInlines` replacing a paragraph's inline list,
+    /// a range delete, a dropped table row — cannot be resolved from the
+    /// operation alone, and neither `SetInlines` nor `DeleteBlocks` validates as
+    /// it applies, so those leave a dangling projection behind instead of
+    /// refusing. That is a pre-existing defect of the imported-chart path, not
+    /// one this lane introduces, and it needs the removal-footprint classifier
+    /// the transaction crate's `removed_by` already half is. Tracked as
+    /// `109` HF-257.
+    ///
+    /// Complexity: one `is_empty()` for every document that holds no chart —
+    /// which is every document until one is inserted. With charts, O(the removed
+    /// subtree) per declared removal, plus O(charts) to key the projections.
+    fn cascade_chart_projections(&self, ops: &[Operation]) -> Vec<Operation> {
+        if self.document.definitions().charts.is_empty() {
+            return ops.to_vec();
+        }
+        let mut removed: Vec<NodeId> = Vec::new();
+        for op in ops {
+            // The two operations that name the node they remove. Everything else is
+            // the positional family recorded above; a wildcard rather than 60 explicit
+            // arms because the gap is the point, and closing it is HF-257's job.
+            if let Operation::DeleteObject { object } | Operation::RemoveInlineObject { object } =
+                op
+            {
+                for blocks in surface_block_lists(&self.document) {
+                    if chart_objects_under_in_blocks(blocks, *object, &mut removed) {
+                        break;
+                    }
+                }
+            }
+        }
+        if removed.is_empty() {
+            return ops.to_vec();
+        }
+        let mut out: Vec<Operation> = self
+            .document
+            .definitions()
+            .charts
+            .iter()
+            .filter(|(_, chart)| removed.contains(&chart.object))
+            .map(|(id, _)| Operation::SetChartDefinition {
+                id: *id,
+                chart: None,
+            })
+            .collect();
+        if out.is_empty() {
+            return ops.to_vec();
+        }
+        out.extend(ops.iter().cloned());
+        out
     }
 
     /// [`finish_edit_with`](Self::finish_edit_with) with no damage report — the
@@ -15185,9 +15372,10 @@ impl WasmDocument {
         // come back (`docs/116`).
         let object_nodes = self.object_nodes_by_paragraph();
         let mut grouped: HashMap<NodeId, usize> = HashMap::new();
-        // Per-paragraph claimed flags, so a paragraph split across pages still maps
-        // each placed box to a distinct model node (media match first, order next).
-        let mut claimed: HashMap<NodeId, (Vec<bool>, Vec<bool>)> = HashMap::new();
+        // Per-paragraph claimed flags, one set per correlation list (images, text
+        // boxes, charts), so a paragraph split across pages still maps each placed
+        // box to a distinct model node (media match first, order next).
+        let mut claimed: HashMap<NodeId, ClaimedObjectNodes> = HashMap::new();
         // The PAINTED layout. Object boxes are the geometry of things the user
         // points at and drags, so reading them from the editing layout put every
         // image, shape and text box where it would have been if the tracked
@@ -15209,14 +15397,18 @@ impl WasmDocument {
                 };
                 // A fragment whose painted lines carry no object has nothing to
                 // correlate, and the `claimed` bookkeeping for it was never read.
-                let Some((img_nodes, tb_nodes)) = object_nodes.get(id) else {
+                let Some(nodes) = object_nodes.get(id) else {
                     continue;
                 };
+                let (img_nodes, tb_nodes, chart_nodes) =
+                    (&nodes.images, &nodes.text_boxes, &nodes.charts);
                 let content_x = placed.rect.origin.x.raw() + box_metrics.indent_start.raw();
                 let content_y = placed.rect.origin.y.raw() + box_metrics.space_before.raw();
-                let entry = claimed
-                    .entry(*id)
-                    .or_insert_with(|| (vec![false; img_nodes.len()], vec![false; tb_nodes.len()]));
+                let entry = claimed.entry(*id).or_insert_with(|| ClaimedObjectNodes {
+                    images: vec![false; img_nodes.len()],
+                    text_boxes: vec![false; tb_nodes.len()],
+                    charts: vec![false; chart_nodes.len()],
+                });
                 for line in &lines.lines {
                     for image in &line.images {
                         let rect = Rect::new(
@@ -15230,22 +15422,63 @@ impl WasmDocument {
                         // unclaimed one in document order.
                         let pick = img_nodes
                             .iter()
-                            .position(|(_, part)| part.as_deref() == Some(image.media.as_str()))
-                            .filter(|i| !entry.0[*i])
-                            .or_else(|| entry.0.iter().position(|used| !used));
+                            .position(|node| node.media.as_deref() == Some(image.media.as_str()))
+                            .filter(|i| !entry.images[*i])
+                            .or_else(|| entry.images.iter().position(|used| !used));
                         if let Some(i) = pick {
-                            entry.0[i] = true;
-                            let frame = object_resize_handles(self.document.body(), img_nodes[i].0);
+                            entry.images[i] = true;
+                            let found = &img_nodes[i];
+                            let frame = object_resize_handles(self.document.body(), found.node);
+                            // An embedded object painted as its cached preview is
+                            // still an embedded object: it is not croppable and
+                            // carries no `descr`, so it must not inherit a
+                            // picture's capabilities just because a picture is
+                            // what the layout drew for it.
+                            let (kind, capabilities) = match found.embedded_kind {
+                                Some(kind) => {
+                                    (kind, ObjectCapabilities::inline_embedded_object(frame))
+                                }
+                                None => ("image", ObjectCapabilities::inline_image(frame)),
+                            };
                             out.push(ObjectBox {
-                                root: img_nodes[i].0,
-                                subject: img_nodes[i].0,
+                                root: found.node,
+                                subject: found.node,
                                 path: Vec::new(),
-                                kind: "image",
+                                kind,
                                 page: page.number,
                                 rect,
                                 rotation_60k: frame.rotation_60k,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_image(frame),
+                                capabilities,
+                            });
+                        }
+                    }
+                    // A drawn chart: its own painted box, correlated against the
+                    // paragraph's chart objects in document order. Without this the
+                    // only selectable chart was one whose projection DID NOT draw —
+                    // the placeholder case — so making charts paint had made them
+                    // unselectable (`SKILL` §9 rule 4, the other way round).
+                    for chart in &line.charts {
+                        let rect = Rect::new(
+                            Point::new(
+                                Twip(content_x + chart.origin.x.raw()),
+                                Twip(content_y + chart.origin.y.raw()),
+                            ),
+                            chart.size,
+                        );
+                        if let Some(i) = entry.charts.iter().position(|used| !used) {
+                            entry.charts[i] = true;
+                            let frame = object_resize_handles(self.document.body(), chart_nodes[i]);
+                            out.push(ObjectBox {
+                                root: chart_nodes[i],
+                                subject: chart_nodes[i],
+                                path: Vec::new(),
+                                kind: "chart",
+                                page: page.number,
+                                rect,
+                                rotation_60k: frame.rotation_60k,
+                                anchored: false,
+                                capabilities: ObjectCapabilities::inline_embedded_object(frame),
                             });
                         }
                     }
@@ -15257,8 +15490,8 @@ impl WasmDocument {
                             ),
                             text_box.size,
                         );
-                        if let Some(i) = entry.1.iter().position(|used| !used) {
-                            entry.1[i] = true;
+                        if let Some(i) = entry.text_boxes.iter().position(|used| !used) {
+                            entry.text_boxes[i] = true;
                             let frame = object_resize_handles(self.document.body(), tb_nodes[i]);
                             out.push(ObjectBox {
                                 root: tb_nodes[i],
@@ -15398,16 +15631,13 @@ impl WasmDocument {
         let definitions = self.document.definitions();
         let mut out = HashMap::new();
         visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
-            let mut images = Vec::new();
-            let mut text_boxes = Vec::new();
-            collect_para_objects(
-                &paragraph.inlines,
-                definitions,
-                &mut images,
-                &mut text_boxes,
-            );
-            if !images.is_empty() || !text_boxes.is_empty() {
-                out.insert(paragraph.id, (images, text_boxes));
+            let mut objects = ParagraphObjectNodes::default();
+            collect_para_objects(&paragraph.inlines, definitions, &mut objects);
+            if !objects.images.is_empty()
+                || !objects.text_boxes.is_empty()
+                || !objects.charts.is_empty()
+            {
+                out.insert(paragraph.id, objects);
             }
         });
         out
@@ -17384,11 +17614,422 @@ fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, S
     }
 }
 
-/// Every paragraph that carries an inline drawing or inline text box, by id:
-/// the drawings (with their resolved media part name) and the text boxes, both
-/// in document order. Built by
+/// Every paragraph that carries an inline object, by id. Built by
 /// [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph).
-type ObjectNodesByParagraph = HashMap<NodeId, (Vec<(NodeId, Option<String>)>, Vec<NodeId>)>;
+type ObjectNodesByParagraph = HashMap<NodeId, ParagraphObjectNodes>;
+
+/// One paragraph's inline object nodes, in document order, split by the kind of
+/// painted box each can correlate to.
+///
+/// Three lists rather than one, because the layout publishes three kinds of
+/// inline box (`line.images`, `line.text_boxes`, `line.charts`) and the
+/// correlation in `resolve_object_boxes` matches a painted box against the model
+/// nodes that could have produced it. Mixing a chart into the image list is how
+/// a chart came to be reported as an image with a picture's capabilities.
+#[derive(Debug, Default)]
+struct ParagraphObjectNodes {
+    /// Nodes that can paint an inline IMAGE box, with each one's resolved media
+    /// part name: a `w:drawing` picture, and an embedded object painted as its
+    /// cached preview (which is a picture, and the only thing of it that paints).
+    images: Vec<InlineImageNode>,
+    /// Inline (non-anchored) text boxes.
+    text_boxes: Vec<NodeId>,
+    /// Embedded CHART objects. One paints a composed chart box of its own
+    /// (`line.charts`) when its projection is drawable, and its cached preview
+    /// otherwise — so a chart appears in this list and, if it has a preview, in
+    /// `images` too. Exactly one of the two boxes is ever painted for it, and the
+    /// claim bookkeeping is per list, so neither can steal the other's slot.
+    charts: Vec<NodeId>,
+}
+
+/// Which of one paragraph's object nodes a painted box has already been matched
+/// to, one flag list per correlation list in [`ParagraphObjectNodes`].
+///
+/// Per paragraph rather than per fragment, so a paragraph split across two pages
+/// still maps each painted box to a distinct model node.
+#[derive(Debug)]
+struct ClaimedObjectNodes {
+    images: Vec<bool>,
+    text_boxes: Vec<bool>,
+    charts: Vec<bool>,
+}
+
+/// One model node an inline image box can correlate to.
+#[derive(Clone, Debug)]
+struct InlineImageNode {
+    node: NodeId,
+    /// The resolved media part name, for the media-match pass.
+    media: Option<String>,
+    /// The object-kind tag when the node is an `EmbeddedObject` rather than a
+    /// `w:drawing`, and `None` for a picture. The two carry different
+    /// capabilities — a cached preview is not a picture the user may crop or
+    /// describe — so the painted box has to know which it found, and a diagram
+    /// must not be reported as a chart just because both flow as a preview.
+    embedded_kind: Option<&'static str>,
+}
+
+/// The OOXML relationship type of an embedded chart part.
+const EMBEDDED_CHART_RELATIONSHIP: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+
+/// The chart family one of [`insert_chart`](WasmDocument::insert_chart)'s `kind`
+/// tokens names, or `None` when this build does not PAINT that family.
+///
+/// Deliberately keyed off what paints rather than off what the model represents.
+/// `ChartGroupKind` is the whole typed surface the importer projects into, and a
+/// family it can read but `casual_doc_layout::chart` cannot draw must not be
+/// insertable: a chart with no drawable projection paints `[chart]`, so offering
+/// one would be a gesture that inserts a label (`SKILL` §10). Today the two sets
+/// coincide — all seven variants paint — and this function is where they would
+/// diverge if an eighth were modeled first.
+///
+/// The defaults are Word's own: a column chart's 150% gap width and -27% overlap,
+/// a pie's twelve-o'clock first slice, a doughnut's 75% hole.
+///
+/// O(1).
+fn chart_group_for_kind(kind: &str) -> Option<ChartGroupKind> {
+    let group = match kind {
+        "bar" => ChartGroupKind::Bar {
+            direction: BarDirection::Bar,
+            grouping: BarGrouping::Clustered,
+            gap_width: 150,
+            overlap: -27,
+        },
+        "column" => ChartGroupKind::Bar {
+            direction: BarDirection::Column,
+            grouping: BarGrouping::Clustered,
+            gap_width: 150,
+            overlap: -27,
+        },
+        "line" => ChartGroupKind::Line {
+            grouping: Grouping::Standard,
+            marker: false,
+        },
+        "area" => ChartGroupKind::Area {
+            grouping: Grouping::Standard,
+        },
+        "scatter" => ChartGroupKind::Scatter {
+            style: ScatterStyle::LineMarker,
+        },
+        "pie" => ChartGroupKind::Pie {
+            first_slice_angle: 0,
+        },
+        "doughnut" => ChartGroupKind::Doughnut {
+            first_slice_angle: 0,
+            hole_size: 75,
+        },
+        _ => return None,
+    };
+    Some(group)
+}
+
+/// The marked refusal for a chart family this build does not paint.
+///
+/// A sentence the reader can act on plus a stable code a host routes
+/// ([`casual_doc_edit::refusal`]), rather than a bare error name that
+/// `edit_errors.mjs` would replace with "that edit isn't supported for this
+/// selection yet" — which is wrong twice over here: the selection is fine, and
+/// the reader is never told which families they CAN have.
+///
+/// A function rather than an inline `format!` so it is assertable without
+/// crossing the `#[wasm_bindgen]` boundary: `to_js` panics under a native test.
+///
+/// Complexity: O(kind length), one allocation.
+fn unpainted_chart_refusal(kind: &str) -> String {
+    casual_doc_edit::refusal::marked(
+        "chart.unpainted-family",
+        &format!(
+            "This build draws bar, column, line, area, scatter, pie and doughnut \
+             charts; there is no {kind} chart to insert yet."
+        ),
+    )
+}
+
+/// Whether `group` colours by point rather than by series — the pie families,
+/// which take ONE series and give each category its own colour.
+const fn chart_colors_by_point(group: ChartGroupKind) -> bool {
+    matches!(
+        group,
+        ChartGroupKind::Pie { .. } | ChartGroupKind::Doughnut { .. }
+    )
+}
+
+/// One cached data range over `values`, with every index present.
+fn chart_range(values: &[&str]) -> DataRange {
+    DataRange {
+        // No `c:f`: the data is the cache, because there is no worksheet behind
+        // an inserted chart. A formula naming a range nothing holds would be a
+        // reference a spreadsheet editor could not resolve.
+        formula: None,
+        point_count: values.len() as u32,
+        points: values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (index as u32, ChartValue::Number((*value).to_owned())))
+            .collect(),
+        number_format: None,
+    }
+}
+
+/// The sample projection a freshly inserted chart carries, anchored to `object`.
+///
+/// The numbers are Word's own Insert ▸ Chart sample data — three series of four
+/// categories for the category families, one series of four for the pie families,
+/// and three x/y pairs for scatter. Sample data rather than an empty chart on
+/// purpose, and for the same reason Word does it: an empty plot area gives the
+/// author nothing to recognise, nothing to resize against, and no way to tell a
+/// working chart from a broken one.
+///
+/// [`ChartCoverage::Complete`] is not optimism: this projection IS the whole
+/// chart, there are no source bytes it fails to represent, and that is exactly
+/// the condition `ChartCoverage::permits_regeneration` asks about.
+///
+/// Complexity: O(1) — a fixed number of series and points.
+fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
+    let scatter = matches!(group, ChartGroupKind::Scatter { .. });
+    let categories = if chart_colors_by_point(group) {
+        chart_range(&["8.2", "3.2", "1.4", "1.2"])
+    } else {
+        chart_range(&["4.3", "2.5", "3.5", "4.5"])
+    };
+    let category_labels = if chart_colors_by_point(group) {
+        ["1st Qtr", "2nd Qtr", "3rd Qtr", "4th Qtr"]
+    } else {
+        ["Category 1", "Category 2", "Category 3", "Category 4"]
+    };
+    let label = |text: &str| ChartText {
+        text: text.to_owned(),
+        formula: None,
+    };
+    let category_names = DataRange {
+        formula: None,
+        point_count: category_labels.len() as u32,
+        points: category_labels
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (index as u32, ChartValue::Text((*name).to_owned())))
+            .collect(),
+        number_format: None,
+    };
+    let series = if scatter {
+        vec![Series {
+            index: 0,
+            order: 0,
+            name: Some(label("Series 1")),
+            categories: None,
+            values: chart_range(&["2.7", "3.2", "0.8"]),
+            x_values: Some(chart_range(&["0.7", "1.8", "2.6"])),
+            ..Series::default()
+        }]
+    } else if chart_colors_by_point(group) {
+        vec![Series {
+            index: 0,
+            order: 0,
+            name: Some(label("Series 1")),
+            categories: Some(category_names),
+            values: categories,
+            ..Series::default()
+        }]
+    } else {
+        [
+            ("Series 1", ["4.3", "2.5", "3.5", "4.5"]),
+            ("Series 2", ["2.4", "4.4", "1.8", "2.8"]),
+            ("Series 3", ["2.0", "2.0", "3.0", "5.0"]),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(index, (name, values))| Series {
+            index: index as u32,
+            order: index as u32,
+            name: Some(label(name)),
+            categories: Some(category_names.clone()),
+            values: chart_range(&values.map(|value| value)),
+            ..Series::default()
+        })
+        .collect()
+    };
+    // The pie families have no axes at all, which is why nothing declares one for
+    // them: `compose_chart` draws no axis furniture it was not given, and an axis
+    // id a group names but the plot area does not hold would be a dangling
+    // reference the model rejects.
+    let (axis_ids, axes) = if chart_colors_by_point(group) {
+        (Vec::new(), Vec::new())
+    } else {
+        (
+            vec![1, 2],
+            vec![
+                Axis {
+                    id: 1,
+                    // Scatter plots both axes as values; every other family puts
+                    // the categories on the bottom.
+                    kind: if scatter {
+                        AxisKind::Value
+                    } else {
+                        AxisKind::Category
+                    },
+                    position: Some(AxisPosition::Bottom),
+                    cross_axis_id: Some(2),
+                    ..Axis::default()
+                },
+                Axis {
+                    id: 2,
+                    kind: AxisKind::Value,
+                    position: Some(AxisPosition::Left),
+                    major_gridlines: true,
+                    cross_axis_id: Some(1),
+                    ..Axis::default()
+                },
+            ],
+        )
+    };
+    Chart {
+        object,
+        coverage: ChartCoverage::Complete,
+        // No title and `autoTitleDeleted` unset: Word shows "Chart Title" as a
+        // placeholder the author replaces, and there is no title-editing gesture
+        // yet, so a chart that printed those two words with no way to change them
+        // would be worse than one with none.
+        title: None,
+        auto_title_deleted: true,
+        plot_area: PlotArea {
+            groups: vec![ChartGroup {
+                kind: group,
+                series,
+                axis_ids,
+                vary_colors: chart_colors_by_point(group),
+            }],
+            axes,
+        },
+        legend: Some(Legend {
+            position: LegendPosition::Bottom,
+            overlay: false,
+        }),
+        plot_visible_only: true,
+        display_blanks_as: DisplayBlanks::Gap,
+        vary_colors: chart_colors_by_point(group),
+        external_data: None,
+    }
+}
+
+/// Every embedded CHART object in `blocks`, in document order.
+///
+/// This is the removal footprint a chart projection depends on.
+/// `Definitions::charts` is a sidecar keyed by the object it projects (ADR-030
+/// I4) and `Document::validate` refuses a projection whose anchor is gone, so
+/// whatever takes one of these nodes out has to take its projection with it.
+///
+/// O(the block subtree).
+fn chart_objects_in_blocks(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => chart_objects_in_inlines(&paragraph.inlines, out),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        chart_objects_in_blocks(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => chart_objects_in_blocks(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// [`chart_objects_in_blocks`] for an inline list, following every container axis
+/// — a chart inside a text box inside a shape group counts.
+fn chart_objects_in_inlines(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
+    for inline in inlines {
+        if let InlineNode::EmbeddedObject(object) = inline
+            && object.kind == EmbeddedKind::Chart
+        {
+            out.push(object.id);
+        }
+        match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => chart_objects_in_inlines(nested, out),
+            InlineDescent::Blocks(blocks) => chart_objects_in_blocks(blocks, out),
+            InlineDescent::Group(children) => {
+                group_block_stories(children, &mut |blocks| {
+                    chart_objects_in_blocks(blocks, out);
+                });
+            }
+            InlineDescent::Leaf => {}
+        }
+    }
+}
+
+/// Every chart object the node `object` would take with it — itself, when it is
+/// one, plus any inside its own stories. Returns whether `object` was found, so
+/// the caller stops searching further surfaces.
+///
+/// One walk, not a by-id lookup per chart: the alternative shape is the
+/// quadratic one `SKILL` §8 forbids.
+fn chart_objects_under_in_blocks(
+    blocks: &[BlockNode],
+    object: NodeId,
+    out: &mut Vec<NodeId>,
+) -> bool {
+    for block in blocks {
+        let found = match block {
+            BlockNode::Paragraph(paragraph) => {
+                chart_objects_under_in_inlines(&paragraph.inlines, object, out)
+            }
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| chart_objects_under_in_blocks(&cell.blocks, object, out))
+            }),
+            BlockNode::Sdt(sdt) => chart_objects_under_in_blocks(&sdt.blocks, object, out),
+            BlockNode::AltChunk(_) => false,
+        };
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+fn chart_objects_under_in_inlines(
+    inlines: &[InlineNode],
+    object: NodeId,
+    out: &mut Vec<NodeId>,
+) -> bool {
+    for inline in inlines {
+        if inline.id() == object {
+            chart_objects_in_inlines(core::slice::from_ref(inline), out);
+            return true;
+        }
+        let found = match inline_descent(inline) {
+            InlineDescent::Inlines(nested) => chart_objects_under_in_inlines(nested, object, out),
+            InlineDescent::Blocks(blocks) => chart_objects_under_in_blocks(blocks, object, out),
+            InlineDescent::Group(children) => {
+                let mut found = false;
+                group_block_stories(children, &mut |blocks| {
+                    found = found || chart_objects_under_in_blocks(blocks, object, out);
+                });
+                found
+            }
+            InlineDescent::Leaf => false,
+        };
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `ObjectKind` tag for an embedded object (docs/85 `ObjectKind`).
+///
+/// Enumerated rather than wildcarded: `Other(_)` is a relationship type this
+/// build does not recognise, and reporting it as a chart would put chart
+/// commands on something that is not one.
+const fn embedded_object_kind(kind: &EmbeddedKind) -> &'static str {
+    match kind {
+        EmbeddedKind::Chart => "chart",
+        EmbeddedKind::Diagram => "diagram",
+        EmbeddedKind::OleObject | EmbeddedKind::Other(_) => "embedded",
+    }
+}
 
 /// What an [`InlineNode`] CONTAINS — the one place in this crate that knows the
 /// inline container set.
@@ -18339,6 +18980,13 @@ struct ObjectOrderEntryJson {
     can_fill: bool,
     can_stroke: bool,
     can_edit_text: bool,
+    /// Why each FALSE capability above is false: the capability's own name → a
+    /// marked refusal the host renders verbatim. The same payload
+    /// [`ObjectHitPayload::capability_reasons`] carries, published here too so
+    /// the list and the hit test cannot explain the same object differently.
+    /// Absent when every capability is available.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    capability_reasons: BTreeMap<String, String>,
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -22413,7 +23061,12 @@ fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
 }
 
 fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
+    let capability_reasons = capability_refusals(object.kind, object.anchored, object.capabilities)
+        .into_iter()
+        .map(|(name, reason)| (name.to_owned(), reason.to_owned()))
+        .collect();
     ObjectOrderEntryJson {
+        capability_reasons,
         node: object.subject.to_string(),
         surface: "body".to_owned(),
         root: object.root.to_string(),
@@ -23110,6 +23763,36 @@ impl ObjectCapabilities {
         }
     }
 
+    /// An inline embedded object: a chart, a diagram, or an OLE object, painted
+    /// either as its composed chart box or as its cached preview picture.
+    ///
+    /// # Why this is not `inline_image`
+    ///
+    /// It was, and every bit it borrowed was a lie. `collect_para_objects` pushes
+    /// a preview-bearing `EmbeddedObject` into the image list, so it received
+    /// `can_delete`, `can_alt_text` and `can_crop` — and `EmbeddedObject` has no
+    /// `descr` field and no `srcRect`, so alt text and crop could never resolve,
+    /// while `DeleteObject` answered `NodeNotFound` because `is_object_node` did
+    /// not list the kind. Three capabilities advertised as live, three commands
+    /// that errored. `can_resize` meanwhile read `false` from a defaulted frame
+    /// while `SetExtent` had an `EmbeddedObject` arm all along — so the one thing
+    /// that worked was the one thing hidden. `SKILL` §9 rule 4 and §10, in one
+    /// carrier.
+    ///
+    /// What is true: the extent is writable (resize), the node is removable
+    /// (delete, paired with its projection — see `Operation::DeleteObject`), and
+    /// nothing else is. Inline, so no move and no wrap; no `a:xfrm`, so no
+    /// rotation; no picture fill or outline; no text story of its own.
+    const fn inline_embedded_object(frame: ObjectFrame) -> Self {
+        Self {
+            can_resize: frame.handles != 0,
+            resize_handles: frame.handles,
+            can_rotate: frame.can_rotate,
+            can_delete: true,
+            ..Self::empty()
+        }
+    }
+
     const fn inline_text_box(frame: ObjectFrame) -> Self {
         Self {
             can_resize: frame.handles != 0,
@@ -23180,6 +23863,120 @@ impl ObjectCapabilities {
             can_edit_text: false,
         }
     }
+
+    /// Whether the capability the host calls `name` is available here, or `None`
+    /// when `name` is not one of the ten.
+    ///
+    /// The accessor half of [`OBJECT_CAPABILITY_NAMES`]: one list of names and
+    /// one function that reads them, so the reason table below cannot disagree
+    /// with the bits about what the capability SET is.
+    const fn has(&self, name: &str) -> Option<bool> {
+        Some(match name.as_bytes() {
+            b"canResize" => self.can_resize,
+            b"canRotate" => self.can_rotate,
+            b"canMove" => self.can_move,
+            b"canWrap" => self.can_wrap,
+            b"canDelete" => self.can_delete,
+            b"canAltText" => self.can_alt_text,
+            b"canCrop" => self.can_crop,
+            b"canFill" => self.can_fill,
+            b"canStroke" => self.can_stroke,
+            b"canEditText" => self.can_edit_text,
+            _ => return None,
+        })
+    }
+}
+
+/// The ten structural capabilities, under the names the host reads them by — the
+/// camelCase keys both payloads publish and `main.js`'s own
+/// `OBJECT_CAPABILITY_KEYS` mirrors.
+///
+/// One list, consumed by [`ObjectCapabilities::has`] and by
+/// [`capability_refusals`], because two copies of "what the capability set is" is
+/// how a capability comes to have a bit and no reason.
+const OBJECT_CAPABILITY_NAMES: [&str; 10] = [
+    "canResize",
+    "canRotate",
+    "canMove",
+    "canWrap",
+    "canDelete",
+    "canAltText",
+    "canCrop",
+    "canFill",
+    "canStroke",
+    "canEditText",
+];
+
+/// Every capability this placed object does **not** support, each with the
+/// engine's reason: the capability's host-facing name → a marked refusal
+/// (`casual_doc_edit::refusal` — a sentence for the reader plus a stable code a
+/// host routes to its own catalogue).
+///
+/// # Why a `false` had to learn to explain itself
+///
+/// `ObjectCapabilities` publishes ten booleans and nothing else, and
+/// `webapp/src/main.js` gates on bare truthiness (`if (objectSelection.canMove)`),
+/// so an unavailable capability produced a control that did nothing and said
+/// nothing. The live instance is the inline picture: `can_move` is false because
+/// this build has no inline-to-floating conversion, so **dragging an inline
+/// picture does nothing at all** — `SKILL` §10's dead control, and the same
+/// defect on every false bit of every carrier, which is why this is one function
+/// rather than a fix at the drag site.
+///
+/// # Why the reason is derived rather than stored per bit
+///
+/// Why a bit is false is a fact about two things: the carrier (its kind, and
+/// whether it floats) and the capability. Storing a reason beside each bool would
+/// be ten more fields to keep in step with ten bools, and they would drift — so
+/// the reason is computed from the same two facts that set the bool, and
+/// `every_unavailable_capability_says_why` asserts the two cannot disagree.
+///
+/// Several of these sentences ARE the command's own refusal, taken from the same
+/// constant (`objects::NOT_FLOATING_MOVE` and friends): what the capability says
+/// and what the command throws must not be two different explanations of one
+/// fact.
+///
+/// Complexity: O(1) — ten names, and an allocation only for the ones that are
+/// unavailable.
+fn capability_refusals(
+    kind: &str,
+    anchored: bool,
+    capabilities: ObjectCapabilities,
+) -> BTreeMap<&'static str, &'static str> {
+    let mut out = BTreeMap::new();
+    for name in OBJECT_CAPABILITY_NAMES {
+        if capabilities.has(name) != Some(false) {
+            continue;
+        }
+        let reason = match name {
+            // `handles == 0` on a top-level carrier means exactly one thing in
+            // this engine: a group whose members cannot be scaled exactly (see
+            // `group_resize_supported`). The float/inline variants exist because
+            // the commands distinguish them and the reader should get the same
+            // sentence from the capability as from the attempt.
+            "canResize" if kind == "group" => objects::GROUP_RESIZE_INEXACT,
+            "canResize" if anchored => objects::FLOAT_RESIZE_INEXACT,
+            "canResize" => objects::INLINE_RESIZE_INEXACT,
+            "canRotate" => objects::NO_ROTATION,
+            "canMove" => objects::NOT_FLOATING_MOVE,
+            "canWrap" => objects::NOT_FLOATING_WRAP,
+            "canDelete" => objects::NOT_DELETABLE,
+            "canAltText" => objects::NO_ALT_TEXT,
+            "canCrop" => objects::NOT_CROPPABLE,
+            "canFill" => objects::NOT_FILLABLE,
+            "canStroke" => objects::NOT_STROKEABLE,
+            "canEditText" => objects::NO_TEXT_STORY,
+            // Unreachable: `has` returned `Some(false)`, so the name is one of
+            // the ten above. Named rather than `unreachable!()` so an eleventh
+            // capability added to `OBJECT_CAPABILITY_NAMES` without a reason
+            // degrades to a generic sentence instead of panicking inside a
+            // getter — and `every_unavailable_capability_says_why` fails the
+            // build the moment this value is reachable.
+            _ => objects::CAPABILITY_UNAVAILABLE,
+        };
+        out.insert(name, reason);
+    }
+    out
 }
 
 /// Collects a paragraph's inline drawing nodes (with each drawing's resolved
@@ -23546,6 +24343,19 @@ fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> O
                     handles: FLOAT_RESIZE_HANDLES,
                     rotation_60k: drawing.rotation.unwrap_or(0),
                     can_rotate: true,
+                });
+            }
+            // A chart / diagram / OLE object. Its `wp:extent` is mandatory in the
+            // model and `set_object_extent_in_inlines` already writes it, so the
+            // eight grips are a real contract — they used to answer
+            // `ObjectFrame::default()` here, which published `can_resize: false`
+            // for an object the engine could resize all along. It models no
+            // `a:xfrm` of its own (see `EmbeddedObject`), so no rotation handle.
+            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
+                return Some(ObjectFrame {
+                    handles: INLINE_RESIZE_HANDLES,
+                    rotation_60k: 0,
+                    can_rotate: false,
                 });
             }
             InlineNode::TextBox(text_box) => {
@@ -23933,8 +24743,7 @@ fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&Word
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
-    images: &mut Vec<(NodeId, Option<String>)>,
-    text_boxes: &mut Vec<NodeId>,
+    out: &mut ParagraphObjectNodes,
 ) {
     let part_of = |media: &casual_doc_model::v1::MediaId| {
         definitions
@@ -23945,31 +24754,47 @@ fn collect_para_objects(
     for inline in inlines {
         match inline {
             InlineNode::Drawing(drawing) => {
-                images.push((drawing.id, part_of(&drawing.media)));
+                out.images.push(InlineImageNode {
+                    node: drawing.id,
+                    media: part_of(&drawing.media),
+                    embedded_kind: None,
+                });
             }
-            // A chart/diagram/OLE object with a cached preview flows as that
-            // picture (`embedded_object_items`), so it is an inline image box.
+            // A chart, diagram or OLE object. A CHART can paint a composed chart
+            // box of its own, so it is a chart correlation target; and any of them
+            // with a cached preview falls back to flowing that picture
+            // (`embedded_object_items`), so it is an image target too. Which box
+            // the layout actually emitted is the layout's decision, re-derived
+            // nowhere: whichever box is painted finds its node in the matching
+            // list, and the other list simply has no box to claim.
             InlineNode::EmbeddedObject(object) => {
+                if object.kind == EmbeddedKind::Chart {
+                    out.charts.push(object.id);
+                }
                 if let Some(preview) = object.preview {
-                    images.push((object.id, part_of(&preview)));
+                    out.images.push(InlineImageNode {
+                        node: object.id,
+                        media: part_of(&preview),
+                        embedded_kind: Some(embedded_object_kind(&object.kind)),
+                    });
                 }
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
-                text_boxes.push(text_box.id);
+                out.text_boxes.push(text_box.id);
             }
             // Floats: placed by the float layer, reported through `page.anchored`.
             InlineNode::TextBox(_) | InlineNode::AnchoredDrawing(_) | InlineNode::Group(_) => {}
             InlineNode::Hyperlink(hyperlink) => {
-                collect_para_objects(&hyperlink.inlines, definitions, images, text_boxes);
+                collect_para_objects(&hyperlink.inlines, definitions, out);
             }
             InlineNode::Revision(revision) => {
-                collect_para_objects(&revision.inlines, definitions, images, text_boxes);
+                collect_para_objects(&revision.inlines, definitions, out);
             }
             InlineNode::Sdt(sdt) => {
-                collect_para_objects(&sdt.inlines, definitions, images, text_boxes);
+                collect_para_objects(&sdt.inlines, definitions, out);
             }
             InlineNode::Field(field) => {
-                collect_para_objects(&field.inlines, definitions, images, text_boxes);
+                collect_para_objects(&field.inlines, definitions, out);
             }
             // Leaves: nothing inside them paints an object box of its own.
             InlineNode::Run(_)
@@ -24126,6 +24951,34 @@ impl ObjectHitPayload {
     #[must_use]
     pub fn can_crop(&self) -> bool {
         self.capabilities.can_crop
+    }
+
+    /// Why each unavailable capability is unavailable, as a JSON object mapping
+    /// the capability's own name to a marked refusal
+    /// (`refused: <sentence>\u{1f}<code>`) — the exact string
+    /// `webapp/src/edit_errors.mjs` already renders verbatim, so the host reads a
+    /// reason with `editRefusalMessage({ message: reasons.canMove })` and needs
+    /// no catalogue of its own.
+    ///
+    /// Only the `false` ones appear: a capability that is available has nothing
+    /// to explain, and publishing a reason for it would invite a host to show one.
+    /// A JSON string rather than ten getters because the set is open — a
+    /// capability added to the engine must reach the host without the host
+    /// shipping a new field — and because `wasm_bindgen` cannot hand back a map.
+    ///
+    /// See `capability_refusals` for why a `false` had to learn to explain
+    /// itself at all. (Plain code text, not a link: it is private, and a public
+    /// doc comment that links to a private item fails the `cargo doc` gate —
+    /// `SKILL` §3's third trap.)
+    #[wasm_bindgen(getter, js_name = capabilityReasons)]
+    #[must_use]
+    pub fn capability_reasons(&self) -> String {
+        serde_json::to_string(&capability_refusals(
+            self.kind,
+            self.anchored,
+            self.capabilities,
+        ))
+        .unwrap_or_else(|_| "{}".to_owned())
     }
 
     /// Whether this exact node owns mutable shape fill properties.
@@ -26663,7 +27516,13 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
         | Operation::SetShapeStroke { .. }
-        | Operation::SetTextBoxBody { .. } => Pos::new(doc_id, 0),
+        | Operation::SetTextBoxBody { .. }
+        // A chart projection is a registry row with no position in the flow, and it is the
+        // LAST operation of an insert (the object node has to exist before a projection may
+        // name it), so `insert_chart` supplies its own caret through
+        // `apply_action_caret_as` rather than letting this arm decide. The document root is
+        // the same neutral placeholder the definition arms above use.
+        | Operation::SetChartDefinition { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -44134,11 +44993,6 @@ mod tests {
     // findable" — rather than the shape of a returned vector, because the vector is
     // the mechanism and the mechanism is what changed.
 
-    /// The OOXML relationship type of an embedded chart part, so the fixtures below
-    /// carry the real one rather than a plausible-looking string.
-    const EMBEDDED_CHART_RELATIONSHIP: &str =
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
-
     /// A paragraph holding the same drawing three ways: bare, inside an inline
     /// content control, and inside a field's cached result. All three are painted
     /// by `collect_items`, which recurses through both wrappers.
@@ -44258,17 +45112,501 @@ mod tests {
         );
     }
 
-    /// A chart whose cached preview is what layout paints can be selected.
+    /// An empty one-paragraph document, and the id of the paragraph a caret or an
+    /// insert addresses.
+    fn empty_body_document(seed: u64) -> (Document, NodeId) {
+        use casual_doc_model::v1::Definitions;
+
+        let paragraph = NodeId::from_parts(seed, 2).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(seed, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph,
+                properties: ParagraphProperties::default().into(),
+                inlines: Vec::new(),
+            })],
+            Definitions::default(),
+        )
+        .expect("a valid one-paragraph document");
+        (document, paragraph)
+    }
+
+    /// Every chart primitive painted anywhere in the editing layout.
+    fn painted_chart_primitives(d: &WasmDocument) -> usize {
+        d.painted_layout()
+            .pages
+            .iter()
+            .flat_map(|page| &page.placed)
+            .filter_map(|placed| match &placed.fragment {
+                BlockFragment::Paragraph { lines, .. } => Some(lines),
+                _ => None,
+            })
+            .flat_map(|lines| &lines.lines)
+            .flat_map(|line| &line.charts)
+            .map(|chart| chart.primitives.len())
+            .sum()
+    }
+
+    /// Every glyph painted in the editing layout's body text.
     ///
-    /// A preview-bearing `EmbeddedObject` flows as a `FlowItem::Image`, exactly
-    /// like a drawing, so it produced a painted image box with no model node to
-    /// correlate against and therefore no handles. A preview-LESS one paints as a
-    /// text run and correctly has none, which the second half asserts — so this
-    /// guard fails if the fix over-reaches as well as if it under-reaches.
+    /// A chart's own labels live inside its `ChartPrimitive`s, not in
+    /// `line.runs`, so on a document whose only content is a chart this is zero
+    /// when the chart DREW and non-zero when it fell back to its `[chart]` label
+    /// run. That is the placeholder test, stated as a count rather than as a
+    /// string because `Glyph` carries a font glyph id and an advance, not text.
+    fn painted_glyphs(d: &WasmDocument) -> usize {
+        d.painted_layout()
+            .pages
+            .iter()
+            .flat_map(|page| &page.placed)
+            .filter_map(|placed| match &placed.fragment {
+                BlockFragment::Paragraph { lines, .. } => Some(lines),
+                _ => None,
+            })
+            .flat_map(|lines| &lines.lines)
+            .flat_map(|line| &line.runs)
+            .map(|run| run.glyphs.len())
+            .sum()
+    }
+
+    /// **The §9 rule 4 guard.** A chart inserted through the facade DRAWS, and is
+    /// selectable, resizable and deletable through exactly the capabilities it
+    /// advertises — for all seven painted families.
+    ///
+    /// This asserts the guarantee rather than the calls. Before this lane:
+    /// `insertChart` did not exist, nothing could write `Definitions::charts` at
+    /// all, a drawn chart produced no object box (its painted box is
+    /// `line.charts`, which the correlation never looked at), `is_object_node`
+    /// excluded `EmbeddedObject` so `DeleteObject` answered `NodeNotFound`, and
+    /// the capability payload a preview-bearing chart did get was an inline
+    /// picture's — `canAltText`/`canCrop` true against a node with no `descr` and
+    /// no `srcRect`, and `canResize` FALSE against the one operation that worked.
     #[test]
-    fn a_chart_with_a_cached_preview_can_be_selected() {
+    fn an_inserted_chart_draws_and_is_selectable_resizable_and_deletable() {
+        for (seed, kind) in [
+            "bar", "column", "line", "area", "scatter", "pie", "doughnut",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (document, paragraph) = empty_body_document(700 + seed as u64);
+            let mut d = wasm_document(document);
+            d.insert_chart(&paragraph.to_string(), 0, kind)
+                .unwrap_or_else(|err| panic!("inserting a {kind} chart: {err:?}"));
+
+            // 1. It DREW. A chart with no drawable projection paints the
+            //    `[chart]` label, so both halves matter: primitives present and
+            //    the placeholder absent.
+            assert!(
+                painted_chart_primitives(&d) > 0,
+                "an inserted {kind} chart painted no chart primitives at all"
+            );
+            assert_eq!(
+                painted_glyphs(&d),
+                0,
+                "an inserted {kind} chart painted body glyphs, and the only text \
+                 this paragraph can produce is the `[chart]` placeholder label: \
+                 the projection is not drawable, so the insert produced a word"
+            );
+
+            // 2. It is SELECTABLE, as a chart.
+            let boxes = d.object_boxes();
+            let chart_box = boxes
+                .iter()
+                .find(|object| object.kind == "chart")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "an inserted {kind} chart is on the page with no object box, \
+                         so it cannot be clicked, resized or deleted: {:?}",
+                        boxes.iter().map(|o| o.kind).collect::<Vec<_>>()
+                    )
+                });
+            let object = chart_box.subject;
+            assert_eq!(chart_box.root, object, "a chart is its own carrier");
+
+            // 3. Every capability it ADVERTISES works, and every one it denies is
+            //    denied because the model cannot carry it.
+            let capabilities = chart_box.capabilities;
+            assert!(
+                capabilities.can_resize && capabilities.resize_handles == INLINE_RESIZE_HANDLES,
+                "a {kind} chart's extent is writable, so all eight grips are real: \
+                 {capabilities:?}"
+            );
+            assert!(
+                capabilities.can_delete,
+                "a {kind} chart must be removable: {capabilities:?}"
+            );
+            for (claimed, name) in [
+                (capabilities.can_alt_text, "canAltText"),
+                (capabilities.can_crop, "canCrop"),
+                (capabilities.can_move, "canMove"),
+                (capabilities.can_wrap, "canWrap"),
+                (capabilities.can_rotate, "canRotate"),
+                (capabilities.can_fill, "canFill"),
+                (capabilities.can_stroke, "canStroke"),
+                (capabilities.can_edit_text, "canEditText"),
+            ] {
+                assert!(
+                    !claimed,
+                    "a {kind} chart advertises {name}, and `EmbeddedObject` carries \
+                     no field for it: the command would error on a control the host \
+                     drew as live"
+                );
+            }
+
+            // 4. Resize APPLIES, which is what `canResize` promises.
+            let before = d.object_rect(&object.to_string());
+            let emu = |twips: i32| f64::from(twips) * EMU_PER_TWIP;
+            d.resize_object(
+                &object.to_string(),
+                emu(before[1]),
+                emu(before[2]),
+                emu(before[3] / 2),
+                emu(before[4] / 2),
+            )
+            .unwrap_or_else(|err| panic!("resizing a {kind} chart: {err:?}"));
+            let after = d.object_rect(&object.to_string());
+            assert!(
+                after[3] < before[3] && after[4] < before[4],
+                "a {kind} chart resize did not change its box: {before:?} -> {after:?}"
+            );
+
+            // 5. Delete APPLIES — projection and node together, which is the
+            //    cascade: `DeleteObject` alone fails `validate` with the
+            //    projection still naming the removed object.
+            // `DeleteObject` through `apply`, which is `delete_object`'s own body
+            // and the same `apply_group` choke point the cascade lives at. Not
+            // `delete_object` itself because its refusal goes through `to_js`,
+            // which cannot build a `JsValue` on a native target: the test would
+            // fail with "cannot call wasm-bindgen imported functions" instead of
+            // with the reason, and a guard whose red says nothing is half a guard.
+            d.apply(Operation::DeleteObject { object })
+                .unwrap_or_else(|err| panic!("deleting a {kind} chart: {err}"));
+            assert!(
+                d.object_boxes().is_empty(),
+                "a deleted {kind} chart still has an object box"
+            );
+            assert!(
+                d.document.definitions().charts.is_empty(),
+                "a deleted {kind} chart left its projection behind, which makes \
+                 every later validating edit — and the save — fail"
+            );
+            assert!(
+                d.document.validate().is_ok(),
+                "deleting a {kind} chart left the document invalid"
+            );
+
+            // 6. …and one undo brings back both halves of the one action.
+            d.undo().expect("undo the chart delete");
+            assert_eq!(
+                d.document.definitions().charts.iter().count(),
+                1,
+                "undoing a {kind} chart delete restored the node without its \
+                 projection, so the chart came back as a placeholder"
+            );
+            assert!(
+                painted_chart_primitives(&d) > 0,
+                "an undone {kind} chart delete painted no chart"
+            );
+        }
+    }
+
+    /// **Every unavailable capability says why — for every carrier the engine can
+    /// publish, not for the one the fixture happened to produce.**
+    ///
+    /// This is the class guard for `SKILL` §10's dead control. `ObjectCapabilities`
+    /// publishes ten booleans and `main.js` gates on bare truthiness, so a `false`
+    /// used to be able to say nothing: dragging an inline picture does nothing at
+    /// all, because `can_move` is false and there is no inline-to-floating
+    /// conversion — and the reader met silence. The guarantee asserted here is the
+    /// one that makes that impossible to reintroduce: **false if and only if there
+    /// is a reason, and the reason is a marked refusal carrying a code.**
+    ///
+    /// Carriers are enumerated from the presets rather than sampled from a
+    /// document (`SKILL` §9 rule 3 — enumerate families, not successes), so a
+    /// sixth preset or an eleventh capability fails here instead of shipping a
+    /// bit that cannot explain itself.
+    #[test]
+    fn every_unavailable_capability_says_why() {
+        let frame = ObjectFrame {
+            handles: INLINE_RESIZE_HANDLES,
+            rotation_60k: 0,
+            can_rotate: true,
+        };
+        let no_grips = ObjectFrame {
+            handles: 0,
+            rotation_60k: 0,
+            can_rotate: false,
+        };
+        // Every carrier this engine can publish, with the kind/anchored pair it
+        // is published under. Both frames per carrier, because `handles == 0` is
+        // a real answer for a group and is what makes `canResize` false.
+        let carriers: Vec<(&str, &str, bool, ObjectCapabilities)> = vec![
+            (
+                "inline image",
+                "image",
+                false,
+                ObjectCapabilities::inline_image(frame),
+            ),
+            (
+                "inline text box",
+                "textbox",
+                false,
+                ObjectCapabilities::inline_text_box(frame),
+            ),
+            (
+                "inline chart",
+                "chart",
+                false,
+                ObjectCapabilities::inline_embedded_object(frame),
+            ),
+            (
+                "inline embedded object",
+                "embedded",
+                false,
+                ObjectCapabilities::inline_embedded_object(no_grips),
+            ),
+            (
+                "floating image",
+                "image",
+                true,
+                ObjectCapabilities::floating("image", frame),
+            ),
+            (
+                "floating text box",
+                "textbox",
+                true,
+                ObjectCapabilities::floating("textbox", frame),
+            ),
+            (
+                "floating shape",
+                "shape",
+                true,
+                ObjectCapabilities::floating("shape", frame),
+            ),
+            (
+                "group child shape",
+                "shape",
+                true,
+                ObjectCapabilities::group_child("shape", frame),
+            ),
+            (
+                "group child text box",
+                "textbox",
+                true,
+                ObjectCapabilities::group_child("textbox", frame),
+            ),
+            (
+                "group root",
+                "group",
+                true,
+                ObjectCapabilities::group_root(frame),
+            ),
+            (
+                "group root that cannot be scaled exactly",
+                "group",
+                true,
+                ObjectCapabilities::group_root(no_grips),
+            ),
+        ];
+
+        for (carrier, kind, anchored, capabilities) in carriers {
+            let reasons = capability_refusals(kind, anchored, capabilities);
+            for name in OBJECT_CAPABILITY_NAMES {
+                let available = capabilities
+                    .has(name)
+                    .unwrap_or_else(|| panic!("{name} is not one of the ten capabilities"));
+                let reason = reasons.get(name);
+                assert_eq!(
+                    available,
+                    reason.is_none(),
+                    "a {carrier} publishes {name} = {available} and \
+                     {} a reason for it. A false capability with no reason is a \
+                     control the host draws and cannot explain; a true one with a \
+                     reason invites the host to explain away something that works",
+                    if reason.is_some() { "also" } else { "no" }
+                );
+                let Some(reason) = reason else { continue };
+                assert_ne!(
+                    *reason,
+                    objects::CAPABILITY_UNAVAILABLE,
+                    "a {carrier}'s {name} fell through to the generic sentence. \
+                     That value exists so an eleventh capability degrades instead \
+                     of panicking in a getter; publishing it is a capability the \
+                     reader is told nothing specific about, which is what this \
+                     whole mechanism is for"
+                );
+                let (text, code) = casual_doc_edit::refusal::split(reason);
+                assert!(
+                    text.starts_with(casual_doc_edit::refusal::MARKER),
+                    "a {carrier}'s {name} reason must carry the marker \
+                     `edit_errors.mjs` passes through verbatim, or the reader gets \
+                     the generic sentence instead: {reason:?}"
+                );
+                let code = code.unwrap_or_else(|| {
+                    panic!(
+                        "a {carrier}'s {name} reason carries no routing code, so a \
+                         non-English reader cannot be given it in their own language: \
+                         {reason:?}"
+                    )
+                });
+                assert!(
+                    code.starts_with("object."),
+                    "an object capability's code belongs to the object namespace: \
+                     {code:?}"
+                );
+                assert!(
+                    text.len() > casual_doc_edit::refusal::MARKER.len() + 20,
+                    "a {carrier}'s {name} reason must be a sentence, not a token: \
+                     {text:?}"
+                );
+            }
+        }
+    }
+
+    /// The inline-picture dead gesture, named: dragging one does nothing, and the
+    /// engine now says why **in the same words the command would refuse with**.
+    ///
+    /// Two separate things, and both were broken. `can_move` is correctly false —
+    /// there is no inline-to-floating conversion — so the engine must not pretend
+    /// otherwise; and the reader was told nothing, so the drag read as a bug.
+    /// Asserting the shared constant rather than a copied sentence is the point:
+    /// one fact, one explanation, whether the host asks the capability or calls
+    /// the command and is refused.
+    #[test]
+    fn an_inline_pictures_refused_move_is_explained_in_the_commands_own_words() {
+        let frame = ObjectFrame {
+            handles: INLINE_RESIZE_HANDLES,
+            rotation_60k: 0,
+            can_rotate: true,
+        };
+        let inline = ObjectCapabilities::inline_image(frame);
+        assert!(
+            !inline.can_move && !inline.can_wrap,
+            "an inline picture cannot be moved or wrapped in this build; if that \
+             changes, this guard should be deleted rather than adjusted"
+        );
+        let reasons = capability_refusals("image", false, inline);
+        assert_eq!(
+            reasons.get("canMove").copied(),
+            Some(objects::NOT_FLOATING_MOVE),
+            "the capability must publish the SAME sentence \
+             `setObjectAnchorPosition` throws, not a second wording of it"
+        );
+        assert_eq!(
+            reasons.get("canWrap").copied(),
+            Some(objects::NOT_FLOATING_WRAP),
+            "and the same for wrapping"
+        );
+        // A FLOATING picture can do both, so neither is explained away.
+        let floating = ObjectCapabilities::floating("image", frame);
+        let floating_reasons = capability_refusals("image", true, floating);
+        assert!(
+            !floating_reasons.contains_key("canMove") && !floating_reasons.contains_key("canWrap"),
+            "a floating picture moves and wraps; publishing a reason for either \
+             would have the host refuse something that works: {floating_reasons:?}"
+        );
+    }
+
+    /// Both payloads explain the same object in the same words.
+    ///
+    /// `objectAt` and `objectOrder` are two surfaces onto one truth, and the
+    /// recurring defect here is a capability reachable from one of them only
+    /// (`105` UX-004). A reason published on the hit payload and absent from the
+    /// order entry would be exactly that, one level down.
+    #[test]
+    fn the_hit_payload_and_the_order_entry_carry_the_same_reasons() {
+        let (document, paragraph) = empty_body_document(720);
+        let mut d = wasm_document(document);
+        d.insert_chart(&paragraph.to_string(), 0, "pie")
+            .expect("insert a pie chart");
+        let chart = d
+            .object_boxes()
+            .into_iter()
+            .find(|object| object.kind == "chart")
+            .expect("the inserted chart has an object box");
+        let centre = (
+            chart.rect.origin.x.raw() + chart.rect.size.width.raw() / 2,
+            chart.rect.origin.y.raw() + chart.rect.size.height.raw() / 2,
+        );
+        let hit = d
+            .object_at(chart.page, centre.0, centre.1)
+            .expect("hit the chart");
+        let from_hit: BTreeMap<String, String> =
+            serde_json::from_str(&hit.capability_reasons()).expect("capabilityReasons JSON");
+        assert!(
+            from_hit.contains_key("canCrop") && from_hit.contains_key("canAltText"),
+            "a chart cannot be cropped or described, so both must be explained: \
+             {from_hit:?}"
+        );
+        assert!(
+            !from_hit.contains_key("canDelete") && !from_hit.contains_key("canResize"),
+            "and the two it CAN do must not be: {from_hit:?}"
+        );
+        let order: Vec<ObjectOrderEntryJson> =
+            serde_json::from_str(&d.object_order()).expect("object order JSON");
+        let entry = order
+            .iter()
+            .find(|entry| entry.subject == chart.subject.to_string())
+            .expect("the chart has an order entry");
+        assert_eq!(
+            entry.capability_reasons, from_hit,
+            "the two surfaces must explain one object identically"
+        );
+    }
+
+    /// A chart family this build does not PAINT is refused with a sentence, not
+    /// inserted as a placeholder.
+    ///
+    /// §10: a command that cannot do the thing says so. Inserting a `[chart]`
+    /// label for `radar` would be a successful-looking gesture that puts a word on
+    /// the page. Asserted on the refusal string rather than through the facade
+    /// because `to_js` cannot build a `JsValue` under a native test — the message
+    /// it would carry is this one, unchanged, and `split` is what `to_js` applies
+    /// to it.
+    #[test]
+    fn an_unpainted_chart_family_is_refused_with_a_sentence() {
+        for kind in ["radar", "surface", "bubble", "", "Column", "pie3d"] {
+            assert!(
+                chart_group_for_kind(kind).is_none(),
+                "{kind:?} is not one of the seven families this build paints, so \
+                 `insert_chart` must refuse it"
+            );
+        }
+        let message = unpainted_chart_refusal("radar");
+        let (text, code) = casual_doc_edit::refusal::split(&message);
+        assert_eq!(
+            code,
+            Some("chart.unpainted-family"),
+            "the refusal must carry a routable code, or a non-English reader gets \
+             the generic sentence: {message:?}"
+        );
+        assert!(
+            text.starts_with(casual_doc_edit::refusal::MARKER),
+            "and the marker `edit_errors.mjs` recognises: {text:?}"
+        );
+        assert!(
+            text.contains("radar") && text.contains("doughnut"),
+            "the sentence must name what was asked for AND what is available, or \
+             the reader learns nothing: {text:?}"
+        );
+    }
+
+    /// An OLE object painted as its cached preview is not offered a PICTURE's
+    /// capabilities.
+    ///
+    /// This replaces `a_chart_with_a_cached_preview_can_be_selected`, which pinned
+    /// a state the importer cannot produce: `commit_embedded_graphic` passes
+    /// `preview: None` for every `EmbeddedKind::Chart` and every `Diagram`, and
+    /// only `commit_object` (a `w:object` OLE embedding) ever resolves one. So the
+    /// old guard blessed `can_alt_text`/`can_crop`/`can_delete` on a document that
+    /// does not exist — and all three of those commands failed. The producible
+    /// case is this one, and what it must not do is inherit a picture's contract
+    /// just because a picture is what the layout drew for it.
+    #[test]
+    fn an_ole_preview_is_not_offered_a_pictures_capabilities() {
         use casual_doc_model::v1::{
-            Definitions, EmbeddedKind, EmbeddedObject, EmbeddedPart, MediaId, MediaReference,
+            Definitions, EmbeddedObject, EmbeddedPart, MediaId, MediaReference,
         };
 
         let media = MediaId::new(NodeId::from_parts(62, 900).unwrap());
@@ -44278,65 +45616,58 @@ mod tests {
             MediaReference {
                 relationship_id: "rId62".to_owned(),
                 media_type: "image/png".to_owned(),
-                part_name: "word/media/chart-preview.png".to_owned(),
+                part_name: "word/media/ole-preview.png".to_owned(),
             },
         );
-        let mut next = 1u64;
-        let mut id = move || {
-            next += 1;
-            NodeId::from_parts(62, next).unwrap()
-        };
-        let chart = |id: NodeId, preview: Option<MediaId>| {
-            InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
-                id,
-                kind: EmbeddedKind::Chart,
-                part: EmbeddedPart {
-                    relationship_id: "rId7".to_owned(),
-                    relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
-                    part_name: "word/charts/chart1.xml".to_owned(),
-                },
-                extra_parts: Vec::new(),
-                preview,
-                extent: Extent {
-                    width_emu: 914_400,
-                    height_emu: 914_400,
-                },
-                prog_id: None,
-            }))
-        };
-        let with_preview = id();
-        let without_preview = id();
+        let object = NodeId::from_parts(62, 3).unwrap();
         let document = Document::new(
             NodeId::from_parts(62, 1).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
-                id: id(),
+                id: NodeId::from_parts(62, 2).unwrap(),
                 properties: ParagraphProperties::default().into(),
-                inlines: vec![
-                    chart(with_preview, Some(media)),
-                    chart(without_preview, None),
-                ],
+                inlines: vec![InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                    id: object,
+                    kind: EmbeddedKind::OleObject,
+                    part: EmbeddedPart {
+                        relationship_id: "rId7".to_owned(),
+                        relationship_type:
+                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+                                .to_owned(),
+                        part_name: "word/embeddings/oleObject1.bin".to_owned(),
+                    },
+                    extra_parts: Vec::new(),
+                    preview: Some(media),
+                    extent: Extent {
+                        width_emu: 914_400,
+                        height_emu: 914_400,
+                    },
+                    prog_id: None,
+                }))],
             })],
             definitions,
         )
-        .expect("a valid chart document");
+        .expect("a valid OLE document");
 
-        let d = wasm_document(document);
-        let selectable: Vec<NodeId> = d
+        let mut d = wasm_document(document);
+        let placed = d
             .object_boxes()
             .into_iter()
-            .map(|object| object.subject)
-            .collect();
-        assert!(
-            selectable.contains(&with_preview),
-            "a chart painted as its cached preview picture has no selection \
-             handles ({selectable:?})"
+            .find(|candidate| candidate.subject == object)
+            .expect("an OLE object painted as its preview picture has no selection handles");
+        assert_eq!(
+            placed.kind, "embedded",
+            "its preview is a picture; the OBJECT is not, and the host switches on this"
         );
         assert!(
-            !selectable.contains(&without_preview),
-            "a chart with NO preview paints as its `[chart]` label text, not as an \
-             image box; claiming an image box for it would let it steal a real \
-             image's slot and hand the wrong node to the handles ({selectable:?})"
+            !placed.capabilities.can_alt_text && !placed.capabilities.can_crop,
+            "`EmbeddedObject` has no `descr` and no `srcRect`: both commands would \
+             error. {:?}",
+            placed.capabilities
         );
+        // And the two it DOES advertise work.
+        assert!(placed.capabilities.can_resize && placed.capabilities.can_delete);
+        d.apply(Operation::DeleteObject { object })
+            .expect("an embedded object advertising canDelete must be deletable");
     }
 
     /// An equation, a chart and a footnote marker each reach assistive technology

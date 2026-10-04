@@ -1064,3 +1064,93 @@ The gate it would have to pass already exists and is guarded:
   `chart::build_charts`' walk and nothing else.
 - Chart formatting (`c:spPr`, `c:txPr` and the chart-space fill) is reported, not
   modelled, which is what keeps coverage `Partial` on real files.
+
+---
+
+## 15. Increment 7, the engine half (2026-10-04)
+
+§9's increment 7 is *"insert a chart, chart elements, type and style, and data
+editing"*, listed against `webapp` + facade lanes. The facade half landed here;
+the host half did not, and the reason is recorded rather than implied.
+
+### 15.1 The capability trap that had to be fixed first
+
+Tier 1A and 1B made seven families paint, and **nothing in the product inserted,
+selected or edited one**. Worse than nothing: the one affordance a chart did have
+advertised itself as live and then errored. Verified by reading, and all four
+facts measured in the same session:
+
+| claim the engine published | what the command did |
+| --- | --- |
+| `canDelete: true` | `NodeNotFound`. `is_object_node` listed `Drawing`, `AnchoredDrawing`, `TextBox` and `Group` and not `EmbeddedObject`, and that predicate is the whole of `DeleteObject`'s target test. |
+| `canAltText: true` | `NodeNotFound`. `EmbeddedObject` has no `descr` field, so `SetObjectDescr` can never resolve one. |
+| `canCrop: true` | `NodeNotFound`. It has no `srcRect` either. |
+| `canResize: false` | …and `SetExtent` had an `EmbeddedObject` arm all along. `object_resize_handles_in_inlines` had no arm for the kind, so the defaulted frame published zero handles — the one operation that worked was the one hidden. |
+
+All four came from one cause: a preview-bearing `EmbeddedObject` is pushed into
+the image list by `collect_para_objects`, so it inherited
+`ObjectCapabilities::inline_image`. It now gets
+`ObjectCapabilities::inline_embedded_object` — resize and delete true, everything
+else false because the model carries no field for it.
+
+**A chart that DRAWS was not selectable at all**, which is §9 rule 4 the other way
+round: making charts paint moved their painted box from `line.images` to
+`line.charts`, and the placement correlation in `resolve_object_boxes` had never
+looked at `line.charts`. So the only chart with selection handles was one whose
+projection did *not* draw. Correlated now, as `kind: "chart"`.
+
+A note on the old guard `a_chart_with_a_cached_preview_can_be_selected`: it
+pinned a state the importer **cannot produce**. `commit_embedded_graphic` passes
+`preview: None` for every `EmbeddedKind::Chart` and every `Diagram`, and only
+`commit_object` — a `w:object` OLE embedding — ever resolves a preview. The guard
+therefore blessed three capabilities, all of which failed, on a document that does
+not exist. It is replaced by `an_ole_preview_is_not_offered_a_pictures_capabilities`
+over the producible case.
+
+### 15.2 `SetChartDefinition`, and the ordering rule it has to obey
+
+No operation could write `Definitions::charts`, so insertion was never one command
+short of working — it had no data path at all. `Operation::SetChartDefinition`
+is the retained-value definition write (`SetMediaReference`'s shape), and the
+chart table's sidecar keying imposes an order that is the model's rule and not the
+operation's:
+
+- a projection is installed **after** its object node exists;
+- an object is removed **after** its projection is removed.
+
+`insertChart(node, offset, kind)` therefore applies two operations in one
+transaction, and `kind` is checked against **what paints** rather than what the
+model represents — a family that is typed but undrawable is refused with a marked
+sentence (`chart.unpainted-family`), because inserting one would put the word
+`[chart]` on the page and call it success.
+
+The removal half is composed at the `apply_group` choke point rather than inside
+`deleteObject`, so every facade path that emits the operation gets it. It covers
+the removals that **name** the node they remove; the positional ones do not
+cascade and leave the document invalid, which is `109` HF-257 with the measurement
+in its Notes cell.
+
+### 15.3 What this deliberately did not do
+
+- **No DOCX chart part is written** (`109` HF-256). Export emits the `c:chart`
+  relationship from the retained-parts side table, and an inserted chart has no
+  retained bytes, so saving writes a reference to a part the package does not
+  contain. The projection is marked `ChartCoverage::Complete`, which is exactly
+  what `permits_regeneration` reads, so the writer has its gate waiting for it.
+  **Until it lands, no host surface may offer the insert.**
+- **No host surface** (`109` HF-258). §10's rule applies to this increment too:
+  `insertChart` is reachable from the facade and from nothing a user can touch.
+  The chrome owes an `INSERT_SURFACE` entry, a button in `editor.html`'s
+  `illustrations` group and a palette row — a seven-item gallery rather than one
+  button, because a single Insert-Chart control would have to pick a family for
+  the author.
+- **No floating charts** (`109` HF-260, and Q-C's answer unchanged). `AnchorContent`
+  has no `Chart` variant and `EmbeddedObject` no `anchor` field, so the work starts
+  in `casual-doc-model` — the 15-literal field addition that broke `main` twice —
+  and the float layer's paint-kind match uses `_ => continue`, so a floating chart
+  would be placed, painted and reported by nothing. Decided against for this
+  increment: an inline chart that inserts, draws, resizes and deletes is worth more
+  than a floating one that cannot be saved.
+- **No data editing, no title, no chart-element gestures.** The sample projection
+  carries Word's own Insert-Chart numbers and no title, because there is no
+  title-editing gesture and two unchangeable words are worse than none.

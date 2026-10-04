@@ -92,6 +92,11 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
         | Operation::SetMediaReference { .. }
+        // A chart projection is a registry row keyed by `ChartId`, exactly like the media
+        // reference beside it: two replicas writing the same key settle last-writer-wins,
+        // and the key is minted from each replica's own reserved id block, so two of them
+        // cannot collide by accident.
+        | Operation::SetChartDefinition { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
         | Operation::CreateHeaderFooterBody { .. }
@@ -152,6 +157,7 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetAbstractNumbering { .. } => "SetAbstractNumbering",
         Operation::SetNumberingInstance { .. } => "SetNumberingInstance",
         Operation::SetMediaReference { .. } => "SetMediaReference",
+        Operation::SetChartDefinition { .. } => "SetChartDefinition",
         Operation::SetDocumentProtection { .. } => "SetDocumentProtection",
         Operation::CreateBookmark { .. } => "CreateBookmark",
         Operation::DeleteBookmark { .. } => "DeleteBookmark",
@@ -304,6 +310,7 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
         | Operation::SetMediaReference { .. }
+        | Operation::SetChartDefinition { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
         | Operation::RemoveField { .. }
