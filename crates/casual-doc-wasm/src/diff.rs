@@ -1155,4 +1155,358 @@ mod tests {
             "the sidecar is versioned: {json}"
         );
     }
+
+    // =========================================================================
+    // Applying a comparison as tracked changes (ADR-061).
+    // =========================================================================
+
+    /// A document and a comparison of it against `older`, in the orientation
+    /// `applyDiffAsRevisions` documents: `left` is the other document, `right` is
+    /// this one's own bytes.
+    fn open_and_compare(older: &[u8], live: &[u8]) -> (crate::WasmDocument, String) {
+        let document = crate::open_document(live).expect("the live document opens");
+        let sidecar = diff_versions_inner(older, live).expect("both sides open");
+        (document, sidecar)
+    }
+
+    /// The typed revision list the review panel, the gutter and next/previous all
+    /// read.
+    fn revisions_of(document: &crate::WasmDocument) -> Vec<serde_json::Value> {
+        serde_json::from_str(&document.list_revisions()).expect("a typed revision list")
+    }
+
+    /// The document as rejecting every tracked change would leave it: the
+    /// `Original` projection, which is where a deletion own runs contribute and
+    /// so where text invented by a deletion would land.
+    fn original_text(document: &crate::WasmDocument) -> String {
+        let mut text = String::new();
+        for block in document.document.body() {
+            if let BlockNode::Paragraph(paragraph) = block {
+                append_node_plain_text(&paragraph.inlines, ReviewProjection::Original, &mut text);
+            }
+        }
+        text
+    }
+
+    /// Whether a rendered page carries **coloured** ink — a pixel whose channels
+    /// are not all equal.
+    ///
+    /// Plain text paints black on white, so every pixel of an unmarked page is
+    /// grey. Review markup paints an insertion in the author's hue
+    /// (`flow::review_author_color`), so coloured ink on the page *is* the markup
+    /// having been painted. Measured from pixels rather than from the model,
+    /// because "the model holds a revision" is what the rest of these guards
+    /// already assert, and `105` CQ-003's lesson is that a construct can be typed,
+    /// anchored and listed while the reader still sees nothing.
+    fn has_colored_ink(bitmap: &crate::PageBitmap) -> bool {
+        bitmap.rgba.chunks_exact(4).any(|pixel| {
+            pixel[3] > 0
+                && (pixel[0].abs_diff(pixel[1]) > 24
+                    || pixel[1].abs_diff(pixel[2]) > 24
+                    || pixel[0].abs_diff(pixel[2]) > 24)
+        })
+    }
+
+    /// The moment Compare stops being a count: one text edit becomes one tracked
+    /// insertion that `listRevisions` reports and that the markup render paints in
+    /// the author's colour.
+    #[test]
+    fn one_text_edit_becomes_one_revision_the_review_surface_lists_and_the_canvas_paints() {
+        let older = text(&["alpha", "beta"]);
+        let live = text(&["alpha", "beta edited"]);
+        let (mut document, sidecar) = open_and_compare(&older, &live);
+        assert!(
+            sidecar.contains("\"family\":\"text\""),
+            "the precondition: the comparison really did find a text edit: {sidecar}"
+        );
+        assert!(
+            revisions_of(&document).is_empty(),
+            "and the document starts with no tracked changes"
+        );
+        assert!(
+            !has_colored_ink(
+                &document
+                    .render_page_inner(0, 96.0)
+                    .expect("the page renders")
+            ),
+            "the precondition for the paint assertion: an unmarked page is black on white"
+        );
+
+        let result = document
+            .apply_diff_as_revisions_inner(
+                &sidecar,
+                "Compared document",
+                Some("2026-10-04T00:00:00Z".to_owned()),
+            )
+            .expect("the comparison applies");
+        assert!(
+            result.paste_loss().is_empty(),
+            "a plain text edit degrades nothing, so nothing is reported: {:?}",
+            result.paste_loss()
+        );
+
+        let revisions = revisions_of(&document);
+        assert_eq!(
+            revisions.len(),
+            1,
+            "one text edit is one tracked change: {revisions:?}"
+        );
+        assert_eq!(revisions[0]["kind"], "insertion");
+        assert_eq!(revisions[0]["author"], "Compared document");
+        assert_eq!(revisions[0]["date"], "2026-10-04T00:00:00Z");
+        assert!(
+            revisions[0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("edited")),
+            "and it is the edited text, not a count: {revisions:?}"
+        );
+
+        document
+            .set_show_changes_inner(true)
+            .expect("the markup preview builds");
+        assert!(
+            has_colored_ink(
+                &document
+                    .render_page_inner(0, 96.0)
+                    .expect("the markup page renders")
+            ),
+            "the comparison is painted on the canvas in the author's colour"
+        );
+    }
+
+    /// A comparison is ONE undo step however many paragraphs it touches, because
+    /// it is one `UpdateReviewState`. A reader who undoes a comparison means the
+    /// whole comparison.
+    #[test]
+    fn the_whole_comparison_is_one_undo_step() {
+        let older = text(&["alpha", "beta", "gamma", "delta"]);
+        let live = text(&["alpha one", "beta two", "gamma three", "delta four"]);
+        let (mut document, sidecar) = open_and_compare(&older, &live);
+        let before = document.revision;
+
+        document
+            .apply_diff_as_revisions_inner(&sidecar, "Compared document", None)
+            .expect("the comparison applies");
+        let applied = revisions_of(&document);
+        assert!(
+            applied.len() >= 4,
+            "the precondition: several paragraphs carry a change, so one undo step is \
+             a claim worth making: {applied:?}"
+        );
+        assert_eq!(
+            document.revision,
+            before + 1,
+            "four paragraphs, one model revision"
+        );
+
+        document.undo_inner().expect("one undo");
+        assert!(
+            revisions_of(&document).is_empty(),
+            "a single undo removes the WHOLE comparison, not its last paragraph"
+        );
+        assert_eq!(
+            document.undo_label(),
+            "",
+            "and there is no second half of the comparison left to undo"
+        );
+    }
+
+    /// A document that already carries a reviewer's suggestions is refused, with
+    /// its own sentence and its own routing code — never the host's generic "that
+    /// edit isn't supported for this selection yet", and never by accepting the
+    /// reviewer's changes first the way ONLYOFFICE does (`docs/158` §2.4).
+    #[test]
+    fn a_document_already_carrying_tracked_changes_is_refused_with_its_own_sentence() {
+        let older = text(&["alpha", "beta"]);
+        let live = text(&["alpha", "beta edited"]);
+        let (mut document, sidecar) = open_and_compare(&older, &live);
+        let node = match &document.document.body()[0] {
+            BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+            other => panic!("the fixture's first block is a paragraph, got {other:?}"),
+        };
+        document
+            .suggest_insert(&node, 0, "Reviewed", Some("Ada".to_owned()), None, None)
+            .expect("a reviewer suggests something first");
+
+        let refusal = document
+            .apply_diff_as_revisions_inner(&sidecar, "Compared document", None)
+            .expect_err("a refusal, not a merge");
+        let (sentence, code) = casual_doc_edit::refusal::split(&refusal);
+        assert_eq!(
+            code,
+            Some("compare.document-has-revisions"),
+            "the refusal carries its own routing code so a host can translate it: {refusal:?}"
+        );
+        assert!(
+            sentence.contains("already has tracked changes"),
+            "and its own sentence, not a generic one: {sentence:?}"
+        );
+        assert_eq!(
+            revisions_of(&document).len(),
+            1,
+            "and the reviewer's suggestion is still there, untouched"
+        );
+    }
+
+    /// An unreadable sidecar and a sidecar from another schema are both refused
+    /// with their own codes. A schema this build does not know may have moved a
+    /// field, and applying it would mark the wrong text.
+    #[test]
+    fn an_unreadable_or_foreign_sidecar_is_refused_with_its_own_code() {
+        let live = text(&["alpha"]);
+        let mut document = crate::open_document(&live).expect("opens");
+
+        let unreadable = document
+            .apply_diff_as_revisions_inner("{\"not\":\"a sidecar\"}", "Compared document", None)
+            .expect_err("a refusal");
+        assert_eq!(
+            casual_doc_edit::refusal::split(&unreadable).1,
+            Some("compare.sidecar-unreadable")
+        );
+
+        let sidecar = diff_versions_inner(&text(&["alpha", "beta"]), &live).expect("both open");
+        let mut foreign: serde_json::Value = serde_json::from_str(&sidecar).expect("valid JSON");
+        foreign["schema"] = serde_json::json!(DIFF_SCHEMA + 1);
+        let refused = document
+            .apply_diff_as_revisions_inner(&foreign.to_string(), "Compared document", None)
+            .expect_err("a refusal");
+        assert_eq!(
+            casual_doc_edit::refusal::split(&refused).1,
+            Some("compare.schema-unsupported")
+        );
+        assert!(
+            revisions_of(&document).is_empty(),
+            "and neither refusal left half a comparison in the document"
+        );
+    }
+
+    /// **The data-loss case.** `DiffChange::left_text` is a 160-byte excerpt with
+    /// `…` appended, and a tracked deletion carries the removed text verbatim in
+    /// its own runs — so applying the excerpt would record a deletion of text the
+    /// compared document never contained, and Reject would then write that
+    /// invented text into the reader's document. A removal the record does not
+    /// carry verbatim is REPORTED and not applied.
+    #[test]
+    fn a_truncated_removal_is_reported_rather_than_invented() {
+        // Long enough that the removed run exceeds the excerpt bound, with a
+        // common prefix long enough that the two paragraphs still pair as one
+        // edited paragraph rather than a delete plus an add.
+        let common = "the quick brown fox jumps over the lazy dog ".repeat(8);
+        let removed = "x".repeat(300);
+        let older = format!("alpha\n{common}{removed}").into_bytes();
+        let live = format!("alpha\n{common}").into_bytes();
+        let (mut document, sidecar) = open_and_compare(&older, &live);
+        let parsed: serde_json::Value = serde_json::from_str(&sidecar).expect("valid JSON");
+        let changes = parsed["changes"].as_array().expect("an array");
+        assert!(
+            changes.iter().any(|change| {
+                change["family"] == "text"
+                    && change["leftText"]
+                        .as_str()
+                        .is_some_and(|text| text.ends_with('\u{2026}'))
+            }),
+            "the precondition: the comparison really did truncate the removed text, \
+             so this guard can fail: {changes:?}"
+        );
+
+        let result = document
+            .apply_diff_as_revisions_inner(&sidecar, "Compared document", None)
+            .expect("the comparison is applied as far as it can be");
+        assert!(
+            result.paste_loss().contains(&"truncatedText".to_owned()),
+            "the truncated removal is reported: {:?}",
+            result.paste_loss()
+        );
+        let listed = document.list_revisions();
+        assert!(
+            !listed.contains('\u{2026}'),
+            "and NOT applied: no tracked change carries the excerpt's ellipsis: {listed}"
+        );
+        let rejected = original_text(&document);
+        assert!(
+            !rejected.contains('\u{2026}'),
+            "nor would rejecting every change write it into the document: {rejected}"
+        );
+    }
+
+    /// The families a comparison can detect but tracked changes cannot say are
+    /// reported through `pasteLoss`, never swallowed. A comparison that applied
+    /// three of its five changes and reported success is the silent loss
+    /// `AGENTS.md` forbids.
+    #[test]
+    fn what_tracked_changes_cannot_express_is_reported_not_swallowed() {
+        // A removed paragraph (no paragraph in this document to mark) and a
+        // changed paragraph beside it.
+        let older = text(&["alpha", "removed entirely", "gamma"]);
+        let live = text(&["alpha", "gamma edited"]);
+        let (mut document, sidecar) = open_and_compare(&older, &live);
+
+        let result = document
+            .apply_diff_as_revisions_inner(&sidecar, "Compared document", None)
+            .expect("the comparison applies what it can");
+        assert!(
+            result.paste_loss().contains(&"blockDeletion".to_owned()),
+            "a whole block this document does not have is reported: {:?}",
+            result.paste_loss()
+        );
+        assert!(
+            !revisions_of(&document).is_empty(),
+            "while the changes that CAN be expressed are still applied"
+        );
+    }
+
+    /// Cost is **O(changes)**, not O(changes × document): the number of
+    /// whole-document scans must not grow with the number of changes.
+    ///
+    /// Measured with `document_scans`, not a clock — `116`'s whole point is that a
+    /// timing test cannot tell a slow constant from one scan per node, and the
+    /// defect this guards against is exactly that shape: `review_paragraph_body`,
+    /// which every `suggest*` method uses, resolves its id with
+    /// `find_paragraph_any`, and calling it once per touched paragraph would make
+    /// a 400-change comparison walk the document 400 times.
+    #[test]
+    fn applying_a_comparison_scans_the_document_a_fixed_number_of_times() {
+        /// One document of `total` paragraphs, of which the first `edited` differ
+        /// from the compared side. The document is the SAME size both times, so
+        /// only the change count varies.
+        fn scans_for(total: usize, edited: usize) -> (usize, usize) {
+            let live: Vec<String> = (0..total).map(|index| format!("line {index}")).collect();
+            let older: Vec<String> = live
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    if index < edited {
+                        format!("{line} as it was")
+                    } else {
+                        line.clone()
+                    }
+                })
+                .collect();
+            let live = live.join("\n").into_bytes();
+            let older = older.join("\n").into_bytes();
+            let (mut document, sidecar) = open_and_compare(&older, &live);
+            casual_doc_edit::reset_document_scans();
+            document
+                .apply_diff_as_revisions_inner(&sidecar, "Compared document", None)
+                .expect("the comparison applies");
+            (
+                casual_doc_edit::document_scans(),
+                revisions_of(&document).len(),
+            )
+        }
+
+        let (few_scans, few_changes) = scans_for(48, 6);
+        let (many_scans, many_changes) = scans_for(48, 24);
+        assert!(
+            many_changes >= few_changes * 2,
+            "the precondition: the change count really did more than double \
+             ({few_changes} then {many_changes})"
+        );
+        assert_eq!(
+            few_scans, many_scans,
+            "four times the changes in the same document must cost the same number of \
+             whole-document scans ({few_scans} then {many_scans})"
+        );
+    }
+
 }
