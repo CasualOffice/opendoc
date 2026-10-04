@@ -3114,7 +3114,7 @@ impl WasmDocument {
     /// before it, saving an inserted chart emitted a relationship pointing at a
     /// part the package did not contain.
     ///
-    /// Every family [`chart_group_for_kind`] admits is a family that writer can
+    /// Every family `chart_group_for_kind` admits is a family that writer can
     /// emit — `chart_part_writer.rs`'s family sweep is exhaustive over
     /// `ChartGroupKind`, so an eighth variant stops it compiling rather than
     /// quietly producing an insertable chart that cannot be saved.

@@ -1501,7 +1501,8 @@ fn an_orphan_projection_writes_no_part_and_the_package_still_reopens() {
 
     let export =
         export_document(&document, &BTreeMap::new()).expect("a document with an orphan writes");
-    let mut package =
+    // Not `mut`: the directory scan below reads metadata, so no part is read.
+    let package =
         DocxPackage::open(&export.bytes, PackageLimits::default()).expect("the package opens");
     // Scanned by DIRECTORY, not by the one name the model happened to hold: a
     // writer keyed off the projection table would mint its own name, and a guard
