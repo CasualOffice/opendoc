@@ -9292,6 +9292,95 @@ fn no_op_document() -> String {
     )
 }
 
+/// A border edge's theme colour must either survive the import or be reported.
+///
+/// `BorderEdge::color` is `Option<RgbColor>` and its own doc comment says
+/// `auto`/theme is "reported" — it was not. Measured over the owner's corpus,
+/// five of nineteen documents lose a border theme colour with a compatibility
+/// report that never names it, and the element-name loss gate
+/// (`casual-doc-export/tests/source_element_coverage.rs`) structurally cannot see
+/// it: the element `w:top` survives the save, only its attribute does not.
+///
+/// The assertion is at the altitude where the invariant actually holds — *the
+/// value survives or is reported* — so it stays green if a later change models
+/// the colour instead of reporting it, and goes red only on silence. It walks
+/// report `location` pairs, never feature text: the feature string for this
+/// finding is `top/@themeColor`, which *contains* `themeColor`, so a substring
+/// test over feature strings could pass on an unrelated entry.
+///
+/// Both parsers are exercised, because the edge builder exists twice — once in
+/// the body parser and once in the styles parser — and fixing one of two copies
+/// is how a defect class survives its own fix.
+#[test]
+fn a_border_theme_color_is_reported_rather_than_silently_dropped() {
+    for (what, import) in [
+        (
+            "body",
+            import(
+                br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+                <w:tbl><w:tblPr><w:tblBorders>
+                  <w:top w:val="single" w:sz="4" w:color="ED7D31" w:themeColor="accent2" w:themeTint="BF"/>
+                </w:tblBorders></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+                </w:body></w:document>"#,
+            ),
+        ),
+        (
+            "styles",
+            import_with_styles(
+                br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+                <w:p><w:r><w:t>Body</w:t></w:r></w:p>
+                </w:body></w:document>"#,
+                br#"<?xml version="1.0"?><w:styles xmlns:w="urn:w">
+                <w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:tblPr><w:tblBorders>
+                  <w:top w:val="single" w:sz="4" w:color="ED7D31" w:themeColor="accent2" w:themeTint="BF"/>
+                </w:tblBorders></w:tblPr></w:style>
+                </w:styles>"#,
+            ),
+        ),
+    ] {
+        let located: Vec<(&str, &str)> = import
+            .report
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry.location.element.as_deref()?,
+                    entry.location.attribute.as_deref()?,
+                ))
+            })
+            .collect();
+        assert!(
+            located.contains(&("top", "themeColor")),
+            "the {what} parser dropped w:top/@w:themeColor without a finding: {located:?}"
+        );
+        assert!(
+            located.contains(&("top", "themeTint")),
+            "the {what} parser dropped w:top/@w:themeTint without a finding: {located:?}"
+        );
+    }
+
+    // The precondition, kept explicit: an edge with no theme reference must stay
+    // silent, or the guard above would be satisfied by a reporter that fires on
+    // every border in every healthy document.
+    let plain = import(
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="000000"/></w:tblBorders></w:tblPr>
+        <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        </w:body></w:document>"#,
+    );
+    let plain_attrs: Vec<&str> = plain
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| entry.location.attribute.as_deref())
+        .collect();
+    assert!(
+        !plain_attrs.contains(&"themeColor") && !plain_attrs.contains(&"themeTint"),
+        "an sRGB-only border reported a theme loss that did not happen: {plain_attrs:?}"
+    );
+}
+
 /// An attribute-less `w:ind`/`w:spacing` specifies nothing, so it must raise
 /// nothing — and one carrying an attribute this parser cannot read must still
 /// raise a finding.

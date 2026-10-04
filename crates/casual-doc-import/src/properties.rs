@@ -697,6 +697,49 @@ pub(crate) fn parse_table_width(element: &BytesStart<'_>) -> Option<TableWidth> 
     Some(TableWidth { value, width_type })
 }
 
+/// The theme-colour attributes a border edge may carry, in schema order.
+///
+/// `CT_Border` admits `w:themeColor`, `w:themeTint` and `w:themeShade` beside the
+/// concrete `w:color`, exactly as `CT_Color` does on a run.
+const BORDER_THEME_ATTRIBUTES: [&[u8]; 3] = [b"themeColor", b"themeTint", b"themeShade"];
+
+/// Reports every theme-colour attribute on a border edge that the model cannot
+/// hold, as one `Degraded` attribute finding each.
+///
+/// `BorderEdge::color` is `Option<RgbColor>` — explicit sRGB only — and the
+/// model's own doc comment on that field already says `auto`/theme is
+/// "reported". It was not. Measured over the owner's corpus, **five of nineteen
+/// documents** lose a border or shading theme colour with a compatibility report
+/// that never mentions it, across `w:top`, `w:bottom`, `w:left`, `w:right`,
+/// `w:insideH` and `w:insideV`, carrying real slots (`accent1`…`accent5`,
+/// `text1`, `background1`) and real `w:themeTint` bytes. It is the largest
+/// genuine silent loss the corpus produced on the attribute axis.
+///
+/// A theme reference is reported rather than modelled here deliberately: giving
+/// `BorderEdge::color` the `Color` type that runs already use would change a
+/// widely-constructed model struct, and honouring it on the page needs a consumer
+/// in the layout engine. Both are follow-on work. What this closes is the part
+/// that `35-DISPOSITION-TAXONOMY.md` makes non-negotiable and that the
+/// element-name loss gate structurally cannot see — the *silence*.
+///
+/// The disposition is `Degraded`, not `Omitted`: the edge itself is captured with
+/// its style, width and padding, and only the colour reference is lost.
+///
+/// `O(1)` per edge, and it allocates nothing unless a theme attribute is present.
+pub(crate) fn report_border_theme_color(
+    reporter: &mut crate::report::Reporter,
+    element: &BytesStart<'_>,
+) {
+    let local = element.local_name();
+    for attribute in BORDER_THEME_ATTRIBUTES {
+        // An empty value says nothing, and a writer that omits the attribute
+        // produces the same document — so only a substantive value is a loss.
+        if attribute_value(element, attribute).is_some_and(|value| !value.is_empty()) {
+            reporter.report_attribute(local.as_ref(), attribute);
+        }
+    }
+}
+
 /// Whether a property element carries no attributes at all.
 ///
 /// This separates two documents that a `parsed == Default::default()` test cannot
