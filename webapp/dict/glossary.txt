@@ -1,6 +1,7 @@
 ABI
 ADR
 ADRs
+AES
 AGPL
 API
 APIs
@@ -16,6 +17,7 @@ Autofit
 Autosave
 BMP
 BOM
+BSD
 Backend
 BiDi
 Bidi
@@ -128,6 +130,7 @@ Noto
 OCR
 ODF
 ODT
+OFFCRYPTO
 OFL
 OLE
 OMML
@@ -201,6 +204,7 @@ TrueType
 Twip
 UAX
 URI
+URIs
 URL
 URLs
 USENIX
@@ -231,6 +235,7 @@ WordArt
 WordprocessingML
 XML
 XMP
+XOR
 XObjects
 Yjs
 accessor
@@ -293,6 +298,7 @@ checkable
 checkboxes
 checkmark
 checksums
+ciphertext
 clippy
 cmap
 codebase
@@ -307,12 +313,14 @@ composable
 config
 contenteditable
 contextualSpacing
+crypto
 cryptographic
 customXml
 customizable
 debounce
 debounced
 decodable
+decrypt
 dedupe
 deduplication
 del
@@ -348,6 +356,7 @@ embeddable
 embeddings
 enablement
 encodings
+endian
 endnote
 endnotes
 enum
@@ -423,6 +432,7 @@ memoized
 meta
 metafile
 metafiles
+microsoft
 microtask
 midrange
 min
@@ -611,6 +621,7 @@ vMerge
 val
 validator
 var
+verifier
 vertAlign
 viewport
 virtualised
