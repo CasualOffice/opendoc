@@ -361,6 +361,16 @@ impl WireOperation {
             Operation::SetStyleDefinition { style, .. } => style.as_ref().map_or(0, |style| {
                 style.name.as_ref().map_or(0, String::len) + PER_ITEM
             }),
+            // The widest payload in the op set, and the one it would be most wrong to
+            // charge as fixed-size: a projection carries every cached data point, so a
+            // 5,000-point chart is thousands of items on the wire however few fields the
+            // struct has. Bounded by the chart model's own limits; O(series + points).
+            Operation::SetChartDefinition { chart, .. } => chart.as_ref().map_or(0, |chart| {
+                let groups = &chart.plot_area.groups;
+                let series: usize = groups.iter().map(|group| group.series.len()).sum();
+                let points: usize = chart.data_ranges().map(|range| range.points.len()).sum();
+                (groups.len() + chart.plot_area.axes.len() + series + points) * PER_ITEM
+            }),
             // Every remaining operation carries a bounded, fixed-size payload: offsets, a
             // property bundle, a geometry, a flag, or nothing but the ids already charged
             // above. Grouped rather than wildcarded so a 56th variant is a compile error
@@ -451,6 +461,11 @@ impl WireOperation {
                 .as_ref()
                 .map_or_else(Vec::new, |_| vec![id.node_id()]),
             Operation::SetMediaReference { id, reference } => reference
+                .as_ref()
+                .map_or_else(Vec::new, |_| vec![id.node_id()]),
+            // Same rule again: a `ChartId` IS a `NodeId` the editor mints, so `Some(_)`
+            // declares it and `localise` decides whether the receiver already holds it.
+            Operation::SetChartDefinition { id, chart } => chart
                 .as_ref()
                 .map_or_else(Vec::new, |_| vec![id.node_id()]),
             Operation::SpliceSectionBoundary { boundary, .. } => boundary

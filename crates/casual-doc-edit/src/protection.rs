@@ -308,6 +308,7 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
         | Operation::SetMediaReference { .. }
+        | Operation::SetChartDefinition { .. }
         // Never reached from `refuse_if_protected`, which exempts this operation above
         // before the level is consulted. `false` is nonetheless the right answer to put
         // here: it is not a comment change, and if the exemption above were ever removed

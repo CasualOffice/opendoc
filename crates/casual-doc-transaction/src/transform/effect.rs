@@ -314,6 +314,11 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             | Operation::SetAbstractNumbering { .. }
             | Operation::SetNumberingInstance { .. }
             | Operation::SetMediaReference { .. }
+            // One registry row in or out. Nothing addresses a chart projection
+            // positionally, and `anchor_key` reports that no operation depends on a chart
+            // key, so a removal here destroys nothing another operation is anchored to —
+            // which is why it is inert rather than a `Key` in `removed_by` below.
+            | Operation::SetChartDefinition { .. }
             | Operation::RenameBookmark { .. }
             | Operation::CreateHeaderFooterBody { .. }
             | Operation::RemoveHeaderFooterBody { .. }

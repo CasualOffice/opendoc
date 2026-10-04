@@ -84,6 +84,7 @@ use crate::Intent;
 // introduce (`147`, ADR-005) — added apart from the shared sorted block so parallel lanes
 // do not conflict in it.
 use casual_doc_model::v1::AbstractNumberingId;
+use casual_doc_model::v1::ChartId;
 use casual_doc_model::v1::MediaId;
 use casual_doc_model::v1::NumberingInstanceId;
 use casual_doc_model::v1::{
@@ -782,6 +783,10 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
         | Operation::SetMediaReference { .. }
+        // A chart projection names a registry key, not a node: its own anchor
+        // precondition — that the key still names an embedded chart object — is the
+        // model's, checked by `validate` as the operation applies.
+        | Operation::SetChartDefinition { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. }
         | Operation::InsertFieldRange { .. }
@@ -857,6 +862,11 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetAbstractNumbering { .. }
         | Operation::SetNumberingInstance { .. }
         | Operation::SetMediaReference { .. }
+        // It WRITES the chart registry rather than depending on a row of it already being
+        // there, so there is no key a concurrent removal could take away: installing under
+        // a key a peer just removed re-creates the row, which is the intended last-writer
+        // outcome, and removing one already gone is a no-op.
+        | Operation::SetChartDefinition { .. }
         | Operation::CreateBookmark { .. }
         | Operation::InsertField { .. }
         | Operation::RemoveField { .. }
@@ -1641,6 +1651,7 @@ enum Target {
     AbstractNumbering(AbstractNumberingId),
     NumberingInstance(NumberingInstanceId),
     Media(MediaId),
+    Chart(ChartId),
     Section(SectionId),
     SectionRunning(SectionId, RunningRegion, HeaderFooterKind),
     CoreProperties,
@@ -1679,6 +1690,7 @@ impl Aspects {
     const NUMBERING_DEFINITION: Self = Self(1 << 22);
     const MEDIA_REFERENCE: Self = Self(1 << 23);
     const DOCUMENT_PROTECTION: Self = Self(1 << 24);
+    const CHART_DEFINITION: Self = Self(1 << 25);
 
     const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -1736,6 +1748,13 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         )),
         Operation::SetMediaReference { id, .. } => {
             Some((Target::Media(*id), Aspects::MEDIA_REFERENCE))
+        }
+        // One aspect for the whole projection, like the definition kinds above: a chart's
+        // series, axes and legend are not independently writable fields of a registry row,
+        // so two replicas editing one chart contend and the later write wins whole. That is
+        // also the only honest answer while the projection is replaced rather than patched.
+        Operation::SetChartDefinition { id, .. } => {
+            Some((Target::Chart(*id), Aspects::CHART_DEFINITION))
         }
         Operation::RenameBookmark { bookmark, .. } => {
             Some((Target::Bookmark(*bookmark), Aspects::BOOKMARK_NAME))
