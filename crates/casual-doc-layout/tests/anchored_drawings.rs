@@ -3088,6 +3088,10 @@ fn wrap_float(
             },
             vertical,
             wrap: WrapMode::Square,
+            // The float's authored side is absent, so `wrap_side()` answers
+            // Word's default of `bothSides`. These guards are about WHERE the
+            // band lands, not which side the producer asked for.
+            wrap_text: None,
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
@@ -3337,6 +3341,10 @@ fn a_floating_text_box_excludes_text_in_its_own_table_cell() {
             },
             vertical: at_paragraph_top(),
             wrap: WrapMode::Square,
+            // The float's authored side is absent, so `wrap_side()` answers
+            // Word's default of `bothSides`. These guards are about WHERE the
+            // band lands, not which side the producer asked for.
+            wrap_text: None,
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
