@@ -2220,7 +2220,7 @@ impl WasmDocument {
             .object_boxes()
             .into_iter()
             .find(|candidate| candidate.root == object)
-            .ok_or_else(|| to_js("object is not currently placed".into()))?;
+            .ok_or_else(|| to_js(objects::NOT_PLACED.into()))?;
         let left = bounded_emu(left_emu, -MAX_EMU, MAX_EMU, "object left")?;
         let top = bounded_emu(top_emu, -MAX_EMU, MAX_EMU, "object top")?;
         let width = bounded_emu(width_emu, MIN_OBJECT_EMU, MAX_EMU, "object width")?;
@@ -2229,12 +2229,12 @@ impl WasmDocument {
 
         if let Some(group) = object_group_any_surface(&self.document, object) {
             if !group_resize_supported(group) {
-                return Err(to_js("group geometry cannot be resized exactly".into()));
+                return Err(to_js(objects::GROUP_RESIZE_INEXACT.into()));
             }
             let placed_width = i64::from(placed.rect.size.width.raw()) * EMU_PER_TWIP_I64;
             let placed_height = i64::from(placed.rect.size.height.raw()) * EMU_PER_TWIP_I64;
             if placed_width <= 0 || placed_height <= 0 {
-                return Err(to_js("group has a degenerate placed rectangle".into()));
+                return Err(to_js(objects::GROUP_DEGENERATE.into()));
             }
             let scale_x = width as f64 / placed_width as f64;
             let scale_y = height as f64 / placed_height as f64;
@@ -2248,12 +2248,12 @@ impl WasmDocument {
             transform.extent.width_emu = scale_positive_emu(transform.extent.width_emu, scale_x)?;
             transform.extent.height_emu = scale_positive_emu(transform.extent.height_emu, scale_y)?;
             let bounds = group_content_bounds(group, transform)
-                .ok_or_else(|| to_js("group has no bounded child geometry".into()))?;
+                .ok_or_else(|| to_js(objects::GROUP_UNBOUNDED.into()))?;
             let anchor = page_anchor_at(
                 group
                     .anchor
                     .clone()
-                    .ok_or_else(|| to_js("group is not floating".into()))?,
+                    .ok_or_else(|| to_js(objects::GROUP_NOT_FLOATING.into()))?,
                 checked_page_offset(left as f64 - bounds.left, "group left")?,
                 checked_page_offset(top as f64 - bounds.top, "group top")?,
             );
@@ -2270,9 +2270,7 @@ impl WasmDocument {
             if object_resize_handles_any_surface(&self.document, object).handles
                 != FLOAT_RESIZE_HANDLES
             {
-                return Err(to_js(
-                    "floating object geometry cannot be resized exactly".into(),
-                ));
+                return Err(to_js(objects::FLOAT_RESIZE_INEXACT.into()));
             }
             operations.push(Operation::SetExtent {
                 object,
@@ -2289,16 +2287,14 @@ impl WasmDocument {
             if object_resize_handles_any_surface(&self.document, object).handles
                 != INLINE_RESIZE_HANDLES
             {
-                return Err(to_js(
-                    "inline object geometry cannot be resized exactly".into(),
-                ));
+                return Err(to_js(objects::INLINE_RESIZE_INEXACT.into()));
             }
             let current_left = i64::from(placed.rect.origin.x.raw()) * EMU_PER_TWIP_I64;
             let current_top = i64::from(placed.rect.origin.y.raw()) * EMU_PER_TWIP_I64;
             if (left - current_left).abs() > EMU_PER_TWIP_I64
                 || (top - current_top).abs() > EMU_PER_TWIP_I64
             {
-                return Err(to_js("inline resize cannot move its flow anchor".into()));
+                return Err(to_js(objects::INLINE_RESIZE_MOVED.into()));
             }
             operations.push(Operation::SetExtent {
                 object,
@@ -2353,7 +2349,7 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
         let mut anchor = object_anchor_any_surface(&self.document, object)
-            .ok_or_else(|| to_js("not a movable floating object".into()))?;
+            .ok_or_else(|| to_js(objects::NOT_FLOATING_MOVE.into()))?;
         anchor.horizontal = AnchorHorizontal {
             relative_from: HorizontalAnchor::Page,
             position: HorizontalPosition::Offset(
@@ -2387,10 +2383,19 @@ impl WasmDocument {
     /// Expressed through `SetInlines`, so the closed operation set is
     /// unchanged and this composes with undo and OT like any other edit.
     ///
+    /// A group of ONE is the exception, and it is the common case rather than a
+    /// corner: every inserted shape and every lone autoshape Word writes is one,
+    /// so this entry point is what a plain shape drag reaches. There the group
+    /// itself moves — see `move_lone_group_by`, which is where the reasoning
+    /// lives — because moving only the leaf left the object's wrap exclusion and
+    /// its exported anchor behind.
+    ///
     /// # Errors
     ///
     /// When `node` is not a shape inside a group, so a host cannot wire the
-    /// gesture to an arbitrary object and quietly move something else.
+    /// gesture to an arbitrary object and quietly move something else; and, for
+    /// a group of one, when the delta or the resulting position is not a
+    /// bounded EMU measurement.
     #[wasm_bindgen(js_name = moveGroupChildBy)]
     pub fn move_group_child_by(
         &mut self,
@@ -2411,14 +2416,24 @@ impl WasmDocument {
         dy_emu: f64,
     ) -> Result<EditResult, String> {
         let child = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        // A group of ONE moves as a group. Resolved through the same
+        // `body_group_object_ref` whose `leaf_count` made `resolve_object_boxes`
+        // present this leaf as the subject in the first place, so ONE predicate
+        // decides both halves of the gesture instead of two that can disagree.
+        if let Some(reference) = body_group_object_ref(self.document.body(), child)
+            && reference.leaf_count == 1
+            && !reference.path.is_empty()
+        {
+            return self.move_lone_group_by(reference.root, dx_emu, dy_emu);
+        }
         let paragraph = self
             .paragraph_containing_inline_deep(child)
-            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+            .ok_or_else(|| objects::NOT_A_GROUP_CHILD.to_owned())?;
         let source = find_paragraph_any(&self.document, paragraph)
-            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+            .ok_or_else(|| objects::NOT_A_GROUP_CHILD.to_owned())?;
         let mut inlines = source.inlines.clone();
         if !move_group_child_in_inlines(&mut inlines, child, dx_emu, dy_emu) {
-            return Err("not a shape inside a group".to_owned());
+            return Err(objects::NOT_A_GROUP_CHILD.to_owned());
         }
         let caret = Pos {
             node: paragraph,
@@ -2437,6 +2452,158 @@ impl WasmDocument {
         )
     }
 
+    /// Moves a group of ONE — a lone shape — by translating the GROUP's
+    /// `wp:anchor`, as one undoable `SetAnchor`.
+    ///
+    /// # The defect this closes
+    ///
+    /// [`insert_shape`](Self::insert_shape) wraps every shape in a group of one,
+    /// "the only shape a shape takes in this model", and a lone autoshape Word
+    /// writes imports the same way. `resolve_object_boxes` therefore reports the
+    /// LEAF as the subject and the GROUP as the root; the host reads
+    /// `subject != root` as "a child inside a group"
+    /// (`webapp/src/object_traversal.mjs`), so the pointer drag, the arrow nudge
+    /// and the Shift+arrow nudge all arrive at `moveGroupChildBy`.
+    ///
+    /// Moving the leaf's `a:xfrm` offset moves what is PAINTED and nothing else.
+    /// Every wrap consumer reads the group's anchor and extent instead —
+    /// `casual_doc_layout`'s body wrap pass hands `group.anchor` and
+    /// `group.extent` to its exclusion builder, and the in-flow carry that
+    /// serves table-cell and content-control content does the same — so the
+    /// shape went where it was dropped while its exclusion band stayed where the
+    /// shape had been. The anchor paragraph and every following paragraph within
+    /// the shape's height kept a two-inch hole around empty space, and the shape
+    /// overlapped unwrapped text wherever it had landed. The exporter writes
+    /// that unmoved `wp:anchor` out, and Word computes wrap from anchor plus
+    /// extent too, so the SAVED `.docx` was wrong the same way: a correctness
+    /// bug, not a repaint glitch.
+    ///
+    /// # Why the group moves, and why here
+    ///
+    /// Nothing else is in the group, so there is no relationship inside it for a
+    /// child-relative move to express. The leaf's offset, the group's extent and
+    /// the group's child space all stay exactly as authored and only the one
+    /// field that positions the whole object changes, which keeps the painted
+    /// shape, the exclusion band and the exported anchor a single fact instead of
+    /// three. A group with more than one leaf still moves its child, because
+    /// there the relationship between members is the point.
+    ///
+    /// It is fixed in the engine rather than by routing the gesture differently
+    /// in the host because the stale anchor is EXPORTED: a host-side patch would
+    /// leave the saved file wrong and would put a second place in the tree that
+    /// knows what a group of one is.
+    ///
+    /// # Why the anchor is translated and not replaced
+    ///
+    /// A `wp:posOffset` keeps its `@relativeFrom`, so a shape positioned
+    /// relative to the column and the paragraph stays positioned that way — it
+    /// still travels with its paragraph, which is what Word does on a drag and
+    /// what the in-flow carry requires in order to exclude text at all. An axis
+    /// positioned by a `wp:align` has no offset to translate, so that axis
+    /// resolves its current placement and becomes a page offset: the same
+    /// canonicalisation
+    /// [`set_object_anchor_position`](Self::set_object_anchor_position) performs
+    /// for every free drag. A translation is reference-independent, so adding a
+    /// page-space delta to a column- or paragraph-relative offset is exact.
+    ///
+    /// **O(document)**, one resolution walk plus one placement walk, and only on
+    /// an alignment axis; never on the keystroke path.
+    ///
+    /// # Errors
+    ///
+    /// When the group is not floating (a lone shape in the line of text has no
+    /// anchor to translate), when its placement or child geometry cannot be
+    /// measured, or when the delta takes the anchor outside the EMU domain.
+    fn move_lone_group_by(
+        &mut self,
+        group: NodeId,
+        dx_emu: f64,
+        dy_emu: f64,
+    ) -> Result<EditResult, String> {
+        let (anchor, origin) = {
+            let model = object_group_any_surface(&self.document, group)
+                .ok_or_else(|| objects::NOT_A_GROUP_CHILD.to_owned())?;
+            let anchor = model
+                .anchor
+                .clone()
+                .ok_or_else(|| objects::LONE_SHAPE_INLINE.to_owned())?;
+            let needs_origin = matches!(anchor.horizontal.position, HorizontalPosition::Align(_))
+                || matches!(anchor.vertical.position, VerticalPosition::Align(_));
+            let origin = if needs_origin {
+                // The group's own anchor origin in page EMU: its placed
+                // rectangle is the one its CONTENT occupies, and content sits at
+                // `origin + bounds`, which is the same correction
+                // `resize_object` applies when it re-anchors a scaled group.
+                let bounds = group_content_bounds(model, model.transform)
+                    .ok_or_else(|| objects::GROUP_UNBOUNDED.to_owned())?;
+                let placed = self
+                    .object_boxes()
+                    .into_iter()
+                    .find(|candidate| candidate.root == group)
+                    .ok_or_else(|| objects::NOT_PLACED.to_owned())?;
+                Some((
+                    f64::from(placed.rect.origin.x.raw()) * EMU_PER_TWIP - bounds.left,
+                    f64::from(placed.rect.origin.y.raw()) * EMU_PER_TWIP - bounds.top,
+                ))
+            } else {
+                None
+            };
+            (anchor, origin)
+        };
+
+        // EMU magnitudes are bounded by `MAX_EMU` (2.7e13), far inside f64's
+        // exact-integer range, so the delta arithmetic loses nothing.
+        #[allow(clippy::cast_precision_loss)]
+        let moved = |current: i64, delta: f64, label: &str| {
+            bounded_emu_reason(current as f64 + delta, -MAX_EMU, MAX_EMU, label)
+        };
+        let horizontal = match anchor.horizontal.position {
+            HorizontalPosition::Offset(current) => AnchorHorizontal {
+                relative_from: anchor.horizontal.relative_from,
+                position: HorizontalPosition::Offset(moved(current, dx_emu, "the shape's x")?),
+            },
+            HorizontalPosition::Align(_) => AnchorHorizontal {
+                relative_from: HorizontalAnchor::Page,
+                position: HorizontalPosition::Offset(bounded_emu_reason(
+                    origin.expect("an alignment axis resolved its origin").0 + dx_emu,
+                    -MAX_EMU,
+                    MAX_EMU,
+                    "the shape's x",
+                )?),
+            },
+        };
+        let vertical = match anchor.vertical.position {
+            VerticalPosition::Offset(current) => AnchorVertical {
+                relative_from: anchor.vertical.relative_from,
+                position: VerticalPosition::Offset(moved(current, dy_emu, "the shape's y")?),
+            },
+            VerticalPosition::Align(_) => AnchorVertical {
+                relative_from: VerticalAnchor::Page,
+                position: VerticalPosition::Offset(bounded_emu_reason(
+                    origin.expect("an alignment axis resolved its origin").1 + dy_emu,
+                    -MAX_EMU,
+                    MAX_EMU,
+                    "the shape's y",
+                )?),
+            },
+        };
+        let anchor = DrawingAnchor {
+            horizontal,
+            vertical,
+            ..anchor
+        };
+        // `ObjectMove`, like the child path and like every other float move, so
+        // the Undo button names the action the reader took.
+        self.apply_action_caret_as(
+            vec![Operation::SetAnchor {
+                object: group,
+                anchor: Box::new(anchor),
+            }],
+            Pos::new(group, 0),
+            HistoryKind::ObjectMove,
+        )
+    }
+
     /// Changes a **floating** object's text-wrap mode (docs/85 §5.3), committing
     /// one undoable `SetAnchor`. Accepts `"square"`, `"tight"`, `"through"`,
     /// `"topAndBottom"`, `"behind"` (wrap-none behind the text), and `"front"`
@@ -2446,7 +2613,7 @@ impl WasmDocument {
     pub fn set_object_wrap(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
         let mut anchor = object_anchor_any_surface(&self.document, object)
-            .ok_or_else(|| to_js("not a floating object".into()))?;
+            .ok_or_else(|| to_js(objects::NOT_FLOATING_WRAP.into()))?;
         match mode {
             "square" => anchor.wrap = WrapMode::Square,
             "tight" => anchor.wrap = WrapMode::Tight,
@@ -23090,10 +23257,19 @@ fn rotate_about(x: i32, y: i32, cx: i32, cy: i32, rotation_60k: i32) -> (i32, i3
 }
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
+    bounded_emu_reason(value, min, max, label).map_err(to_js)
+}
+
+/// [`bounded_emu`] with a plain reason, for the paths that carry a `String`
+/// error — the native-testable `_inner` halves. One mechanism: the sentence is
+/// written once here, and the `JsValue` form is this one plus `to_js`, because
+/// building a `JsValue` panics outside WebAssembly and would make the rule
+/// untestable (the same reason [`EmuError`] exists).
+fn bounded_emu_reason(value: f64, min: i64, max: i64, label: &str) -> Result<i64, String> {
     match checked_emu(value, min, max) {
         Ok(emu) => Ok(emu),
-        Err(EmuError::NotFinite) => Err(to_js(format!("{label} must be finite"))),
-        Err(EmuError::OutOfBounds) => Err(to_js(format!("{label} is out of bounds"))),
+        Err(EmuError::NotFinite) => Err(format!("{label} must be finite")),
+        Err(EmuError::OutOfBounds) => Err(format!("{label} is out of bounds")),
     }
 }
 
