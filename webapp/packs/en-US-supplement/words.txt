@@ -7,7 +7,6 @@ autosaves
 autosaving
 benchmarked
 benchmarking
-bitmask
 bitmasks
 blocklist
 bootcamp
@@ -45,7 +44,6 @@ deprioritise
 deprioritize
 deserialisation
 deserialization
-diffing
 droppable
 dropshipping
 ecommerce
@@ -88,7 +86,6 @@ mockups
 monorepo
 multifactor
 nearshoring
-newline
 newlines
 nullable
 observability

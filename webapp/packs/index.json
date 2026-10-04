@@ -4,7 +4,7 @@
       "schemaVersion": 1,
       "packId": "casual-proof-en-US-supplement",
       "locale": "en-US",
-      "packVersion": "1.4e3115ffb32e",
+      "packVersion": "1.2d050743ad1d",
       "engineApiRange": "1",
       "capabilities": [
         "spelling"
@@ -13,15 +13,15 @@
         {
           "id": "words",
           "url": "packs/en-US-supplement/words.txt",
-          "bytes": 1785,
-          "sha256": "4e3115ffb32eb9c461e0211091b002a21a8db23b4dc6be264faa9e998f92738a",
+          "bytes": 1761,
+          "sha256": "2d050743ad1df0023fee2cf760ff6609b6e807e7e5fc299bab0896fd528441e1",
           "format": "words-plain-1"
         }
       ],
       "provenance": [
         {
           "name": "OpenDoc contemporary English supplement",
-          "version": "1.4e3115ffb32e",
+          "version": "1.2d050743ad1d",
           "license": "Apache-2.0",
           "url": "https://github.com/CasualOffice/opendoc/blob/main/webapp/packs/sources/en-US-supplement.txt"
         }
