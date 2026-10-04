@@ -4,6 +4,8 @@ import {
   definedParagraphStyles,
   gotoEditor,
   openFilePage,
+  runFilePageCommand,
+  runPaletteCommand,
 } from "./fixtures.mjs";
 
 // docs/123 §6 — the File page's right side is one surface, not four dialogs
@@ -232,6 +234,91 @@ test("the gear goes to the pane while the File page is open — there is one Set
   // Still exactly one settings form, and no scrim over the page.
   expect(await page.locator("#settingsPanel").count()).toBe(1);
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// ADR-062 corollary C1 — a pointer must point. docs/159 §3: the Measurement-unit
+// row deferred to the chooser inside Settings and never revealed it, for two
+// independent reasons. It focused synchronously, so `modal.mjs`'s queued
+// `initialFocus` overwrote it and focus stayed on the Theme radio group at the
+// top of a scrolling body; and it had no `showSettingsPane()` guard, so from the
+// File page — where the row lives — it would raise a half-dialog out of a pane.
+//
+// This asserts the GUARANTEE, not either mechanism: after invoking the row, the
+// chooser is the focused element and it is inside the viewport. Both routes are
+// driven, because the two bugs are different and one route would miss the other.
+// `surface_reveal.test.mjs` holds the ordering half as a unit test with the
+// frame scheduler injected; this is the half only a browser can answer.
+//
+// The two routes are the two the reader has, and BOTH end in the dialog — which
+// is a correction to docs/159 §3.2 that writing this guard produced. Every File
+// row calls `closeFilePage()` before `command.run()` (`main.js:12255-12267`,
+// "one rule, no exception list"), and so does the palette
+// (`main.js:13053-13056`, whose comment records this very hazard being fixed
+// there). So neither route can reach `openChooser` with the page still open, and
+// the half-dialog §3.2 predicted is NOT live on this command. The pane guard in
+// `showSettings()` is a consolidation and a latent-case defence, not the fix for
+// a reachable bug; the reachable bug was the focus race alone.
+//
+// Asserting a pane here would have been asserting the wrong thing — and it did,
+// until this spec was run. That is the whole argument for driving a guard rather
+// than reasoning about one.
+for (const route of ["from the File page", "from the command palette"]) {
+  test(`the measurement row reveals the chooser, not just the dialog — ${route}`, async ({
+    page,
+    consoleErrors,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await gotoEditor(page);
+    const onPage = route.endsWith("File page");
+
+    if (onPage) await runFilePageCommand(page, "view.measurementUnits");
+    else await runPaletteCommand(page, "view.measurementUnits", "measurement");
+
+    const select = page.locator("#measurementUnitSelect");
+    await expect(select, "the chooser is on screen").toBeVisible();
+    // The actual report: Settings opened and the measurement parameter was not
+    // to be found. Focus is the machine-checkable form of "the reader is looking
+    // at it", and it is what the dead `.focus()` call failed to achieve.
+    await expect(select, "the chooser is the focused control").toBeFocused();
+    // Focused is not the same as revealed: `modal.mjs` focuses with
+    // preventScroll, so without an explicit scroll it can be focused and still
+    // below the fold.
+    await expect(select).toBeInViewport();
+
+    // Either route leaves the dialog, because both returned to the document
+    // first. What must NOT happen is a dialog layered over a still-open File
+    // page — two layers of chrome between the reader and the document, which is
+    // what `closeFilePage()` before `run()` exists to prevent.
+    await expect(page.locator("#settingsPanel")).toHaveClass(/dialog-overlay/);
+    await expect(page.locator("body")).not.toHaveClass(/file-page-open/);
+    expect(await page.locator("#settingsPanel").count()).toBe(1);
+
+    expect(consoleErrors).toEqual([]);
+  });
+}
+
+// The third route to Settings, which had no guard of its own before: the File
+// page's own Settings ROW. It lands in the pane not because of the pane check in
+// `showSettings()` but because `view.settings` is a `PANEL_PANES` entry
+// (`file_pane.mjs:112`), so the page renders it in place and the command never
+// runs. That is worth pinning precisely because it is a different mechanism from
+// the gear's (covered above) and from the palette's: three routes, three
+// mechanisms, one required outcome.
+test("Settings from the File page row lands in the pane, not a dialog over it", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await gotoEditor(page);
+
+  await runFilePageCommand(page, "view.settings");
+
+  await expect(page.locator("#filePageDetail #settingsPanel")).toBeVisible();
+  await expect(page.locator("#settingsPanel")).toHaveClass(/panel-in-page/);
+  await expect(page.locator("body")).not.toHaveClass(/modal-open/);
+  expect(await page.locator("#settingsPanel").count()).toBe(1);
 
   expect(consoleErrors).toEqual([]);
 });

@@ -211,6 +211,7 @@ import {
   renderFilePane,
   setFilePane,
 } from "./file_pane.mjs";
+import { revealControl } from "./surface_reveal.mjs";
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
 import {
   BLANK_DOCX_PARTS,
@@ -10515,8 +10516,8 @@ const measurement = createMeasurementUnits({
   onChanged: () => pageSetup.reflectUnits(),
   setStatus,
   openChooser: () => {
-    toggleSettings(true);
-    document.getElementById("measurementUnitSelect")?.focus();
+    showSettings();
+    revealControl(document.getElementById("measurementUnitSelect"), { group: ".settings-section" });
   },
 });
 const documentProtection = createDocumentProtection({
@@ -11838,7 +11839,7 @@ function editorCommands(context = { surface: "palette" }) {
     // while the panel was open would have closed it. `noDoc` because theme,
     // accent and reviewer identity are host preferences that do not need a
     // document open, and the gear is the only other way to reach them.
-    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => toggleSettings(true) },
+    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => showSettings() },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => pageSetup.open(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
     { id: "layout.tabStops", label: t("tabStops.command"), group: "Layout", kw: "tab tabs stop stops ruler decimal bar align position", enabled: !!selection && reviewMode !== "viewing", disabledReason: selection ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : t("paragraph.caretRequired"), run: () => tabStopsDialog.open() },
@@ -15986,6 +15987,15 @@ function toggleSettings(open) {
   settingsBtn.setAttribute("aria-expanded", String(show));
   if (show) settingsModal.open();
   else settingsModal.close();
+}
+
+/** Shows Settings wherever it currently lives — ADR-062 C1, for every route that
+ *  wants it OPEN rather than toggled. The dialog and the pane are the same
+ *  element and the File page reparents it, so asking the pane first is the only
+ *  way not to raise a half-dialog out of a pane. The gear keeps its own body
+ *  below because it toggles, which is a real difference and not a second copy. */
+function showSettings() {
+  if (!showSettingsPane()) toggleSettings(true);
 }
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
