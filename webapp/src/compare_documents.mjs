@@ -28,19 +28,55 @@
 // One engine call serves both, because a comparison is two byte arrays and
 // nothing else (`diff.rs`: the facade "references nothing in the live session").
 //
+// ## THE CHANGE LIST IS NOT THE DESTINATION — ADR-061 (`docs/158`)
+//
+// CORRECTED 2026-10-04. The section below recorded the side-panel change list as
+// the DECIDED shape of this feature, and ADR-061 says in its own "Corrects" line
+// that it should not: *"It was the right call for what was reachable; it is not
+// the right destination, and the file says so as though it were."* `docs/158`
+// measured all three references and found that **none of them presents a
+// comparison as a count** — ONLYOFFICE mutates the open document, setting
+// `reviewtype_Add`/`reviewtype_Remove` on runs with an author and a date
+// (`Comparison.js:3864`, `:179`), and its Compare button sits on the Review band
+// beside Accept, Reject, Previous and Next, which is the admission that a diff IS
+// review markup.
+//
+// So the decision is: a comparison is applied to the open document as tracked
+// changes, through the revision model that already exists, and read with the
+// review surface that already exists — one new engine function,
+// `applyDiffAsRevisions(sidecar, author, date)`. It is NOT BUILT, so this module
+// still renders a list, and the list is a way station rather than the answer.
+//
+// What ADR-061 says the chrome owes, and where each part stands here:
+//
+//   * **each entry names its object** — DONE. "`Removed` with no object is the
+//     same defect as a refusal with no reason", and it was measured doing exactly
+//     that; see `changeFields` and `changeObjectName`.
+//   * **the panel becomes an index: an entry scrolls the canvas to its change** —
+//     BLOCKED, and not on effort. `diff.rs:228-244` imports BOTH sides freshly
+//     and this module's own right-hand side is `comparableBytes(doc, …)`, a
+//     re-export of the live document, so `right.node` belongs to a throwaway
+//     parse whose id counter restarted at 1. Only `right.path` survives and there
+//     is no `path → NodeId` resolver: `blockIndexOf` is the inverse,
+//     `documentOutline` covers only headings. Handing a `DiffAnchor` to
+//     `navigateToReviewAnchor` would either no-op or scroll to an unrelated
+//     paragraph that happens to hold the same ordinal id, which is worse than not
+//     navigating. The engine owes `nodeAtStoryPath(story, path) -> String`.
+//   * **route the result into `applyDiffAsRevisions`, and turn `setShowChanges`
+//     on** — waits on the engine half.
+//
 // ## WHERE WE DELIBERATELY DIFFER FROM WORD, and say so
 //
 // Word's Compare produces a THIRD DOCUMENT: a merged copy whose differences are
-// real tracked changes you can accept and reject. We do not, and claiming
+// real tracked changes you can accept and reject. We do not YET, and claiming
 // otherwise would be the overstatement this repository has twice published by
 // accident. `casual-doc-diff` returns a typed SIDECAR — a list of changes with
-// anchors — not a merged document, and turning one into the other is a document
-// construction with its own correctness questions (whose author owns a change?
-// what happens to a move?). So this surface is a CHANGE LIST in a side panel,
-// which is Google Docs' answer, and the panel says which document each side is.
+// anchors — not a merged document, and turning one into the other needs the
+// engine function above. So this surface is, for now, a CHANGE LIST in a side
+// panel, and the panel says which document each side is.
 //
 // The honest consequence, stated in the panel rather than hidden: the changes
-// can be read and counted, and they cannot be accepted or rejected, because
+// can be read and counted, and they cannot yet be accepted or rejected, because
 // there is nothing to accept them INTO.
 //
 // ## WHERE IT RUNS
