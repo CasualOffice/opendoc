@@ -204,6 +204,7 @@ L = more than a week. Both are carried across verbatim; neither was rescaled.
 ## Summary
 
 **202 rows in the one queue: 107 Hotfix, 76 Audit, 19 Roadmap.**
+**201 rows in the one queue: 106 Hotfix, 76 Audit, 19 Roadmap.**
 
 Derived from the rows below by `webapp/tests/tracker_counts.test.mjs`. Do not edit these
 cells by hand — re-derive them. (`104`'s summary drifted for exactly as long as nothing
