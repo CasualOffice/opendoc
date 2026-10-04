@@ -97,6 +97,20 @@ async function caretInHeading(page, heading) {
   await outlineRow(page, heading).item.click();
 }
 
+/** The fold state the ENGINE holds for `heading`, read through a FRESHLY BUILT
+ *  outline panel: closing and reopening it runs `buildOutline`, which syncs from
+ *  `foldState()` before it renders.
+ *
+ *  Rebuilt rather than read off the screen because an assertion against the DOM
+ *  already rendered — or a poll for the value that is already there — passes on
+ *  exactly the stale reading it is meant to catch. Two earlier spellings of the
+ *  print check stayed green while print restored nothing at all. */
+async function foldStateFromEngine(page, heading) {
+  await runPaletteCommand(page, "view.outline", "outline");
+  await runPaletteCommand(page, "view.outline", "outline");
+  return outlineRow(page, heading).row.getAttribute("aria-expanded");
+}
+
 /** Every block of text the accessibility mirror is currently projecting. */
 async function mirrorText(page) {
   return page.evaluate(() =>
@@ -322,12 +336,15 @@ test("printing while a heading is folded prints the whole document and keeps the
   // DOM already on screen, or a poll for the value that is already there,
   // passes on exactly the stale reading it is meant to catch. Both earlier
   // spellings of this check stayed green while print never restored anything.
-  await runPaletteCommand(page, "view.outline", "outline"); // close
-  await runPaletteCommand(page, "view.outline", "outline"); // reopen, rebuilt
-  await expect(
-    outlineRow(page, BETA_PARENT).row,
-    "the engine must still have the heading folded after the print",
-  ).toHaveAttribute("aria-expanded", "false");
+  await expect
+    .poll(() => foldStateFromEngine(page, BETA_PARENT), {
+      message:
+        "print must put the reader's folds back. Polled through a REBUILT panel, and " +
+        "polled rather than read once, because the restore lands in " +
+        "`withPagedLayout`'s `finally` — after the PDF blob the poll above waits on",
+      timeout: 30_000,
+    })
+    .toBe("false");
   expect(await documentPageCount(page), "and the page count is the folded one").toBe(folded);
 
   expect(consoleErrors).toEqual([]);

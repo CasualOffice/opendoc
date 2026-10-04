@@ -65,6 +65,25 @@ const PDF_FORMAT = "application.pdf";
  *  preview still needs it cancels the job, so the cleanup errs late. */
 const PRINT_FRAME_TTL_MS = 120_000;
 
+/** How long to wait for the print frame to LOAD the PDF before giving up on the
+ *  handoff and rastering instead.
+ *
+ *  Not a nicety — without it `printDocument` can never resolve. A browser with
+ *  no in-frame PDF viewer (viewing disabled by policy, a build without the
+ *  viewer, and headless Chromium, which is how this was found) fires neither
+ *  `load` nor `error` on a `blob:` PDF frame, so `await loaded` waits forever:
+ *  the Print command hangs with no feedback, and — the half that matters —
+ *  `withPagedLayout`'s `finally` is never reached, so the reader's reflow view
+ *  and their collapsed headings are never put back. That restore had been
+ *  unreachable on this path since the PDF handoff landed; the fold work is what
+ *  made it observable.
+ *
+ *  Four seconds because the export has already happened by this point: all that
+ *  is left is handing the browser bytes it already holds, which is immediate
+ *  where it works at all. The fallback is the raster path, which is exactly what
+ *  `printViaPdf`'s `false` return is for. */
+const PRINT_FRAME_LOAD_TIMEOUT_MS = 4_000;
+
 /** Print through the real-text PDF, which is what `PDF-PRINT-0` in `docs/98`
  *  specifies: "PDF → browser print handoff (`window.print()` on a PDF
  *  object/hidden frame)".
@@ -92,14 +111,22 @@ async function printViaPdf(doc) {
   // print view to invoke in Chromium.
   frame.style.cssText =
     "position:fixed; right:0; bottom:0; width:1px; height:1px; opacity:0; border:0; pointer-events:none;";
+  let loadTimer = 0;
   const loaded = new Promise((resolve, reject) => {
     frame.addEventListener("load", resolve, { once: true });
     frame.addEventListener("error", reject, { once: true });
+    // A frame that neither loads nor errors is a Print that never returns — see
+    // `PRINT_FRAME_LOAD_TIMEOUT_MS`.
+    loadTimer = setTimeout(
+      () => reject(new Error("the print frame did not load the PDF")),
+      PRINT_FRAME_LOAD_TIMEOUT_MS,
+    );
   });
   frame.src = url;
   document.body.appendChild(frame);
   try {
     await loaded;
+    clearTimeout(loadTimer);
     const view = frame.contentWindow;
     if (!view) throw new Error("print frame has no view");
     let cleaned = false;
@@ -116,6 +143,7 @@ async function printViaPdf(doc) {
     return true;
   } catch (err) {
     console.warn("print: PDF handoff failed, falling back to raster:", err?.message ?? err);
+    clearTimeout(loadTimer);
     frame.remove();
     URL.revokeObjectURL(url);
     return false;
