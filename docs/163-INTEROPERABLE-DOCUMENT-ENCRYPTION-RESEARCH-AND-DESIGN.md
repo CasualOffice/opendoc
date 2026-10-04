@@ -10,6 +10,28 @@ register runs 001–063, contiguous, and a guard in `webapp/tests/doc_citations.
 a gap or a duplicate). What this document *does* record, and what an ADR would otherwise have to
 re-establish, is the sourced constraint set that makes the decisions decidable.
 
+### How to read the evidence in this document
+
+Three grades, kept distinct on purpose, because `SKILL` §9 exists for a reason:
+
+1. **Specification text**, quoted with a section number — MS-OFFCRYPTO, MS-CFB, ODF 1.3 part 2,
+   ISO/IEC 29500-1. Freely published and read directly. **The exception is ISO 32000, which is
+   paywalled and was NOT read** (§4 opens by saying so), so every PDF claim is one grade weaker.
+2. **Source code of another product**, cited by file and line — LibreOffice's `oox/source/crypto`
+   and `package/source/zippackage`, ONLYOFFICE's `sdkjs`/`web-apps` at a named commit, and the
+   `aes`/`cfb`/`cpufeatures` crates' own sources. Read, not inferred.
+3. **Measurements run in this tree on 2026-10-04/05**, each with the command that produced it:
+   the greps in §1, the wasm engine probes in §1.2, the ODF-manifest experiment in §1.2, the
+   crates.io and RustSec queries in §9.3, the MSRV-resolver reproduction in §9.3, and the AES
+   throughput table in §7.5. The throughput table is the **weakest** of these — Node rather than
+   a browser, on a loaded machine, ±2× on absolutes — and is labelled indicative where it
+   appears. **No number in this document may be published** until the experiment that hardens it
+   has run (§14).
+
+Where none of the three could answer a question, the question is in §14 as a named experiment
+rather than being answered. Nothing here is fenced as recollection, because nothing here is
+recollection.
+
 ## 0. The requirement, and the thing this is not
 
 The owner's words:
@@ -357,6 +379,26 @@ length, and `blockSize` (16 for AES) governs the final padding.
 zero-padded → `encryptedHmacKey`. Then HMAC ([RFC2104]) **the entire `\EncryptedPackage` stream,
 `StreamSize` field included**, keyed with `Salt`; encrypt that with
 `blockKey = a0 67 7f 02 b2 2c 84 33` → `encryptedHmacValue`.
+
+#### A reported deviation from this text that would break interoperability if we follow the spec literally
+
+§2.3.4.14 step 2 says the HMAC key `Salt` is "a random array of bytes … **of the same length as
+the value of the `KeyData.saltSize` attribute**" — so with our profile's `saltSize=16`, a
+16-byte HMAC key. The `ms-offcrypto-writer` crate's README says Office does something else:
+
+> This does also include one deviation from the standard, which specifies that the HMAC key
+> should have a length equal to the salt length in `<keyData>`. However, the reference
+> implementation uses an **HMAC key length of 64**.
+
+64 is `hashSize` for SHA-512, not `saltSize`. If that is right, a spec-literal writer produces
+an `encryptedHmacKey` Word computes a different HMAC over, and the file either fails Word's
+integrity check or ours fails on Word's files — **a defect that only shows up against another
+product, never in a round trip against ourselves.**
+
+**This is a third party's README, not a measurement, and it is the single highest-value thing
+to settle before writing any agile file.** It is experiment **E12**. Note which way the risk
+runs: `hashSize` happens to equal 64 in our chosen profile, so the two readings differ by
+exactly the 16-vs-64 byte key length and nothing else — easy to get wrong, easy to test for.
 
 ### 2.6 What we should WRITE, and what we must READ
 
@@ -934,25 +976,68 @@ The honest answer is **not established**, and the shape of the answer is predict
   host-provided primitive (which the host contract would then have to specify). **This is owner
   decision D-5.**
 
-**The measurement that would settle it (E8), stated so it can be run before any code is
-committed to:**
+#### An indicative measurement exists, and it moves the answer
 
-1. Build a one-function wasm module exporting `decrypt_cbc(key, iv, bytes) -> bytes` using
-   `aes` + `cbc`, compiled three ways: default, `-C target-feature=+simd128`, and with the
-   `aes` crate's `force-soft` off/on.
-2. In Chromium and Firefox, run it over 1 MB, 10 MB and 64 MB buffers, five repetitions,
-   reporting MB/s and the wall-clock total.
-3. Measure `crypto.subtle.decrypt` over the same buffers as the ceiling.
-4. Separately, measure 100,000 iterations of SHA-512 with `sha2` in wasm — the KDF cost, which is
-   what the user feels as "the password dialog hangs".
-5. **The acceptance criterion is time-to-interactive, not throughput** (`SKILL` §"Performance is
-   a gate"): a 10 MB document must open within the budget a 10 MB document already has, and the
-   KDF must not block the main thread. Both decryption and derivation are O(document) and
-   therefore must run off the main thread, show progress, and be cancellable — the same rule that
-   already governs opening.
+A lane of this research built a `cdylib` exporting AES-256-CBC
+`encrypt_padded`/`decrypt_padded::<NoPadding>` over a 1 MiB buffer
+(`opt-level=3, lto=true, codegen-units=1`) and drove it from Node 22.18.0 — **V8, the same wasm
+pipeline Chrome uses** — through plain `WebAssembly.instantiate`, medians of 5–9 reps:
 
-Until E8 has run, **no claim about encrypted-document performance may be published**, and the
-phasing in §11 deliberately puts the measurement before the writer.
+| Build | AES-256-CBC encrypt | AES-256-CBC decrypt |
+| --- | ---: | ---: |
+| wasm32, V8, default | 41.1 MiB/s | 104.8 MiB/s |
+| wasm32, V8, `-C target-feature=+simd128` | 46.6 MiB/s | 132.3 MiB/s |
+| wasm32, `--cfg cpubits="64"` | 15.0 MiB/s | 79.1 MiB/s |
+| native aarch64, `aes_backend="soft"` (fixslice) | 27.8 MiB/s | 73.4 MiB/s |
+| native aarch64, ARMv8 AES intrinsics | 1198 MiB/s | 5114 MiB/s |
+
+**Treat the absolutes as ±2× and the ratios as the result.** The machine was running other
+heavy work (load average 47 at one point) and repeats under load gave 16.8/58.4 MiB/s for the
+wasm cases; ratios were taken within single runs, so they survive the noise. It is **Node, not a
+browser**, and not from a dedicated Worker on an idle machine. One published figure agrees:
+`jedisct1/rust-aes-wasm`'s README measures the `aes`+`cbc` combination at **35.49 M/s** for
+AES-256-CBC under Wasmtime on an Apple M1 — a different engine, same ballpark. Two independent
+measurements agreeing is the strongest evidence available short of E8.
+
+Five things follow, and three of them change the design:
+
+1. **wasm ≈ the native software backend** (41 vs 28, 105 vs 73), which independently confirms
+   that wasm is running the fixsliced code and nothing else — the source reading above, measured.
+2. **wasm is ~25–30× slower than hardware AES on encrypt and ~35–50× on decrypt.** A big
+   multiple, and on absolute numbers that mostly do not matter — see 4.
+3. **`+simd128` buys 10–25%, not a backend change.** Worth enabling; not AES acceleration.
+   `--cfg cpubits="64"` makes wasm **slower** (V8 does not reward 64-bit bitslicing in wasm32),
+   so leave `cpubits` alone.
+4. **CBC decrypt is 2.5–3× faster than CBC encrypt in the same build, and this is structural:**
+   CBC encryption is serially chained so it can only ever use the one-block path, while CBC
+   decryption parallelises and feeds the fixslice batch. **Decryption is our common case** —
+   opening a protected `.docx` — so the fast direction is the one we need. At ~105 MiB/s a
+   10 MB package decrypts in roughly **0.1 s**, and 100 MB in about a second. Against everything
+   else opening a document costs, that is not the bottleneck.
+5. **Therefore D-5 probably resolves to pure Rust**, and R5 drops down the risk list. WebCrypto
+   would buy an order of magnitude on a cost that is already ~0.1 s for a realistic file, at the
+   price of a second cipher implementation and a host-provided primitive in the contract. The
+   engineering that pays is **chunking and Worker offload**, not a faster cipher.
+
+**E8 is therefore narrowed, not cancelled.** What is still unmeasured, and still gating:
+
+1. A real **browser** figure (Chrome, Firefox, Safari), from a **dedicated Worker**, on an idle
+   machine with the power profile pinned, over {64 KiB, 1 MiB, 16 MiB} × {encrypt, decrypt} ×
+   {default, `+simd128`}, discarding the first 2 s as warm-up (Liftoff → TurboFan tiering),
+   medians of ≥20 reps.
+2. **`crypto.subtle.decrypt('AES-CBC')` in the same page, in the same units** — the WebCrypto
+   ceiling. This is the control that actually decides D-5, because it gives the crossover size
+   at which offloading bulk AES would be worth a second implementation.
+3. **The KDF measured on its own:** 100,000 iterations of SHA-512 with `sha2` in wasm. This is a
+   *serial* cost that cannot be chunked or parallelised, and it is what a user experiences as
+   "the password dialog hangs". It is not covered by the table above at all.
+4. **The acceptance criterion is time-to-interactive, not throughput** (`SKILL` §"Performance is
+   a gate"): a 10 MB protected document must open within the budget a 10 MB document already
+   has. Decryption and derivation are both O(document), so regardless of the number they run off
+   the main thread, show progress, and are cancellable — the rule that already governs opening.
+
+Until E8's browser figures exist, **no performance number may be published** (`SKILL` §9.1), and
+the numbers in the table above are indicative, in this document, and not for a public page.
 
 ---
 
@@ -1115,18 +1200,88 @@ All version, licence, MSRV, download and date figures below were read from the c
 Everything in that table is licence-clean against the nine-licence allow list, comes from
 crates.io, and declares an MSRV at or below 1.88.0 — with the one exception called out.
 
-#### Two transitive hazards
+#### Three MSRV/wasm hazards — and the first one needs no pin, which was worth measuring
 
-1. **`aes` 0.9.3 → MSRV 1.89.** Pin `aes = "=0.9.2"` (the project already pins `zip = "=7.2.0"`
-   for a behavioural reason, so the precedent exists). A `cargo update` that takes 0.9.3 turns the
-   `platform` MSRV row red, and because every CI command is `--locked`, the committed `Cargo.lock`
-   is the enforcement point.
-2. **`cfb` depends on `uuid = "1"`, and `uuid` 1.27.0 declares MSRV 1.89.0** (1.26.1 is the last
-   at 1.85.0). `cfb` also pulls `fnv` (Apache-2.0 / MIT) and `web-time` (MIT OR Apache-2.0) —
-   both clean, and `web-time` being there is itself a signal that the crate was made
-   wasm-aware deliberately. The `uuid` ceiling must be pinned in `Cargo.lock`
-   (`cargo update -p uuid --precise 1.26.1`), and it is the kind of thing that breaks months
-   later on an unrelated `cargo update`. **Worth an explicit note in `deny.toml` or a comment.**
+1. **`aes` 0.9.3 declares MSRV 1.89 and `uuid` 1.27.0 declares 1.89.0, and *neither needs an
+   `=` pin*.** The workspace already sets `resolver = "3"` (`Cargo.toml:26`) and
+   `rust-version = "1.88.0"` (`:31`), which turns on Cargo's MSRV-aware resolver. Reproduced in
+   the scratchpad with a throwaway crate depending on `aes = "0.9"`, `cbc`, `sha2`, `hmac` and
+   `cfb`:
+
+   ```text
+        Locking 40 packages to latest Rust 1.88.0 compatible versions
+          Adding aes v0.9.2 (available: v0.9.3, requires Rust 1.89)
+          Adding uuid v1.26.1 (available: v1.27.0, requires Rust 1.89.0)
+   ```
+
+   So Cargo holds both back by itself, including the transitive `uuid` that arrives via `cfb`.
+   **An earlier draft of this document recommended `aes = "=0.9.2"`; that was overcautious and
+   is withdrawn** — an `=` pin would also freeze out patch releases, which is the opposite of
+   what you want on a cipher. The two conditions that must hold: the new crates inherit
+   `rust-version.workspace = true`, and nothing runs a bare `cargo update` on a newer toolchain
+   without the MSRV resolver in effect. The `--locked` CI commands are the backstop.
+2. **`cfb`'s other transitive deps are clean:** `fnv` (Apache-2.0 / MIT) and `web-time`
+   (MIT OR Apache-2.0). `web-time` being there is itself the signal that the crate was made
+   wasm-aware deliberately — and it has a sharp edge, see §9.3's prior-art note on
+   `msoffice-crypto`.
+3. **Never add `cpufeatures` as an unconditional dependency: on wasm it does not degrade, it
+   refuses to compile.** Verified in the vendored source,
+   `cpufeatures-0.3.1/src/lib.rs:26-31`:
+
+   ```rust
+   #[cfg(not(any(
+       target_arch = "aarch64",
+       target_arch = "loongarch64",
+       target_arch = "x86",
+       target_arch = "x86_64"
+   )))]
+   compile_error!("This crate works only on `aarch64`, `loongarch64`, `x86`, and `x86-64` targets.");
+   ```
+
+   The RustCrypto crates that use it gate it per-target in their own `Cargo.toml`, so it never
+   reaches a wasm build through them. A hand-written `cpufeatures` line in our crate would break
+   the `wasm` CI job outright.
+
+#### `getrandom` on `wasm32-unknown-unknown` — the answer, and why the library should not ask for it
+
+Without configuration a wasm32 build **hard-fails at compile time**
+(`getrandom-0.4.3/src/backends.rs`: the wasm arm is a `compile_error!` unless the feature is on).
+What is needed has changed three times, which is why this is written down:
+
+| `getrandom` | What `wasm32-unknown-unknown` needs |
+| --- | --- |
+| 0.2.x | `features = ["js"]` |
+| **0.3.0 – 0.3.3** | **both** `features = ["wasm_js"]` **and** `RUSTFLAGS='--cfg getrandom_backend="wasm_js"'` — the feature alone does nothing |
+| 0.3.4+ | the feature alone (its `compile_error!` text is stale and still claims otherwise) |
+| **0.4.x** | the feature alone; `getrandom_backend` no longer accepts `"wasm_js"` at all |
+
+So on 0.4.x it is `getrandom = { version = "0.4", features = ["wasm_js"] }` and no `RUSTFLAGS`.
+
+**But the library should not be the crate that enables it.** `getrandom`'s own README:
+
+> We strongly recommend against enabling this feature in libraries (except for tests) since it
+> is known to break non-Web WASM builds and further since the usage of `wasm-bindgen` causes
+> significant bloat to `Cargo.lock` (on all targets).
+
+We happen to fall inside its stated exception, because `cfb` already pulls `web-time` →
+`js-sys`/`wasm-bindgen` on wasm32-unknown-unknown. That makes it *defensible*, not *right*. Two
+better shapes, and the second is the one to prefer:
+
+- **Enable `wasm_js` at the leaf** (`casual-doc-wasm`), never in `casual-doc-crypto`, so a future
+  non-JS wasm consumer of the engine is not poisoned by a transitive `wasm-bindgen`.
+- **Better: take the entropy from the host and keep `getrandom` out of the library's API
+  entirely.** `casual-doc-crypto`'s writing functions accept the random bytes they need rather
+  than fetching them — the salts, the verifier input, the intermediate key, the HMAC key. The
+  browser leaf supplies `crypto.getRandomValues` through the seam it already has; a native host
+  supplies `getrandom`; a test supplies a fixed vector, **which is the only way a known-answer
+  test of the writer is possible at all** (R2). `getrandom` also offers `custom`/`extern_impl`
+  backends for exactly this. Note the consequence for the host contract: entropy becomes a host
+  responsibility, which is consistent with `AGENTS.md` ("host applications own policy") and must
+  be stated there rather than assumed.
+
+Also: **a decrypt-only build needs no CSPRNG at all**, which is the whole reason phase 1 can
+avoid this question. Watch `argon2`, whose default features include `getrandom` — take it as
+`argon2 = { version = "0.6", default-features = false, features = ["alloc"] }`.
 
 #### Does `cfb` do what we need?
 
@@ -1153,14 +1308,80 @@ crates.io, and declares an MSRV at or below 1.88.0 — with the one exception ca
 
 - **`ole` 0.1.15** — **WTFPL**, which is not in the nine permitted licences, so `cargo-deny`
   refuses it outright. Last released 2018-03-23. Unmaintained and unusable regardless of merit.
-- **`msoffice-crypto` 0.1.0-rc.5** — MIT OR Apache-2.0, MSRV 1.85, released 2026-09-30, **99
-  downloads**, still a release candidate. It is genuine prior art and worth *reading* — its
-  public history includes a pull request titled "Make the agile write tuple the caller's, and
-  fix five defects found on the way", which tells you how settled the implementation is.
-  Depending on a 99-download pre-release for the confidentiality of users' documents is not a
-  decision this project should make. **Recommendation: read it, cite it, do not depend on it.**
-  Re-evaluate if it reaches 1.0 with an audit and real adoption.
 - **Writing our own AES/SHA/HMAC** — rejected, §9.2.
+
+#### Prior art: four crates already attempt this, and none of them can be the dependency
+
+Each was resolved against our own `deny.toml`, run through `cargo audit 0.22.2`, and **built for
+`wasm32-unknown-unknown`**. Versions, licences and download counts re-checked against the
+crates.io API.
+
+| Crate | Version | Licence | `cargo audit --deny warnings` | wasm32 build | Scope |
+| --- | --- | --- | --- | --- | --- |
+| `office-crypto` | 0.4.0 (2026-09-13) | MIT | **FAILS** | builds | **decrypt only** |
+| `ms-offcrypto-writer` | 1.0.7 (2025-09-05) | MIT OR Apache-2.0 | clean | builds | **encrypt only, agile only** |
+| `msoffice-crypto` | 0.1.0-rc.5 (2026-09-30) | MIT OR Apache-2.0 | clean | **FAILS TO COMPILE** | detect + decrypt + encrypt, all schemes |
+| `odf-crypto` | 0.1.0-rc.8 (2026-09-30) | MIT OR Apache-2.0 | clean | builds | ODF, not OOXML |
+
+- **`office-crypto` 0.4.0** is the most used (196,889 downloads) and **fails our CI today**: it
+  requires `quick-xml ^0.38.4`, which carries **two 7.5-high advisories** (RUSTSEC-2026-0195,
+  unbounded namespace-declaration allocation; RUSTSEC-2026-0194, quadratic duplicate-attribute
+  check), both needing ≥ 0.41.0 — and a `^0.38.4` requirement cannot be fixed with
+  `cargo update`. It also pulls `derivative` 2.2.0 (RUSTSEC-2024-0388, **unmaintained, patched
+  list empty**, so no fix will ever exist). Note the asymmetry our config produces: our
+  `advisories.unmaintained = "workspace"` means `cargo-deny` would **not** flag the transitive
+  `derivative`, but `cargo audit --deny warnings` does — so the PR job catches it and the weekly
+  job would not. Decrypt-only in any case. **Unusable under our policy until upstream moves.**
+- **`ms-offcrypto-writer` 1.0.7** passes every gate and builds for wasm, and is the most useful
+  of the four **to read**: ~1,400 lines, deliberately "very simple and easy to audit", generic
+  over `Read + Write + Seek` so it works on a `Cursor`. Its README states exactly the profile
+  §2.6 arrives at independently (salt 16, AES-256, CBC, SHA-512, spin count 100000) and carries
+  the HMAC-key-length deviation that became E12. Against it: write-only, agile-only, no
+  configurability, **no zeroization of key material** (its own roadmap says "*maybe* implement
+  zeroing of data structures"), 0 stars, one maintainer, 13 months without a commit, and 1.0.5
+  and 1.0.6 are yanked.
+- **`msoffice-crypto` 0.1.0-rc.5** claims the most complete coverage in Rust — agile and
+  standard detect/decrypt/encrypt across AES-128/192/256 × SHA-1/256/384/512, plus RC4 CryptoAPI
+  and XOR decrypt — and claims the two design properties §7.3 arrives at independently: the
+  `dataIntegrity` HMAC verified over ciphertext **before** plaintext is returned, and
+  `WrongPassword` / `IntegrityCheckFailed` / `UnsupportedAlgorithm` as distinct variants. That is
+  the right shape, and it is corroboration worth having. But: **it does not compile for
+  `wasm32-unknown-unknown`** — it passes `std::time::SystemTime` to
+  `cfb::CompoundFile::set_modified_time`, whose wasm32 signature takes `web_time::SystemTime`
+  (two `E0308`s). A two-line upstream fix, and proof **nobody has ever built it for wasm**. It is
+  also pre-release with a self-admittedly unstable API, ~47,000 lines in a three-week-old
+  repository, 0 stars, 99 downloads, and — the biggest supply-chain concern in this list — it
+  **exact-pins a pre-release dependency from the same author**, `secure-gate = "=0.9.0-rc.12"`,
+  in the key-material path.
+- **`odf-crypto` 0.1.0-rc.8** is the same author with the same `secure-gate` pin, for ODF; its
+  dependency set (`blowfish` + `cfb-mode`, `aes` + `cbc` + `aes-gcm`, `argon2` + `pbkdf2`) is the
+  right shape for §3 and is useful confirmation of that shape.
+- Also considered and out: **`msoffice_crypt`** — BSD-3-Clause FFI bindings to the C++
+  `herumi/msoffice`, needs a C++ toolchain, **cannot target wasm**. **`aes-wasm`** — MIT, but
+  `wasm32-wasi` only, so it cannot help a browser build. **`xlsx_encryptor`** — a wrapper, not a
+  primitive.
+- **Worth reading rather than depending on**, as reference implementations: `msoffcrypto-tool`
+  (Python), `herumi/msoffice` (C++), and LibreOffice's `oox/source/crypto` and
+  `package/source/zippackage`, which this document already quotes.
+
+**Conclusion: implement on the primitives, and use `ms-offcrypto-writer` and `msoffice-crypto`
+as reading.** Two independent reasons beyond the gate failures. First, no single crate covers
+read + write + both schemes + wasm. Second, all four are built on the **previous** RustCrypto
+generation (`aes 0.8` / `cbc 0.1` / `sha2 0.10` / `pbkdf2 0.12`) while §9.3 chooses the current
+one (`aes 0.9` / `cbc 0.2` / `sha2 0.11` / `pbkdf2 0.13`) — which is where MSRV and security
+attention goes. Pulling one in would put **two generations of the same cipher code in the wasm
+bundle**; `multiple-versions = "warn"` makes that non-fatal and it is still a bundle we would be
+shipping to a browser.
+
+What to take from them regardless of the decision — the hard-won parts, not the code: the
+HMAC-key-length deviation (E12), the salt-16/AES-256/SHA-512/spin-100000 tuple, and the
+verify-HMAC-over-ciphertext-before-returning-plaintext ordering with a three-way error split.
+
+One migration cost to expect, because it is the kind of thing that eats a day: examples and
+reference code written against the old generation do not port mechanically. `rc4::Rc4` lost its
+key-size generic; `hmac` moved `new_from_slice` from `Mac` to `KeyInit`; `cfb_mode::Encryptor` is
+block-granular and the one you want is `BufEncryptor`; `rand_core`'s core trait is now
+`Rng`/`TryRng`, not `RngCore`.
 
 #### Audit status, stated with its real scope
 
@@ -1312,8 +1533,11 @@ difference is we say it before the user finds out.
 - `casual-doc-crypto` gains agile **write** at the one profile in §2.6, `dataIntegrity`
   included, plus the `\0x06DataSpaces` streams.
 - A CSPRNG appears for the first time: salts, the verifier input, the intermediate key, the HMAC
-  key. **This is where the wasm entropy question has to be answered**, and where a
-  weak-randomness bug is catastrophic and silent.
+  key. **This is where a weak-randomness bug is catastrophic and silent**, and §9.3 answers the
+  wasm entropy question: `casual-doc-crypto`'s writing functions **take** the random bytes rather
+  than fetching them, the browser leaf supplies `crypto.getRandomValues` and a native host
+  supplies `getrandom`. That is also the only shape in which a known-answer test of the writer is
+  possible, because a test can supply a fixed vector.
 - Round-trip gates: our file opens in Word and in LibreOffice; their files open in ours; the
   plaintext digest matches.
 - "Keep the password on save" becomes the default for a file that arrived encrypted.
@@ -1356,7 +1580,7 @@ own sourcing.
 | **D-2** | **Read-only in phase one, or read + write?** | (a) read only, then write; (b) both together | (a) ships a real capability in roughly half the time, needs **no CSPRNG** and so dodges the wasm entropy question entirely, and is safe to claim. Its cost is a user experience that silently removes protection unless we say so loudly — which is the Google/ONLYOFFICE behaviour, and the thing their own dialog apologises for. (b) is coherent as a product but doubles phase 1 and puts a randomness bug on the critical path before any of the format work is proven. **Recommendation: (a), with the "this will save unencrypted" warning treated as a shipping requirement, not a nicety.** |
 | **D-3** | **What does the product claim, in its own words?** | the owner's sentence | §8.3 is the permitted set and §8.4 the forbidden set. The sentence has to be written by the owner and then **guarded**, like every other number on `index.page.html` (`SKILL` §9.6). |
 | **D-4** | **`spinCount` for files we write** | (a) 100000, matching Office and LibreOffice; (b) higher | (a) is interoperable by construction and is what every other product writes. (b) is cryptographically better and adds open latency linearly — at 1,000,000 the KDF is 10× and E8's number decides whether that is seconds. Note the spec ceiling is 10,000,000. **Recommendation: (a) now, revisit with E8's measurement.** |
-| **D-5** | **Pure-Rust AES in wasm, or WebCrypto through the host?** | (a) `aes` crate everywhere; (b) WebCrypto in the browser, Rust elsewhere; (c) (a) now, (b) behind the host contract if E8 fails | (a) keeps one implementation and one behaviour across native/wasm/headless — the "prefer one mechanism over two" rule — at an order of magnitude in throughput. (b) is browser-fast and makes the engine depend on a host-provided primitive, which the host contract would have to specify and a headless host would have to supply. **This decision should wait for E8**, and (c) is the shape that lets it. |
+| **D-5** | **Pure-Rust AES in wasm, or WebCrypto through the host?** | (a) `aes` crate everywhere; (b) WebCrypto in the browser, Rust elsewhere; (c) (a) now, (b) behind the host contract if E8 fails | (a) keeps one implementation and one behaviour across native/wasm/headless — the "prefer one mechanism over two" rule — at an order of magnitude in throughput. (b) is browser-fast and makes the engine depend on a host-provided primitive, which the host contract would have to specify and a headless host would have to supply. **The indicative measurement in §7.5 leans hard towards (a)**: CBC *decrypt* — our common case — runs at ~105 MiB/s in V8, so a 10 MB package is ~0.1 s, and WebCrypto would buy an order of magnitude on a cost that is already negligible. **Recommendation: (a), confirmed by E8's `crypto.subtle` control**, which gives the crossover size at which (b) would ever be worth a second cipher implementation. |
 | **D-6** | **`.docm`, and encrypted macro-enabled files** | (a) keep refusing; (b) decide | `.docm` is already refused at open and `SKILL` §11 records that as undecided rather than an oversight. An encrypted `.docm` is the same question with the macro hidden until after decryption, which makes the refusal *harder*, not easier: we cannot know what is inside until we have the password. **Recommendation: keep refusing, and refuse after decryption with the real reason.** |
 | **D-7** | **Does an encrypted document join a room?** | (a) no — encrypted implies standalone edit-and-save; (b) yes, with the plaintext relayed | The "one doc, one room" rule says a deployed or shared document always joins a room. An encrypted document in a room means the relay sees plaintext operations, which contradicts what a user will assume the password bought. (a) is honest and is a real product limitation. **Recommendation: (a), stated in the UI, until there is a design that does better.** |
 
@@ -1370,7 +1594,7 @@ own sourcing.
 | **R2** | **A silent cryptographic bug: we write files that look encrypted and are not, or that nothing can open.** | A wrong `iterator` byte order, a reused IV, a predictable "random" salt, or a CSPRNG that returns zeros in wasm all produce a file that *writes and reads back fine in our own tests* and is either unopenable elsewhere or trivially breakable. A round-trip test is green and wrong — `SKILL` §4's exact failure. | Known-answer vectors from files other products produced (§10), not round trips; cross-product round-trip gates in CI; the mutation rule applied to each constant and each byte order; and `getrandom` kept out of the tree until phase 2, where its wasm configuration gets its own guard. |
 | **R3** | **Interoperability fails in one direction and we do not notice.** | LibreOffice's reader is a whitelist of four parameter combinations (§2.6) — AES-256 with SHA-256 is schema-legal and LibreOffice refuses it. A file Word opens and LibreOffice will not is a half-broken feature, and nothing in our test suite today would see it. | Write exactly one profile, chosen to be LibreOffice's own write preset; a CI gate that opens our output with a headless LibreOffice; fixtures from each producer in both directions. |
 | **R4** | **The decrypted plaintext or the password leaks within our own process.** | The password arrives as a JavaScript string (unzeroable), the whole decrypted package sits in memory, and we embed in third-party pages. A host with a loose CSP turns our feature into an exfiltration channel. | A `SecretPassword` newtype that zeroizes and has an empty `Debug`; the password never in the DOM, never in a log, never in an error message; `AdapterError`'s existing "no document contents" contract extended to key material; a guard asserting no build posts a password anywhere; and the limits of all this written into §8.2 rather than engineered around. |
-| **R5** | **wasm AES is too slow and we find out after building on it.** | Decryption is O(document) on the open path, which is already the most latency-sensitive thing the editor does, and the software AES fallback is ~10× off hardware. Discovering this in phase 2 means reworking the architecture after the format work is committed. | E8 runs **before** phase 1 commits to the pure-Rust path; D-5 stays open until it has; the work is off-main-thread, progressive and cancellable from the first commit, which is the rule for anything O(document) anyway. |
+| **R5** | **wasm AES is too slow and we find out after building on it.** | *Downgraded from its original place by the §7.5 measurement.* The software backend is 25–50× off hardware, but CBC decrypt — the common case — measured ~105 MiB/s in V8, which is ~0.1 s for a 10 MB package, so the original fear does not hold on the read path. What remains: the **serial 100,000-iteration SHA-512 KDF is unmeasured** and cannot be chunked, and write throughput is 2.5–3× worse than read. | E8's narrowed form — a browser figure from a Worker, the `crypto.subtle` control, and **the KDF measured on its own** — before phase 1 commits; and the work is off-main-thread, progressive and cancellable from the first commit, which is the rule for anything O(document) anyway. |
 | **R6** | **A hostile CFB file hangs or crashes the tab.** | A FAT is a linked list and a sector chain can be cyclic; a `StreamSize` can claim 2^63; a directory can be enormous. Our ZIP substrate is bounded and fuzzed precisely because this class is real, and a brand-new container starts with none of that. | `casual-doc-cfb` gets limits and a fuzz target in the same PR as its reader, not later; the adversarial fixtures in §10 are part of phase 0's definition of done; `forbid(unsafe_code)`. |
 | **R7** | **Two branches collide on `ImportRequest`.** | Adding a field to a widely-constructed, non-`non_exhaustive` struct is the exact shape that made `main` red twice (`SKILL` §5a). | The `#[non_exhaustive]`-plus-builder change lands **first and alone**, in phase 0, before any crypto branch exists. |
 | **R8** | **A new dependency fails a CI gate we did not think about.** | MSRV 1.88.0, the wasm target, nine permitted licences, `cargo audit --deny warnings`, `--locked` everywhere. A crate that is fine on crates.io can still fail four of those. | §9.3's table carries licence, MSRV and wasm status per crate; the dependency addition is its own commit so the gate failure is unambiguous; `cargo +1.96.0 fmt`, the full gate list, and `cargo check --workspace --all-targets` as always. |
@@ -1391,10 +1615,12 @@ Named, because `SKILL` §9 requires saying what is unsourced rather than smoothi
 | **E5** | Can Word open an encrypted `.odt` at all? | Produce one with LibreOffice; open it in Word; record the exact error. |
 | **E6** | What does Google Docs do with an encrypted `.odt`? | Upload one to Drive; record whether it prompts, previews, or refuses. |
 | **E7** | Does LibreOffice's PDF export really write `/R 6` AES-256, and at which version? | Export with a password from LibreOffice 25.8+; parse the `/Encrypt` dictionary for `/V`, `/R`, `/CF`. Replace the secondary source in §5.3 with this. |
-| **E8** | Can a wasm build do AES-256-CBC and 100,000-iteration SHA-512 fast enough? | §7.5, steps 1–5. **This is the one that gates D-5 and phase 1's architecture.** |
+| **E8** | Can a wasm build do AES-256-CBC and 100,000-iteration SHA-512 fast enough? | **Partly answered** — §7.5 has an indicative V8/Node figure (~41 MiB/s encrypt, ~105 MiB/s decrypt, ±2×) corroborated by one published Wasmtime figure. Still needed: a real browser figure from a dedicated Worker on an idle machine, the `crypto.subtle.decrypt('AES-CBC')` control in the same units, and **the serial SHA-512 KDF measured on its own** — the one cost the table does not cover and the one a user feels as a hung dialog. Still gates D-5 and any published number. |
 | **E9** | Can the LibreOffice CLI be driven to *write* an encrypted file without a macro, so fixtures are reproducible in CI? | Try `--convert-to` with filter-data JSON for ODF and OOXML; if the password is a MediaDescriptor property rather than FilterData, fall back to a committed Basic macro or to generating fixtures from our own writer once phase 2 exists (and say so, because self-generated fixtures prove nothing — R2). |
 | **E10** | Is `spinCount`'s `iterator` little-endian in the files Word writes? | Falls out of E1: decrypt a Word file with both byte orders and see which verifier round trip succeeds. Pin it as a known-answer test. |
 | **E11** | What does ISO 32000 actually say about the standard security handler, Algorithm 2.A/2.B and the `/Encrypt` dictionary? | Obtain ISO 32000-2 (paywalled; it was **not** read for §4) and replace every secondary citation in §4 with the text. Phase 4 must not start before this. |
+| **E12** | Is the agile `dataIntegrity` HMAC key `saltSize` bytes as §2.3.4.14 says, or **64** bytes as `ms-offcrypto-writer`'s README says Office's reference implementation uses? | Decrypt a Word-produced file and verify its `encryptedHmacValue` both ways; exactly one will check out. **Highest-value experiment before writing any agile file** (§2.5). |
+| **E13** | Does `cfb` 0.15's wasm32 API really differ from its host API (`web_time::SystemTime` vs `std::time::SystemTime` on `set_modified_time`)? | It is what breaks `msoffice-crypto`'s wasm build (§9.3). Build a two-line probe against `cfb` 0.15 on both targets. If it holds, `casual-doc-cfb`'s wrapper must abstract it, and the `wasm` CI job is what would otherwise catch it late. |
 
 ### Proposed backlog row (not yet filed)
 
