@@ -293,12 +293,67 @@ export const EN_STRINGS = Object.freeze({
   "compare.needsDocument": "Open a document to compare another one with",
   "compare.intro": "Pick a document to compare this one with. Nothing is uploaded.",
   "compare.chooseFile": "Choose a document…",
-  // Said BEFORE a file is picked, not discovered after. Word's Review ▸ Compare
-  // makes a third document whose differences are real tracked changes you can
-  // accept and reject; this makes a list you can read. A reader who expects to
-  // accept a change deserves to know which product they are using.
-  "compare.notTrackedChanges":
-    "The differences are listed here, not written into a document — they cannot be accepted or rejected.",
+  // REPLACES `compare.notTrackedChanges`, which said "The differences are listed
+  // here, not written into a document — they cannot be accepted or rejected."
+  // That was true of the change list and is false of ADR-061: the differences are
+  // written into the open document as tracked changes now, and the key's own name
+  // said the opposite. Renamed rather than reworded in place, so a maintainer
+  // reading `notTrackedChanges` cannot be told the opposite of what it carries.
+  //
+  // Said BEFORE a file is picked, because it is the warning that matters: Word and
+  // Google Docs build a merged THIRD document; we mutate the one on screen, which
+  // is ONLYOFFICE's answer (`docs/158` §2.2).
+  "compare.writesTrackedChanges":
+    "The differences are written into this document as tracked changes, which you can then accept or reject.",
+  // The answer, FIRST and as a sentence about the document rather than a number
+  // about the panel. The owner's report on the previous shape was that a count
+  // told them nothing: "i cant even see what is being changed".
+  "compare.marked": "{count} differences are now tracked changes in this document.",
+  // And how to walk them. Review's own next/previous navigate the revisions the
+  // comparison just wrote, which is the route that cannot land on the wrong
+  // paragraph — unlike a click on a list entry, whose anchor belongs to the
+  // comparison's throwaway re-import (`compare_documents.mjs`, "still blocked").
+  "compare.reviewNav":
+    "Review ▸ Next and Previous move through them; Accept or Reject decides each one.",
+  // The author a comparison's tracked changes are attributed to when the compared
+  // document has no name to use — ADR-061 attributes them to the compared
+  // document so the author colour tells a computed difference from a person's
+  // suggestion.
+  "compare.author": "Compared document",
+  // WHAT THE COMPARISON FOUND AND COULD NOT MARK. `EditResult.pasteLoss`, routed
+  // rather than swallowed: a comparison that silently applied nine of twelve
+  // changes and reported success is the worst outcome available, and the engine
+  // computes this report precisely so a host can say it.
+  "compare.unmarkedTitle": "Found, but not marked in the document:",
+  "compare.unmarked.blockDeletion":
+    "Whole paragraphs the other document has and this one does not — a tracked change marks text that is here, and there is no paragraph here to mark.",
+  "compare.unmarked.trackedMove":
+    "The far half of a move: where the content came from is in the other document only.",
+  "compare.unmarked.truncatedText":
+    "Removed text too long to record word for word, so the deletion is reported rather than reconstructed.",
+  "compare.unmarked.incompleteComparison":
+    "The comparison itself stopped short of exhaustive, so this is not everything that differs.",
+  "compare.unmarked.notMarkable":
+    "A real difference with no run of text here to mark it on.",
+  // THE FOUR CODED REFUSALS `applyDiffAsRevisions` can return, each a sentence
+  // this host routes by code so it is read in the reader's own language rather
+  // than in the engine's English.
+  //
+  // The first is the one a reader will actually meet, and it is DELIBERATE: one
+  // `reviewType` field cannot carry both "a person suggested this" and "a
+  // comparison computed this" without the two deciding each other. ONLYOFFICE
+  // accepts every existing change first, on consent (`Comparison.js:3910-3921`);
+  // destroying a reviewer's suggestions to run a comparison is the loss
+  // `AGENTS.md` puts first. So the sentence says what we refuse and why, and does
+  // not apologise for it.
+  "compare.refused.documentHasRevisions":
+    "This document already has tracked changes. Accept or reject them first — a comparison writes its own tracked changes, and merging the two would decide someone else's suggestions for them.",
+  "compare.refused.schemaUnsupported":
+    "This comparison was made by a different version of the editor and cannot be applied to the document.",
+  "compare.refused.sidecarUnreadable":
+    "This comparison could not be read, so nothing was written into the document.",
+  "compare.refused.authorRequired":
+    "A comparison's tracked changes need an author name, and the compared document supplied none.",
   "compare.parsing": "Reading both documents…",
   "compare.comparing": "Comparing…",
   "compare.cancel": "Cancel",

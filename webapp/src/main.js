@@ -10530,7 +10530,13 @@ const documentProtection = createDocumentProtection({
   participantRefusal: () => SESSION.refusalFor("review.restrictEditing"),
   onChanged: () => updateToolbar(),
 });
-const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted") });
+// ADR-061's three review seams are inline rather than a function here on
+// purpose: `compare_documents.mjs` owns the ORDER of "apply the sidecar, repaint,
+// turn the markup on, re-render the gutter" because that order is the decision,
+// and this module is the 93%-of-the-webapp one with no mount seam (`109` HF-085).
+// `landed` doubles as the capability test — a composition with no review chrome
+// supplies none, and the panel then claims no tracked changes it cannot write.
+const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted"), blockedReason: () => (blockMutationInViewing() ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : ""), readOnlyReason: () => readOnlyReason, landed: async (res) => { await applyEditResult(res); await setShowingChanges(true); scheduleReviewMarginRender(); } });
 
 // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
 // Its Select handler used to be a second copy of `selectTableContext`.
@@ -11467,13 +11473,11 @@ reviewClose.addEventListener("click", () => toggleReview(false));
  *  refused by `runEdit`, which reports that in its own words. */
 async function decideAllReviewChanges(accept) {
   if (!doc) return;
-  let count = 0;
-  try {
-    count = (JSON.parse(doc.listRevisions()) ?? []).length;
-  } catch {
-    count = 0;
-  }
-  if (!count) {
+  // `documentHasTrackedChanges` rather than a second parse of `listRevisions`
+  // here: this had its own copy of that try/catch, and two readings of "does this
+  // document carry a change" is how Accept All and the markup-on-open default
+  // come to disagree about one document (SKILL §8, one mechanism not two).
+  if (!documentHasTrackedChanges()) {
     setStatus("This document has no tracked changes", "", { timeout: 3000 });
     return;
   }

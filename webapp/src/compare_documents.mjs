@@ -28,56 +28,69 @@
 // One engine call serves both, because a comparison is two byte arrays and
 // nothing else (`diff.rs`: the facade "references nothing in the live session").
 //
-// ## THE CHANGE LIST IS NOT THE DESTINATION — ADR-061 (`docs/158`)
+// ## THE DIFF IS ON THE CANVAS — ADR-061 (`docs/158`)
 //
-// CORRECTED 2026-10-04. The section below recorded the side-panel change list as
-// the DECIDED shape of this feature, and ADR-061 says in its own "Corrects" line
-// that it should not: *"It was the right call for what was reachable; it is not
-// the right destination, and the file says so as though it were."* `docs/158`
-// measured all three references and found that **none of them presents a
-// comparison as a count** — ONLYOFFICE mutates the open document, setting
-// `reviewtype_Add`/`reviewtype_Remove` on runs with an author and a date
+// A comparison is **applied to the open document as tracked changes**, through the
+// revision model that already existed, and read with the review surface that
+// already existed. `docs/158` measured all three references and found that none of
+// them presents a comparison as a count — ONLYOFFICE mutates the open document,
+// setting `reviewtype_Add`/`reviewtype_Remove` on runs with an author and a date
 // (`Comparison.js:3864`, `:179`), and its Compare button sits on the Review band
 // beside Accept, Reject, Previous and Next, which is the admission that a diff IS
 // review markup.
 //
-// So the decision is: a comparison is applied to the open document as tracked
-// changes, through the revision model that already exists, and read with the
-// review surface that already exists — one new engine function,
-// `applyDiffAsRevisions(sidecar, author, date)`. It is NOT BUILT, so this module
-// still renders a list, and the list is a way station rather than the answer.
+// So `compareWith` hands the sidecar to `applyDiffAsRevisions(sidecar, author,
+// date)` and turns `setShowChanges` on. Every downstream surface then inherits the
+// comparison with no further chrome: the author-coloured underline and
+// strikethrough on the canvas, `listRevisions`, the review gutter, accept/reject
+// per change and in bulk, next/previous, and `w:ins`/`w:del` on export. ONE
+// `Operation::UpdateReviewState` under `HistoryKind::Review`, so the whole
+// comparison is one undo step.
 //
-// What ADR-061 says the chrome owes, and where each part stands here:
+// The panel is the INDEX of that, in Google Docs' role — not the report. It says
+// how many differences are now tracked changes, names each one's object, and says
+// how to walk them; the differences themselves are read in the document.
 //
-//   * **each entry names its object** — DONE. "`Removed` with no object is the
-//     same defect as a refusal with no reason", and it was measured doing exactly
-//     that; see `changeFields` and `changeObjectName`.
-//   * **the panel becomes an index: an entry scrolls the canvas to its change** —
-//     BLOCKED, and not on effort. `diff.rs:228-244` imports BOTH sides freshly
-//     and this module's own right-hand side is `comparableBytes(doc, …)`, a
-//     re-export of the live document, so `right.node` belongs to a throwaway
-//     parse whose id counter restarted at 1. Only `right.path` survives and there
-//     is no `path → NodeId` resolver: `blockIndexOf` is the inverse,
-//     `documentOutline` covers only headings. Handing a `DiffAnchor` to
-//     `navigateToReviewAnchor` would either no-op or scroll to an unrelated
-//     paragraph that happens to hold the same ordinal id, which is worse than not
-//     navigating. The engine owes `nodeAtStoryPath(story, path) -> String`.
-//   * **route the result into `applyDiffAsRevisions`, and turn `setShowChanges`
-//     on** — waits on the engine half.
+// ## THREE THINGS THE PANEL MUST SAY, and why each is not optional
 //
-// ## WHERE WE DELIBERATELY DIFFER FROM WORD, and say so
+//   1. **A REFUSAL, in its own words.** Four coded refusals can come back
+//      (`REFUSAL_KEY`), and `compare.document-has-revisions` is the one a reader
+//      will actually meet. It is a DELIBERATE refusal, not a shortfall: one
+//      `reviewType` field cannot carry both "a person suggested this" and "a
+//      comparison computed this" without the two deciding each other, and
+//      ONLYOFFICE resolves that by accepting every existing change first
+//      (`Comparison.js:3910-3921`). Destroying a reviewer's suggestions to run a
+//      comparison is the loss `AGENTS.md` puts first, so we refuse — and the
+//      sentence says so rather than apologising.
+//   2. **WHAT COULD NOT BE MARKED** (`UNMARKED_KEY`). `EditResult.pasteLoss` names
+//      every difference the comparison found and tracked changes cannot express: a
+//      whole block only the other document has, a move's far half, a story outside
+//      the body, removed text the record carries only as an excerpt, and a
+//      comparison that stopped short of exhaustive. A comparison that silently
+//      applied nine of twelve changes and reported success is the worst outcome
+//      available, so the report is rendered, unknown keys included.
+//   3. **HOW TO WALK THEM.** Review ▸ Next / Previous, Accept and Reject. Which is
+//      the honest answer to the one part of ADR-061 that is still blocked below.
 //
-// Word's Compare produces a THIRD DOCUMENT: a merged copy whose differences are
-// real tracked changes you can accept and reject. We do not YET, and claiming
-// otherwise would be the overstatement this repository has twice published by
-// accident. `casual-doc-diff` returns a typed SIDECAR — a list of changes with
-// anchors — not a merged document, and turning one into the other needs the
-// engine function above. So this surface is, for now, a CHANGE LIST in a side
-// panel, and the panel says which document each side is.
+// ## WHAT IS STILL BLOCKED: clicking an entry cannot scroll to its change
 //
-// The honest consequence, stated in the panel rather than hidden: the changes
-// can be read and counted, and they cannot yet be accepted or rejected, because
-// there is nothing to accept them INTO.
+// Not on effort. `diff.rs` imports BOTH sides freshly and this module's own
+// right-hand side is `comparableBytes(doc, …)`, a re-export of the live document,
+// so `right.node` belongs to a throwaway parse whose id counter restarted at 1.
+// Only `right.path` survives, and the facade exposes no `path → NodeId` resolver:
+// `blockIndexOf` is the inverse, `documentOutline` covers only headings.
+// `navigateToReviewAnchor` takes `{node, start, end}` — a byte-for-byte match for
+// `DiffAnchor` — so handing it one would silently scroll to an unrelated paragraph
+// holding the same ordinal id, which is worse than not navigating.
+//
+// The resolver itself EXISTS in Rust and is what makes this feature work:
+// `casual_doc_diff::projection::block_at_path(document, story, path)` reuses the
+// walk that produced the path, so the producer and the resolver cannot disagree
+// about `Sdt` wrappers or `AltChunk`. `applyDiffAsRevisions` calls it. What is
+// missing is only a wasm-exposed `nodeAtStoryPath(story, path) -> String` over it,
+// which is a `crates/` change. Until then the panel points at Review's own
+// next/previous, which navigates the revisions the comparison just wrote — the
+// same destination by a route that cannot land on the wrong paragraph.
 //
 // ## WHERE IT RUNS
 //
@@ -98,6 +111,7 @@
 // scheduler and its clock as arguments, so the whole of "parse two documents in
 // slices, report progress, cancel at a boundary" is drivable from node without a
 // browser. The DOM half is `bindComparePanel` at the bottom.
+import { editRefusalMessage } from "./edit_errors.mjs";
 import { n, t } from "./i18n.mjs";
 
 /** This document, as bytes a comparison can parse.
@@ -243,7 +257,13 @@ export const NO_ANSWER = new Set([EXHAUSTED, COMPLETE]);
  *   between frames — and so nothing here reaches for `requestAnimationFrame`.
  * @param {(progress: {phase: string, done: number, total: number}) => void} [io.onProgress]
  * @param {() => boolean} [io.cancelled] asked once per slice.
- * @returns {Promise<{ok: true, diff: object} | {ok: false, reason: string}>}
+ * @returns {Promise<{ok: true, diff: object, sidecar: string} | {ok: false, reason: string}>}
+ *   `sidecar` is the engine's own JSON text, carried alongside the parsed object
+ *   because `applyDiffAsRevisions` takes the STRING. Re-stringifying the parsed
+ *   copy would work and is still wrong: it would hand the engine a document this
+ *   module had re-serialised, so a key order or a number format this host's
+ *   `JSON` differs on would become the engine's problem at the one boundary
+ *   where a mis-parse places a revision in the wrong text.
  */
 export async function runComparison(io) {
   const job = io.begin();
@@ -272,7 +292,7 @@ export async function runComparison(io) {
       if (phase === COMPLETE) {
         const json = job.result();
         if (!json) return { ok: false, reason: COMPLETE };
-        return { ok: true, diff: JSON.parse(json) };
+        return { ok: true, diff: JSON.parse(json), sidecar: json };
       }
       // GIVE THE THREAD BACK between slices. Without this the loop is one long
       // synchronous call wearing an `async` keyword: `await` on an already-done
@@ -515,6 +535,120 @@ export function changeObjectName(change) {
   return OBJECT_KEY[family] ? t(OBJECT_KEY[family]) : `<${family}>`;
 }
 
+/** `applyDiffAsRevisions`' coded refusals -> catalogue key.
+ *
+ *  THE FIRST AND ONLY SUCH TABLE IN THIS HOST, checked before it was written.
+ *  `casual-doc-edit/src/refusal.rs` ships a refusal as `refused: <sentence>\u{1f}<code>`
+ *  and `to_js` splits the code onto the thrown `Error`; its own documentation says
+ *  a host routes `t(code)` "so a non-English reader gets the specific reason in
+ *  their own language". The engine has ~130 such codes and `grep` finds **no host
+ *  table routing any of them** — `edit_errors.mjs` passes the engine's English
+ *  sentence through verbatim, deliberately, because a half-populated general list
+ *  would silently fall back to the generic sentence for everything not in it.
+ *
+ *  So this table is scoped to the four codes THIS surface can produce, exactly as
+ *  `FINDING_KEY` is scoped to the finding codes this surface can produce, and
+ *  anything else still falls through to the engine's own sentence rather than to a
+ *  generic one. A general code->sentence catalogue over all ~130 is a separate
+ *  piece of work; when it lands, these four keys are what it reads.
+ *
+ *  `review.author-required` is defence in depth: `compareWith` never passes an
+ *  empty author. It is routed anyway, because a refusal whose only reader-facing
+ *  form is English prose is a refusal that will be read in English.
+ *
+ *  `compare_documents.test.mjs` derives the expected set FROM THE RUST and fails
+ *  the build if the engine grows a fifth. O(1). */
+export const REFUSAL_KEY = Object.freeze({
+  "compare.document-has-revisions": "compare.refused.documentHasRevisions",
+  "compare.schema-unsupported": "compare.refused.schemaUnsupported",
+  "compare.sidecar-unreadable": "compare.refused.sidecarUnreadable",
+  "review.author-required": "compare.refused.authorRequired",
+});
+
+/** What a comparison found and a tracked change cannot say -> catalogue key.
+ *
+ *  `EditResult.pasteLoss`, whose name reads oddly for a comparison and is used
+ *  anyway: the engine's own contract is that the next path to degrade something
+ *  must not invent a second channel, and a second channel is what this host would
+ *  then have to grow a second renderer for.
+ *
+ *  `pasteLossMessage` is NOT the renderer for these. That function filters its
+ *  input against the five paste families and returns `null` when none match — so
+ *  routing a comparison through it would drop every key below except
+ *  `trackedMove`, and drop it silently, which is the exact failure this report
+ *  exists to prevent. Two vocabularies, two mappings; the mechanism they share is
+ *  "stable key in, localised noun out, unknown keys still shown".
+ *
+ *  **Twelve of the twenty-two keys are the engine's `DiffFamily` names**
+ *  (`family_loss_key`), reported when a family has no inline revision form at all
+ *  — `RevisionKind` is Insertion/Deletion/MoveFrom/MoveTo and nothing else, so a
+ *  formatting, style, section, definition, resource, comment or metadata
+ *  difference cannot be EXPRESSED however faithfully it was detected. Those route
+ *  through `OBJECT_KEY`, which already names all twelve in all nineteen
+ *  catalogues: a thirteenth noun for `formatting` would be a second spelling of
+ *  one thing in one panel.
+ *
+ *  The five below are the reasons that are not a family. Five engine keys share
+ *  `notMarkable` on purpose — `unresolvedAnchor`, `offsetSpace`,
+ *  `nonParagraphBlock`, `notParagraphText` and `insertionNotText` are five
+ *  internal distinctions about offsets and block kinds, and one reader-facing
+ *  fact: the difference is real and there is no run of text here to mark it on.
+ *  Five near-identical sentences about anchor spaces would be noise presented as
+ *  precision. O(1). */
+export const UNMARKED_KEY = Object.freeze({
+  blockDeletion: "compare.unmarked.blockDeletion",
+  trackedMove: "compare.unmarked.trackedMove",
+  truncatedText: "compare.unmarked.truncatedText",
+  incompleteComparison: "compare.unmarked.incompleteComparison",
+  unresolvedAnchor: "compare.unmarked.notMarkable",
+  offsetSpace: "compare.unmarked.notMarkable",
+  nonParagraphBlock: "compare.unmarked.notMarkable",
+  notParagraphText: "compare.unmarked.notMarkable",
+  insertionNotText: "compare.unmarked.notMarkable",
+  ...OBJECT_KEY,
+});
+
+/**
+ * The loss report, as `{key, label}` rows: one per distinct SENTENCE, with
+ * nothing dropped.
+ *
+ * The order is the ENGINE's, not one invented here: `apply_diff_as_revisions`
+ * collects into a `BTreeSet<&'static str>`, so the keys arrive sorted and a
+ * second comparison of the same two documents reports them in the same order.
+ * Re-sorting by this host's own idea of importance would be a second ordering of
+ * one list, and a reader comparing two runs would see it move.
+ *
+ * Separate from the DOM so the filtering, the de-duplication and the
+ * never-silent rule are testable without a document — and so an unknown key is
+ * provably carried rather than provably convenient to drop.
+ *
+ * De-duplicated by catalogue key rather than by engine key, because the five
+ * `notMarkable` aliases would otherwise print one identical sentence five times.
+ * An engine key this build has no sentence for keeps its own name and still
+ * shows: a loss report dropped because the host has no wording for it is the
+ * defect twice over.
+ *
+ * O(keys).
+ *
+ * @param {readonly string[] | undefined | null} keys `EditResult.pasteLoss`.
+ * @returns {{key: string, label: string}[]}
+ */
+export function unmarkedReasons(keys) {
+  if (!Array.isArray(keys)) return [];
+  const rows = [];
+  const seen = new Set();
+  for (const raw of keys) {
+    const key = String(raw ?? "");
+    if (!key) continue;
+    const catalogue = UNMARKED_KEY[key];
+    const dedupe = catalogue ?? `raw:${key}`;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    rows.push({ key, label: catalogue ? t(catalogue) : key });
+  }
+  return rows;
+}
+
 /**
  * Binds the Compare panel and its two entry points.
  *
@@ -526,6 +660,17 @@ export function changeObjectName(change) {
  * @param {(text: string, kind?: string) => void} io.setStatus
  * @param {() => boolean} io.allowed whether the host granted what this needs.
  * @param {string} io.refusedReason what to say when it did not.
+ * @param {(res: object) => Promise<void>} [io.landed] ADR-061's one new seam:
+ *   repaint, turn the markup view on, re-render the review gutter — in that
+ *   order, for an `EditResult` this module has already read `pasteLoss` off.
+ *   OPTIONAL, and absence is not a second code path: a composition that withheld
+ *   it (no review chrome) gets the index with no "now tracked changes" claim on
+ *   it, which is the one sentence that would be false there.
+ * @param {() => string} [io.blockedReason] the sentence for a mutation the host
+ *   blocks before the engine sees it (Viewing mode), or `""`. A comparison WRITES
+ *   revisions, so it is a mutation and goes through that gate like every other.
+ * @param {() => string} [io.readOnlyReason] the engine's own
+ *   `editingUnavailableReason`, for a document no edit can ever apply to.
  */
 export function bindComparePanel(io) {
   const panel = document.getElementById("comparePanel");
@@ -581,10 +726,13 @@ export function bindComparePanel(io) {
     render([
       paragraph(t("compare.intro"), "muted"),
       choose,
-      // Said up front, not discovered afterwards. Word's Compare makes a third
-      // document of tracked changes; this makes a list. A reader who expects to
-      // accept a change deserves to know before they pick a file.
-      paragraph(t("compare.notTrackedChanges"), "muted"),
+      // Said up front, not discovered afterwards — and it now says what ADR-061
+      // decided rather than what the previous shape could manage. Word and Google
+      // Docs build a merged THIRD document; we mutate the open one, which is
+      // ONLYOFFICE's answer, and the difference is visible to the reader the
+      // moment they pick a file. It is also the warning that matters: this writes
+      // tracked changes into the document on screen.
+      paragraph(t("compare.writesTrackedChanges"), "muted"),
     ]);
   }
 
@@ -638,7 +786,29 @@ export function bindComparePanel(io) {
     return [paragraph(t("compare.findingsTitle"), "muted"), notes];
   }
 
-  function renderResult(summary, otherName) {
+  /** WHAT THE COMPARISON FOUND AND COULD NOT MARK, as elements.
+   *
+   *  Rendered above the index and below the "now tracked changes" sentence,
+   *  because that sentence is a claim about the document and this is its
+   *  qualification: a reader who is told nine differences are in the document
+   *  needs to know in the same breath that three of twelve are not. The engine
+   *  computed the report so a host could say it; collecting it and not rendering
+   *  it is the silent loss `AGENTS.md` puts first. */
+  function unmarkedNotes(loss) {
+    const rows = unmarkedReasons(loss);
+    if (rows.length === 0) return [];
+    const notes = document.createElement("ul");
+    notes.className = "compare-list";
+    for (const row of rows) {
+      const item = document.createElement("li");
+      item.dataset.compareUnmarked = row.key;
+      item.textContent = row.label;
+      notes.append(item);
+    }
+    return [paragraph(t("compare.unmarkedTitle"), "muted"), notes];
+  }
+
+  function renderResult(summary, otherName, applied = null) {
     const children = [
       paragraph(t("compare.against", { name: otherName })),
     ];
@@ -655,6 +825,23 @@ export function bindComparePanel(io) {
       if (summary.findings.length > 0) children.push(...findingNotes(summary));
       render(children);
       return;
+    }
+    // THE ANSWER FIRST, and it is a sentence about the DOCUMENT rather than a
+    // number about the panel. ADR-061: the differences are tracked changes now,
+    // so the reader's next move is to read the document, and the second sentence
+    // says which controls walk them — Review's own next/previous, which navigate
+    // the revisions the comparison just wrote.
+    //
+    // Only when a comparison was actually applied. A refusal renders its own
+    // sentence instead and never reaches here, and a composition with no
+    // `applyAsRevisions` gets the index alone: claiming a document holds tracked
+    // changes it does not hold is the overstatement SKILL §9 exists for.
+    if (applied) {
+      const marked = document.createElement("p");
+      marked.dataset.compareMarked = String(summary.total);
+      marked.textContent = t("compare.marked", { count: summary.total });
+      children.push(marked, paragraph(t("compare.reviewNav"), "muted"));
+      children.push(...unmarkedNotes(applied.loss));
     }
     const total = document.createElement("p");
     total.dataset.compareTotal = String(summary.total);
@@ -742,6 +929,51 @@ export function bindComparePanel(io) {
     render(children);
   }
 
+  /** ADR-061: applies the sidecar to the open document as tracked changes.
+   *
+   *  THE AUTHOR IS THE COMPARED DOCUMENT — ADR-061's "the name comes from the
+   *  compared document" — so the author colour on the canvas distinguishes what a
+   *  comparison computed from what a person suggested, and the review card names
+   *  the file the change came from. Bounded well inside the engine's 255-BYTE
+   *  author limit, and bounded by CODE POINTS: `slice(80)` on an 80-glyph CJK
+   *  name is 240 bytes, which is why the figure is not 255. A blank name falls
+   *  back to a localised noun rather than to `review.author-required` — that
+   *  refusal would be this chrome's bug reported as the reader's.
+   *
+   *  NOT routed through the host's `runEdit`, and the two reasons are the whole
+   *  reason this function exists rather than one more `runEdit` call:
+   *
+   *    1. `runEdit` swallows a throw into a status sentence and returns `false`,
+   *       so the refusal CODE never reaches a caller — and four coded refusals
+   *       are exactly what this surface has to tell apart.
+   *    2. It hands the `EditResult` straight to `applyEditResult`, which calls
+   *       `res.free()`. `pasteLoss` read after that throws "null pointer passed
+   *       to rust", which is how the structured-paste loss report was first
+   *       written wrong. It is read HERE, before `io.landed` frees anything.
+   *
+   *  Complexity: O(changes + the paragraphs they touch) in the engine, then one
+   *  re-render. Not O(document) per change. */
+  async function applyAsRevisions(sidecar, otherName) {
+    const live = io.doc();
+    if (!live) return { ok: false, code: "", message: t("compare.needsDocument") };
+    const blocked = io.blockedReason?.() ?? "";
+    if (blocked) return { ok: false, code: "", message: blocked };
+    const author = String(otherName ?? "").trim().slice(0, 80) || t("compare.author");
+    let res;
+    try {
+      res = live.applyDiffAsRevisions(sidecar, author, new Date().toISOString());
+    } catch (error) {
+      return {
+        ok: false,
+        code: String(error?.code ?? ""),
+        message: editRefusalMessage(error, { editingUnavailableReason: io.readOnlyReason?.() ?? "" }),
+      };
+    }
+    const loss = Array.from(res.pasteLoss ?? []);
+    await io.landed(res);
+    return { ok: true, loss };
+  }
+
   /** Compares the live document against `bytes`, named `otherName`. */
   async function compareWith(bytes, otherName) {
     // NO capability gate here, deliberately. Comparing reads nothing the caller
@@ -818,7 +1050,34 @@ export function bindComparePanel(io) {
         io.setStatus(message, "error");
         return;
       }
-      renderResult(summariseDiff(outcome.diff), otherName);
+      const summary = summariseDiff(outcome.diff);
+      // ADR-061, and the whole point of this lane: the differences go INTO the
+      // document as tracked changes, and the panel becomes their index.
+      //
+      // Nothing is applied for a comparison that found nothing — an empty
+      // `UpdateReviewState` would bump the revision and enable Save for a
+      // comparison that changed no text, which the engine refuses to do for the
+      // same reason.
+      let applied = null;
+      if (summary.total > 0 && io.landed) {
+        const result = await applyAsRevisions(outcome.sidecar, otherName);
+        if (!result?.ok) {
+          // ROUTED BY CODE, falling back to the engine's own sentence. Both
+          // halves matter: the code is what makes the reason translatable, and
+          // the engine's sentence is what stops an unrecognised code becoming
+          // "something went wrong".
+          const message = REFUSAL_KEY[result?.code]
+            ? t(REFUSAL_KEY[result.code])
+            : result?.message || t("compare.noAnswer");
+          const note = paragraph(message);
+          note.dataset.compareRefused = String(result?.code ?? "");
+          render([paragraph(t("compare.against", { name: otherName })), note]);
+          io.setStatus(message, "error");
+          return;
+        }
+        applied = result;
+      }
+      renderResult(summary, otherName, applied);
     } finally {
       running = false;
     }
