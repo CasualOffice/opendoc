@@ -1110,15 +1110,33 @@ pub enum DocumentProtectionEdit {
     Forms,
 }
 
-/// Editing/formatting protection (`w:documentProtection`). The crypto attributes
-/// (`w:cryptProviderType`, `w:hash`, `w:salt`, …) are the byte-floor's concern;
-/// only the load-bearing policy attributes are modeled.
+/// Editing/formatting protection (`w:documentProtection`). Only the three
+/// load-bearing policy attributes are modeled.
+///
+/// The sixteen password attributes (`AG_Password`'s `w:hash`, `w:salt`,
+/// `w:cryptProviderType`, … and `AG_TransitionalPassword`'s `w:algorithmName`,
+/// `w:hashValue`, `w:saltValue`, `w:spinCount`) are **not** modeled and are
+/// **not** the byte floor's concern either — this doc comment used to say they
+/// were, and that was wrong. `word/settings.xml` is a *consumed* part that the
+/// semantic writer regenerates from this struct, so a password-protected
+/// restriction saves password-less while the restriction itself survives.
+/// `casual-doc-import` reports every one of them as a named compatibility
+/// finding (`documentProtection/@hashValue`, …) so the loss is not silent;
+/// whether to re-emit or verify password material is ADR-052's open decision,
+/// and ADR-052 declines to treat it as a security boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DocumentProtection {
     /// The editing restriction (`w:edit`).
     pub edit: DocumentProtectionEdit,
     /// Whether the restriction is enforced (`w:enforcement`).
+    ///
+    /// The source attribute has three states and this field is the **resolved**
+    /// answer, so a reader never has to know which of them produced it: an
+    /// explicit `"0"` is `false`, an explicit `"1"` is `true`, and an **absent**
+    /// attribute is `true` — MS-OI29500 Part 1 §17.15.1.29 records that "Word
+    /// enforces protection when this attribute is missing". Export writes the
+    /// attribute explicitly in both directions for the same reason.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub enforcement: bool,
     /// Whether style formatting is also locked (`w:formatting`).
@@ -1127,8 +1145,13 @@ pub struct DocumentProtection {
 }
 
 /// Write protection (`w:writeProtection`) — the document is recommended or
-/// required to be opened read-only. Presence (`Some`) is itself load-bearing; the
-/// crypto attributes are the byte-floor's concern.
+/// required to be opened read-only. Presence (`Some`) is itself load-bearing.
+///
+/// `CT_WriteProtection` carries the same sixteen password attributes as
+/// [`DocumentProtection`], with the same consequence and the same remedy: they
+/// are not modeled, `word/settings.xml` is regenerated rather than byte-floored,
+/// and `casual-doc-import` reports each one it sees
+/// (`writeProtection/@hashValue`, …) rather than dropping it in silence.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WriteProtection {

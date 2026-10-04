@@ -7,6 +7,12 @@
 //! setting is auditable and — in Retention mode — preserved by the byte floor.
 //! Elements are matched by local name (namespace-agnostic); each `CT_OnOff` flag
 //! is present-means-true unless an explicit `w:val` says otherwise.
+//!
+//! Two rules in here are about the *attributes* of elements this parser already
+//! recognises, which the element-name catch-all cannot see:
+//! [`enforcement`] (absent means **enforced**, per MS-OI29500 §17.15.1.29) and
+//! [`report_unmodeled_attributes`] (the password groups on the two protection
+//! elements, reported rather than dropped in silence).
 
 use casual_doc_model::v1::{
     CompatSetting, DocumentProtection, DocumentProtectionEdit, DocumentSettings, NoteNumberRestart,
@@ -153,8 +159,91 @@ fn on_setting(
     if matches!(local, b"footnotePr" | b"endnotePr") {
         return;
     }
-    if !apply_setting(local, element, settings) {
+    if apply_setting(local, element, settings) {
+        report_unmodeled_attributes(reporter, local, element);
+    } else {
         reporter.report_element(local, element, self_closing);
+    }
+}
+
+/// The `AG_Password` and `AG_TransitionalPassword` attribute groups, which
+/// `w:documentProtection` (`CT_DocProtect`) and `w:writeProtection`
+/// (`CT_WriteProtection`) both carry and this model represents nowhere.
+///
+/// Sorted by name, so the two groups are interleaved rather than in blocks.
+/// `AG_Password` is the legacy twelve Word has always written (`w:hash`,
+/// `w:salt`, `w:cryptProviderType`, `w:cryptAlgorithmClass`,
+/// `w:cryptAlgorithmType`, `w:cryptAlgorithmSid`, `w:cryptSpinCount`,
+/// `w:cryptProvider`, `w:algIdExt`, `w:algIdExtSource`,
+/// `w:cryptProviderTypeExt`, `w:cryptProviderTypeExtSource`).
+/// `AG_TransitionalPassword` is the Office-2010 ISO verifier form Word writes
+/// *instead* when `UseIsoPasswordVerifier` is set — `w:algorithmName`,
+/// `w:hashValue`, `w:saltValue`, `w:spinCount` — so a modern file's password
+/// material may be entirely in those four. ADR-052 and `docs/160` §7 item 5 each
+/// enumerated only the legacy five or seven until this landed; both now name the
+/// sixteen.
+const PASSWORD_ATTRIBUTES: &[&[u8]] = &[
+    b"algIdExt",
+    b"algIdExtSource",
+    b"algorithmName",
+    b"cryptAlgorithmClass",
+    b"cryptAlgorithmSid",
+    b"cryptAlgorithmType",
+    b"cryptProvider",
+    b"cryptProviderType",
+    b"cryptProviderTypeExt",
+    b"cryptProviderTypeExtSource",
+    b"cryptSpinCount",
+    b"hash",
+    b"hashValue",
+    b"salt",
+    b"saltValue",
+    b"spinCount",
+];
+
+/// Reports the **attributes** of an otherwise-modeled settings element whose
+/// meaning the model does not carry — today, exactly the password groups on the
+/// two protection elements.
+///
+/// This function exists because `apply_setting` returns *handled* for
+/// `w:documentProtection` and `w:writeProtection`, and the catch-all at the end
+/// of [`on_setting`] fires only on the `false` branch. "Handled" marked the whole
+/// element consumed, so its unread attributes fell through the only reporter in
+/// reach and were dropped **in total silence**: `word/settings.xml` is a consumed
+/// part that the semantic writer regenerates from the model, and retained parts
+/// are extra opaque parts rather than an override for a generated one, so there
+/// is no byte floor behind these either. A password-protected document therefore
+/// saved password-less while the restriction survived, and nothing anywhere said
+/// so. That is `AGENTS.md`'s no-silent-data-loss rule, and `SKILL.md` §1
+/// advantage 2 — verbatim retention is only an advantage if the loss is
+/// *reported*.
+///
+/// It is a report rather than a round trip on purpose. ADR-052 decided opendoc
+/// will **not** verify password material as a security boundary (the legacy hash
+/// is removable by editing one attribute, and Word documents it as a deterrent),
+/// and re-emitting a hash the engine cannot verify is a separate decision an
+/// owner has to make. Reporting it needs no decision at all.
+///
+/// The shape mirrors `numbering.rs`'s `report_unmodeled_attributes` (`docs/142`
+/// LST-31), which exists for the same reason in the same position: a parser that
+/// matches on element names cannot see an attribute on an element it recognises.
+///
+/// Empty values are skipped. `docs/160` §3's reduction is that an attribute whose
+/// value says nothing is not a loss — a producer may legitimately write
+/// `w:hash=""` — and a false finding is the failure mode HF-174 put 621 of in
+/// front of the owner.
+///
+/// Complexity: O(A) in the attributes of the one element being opened, with a
+/// 16-name comparison each, and there is at most one of each protection element
+/// per document. No document walk.
+fn report_unmodeled_attributes(reporter: &mut Reporter, local: &[u8], element: &BytesStart<'_>) {
+    if !matches!(local, b"documentProtection" | b"writeProtection") {
+        return;
+    }
+    for attribute in PASSWORD_ATTRIBUTES {
+        if attribute_value(element, attribute).is_some_and(|value| !value.is_empty()) {
+            reporter.report_attribute(local, attribute);
+        }
     }
 }
 
@@ -266,7 +355,7 @@ fn apply_setting(local: &[u8], element: &BytesStart<'_>, settings: &mut Document
         b"documentProtection" => {
             settings.document_protection = Some(DocumentProtection {
                 edit: protection_edit(element),
-                enforcement: attr_flag(element, b"enforcement"),
+                enforcement: enforcement(element),
                 formatting: attr_flag(element, b"formatting"),
             });
         }
@@ -314,13 +403,57 @@ fn on_off(element: &BytesStart<'_>) -> bool {
     }
 }
 
-/// Reads an attribute-level `CT_OnOff` (e.g. `w:enforcement`): true only for an
-/// explicit truthy token; absent or falsey is `false`.
+/// Reads an attribute-level `CT_OnOff` (e.g. `w:formatting`, `w:recommended`):
+/// true only for an explicit truthy token; absent or falsey is `false`.
+///
+/// `w:enforcement` is deliberately **not** read through here — see
+/// [`enforcement`], which has a different default and a documented reason for it.
 fn attr_flag(element: &BytesStart<'_>, name: &[u8]) -> bool {
     matches!(
         attribute_value(element, name).as_deref(),
         Some("1" | "true" | "on")
     )
+}
+
+/// Reads `w:documentProtection/@w:enforcement`, whose **absence means enforced**.
+///
+/// The attribute has three states and they are not two:
+///
+/// | Source | Here |
+/// | --- | --- |
+/// | `w:enforcement="1"` (`true`/`on`) | enforced |
+/// | `w:enforcement="0"` (`false`/`off`) | **not** enforced |
+/// | the attribute is **absent** | **enforced** |
+///
+/// ECMA-376 says an omitted `w:enforcement` means the protection settings are
+/// ignored. Word does the opposite, and Microsoft's own implementer notes say so:
+///
+/// > "The standard states that if the `enforcement` attribute is omitted, then
+/// > protection settings are ignored by application. — **Word enforces protection
+/// > when this attribute is missing.**"
+/// > — MS-OI29500 Part 1 §17.15.1.29.
+///
+/// Word is the producer of essentially every protected document in the world, so
+/// its behaviour is the compatible reading, and the two readings differ in the
+/// unsafe direction: this parser used to go through [`attr_flag`], which treats
+/// absent as `false`, so `<w:documentProtection w:edit="readOnly"/>` — a document
+/// Word opens read-only — opened here **fully editable, with no banner and no
+/// finding**. That is a document-safety defect, not a fidelity one, which is why
+/// it does not wait on any decision about how protection is presented.
+///
+/// The `="0"` case is separate and was always right: Word writes an explicit zero
+/// when an author set a restriction up and then switched it off, and
+/// `casual-doc-edit`'s `protection.rs` relies on exactly that to leave such a
+/// document editable. Keeping the two cases apart is the whole content of this
+/// function, so it reuses `properties::is_true` for the token table rather than
+/// spelling the truthy and falsey tokens a second time.
+///
+/// A present-but-unrecognised token (`w:enforcement="maybe"`) resolves to
+/// enforced, with absent: the producer said something about enforcement that this
+/// parser cannot read, and the document-safety direction is to honour the
+/// restriction rather than to drop it.
+fn enforcement(element: &BytesStart<'_>) -> bool {
+    crate::properties::is_true(attribute_value(element, b"enforcement").as_deref())
 }
 
 /// The default tab stop in twips (`w:defaultTabStop/@w:val`), bounded 0..=31680.

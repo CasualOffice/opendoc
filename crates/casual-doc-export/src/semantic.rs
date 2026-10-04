@@ -3393,9 +3393,19 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
     if let Some(protection) = &settings.document_protection {
         let mut el = start("w:documentProtection");
         el.push_attribute(("w:edit", protection_edit_token(protection.edit)));
-        if protection.enforcement {
-            el.push_attribute(("w:enforcement", "1"));
-        }
+        // `w:enforcement` is written ALWAYS, and explicitly, including as `"0"`.
+        // Omitting it is not the neutral choice it looks like: MS-OI29500 Part 1
+        // §17.15.1.29 records that "Word enforces protection when this attribute
+        // is missing", so writing a restriction the author deliberately switched
+        // OFF without the attribute hands Word a document it then ENFORCES. That
+        // silently tightens someone else's document, which is a document-safety
+        // defect. Writing both states leaves nothing for a reader to infer, and
+        // it is what Word itself does. The import half is `settings.rs`'s
+        // `enforcement`, which reads the same three states.
+        el.push_attribute((
+            "w:enforcement",
+            if protection.enforcement { "1" } else { "0" },
+        ));
         if protection.formatting {
             el.push_attribute(("w:formatting", "1"));
         }
