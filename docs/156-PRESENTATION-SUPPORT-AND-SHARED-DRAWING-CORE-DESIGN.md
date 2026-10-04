@@ -126,7 +126,20 @@ From their own build manifest `sdkjs/configs/slide.json`, resolved and counted:
 | `common/Charts` + `Shapes` + `SmartArts` | 58,588 | 6.4% |
 
 Their presentation-specific *specialisation* of the shared drawing layer is six
-prototype-patch files totalling **1,966 lines**. The conclusion is blunt: **given a
+prototype-patch files totalling **1,966 lines**.
+
+Two incidental findings from reading their token tables, recorded because both are
+the kind of thing that is cheap to get right once and expensive to discover later.
+First, `sdkjs/slide/fromToJSON.js` emits a `wideScreen` slide-size token, which is
+**not** one of `ST_SlideSizeType`'s sixteen values — so a consumer that trusts the
+token over the dimensions reads a non-standard name. We map any unrecognized token to
+`custom` and keep the authored `cx`/`cy`, which is the lossless reading, and there is
+a guard naming `wideScreen` specifically. Second, `sdkjs/word/fromToJSON.js`'s
+`GetStrPhType` returns the string `"sPhType"` for `phType_chart` where every other
+arm returns its real token — so a chart placeholder serializes to a bogus type in
+their JSON export. It is a one-line slip, and it is the reason our equivalent table is
+guarded by a closed round-trip over `PlaceholderKind::ALL` rather than by review:
+every token must survive `token()` → `from_token()`, and no two may collide. The conclusion is blunt: **given a
 word-processing text engine and a DrawingML layer, PPTX is an increment. Without
 them it is not a PPTX project at all.**
 
@@ -339,7 +352,30 @@ Three of these are already on the owner's delivery order (`106` §6.0).
 Scope is **not final** pending §4.3 and §4.4.
 
 **Tier 2, engine (new crates, no DOCX surface touched).** `casual-pres-model`
-(Presentation / Slide / SlideLayout / SlideMaster / ShapeTree / Placeholder) →
+**(BUILT — `crates/casual-pres-model`, 33 guards, every one driven red by mutation.**
+`Presentation` / `Slide` / `SlideLayout` / `SlideMaster` / `ShapeTree` / `SlideNode` /
+`Placeholder`, `SlideSize` with `ST_SlideSizeCoordinate` bounds, `ST_SlideLayoutType`'s
+36 kinds and `ST_PlaceholderType`'s 16. Validation refuses an empty deck, an
+out-of-domain surface, a dangling layout/master/media reference, a duplicate node id
+anywhere in the deck, two shapes in one placeholder slot, a second title, a zero child
+space under a populated tree, and a group past `MAX_GROUP_DEPTH`.
+**What it reuses rather than redeclares:** `v1::GroupChild` and the whole DrawingML
+vocabulary — so the preset table, the guide evaluator and the display list transfer
+with no second implementation — plus `v1::Definitions` and `NodeId`.
+**What it deliberately does not model yet:** notes slides and handout masters,
+`p:txStyles`, `p:transition`, `p:timing`, `p14:sectionLst`, and `a:txBody` itself —
+slide text is still carried by the document model's `BlockNode` inside a text box,
+which is interim. Because that carrier is interim, media-reference validation through
+text-box block content is deliberately **not** written, since it would be discarded
+with it.
+**Two seams were published in `casual-doc-model` to make this possible without
+copying code** (ADR-055 part 2): `v1::visit_definition_node_ids` — extracted from the
+body of `Document::visit_node_ids`, so the two document classes share **one**
+enumeration of the definition tables rather than two that drift — and
+`v1::visit_group_child_node_ids`. That the shared walk is load-bearing is proven by
+mutation: deleting the media table from it turns a presentation guard red, because a
+slide shape id colliding with a media id stops being detected. This list has already
+been wrong twice by omission (field ranges, chart ids); there is now only one of it.) →
 DrawingML text-body mapping (§4.2) → the inheritance cascade: slide → layout →
 master → `defaultTextStyle`, plus `p:style` → `fmtScheme` and `clrMap`/`clrMapOvr`
 → `casual-pres-import`/`-export` over the parameterised OPC layer → slide layout
