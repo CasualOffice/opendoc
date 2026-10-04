@@ -450,6 +450,30 @@ change and the gap is named rather than hidden.
 **Tier 3, product.** `slides.html`, slide sorter, canvas, notes pane, layout picker,
 master editor, command registry plus slide descriptors, locale keys.
 
+**Tier 3 status.** `slides.html`, the canvas and the sorter have landed, with the
+locale keys in all nineteen catalogues. A deck opens in a browser, renders at the
+device's own pixel ratio, pages with the keyboard, marks hidden slides in the
+sorter, surfaces the fidelity report and saves with retention. Eight browser specs
+drive a real package from bytes to pixels.
+
+Three things in this tier are NOT done, and the first is the one that matters:
+
+* **slide text reaches no screen reader.** A rendered slide is pixels, so the
+  canvas carries no text for assistive technology and the sorter's list is the
+  only navigable structure. The text IS in the model and is shaped into glyph
+  runs; nothing exposes it as text. That is the "modelled but unreachable"
+  shape §9.4 names, and it is this tier's sharpest gap — stated in the page's own
+  markup beside the element it is true of, not only here.
+* the notes pane, the layout picker and the master editor are untouched.
+* the command registry has no slide descriptors, because there are no slide
+  commands: the facade exposes no operation set at all.
+
+**Editing is not in this tier and should not be added to it without an ADR.**
+Every mutation has to route through `casual-doc-transaction` (ADR-005, ADR-043),
+and `105` CQ-002 records what happened on the document path when the live editing
+path bypassed the engine — ADR-005 came to be honoured nowhere. A slide operation
+set is a design decision first and an implementation second.
+
 **Tier 4, preserve-and-disclose.** Animations (`p:timing`), transitions,
 presenter/slide-show runtime, media. Charts and SmartArt authoring belong to `155` /
 ADR-050 and are **not designed here**.
