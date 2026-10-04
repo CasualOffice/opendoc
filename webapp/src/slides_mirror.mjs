@@ -84,8 +84,49 @@ function appendParagraphs(parent, paragraphs) {
   if (stack[0]) parent.append(stack[0]);
 }
 
+/// Builds a projected table into `parent` as a real `table`.
+///
+/// A real `table`/`tr`/`td` with real `colspan`/`rowspan`, which is the only thing
+/// that gives a screen reader a grid it can navigate — `a11y_mirror.mjs` projects
+/// the document's tables the same way, and for the same reason. A list of
+/// paragraphs would turn a 3x3 grid into nine sentences with no row, no column and
+/// no merge.
+///
+/// `td` and never `th`: `a:tblPr@firstRow`/`@firstCol` say a style treats a band as
+/// a header, which is a FORMATTING flag and not a statement that the cells are
+/// headers — and this build does not apply a table style's parts at all. Claiming
+/// a header row would make a reader hear "Revenue, Q3" against cells that may hold
+/// nothing of the kind, which is worse than a plain grid.
+function appendTable(parent, shape, rows) {
+  const table = document.createElement("table");
+  const name = typeof shape.name === "string" ? shape.name.trim() : "";
+  if (name !== "") table.setAttribute("aria-label", name);
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const cell of Array.isArray(row) ? row : []) {
+      const td = document.createElement("td");
+      // Written only when they are not 1, because `colspan="1"` is the default and
+      // an attribute restating a default is noise in the accessibility tree.
+      const columns = Math.max(1, cell.columnSpan | 0);
+      const rowsSpanned = Math.max(1, cell.rowSpan | 0);
+      if (columns > 1) td.setAttribute("colspan", String(columns));
+      if (rowsSpanned > 1) td.setAttribute("rowspan", String(rowsSpanned));
+      appendParagraphs(td, Array.isArray(cell.paragraphs) ? cell.paragraphs : []);
+      tr.append(td);
+    }
+    table.append(tr);
+  }
+  parent.append(table);
+}
+
 /// Builds one shape of the outline into `parent`.
 function appendShape(parent, shape) {
+  if (shape.kind === "table") {
+    const rows = Array.isArray(shape.rows) ? shape.rows : [];
+    if (rows.length === 0) return;
+    appendTable(parent, shape, rows);
+    return;
+  }
   const paragraphs = Array.isArray(shape.paragraphs) ? shape.paragraphs : [];
   if (paragraphs.length === 0) return;
   if (shape.role === "title") {
@@ -117,7 +158,9 @@ function appendShape(parent, shape) {
 /// Rebuilds the mirror from one slide's text outline.
 ///
 /// `outline` is `casual_pres_wasm`'s `slideText` projection, parsed:
-/// `{shapes:[{id, tier, role, name, paragraphs:[{level, text}]}]}`. Both containers
+/// `{shapes:[{id, tier, role, name, kind, paragraphs:[{level, text}],
+/// rows:[[{columnSpan, rowSpan, paragraphs}]]}]}`, where `kind` is `"text"` or
+/// `"table"` and the other of the two lists is empty. Both containers
 /// are replaced wholly rather than patched, because a half-replaced mirror reading
 /// one slide's title above another's body is the failure that shape prevents — the
 /// same reason `createViewer` keeps one state object.

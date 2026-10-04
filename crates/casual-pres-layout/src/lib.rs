@@ -62,8 +62,8 @@ mod table;
 pub mod text;
 
 pub use outline::{
-    OutlineParagraph, OutlineShape, SlideTextOutline, SlideTextRole, SlideTextTier,
-    slide_text_outline,
+    OutlineCell, OutlineContent, OutlineParagraph, OutlineShape, OutlineTable, SlideTextOutline,
+    SlideTextRole, SlideTextTier, slide_text_outline,
 };
 pub use text::{LAST_RESORT_COLOR, LAST_RESORT_SIZE, UnresolvedProperty, UnresolvedTextProperty};
 

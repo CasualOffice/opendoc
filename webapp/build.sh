@@ -133,8 +133,10 @@ cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 # about what is being tested. The builder is the same `src/tests/deck.rs` the
 # importer's own guards use, so the browser opens exactly the package those
 # guards assert against — three slides named out of lexical order, a hidden
-# slide, a theme with a dark colour map, a picture, a group, an unadjusted preset
-# and a custom geometry.
+# slide, a theme with a dark colour map, a picture, a group, an unadjusted preset,
+# a custom geometry, a 3x3 `a:tbl` with merges on both axes and a style GUID
+# joining two `tableStyles.xml` entries, and a chart frame whose payload is
+# reported rather than read.
 cargo run --quiet -p casual-pres-import --example generate_pptx_fixture -- "$here/demo.pptx"
 
 # --- Static multi-page site -----------------------------------------------

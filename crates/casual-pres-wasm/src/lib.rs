@@ -190,7 +190,22 @@ struct OutlineParagraphJson<'a> {
     text: &'a str,
 }
 
+/// One cell of a projected table, as the host sees it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineCellJson<'a> {
+    column_span: u32,
+    row_span: u32,
+    paragraphs: Vec<OutlineParagraphJson<'a>>,
+}
+
 /// One text-bearing shape of a slide, as the host sees it.
+///
+/// `paragraphs` and `rows` are both present and one of them is always empty: a
+/// shape is text or a table, never both, and `kind` says which. Flattened rather
+/// than nested under a variant key because the host is a DOM builder that branches
+/// once on `kind` — and a tagged union across the wasm boundary would make every
+/// reader of this JSON learn serde's representation to read a list of paragraphs.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OutlineShapeJson<'a> {
@@ -198,7 +213,23 @@ struct OutlineShapeJson<'a> {
     tier: &'static str,
     role: &'static str,
     name: Option<&'a str>,
+    /// `"text"` or `"table"`.
+    kind: &'static str,
     paragraphs: Vec<OutlineParagraphJson<'a>>,
+    rows: Vec<Vec<OutlineCellJson<'a>>>,
+}
+
+/// Bridges a run of paragraphs, borrowing their text.
+fn paragraphs_json(
+    paragraphs: &[casual_pres_layout::OutlineParagraph],
+) -> Vec<OutlineParagraphJson<'_>> {
+    paragraphs
+        .iter()
+        .map(|paragraph| OutlineParagraphJson {
+            level: paragraph.level,
+            text: paragraph.text.as_str(),
+        })
+        .collect()
 }
 
 /// A slide's text, as the host sees it.
@@ -416,14 +447,32 @@ impl WasmPresentation {
                 tier: shape.tier.token(),
                 role: shape.role.token(),
                 name: shape.name.as_deref(),
-                paragraphs: shape
-                    .paragraphs
-                    .iter()
-                    .map(|paragraph| OutlineParagraphJson {
-                        level: paragraph.level,
-                        text: paragraph.text.as_str(),
-                    })
-                    .collect(),
+                kind: shape.content.token(),
+                paragraphs: match &shape.content {
+                    casual_pres_layout::OutlineContent::Text(paragraphs) => {
+                        paragraphs_json(paragraphs)
+                    }
+                    // A table's text is in its CELLS, so the shape itself carries
+                    // none. An empty array rather than a null, so a host reading
+                    // `paragraphs` need not branch before iterating.
+                    casual_pres_layout::OutlineContent::Table(_) => Vec::new(),
+                },
+                rows: match &shape.content {
+                    casual_pres_layout::OutlineContent::Table(table) => table
+                        .rows
+                        .iter()
+                        .map(|row| {
+                            row.iter()
+                                .map(|cell| OutlineCellJson {
+                                    column_span: cell.column_span,
+                                    row_span: cell.row_span,
+                                    paragraphs: paragraphs_json(&cell.paragraphs),
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                    casual_pres_layout::OutlineContent::Text(_) => Vec::new(),
+                },
             })
             .collect();
         serde_json::to_string(&OutlineJson { shapes }).map_err(|error| error.to_string())

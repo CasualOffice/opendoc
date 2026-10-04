@@ -395,3 +395,84 @@ fn a_slides_text_crosses_the_boundary_as_structure() {
         "the error names the index the host asked for: {error}"
     );
 }
+
+/// A slide TABLE's cell text crosses the boundary too, which is the whole reason
+/// the projection carries a kind rather than only paragraphs.
+///
+/// A table that is read, validated and painted and that a reader hears nothing of
+/// is the "modelled but unreachable" failure `SKILL` §9.4 names — the same one the
+/// mirror exists to close for a shape's own text. The fixture's third slide holds a
+/// 3x3 `a:tbl` with merges on both axes, so this also pins the one decision a
+/// mirror cannot make for itself: a COVERED cell is not projected, because it
+/// paints nothing and the origin's spans already state the merge's shape.
+#[test]
+fn a_slide_tables_cells_cross_the_boundary_with_their_merge_spans() {
+    let facade = open_deck(&deck::deck()).expect("the fixture opens");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&facade.slide_text(2).expect("slide 2's text"))
+            .expect("the projection is valid JSON");
+    let shapes = parsed["shapes"].as_array().expect("a shapes array");
+
+    let table = shapes
+        .iter()
+        .find(|shape| shape["kind"] == "table")
+        .expect("the fixture's third slide carries a table, and it must be projected");
+    // A text shape carries no rows and a table carries no paragraphs of its own:
+    // the two are exclusive in the model and must stay exclusive on the wire.
+    assert!(
+        table["paragraphs"]
+            .as_array()
+            .is_some_and(|paragraphs| paragraphs.is_empty()),
+        "a table's text is in its cells: {table}"
+    );
+    let rows = table["rows"].as_array().expect("a rows array");
+    assert!(!rows.is_empty(), "the table's rows reach the host: {table}");
+
+    // The whole grid, as a reader would walk it. Asserted as one structure rather
+    // than as three separate claims, because each one alone is satisfiable by
+    // accident: "a merge becomes a span" passes for a projection that also emits
+    // the covered cells, and "the covered cell is gone" passes for one that drops
+    // every merged cell including the origin.
+    let read: Vec<Vec<(u64, u64, &str)>> = rows
+        .iter()
+        .map(|row| {
+            row.as_array()
+                .expect("a row is an array")
+                .iter()
+                .map(|cell| {
+                    (
+                        cell["columnSpan"].as_u64().expect("a column span"),
+                        cell["rowSpan"].as_u64().expect("a row span"),
+                        cell["paragraphs"]
+                            .as_array()
+                            .expect("a paragraphs array")
+                            .first()
+                            .and_then(|paragraph| paragraph["text"].as_str())
+                            .unwrap_or(""),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        read,
+        vec![
+            // `gridSpan="2"` becomes a column span; the `<a:tc hMerge="1"/>` after
+            // it is gone, because it owns no box and the span already says so.
+            vec![(2, 1, "Spans two"), (1, 2, "Tall right")],
+            // The `<a:tc vMerge="1">` under "Tall right" is gone for the same
+            // reason — and it CARRIES THE TEXT "Covered" in this fixture, which a
+            // real PowerPoint file would never write and which the table lane put
+            // there deliberately so "a covered cell paints nothing" could be told
+            // apart from "a covered cell had nothing to paint". It is not painted,
+            // so it is not read either.
+            vec![(1, 1, "Middle left"), (1, 1, "Middle mid")],
+            vec![
+                (1, 1, "Bottom left"),
+                (1, 1, "Bottom mid"),
+                (1, 1, "Bottom right")
+            ],
+        ],
+        "the grid a reader walks: merges as spans, no covered cell, no zero span"
+    );
+}

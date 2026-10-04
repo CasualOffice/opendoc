@@ -58,13 +58,18 @@ const { EN_STRINGS } = await import("../src/en_strings.mjs");
 
 setCatalogue("en", EN_STRINGS);
 
-/** `tag[label]:text` for every element in a subtree, depth first. */
+/** `tag[label]{spans}:text` for every element in a subtree, depth first. */
 function outline(node, depth = 0) {
   const lines = [];
   for (const child of node.children) {
     const label = child.attributes["aria-label"];
+    const spans = ["colspan", "rowspan"]
+      .filter((name) => child.attributes[name])
+      .map((name) => `${name}=${child.attributes[name]}`)
+      .join(",");
     lines.push(
       `${"  ".repeat(depth)}${child.tagName.toLowerCase()}${label ? `[${label}]` : ""}` +
+        (spans ? `{${spans}}` : "") +
         (child.text ? `:${child.text}` : ""),
     );
     lines.push(...outline(child, depth + 1));
@@ -236,4 +241,71 @@ test("a malformed or absent projection empties the mirror instead of throwing", 
     shapes: [{ id: "9", tier: "slide", role: "title", name: "Title 1", paragraphs: [] }],
   });
   assert.deepEqual(outline(own), []);
+});
+
+test("a slide TABLE becomes a real table, with its merges as colspan and rowspan", () => {
+  const { own } = mirror({
+    shapes: [
+      {
+        id: "10",
+        tier: "slide",
+        role: "shape",
+        name: "Table 3",
+        kind: "table",
+        paragraphs: [],
+        rows: [
+          [
+            { columnSpan: 2, rowSpan: 1, paragraphs: [{ level: 0, text: "Spans two" }] },
+            { columnSpan: 1, rowSpan: 2, paragraphs: [{ level: 0, text: "Tall right" }] },
+          ],
+          [
+            { columnSpan: 1, rowSpan: 1, paragraphs: [{ level: 0, text: "Middle left" }] },
+            { columnSpan: 1, rowSpan: 1, paragraphs: [{ level: 0, text: "Middle mid" }] },
+          ],
+        ],
+      },
+    ],
+  });
+  // A real grid, not nine sentences. `colspan`/`rowspan` are the only thing that
+  // tells a screen reader a cell covers more than its own box, and they are
+  // written only when they are not 1 — an attribute restating a default is noise.
+  assert.deepEqual(outline(own), [
+    "table[Table 3]",
+    "  tr",
+    "    td{colspan=2}",
+    "      p:Spans two",
+    "    td{rowspan=2}",
+    "      p:Tall right",
+    "  tr",
+    "    td",
+    "      p:Middle left",
+    "    td",
+    "      p:Middle mid",
+  ]);
+});
+
+test("a table shape is NOT read as paragraphs, and a text shape is not read as a grid", () => {
+  // The two are exclusive in the model — a `p:sp` carries an `a:txBody`, a
+  // `p:graphicFrame` carries an `a:tbl`, and no slide child carries both — so the
+  // projection sends one list empty and the mirror must branch on `kind` rather
+  // than on which list happens to be populated.
+  const { own: asTable } = mirror({
+    shapes: [{ id: "11", tier: "slide", role: "shape", name: "", kind: "table", rows: [] }],
+  });
+  assert.deepEqual(outline(asTable), [], "a table with no rows contributes nothing");
+
+  const { own: asText } = mirror({
+    shapes: [
+      {
+        id: "12",
+        tier: "slide",
+        role: "shape",
+        name: "",
+        kind: "text",
+        paragraphs: [{ level: 0, text: "Not a grid" }],
+        rows: [],
+      },
+    ],
+  });
+  assert.deepEqual(outline(asText), ["p:Not a grid"]);
 });

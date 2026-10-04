@@ -247,4 +247,22 @@ test("a screen reader can read the slide, which the canvas itself says nothing t
   // And nothing nests deeper than the file states, which is what a stack that
   // never unwound would produce.
   await expect(page.locator("#slideTextOwn ul ul ul ul")).toHaveCount(0);
+
+  // The third slide's TABLE becomes a real table. A `<canvas>` says nothing about
+  // a grid, and a list of sentences would turn a 3x3 table into nine of them with
+  // no row, no column and no merge — so this is the one shape in the deck where
+  // the mirror's structure carries information the text alone cannot.
+  await page.keyboard.press("End");
+  const table = page.locator("#slideTextOwn table");
+  await expect(table).toHaveCount(1);
+  await expect(table.locator("tr")).toHaveCount(3);
+  // The merges reach the reader as spans, which is how both HTML and PowerPoint's
+  // own accessibility tree state them.
+  await expect(table.locator('td[colspan="2"]')).toHaveText("Spans two");
+  await expect(table.locator('td[rowspan="2"]')).toHaveText("Tall right");
+  // And the COVERED cell is absent. The fixture deliberately gives it the text
+  // "Covered" — which a real PowerPoint file would never write — so that "a
+  // covered cell paints nothing" can be told apart from "a covered cell had
+  // nothing to paint". It paints nothing, so it is read as nothing.
+  await expect(page.locator("#slideText")).not.toContainText("Covered");
 });

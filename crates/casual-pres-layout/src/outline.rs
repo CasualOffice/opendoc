@@ -29,7 +29,7 @@
 //! a font has loaded.
 
 use casual_doc_model::NodeId;
-use casual_pres_model::{PlaceholderKind, Presentation, SlideNode, TextRun};
+use casual_pres_model::{CellMerge, PlaceholderKind, Presentation, SlideNode, SlideTable, TextRun};
 
 use crate::cascade_tiers;
 
@@ -120,6 +120,56 @@ pub struct OutlineParagraph {
     pub text: String,
 }
 
+/// One cell of a projected table.
+///
+/// A COVERED cell is not projected at all. It paints nothing — that is what
+/// `CellMerge::Continuation` means — and `rowSpan`/`colSpan` on the origin already
+/// tell a reader the shape of the merge, which is how both HTML and PowerPoint's
+/// own accessibility tree state it. Emitting it as an empty cell would make a
+/// reader walk through blanks that are not there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutlineCell {
+    /// How many grid columns this cell covers (`a:tc@gridSpan`), at least one.
+    pub column_span: u32,
+    /// How many rows it covers (`a:tc@rowSpan`), at least one.
+    pub row_span: u32,
+    /// The cell's paragraphs that carry text, in order.
+    pub paragraphs: Vec<OutlineParagraph>,
+}
+
+/// A projected table (`a:tbl`), row-major.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OutlineTable {
+    /// The rows, top to bottom, each holding only the cells that own a box.
+    pub rows: Vec<Vec<OutlineCell>>,
+}
+
+/// What a projected shape says, which is one of two things.
+///
+/// An ENUM rather than a struct with both a `paragraphs` and a `table` field,
+/// because a shape is one or the other: a `p:sp` carries an `a:txBody` and a
+/// `p:graphicFrame` carries an `a:tbl`, and no slide child carries both. The field
+/// pair would make "neither" and "both" representable, and a mirror would have to
+/// decide what to do about two states the format cannot state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OutlineContent {
+    /// A shape's own text (`p:txBody`).
+    Text(Vec<OutlineParagraph>),
+    /// A graphic frame's table (`a:tbl`), whose cells hold the text.
+    Table(OutlineTable),
+}
+
+impl OutlineContent {
+    /// A stable token naming which kind this is, for a host that has to branch.
+    #[must_use]
+    pub const fn token(&self) -> &'static str {
+        match self {
+            Self::Text(_) => "text",
+            Self::Table(_) => "table",
+        }
+    }
+}
+
 /// One text-bearing shape of a slide.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutlineShape {
@@ -133,8 +183,8 @@ pub struct OutlineShape {
     /// The shape's name (`p:cNvPr@name`), when the file carries one. A reader with
     /// no visual context has nothing else to distinguish two text boxes by.
     pub name: Option<String>,
-    /// The paragraphs that carry text, in order.
-    pub paragraphs: Vec<OutlineParagraph>,
+    /// What the shape says.
+    pub content: OutlineContent,
 }
 
 /// A slide's text, in reading order.
@@ -203,11 +253,74 @@ pub fn slide_text_outline(presentation: &Presentation, index: usize) -> Option<S
     Some(SlideTextOutline { shapes })
 }
 
-/// One shape's text, or `None` when it carries none a reader would hear.
+/// One shape's content, or `None` when it carries nothing a reader would hear.
+///
+/// A table is checked FIRST, because a `p:graphicFrame` holding one has no
+/// `a:txBody` of its own and would otherwise project as nothing at all — a table
+/// read, validated and painted, and silent to a reader, which is precisely the
+/// §9.4 failure this whole module exists to close.
 fn outline_shape(node: &SlideNode, tier: SlideTextTier) -> Option<OutlineShape> {
-    let body = node.text.as_ref()?;
-    let paragraphs: Vec<OutlineParagraph> = body
-        .paragraphs
+    let content = match node.table.as_ref() {
+        Some(table) => OutlineContent::Table(outline_table(table)?),
+        None => OutlineContent::Text(outline_paragraphs(node.text.as_ref()?)),
+    };
+    if let OutlineContent::Text(paragraphs) = &content
+        && paragraphs.is_empty()
+    {
+        return None;
+    }
+    Some(OutlineShape {
+        id: node.id(),
+        tier,
+        role: SlideTextRole::of(node.placeholder.map(|slot| slot.kind)),
+        name: node.name.clone(),
+        content,
+    })
+}
+
+/// A table's cells, or `None` when not one of them carries text.
+///
+/// `None` and not an empty table, because a table whose every cell is blank says
+/// nothing a reader needs — a real deck's layout grid, which is a table used for
+/// arrangement, would otherwise announce "table, three rows, three columns" and
+/// then nothing. A table with ANY text keeps all its structure, blanks included:
+/// once a reader is in a grid, a missing cell is information.
+fn outline_table(table: &SlideTable) -> Option<OutlineTable> {
+    let mut any = false;
+    let rows: Vec<Vec<OutlineCell>> = table
+        .rows
+        .iter()
+        .map(|row| {
+            row.cells
+                .iter()
+                .filter(|cell| {
+                    // A covered cell owns no box and paints nothing. The origin's
+                    // spans already say the merge's shape.
+                    cell.horizontal != CellMerge::Continuation
+                        && cell.vertical != CellMerge::Continuation
+                })
+                .map(|cell| {
+                    let paragraphs = cell
+                        .text
+                        .as_ref()
+                        .map(outline_paragraphs)
+                        .unwrap_or_default();
+                    any |= !paragraphs.is_empty();
+                    OutlineCell {
+                        column_span: cell.horizontal.units().max(1),
+                        row_span: cell.vertical.units().max(1),
+                        paragraphs,
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    any.then_some(OutlineTable { rows })
+}
+
+/// One text body's paragraphs that carry text, in order.
+fn outline_paragraphs(body: &casual_pres_model::TextBody) -> Vec<OutlineParagraph> {
+    body.paragraphs
         .iter()
         .filter_map(|paragraph| {
             let text = paragraph_text(paragraph);
@@ -219,17 +332,7 @@ fn outline_shape(node: &SlideNode, tier: SlideTextTier) -> Option<OutlineShape> 
                 text,
             })
         })
-        .collect();
-    if paragraphs.is_empty() {
-        return None;
-    }
-    Some(OutlineShape {
-        id: node.id(),
-        tier,
-        role: SlideTextRole::of(node.placeholder.map(|slot| slot.kind)),
-        name: node.name.clone(),
-        paragraphs,
-    })
+        .collect()
 }
 
 /// One paragraph's runs, joined.

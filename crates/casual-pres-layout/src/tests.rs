@@ -22,7 +22,7 @@ use casual_pres_model::{
 };
 
 use crate::text::{LAST_RESORT_COLOR, LAST_RESORT_SIZE};
-use crate::{SlideCanvas, UnresolvedProperty, lay_out_slide, slide_text_outline};
+use crate::{OutlineContent, SlideCanvas, UnresolvedProperty, lay_out_slide, slide_text_outline};
 
 fn id(counter: u64) -> NodeId {
     NodeId::from_parts(1, counter).expect("non-zero")
@@ -1975,11 +1975,15 @@ fn the_text_outline_reads_the_slides_words_then_the_decks_furniture_and_no_promp
                 shape.tier.token(),
                 shape.role.token(),
                 shape.name.as_deref(),
-                shape
-                    .paragraphs
-                    .iter()
-                    .map(|paragraph| (paragraph.level, paragraph.text.as_str()))
-                    .collect(),
+                match &shape.content {
+                    OutlineContent::Text(paragraphs) => paragraphs
+                        .iter()
+                        .map(|paragraph| (paragraph.level, paragraph.text.as_str()))
+                        .collect(),
+                    OutlineContent::Table(_) => {
+                        unreachable!("this fixture carries no table")
+                    }
+                },
             )
         })
         .collect();
