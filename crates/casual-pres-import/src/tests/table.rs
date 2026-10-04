@@ -64,6 +64,11 @@ fn a_graphic_frame_arrives_as_a_positioned_unpainted_box_carrying_its_table() {
             Some("Callout"),
             Some("Table 4"),
             Some("Chart 5"),
+            // The connector that closes the tree; it is here because a suppressed
+            // outline on a LINE is the one case layout answers by emitting no
+            // anchor at all, and it sits last so a reopened deck's node ids cannot
+            // shift (`deck.rs` says why).
+            Some("Invisible Rule"),
         ],
         "both frames join the tree in document order, which is paint order: a          frame dropped or appended would move the chart over the table"
     );

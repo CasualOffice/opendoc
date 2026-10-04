@@ -1071,3 +1071,158 @@ fn a_phclr_carries_its_saturation_modifier() {
         "a:phClr keeps every modifier the model carries"
     );
 }
+
+/// What a shape STATED about its fill and its outline survives a save.
+///
+/// # What breaks without this
+///
+/// `GroupShape::fill` is an `Option<Fill>`, so a writer that emits a fill only when
+/// there is one to emit writes nothing for a shape that stated `<a:noFill/>` — and
+/// "nothing" is the markup for "inherit". PowerPoint reopening that deck therefore
+/// fills the shape from its placeholder slot, then from its `p:style` theme
+/// reference, then from the theme default, and a deliberately transparent shape
+/// comes back opaque. The outline half is the same sentence with `a:ln` in it: an
+/// invisible border comes back visible.
+///
+/// So this is round-trip fidelity on the semantic path (`m1 == m2`), asserted on the
+/// two fields the writer had no way to express before.
+///
+/// # The one state that legitimately does NOT survive, named rather than excluded
+///
+/// `Authored` with no modelled value — slide 10's `a:gradFill` callout — comes back
+/// `Inherited`, because there is nothing to write: the gradient never reached the
+/// model and the loss report says so. Collapsing it silently in the comparison would
+/// hide a second loss behind the first, so the comparison folds it deliberately and
+/// the shape it happens to is asserted by name below.
+///
+/// # Why the floors are here
+///
+/// `before == after` is satisfied by a deck that states nothing anywhere, which is
+/// exactly what a regression in the IMPORTER would produce. The floors are derived
+/// from the first import rather than typed, so they track the fixture.
+#[test]
+fn what_a_shape_stated_about_its_fill_and_outline_survives_a_save() {
+    use casual_doc_model::v1::GroupChild;
+    use casual_pres_model::{Presentation, SlidePaint};
+
+    /// The state as the WRITER can express it: `Authored` with nothing in the
+    /// drawing to write is indistinguishable in markup from stating nothing.
+    fn writable(state: SlidePaint, has_value: bool) -> SlidePaint {
+        if state == SlidePaint::Authored && !has_value {
+            SlidePaint::Inherited
+        } else {
+            state
+        }
+    }
+
+    /// Every named `p:sp` in every tier, with what it stated.
+    ///
+    /// Named rather than indexed because the writer renumbers shape ids per tree —
+    /// `p:cNvPr@id` is a producer-scoped token — so a positional comparison would be
+    /// comparing the writer's numbering with itself.
+    ///
+    /// `p:sp` only: a `p:pic` whose bytes the caller did not supply is deliberately
+    /// written without its `a:blip` and does not reopen at all (`109` FID-R-06), so
+    /// including pictures would make this guard fail for that reason instead of
+    /// this one. `round_trip` supplies no media.
+    fn stated(presentation: &Presentation) -> Vec<(Option<String>, SlidePaint, SlidePaint)> {
+        presentation
+            .masters()
+            .iter()
+            .map(|master| &master.shapes)
+            .chain(presentation.layouts().iter().map(|layout| &layout.shapes))
+            .chain(presentation.slides().iter().map(|slide| &slide.shapes))
+            .flat_map(|tree| tree.children.iter())
+            .filter_map(|node| match &node.content {
+                GroupChild::Shape(shape) => Some((
+                    node.name.clone(),
+                    writable(node.fill, shape.fill.is_some()),
+                    writable(node.outline, shape.stroke.is_some()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    let (first, second) = round_trip();
+    let before = stated(&first.presentation);
+    let after = stated(&second.presentation);
+
+    let suppressed_fills = before
+        .iter()
+        .filter(|(_, fill, _)| *fill == SlidePaint::Suppressed)
+        .count();
+    let suppressed_outlines = before
+        .iter()
+        .filter(|(_, _, outline)| *outline == SlidePaint::Suppressed)
+        .count();
+    assert!(
+        suppressed_fills >= 2 && suppressed_outlines >= 1,
+        "the fixture must state `a:noFill` on at least two fills and one outline, \
+         or `before == after` is satisfied by a deck that states nothing; it \
+         states {suppressed_fills} and {suppressed_outlines}"
+    );
+    assert!(
+        before
+            .iter()
+            .any(|(_, fill, _)| *fill == SlidePaint::Authored),
+        "and a stated fill with a value, so the comparison can tell `Authored` \
+         from `Suppressed` rather than only from `Inherited`"
+    );
+
+    assert_eq!(
+        before, after,
+        "every shape's stated fill and outline must come back as it went in"
+    );
+
+    // The collapse the fold above performs, asserted where it happens rather than
+    // left as a quiet allowance: slide 10's callout states an `a:gradFill` this
+    // build cannot hold, so it goes in `Authored` with no value and comes back
+    // `Inherited`. That is the already-reported `gradFill` loss, not a new one.
+    let callout = |imported: &casual_pres_import::ImportedPresentation| {
+        imported.presentation.slides()[2]
+            .shapes
+            .children
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Callout"))
+            .map(|node| node.fill)
+            .expect("the fixture carries slide 10's gradient callout")
+    };
+    assert_eq!(callout(&first), SlidePaint::Authored);
+    assert_eq!(
+        callout(&second),
+        SlidePaint::Inherited,
+        "an unmodellable fill cannot be written, so its `Authored` does not survive \
+         — the loss is the gradient's, and the report names it"
+    );
+
+    // And the written markup is the right markup, not merely something that reopens
+    // the same way through this engine's own reader. An empty `<a:ln/>` would mean
+    // "inherit" and would reopen as `Authored` here while PowerPoint drew the
+    // theme's outline — a round trip through one reader cannot see that.
+    let written = export_pptx(&first.presentation, &BTreeMap::new()).expect("the deck writes");
+    let slide_one = read_part(written, "ppt/slides/slide1.xml");
+    assert!(
+        slide_one.contains("<a:noFill/>"),
+        "a suppressed fill must be written as `<a:noFill/>`: {slide_one}"
+    );
+    assert!(
+        slide_one.contains("<a:ln><a:noFill/></a:ln>"),
+        "and a suppressed outline as an `a:ln` wrapping one, because an empty \
+         `<a:ln/>` means inherit: {slide_one}"
+    );
+}
+
+/// One part of a written package, as text.
+fn read_part(package: Vec<u8>, part: &str) -> String {
+    use std::io::Read as _;
+
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(package)).expect("the output is a ZIP");
+    let mut file = archive
+        .by_name(part)
+        .unwrap_or_else(|_| panic!("the package carries {part}"));
+    let mut text = String::new();
+    file.read_to_string(&mut text).expect("the part is UTF-8");
+    text
+}

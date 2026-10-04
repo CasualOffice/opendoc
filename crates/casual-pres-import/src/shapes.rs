@@ -45,16 +45,16 @@ use casual_doc_model::v1::{
     Extent, Fill, GroupChild, GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
     MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
     MAX_SHAPE_PATH_COMMANDS, MAX_SHAPE_PRESET_BYTES, MediaId, PointEmu, ShapeAdjustment,
-    ShapeGeometry, ShapePath, ShapePathCommand, ShapeStroke, ShapeStyleRef, WordprocessingGroup,
+    ShapeGeometry, ShapePath, ShapePathCommand, ShapeStyleRef, WordprocessingGroup,
 };
 use casual_pres_model::{
     Placeholder, PlaceholderKind, PlaceholderOrientation, PlaceholderSize, ShapeTree, SlideNode,
-    TextBody,
+    SlidePaint, TextBody,
 };
 use quick_xml::events::BytesStart;
 
 use crate::ImportError;
-use crate::color::{FillRead, read_fill_child, read_line};
+use crate::color::{FillRead, LineRead, read_fill_child, read_line};
 use crate::ids::Ids;
 use crate::loss::Reporter;
 use crate::media::MediaResolver;
@@ -507,12 +507,16 @@ struct Geometry {
 }
 
 /// A shape's `p:spPr`: transform, geometry, fill, outline.
+///
+/// `fill` and `line` carry what the element STATED as well as what it resolved to,
+/// because `a:noFill` resolves to the same `None` an absent element does and means
+/// the opposite — see `casual_pres_model::SlidePaint`.
 #[derive(Clone, Debug, Default)]
 struct ShapeProperties {
     transform: Transform,
     geometry: Geometry,
     fill: FillRead,
-    stroke: Option<ShapeStroke>,
+    line: LineRead,
 }
 
 /// Reads one `p:sp` (or `p:cxnSp`), having just entered it.
@@ -605,7 +609,7 @@ fn read_shape(
         adjustments: properties.geometry.adjustments,
         path: properties.geometry.path,
         fill: properties.fill.fill,
-        stroke: properties.stroke,
+        stroke: properties.line.stroke,
         flip_h: properties.transform.flip_h,
         flip_v: properties.transform.flip_v,
         rotation: properties.transform.rotation,
@@ -615,6 +619,11 @@ fn read_shape(
         placeholder: non_visual.placeholder,
         name: non_visual.name,
         hidden: non_visual.hidden,
+        // The two states the `GroupShape` above cannot hold. Named rather than
+        // defaulted, because defaulting here is exactly the silent drop that made
+        // `a:noFill` a reported loss in the first place.
+        fill: properties.fill.state,
+        outline: properties.line.state,
         content: GroupChild::Shape(shape),
         text,
         table: None,
@@ -716,7 +725,7 @@ fn read_picture(
         crop: None,
         opacity: None,
         hyperlink: None,
-        border: properties.stroke,
+        border: properties.line.stroke,
         flip_h: properties.transform.flip_h,
         flip_v: properties.transform.flip_v,
         rotation: properties.transform.rotation,
@@ -725,6 +734,11 @@ fn read_picture(
         placeholder: non_visual.placeholder,
         name: non_visual.name,
         hidden: non_visual.hidden,
+        // A `p:pic`'s `p:spPr` fill is the fill BEHIND the image, which
+        // `GroupPicture` has no field for — so `a:noFill` there is carried and not
+        // contradicted by anything, and the outline is the picture's frame.
+        fill: properties.fill.state,
+        outline: properties.line.state,
         content: GroupChild::Picture(picture),
         text,
         // A `p:pic` is not a `p:graphicFrame`; only the frame reader produces a
@@ -854,6 +868,17 @@ fn read_group(
         if node.placeholder.is_some() {
             reporter.degraded_attribute(&part, b"grpSp", b"ph");
         }
+        // The one place `a:noFill` is still a LOSS, and it is reported with the
+        // feature name it has always had: a group's children are bare
+        // `GroupChild`s, so the `SlideNode` carrying the distinction is thrown away
+        // here along with the name, the slot and the text. A grouped transparent
+        // shape therefore still reopens filled, and the report still says so.
+        if node.fill.suppresses() {
+            reporter.degraded_attribute(&part, b"spPr", b"noFill");
+        }
+        if node.outline.suppresses() {
+            reporter.degraded_attribute(&part, b"ln", b"noFill");
+        }
         if node.table.is_some() {
             // A `p:graphicFrame` inside a `p:grpSp`. The frame's box survives as
             // an unpainted rectangle inside the group, which keeps the group's
@@ -909,6 +934,15 @@ fn read_group(
         placeholder: non_visual.placeholder,
         name: non_visual.name,
         hidden: non_visual.hidden,
+        // `Inherited` on both, and not because the `p:grpSpPr` was not read: it was,
+        // and its fill was discarded above. A `p:grpSpPr/a:noFill` is PowerPoint's
+        // boilerplate on essentially every group and it loses nothing, because a
+        // group is not a painted surface — `WordprocessingGroup` has no fill field
+        // and the display list emits no item for the group itself. Recording
+        // `Suppressed` here would make the model claim a group was deliberately
+        // transparent, which is a statement about something that is never painted.
+        fill: SlidePaint::Inherited,
+        outline: SlidePaint::Inherited,
         content: GroupChild::Group(Box::new(group)),
         text: None,
         // A `p:graphicFrame` inside a `p:grpSp` is read as a frame by the same
@@ -995,7 +1029,7 @@ fn read_shape_property(
                 // answering `default()` for it discarded the width — the sixth
                 // instance of the trap `xml::enter` was written for. `read_line`
                 // takes the flag and reads the attributes either way.
-                properties.stroke = read_line(cursor, reporter, element, empty, resolver)?;
+                properties.line = read_line(cursor, reporter, element, empty, resolver)?;
                 Ok(!empty)
             }
             b"effectLst" | b"effectDag" | b"scene3d" | b"sp3d" => {

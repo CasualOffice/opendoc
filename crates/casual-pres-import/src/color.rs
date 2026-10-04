@@ -38,6 +38,7 @@ use casual_doc_model::v1::{
     ColorTransform, DashStyle, Fill, LineEnd, LineEndKind, LineEndSize, Rgba, ShapeStroke,
     StyleColor,
 };
+use casual_pres_model::SlidePaint;
 use quick_xml::events::BytesStart;
 
 use crate::ImportError;
@@ -285,14 +286,15 @@ fn parse_srgb(value: Option<&str>) -> Option<Rgba> {
     })
 }
 
-/// How a shape's fill element resolved.
+/// How a shape's fill element resolved: the value, and what the file stated.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct FillRead {
     /// The modelled fill, when one was resolvable.
     pub(crate) fill: Option<Fill>,
-    /// Whether the shape declared `a:noFill` — an explicit *nothing*, which is
-    /// not the same as declaring no fill element at all.
-    pub(crate) explicit_none: bool,
+    /// What the element stated, which is not derivable from `fill`: an
+    /// unmodellable `a:gradFill` and an absent fill element both leave `fill`
+    /// `None` and mean opposite things to a consumer that inherits.
+    pub(crate) state: SlidePaint,
 }
 
 /// Reads a shape-property fill child, having just seen it.
@@ -300,17 +302,28 @@ pub(crate) struct FillRead {
 /// Returns whether the element's subtree was consumed, matching
 /// [`children`]'s contract.
 ///
-/// # The `a:noFill` loss, stated rather than hidden
+/// # `a:noFill` is CARRIED now, and the caller decides whether to report it
 ///
-/// `v1::GroupShape::fill` is an `Option<Fill>`, and on a slide `None` has to mean
-/// two different things: "this shape states no fill, so it inherits from its
-/// placeholder slot and then from the theme", and "this shape states `a:noFill`,
-/// so it is deliberately transparent and must *not* inherit". DOCX has no
-/// placeholder cascade, so the document model never needed the distinction. A
-/// slide does, and the reused type cannot carry it — so `a:noFill` is reported
-/// `degraded` on every occurrence. That is a real fidelity gap with a real
-/// visible consequence (a transparent shape over a filled placeholder reopens
-/// filled), and the fix is a presentation-side field, not a guess here.
+/// This function used to report every `a:noFill` as a degraded `spPr/@noFill`,
+/// because `v1::GroupShape::fill` is an `Option<Fill>` in which `None` has to mean
+/// two different things on a slide: "states no fill, so inherit from the
+/// placeholder slot and then from the theme", and "states `a:noFill`, so is
+/// deliberately transparent and must *not* inherit". That gap is closed by
+/// `casual_pres_model::SlidePaint`, which is a presentation-side field exactly as
+/// the previous revision of this comment said it had to be.
+///
+/// So nothing is reported here any more, and the reporting moved OUT rather than
+/// away: whether the distinction survives depends on where the element was read,
+/// and only the caller knows that.
+///
+/// | Caller | `p:spPr` of a top-level `p:sp`/`p:pic` | inside a `p:grpSp` | an `a:tcPr` | a `p:grpSpPr` |
+/// | --- | --- | --- | --- | --- |
+/// | Carries it? | yes, on the `SlideNode` | no — a group child is a bare `GroupChild` | no — `TableCellProperties` has no field | nothing to carry: a group has no fill |
+/// | Reports? | no | yes, as `spPr/@noFill` | yes, as `tcPr/@noFill` | no |
+///
+/// Reporting it here regardless would have put 90 false findings in the one real
+/// deck this was measured on — the loss is fixed for those, and a report that
+/// still names it would be describing a loss that no longer happens (`SKILL` §9).
 pub(crate) fn read_fill_child(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
@@ -323,8 +336,7 @@ pub(crate) fn read_fill_child(
     let part = cursor.part().to_owned();
     match local {
         b"noFill" => {
-            read.explicit_none = true;
-            reporter.degraded_attribute(&part, b"spPr", b"noFill");
+            read.state = SlidePaint::Suppressed;
             Ok(false)
         }
         b"solidFill" => {
@@ -332,6 +344,11 @@ pub(crate) fn read_fill_child(
                 reporter.invalid(&part, b"solidFill");
                 return Ok(false);
             }
+            // `Authored` even when the colour does not resolve: the FILE states a
+            // fill either way, so a shape whose `a:schemeClr` found no palette must
+            // still not inherit one from the theme matrix on top of the colour it
+            // already failed to resolve.
+            read.state = SlidePaint::Authored;
             // A fill whose colour did not resolve is reported by `read_solid_fill`
             // on the colour element itself, which is where the fact is; adding a
             // second finding here would double-count every one of them.
@@ -341,6 +358,12 @@ pub(crate) fn read_fill_child(
             Ok(true)
         }
         b"gradFill" | b"blipFill" | b"pattFill" | b"grpFill" => {
+            // Stated, and unmodellable. Both halves matter: the `omitted` finding
+            // says the gradient was lost, and `Authored` says the shape is
+            // nevertheless filled in the file — so a consumer must not quietly
+            // substitute the theme's solid entry and make the reported loss
+            // invisible on screen.
+            read.state = SlidePaint::Authored;
             reporter.omitted(&part, local);
             Ok(false)
         }
@@ -348,19 +371,35 @@ pub(crate) fn read_fill_child(
     }
 }
 
+/// How an `a:ln` resolved: the stroke, and what the element stated.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct LineRead {
+    /// The modelled stroke, when the outline named a colour this build resolved.
+    pub(crate) stroke: Option<ShapeStroke>,
+    /// What the element stated. [`SlidePaint::Inherited`] when there was no `a:ln`
+    /// at all — which is the one state this function never returns, since it is
+    /// only called having seen one.
+    pub(crate) state: SlidePaint,
+}
+
 /// Reads an `a:ln`, having just entered it.
 ///
-/// Returns `None` when the outline names no resolvable colour: `ShapeStroke`
+/// `stroke` is `None` when the outline names no resolvable colour: `ShapeStroke`
 /// requires a concrete [`Rgba`], and an outline painted in a substituted colour
 /// looks like an authored choice. The width is still read and reported in that
 /// case, so the loss is visible rather than silent.
+///
+/// `state` is the `a:ln/a:noFill` half of the same distinction `read_fill_child`
+/// carries, and it is returned rather than reported here for the same reason —
+/// `tcPr`'s four edges have nowhere to put it and a `p:spPr` does, so only the
+/// caller can say whether anything was lost.
 pub(crate) fn read_line(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     element: &BytesStart<'_>,
     empty: bool,
     resolver: Resolver,
-) -> Result<Option<ShapeStroke>, ImportError> {
+) -> Result<LineRead, ImportError> {
     let part = cursor.part().to_owned();
     // `a:ln@w` is in EMU, like every other DrawingML measure here. It is NOT in
     // points or eighths of a point, which is the conversion a reader coming from
@@ -379,7 +418,12 @@ pub(crate) fn read_line(
         if width_emu != 0 {
             reporter.degraded(&part, b"ln");
         }
-        return Ok(None);
+        // `Authored`, not `Suppressed`: `<a:ln w="12700"/>` states an outline. It
+        // is the width's colour that is missing, not the outline.
+        return Ok(LineRead {
+            stroke: None,
+            state: SlidePaint::Authored,
+        });
     }
     let mut color: Option<Rgba> = None;
     let mut dash: Option<DashStyle> = None;
@@ -439,19 +483,27 @@ pub(crate) fn read_line(
     })?;
 
     if no_fill {
-        // `a:ln/a:noFill` is "explicitly unstroked". Same shape of loss as the
-        // fill case and reported the same way.
-        reporter.degraded_attribute(&part, b"ln", b"noFill");
-        return Ok(None);
+        // `a:ln/a:noFill` is "explicitly unstroked" — CARRIED now, as
+        // `SlidePaint::Suppressed`, and reported by the caller only where the
+        // caller cannot carry it. A stroke is deliberately not returned beside it:
+        // `ShapeStroke` has no "invisible" spelling, and a zero-width one paints a
+        // hairline.
+        return Ok(LineRead {
+            stroke: None,
+            state: SlidePaint::Suppressed,
+        });
     }
     match color {
-        Some(color) => Ok(Some(ShapeStroke {
-            color,
-            width_emu,
-            dash,
-            head_end,
-            tail_end,
-        })),
+        Some(color) => Ok(LineRead {
+            stroke: Some(ShapeStroke {
+                color,
+                width_emu,
+                dash,
+                head_end,
+                tail_end,
+            }),
+            state: SlidePaint::Authored,
+        }),
         None => {
             if width_emu != 0 || dash.is_some() {
                 // The file states an outline but not a colour this build can
@@ -460,7 +512,14 @@ pub(crate) fn read_line(
                 // unbordered.
                 reporter.degraded(&part, b"ln");
             }
-            Ok(None)
+            Ok(LineRead {
+                stroke: None,
+                // Still `Authored`: an `a:ln` that states only a `a:prstDash`, or
+                // only a colour this build cannot resolve, is an outline the file
+                // asked for. Calling it `Inherited` would let the theme's
+                // `a:lnStyleLst` paint over an authored one.
+                state: SlidePaint::Authored,
+            })
         }
     }
 }

@@ -18,7 +18,7 @@
 
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::display::{PaintItem, ShapeGeometry};
-use casual_doc_layout::page::AnchorContent;
+use casual_doc_layout::page::{AnchorContent, AnchorFill, AnchorStroke};
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_package::PackageLimits;
 use casual_pres_import::{ImportLimits, ImportedPresentation, import_pptx};
@@ -834,5 +834,208 @@ fn a_merged_cells_content_is_not_painted_twice() {
          back — and exactly one emitted cell paints none of it, because a covered \
          cell paints nothing. A continuation that painted its own content would \
          make this (8, 0)"
+    );
+}
+
+/// A shape that states `<a:noFill/>` paints NO fill, although its `p:style` theme
+/// reference resolves to one — and the same for `<a:ln><a:noFill/></a:ln>`.
+///
+/// # Why this is the test that matters
+///
+/// The model carrying the distinction is necessary and not sufficient (`SKILL`
+/// §9.4). The thing a user sees is the display list, and the mechanism that fills a
+/// deliberately transparent shape lives in the shared walk: `themed_appearance`
+/// resolves a shape's `a:fillRef`/`a:lnRef` whenever the shape's own value is
+/// absent, which is correct for a DOCX shape — it has no way to say "nothing" — and
+/// wrong for a slide shape that said exactly that.
+///
+/// # Why it is differential
+///
+/// "The overlay paints no fill" passes for a build in which the theme reference
+/// never resolved at all, which is a different bug wearing this fix's clothes. So
+/// the same fixture is imported twice, one `<a:noFill/>` apart, and the assertion is
+/// that the difference is a fill and a stroke appearing. Each half alone is
+/// satisfiable by accident; the pair is not.
+///
+/// The overlay is positioned on exactly the box "Themed Band" occupies and paints
+/// after it, so the failure this guards against is literally a shape hiding another
+/// shape — the symptom the real deck was reported with.
+#[test]
+fn a_shape_that_states_no_fill_paints_none_although_its_theme_reference_resolves() {
+    /// The fill and the stroke of the anchor belonging to the named shape.
+    fn appearance(
+        imported: &ImportedPresentation,
+        name: &str,
+    ) -> (Option<AnchorFill>, Option<AnchorStroke>) {
+        let slide = &imported.presentation.slides()[0];
+        let node = slide
+            .shapes
+            .children
+            .iter()
+            .find(|child| child.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("the fixture carries a shape named {name}"))
+            .id();
+        let canvas = lay_out_slide(&imported.presentation, 0, &shaper()).expect("slide 1 lays out");
+        let anchor = canvas
+            .anchors
+            .iter()
+            .find(|anchor| anchor.node == Some(node))
+            .unwrap_or_else(|| panic!("{name} reaches the display list"));
+        match &anchor.content {
+            AnchorContent::Rectangle { fill, stroke } => (fill.clone(), stroke.clone()),
+            other => panic!("{name} is a prst=\"rect\", not {other:?}"),
+        }
+    }
+
+    let slide_one = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slides/slide1.xml")
+            .expect("the fixture carries slide1.xml")
+            .1,
+    )
+    .expect("the slide part is UTF-8");
+    // The overlay's two suppressions, as the only difference between the two decks.
+    // Both substrings are asserted unique, because a perturbation that matched the
+    // subtitle's `<a:noFill/>` as well would change two shapes and the guard could
+    // not say which one it was charged to.
+    const FILL: &str =
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln>"#;
+    const NEITHER: &str = r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#;
+    assert_eq!(
+        slide_one.matches(FILL).count(),
+        1,
+        "the two halves of this guard must be one change apart"
+    );
+
+    let suppressed = open(&deck::deck());
+    let (no_fill, no_stroke) = appearance(&suppressed, "Transparent Overlay");
+    assert_eq!(
+        no_fill, None,
+        "a shape that states `<a:noFill/>` must paint no fill, whatever its \
+         `a:fillRef` resolves to"
+    );
+    assert_eq!(
+        no_stroke, None,
+        "and `<a:ln><a:noFill/></a:ln>` must paint no stroke"
+    );
+
+    let inheriting = open(&deck::deck_with(
+        "ppt/slides/slide1.xml",
+        slide_one.replace(FILL, NEITHER).as_bytes(),
+    ));
+    let (themed_fill, themed_stroke) = appearance(&inheriting, "Transparent Overlay");
+    assert!(
+        themed_fill.is_some(),
+        "without the `<a:noFill/>` the same shape must take its theme reference's \
+         fill, or this guard is passing because nothing resolves"
+    );
+    assert!(themed_stroke.is_some(), "and its theme reference's outline");
+
+    // The placeholder half of the same fact, on a shape with no `p:style` at all:
+    // the slide's `subTitle` states `<a:noFill/>` and the layout slot it inherits
+    // its geometry from states a solid fill, so "transparent" and "took the slot's
+    // fill" are different display lists rather than the same one.
+    let (subtitle_fill, _) = appearance(&suppressed, "Subtitle 2");
+    assert_eq!(
+        subtitle_fill, None,
+        "a suppressed fill must not be filled from the placeholder slot either"
+    );
+    let layout_slot_fill = imported_layout_subtitle_fill(&suppressed);
+    assert!(
+        layout_slot_fill.is_some(),
+        "the layout's `subTitle` slot must carry a fill, or there is nothing for \
+         the slide's suppression to beat"
+    );
+}
+
+/// The fill the layout's `subTitle` slot carries, so the guard above can assert
+/// there was something to inherit.
+fn imported_layout_subtitle_fill(
+    imported: &ImportedPresentation,
+) -> Option<casual_doc_model::v1::Fill> {
+    imported
+        .presentation
+        .layouts()
+        .iter()
+        .flat_map(|layout| layout.shapes.children.iter())
+        .filter(|node| node.name.as_deref() == Some("Subtitle 2"))
+        .find_map(|node| match &node.content {
+            casual_doc_model::v1::GroupChild::Shape(shape) => shape.fill.clone(),
+            _ => None,
+        })
+}
+
+/// A LINE whose outline is suppressed paints nothing at all — no anchor, rather than
+/// an anchor with a cleared field.
+///
+/// # Why this case is separate from the rectangle one
+///
+/// `AnchorContent::Line`'s stroke is not an `Option`: a line IS its stroke, and the
+/// display list has no spelling for an unstroked one. So honouring
+/// `<a:ln><a:noFill/></a:ln>` on a `prst="line"` means dropping the anchor, which is
+/// the only arm of the suppression that changes how MANY items reach the backend. A
+/// guard written against rectangles exercises none of it, and the failure it would
+/// miss is the worst-looking one: `preset_geometry_content` falls back to a BLACK
+/// hairline for a line with no stroke, so the shape the author made invisible comes
+/// back as a black rule across the slide.
+///
+/// Differential, because "no anchor" is also what a shape that failed to import
+/// produces: the second half asserts that giving the same connector a real outline
+/// brings the anchor back.
+#[test]
+fn a_line_whose_outline_is_suppressed_paints_no_anchor_at_all() {
+    fn anchor_count(imported: &ImportedPresentation, name: &str) -> usize {
+        let slide = &imported.presentation.slides()[2];
+        let node = slide
+            .shapes
+            .children
+            .iter()
+            .find(|child| child.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("the fixture carries a shape named {name}"))
+            .id();
+        let canvas =
+            lay_out_slide(&imported.presentation, 2, &shaper()).expect("slide 10 lays out");
+        canvas
+            .anchors
+            .iter()
+            .filter(|anchor| anchor.node == Some(node))
+            .count()
+    }
+
+    let slide_ten = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slides/slide10.xml")
+            .expect("the fixture carries slide10.xml")
+            .1,
+    )
+    .expect("the slide part is UTF-8");
+    const SUPPRESSED: &str = r#"<a:ln w="12700"><a:noFill/></a:ln>"#;
+    const STROKED: &str =
+        r#"<a:ln w="12700"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln>"#;
+    assert_eq!(
+        slide_ten.matches(SUPPRESSED).count(),
+        1,
+        "the two halves of this guard must be one change apart"
+    );
+
+    assert_eq!(
+        anchor_count(&open(&deck::deck()), "Invisible Rule"),
+        0,
+        "a line with no stroke has nothing to paint, and an anchor for it would be \
+         painted as the default black hairline"
+    );
+    assert_eq!(
+        anchor_count(
+            &open(&deck::deck_with(
+                "ppt/slides/slide10.xml",
+                slide_ten.replace(SUPPRESSED, STROKED).as_bytes(),
+            )),
+            "Invisible Rule"
+        ),
+        1,
+        "and the same connector with a real outline must paint, or this guard is \
+         passing because the shape never reached layout"
     );
 }

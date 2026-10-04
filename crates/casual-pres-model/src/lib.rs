@@ -31,6 +31,11 @@
 //! through. It is the reason this crate exists rather than a `Document` profile: a
 //! slide shape states only what it overrides, so discarding the slot would discard
 //! the geometry of nearly every shape in a real deck.
+//!
+//! [`SlidePaint`] is the other half of that same fact: because a slide shape
+//! inherits, "states nothing" and "states nothing *deliberately*" are different
+//! instructions, and `Option<v1::Fill>` has one spelling for both. A document,
+//! which inherits neither, never needed the distinction.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -51,12 +56,12 @@ mod text_run;
 mod text_styles;
 mod theme;
 
-pub use error::{PresentationError, SlideAxis, TableAxis};
+pub use error::{PaintProperty, PresentationError, SlideAxis, TableAxis};
 pub use ids::{SlideId, SlideLayoutId, SlideMasterId};
 pub use layout_kind::LayoutKind;
 pub use placeholder::{Placeholder, PlaceholderKind, PlaceholderOrientation, PlaceholderSize};
 pub use presentation::{Presentation, SCHEMA_VERSION, Slide, SlideLayout, SlideMaster};
-pub use shape_tree::{ShapeTree, SlideNode};
+pub use shape_tree::{ShapeTree, SlideNode, SlidePaint};
 pub use slide_size::{MAX_SLIDE_EMU, MIN_SLIDE_EMU, SlideSize, SlideSizeKind};
 // Own line (anti-conflict): the PPTX-only table vocabulary.
 pub use table::{

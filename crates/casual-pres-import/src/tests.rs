@@ -885,9 +885,24 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
             "the shape is still drawn, it just is not wearing the right appearance"
         );
     }
-    // And once per REFERENCE, not once per deck: the fixture carries two
-    // `a:fontRef`s on two different shapes, and collapsing them would make a deck
+    // And once per REFERENCE, not once per deck: collapsing them would make a deck
     // that loses a typeface on forty shapes look like one that loses it on one.
+    //
+    // The expected count is DERIVED from the model's own side table rather than
+    // typed, and that is not tidiness — the typed `2` here went stale the moment a
+    // third `p:style` joined the fixture, which is a guard failing for the one
+    // reason a guard must not: the fixture grew.
+    let font_refs = imported
+        .presentation
+        .definitions()
+        .shape_styles
+        .iter()
+        .filter(|(_, style)| style.font_ref.is_some())
+        .count();
+    assert!(
+        font_refs >= 2,
+        "the fixture must carry at least two a:fontRefs on different shapes, or          the per-reference count below cannot tell one finding per reference from          one per deck; it carries {font_refs}"
+    );
     assert_eq!(
         imported
             .report
@@ -895,7 +910,7 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
             .iter()
             .find(|entry| entry.feature == "shape/fontRef")
             .map(|entry| entry.occurrences),
-        Some(2),
+        u32::try_from(font_refs).ok(),
         "one finding per reference: {features:?}"
     );
 
@@ -1932,3 +1947,240 @@ const SLIDE_WITH_DUPLICATE_SLOTS: &str = r#"<?xml version="1.0" encoding="UTF-8"
 </p:cSld>
 <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
 </p:sld>"#;
+/// `<a:noFill/>` is READ as a third state, distinct both from an absent fill and
+/// from a stated one.
+///
+/// # Why this needs five shapes and not one
+///
+/// The thing under test is a three-valued reading, and a guard that looks at one
+/// shape cannot tell a three-valued reading from a two-valued one that happens to
+/// agree on that shape. So every combination the fixture can produce is asserted,
+/// and two of them are the ones a wrong reading collapses:
+///
+/// * `Authored` with **no modelled value** — slide 10's `a:gradFill` callout. This
+///   is the case that proves `SlidePaint` is not `fill.is_some()` spelled
+///   differently: the shape is filled in the file and unfilled in the model, and a
+///   consumer that inferred the state from the value would inherit a theme fill
+///   over an authored gradient.
+/// * `Suppressed` beside an `Inherited` outline — slide 1's `subTitle`, which
+///   states `<a:noFill/>` and no `a:ln` at all. A reader that folded the two
+///   properties into one flag cannot produce this.
+#[test]
+fn a_shape_that_states_no_fill_is_read_as_a_third_state() {
+    use casual_pres_model::{ShapeTree, SlidePaint};
+
+    let imported = import_fixture();
+    let stated = |tree: &ShapeTree, name: &str| {
+        tree.children
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .map(|node| (node.fill, node.outline))
+            .unwrap_or_else(|| panic!("the fixture carries a shape named {name}"))
+    };
+    let slide_one = &imported.presentation.slides()[0].shapes;
+    let slide_ten = &imported.presentation.slides()[2].shapes;
+
+    assert_eq!(
+        stated(slide_one, "Transparent Overlay"),
+        (SlidePaint::Suppressed, SlidePaint::Suppressed),
+        "`<a:noFill/>` and `<a:ln><a:noFill/></a:ln>` are both explicit nothings"
+    );
+    assert_eq!(
+        stated(slide_one, "Subtitle 2"),
+        (SlidePaint::Suppressed, SlidePaint::Inherited),
+        "a suppressed fill beside an absent outline — the pair one flag cannot hold"
+    );
+    assert_eq!(
+        stated(slide_one, "Title 1"),
+        (SlidePaint::Inherited, SlidePaint::Inherited),
+        "a `<p:spPr/>` states neither, so both inherit"
+    );
+    assert_eq!(
+        stated(slide_one, "Accent Bar"),
+        (SlidePaint::Authored, SlidePaint::Authored),
+        "a solid fill and a dashed outline are both stated values"
+    );
+
+    // The gradient: stated, unmodellable, and therefore `Authored` with nothing in
+    // the drawing to derive that from.
+    assert_eq!(
+        stated(slide_ten, "Callout"),
+        (SlidePaint::Authored, SlidePaint::Inherited),
+        "an `a:gradFill` is a stated fill even though this build cannot hold it"
+    );
+    let callout_fill = slide_ten
+        .children
+        .iter()
+        .find(|node| node.name.as_deref() == Some("Callout"))
+        .and_then(|node| match &node.content {
+            GroupChild::Shape(shape) => shape.fill.clone(),
+            _ => None,
+        });
+    assert!(
+        callout_fill.is_none(),
+        "and it carries no modelled fill, which is what makes `Authored` \
+         information the value does not already have"
+    );
+}
+
+/// The `a:noFill` findings that LEAVE the report, and the ones that must stay.
+///
+/// Both halves, because either alone is satisfiable by accident: "it is not
+/// reported" passes for a reader that stopped reading the element at all, and "it
+/// is reported" passes for the reader this change replaced.
+///
+/// The surviving count is DERIVED from the fixture's own markup — a grouped shape
+/// is the one place the distinction has nowhere to live, because a `p:grpSp`'s
+/// children are bare `GroupChild`s — so the guard cannot drift from the fixture and
+/// cannot be satisfied by a number someone typed.
+#[test]
+fn a_no_fill_is_reported_only_where_the_model_cannot_carry_it() {
+    use casual_pres_model::SlidePaint;
+
+    let imported = import_fixture();
+    let (grouped_fills, grouped_outlines) = grouped_no_fill_counts();
+    assert!(
+        grouped_fills > 0 && grouped_outlines > 0,
+        "the fixture must state `a:noFill` inside a group on both a fill and an \
+         outline, or the surviving half of this guard is vacuous; it states \
+         {grouped_fills} and {grouped_outlines}"
+    );
+    let carried = imported
+        .presentation
+        .slides()
+        .iter()
+        .flat_map(|slide| slide.shapes.children.iter())
+        .filter(|node| node.fill.suppresses() || node.outline.suppresses())
+        .count();
+    assert!(
+        carried >= 2,
+        "and it must state `a:noFill` on at least two TOP-LEVEL shapes, or the \
+         half that must no longer report is vacuous; it carries {carried}"
+    );
+
+    let occurrences = |feature: &str| {
+        imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == feature)
+            .map_or(0, |entry| entry.occurrences)
+    };
+    assert_eq!(
+        Some(occurrences("spPr/@noFill")),
+        u32::try_from(grouped_fills).ok(),
+        "a top-level `a:noFill` is carried on the SlideNode and is no longer a \
+         loss; only a grouped one still is, and the count must be the grouped \
+         count exactly"
+    );
+    assert_eq!(
+        Some(occurrences("ln/@noFill")),
+        u32::try_from(grouped_outlines).ok(),
+        "same for `a:ln/a:noFill`"
+    );
+    // And the states really are the ones that stopped reporting, rather than the
+    // report having been quietened for all of them.
+    assert!(
+        imported.presentation.slides()[0]
+            .shapes
+            .children
+            .iter()
+            .any(|node| node.fill == SlidePaint::Suppressed),
+        "the top-level suppression must be in the model, not merely absent from \
+         the report"
+    );
+}
+
+/// How many `<a:noFill/>` the fixture states INSIDE a `p:grpSp`, split into fills
+/// and outlines.
+///
+/// Scanned from the fixture's own bytes rather than counted by hand, and it asserts
+/// the spelling it depends on: the fixture writes a suppressed outline as the exact
+/// string `<a:ln><a:noFill/></a:ln>`, so a reformat that broke this derivation
+/// fails here loudly instead of silently returning zero.
+fn grouped_no_fill_counts() -> (usize, usize) {
+    const OUTLINE: &str = "<a:ln><a:noFill/></a:ln>";
+    const ANY: &str = "<a:noFill/>";
+    let mut fills = 0;
+    let mut outlines = 0;
+    let mut saw_group = false;
+    for (name, bytes) in deck::deck_parts() {
+        let slide_side = name.starts_with("ppt/slides/slide")
+            || name.starts_with("ppt/slideLayouts/slideLayout")
+            || name.starts_with("ppt/slideMasters/slideMaster");
+        if !slide_side || !name.ends_with(".xml") {
+            continue;
+        }
+        let part = String::from_utf8(bytes).expect("the fixture's parts are UTF-8");
+        let mut rest = part.as_str();
+        while let Some(start) = rest.find("<p:grpSp>") {
+            saw_group = true;
+            // The fixture nests no group inside a group, so the first closing tag
+            // ends this one. A nested group would make these UNDER-count, which is
+            // the safe direction: the caller asserts the counts are non-zero and
+            // compares them against the report, so an undercount fails rather than
+            // passes.
+            let body = &rest[start..];
+            let end = body.find("</p:grpSp>").unwrap_or(body.len());
+            let group = &body[..end];
+            let group_outlines = group.matches(OUTLINE).count();
+            outlines += group_outlines;
+            fills += group.matches(ANY).count() - group_outlines;
+            // Step past the closing tag so the loop cannot spin on it.
+            rest = body[end..].strip_prefix("</p:grpSp>").unwrap_or("");
+        }
+    }
+    assert!(
+        saw_group,
+        "the fixture must carry a `p:grpSp`, or this derivation is reading the \
+         wrong parts"
+    );
+    (fills, outlines)
+}
+
+/// A table CELL's `a:noFill` is still a loss, and the report names which construct
+/// lost it.
+///
+/// `TableCellProperties` carries an `Option<Fill>` and four `Option<ShapeStroke>`
+/// edges, so "states nothing" and "states `a:noFill`" collapse there exactly as they
+/// did on a shape before `SlidePaint` — and it matters for the same reason: a cell
+/// that suppresses its fill must not take its table style's band fill, and one that
+/// suppresses its right border must not take the style's grid line.
+///
+/// The names are asserted, not just the presence: `tcPr/@noFill` and `lnR/@noFill`
+/// rather than one `spPr/@noFill` for both. Charging a cell's loss to `spPr` would
+/// make a deck look as though it had lost a shape's fill, and charging an edge to
+/// `ln` would make it indistinguishable from a shape's outline — which is what this
+/// reader did until the shape half was fixed.
+#[test]
+fn a_cell_that_states_no_fill_is_reported_by_the_construct_that_lost_it() {
+    let imported = import_fixture();
+    let features = features(&imported);
+    for expected in ["tcPr/@noFill", "lnR/@noFill"] {
+        assert!(
+            features.contains(&expected),
+            "a cell's suppressed fill and suppressed edge are both still losses, \
+             and the report must name each: {features:?}"
+        );
+    }
+    // And the cell really did arrive with nothing, rather than the finding being
+    // reported over a value that survived.
+    let cell = imported.presentation.slides()[2]
+        .shapes
+        .children
+        .iter()
+        .find_map(|node| node.table.as_ref())
+        .and_then(|table| table.rows.last())
+        .and_then(|row| row.cells.first())
+        .expect("the fixture's table has a bottom-left cell");
+    let properties = &cell.properties;
+    assert_eq!(
+        properties.fill, None,
+        "the suppressed fill arrives as nothing"
+    );
+    assert_eq!(
+        properties.border_right, None,
+        "and so does the suppressed right edge — which is exactly why both are \
+         reported: nothing here distinguishes them from a cell that stated neither"
+    );
+}

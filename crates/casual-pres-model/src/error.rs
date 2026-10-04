@@ -49,6 +49,29 @@ impl fmt::Display for TableAxis {
     }
 }
 
+/// Which of a shape's two paintable properties a [`crate::SlidePaint`] failure was
+/// charged to.
+///
+/// A value rather than two near-identical error variants, for the reason
+/// [`TableAxis`] is one: the two properties are validated by one routine, so the
+/// axis has to be data or the failure can be reported as the wrong half.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaintProperty {
+    /// The fill: `a:solidFill` and its siblings, or `<a:noFill/>`.
+    Fill,
+    /// The outline: `a:ln`.
+    Outline,
+}
+
+impl fmt::Display for PaintProperty {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Fill => "fill",
+            Self::Outline => "outline",
+        })
+    }
+}
+
 /// Presentation model construction or validation failure.
 ///
 /// Deliberately a separate type from [`ModelError`] rather than more variants on it:
@@ -115,6 +138,22 @@ pub enum PresentationError {
     /// model exposes a slide's title as a single `Shapes.Title`, so a second title is
     /// not addressable there either.
     DuplicateTitlePlaceholder(NodeId),
+    /// A shape said its fill or outline was explicitly nothing
+    /// ([`crate::SlidePaint::Suppressed`]) while the drawing carried a value for
+    /// it.
+    ///
+    /// Refused rather than resolved by precedence, because there is no file this
+    /// model could be a reading of: `p:spPr`'s fill is a schema CHOICE, so a shape
+    /// states `<a:noFill/>` or it states a fill, never both. A painter reaching
+    /// this pair would have to invent a rule, and an invented rule is how the
+    /// fourth state a `bool` beside an `Option` admits gets quietly settled two
+    /// different ways in two crates.
+    SuppressedPaintCarriesValue {
+        /// The offending shape.
+        shape: NodeId,
+        /// Which property disagreed with the drawing.
+        property: PaintProperty,
+    },
     /// A DrawingML group nested deeper than the supported bound.
     GroupNestingTooDeep(NodeId),
     /// A slide carried a `GroupChild::TextBox`, the document model's text-box
@@ -264,6 +303,10 @@ impl fmt::Display for PresentationError {
             Self::DuplicateTitlePlaceholder(id) => {
                 write!(formatter, "shape tree {id} has more than one title")
             }
+            Self::SuppressedPaintCarriesValue { shape, property } => write!(
+                formatter,
+                "shape {shape} states no {property} and carries one"
+            ),
             Self::GroupNestingTooDeep(id) => {
                 write!(
                     formatter,

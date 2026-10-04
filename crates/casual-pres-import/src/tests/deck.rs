@@ -47,6 +47,42 @@
 //! can, so a reader that dropped the unmodelled entry instead of keeping a `None`
 //! in its place would resolve `idx="2"` to entry 1 and paint the wrong outline
 //! with nothing reporting it.
+//!
+//! # The third adversarial choice: `a:noFill` where it CHANGES something
+//!
+//! A shape stating `<a:noFill/>` is only a test of anything if the same shape
+//! would otherwise be filled, or stroked, or painted at all. So the deck states it
+//! in five places, each of which `casual_pres_model::SlidePaint` has to answer
+//! differently:
+//!
+//! * **Over a theme style reference.** `slide1`'s "Transparent Overlay" states
+//!   `<a:noFill/>` and `<a:ln><a:noFill/></a:ln>` AND a `p:style` whose
+//!   `a:fillRef idx="1"` and `a:lnRef idx="1"` both resolve to solid `a:phClr`
+//!   entries with `accent6` as the argument. So the shared appearance resolver
+//!   would hand it a fill and a stroke, and it is positioned on EXACTLY the box
+//!   "Themed Band" occupies and paints after it — so a build that filled it hides
+//!   the band entirely, which is the user-visible failure, in a shape the display
+//!   list can be asked about. (`accent6` and not `accent1`, because a theme guard
+//!   perturbs the Accent Bar's `a:fillRef` by its exact text and a second
+//!   identical one would silently change two shapes.)
+//! * **Over a filled placeholder slot.** `slide1`'s `subTitle` states
+//!   `<a:noFill/>` and nothing else, and `slideLayout1`'s `subTitle` slot — the
+//!   one it inherits its geometry from — states a solid `FFF2CC`. "Transparent"
+//!   and "took the slot's fill" therefore give different display lists.
+//! * **On a LINE, where suppression leaves nothing at all.** `slide10`'s
+//!   "Invisible Rule"; its own note says why it is last in that tree.
+//! * **On a table CELL, where it is still LOST.** `slide10`'s "Bottom left" cell
+//!   states `<a:noFill/>` and an `<a:lnR><a:noFill/></a:lnR>`, and
+//!   `TableCellProperties` has an `Option<Fill>` and four `Option<ShapeStroke>`
+//!   edges with no room for a third state — so both are reported, by the name of
+//!   the construct that lost each.
+//! * **Inside a group, where it is still LOST.** `slide2`'s grouped "Right Box"
+//!   states `<a:noFill/>` with a visible `a:ln` and its "Left Box" states the
+//!   mirror image — a solid fill with `<a:ln><a:noFill/></a:ln>` — and a group's
+//!   children are bare `GroupChild`s with no `SlideNode` to carry either. So both
+//!   must still be reported, and the report must distinguish them from the
+//!   top-level cases above. A fixture whose only `a:noFill` were the grouped one
+//!   could not tell the fix from the bug.
 
 use std::io::{Cursor, Write};
 
@@ -169,7 +205,7 @@ const LAYOUT_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 </p:sp>
 <p:sp>
 <p:nvSpPr><p:cNvPr id="3" name="Subtitle 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
-<p:spPr><a:xfrm><a:off x="1524000" y="3602038"/><a:ext cx="9144000" cy="1655762"/></a:xfrm></p:spPr>
+<p:spPr><a:xfrm><a:off x="1524000" y="3602038"/><a:ext cx="9144000" cy="1655762"/></a:xfrm><a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill></p:spPr>
 <p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr marL="0" indent="0" algn="ctr"><a:buNone/><a:defRPr sz="2400"/></a:lvl1pPr></a:lstStyle><a:p><a:r><a:rPr lang="en-US"/><a:t>Click to edit Master subtitle style</a:t></a:r></a:p></p:txBody>
 </p:sp>
 </p:spTree>
@@ -218,6 +254,15 @@ const LAYOUT_TWO_RELS: &str = LAYOUT_ONE_RELS;
 /// rectangle below them does carry one, plus a solid fill, a dashed outline and a
 /// rotation in 1/60000 degree.
 ///
+/// The `subTitle` placeholder's `p:spPr` is POPULATED (with `<a:noFill/>`) while
+/// the title's self-closes, so the two reporting paths for "states no `a:xfrm`"
+/// are both exercised on one slide — see
+/// `the_report_names_every_construct_the_projection_did_not_recover`, whose count
+/// guard needs both.
+///
+/// "Transparent Overlay" is the slide's `a:noFill` case that CHANGES a display
+/// list; the module header says why it is shaped the way it is.
+///
 /// The title's run states `sz="4400"` — 44 points in HUNDREDTHS of a point. A
 /// reader that treated it as half-points would make it 2200 points.
 const SLIDE_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -235,7 +280,7 @@ const SLIDE_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 </p:sp>
 <p:sp>
 <p:nvSpPr><p:cNvPr id="3" name="Subtitle 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
-<p:spPr/>
+<p:spPr><a:noFill/></p:spPr>
 <p:txBody><a:bodyPr/><a:lstStyle/>
 <a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="2400" i="1"/><a:t>First in presentation order</a:t></a:r><a:br><a:rPr lang="en-US" sz="1200"/></a:br><a:r><a:rPr lang="en-US" sz="2400"><a:latin typeface="+mn-lt"/></a:rPr><a:t>second line</a:t></a:r></a:p>
 </p:txBody>
@@ -255,6 +300,12 @@ const SLIDE_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <p:sp>
 <p:nvSpPr><p:cNvPr id="5" name="Themed Band"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
 <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="76200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="tx1"/></a:solidFill></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="7" name="Transparent Overlay"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="76200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr>
+<p:style><a:lnRef idx="1"><a:schemeClr val="accent6"/></a:lnRef><a:fillRef idx="1"><a:schemeClr val="accent6"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent6"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="dk2"/></a:fontRef></p:style>
 <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
 </p:sp>
 <p:sp>
@@ -312,7 +363,7 @@ const SLIDE_TWO: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <p:grpSpPr><a:xfrm><a:off x="6096000" y="4572000"/><a:ext cx="2743200" cy="1371600"/><a:chOff x="0" y="0"/><a:chExt cx="1371600" cy="685800"/></a:xfrm></p:grpSpPr>
 <p:sp>
 <p:nvSpPr><p:cNvPr id="6" name="Left Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
-<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="609600" cy="685800"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></p:spPr>
+<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="609600" cy="685800"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr>
 <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
 </p:sp>
 <p:sp>
@@ -383,6 +434,15 @@ const SLIDE_TWO_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone=
 /// answer, not the layout's and not the master's.
 ///
 /// It is also the third slide in `p:sldIdLst` while sorting SECOND by part name.
+///
+/// Its last child is "Invisible Rule": a `p:cxnSp` whose `a:prstGeom` is a LINE and
+/// whose `a:ln` states `<a:noFill/>`. A line is nothing but its stroke, so
+/// suppressing it leaves nothing to paint at all — the one case where honouring
+/// `a:noFill` means emitting no anchor rather than clearing a field on one, and the
+/// arm a guard written only against rectangles cannot reach. It is LAST in the tree
+/// on purpose: `CT_Connector` has no `p:txBody` and the writer gives every `p:sp`
+/// one, so a reopened connector allocates paragraph ids the original did not and
+/// every node id after it would shift.
 const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" show="0">
 <p:cSld name="Appendix">
@@ -438,7 +498,7 @@ const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <a:tc vMerge="1"><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Covered</a:t></a:r></a:p></a:txBody></a:tc>
 </a:tr>
 <a:tr h="533400">
-<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom left</a:t></a:r></a:p></a:txBody></a:tc>
+<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom left</a:t></a:r></a:p></a:txBody><a:tcPr><a:lnR><a:noFill/></a:lnR><a:noFill/></a:tcPr></a:tc>
 <a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom mid</a:t></a:r></a:p></a:txBody></a:tc>
 <a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom right</a:t></a:r></a:p></a:txBody><a:tcPr><a:lnTlToBr w="12700"><a:solidFill><a:srgbClr val="7F7F7F"/></a:solidFill></a:lnTlToBr></a:tcPr></a:tc>
 </a:tr>
@@ -450,6 +510,10 @@ const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <p:xfrm><a:off x="914400" y="4572000"/><a:ext cx="2286000" cy="1143000"/></p:xfrm>
 <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdChart"/></a:graphicData></a:graphic>
 </p:graphicFrame>
+<p:cxnSp>
+<p:nvCxnSpPr><p:cNvPr id="7" name="Invisible Rule"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>
+<p:spPr><a:xfrm><a:off x="914400" y="6248400"/><a:ext cx="3048000" cy="0"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom><a:ln w="12700"><a:noFill/></a:ln></p:spPr>
+</p:cxnSp>
 </p:spTree>
 </p:cSld>
 <p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent5" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>

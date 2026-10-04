@@ -8,16 +8,17 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    ColorScheme, ColorTransform, Definitions, Extent, FontCollection, FontScheme, GroupChild,
+    ColorScheme, ColorTransform, Definitions, Extent, Fill, FontCollection, FontScheme, GroupChild,
     GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH, MediaId, MediaReference, PointEmu,
-    RgbColor, Rgba, SchemeColor, ShapeGeometry, SystemColor, ThemeFontEntry, WordprocessingGroup,
+    RgbColor, Rgba, SchemeColor, ShapeGeometry, ShapeStroke, SystemColor, ThemeFontEntry,
+    WordprocessingGroup,
 };
 
 use crate::{
-    LayoutKind, MAX_SLIDE_EMU, MIN_SLIDE_EMU, Placeholder, PlaceholderKind, PlaceholderOrientation,
-    PlaceholderSize, Presentation, PresentationError, SCHEMA_VERSION, ShapeTree, Slide, SlideAxis,
-    SlideId, SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId, SlideNode, SlideSize,
-    SlideSizeKind, TextStyles,
+    LayoutKind, MAX_SLIDE_EMU, MIN_SLIDE_EMU, PaintProperty, Placeholder, PlaceholderKind,
+    PlaceholderOrientation, PlaceholderSize, Presentation, PresentationError, SCHEMA_VERSION,
+    ShapeTree, Slide, SlideAxis, SlideId, SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId,
+    SlideNode, SlidePaint, SlideSize, SlideSizeKind, TextStyles,
 };
 // Own line (anti-conflict): the theme indirection, new in this change.
 use crate::{
@@ -892,7 +893,11 @@ fn absent_optional_fields_are_omitted_rather_than_written_as_null() {
         );
     }
     let node = &json["slides"][0]["shapes"]["children"][0];
-    for omitted in ["placeholder", "name", "hidden"] {
+    // `fill` and `outline` are in this list and not merely defaulted: they are the
+    // two newest fields on the node and every shape in every deck carries them, so
+    // writing them at their default would add two lines per shape to every snapshot
+    // — on a 300-slide deck that is thousands of lines saying "nothing was stated".
+    for omitted in ["placeholder", "name", "hidden", "fill", "outline"] {
         assert!(
             node.get(omitted).is_none(),
             "shape.{omitted} should be omitted when unset, got {node}"
@@ -2328,4 +2333,127 @@ fn deck_validation_delegates_to_the_shared_theme_rule() {
         format!("{error:?}").contains("fontScheme"),
         "and refused BY THE THEME RULE, naming the field it broke: {error:?}"
     );
+}
+
+/// The fourth, impossible state is refused rather than left to each painter to
+/// settle: "explicitly nothing" beside a value.
+///
+/// `p:spPr`'s fill is a schema CHOICE, so no file states `<a:noFill/>` and a fill.
+/// The point of refusing it is that the pairing is REPRESENTABLE — it is exactly
+/// what a `bool` beside an `Option<Fill>` would have admitted — and a model that
+/// admits an unreachable state hands every consumer a branch to invent an answer
+/// for. Four assertions, because the two properties are validated by one routine
+/// and the legal halves must stay legal.
+#[test]
+fn an_explicitly_suppressed_fill_or_outline_beside_a_value_is_refused() {
+    let filled = |node: NodeId| {
+        GroupChild::Shape(GroupShape {
+            id: node,
+            offset: ORIGIN,
+            extent: BOX,
+            geometry: ShapeGeometry::Rectangle,
+            preset: None,
+            adjustments: Vec::new(),
+            path: None,
+            fill: Some(Fill::Solid(Rgba {
+                r: 0x44,
+                g: 0x72,
+                b: 0xC4,
+                a: 255,
+            })),
+            stroke: Some(ShapeStroke {
+                color: Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                width_emu: 12_700,
+                dash: None,
+                head_end: None,
+                tail_end: None,
+            }),
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+            hyperlink: None,
+        })
+    };
+
+    // Both legal readings of a shape that carries values: it stated them, or a
+    // caller built it by hand and said nothing. Neither is refused, and asserting
+    // that is what stops the check being "any Suppressed is refused".
+    tree(id(60), vec![SlideNode::new(filled(id(61)))])
+        .validate(&Definitions::default())
+        .expect("a hand-built filled shape states nothing and is legal");
+    tree(
+        id(60),
+        vec![
+            SlideNode::new(filled(id(61)))
+                .stating_fill(SlidePaint::Authored)
+                .stating_outline(SlidePaint::Authored),
+        ],
+    )
+    .validate(&Definitions::default())
+    .expect("a stated fill beside its value is the ordinary case");
+
+    // Mutation: deleting the `node.fill.suppresses() && fill` arm from
+    // `validate_stated_paint` made this `expect_err` fail.
+    assert_eq!(
+        tree(
+            id(60),
+            vec![SlideNode::new(filled(id(61))).stating_fill(SlidePaint::Suppressed)],
+        )
+        .validate(&Definitions::default())
+        .expect_err("a:noFill beside a fill is not a file"),
+        PresentationError::SuppressedPaintCarriesValue {
+            shape: id(61),
+            property: PaintProperty::Fill,
+        }
+    );
+    // And the outline half separately, because one routine checks both and a
+    // guard on one of them cannot tell that the other is wired up. The property
+    // in the error is asserted, not merely the variant: reporting the wrong half
+    // is the failure a shared routine actually has.
+    assert_eq!(
+        tree(
+            id(60),
+            vec![SlideNode::new(filled(id(61))).stating_outline(SlidePaint::Suppressed)],
+        )
+        .validate(&Definitions::default())
+        .expect_err("a:ln/a:noFill beside a stroke is not a file"),
+        PresentationError::SuppressedPaintCarriesValue {
+            shape: id(61),
+            property: PaintProperty::Outline,
+        }
+    );
+}
+
+/// A picture may state `<a:noFill/>` and still carry its image, because the two are
+/// different things: the image is the `p:blipFill` and the suppressed fill is the
+/// box behind it, which this model has no field for at all.
+///
+/// Stated as a guard rather than a comment because it is the one asymmetry in
+/// `validate_stated_paint`, and an over-eager tightening of that routine would
+/// refuse every real picture whose author turned its shape fill off.
+#[test]
+fn a_picture_may_suppress_its_shape_fill_and_keep_its_image() {
+    let mut definitions = Definitions::default();
+    definitions.media.insert(
+        MediaId::new(id(71)),
+        MediaReference {
+            relationship_id: "rId1".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "/ppt/media/image1.png".to_owned(),
+        },
+    );
+    tree(
+        id(70),
+        vec![
+            SlideNode::new(picture(id(72), MediaId::new(id(71))))
+                .stating_fill(SlidePaint::Suppressed),
+        ],
+    )
+    .validate(&definitions)
+    .expect("a picture's suppressed shape fill says nothing about its image");
 }
