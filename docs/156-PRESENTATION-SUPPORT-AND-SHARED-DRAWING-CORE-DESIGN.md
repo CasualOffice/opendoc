@@ -302,8 +302,10 @@ the *flag* arrives via `asc_onGetEditorPermissions`, which the proprietary Docum
 Server drives. Run the AGPL build standalone and it is permissive.
 
 `106` is a **published page** (`webapp/tools/build-doc-pages.mjs`), and under `105`
-EV-003/EV-006 understating and overstating are both false. This is recorded as an
-**open question for the owner (§11 Q1)**, not silently edited here.
+EV-003/EV-006 understating and overstating are both false. **RESOLVED (§11 Q1): `106`
+§2 now carries both halves with their line citations.** Verified by reading the
+source — `LayoutManager.js:68` for the early-return, `license.js:38-46` for the
+permissive local fallback — rather than from marketing material.
 
 ## 5. The four gates, and why they are not pagination
 
@@ -468,16 +470,33 @@ Required by the skill before designing anything structural.
 
 ## 11. Open questions for the owner
 
-- **Q1.** `106` §2's licence-gating claim needs the §4.7 refinement. Edit the
-  published page, or record the nuance elsewhere? It is a competitive claim on a
-  public page, so it is the owner's call, not this branch's.
-- **Q2.** Does presentation support live in this repository or in a sibling, per
-  `106` §1's "a future sibling"? §9.2 is written so the answer can change late: new
-  crates and a second surface move between repositories cheaply, whereas a modified
-  `v1::Document` would not.
-- **Q3.** Tier 0 is DOCX work. Should it be sequenced against the existing FID-R and
-  OO-014 rows in `105` and proceed independently of any presentation decision?
-  This document's recommendation is yes.
+- **Q1.** ~~`106` §2's licence-gating claim needs the §4.7 refinement.~~
+  **CLOSED 2026-10-04, decided here on the owner's instruction to take design
+  decisions directly from the reference.** The page is **edited**, not annotated
+  elsewhere: under `105` EV-003/EV-006 an incomplete competitive claim is a false one,
+  and a claim split across two documents is the shape that drifts. Both halves are
+  verified by reading the source: the early-return is real
+  (`LayoutManager.js:68`, `if (!_licensed || !config) return;`) and the local AGPL
+  fallback is permissive (`license.js:38-46` sets `Success`, `setCanBranding(true)`,
+  `setCustomization(true)`, `setRights(Edit)` unconditionally). `106` §2 now carries
+  both with their line citations. The wedge is unchanged and sharper: customization is
+  gated behind a **commercial component**, not behind licence text.
+- **Q2.** ~~This repository or a sibling?~~ **CLOSED 2026-10-04: this repository.**
+  Decided on the reference's own measurements rather than on preference. Only
+  **10.5%** of ONLYOFFICE's deck engine is presentation-specific (95,983 of 912,142
+  LOC, §4.1), and they ship documents, presentations and spreadsheets from **one**
+  `sdkjs` tree. A sibling repository would fork the 89.5% that is shared — the
+  DrawingML layer, the text engine, the preset table, the guide evaluator — and the
+  first divergence would be permanent. The work so far is the evidence: `a:arcTo` and
+  the theme style matrix landed as **DOCX** improvements in shared crates, which a
+  split would have made into a cross-repository port. §9.2 still holds, so the answer
+  can be revisited cheaply if it ever needs to be.
+- **Q3.** ~~Should Tier 0 proceed independently of any presentation decision?~~
+  **CLOSED 2026-10-04: yes — demonstrated rather than argued.** Rows 0.1 and 0.2 have
+  landed, and both are pure DOCX wins taken with no presentation decision made: all
+  187 preset geometries now resolve their real outline instead of 124, and a shape
+  naming a gradient or pattern theme entry now paints instead of rendering unfilled.
+  Neither change references a slide.
 - **Q4.** ~~Deferring animation authoring — survivable, or disqualifying?~~
   **CLOSED by §4.3 and §4.4: survivable.** Google Slides has no animation or
   transition model at all, and PowerPoint for the web ships only 37 of ~150 animation
@@ -487,7 +506,19 @@ Required by the skill before designing anything structural.
   `mc:AlternateContent` wrappers must round-trip byte-faithfully from day one, with a
   non-destructive affordance. Preservation is trivial; silent loss would end an
   evaluation and is already forbidden by `AGENTS.md`.
-- **Q5.** `107` says the op set is 47 in one place and 55 in another; it is 58.
+- **Q5.** ~~`107` says the op set is 47 in one place and 55 in another; it is 58.~~
+  **CLOSED 2026-10-04 — and the figure in this very question was itself already
+  stale, which is the finding.** The set has **59** operations, derived. It was
+  published as 47 (three documents), 55 (`107`'s own correction block), 58 (ADR
+  register, and this question) and 47 again in `113` and `125`: eight stale totals
+  across six documents, two of them site-published. Nobody wrote a wrong number —
+  each was right when written and became false the next time an operation was added.
+  So the fix is not an edit: `crates/casual-doc-edit/tests/operation_count.rs`
+  **derives** the count from `pub enum Operation` and fails naming any document that
+  disagrees, per the `SKILL` §9 rule that counts must be derived. The guard was driven
+  red before being trusted, and caught a real bug in itself on the first run (a
+  variant is written `InsertText {` with a space, so an un-trimmed comparison rejected
+  every variant and produced a count of zero).
 - **Q6.** ~~Where do the 187 preset definitions come from?~~ **CLOSED 2026-10-04, by me rather than by the owner, who said nothing was blocked on them.** The canonical source is ECMA-376 itself, which publishes `presetShapeDefinitions.xml`; Apache POI redistributes that file under Apache-2.0 and is the copy taken, because it is one file at a stable path. It is vendored at `fixtures/spec/` with its provenance and the rejected alternatives recorded. ONLYOFFICE's copy is AGPL-3.0-only and was **not** used — it was read as a behavioural oracle for the opcode and built-in sets only, which is the one thing it is safe for here.
   Correct `107` separately.
 

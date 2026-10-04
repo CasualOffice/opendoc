@@ -32,7 +32,7 @@ uses neither OT nor a CRDT, but a server-ordered change log plus pessimistic obj
 Matching that is cheaper. The owner chose OT anyway, and the reasons hold up:
 
 1. **The hard prerequisite is already paid.** OT needs a closed set of operations that can
-   be transformed. `casual-doc-edit` is exactly that: 47 operations, closed by invariant I2,
+   be transformed. `casual-doc-edit` is exactly that: 59 operations, closed by invariant I2,
    each returning its own **inverse** so undo is inverse-application. A design that already
    has invertible granular ops is most of the way to one that has transformable ops.
 2. **Position mapping already exists and is already affinity-correct.**
@@ -62,8 +62,11 @@ its transform rules. §3 makes this tractable; §8 is honest about what is not y
 > **Corrected 2026-09-29 by `147` (ADR-043), which implements §2.1 P-1…P-3.** Three things
 > below were wrong or missing when this section was written, and the third changed the design:
 >
-> 1. **`casual-doc-edit` has 55 operations, not 47.** The tier table in §3.1 is sized against
->    the stale count.
+> 1. **The op-set size in this section was stale, and stayed stale.** It was written as 47,
+>    corrected to 55, published as 58 elsewhere, and is **59** today. It is no longer
+>    maintained by hand: `casual-doc-edit/tests/operation_count.rs` derives the count from
+>    `pub enum Operation` and fails when any document disagrees, so the next operation added
+>    breaks a test rather than publishing a falsehood.
 > 2. **The two stacks do not merely have different op sets — they edit different document
 >    models.** `casual-doc-transaction`, `casual-doc-selection::TextSelection` and
 >    `casual-doc-sdk` operate on the Phase-0 schema-**v0** `casual_doc_model::Document`
@@ -133,7 +136,7 @@ crash recovery (`HF-011`) regardless of collaboration.
 
 ---
 
-## 3. Making OT tractable over 47 operations
+## 3. Making OT tractable over 59 operations
 
 Naive OT needs a transform for every ordered pair of concurrent operations — 47 × 47 is not
 a design, it is a wish. The tractability argument is that **most of the op set does not need
@@ -155,8 +158,9 @@ T1 is where correctness is hard and where nearly all traffic is. T2 is where nea
 > **Corrected 2026-09-30 by `150` (ADR-045), which builds this section.** The asymmetry holds
 > and was the right bet. Three details were wrong:
 >
-> 1. **T1 is 11 operations over 55, not 9 over 47.** `InsertField`, `InsertNote` and
->    `CreateBookmark` belong to it as well.
+> 1. **T1 is 11 operations, not 9.** `InsertField`, `InsertNote` and `CreateBookmark` belong
+>    to it as well. The 11 is a tier size and is still hand-maintained; only the op-set
+>    TOTAL is derived (see note 1 above).
 > 2. **`InsertInlineObject`, `InsertNote` and `CreateBookmark` insert ZERO bytes.** A drawing,
 >    a note reference and a bookmark marker are all zero-width in a paragraph's projected
 >    text, by the edit crate's own length rule. They are T1 for anchoring and inert for
