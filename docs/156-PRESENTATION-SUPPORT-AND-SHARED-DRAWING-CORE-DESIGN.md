@@ -407,12 +407,27 @@ mapping, the full inheritance cascade below `p:style` (slide → layout → mast
 layout was indeed small and did consume §3.2's published seams, which is the
 prediction above holding up.
 
-Three things in this tier remain, and two of them are the reason a deck is still
-not usable: **`p:style` → `fmtScheme` and `clrMap`/`clrMapOvr`** are unread, so
-every `a:schemeClr` on a slide is reported rather than resolved and no shape takes a
-themed fill; and **slide text is not shaped** — every cascade tier resolves, and
-nothing yet hands the resolved runs to the shaper, so a slide paints its shapes and
-no glyphs. `a:tbl` + `tableStyles.xml` and `casual-pres-wasm` are the rest.
+**Both of those are now done too.** `p:style` → `a:fmtScheme` and the
+`p:clrMap`/`p:clrMapOvr` chain are read, so an `a:schemeClr` resolves through the
+deck's own map — which matters because the DOCX-side slot mapping admits in its own
+comment that it assumes the identity `bg1=lt1`/`tx1=dk1`, and a real master states
+the dark map. And slide text is shaped: the resolved runs go to the SAME
+`LineShaper` a DOCX text box uses, so there is one shaping path in the engine rather
+than two.
+
+So Tier 2 is down to **`a:tbl` + `tableStyles.xml`** — the only genuinely PPTX-only
+item in it — and **`casual-pres-wasm`**. Everything else in this tier has landed,
+and `casual-pres-export` landed beside it although the order above places a writer
+here only implicitly.
+
+Two findings from doing it, recorded because they are properties of the plan rather
+than of the code. **Theme discovery belongs on the master**, not on the presentation
+part: ECMA-376 §13.3.8 puts the required relationship there and
+`presentation.xml.rels` carrying one is a PowerPoint convention, so a reader that
+consults only the latter imports a conformant package with no theme at all. And
+**`p:clrMap` needs its own pass**, because the schema puts it after `p:cSld` while
+the shape tree inside `p:cSld` is what needs it, and `v1::Fill` holds a concrete
+`Rgba` with nowhere to defer to.
 
 One correction to the plan above: it lists import and export "over the parameterised
 OPC layer", and that layer does not exist. `casual-doc-ooxml`'s OPC reader is
