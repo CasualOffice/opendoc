@@ -1864,8 +1864,8 @@ fn post_pagination_passes(
     // against the same palette the body runs use.
     let palette = document
         .definitions()
+        .theme(None)
         .color_scheme
-        .as_ref()
         .map(crate::flow::resolve_palette);
     let mut section_page_numbers: BTreeMap<SectionId, u32> = BTreeMap::new();
     for page in &mut layout.pages {

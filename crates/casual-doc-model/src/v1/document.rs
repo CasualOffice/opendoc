@@ -284,8 +284,10 @@ impl Document {
         self.validate_field_ranges()?;
         self.validate_charts()?;
         self.validate_font_table()?;
-        self.validate_font_scheme()?;
-        self.validate_color_scheme()?;
+        // One rule, not two: the same check `casual_pres_model` runs, because an
+        // OOXML theme's bounds are a property of the theme rather than of the
+        // document class that carries it.
+        self.definitions.validate_theme()?;
         self.validate_settings()?;
         self.validate_properties()?;
         self.validate_body()?;
@@ -326,67 +328,6 @@ impl Document {
     fn validate_properties(&self) -> Result<(), ModelError> {
         if let Some(properties) = &self.properties {
             properties.validate()?;
-        }
-        Ok(())
-    }
-
-    fn validate_font_scheme(&self) -> Result<(), ModelError> {
-        let Some(scheme) = &self.definitions.font_scheme else {
-            return Ok(());
-        };
-        for collection in [&scheme.major, &scheme.minor] {
-            for entry in [&collection.latin, &collection.ea, &collection.cs] {
-                check_domain(entry.typeface.len() <= 255, "fontScheme.typeface")?;
-                for (value, field) in [
-                    (&entry.panose, "fontScheme.panose"),
-                    (&entry.pitch_family, "fontScheme.pitchFamily"),
-                    (&entry.charset, "fontScheme.charset"),
-                ] {
-                    if let Some(value) = value {
-                        check_domain(!value.is_empty() && value.len() <= 255, field)?;
-                    }
-                }
-            }
-            for over in &collection.script_overrides {
-                check_domain(
-                    !over.script.is_empty() && over.script.len() <= 32,
-                    "fontScheme.script",
-                )?;
-                check_domain(over.typeface.len() <= 255, "fontScheme.override.typeface")?;
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_color_scheme(&self) -> Result<(), ModelError> {
-        if let Some(scheme) = &self.definitions.color_scheme {
-            check_domain(scheme.name.len() <= 255, "clrScheme.name")?;
-            for slot in [
-                &scheme.dark1,
-                &scheme.light1,
-                &scheme.dark2,
-                &scheme.light2,
-                &scheme.accent1,
-                &scheme.accent2,
-                &scheme.accent3,
-                &scheme.accent4,
-                &scheme.accent5,
-                &scheme.accent6,
-                &scheme.hyperlink,
-                &scheme.followed_hyperlink,
-            ] {
-                if let SchemeColor::System(system) = slot {
-                    check_domain(
-                        !system.value.is_empty() && system.value.len() <= 32,
-                        "clrScheme.sysClr.val",
-                    )?;
-                }
-            }
-        }
-        // The format scheme is retained verbatim; bound its size so a hostile
-        // theme cannot inflate the model unboundedly.
-        if let Some(xml) = &self.definitions.format_scheme_xml {
-            check_domain(!xml.is_empty() && xml.len() <= 1 << 20, "fmtScheme")?;
         }
         Ok(())
     }
@@ -3233,7 +3174,9 @@ fn check_embedded_part_shape(
     Ok(())
 }
 
-fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelError> {
+/// `pub(super)` so `Definitions::validate_theme` raises the same error, with the
+/// same property name, as every other bound in this module.
+pub(super) fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelError> {
     if condition {
         Ok(())
     } else {

@@ -23,6 +23,10 @@ use super::NumberingResolver;
 use super::{Chart, ChartId};
 // Own line (anti-conflict): the shape fill/line side table's payload.
 use super::ShapeFillDetail;
+// Own line (anti-conflict): the theme side table and the one theme accessor.
+use super::document::check_domain;
+use super::{SchemeColor, Theme, ThemeId, ThemeView};
+use crate::ModelError;
 // Own line (anti-conflict): the shape theme-style side table's key.
 use crate::NodeId;
 
@@ -1440,6 +1444,20 @@ pub struct Definitions {
     /// it is not. Additive: omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_scheme: Option<FormatScheme>,
+    /// Theme parts beyond the document's own, keyed by [`ThemeId`].
+    ///
+    /// Empty for every WordprocessingML document, which has exactly one theme —
+    /// the four fields above. A `.pptx` may carry one theme part per slide master,
+    /// and this is where the second and subsequent ones live; the holder of the
+    /// key is the master.
+    ///
+    /// **Read it through [`Definitions::theme`], not directly.** That accessor is
+    /// the single mechanism: it answers for the document's own theme and for a
+    /// keyed entry identically, so a consumer cannot grow a special case for one
+    /// of them. Additive: omitted when empty so existing snapshots serialize
+    /// byte-identically, and a single-theme document pays one empty `BTreeMap`.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub themes: DefinitionMap<ThemeId, Theme>,
     /// Shape theme-style references (`wps:style`), keyed by the shape's node id.
     ///
     /// A side table rather than a field on `GroupShape`: this is authored content and
@@ -1490,4 +1508,139 @@ impl Definitions {
     pub fn numbering_resolver(&self) -> NumberingResolver<'_> {
         NumberingResolver::new(&self.styles, &self.numbering, &self.abstract_numbering)
     }
+
+    /// The theme in force for one holder: `None` for the document's own theme,
+    /// `Some(id)` for a keyed entry of [`Definitions::themes`].
+    ///
+    /// This is the **one** way to read a theme. Both document classes go through
+    /// it, so a DOCX — which passes `None` always, because a WordprocessingML
+    /// package has exactly one theme — and a deck whose masters each name their
+    /// own part take the same path, and neither can grow a reader the other does
+    /// not have.
+    ///
+    /// A `Some(id)` naming no entry falls back to the document's own theme rather
+    /// than to nothing. Painting with the package's theme is a better failure than
+    /// painting with none, and the fallback is deliberate rather than defensive:
+    /// which ids are live is a property of the holders, which live outside this
+    /// struct, so `validate_theme` cannot refuse a dangling one and pretending
+    /// otherwise would be the real defect.
+    ///
+    /// Complexity: O(log themes) for a keyed lookup, O(1) for the document's own.
+    /// Allocates nothing and clones nothing, which is why it returns borrows.
+    #[must_use]
+    pub fn theme(&self, id: Option<ThemeId>) -> ThemeView<'_> {
+        if let Some(id) = id
+            && let Some(theme) = self.themes.get(&id)
+        {
+            return ThemeView::of(theme);
+        }
+        ThemeView {
+            color_scheme: self.color_scheme.as_ref(),
+            font_scheme: self.font_scheme.as_ref(),
+            format_scheme: self.format_scheme.as_ref(),
+            format_scheme_xml: self.format_scheme_xml.as_deref(),
+        }
+    }
+
+    /// Every theme this document carries, the document's own first.
+    ///
+    /// For validation and for any consumer that must touch all of them — a loss
+    /// report, a font-collection sweep — so the "primary plus table" shape is
+    /// enumerated in exactly one place.
+    ///
+    /// Complexity: O(themes).
+    pub fn themes_in_force(&self) -> impl Iterator<Item = ThemeView<'_>> {
+        std::iter::once(self.theme(None))
+            .chain(self.themes.iter().map(|(_, theme)| ThemeView::of(theme)))
+    }
+
+    /// Checks the bounds of every theme this document carries — the document's own
+    /// and every keyed entry.
+    ///
+    /// Public, and public on purpose: this is the rule for an OOXML theme, not for
+    /// a WordprocessingML one, and `casual_pres_model::Presentation::validate` has
+    /// the same theme to check. Two copies of a bounds rule drift, and the one
+    /// that drifts is always the copy nobody is reading — so the document's own
+    /// `validate` calls this rather than keeping its own.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::PropertyValueOutOfDomain`] naming the property, for a
+    /// typeface, panose, pitch-family, charset, script token or scheme name past
+    /// its bound, or a retained `a:fmtScheme` larger than 1 MiB.
+    ///
+    /// # Complexity
+    ///
+    /// O(themes x scheme size): per theme, six font entries plus their script
+    /// overrides and twelve colour slots, all bounded by the format. Not a
+    /// per-keystroke check.
+    pub fn validate_theme(&self) -> Result<(), ModelError> {
+        for theme in self.themes_in_force() {
+            if let Some(scheme) = theme.font_scheme {
+                validate_font_scheme(scheme)?;
+            }
+            if let Some(scheme) = theme.color_scheme {
+                validate_color_scheme(scheme)?;
+            }
+            // The format scheme is retained verbatim; bound its size so a hostile
+            // theme cannot inflate the model unboundedly.
+            if let Some(xml) = theme.format_scheme_xml {
+                check_domain(!xml.is_empty() && xml.len() <= 1 << 20, "fmtScheme")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The bounds of one `a:fontScheme`.
+fn validate_font_scheme(scheme: &FontScheme) -> Result<(), ModelError> {
+    for collection in [&scheme.major, &scheme.minor] {
+        for entry in [&collection.latin, &collection.ea, &collection.cs] {
+            check_domain(entry.typeface.len() <= 255, "fontScheme.typeface")?;
+            for (value, field) in [
+                (&entry.panose, "fontScheme.panose"),
+                (&entry.pitch_family, "fontScheme.pitchFamily"),
+                (&entry.charset, "fontScheme.charset"),
+            ] {
+                if let Some(value) = value {
+                    check_domain(!value.is_empty() && value.len() <= 255, field)?;
+                }
+            }
+        }
+        for over in &collection.script_overrides {
+            check_domain(
+                !over.script.is_empty() && over.script.len() <= 32,
+                "fontScheme.script",
+            )?;
+            check_domain(over.typeface.len() <= 255, "fontScheme.override.typeface")?;
+        }
+    }
+    Ok(())
+}
+
+/// The bounds of one `a:clrScheme`.
+fn validate_color_scheme(scheme: &ColorScheme) -> Result<(), ModelError> {
+    check_domain(scheme.name.len() <= 255, "clrScheme.name")?;
+    for slot in [
+        &scheme.dark1,
+        &scheme.light1,
+        &scheme.dark2,
+        &scheme.light2,
+        &scheme.accent1,
+        &scheme.accent2,
+        &scheme.accent3,
+        &scheme.accent4,
+        &scheme.accent5,
+        &scheme.accent6,
+        &scheme.hyperlink,
+        &scheme.followed_hyperlink,
+    ] {
+        if let SchemeColor::System(system) = slot {
+            check_domain(
+                !system.value.is_empty() && system.value.len() <= 32,
+                "clrScheme.sysClr.val",
+            )?;
+        }
+    }
+    Ok(())
 }

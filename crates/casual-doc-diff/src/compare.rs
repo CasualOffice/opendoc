@@ -74,6 +74,7 @@ pub const DEFINITION_FIELDS: &[&str] = &[
     "colorScheme",
     "formatSchemeXml",
     "formatScheme",
+    "themes",
     "shapeStyles",
     "shapeFillDetail",
     "settings",
@@ -90,6 +91,11 @@ pub const OPAQUE_CONSTRUCTS: &[&str] = &[
     "abstractNumbering",
     "numbering",
     "fieldRanges",
+    // Theme parts beyond the document's own, keyed by a `ThemeId` the parse minted,
+    // so two files' tables cannot be paired — the same reason `numbering` and
+    // `fieldRanges` are here. Empty for every WordprocessingML document, so this
+    // entry is about a second document class rather than about Compare today.
+    "themes",
     // Shape theme-style references are keyed by a `NodeId` the parse minted, so two
     // files' tables cannot be paired — the same reason `numbering` and `fieldRanges`
     // are here. A difference is therefore located, not characterised.
@@ -522,6 +528,14 @@ pub fn compare_definitions(
         "formatSchemeXml",
         &left_definitions.format_scheme_xml,
         &right_definitions.format_scheme_xml,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    compare_field(
+        "themes",
+        &left_definitions.themes,
+        &right_definitions.themes,
         DiffFamily::Definition,
         &mut changes,
         findings,

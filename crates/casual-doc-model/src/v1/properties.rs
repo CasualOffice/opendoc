@@ -1249,6 +1249,113 @@ pub struct ColorScheme {
     pub followed_hyperlink: SchemeColor,
 }
 
+/// One theme part (`theme1.xml`) other than the document's own.
+///
+/// # Why a side table and not a wider `Definitions`
+///
+/// A WordprocessingML package has **exactly one** theme, so
+/// [`Definitions::color_scheme`](super::Definitions::color_scheme) and its three
+/// siblings are flat fields and always will be: that is the document's theme, it
+/// needs no key, and reading it costs a borrow. A `.pptx` may carry one theme
+/// part **per slide master**, which a single triple cannot represent — the first
+/// master's theme wins and every other is a loss.
+///
+/// This is the pattern `Definitions` already uses five times over — `media`,
+/// `charts`, `shape_styles`, `shape_fill_detail` and `field_ranges` are all
+/// `DefinitionMap<Id, Value>` side tables whose holder carries the key — composed
+/// with the default-plus-overrides shape of `document_defaults` and the per-style
+/// overrides above it. The format itself is built the same way: `p:clrMap` on the
+/// master with `p:clrMapOvr` on the layout and the slide. Nothing here is new,
+/// and naming the prior art is the point (`SKILL` §8).
+///
+/// The one mechanism for asking *which theme is in force* is
+/// [`Definitions::theme`](super::Definitions::theme), which hands back a
+/// [`ThemeView`] whether the answer is the document's own theme or a keyed entry.
+/// A consumer that goes through it cannot tell a single-theme document from a
+/// multi-theme deck, and a single-theme document pays nothing: the table is empty,
+/// it is omitted from the snapshot entirely, and the view is four borrows.
+///
+/// The line is resolution, not access. Layout resolves through the accessor; the
+/// importer that fills the fields and the writer that serializes them touch them
+/// directly, because they are the storage's own reader and writer rather than
+/// consumers asking a question.
+///
+/// # What is deliberately NOT here
+///
+/// The theme's display name (`a:theme@name`). The document's own theme has no
+/// field for it either, and giving the table one would make an entry a *richer*
+/// model of the same part than the primary — which is how two mechanisms grow
+/// back. It stays an unmodelled loss, reported on both paths, until there is a
+/// field on both sides.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Theme {
+    /// This theme's `a:clrScheme`, matching
+    /// [`Definitions::color_scheme`](super::Definitions::color_scheme).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme: Option<ColorScheme>,
+    /// This theme's `a:fontScheme`, matching
+    /// [`Definitions::font_scheme`](super::Definitions::font_scheme).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_scheme: Option<FontScheme>,
+    /// The modelled subset of this theme's `a:fmtScheme`, matching
+    /// [`Definitions::format_scheme`](super::Definitions::format_scheme).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_scheme: Option<FormatScheme>,
+    /// This theme's `a:fmtScheme` retained verbatim, matching
+    /// [`Definitions::format_scheme_xml`](super::Definitions::format_scheme_xml).
+    ///
+    /// Two representations of one part, with the same strict division as on the
+    /// document's own theme: the verbatim XML is what a writer emits, the typed
+    /// form is what a `a:fillRef`/`a:lnRef` resolves against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_scheme_xml: Option<String>,
+}
+
+/// A theme resolved for one holder: the document's own, or one keyed entry.
+///
+/// Borrowed rather than cloned, because the alternative is copying a format
+/// scheme — gradient stops and all — on every lookup, and the lookups sit on the
+/// painting path. `Copy`, so it can be threaded through a resolution without
+/// re-borrowing `Definitions`.
+///
+/// Every member is an `Option` for the same reason the flat fields are: a theme
+/// part may state any subset of the three schemes, and a package may have no
+/// theme at all.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ThemeView<'a> {
+    /// The `a:clrScheme` in force.
+    pub color_scheme: Option<&'a ColorScheme>,
+    /// The `a:fontScheme` in force.
+    pub font_scheme: Option<&'a FontScheme>,
+    /// The modelled subset of the `a:fmtScheme` in force.
+    pub format_scheme: Option<&'a FormatScheme>,
+    /// The verbatim `a:fmtScheme` in force.
+    pub format_scheme_xml: Option<&'a str>,
+}
+
+impl<'a> ThemeView<'a> {
+    /// The view of one keyed [`Theme`].
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub fn of(theme: &'a Theme) -> Self {
+        Self {
+            color_scheme: theme.color_scheme.as_ref(),
+            font_scheme: theme.font_scheme.as_ref(),
+            format_scheme: theme.format_scheme.as_ref(),
+            format_scheme_xml: theme.format_scheme_xml.as_deref(),
+        }
+    }
+
+    /// Whether this view states nothing at all — no package theme, or a theme part
+    /// that modelled none of its three schemes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Paragraph indentation in twips.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -6490,3 +6490,388 @@ fn sat_mod_round_trips_through_json_and_is_omitted_when_absent() {
         "a transform with no saturation must not grow a key"
     );
 }
+
+/// Two themes, two keys, and each key resolves ITS OWN colour scheme, font
+/// scheme and format scheme — not the first one, not a merge of the two.
+///
+/// A guard with one theme cannot tell a table from a single value: every
+/// assertion would pass against the old single-triple model. So this builds a
+/// `Definitions` carrying a document theme plus two keyed entries whose three
+/// schemes all differ, and asserts all three members of all three answers.
+///
+/// Mutation: make `Definitions::theme` ignore its argument and always return the
+/// document's own theme (delete the `if let Some(id)` block).
+#[test]
+fn each_theme_key_resolves_its_own_scheme_rather_than_the_first() {
+    fn scheme(name: &str, accent: u8) -> ColorScheme {
+        ColorScheme {
+            name: name.to_owned(),
+            accent1: SchemeColor::Srgb(RgbColor {
+                r: accent,
+                g: 0,
+                b: 0,
+            }),
+            ..ColorScheme::default()
+        }
+    }
+    fn fonts(typeface: &str) -> FontScheme {
+        FontScheme {
+            major: FontCollection {
+                latin: ThemeFontEntry {
+                    typeface: typeface.to_owned(),
+                    ..ThemeFontEntry::default()
+                },
+                ..FontCollection::default()
+            },
+            ..FontScheme::default()
+        }
+    }
+    fn format(fill: Rgba) -> FormatScheme {
+        FormatScheme {
+            fill_styles: vec![Some(FillStyle::Solid {
+                color: StyleColor::Fixed(fill),
+            })],
+            ..FormatScheme::default()
+        }
+    }
+
+    let first = ThemeId::new(tid(81));
+    let second = ThemeId::new(tid(82));
+    // The document's own theme, in the flat fields a DOCX has always used.
+    let mut definitions = Definitions {
+        color_scheme: Some(scheme("Package", 0x10)),
+        font_scheme: Some(fonts("Calibri")),
+        format_scheme: Some(format(Rgba {
+            r: 1,
+            g: 1,
+            b: 1,
+            a: 255,
+        })),
+        format_scheme_xml: Some("<a:fmtScheme name=\"Package\"/>".to_owned()),
+        ..Definitions::default()
+    };
+    // Two further parts, as a deck with a theme per master carries.
+    definitions.themes.insert(
+        first,
+        Theme {
+            color_scheme: Some(scheme("Master one", 0x20)),
+            font_scheme: Some(fonts("Garamond")),
+            format_scheme: Some(format(Rgba {
+                r: 2,
+                g: 2,
+                b: 2,
+                a: 255,
+            })),
+            format_scheme_xml: Some("<a:fmtScheme name=\"One\"/>".to_owned()),
+        },
+    );
+    definitions.themes.insert(
+        second,
+        Theme {
+            color_scheme: Some(scheme("Master two", 0x30)),
+            font_scheme: Some(fonts("Futura")),
+            format_scheme: Some(format(Rgba {
+                r: 3,
+                g: 3,
+                b: 3,
+                a: 255,
+            })),
+            format_scheme_xml: Some("<a:fmtScheme name=\"Two\"/>".to_owned()),
+        },
+    );
+
+    for (id, expected_scheme, expected_face, expected_fill, expected_xml) in [
+        (
+            None,
+            "Package",
+            "Calibri",
+            1,
+            "<a:fmtScheme name=\"Package\"/>",
+        ),
+        (
+            Some(first),
+            "Master one",
+            "Garamond",
+            2,
+            "<a:fmtScheme name=\"One\"/>",
+        ),
+        (
+            Some(second),
+            "Master two",
+            "Futura",
+            3,
+            "<a:fmtScheme name=\"Two\"/>",
+        ),
+    ] {
+        let view = definitions.theme(id);
+        assert_eq!(
+            view.color_scheme.map(|s| s.name.as_str()),
+            Some(expected_scheme),
+            "{id:?} must resolve its own a:clrScheme"
+        );
+        assert_eq!(
+            view.font_scheme.map(|s| s.major.latin.typeface.as_str()),
+            Some(expected_face),
+            "{id:?} must resolve its own a:fontScheme"
+        );
+        let Some(FillStyle::Solid { color }) = view
+            .format_scheme
+            .and_then(|scheme| scheme.fill_styles[0].as_ref())
+        else {
+            panic!("{id:?} must resolve its own modelled a:fmtScheme");
+        };
+        assert_eq!(
+            *color,
+            StyleColor::Fixed(Rgba {
+                r: expected_fill,
+                g: expected_fill,
+                b: expected_fill,
+                a: 255
+            }),
+            "{id:?} must resolve its own fill-style entry"
+        );
+        assert_eq!(
+            view.format_scheme_xml,
+            Some(expected_xml),
+            "{id:?} must resolve its own retained a:fmtScheme"
+        );
+    }
+
+    // The themes are distinguishable BY the accessor, which is the property the
+    // old single-triple model could not have: three different answers, three keys.
+    assert_ne!(
+        definitions.theme(Some(first)),
+        definitions.theme(Some(second))
+    );
+    assert_ne!(definitions.theme(None), definitions.theme(Some(first)));
+}
+
+/// A key naming no entry falls back to the document's own theme, and the fallback
+/// is the DOCUMENT's theme rather than an arbitrary table entry.
+///
+/// Documented as deliberate on the accessor: which ids are live is a property of
+/// the holders, which live outside `Definitions`, so this cannot be refused by
+/// validation and must therefore be defined.
+///
+/// Mutation: return `ThemeView::default()` instead of the flat fields when the
+/// lookup misses.
+#[test]
+fn a_theme_key_naming_no_entry_falls_back_to_the_documents_own() {
+    let mut definitions = Definitions {
+        color_scheme: Some(ColorScheme {
+            name: "Package".to_owned(),
+            ..ColorScheme::default()
+        }),
+        ..Definitions::default()
+    };
+    definitions.themes.insert(
+        ThemeId::new(tid(84)),
+        Theme {
+            color_scheme: Some(ColorScheme {
+                name: "Keyed".to_owned(),
+                ..ColorScheme::default()
+            }),
+            ..Theme::default()
+        },
+    );
+    assert_eq!(
+        definitions
+            .theme(Some(ThemeId::new(tid(85))))
+            .color_scheme
+            .map(|s| s.name.as_str()),
+        Some("Package"),
+        "a dangling key paints with the package's theme, not with nothing and not \
+         with whichever entry happened to be first"
+    );
+}
+
+/// The keyed table is omitted from the snapshot when empty, so every DOCX
+/// serializes byte-identically, and round-trips when populated.
+///
+/// The first half is the compatibility guarantee and the one a populated-only
+/// guard would miss.
+#[test]
+fn an_empty_theme_table_is_absent_from_the_snapshot_and_a_populated_one_round_trips() {
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(2),
+        properties: ParagraphProperties::default().into(),
+        inlines: Vec::new(),
+    })];
+    let plain = Document::new(tid(1), body.clone(), Definitions::default()).unwrap();
+    let json = String::from_utf8(plain.to_json().unwrap()).unwrap();
+    assert!(
+        !json.contains("themes"),
+        "an empty theme table must not appear in the snapshot at all; got {json}"
+    );
+
+    let mut definitions = Definitions::default();
+    definitions.themes.insert(
+        ThemeId::new(tid(86)),
+        Theme {
+            font_scheme: Some(FontScheme {
+                minor: FontCollection {
+                    latin: ThemeFontEntry {
+                        typeface: "Futura".to_owned(),
+                        ..ThemeFontEntry::default()
+                    },
+                    ..FontCollection::default()
+                },
+                ..FontScheme::default()
+            }),
+            ..Theme::default()
+        },
+    );
+    let populated = Document::new(tid(1), body, definitions).unwrap();
+    let bytes = populated.to_json().unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("\"themes\""));
+    let reopened = Document::from_json(&bytes, SnapshotLimits::default()).unwrap();
+    assert_eq!(
+        reopened.definitions().themes,
+        populated.definitions().themes,
+        "a keyed theme survives the snapshot"
+    );
+}
+
+/// `Definitions::validate_theme` is the ONE theme rule, and it checks every theme
+/// the document carries — the keyed entries as well as its own.
+///
+/// This is the half that the two private validators could not do: they read
+/// `self.definitions.font_scheme` and `self.definitions.color_scheme`, so a bad
+/// bound inside a keyed entry would have validated clean. A validator that only
+/// checked the primary would pass every assertion below except the two that name
+/// a keyed entry, which is exactly why both are here.
+///
+/// Mutation: in `validate_theme`, replace `self.themes_in_force()` with
+/// `std::iter::once(self.theme(None))`.
+#[test]
+fn validate_theme_is_one_rule_and_covers_the_keyed_entries_too() {
+    let over_long = "x".repeat(256);
+    let over_long_script = "s".repeat(33);
+
+    let bad_fonts = FontScheme {
+        major: FontCollection {
+            latin: ThemeFontEntry {
+                typeface: over_long.clone(),
+                ..ThemeFontEntry::default()
+            },
+            ..FontCollection::default()
+        },
+        ..FontScheme::default()
+    };
+    let bad_script = FontScheme {
+        minor: FontCollection {
+            script_overrides: vec![ScriptFont {
+                script: over_long_script,
+                typeface: "Futura".to_owned(),
+            }],
+            ..FontCollection::default()
+        },
+        ..FontScheme::default()
+    };
+    let bad_colors = ColorScheme {
+        dark1: SchemeColor::System(SystemColor {
+            value: "w".repeat(33),
+            last_color: None,
+        }),
+        ..ColorScheme::default()
+    };
+
+    // Each of these is refused wherever it sits: on the document's own theme, and
+    // on a keyed entry.
+    let cases: Vec<(&str, Theme, &str)> = vec![
+        (
+            "fontScheme.typeface",
+            Theme {
+                font_scheme: Some(bad_fonts),
+                ..Theme::default()
+            },
+            "an over-long typeface",
+        ),
+        (
+            "fontScheme.script",
+            Theme {
+                font_scheme: Some(bad_script),
+                ..Theme::default()
+            },
+            "an over-long script token",
+        ),
+        (
+            "clrScheme.sysClr.val",
+            Theme {
+                color_scheme: Some(bad_colors),
+                ..Theme::default()
+            },
+            "an over-long a:sysClr@val",
+        ),
+        (
+            "fmtScheme",
+            Theme {
+                format_scheme_xml: Some(String::new()),
+                ..Theme::default()
+            },
+            "an empty retained a:fmtScheme",
+        ),
+    ];
+
+    for (property, theme, why) in cases {
+        // On the document's own theme, through the flat fields.
+        let own = Definitions {
+            color_scheme: theme.color_scheme.clone(),
+            font_scheme: theme.font_scheme.clone(),
+            format_scheme_xml: theme.format_scheme_xml.clone(),
+            ..Definitions::default()
+        };
+        assert!(
+            matches!(
+                own.validate_theme(),
+                Err(ModelError::PropertyValueOutOfDomain { property: p }) if p == property
+            ),
+            "{why} on the document's own theme must be refused as {property}, got {:?}",
+            own.validate_theme()
+        );
+
+        // And on a keyed entry, which the old private validators never looked at.
+        let mut keyed = Definitions::default();
+        keyed.themes.insert(ThemeId::new(tid(88)), theme);
+        assert!(
+            matches!(
+                keyed.validate_theme(),
+                Err(ModelError::PropertyValueOutOfDomain { property: p }) if p == property
+            ),
+            "{why} inside a KEYED theme must be refused as {property}, got {:?}",
+            keyed.validate_theme()
+        );
+    }
+}
+
+/// And the document's own `validate` calls that one rule, rather than keeping a
+/// second copy — so a bad bound in a keyed theme fails `Document::validate`.
+///
+/// Mutation: delete the `self.definitions.validate_theme()?;` line from
+/// `Document::validate`.
+#[test]
+fn document_validation_delegates_to_the_public_theme_rule() {
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(2),
+        properties: ParagraphProperties::default().into(),
+        inlines: Vec::new(),
+    })];
+    let mut definitions = Definitions::default();
+    definitions.themes.insert(
+        ThemeId::new(tid(89)),
+        Theme {
+            format_scheme_xml: Some("x".repeat((1 << 20) + 1)),
+            ..Theme::default()
+        },
+    );
+    assert!(
+        matches!(
+            Document::new(tid(1), body, definitions),
+            Err(ModelError::PropertyValueOutOfDomain {
+                property: "fmtScheme"
+            })
+        ),
+        "a 1 MiB+ retained fmtScheme in a KEYED theme must fail the document's own \
+         validation, which is only true if it delegates"
+    );
+}

@@ -2015,7 +2015,7 @@ fn themed_appearance_of(
     let Some(reference) = definitions.shape_styles.get(&id) else {
         return (fill, stroke);
     };
-    let Some(scheme) = definitions.format_scheme.as_ref() else {
+    let Some(scheme) = definitions.theme(None).format_scheme else {
         return (fill, stroke);
     };
     if fill.is_none()

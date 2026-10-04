@@ -78,6 +78,17 @@ id_newtype!(
     ChartId
 );
 id_newtype!(
+    /// Stable identity of a theme part beyond the document's own, resolving in
+    /// `Definitions::themes`.
+    ///
+    /// A WordprocessingML package has exactly one theme, which is why the
+    /// document's own lives in flat fields on `Definitions` and needs no id. A
+    /// `.pptx` may carry one theme part per slide master, so the additional ones
+    /// are keyed — and the holder of the key is the master, which is why this is a
+    /// definition id rather than a position in a list.
+    ThemeId
+);
+id_newtype!(
     /// Stable identity of a paragraph-spanning complex field (shared by its
     /// start/end markers), resolving in `Definitions::field_ranges`.
     ///

@@ -1466,6 +1466,12 @@ pub(crate) fn import_with_sources(
         color_scheme: theme.color_scheme,
         format_scheme: theme.format_scheme,
         format_scheme_xml: theme.format_scheme_xml,
+        // A WordprocessingML package has exactly ONE theme part (ECMA-376
+        // §14.2.7), and `theme` above is it. The keyed table exists for a document
+        // class that can have more than one; naming it empty here rather than
+        // defaulting the struct is what says this importer knows that, instead of
+        // leaving a reader to wonder whether a theme was dropped.
+        themes: DefinitionMap::default(),
         shape_styles: parsed_defs.shape_styles,
         shape_fill_detail: parsed_defs.shape_fill_detail,
         settings,
