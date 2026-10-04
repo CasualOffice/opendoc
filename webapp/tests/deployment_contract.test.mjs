@@ -478,12 +478,36 @@ test("the static server does not rewrite the self-hosted fonts away", () => {
     /fonts\.(?:googleapis|gstatic)\.com/,
     "deploy/editor-nginx.conf names a Google Fonts host",
   );
-  assert.match(
-    NGINX,
-    /application\/wasm\s+wasm;/,
-    "deploy/editor-nginx.conf must declare application/wasm — a module served as " +
+  // The GUARANTEE — a `.wasm` request is answered as `application/wasm` — and not
+  // the first mechanism that was reached for. A `types { application/wasm wasm; }`
+  // block at `http` level reads like the obvious way to say this and is
+  // `nginx: [emerg] duplicate extension "wasm"`, because `include mime.types` has
+  // mapped it since nginx 1.21 and a second mapping is a conflict rather than an
+  // override. So what is asserted is a per-location pin: the extension, an emptied
+  // types hash, and the type.
+  const wasmLocation = NGINX.match(/location[^{]*\\\.wasm\$[^{]*\{([\s\S]*?)\n {8}\}/);
+  assert.ok(
+    wasmLocation,
+    "deploy/editor-nginx.conf must carry a location for .wasm — a module served as " +
       "application/octet-stream is refused by WebAssembly.instantiateStreaming and the " +
       "editor loads blank",
+  );
+  assert.match(
+    wasmLocation[1],
+    /default_type application\/wasm;/,
+    "the .wasm location must set default_type application/wasm",
+  );
+  assert.match(
+    wasmLocation[1],
+    /types \{ \}/,
+    "the .wasm location must empty the types hash first, or default_type never applies " +
+      "to a file mime.types already has a type for",
+  );
+  assert.doesNotMatch(
+    NGINX,
+    /^\s*types \{\s*$/m,
+    "a multi-line `types {` block at http level will collide with include mime.types and " +
+      "refuse to start: nginx: [emerg] duplicate extension",
   );
 });
 
