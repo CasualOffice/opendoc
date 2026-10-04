@@ -10,7 +10,7 @@
 // you had clicked one. The comment beside that handler asserted it was "the only
 // way to reach an object without a pointer" — which made the whole surface
 // mouse-gated, since nothing else could select one either.
-import { test, expect, stableBox, MOD } from "./fixtures.mjs";
+import { MOD, expect, sizeReadoutPattern, stableBox, test } from "./fixtures.mjs";
 
 async function gotoFloat(page) {
   await page.goto("/editor.html?fixture=float");
@@ -132,15 +132,11 @@ test("resizing an object shows the size you are dragging to", async ({
   // just as happily on `2.89 × 1.45 {unit}` had the suffix been a different
   // placeholder — which is exactly what shipped, an unsubstituted `{unit}`
   // rendered to the reader.
-  const suffix = await page.evaluate(() => {
-    const select = document.getElementById("measurementUnitSelect");
-    return select?.value ?? "";
-  });
-  const suffixes = { inch: "in", cm: "cm", mm: "mm", point: "pt", pica: "pi" };
-  const expected = suffixes[suffix] ?? "in";
-  await expect(readout).toHaveText(
-    new RegExp(`^\\d+\\.\\d{2} × \\d+\\.\\d{2} ${expected}$`),
-  );
+  // Through `sizeReadoutPattern`, which is the ONE copy of the id → symbol table
+  // (`fixtures.mjs`). It was written here first and the crop readout needed the
+  // same thing within the hour; two tables for one mapping is how they start
+  // disagreeing about which unit `pica` prints as.
+  await expect(readout).toHaveText(await sizeReadoutPattern(page));
 
   await page.mouse.up();
   // Gone on release — the readout belongs to the gesture, and the committed size

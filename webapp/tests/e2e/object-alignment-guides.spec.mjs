@@ -7,7 +7,7 @@
 //
 // Each test CREATES its condition: it drags the image somewhere off-centre
 // first, so a pass cannot come from an image that happened to start aligned.
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { expect, gotoEditor, sizeReadoutPattern, test } from "./fixtures.mjs";
 
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
@@ -247,7 +247,19 @@ test("a crop drag says what size it is keeping", async ({ page, consoleErrors })
 
   const readout = page.locator(".overlay .object-crop-rect .object-resize-readout");
   const before = await readout.textContent();
-  expect(before).toMatch(/\d/);
+  // THE WHOLE SENTENCE, not merely "it has a digit in it". This readout and the
+  // resize one share `sizeLabel`, and when `pageSetup.dimensions` gained a
+  // `{unit}` parameter that `sizeLabel` did not supply, the product painted
+  // `2.89 × 1.45 {unit}` to whoever was dragging — in every language. Only the
+  // resize spec noticed, because this line asked for a digit and a digit was
+  // there: a guard that cannot see the thing it is about.
+  //
+  // In THE UNIT IN FORCE, through the same `sizeReadoutPattern` the resize spec
+  // uses, so a hard-coded `in` cannot pass on a reader whose preference is
+  // centimetres — the mistake the resize assertion made in the other direction.
+  expect(before, "the crop readout is missing its unit").toMatch(
+    await sizeReadoutPattern(page),
+  );
 
   // Pull the east grip inward and watch the kept width fall.
   const grip = page.locator('.overlay .object-crop-handle[data-handle="3"]');

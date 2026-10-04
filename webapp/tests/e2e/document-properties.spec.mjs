@@ -7,6 +7,40 @@
 // mirroring the existing copyRichRuns/pasteRichRuns convention.
 import { test, expect, gotoEditor, clickIntoFirstPage, runFilePageCommand, MOD } from "./fixtures.mjs";
 
+// EVERY GEOMETRY NUMBER BELOW IS IN INCHES, AND NOTHING USED TO SAY SO.
+//
+// `measurement_units.mjs` falls back, on a first run with no stored preference,
+// to `defaultMeasurementUnit(navigator.language)` — and that function answers
+// `inch` for the United States and Canada and `cm` for every other locale on
+// earth (`casual-doc-wasm/src/quantity.rs`: "Inches for the United States and
+// Canada, centimetres everywhere else — the rule ONLYOFFICE applies"). So
+// `8.27`, `11.69`, `0.39` and `"10 x 11.69 in"` were pinned to whatever locale
+// the machine running the suite happened to have. On a US runner they passed; on
+// a developer's own laptop three of these tests failed with
+//
+//   Expected substring: "10 x 11.69 in"
+//   Received string:    "10.00 x 29.70 cm"
+//
+// which is a spec failing a correct build, and the kind of coupling that turns a
+// green CI into an argument. `test.use` pins the locale so the unit is a FACT of
+// this file rather than a property of the host, and `expectInchFields` asserts it
+// where it is relied on, so the next failure here names its own cause instead of
+// looking like a geometry bug.
+test.use({ locale: "en-US" });
+
+/** Asserts the page-setup fields really are labelled in inches.
+ *
+ *  The suffix beside the field is what `applyToField` writes from the unit in
+ *  force, so this reads back the unit the ENGINE resolved rather than restating
+ *  the `test.use` above: if that default rule ever changes, this line fails and
+ *  says which unit arrived instead. */
+async function expectInchFields(page) {
+  await expect(
+    page.locator("#pageWidth ~ [data-measure-suffix]"),
+    "these assertions are written in inches; the unit in force is not inches",
+  ).toHaveText("in");
+}
+
 test("the public demo opens sample.docx and exposes its real saved metadata", async ({
   page,
   consoleErrors,
@@ -137,6 +171,7 @@ test("page setup reflects real geometry, applies margins/size, and undoes", asyn
   await page.locator("#tabView").click();
   await page.locator("#pageSetupBtn").click();
   await expect(page.locator("#pageSetupMenu")).toBeVisible();
+  await expectInchFields(page);
   // The fixture is A4 with ~1cm (0.39in) margins.
   await expect(page.locator("#pageWidth")).toHaveValue("8.27");
   await expect(page.locator("#pageHeight")).toHaveValue("11.69");
@@ -168,6 +203,7 @@ test("the orientation toggle swaps width and height without applying yet", async
 
   await page.locator("#tabView").click();
   await page.locator("#pageSetupBtn").click();
+  await expectInchFields(page);
   await expect(page.locator("#pageWidth")).toHaveValue("8.27");
 
   await page.locator('[data-orientation="landscape"]').click();
@@ -225,8 +261,15 @@ test("properties and page setup are keyboard-safe, mobile-bounded modal dialogs"
   expect(cardBounds.bottom).toBeLessThanOrEqual(cardBounds.viewportHeight);
   await expect(page.locator("#pageSetupApply")).toBeVisible();
 
+  await expectInchFields(page);
   await page.locator("#pageWidth").fill("10");
-  await expect(page.locator("#pagePreviewLabel")).toContainText("10 × 11.69 in");
+  // `10.00`, not `10`. The caption is PROSE, so it goes through the preference's
+  // `display()` — fixed at the unit's own decimal places and carrying the
+  // locale's separator — while the FIELD goes through `format()`, which trims
+  // trailing zeros because `1.00` in an input reads as a precision nobody asked
+  // for. Two functions, two jobs, and this expectation was written against the
+  // field's one.
+  await expect(page.locator("#pagePreviewLabel")).toContainText("10.00 × 11.69 in");
   await page.keyboard.press("Escape");
   await expect(setupDialog).toBeHidden();
   // Focus is not dropped on the floor. It used to say "…returns to

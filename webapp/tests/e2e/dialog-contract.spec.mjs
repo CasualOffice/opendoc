@@ -289,6 +289,36 @@ const MODALS = [
     },
   },
   {
+    id: "restrictEditingDialog",
+    name: "Restrict editing",
+    // Word's Review ▸ Protect ▸ Restrict Editing, and the only surface in this
+    // product that can LIFT a restriction a document arrived with — which is why
+    // it had to exist at all (ADR-059). It shipped in #732 without joining this
+    // table, so the last test in this file went red on `main`: that test is the
+    // loop-closer, and it did its job.
+    //
+    // No surviving opener, the Watermark/Drop cap/Proofing-languages shape: the
+    // Review band's button is bound from `COMMAND_CONTRACT` through `onButton`,
+    // which preventDefaults mousedown precisely so the band never takes the
+    // keyboard off the document. So the requirement is the one that actually
+    // holds for this route — Escape puts the keyboard back on the editing
+    // surface, not on <body> (HF-062).
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The level radios ARE the dialog, so focus lands on the one in force.
+    // Named by STATE rather than by id, like the Watermark and Update-table rows:
+    // which level is checked depends on what the document arrived carrying, and a
+    // row that named `[data-protect-level="off"]` would assert the fixture rather
+    // than the contract.
+    focus: '#restrictEditingLevels button[aria-checked="true"]',
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="review"]').click();
+      await page.locator("#reviewProtectBtn").click();
+    },
+  },
+  {
     id: "aboutDialog",
     name: "About",
     // Opened from the File PAGE rather than the palette, because a durable
