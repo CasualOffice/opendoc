@@ -927,3 +927,507 @@ fn a_snapshot_claiming_an_unsupported_schema_version_is_refused() {
         PresentationError::UnsupportedSchemaVersion(2)
     );
 }
+
+// ---------------------------------------------------------------------------
+// DrawingML text (`a:txBody`)
+// ---------------------------------------------------------------------------
+
+use crate::{
+    AutoNumberScheme, MAX_FONT_SIZE_HUNDREDTHS, MAX_TEXT_LEVEL, MAX_TEXT_MARGIN_EMU,
+    MIN_FONT_SIZE_HUNDREDTHS, TEXT_LEVELS, TextAlign, TextBody, TextBodyProperties, TextBullet,
+    TextCharacterProperties, TextLineBreak, TextParagraph, TextParagraphProperties, TextRun,
+    TextRunText, TextSpacing, TextUnderline, TextVertical, Typeface,
+};
+
+/// A run carrying `text`.
+fn run(node: NodeId, text: &str) -> TextRun {
+    TextRun::Run(TextRunText {
+        id: node,
+        properties: None,
+        text: text.to_owned(),
+    })
+}
+
+/// A paragraph of one run.
+fn para(node: NodeId, run_id: NodeId, text: &str) -> TextParagraph {
+    TextParagraph {
+        id: node,
+        properties: None,
+        runs: vec![run(run_id, text)],
+        end_properties: None,
+    }
+}
+
+fn body(paragraphs: Vec<TextParagraph>) -> TextBody {
+    TextBody {
+        body_properties: TextBodyProperties::default(),
+        list_style: crate::ListStyle::default(),
+        paragraphs,
+    }
+}
+
+#[test]
+fn the_text_body_defaults_are_drawingmls_asymmetric_insets() {
+    // 0.1in left/right and 0.05in top/bottom, NOT zero: an absent attribute means
+    // the default, so zeroing them shifts every line of every slide.
+    // Mutation that drove this red: defaulting all four insets to 0.
+    let properties = TextBodyProperties::default();
+    assert_eq!(properties.inset_left_emu, 91_440, "0.1in");
+    assert_eq!(properties.inset_right_emu, 91_440);
+    assert_eq!(properties.inset_top_emu, 45_720, "0.05in");
+    assert_eq!(properties.inset_bottom_emu, 45_720);
+    assert_eq!(
+        properties.inset_left_emu,
+        properties.inset_top_emu * 2,
+        "the side inset is twice the vertical one"
+    );
+}
+
+#[test]
+fn every_autonumber_scheme_round_trips_and_the_set_is_closed() {
+    for scheme in AutoNumberScheme::ALL {
+        assert_eq!(
+            AutoNumberScheme::from_token(scheme.token()),
+            scheme,
+            "{} did not round-trip",
+            scheme.token()
+        );
+    }
+    let distinct: std::collections::BTreeSet<&str> = AutoNumberScheme::ALL
+        .iter()
+        .map(|scheme| scheme.token())
+        .collect();
+    assert_eq!(
+        distinct.len(),
+        AutoNumberScheme::ALL.len(),
+        "two schemes share a token, so one can never be read back"
+    );
+    assert_eq!(AutoNumberScheme::ALL.len(), 41);
+    // An unknown scheme degrades rather than failing: a deck must still open.
+    assert_eq!(
+        AutoNumberScheme::from_token("klingonPeriod"),
+        AutoNumberScheme::ArabicPeriod
+    );
+}
+
+#[test]
+fn every_text_token_table_round_trips_and_is_closed() {
+    for align in TextAlign::ALL {
+        assert_eq!(TextAlign::from_token(align.token()), align);
+    }
+    for vertical in TextVertical::ALL {
+        assert_eq!(TextVertical::from_token(vertical.token()), vertical);
+    }
+    for underline in TextUnderline::ALL {
+        assert_eq!(TextUnderline::from_token(underline.token()), underline);
+    }
+    for (count, tokens) in [
+        (
+            TextAlign::ALL.len(),
+            TextAlign::ALL.map(TextAlign::token).to_vec(),
+        ),
+        (
+            TextVertical::ALL.len(),
+            TextVertical::ALL.map(TextVertical::token).to_vec(),
+        ),
+        (
+            TextUnderline::ALL.len(),
+            TextUnderline::ALL.map(TextUnderline::token).to_vec(),
+        ),
+    ] {
+        let distinct: std::collections::BTreeSet<&str> = tokens.iter().copied().collect();
+        assert_eq!(distinct.len(), count, "a token table has a collision");
+    }
+}
+
+#[test]
+fn only_the_horizontal_flow_direction_is_unrotated() {
+    // A renderer that draws only horizontal text must branch on this, and report the
+    // rest rather than drawing them axis-aligned and wrong. Mutation: making
+    // `is_rotated` return false for everything collapsed six directions into one.
+    let rotated: Vec<&str> = TextVertical::ALL
+        .iter()
+        .filter(|kind| kind.is_rotated())
+        .map(|kind| kind.token())
+        .collect();
+    assert_eq!(
+        rotated,
+        vec![
+            "vert",
+            "vert270",
+            "wordArtVert",
+            "eaVert",
+            "mongolianVert",
+            "wordArtVertRtl"
+        ]
+    );
+    assert!(!TextVertical::Horizontal.is_rotated());
+}
+
+#[test]
+fn an_explicit_no_bullet_is_not_the_same_as_an_inherited_one() {
+    // THE distinction that decides whether a deliberately unbulleted paragraph in a
+    // bulleted body placeholder grows a bullet on reopen. `None` inherits;
+    // `Some(TextBullet::None)` suppresses. Mutation: making `is_visible` true for
+    // `TextBullet::None` erased the suppression.
+    let inherits = TextParagraphProperties::default();
+    assert!(inherits.bullet.is_none(), "unset means inherit");
+
+    let suppressed = TextParagraphProperties {
+        bullet: Some(TextBullet::None),
+        ..TextParagraphProperties::default()
+    };
+    assert!(suppressed.bullet.is_some(), "an explicit buNone is stated");
+    assert!(
+        !suppressed.bullet.as_ref().expect("stated").is_visible(),
+        "and it draws nothing"
+    );
+
+    let character = TextBullet::Character {
+        character: "\u{2022}".to_owned(),
+        font: Some(Typeface {
+            name: "Arial".to_owned(),
+            panose: None,
+        }),
+    };
+    assert!(character.is_visible());
+    assert!(
+        TextBullet::AutoNumber {
+            scheme: AutoNumberScheme::ArabicPeriod,
+            start_at: Some(3),
+        }
+        .is_visible()
+    );
+}
+
+#[test]
+fn a_theme_font_reference_is_distinguished_from_a_family_name() {
+    // `+mn-lt` must be resolved at layout against the theme, not treated as a family
+    // called "+mn-lt" — which would fall back to a default font for most slide text.
+    for reference in ["+mn-lt", "+mj-lt", "+mn-ea", "+mj-cs"] {
+        assert!(
+            Typeface {
+                name: reference.to_owned(),
+                panose: None
+            }
+            .is_theme_reference(),
+            "{reference} is a theme reference"
+        );
+    }
+    for family in ["Arial", "Calibri", "Noto Sans", ""] {
+        assert!(
+            !Typeface {
+                name: family.to_owned(),
+                panose: None
+            }
+            .is_theme_reference(),
+            "{family} is a family"
+        );
+    }
+}
+
+#[test]
+fn a_font_size_outside_the_schema_domain_is_refused_and_an_absent_one_is_not() {
+    let sized = |size: u32| TextCharacterProperties {
+        size_hundredths_point: Some(size),
+        ..TextCharacterProperties::default()
+    };
+    assert!(sized(MIN_FONT_SIZE_HUNDREDTHS).size_in_domain(), "1pt");
+    assert!(sized(MAX_FONT_SIZE_HUNDREDTHS).size_in_domain(), "4000pt");
+    assert!(!sized(MIN_FONT_SIZE_HUNDREDTHS - 1).size_in_domain());
+    assert!(!sized(MAX_FONT_SIZE_HUNDREDTHS + 1).size_in_domain());
+    // Absent inherits, so it must NOT be refused.
+    assert!(TextCharacterProperties::default().size_in_domain());
+
+    // And the refusal surfaces through validation. This is the check that catches a
+    // `w:sz` half-point value carried into `a:rPr@sz` without conversion: 24pt in
+    // half-points is 48, which is below the 100 minimum.
+    let paragraph = TextParagraph {
+        id: id(300),
+        properties: None,
+        runs: vec![TextRun::Run(TextRunText {
+            id: id(301),
+            properties: Some(Box::new(sized(48))),
+            text: "half-points by mistake".to_owned(),
+        })],
+        end_properties: None,
+    };
+    assert_eq!(
+        body(vec![paragraph])
+            .validate()
+            .expect_err("48 hundredths is 0.48pt"),
+        PresentationError::FontSizeOutOfDomain(48)
+    );
+}
+
+#[test]
+fn an_outline_level_above_eight_is_refused_and_eight_is_not() {
+    let levelled = |level: u8| TextParagraphProperties {
+        level: Some(level),
+        ..TextParagraphProperties::default()
+    };
+    levelled(MAX_TEXT_LEVEL)
+        .validate()
+        .expect("level 8 is the ninth and last");
+    levelled(0).validate().expect("level 0 is the first");
+    // Mutation: dropping the bound let level 9 through, which indexes past the
+    // nine-level list style and silently takes level 0's formatting.
+    assert_eq!(
+        levelled(MAX_TEXT_LEVEL + 1)
+            .validate()
+            .expect_err("level 9 does not exist"),
+        PresentationError::TextLevelOutOfRange(9)
+    );
+    assert_eq!(TEXT_LEVELS, 9);
+}
+
+#[test]
+fn a_negative_indent_is_accepted_because_every_bullet_uses_one() {
+    // The hanging indent is negative by construction, so a non-negative bound on
+    // `indent` would refuse ordinary bulleted text. Guarded because the margins DO
+    // have a non-negative bound and sharing it would have been the natural mistake.
+    TextParagraphProperties {
+        margin_left_emu: Some(457_200),
+        indent_emu: Some(-457_200),
+        ..TextParagraphProperties::default()
+    }
+    .validate()
+    .expect("a hanging indent is ordinary");
+
+    assert_eq!(
+        TextParagraphProperties {
+            margin_left_emu: Some(-1),
+            ..TextParagraphProperties::default()
+        }
+        .validate()
+        .expect_err("a negative margin is not"),
+        PresentationError::TextMarginOutOfDomain(-1)
+    );
+    assert_eq!(
+        TextParagraphProperties {
+            indent_emu: Some(-MAX_TEXT_MARGIN_EMU - 1),
+            ..TextParagraphProperties::default()
+        }
+        .validate()
+        .expect_err("but it is still bounded"),
+        PresentationError::TextMarginOutOfDomain(-MAX_TEXT_MARGIN_EMU - 1)
+    );
+}
+
+#[test]
+fn a_text_body_with_no_paragraphs_is_refused_but_an_empty_paragraph_is_not() {
+    assert_eq!(
+        body(Vec::new()).validate().expect_err("no paragraphs"),
+        PresentationError::EmptyTextBody
+    );
+    // An empty `a:p` is how PowerPoint writes a blank line, so refusing it would
+    // refuse real files. Mutation: refusing an empty `runs` broke this.
+    body(vec![TextParagraph::empty(id(310))])
+        .validate()
+        .expect("an empty paragraph is a blank line");
+}
+
+#[test]
+fn an_empty_text_run_is_refused() {
+    assert_eq!(
+        body(vec![para(id(320), id(321), "")])
+            .validate()
+            .expect_err("an empty a:t"),
+        PresentationError::EmptyTextRun(id(321))
+    );
+}
+
+#[test]
+fn a_list_style_deeper_than_nine_levels_is_refused() {
+    let mut text = body(vec![TextParagraph::empty(id(330))]);
+    text.list_style.levels = (0..=TEXT_LEVELS)
+        .map(|_| Some(TextParagraphProperties::default()))
+        .collect();
+    assert_eq!(
+        text.validate().expect_err("ten levels"),
+        PresentationError::TooManyTextLevels(TEXT_LEVELS + 1)
+    );
+    text.list_style.levels.pop();
+    text.validate().expect("nine is the limit, not an error");
+}
+
+#[test]
+fn plain_text_joins_paragraphs_with_newlines_and_a_break_contributes_one() {
+    let text = TextBody {
+        body_properties: TextBodyProperties::default(),
+        list_style: crate::ListStyle::default(),
+        paragraphs: vec![
+            TextParagraph {
+                id: id(340),
+                properties: None,
+                runs: vec![
+                    run(id(341), "first"),
+                    TextRun::LineBreak(TextLineBreak {
+                        id: id(342),
+                        properties: None,
+                    }),
+                    run(id(343), "same paragraph"),
+                ],
+                end_properties: None,
+            },
+            para(id(344), id(345), "second"),
+        ],
+    };
+    // Mutation: making a break contribute "" silently joined two visual lines, which
+    // no count-based assertion would notice.
+    assert_eq!(text.plain_text(), "first\nsame paragraph\nsecond");
+    assert_eq!(text.paragraphs[0].level(), 0, "unstated level is zero");
+}
+
+// ---------------------------------------------------------------------------
+// The guard that makes the interim carrier unreachable
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_document_text_box_shape_is_refused_on_a_slide() {
+    // `GroupTextBox` holds `Vec<BlockNode>` — WordprocessingML paragraphs — which
+    // cannot express `a:pPr@lvl`, an inline bullet or an `a:lstStyle`. It was the
+    // interim carrier for slide text before `TextBody` existed. Refusing it is what
+    // makes that interim state UNREACHABLE rather than merely discouraged, so the
+    // work cannot quietly be redone against the wrong type later.
+    //
+    // Mutation: removing the refusal let a slide validate while carrying text that
+    // would have been silently downgraded at the first round trip.
+    use casual_doc_model::v1::{GroupTextBox, ShapeGeometry, TextBoxBodyProperties};
+
+    let text_box = GroupChild::TextBox(GroupTextBox {
+        id: id(350),
+        offset: ORIGIN,
+        extent: BOX,
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        // Empty deliberately, and it is not a shortcut: the refusal fires on the
+        // CHILD KIND, so the blocks play no part in what this guard proves. Building
+        // a real `w:p` here would assert something about the document model instead.
+        blocks: Vec::new(),
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties::default(),
+        hyperlink: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    assert_eq!(
+        tree(id(352), vec![SlideNode::new(text_box)])
+            .validate(&Definitions::default())
+            .expect_err("a document text box on a slide"),
+        PresentationError::TextBoxShapeOnSlide(id(350))
+    );
+}
+
+#[test]
+fn a_text_node_id_colliding_with_a_shape_id_is_refused() {
+    // Text ids live in the same `NodeId` space as shape ids, so the duplicate walk
+    // has to descend into the text body. Mutation: not walking the text left a
+    // paragraph id equal to a shape id undetected, which is exactly the class of
+    // defect the shared traversal exists to prevent.
+    let mut presentation = deck();
+    presentation.slides_mut()[0].shapes.children[0].text =
+        Some(body(vec![para(id(32), id(400), "collides with the shape")]));
+    assert_eq!(
+        presentation
+            .validate()
+            .expect_err("paragraph id is a shape id"),
+        PresentationError::DuplicateNodeId(id(32))
+    );
+}
+
+#[test]
+fn a_slide_carrying_text_validates_and_round_trips() {
+    let mut presentation = deck();
+    presentation.slides_mut()[0].shapes.children[0].text = Some(TextBody {
+        body_properties: TextBodyProperties {
+            anchor: crate::TextAnchor::Center,
+            vertical: TextVertical::Vertical270,
+            auto_fit: crate::TextAutoFit::Normal {
+                font_scale: Some(92_500),
+                line_space_reduction: Some(10_000),
+            },
+            ..TextBodyProperties::default()
+        },
+        list_style: crate::ListStyle::default(),
+        paragraphs: vec![TextParagraph {
+            id: id(410),
+            properties: Some(Box::new(TextParagraphProperties {
+                level: Some(2),
+                alignment: Some(TextAlign::Center),
+                margin_left_emu: Some(914_400),
+                indent_emu: Some(-342_900),
+                line_spacing: Some(TextSpacing::Percent {
+                    thousandths: 90_000,
+                }),
+                space_before: Some(TextSpacing::Points { hundredths: 1_000 }),
+                bullet: Some(TextBullet::AutoNumber {
+                    scheme: AutoNumberScheme::RomanUcPeriod,
+                    start_at: Some(4),
+                }),
+                ..TextParagraphProperties::default()
+            })),
+            runs: vec![TextRun::Run(TextRunText {
+                id: id(411),
+                properties: Some(Box::new(TextCharacterProperties {
+                    size_hundredths_point: Some(2_800),
+                    bold: Some(true),
+                    underline: Some(TextUnderline::Double),
+                    latin: Some(Typeface {
+                        name: "+mn-lt".to_owned(),
+                        panose: None,
+                    }),
+                    ..TextCharacterProperties::default()
+                })),
+                text: "Agenda".to_owned(),
+            })],
+            end_properties: None,
+        }],
+    });
+    presentation.validate().expect("a deck with slide text");
+
+    let json = serde_json::to_string(&presentation).expect("serializable");
+    let parsed: Presentation = serde_json::from_str(&json).expect("deserializable");
+    assert_eq!(parsed, presentation, "slide text did not round-trip");
+    assert_eq!(
+        parsed.slides()[0].shapes.children[0]
+            .text
+            .as_ref()
+            .expect("text")
+            .plain_text(),
+        "Agenda"
+    );
+}
+
+#[test]
+fn an_absent_text_body_is_omitted_from_the_snapshot() {
+    // The overwhelming majority of shapes carry no text, so writing `"text": null`
+    // on each would grow every snapshot and defeat byte comparison.
+    let json = serde_json::to_value(deck()).expect("serializable");
+    let node = &json["slides"][0]["shapes"]["children"][0];
+    assert!(
+        node.get("text").is_none(),
+        "shape.text should be omitted when absent, got {node}"
+    );
+}
+
+#[test]
+fn spacing_as_a_percentage_and_as_points_are_distinct_representations() {
+    // The schema admits one or the other, never both, so they must not collapse: 90%
+    // line spacing and 90 hundredths of a point are wildly different and a type that
+    // conflated them would round-trip one as the other.
+    let percent = TextSpacing::Percent {
+        thousandths: 90_000,
+    };
+    let points = TextSpacing::Points { hundredths: 90_000 };
+    assert_ne!(percent, points);
+    let encoded = serde_json::to_value(percent).expect("serializable");
+    assert_eq!(encoded["unit"], "percent");
+    assert_eq!(
+        serde_json::to_value(points).expect("serializable")["unit"],
+        "points"
+    );
+}

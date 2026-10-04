@@ -42,6 +42,10 @@ mod placeholder;
 mod presentation;
 mod shape_tree;
 mod slide_size;
+mod text_body;
+mod text_bullet;
+mod text_paragraph;
+mod text_run;
 
 pub use error::{PresentationError, SlideAxis};
 pub use ids::{SlideId, SlideLayoutId, SlideMasterId};
@@ -50,6 +54,19 @@ pub use placeholder::{Placeholder, PlaceholderKind, PlaceholderOrientation, Plac
 pub use presentation::{Presentation, SCHEMA_VERSION, Slide, SlideLayout, SlideMaster};
 pub use shape_tree::{ShapeTree, SlideNode};
 pub use slide_size::{MAX_SLIDE_EMU, MIN_SLIDE_EMU, SlideSize, SlideSizeKind};
+pub use text_body::{
+    ListStyle, MAX_TEXT_LEVEL, TEXT_LEVELS, TextAnchor, TextAutoFit, TextBody, TextBodyProperties,
+    TextVertical, TextWrap,
+};
+pub use text_bullet::{AutoNumberScheme, TextBullet};
+pub use text_paragraph::{
+    MAX_TEXT_MARGIN_EMU, TextAlign, TextField, TextLineBreak, TextParagraph,
+    TextParagraphProperties, TextRun, TextRunText, TextSpacing, TextTabStop,
+};
+pub use text_run::{
+    MAX_FONT_SIZE_HUNDREDTHS, MAX_SPACING_HUNDREDTHS, MIN_FONT_SIZE_HUNDREDTHS, TextCaps,
+    TextCharacterProperties, TextStrike, TextUnderline, Typeface,
+};
 
 #[cfg(test)]
 mod tests;
