@@ -2513,6 +2513,7 @@ fn apply_transform(
 mod tests {
     use super::*;
     use crate::open_document;
+    use casual_doc_layout::block::BlockFragment;
     use casual_doc_model::v1::BlockNode;
 
     /// A real producer's package, so a round trip is measured against Word's
@@ -3629,6 +3630,107 @@ mod tests {
                 .set_object_rotation_inner(&text_box, Some(30.0))
                 .is_err(),
             "and the facade refuses to rotate it, which is what the missing grip says"
+        );
+    }
+
+    /// Where the text of `paragraph`'s first painted line starts, in the painted
+    /// layout's own twips — the right edge of the wrap-exclusion band a
+    /// left-hand float imposes on it.
+    ///
+    /// Read from the PAINTED layout, and only ever compared as a delta, so the
+    /// reference (the fragment origin plus the run's origin, which excludes the
+    /// paragraph's constant indent) need not be an absolute page x.
+    fn first_text_left(document: &WasmDocument, paragraph: &str) -> i32 {
+        let wanted: NodeId = paragraph.parse().expect("a node id");
+        for page in &document.painted_layout().pages {
+            for placed in &page.placed {
+                if let BlockFragment::Paragraph { id, lines, .. } = &placed.fragment
+                    && *id == wanted
+                    && let Some(run) = lines.lines.first().and_then(|line| line.runs.first())
+                {
+                    return placed.rect.origin.x.raw() + run.origin.x.raw();
+                }
+            }
+        }
+        panic!("the paragraph is not painted with any text");
+    }
+
+    /// Dragging a lone shape has to move the band of text it excludes, not only
+    /// the shape.
+    ///
+    /// Every inserted shape — and every lone autoshape Word writes — is a GROUP
+    /// OF ONE, so `object_boxes` reports the leaf as the subject and the group
+    /// as the root, the host reads `subject != root` as "a child inside a
+    /// group", and the drag, the arrow nudge and the Shift+arrow nudge all route
+    /// to `moveGroupChildBy`. That moved the child's `a:xfrm` offset and nothing
+    /// else, while every wrap consumer reads the GROUP's `wp:anchor` and
+    /// `wp:extent`: the shape painted where it was dropped and its exclusion
+    /// band stayed at the group's original anchor, so the paragraph kept a
+    /// two-inch hole around empty space while the shape overlapped unwrapped
+    /// text elsewhere. The exporter wrote the unmoved anchor out, so the saved
+    /// `.docx` was wrong the same way — a correctness bug, not a repaint glitch.
+    #[test]
+    fn dragging_a_lone_shape_moves_its_text_exclusion_by_the_same_delta() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let paragraph = first_paragraph(&document);
+        document
+            .insert_shape(&paragraph, 0, "rectangle")
+            .expect("insert a shape");
+        let group = only_group(&document).expect("a group of one");
+        let shape = match group.children.first().expect("one child") {
+            GroupChild::Shape(shape) => shape.id.to_string(),
+            other => panic!("expected a shape, got {other:?}"),
+        };
+
+        let before_shape = document.object_rect(&shape);
+        assert_eq!(before_shape.len(), 5, "the shape reached layout");
+        let before_text = first_text_left(&document, &paragraph);
+
+        // Half an inch to the LEFT, so the band still runs off the column's
+        // leading edge and the text has nowhere to go but to its right: the one
+        // placement where the band's right edge IS where the text starts.
+        document
+            .move_group_child_by_inner(&shape, -457_200.0, 0.0)
+            .expect("drag the shape half an inch left");
+
+        let after_shape = document.object_rect(&shape);
+        let after_text = first_text_left(&document, &paragraph);
+        assert_eq!(
+            after_shape[1] - before_shape[1],
+            -720,
+            "the shape itself moved half an inch left: {before_shape:?} -> {after_shape:?}"
+        );
+        assert_eq!(
+            after_text - before_text,
+            after_shape[1] - before_shape[1],
+            "the text's exclusion band moved by the SAME delta as the shape \
+             (the text started at {before_text}, now starts at {after_text})"
+        );
+
+        // And the SAVED file is right, not merely faithful. The exporter writes
+        // `wp:anchor` from the GROUP and `a:off` from the leaf, and Word
+        // computes wrap from anchor plus extent too, so a move that touched only
+        // the leaf wrote a document that is wrong in Word as well.
+        //
+        // The assertion is the DISTANCE from the shape's leading edge to where
+        // the text starts, because a round trip reproduces a stale anchor
+        // perfectly: comparing the reopened numbers to the ones above would pass
+        // whether the band followed the shape or not.
+        let bytes = document.export_docx().expect("export the document");
+        let reopened = open_document(&bytes).expect("reopen the exported document");
+        let reopened_paragraph = first_paragraph(&reopened);
+        let reopened_group = only_group(&reopened).expect("the shape came back as a group of one");
+        let reopened_shape = match reopened_group.children.first().expect("one child") {
+            GroupChild::Shape(shape) => shape.id.to_string(),
+            other => panic!("expected a shape, got {other:?}"),
+        };
+        let reopened_rect = reopened.object_rect(&reopened_shape);
+        assert_eq!(reopened_rect.len(), 5, "the exported shape reopens placed");
+        assert_eq!(
+            first_text_left(&reopened, &reopened_paragraph) - reopened_rect[1],
+            before_text - before_shape[1],
+            "the saved file keeps the text beside the shape it wraps around, \
+             rather than around the space the shape left"
         );
     }
 }
