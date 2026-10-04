@@ -378,15 +378,18 @@
       "area": "object",
       "title": "Insert a chart",
       "ours": {
-        "absent": [
-          "insert.chart"
-        ]
+        "partial": {
+          "evidence": {
+            "command": "insert.chart"
+          },
+          "missing": "a chart type gallery, and any editing of the chart's data, title, series or legend"
+        }
       },
       "theirs": {
         "control": "btnInsertChart"
       },
       "rank": 1,
-      "note": "We have no chart authoring of any kind."
+      "note": "Insert ▸ Chart and the command palette both create Word's own default, a clustered column chart, and the engine writes a real `word/charts/chartN.xml` part for the six typed families. What is missing is every choice AFTER the insert: there is no type picker, and nothing edits the data — their btnInsertChart opens straight into a data grid. The row was graded as a flat gap until `insert.chart` landed; the guard caught the UNDERSTATEMENT, which is the half of §9 rule 6 that is easy to forget."
     },
     {
       "id": "object.insert-image-file",

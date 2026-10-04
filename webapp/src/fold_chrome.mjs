@@ -34,7 +34,7 @@
 // rather than over either printer.
 
 import { t } from "./i18n.mjs";
-import { chevronPlacement, foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
+import { chevronPlacement, foldCommands, hasChildren, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
 
 /**
  * Wires folding.
@@ -74,6 +74,7 @@ export function createFoldChrome({
   setStatus,
   getPages = () => [],
   scaleOf = () => ({ sx: 1, sy: 1 }),
+  outlineOpen = () => true,
 }) {
   /** The last state the ENGINE reported, re-read after every call rather than
    *  mutated here. One state, and it is not this module's. */
@@ -122,8 +123,16 @@ export function createFoldChrome({
   const caretHeading = () => {
     const node = caretNode();
     if (!node) return null;
-    const row = rows.find((candidate) => candidate.node === node);
-    return row ? { node: row.node, collapsed: row.collapsed } : null;
+    const index = rows.findIndex((candidate) => candidate.node === node);
+    if (index < 0) return null;
+    const row = rows[index];
+    // `hasChildren` is the tree's OWN rule, reused rather than restated: a row
+    // is collapsible when the row after it is deeper. The outline panel already
+    // uses it to decide which rows get a disclosure and which get an inert
+    // spacer, and the in-body chevron has to agree with it — a chevron on a
+    // heading with nothing under it is a disclosure for nothing, and clicking
+    // it folds nothing away.
+    return { node: row.node, collapsed: row.collapsed, hasChildren: hasChildren(rows, index) };
   };
 
   /**
@@ -315,7 +324,17 @@ export function createFoldChrome({
       // Withholding it costs nothing a reader can reach for: folding is still on
       // the outline tree, on View ▸ Show and in the palette, so this is a
       // missing ornament and not a missing capability.
-      const place = chevronPlacement(rect, CHEVRON_GUTTER);
+      // The chevron is only shown while the outline panel is OPEN, and that is
+      // the honest rule rather than a convenience. Its fold state is read from
+      // the rows the last `sync` saw, and `sync` runs when the panel renders —
+      // so with the panel shut the chevron is a control whose state nobody is
+      // refreshing (FOLD-006). An affordance that may be showing yesterday's
+      // answer is worse than no affordance, and the reader loses nothing:
+      // folding is on the outline tree, View ▸ Show and the palette.
+      const place =
+        outlineOpen() && heading.hasChildren
+          ? chevronPlacement(rect, CHEVRON_GUTTER)
+          : { show: false, left: 0 };
       if (!place.show) {
         host.querySelector(".fold-body-chevron")?.remove();
         return;

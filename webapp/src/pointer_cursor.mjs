@@ -323,6 +323,18 @@ export const CURSOR_TARGETS = [
       "same reason the touch pills above carry one.",
   },
   {
+    id: "fold-chevron",
+    cursor: "pointer",
+    owner: "css",
+    selector: ".overlay .fold-body-chevron",
+    gesture: "Collapsing or expanding the heading the caret is in",
+    why:
+      "A control, not text: it folds the heading's range away. Word puts the same " +
+      "chevron in the margin beside a heading and gives it a pointer, and the " +
+      "overlay is `pointer-events: none` so this element opts back in — which is " +
+      "exactly why it needs a row here rather than inheriting the layer's arrow.",
+  },
+  {
     id: "checklist-checkbox",
     cursor: "pointer",
     owner: "css",
