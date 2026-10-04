@@ -175,6 +175,11 @@ mod diff;
 // it exists.
 mod quantity;
 
+// The shared session (`docs/152`, ADR-063). Its own module because the socket is the
+// browser's and the session is the engine's: nothing here opens a connection, and nothing in
+// `webapp/src` parses a frame.
+mod collab;
+
 // The roster — who else is in the room (`docs/152` §2b). Its own module for the
 // same reason, and a stronger one: presence is never persisted and never
 // replayed, so keeping it off the document handle is what stops it ever reaching
@@ -535,6 +540,14 @@ pub struct WasmDocument {
     /// all, which is how ADR-005 came to be honoured nowhere: the flat stacks
     /// carried the inverses, the forward operations were thrown away, and
     /// nothing could replay, rebase or transform them.
+    /// The shared-session protocol state, present only while this replica has joined a room.
+    ///
+    /// `None` is the standalone mode and the only honest default (`152` §2a): a document opened
+    /// from a file has no room, nobody to order its edits and nobody to tell. The browser's
+    /// transport installs one by feeding a `Welcome` to
+    /// [`WasmDocument::collab_receive_frame`]; see [`crate::collab`] for why the socket is the
+    /// host's and the session is the engine's.
+    session: Option<casual_doc_transaction::session::ClientSession>,
     log: RevisionLog,
     /// Mints transaction identities for this session. Monotonic and never
     /// reused, including after Undo — the same rule `edit_ids` and
@@ -25824,6 +25837,7 @@ fn open_document_bounded(
         },
         default_config,
         edit_ids,
+        session: None,
         log: RevisionLog::default(),
         next_transaction: 0,
         typing_history: None,
@@ -34209,7 +34223,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5d),
-            log: RevisionLog::default(),
+            session: None,
+        log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -34656,7 +34671,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5c),
-            log: RevisionLog::default(),
+            session: None,
+        log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -34958,7 +34974,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5b),
-            log: RevisionLog::default(),
+            session: None,
+        log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -38816,7 +38833,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
-            log: RevisionLog::default(),
+            session: None,
+        log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -40989,7 +41007,8 @@ mod tests {
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5a),
-            log: RevisionLog::default(),
+            session: None,
+        log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
             revision_ids,
@@ -44948,14 +44967,49 @@ mod tests {
              guard that reads no files passes for the wrong reason"
         );
 
-        let mut declared: Vec<String> = Vec::new();
+        // A file can be test code in its ENTIRETY, with no internal boundary to
+        // find: `#[cfg(test)] #[path = "x_tests.rs"] mod tests;` puts a whole module
+        // in its own file. Scanning one of those hands this guard nothing but test
+        // code, and the boundary assertion below correctly refuses to run — so the
+        // set of such files is DERIVED from the declarations that create them rather
+        // than from a filename convention. A file named `*_tests.rs` that no
+        // `#[cfg(test)]` declaration points at is still scanned, and still has to
+        // carry a boundary.
+        let mut test_module_files: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
         for path in &files {
             let text = std::fs::read_to_string(path).expect("a readable source file");
+            let lines: Vec<&str> = text.lines().collect();
+            for (index, line) in lines.iter().enumerate() {
+                if line.trim_end() != "#[cfg(test)]" {
+                    continue;
+                }
+                // The attributes may appear in either order, so look at the few
+                // lines the declaration can occupy rather than at a fixed offset.
+                for next in lines.iter().skip(index + 1).take(3) {
+                    let next = next.trim();
+                    if let Some(rest) = next.strip_prefix("#[path = \"") {
+                        if let Some(file) = rest.split('"').next() {
+                            test_module_files.insert(file.to_owned());
+                        }
+                    } else if !next.starts_with("#[") {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut declared: Vec<String> = Vec::new();
+        for path in &files {
             let name = path
                 .file_name()
                 .expect("a source file has a name")
                 .to_string_lossy()
                 .into_owned();
+            if test_module_files.contains(&name) {
+                continue;
+            }
+            let text = std::fs::read_to_string(path).expect("a readable source file");
 
             // Production code only: a test helper is not a second answer the engine
             // can call, and scanning the test module is how this guard came to match
