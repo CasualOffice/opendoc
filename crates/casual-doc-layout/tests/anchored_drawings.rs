@@ -2445,6 +2445,155 @@ fn place_themed_shape(
     layout.pages[0].anchored[0].content.clone()
 }
 
+/// A grouped TEXT BOX resolves its theme style, which it did not.
+///
+/// `docs/156` section 6 row 0.2's last paintable gap. A text-bearing `wps:wsp`
+/// imports as a `GroupTextBox` but keeps the shape's node id, and the importer files
+/// its `wps:style` reference under that id BEFORE building the text box — so the
+/// entry was always in `Definitions::shape_styles` and the layout simply never
+/// looked. A themed text box rendered unfilled: PowerPoint and the Shape Styles
+/// gallery lean on the matrix rather than writing an explicit `spPr` fill, so this is
+/// the common case rather than an edge.
+///
+/// Resolved through the SAME function a text-free shape uses, so the two cannot
+/// disagree about what `a:fillRef idx="1"` means — which is why this asserts the text
+/// box gets the identical fill the shape guard above asserts.
+#[test]
+fn a_grouped_text_box_with_no_explicit_fill_resolves_its_theme_style() {
+    use casual_doc_layout::page::AnchorContent;
+
+    let AnchorContent::TextBox { fill, border, .. } = place_themed_text_box(None) else {
+        panic!("expected a text box");
+    };
+    assert_eq!(
+        fill,
+        Some(casual_doc_model::v1::Fill::Solid(THEMED_GREEN)),
+        "the fillRef's colour is substituted for the entry's phClr, exactly as it is \
+         for a text-free shape"
+    );
+    let border = border.expect("the lnRef resolves an outline");
+    assert_eq!(border.color, [255, 0, 0, 255], "the lnRef's colour");
+
+    // The control: the box's own fill is its own statement and must win over the
+    // matrix, the same precedence a text-free shape has.
+    let explicit = casual_doc_model::v1::Fill::Solid(Rgba {
+        r: 1,
+        g: 2,
+        b: 3,
+        a: 255,
+    });
+    let AnchorContent::TextBox { fill, .. } = place_themed_text_box(Some(explicit.clone())) else {
+        panic!("expected a text box");
+    };
+    assert_eq!(
+        fill,
+        Some(explicit),
+        "an explicit fill outranks the style matrix"
+    );
+}
+
+/// Places a grouped text box carrying a `wps:style` reference into the same format
+/// scheme `place_themed_shape` uses, so the two can be compared directly.
+fn place_themed_text_box(
+    explicit_fill: Option<casual_doc_model::v1::Fill>,
+) -> casual_doc_layout::page::AnchorContent {
+    use casual_doc_model::v1::{
+        ColorTransform, DashStyle, Definitions, FillStyle, FormatScheme, LineStyle, ShapeStyleRef,
+        StyleColor,
+    };
+
+    let box_id = node(95);
+    let red = Rgba {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let child = GroupChild::TextBox(GroupTextBox {
+        hyperlink: None,
+        id: box_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        // A plain rectangle, so the fill reaches `AnchorContent::TextBox` directly
+        // rather than through a preset backdrop — the backdrop path has its own
+        // guards and would hide which value was used.
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(96),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(97, "themed")],
+        })],
+        fill: explicit_fill,
+        border: None,
+        body_properties: TextBoxBodyProperties::default(),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    let extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
+        id: node(94),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(11),
+        extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        children: vec![child],
+    }));
+    let mut definitions = Definitions {
+        format_scheme: Some(FormatScheme {
+            fill_styles: vec![Some(FillStyle::Solid {
+                color: StyleColor::Placeholder(ColorTransform::default()),
+            })],
+            line_styles: vec![Some(LineStyle {
+                width_emu: 6_350,
+                color: StyleColor::Placeholder(ColorTransform::default()),
+                dash: Some(DashStyle::Dash),
+            })],
+            effect_styles: Vec::new(),
+        }),
+        ..Definitions::default()
+    };
+    definitions.shape_styles.insert(
+        box_id,
+        ShapeStyleRef {
+            fill_idx: Some(1),
+            fill_color: Some(THEMED_GREEN),
+            line_idx: Some(1),
+            line_color: Some(red),
+            effect_idx: None,
+        },
+    );
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    layout.pages[0].anchored[0].content.clone()
+}
+
 /// An adjustment guide that COMPUTES its value is honoured, not passed over for the
 /// preset default (`109` FID-G-02 / FID-L-04 groundwork).
 ///

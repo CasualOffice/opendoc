@@ -1182,12 +1182,26 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
             relative_height: self.relative_height,
             order: self.ctx.next_order(),
         };
+        // A text-bearing `wps:wsp` keeps its shape's node id, and the importer files
+        // its `wps:style` reference under that id — so the theme entry was always
+        // there and the layout simply never looked. Without this a themed text box
+        // renders UNFILLED, which is `docs/156` §6 row 0.2's last paintable gap.
+        // Resolved through the same function a text-free shape uses, so the two
+        // cannot disagree about what `a:fillRef idx="2"` means.
+        let (themed_fill, themed_border) = themed_appearance_of(
+            text_box.id,
+            text_box.fill.clone(),
+            text_box.border,
+            self.definitions(),
+        );
+        let detail = stroke_detail(self.definitions(), text_box.id);
         // "Modeled is not shipped": a text-bearing `wps:wsp` whose preset is an
         // ellipse or a star must PAINT as one, with its text inside. The backdrop
         // comes from the same mapping a text-free shape uses, and takes the
         // fill/outline with it so the rectangular box path below paints nothing over
         // it.
-        let backdrop = text_box_backdrop(text_box, rect);
+        let backdrop =
+            text_box_backdrop(text_box, rect, themed_fill.as_ref(), themed_border, detail);
         push(
             self.layout,
             self.page_index,
@@ -1195,10 +1209,10 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
                 node: Some(text_box.id),
                 content: AnchorContent::TextBox {
                     blocks: flowed.blocks,
-                    fill: backdrop.is_none().then(|| text_box.fill.clone()).flatten(),
+                    fill: backdrop.is_none().then(|| themed_fill.clone()).flatten(),
                     border: backdrop
                         .is_none()
-                        .then(|| text_box.border.map(text_box_stroke))
+                        .then(|| themed_border.map(text_box_stroke))
                         .flatten(),
                     content_layout: flowed.content_layout,
                     backdrop,
@@ -1441,6 +1455,9 @@ pub fn themed_shape_appearance(
 fn text_box_backdrop(
     text_box: &casual_doc_model::v1::GroupTextBox,
     rect: Rect,
+    fill: Option<&Fill>,
+    border: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
 ) -> Option<Box<AnchorContent>> {
     // A plain rectangle never needs a backdrop: the text-box content already paints
     // its fill and outline, and a second rectangle over the top would just be the
@@ -1472,9 +1489,9 @@ fn text_box_backdrop(
         text_box.preset.as_deref(),
         &text_box.adjustments,
         rect,
-        text_box.fill.as_ref(),
-        text_box.border,
-        None,
+        fill,
+        border,
+        detail,
     )))
 }
 
@@ -1915,9 +1932,32 @@ fn themed_appearance(
     shape: &GroupShape,
     definitions: &Definitions,
 ) -> (Option<Fill>, Option<ShapeStroke>) {
-    let mut fill = shape.fill.clone();
-    let mut stroke = shape.stroke;
-    let Some(reference) = definitions.shape_styles.get(&shape.id) else {
+    themed_appearance_of(shape.id, shape.fill.clone(), shape.stroke, definitions)
+}
+
+/// The themed fill and outline of anything that carries an id, a fill and a stroke.
+///
+/// # Why this is keyed on an id rather than taking a shape
+///
+/// A text-bearing `wps:wsp` imports as a `GroupTextBox`, not a `GroupShape` — but it
+/// keeps the SAME node id, and the importer inserts its `wps:style` reference under
+/// that id before building the text box. So the style was always in
+/// `Definitions::shape_styles`; the layout simply never looked, and a themed text box
+/// rendered unfilled.
+///
+/// Taking the three values instead of a `&GroupShape` is what lets both callers share
+/// one resolution. A second copy for text boxes would have been the obvious move and
+/// would have drifted the first time the matrix gained an entry kind — which it did
+/// twice in this branch alone.
+///
+/// Complexity: O(1), plus O(stops) for a gradient entry, bounded by the theme.
+fn themed_appearance_of(
+    id: NodeId,
+    mut fill: Option<Fill>,
+    mut stroke: Option<ShapeStroke>,
+    definitions: &Definitions,
+) -> (Option<Fill>, Option<ShapeStroke>) {
+    let Some(reference) = definitions.shape_styles.get(&id) else {
         return (fill, stroke);
     };
     let Some(scheme) = definitions.format_scheme.as_ref() else {
