@@ -17,7 +17,7 @@ use casual_doc_model::NodeId;
 
 use crate::block::BlockFragment;
 use crate::model::ModelRange;
-use crate::units::{Point, Size, Twip};
+use crate::units::{Point, Rect, Size, Twip};
 
 /// A resolved font identity (an index into the engine's resolved font set). The
 /// resolution itself is `casual-doc-fonts`' concern (`40-FONT-MANAGEMENT-DESIGN.md`).
@@ -337,6 +337,102 @@ pub struct InlineRule {
     pub color: [u8; 4],
 }
 
+/// A chart's stroke: a resolved RGBA colour and a twip width.
+///
+/// Deliberately the same shape as [`TextBoxStroke`] rather than a reuse of it:
+/// the two describe different things (a box outline, and a gridline / axis /
+/// series line), and a single `width` in twips is what both need. Composition
+/// converts it to the display list's device-pixel [`crate::display::Stroke`] in
+/// one place, so a chart's hairline is exactly as thick as a bar-tab rule's.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct ChartStroke {
+    /// Resolved RGBA colour.
+    pub color: [u8; 4],
+    /// Stroke width in twips.
+    pub width: Twip,
+}
+
+/// One painted piece of a chart, in the chart box's **own** coordinate space
+/// (twips from the box's top-left corner).
+///
+/// This is the layout-level vocabulary, the same kind of thing [`InlineRule`] and
+/// [`InlineTextBox`] are: it is `Eq` and serializable so a galley stays
+/// comparable and the geometry golden can hold it, where
+/// [`crate::display::PaintItem`] carries device-pixel floats and cannot be. There
+/// is still **one** display vocabulary — [`crate::compose`] translates each
+/// primitive into a `PaintItem` and nothing else paints a chart.
+///
+/// Every variant maps to a primitive the display list already has (`docs/155`
+/// §7.2), which is why tier 1A needed no new one. A pie sector would need an arc
+/// and there is deliberately no variant for one.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum ChartPrimitive {
+    /// A filled and/or stroked axis-aligned rectangle: a bar, a legend key, the
+    /// chart-space background.
+    Rect {
+        /// The rectangle, box-local.
+        rect: Rect,
+        /// Fill colour (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// Outline, if stroked.
+        stroke: Option<ChartStroke>,
+    },
+    /// A straight segment: a gridline, an axis line, a tick mark.
+    Line {
+        /// The segment's start, box-local.
+        from: Point,
+        /// The segment's end, box-local.
+        to: Point,
+        /// The segment's stroke.
+        stroke: ChartStroke,
+    },
+    /// A polyline or polygon: a line series, a smoothed (sampled) series, an area
+    /// series' closed outline.
+    Path {
+        /// The vertices in path order, box-local.
+        points: Vec<Point>,
+        /// Whether the figure joins back to its first point (an area) or is left
+        /// open (a line series).
+        closed: bool,
+        /// Fill colour (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// Outline, if stroked.
+        stroke: Option<ChartStroke>,
+    },
+    /// A filled and/or stroked ellipse: a circular series marker.
+    Ellipse {
+        /// The ellipse's bounding rectangle, box-local.
+        rect: Rect,
+        /// Fill colour (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// Outline, if stroked.
+        stroke: Option<ChartStroke>,
+    },
+    /// Shaped text: the title, a tick label, a legend entry, a data label. The
+    /// run's origin is its left edge on its baseline, box-local.
+    Text {
+        /// The shaped run.
+        run: GlyphRun,
+    },
+}
+
+/// An inline chart (`a:graphicFrame` → `c:chart`) placed on a line: the authored
+/// `wp:extent` box and the primitives that fill it, already composed from the
+/// typed [`Chart`](casual_doc_model::v1::Chart) projection by [`crate::chart`].
+///
+/// `origin` is the box's top-left relative to the paragraph content box; the
+/// primitives are relative to the box's own top-left. Laid out on its own line,
+/// like an [`InlineImage`]; composition translates each primitive into page space.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct InlineChart {
+    /// Top-left of the chart box, relative to the paragraph content box (twips).
+    pub origin: Point,
+    /// The chart box size (twips), from the drawing's EMU extent.
+    pub size: Size,
+    /// The chart's paint primitives, box-local, in paint order.
+    pub primitives: Vec<ChartPrimitive>,
+}
+
 /// A resolved text-box outline ready for layout and paint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct TextBoxStroke {
@@ -528,6 +624,13 @@ pub struct Line {
     /// only when non-empty so a tab-free galley stays byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tab_extents: Vec<TabExtent>,
+    /// Inline charts placed on this line (`a:graphicFrame` → `c:chart`), each a
+    /// box of already-composed paint primitives (`docs/155` §9 increment 5). Empty
+    /// for every line in every document without a drawn chart; serialized only
+    /// when non-empty, so no galley and no geometry golden moves for a document
+    /// that has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub charts: Vec<InlineChart>,
 }
 
 /// The horizontal span one resolved tab advanced across, in the same
@@ -586,6 +689,13 @@ impl Line {
         }
         for rule in &mut self.rules {
             rule.origin.y = rule.origin.y + delta;
+        }
+        // A chart's primitives are relative to its own box, so only the box moves
+        // — the same rule an [`InlineTextBox`]'s nested fragments follow. Leaving
+        // the box behind is exactly the split-continuation defect this method was
+        // written to prevent, so the chart list is rebased here with the others.
+        for chart in &mut self.charts {
+            chart.origin.y = chart.origin.y + delta;
         }
     }
 }
@@ -799,6 +909,7 @@ pub trait LineShaper {
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
                 tab_extents: Vec::new(),
+                charts: Vec::new(),
             });
             y = y + image.size.height;
         }
@@ -869,6 +980,7 @@ pub trait LineShaper {
                 text_boxes: Vec::new(),
                 rules,
                 tab_extents: Vec::new(),
+                charts: Vec::new(),
             });
             y = y + math.size.height;
         }
@@ -905,6 +1017,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         };
         let layout = LineLayout {
             lines: vec![line(240), line(240), line(200)],

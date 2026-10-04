@@ -635,6 +635,7 @@ impl PreparedMarker {
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
                 tab_extents: Vec::new(),
+                charts: Vec::new(),
             });
         }
         let first = layout.lines.first_mut().expect("a line exists");

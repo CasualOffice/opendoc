@@ -1556,6 +1556,7 @@ impl ParleyShaper {
                 text_boxes: Vec::new(),
                 rules: out_rules,
                 tab_extents: Vec::new(),
+                charts: Vec::new(),
             });
             output_y = output_y + height;
             source_y = source_y + natural;
@@ -1686,6 +1687,7 @@ mod tests {
             text_boxes: Vec::new(),
             rules: Vec::new(),
             tab_extents: Vec::new(),
+            charts: Vec::new(),
         }
     }
 
