@@ -327,8 +327,44 @@ export const EN_STRINGS = Object.freeze({
   // findings sentence records: it reports a labelled number, which reads the same
   // in every language and needs one form per locale instead of Arabic's six.
   "compare.changeCount": "Differences: {count}",
+  // CORRECTED 2026-10-04, English and all eighteen translations. This read "This
+  // comparison did not finish, so the list below is incomplete", on a comment in
+  // `compare_documents.mjs` claiming `complete: false` happens only on a cancelled
+  // job. `record.rs` says the opposite in as many words — `complete` is "False
+  // whenever `findings` is non-empty" — so a perfectly ordinary comparison that
+  // met one construct this build cannot compare in detail was telling the reader
+  // it had broken. Measured on bolding one word in the demo document: four
+  // differences found, and "did not finish" printed above them. A comparison that
+  // finished and skipped something is not a comparison that did not finish, and
+  // the findings list directly below already names what was skipped.
   "compare.partial":
-    "This comparison did not finish, so the list below is incomplete.",
+    "Some of what differs could not be characterised; the list below says which.",
+  // WHAT A ROW IS ABOUT when there is no text and no typed field to name — the
+  // bracketed convention ONLYOFFICE uses, where theirs reads `<Image>`, `<Shape>`,
+  // `<Chart>` or `<Equation>`.
+  //
+  // Ours can only be as specific as the sidecar, and `family_of` in
+  // `casual-doc-diff/src/job.rs` maps a table row or cell to `table` and
+  // EVERYTHING else to `block` — so a deleted image-only paragraph is `<Block>`
+  // here and `<Image>` there. That gap is the engine's, it is reported as the
+  // engine's, and it is not papered over by printing `<Image>` on the grounds that
+  // images are the commonest untexted block: a plausible guess presented as a fact
+  // is what this repository has published by accident twice.
+  //
+  // All twelve families, enumerated rather than defaulted (SKILL §9.3), and
+  // `compare_documents.test.mjs` fails if the engine grows a family with no entry.
+  "compare.object.block": "<Block>",
+  "compare.object.text": "<Text>",
+  "compare.object.formatting": "<Formatting>",
+  "compare.object.style": "<Style>",
+  "compare.object.table": "<Table>",
+  "compare.object.object": "<Object>",
+  "compare.object.section": "<Page setup>",
+  "compare.object.definition": "<Definition>",
+  "compare.object.resource": "<Resource>",
+  "compare.object.comment": "<Comment>",
+  "compare.object.review": "<Tracked change>",
+  "compare.object.metadata": "<Document property>",
   "compare.cannotExport":
     "This document could not be written out, so there is nothing to compare.",
   // The engine's own sentence about this document — an admission limit, a corrupt
@@ -595,6 +631,32 @@ export const EN_STRINGS = Object.freeze({
 
   "versionHistory.command": "Version history",
   "versionHistory.current": "Current version",
+
+  // WHAT CHANGED, per row. The owner's second report was about the timeline
+  // itself: "still no improvement in versions". Every row read `Saved · 16 KB`,
+  // so the panel answered *when* and never *what*, and nothing told two rows
+  // apart but a clock. These four are everything the stored metadata can honestly
+  // say without parsing a checkpoint — see `versionRowDeltas` for why each one is
+  // derivable and what it deliberately does not claim.
+  //
+  // `sameAs` is the one the owner's FIRST report is about. A duplicate row can no
+  // longer be created by an implicit capture, but the integrity captures can still
+  // make one and older timelines already have them, so a duplicate names the
+  // version it duplicates instead of leaving the reader to diff by eye.
+  "versionHistory.row.sameAs": "Same content as {name}",
+  "versionHistory.row.edits.one": "{count} edit",
+  "versionHistory.row.edits.other": "{count} edits",
+  "versionHistory.row.grew": "{size} larger",
+  "versionHistory.row.shrank": "{size} smaller",
+  "versionHistory.row.by": "by {name}",
+
+  // Said, not whispered. SKILL §10 forbids a silent no-op, and a capture that
+  // found nothing new to keep used to be exactly that: no row appeared and
+  // nothing explained why. This is the panel's line for it — the status channel
+  // stays out of it on purpose, because a Save's own "Saved <name>" is the
+  // sentence the reader needs at that moment and two sentences about one act
+  // race each other.
+  "versionHistory.unchangedNote": "No changes since {name}, so no new version was kept.",
 
   // The row menu: the five actions a single version can have done to it, and
   // the name of the ⋮ that opens them.

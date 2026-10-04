@@ -21,8 +21,11 @@ import {
   FINDING_KEY,
   KIND_KEY,
   MAX_SLICES,
+  OBJECT_KEY,
   PARSING,
   WORKING,
+  changeFields,
+  changeObjectName,
   changeText,
   runComparison,
   storyLabel,
@@ -251,6 +254,12 @@ test("every family, kind and finding code the engine can report has a catalogue 
     [],
     "a change kind with no catalogue key renders as a bare identifier",
   );
+  assert.deepEqual(
+    families.filter((family) => !OBJECT_KEY[family]),
+    [],
+    "a construct family with no bracketed object name leaves a row that says only " +
+      "its kind — `Removed`, with nothing removed",
+  );
   // And the order list is the family list, so a new family cannot be given a key
   // and then left out of the panel's grouping.
   assert.deepEqual([...FAMILY_ORDER].sort(), [...families].sort());
@@ -260,9 +269,79 @@ test("every family, kind and finding code the engine can report has a catalogue 
     ...Object.values(FAMILY_KEY),
     ...Object.values(KIND_KEY),
     ...Object.values(FINDING_KEY),
+    ...Object.values(OBJECT_KEY),
   ]) {
     assert.ok(Object.hasOwn(EN_STRINGS, key), `${key} is in no string table`);
   }
+});
+
+test("no change can render as its kind label and nothing else", () => {
+  // THE DEFECT, measured in Chromium on 2026-10-04: bold one word in the demo
+  // document and compare, and three of the four rows named nothing at all.
+  //
+  //   <li data-compare-kind="formatting"><span class="compare-kind">Reformatted</span></li>
+  //   <li data-compare-kind="property" data-compare-change-family="object">
+  //     <span class="compare-kind">Property changed</span></li>
+  //
+  // "Reformatted." That was the whole entry. `changeText`'s own doc comment said
+  // the field list carried such a row — and `renderResult` never rendered
+  // `change.fields`, so the intention was written down and not implemented, which
+  // is why reading the module made the surface look finished.
+  //
+  // The rule is a disjunction and this is the guard on it: text, or typed fields,
+  // or a bracketed object name. The third is total over `OBJECT_KEY`, so the
+  // disjunction cannot fail — which is what lets this assert over every shape the
+  // engine can produce rather than over the three the panel was tested with.
+  const about = (change) =>
+    changeText(change) || changeFields(change).join(", ") || changeObjectName(change);
+
+  // Shapes taken from the real construction sites in `casual-doc-diff/src/job.rs`
+  // and `compare.rs`, including the ones that carry no text AND no fields.
+  const shapes = [
+    { family: "text", kind: "insertion", rightText: "BASELINE ", fields: [] },
+    { family: "text", kind: "deletion", leftText: "gone", fields: [] },
+    { family: "formatting", kind: "formatting", fields: ["runProperties"] },
+    { family: "object", kind: "property", fields: ["inlineObject"] },
+    { family: "section", kind: "property", fields: ["sections[0]", "id"] },
+    { family: "block", kind: "insertion", fields: ["story"] },
+    { family: "review", kind: "property", fields: ["revision"] },
+    // `excerpt_of` returns None for a block whose projected text is empty — an
+    // image-only paragraph, an empty paragraph, a table row — so these two are
+    // the shapes that used to read exactly "Removed" and "Added".
+    { family: "block", kind: "deletion", fields: [] },
+    { family: "table", kind: "insertion", fields: [] },
+    { family: "block", kind: "move_from", fields: [] },
+    // And a family this build has never heard of still names itself.
+    { family: "sparkline", kind: "deletion", fields: [] },
+  ];
+  for (const change of shapes) {
+    const words = about(change);
+    assert.ok(
+      words.length > 0,
+      `a ${change.kind} in ${change.family} renders as its kind label and nothing else`,
+    );
+  }
+
+  // Every family the engine declares, not just the shapes above: a family with no
+  // text and no fields is the worst case, so it is the one asserted over all of
+  // them.
+  for (const family of variants(readRecordSource(), "DiffFamily")) {
+    assert.ok(
+      about({ family, kind: "deletion", fields: [] }).length > 0,
+      `a deletion in ${family} with no text and no fields names nothing`,
+    );
+  }
+
+  // And the three parts are in priority order, so a row with text does not bury
+  // the words under a taxonomy label.
+  assert.equal(about({ family: "text", kind: "deletion", leftText: "x", fields: ["y"] }), "x");
+  assert.equal(about({ family: "object", kind: "property", fields: ["inlineObject"] }), "inlineObject");
+  assert.equal(about({ family: "table", kind: "deletion", fields: [] }), "<Table>");
+  assert.equal(about({ family: "nope", kind: "deletion", fields: [] }), "<nope>");
+  // A blank or non-string field is not a name. `fields` is untrusted on the way in
+  // for the same reason a stored version row is: it crossed a JSON boundary.
+  assert.deepEqual(changeFields({ fields: ["", null, 3, "alignment"] }), ["alignment"]);
+  assert.deepEqual(changeFields({}), []);
 });
 
 test("a story outside the body says where it is; the body says nothing", () => {

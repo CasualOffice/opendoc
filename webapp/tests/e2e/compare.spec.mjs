@@ -224,3 +224,84 @@ test("Show changes is live on a stored version and refused on the head, with the
   });
   expect(consoleErrors).toEqual([]);
 });
+
+test("every entry in the list names what it is about, never only its kind", async ({
+  page,
+  consoleErrors,
+}) => {
+  // MEASURED IN CHROMIUM ON 2026-10-04, through this exact route: bold one word
+  // in the demo document and compare it with its own import baseline.
+  //
+  //   <li data-compare-kind="formatting"><span class="compare-kind">Reformatted</span></li>
+  //   <li data-compare-kind="property" data-compare-change-family="object">
+  //     <span class="compare-kind">Property changed</span></li>
+  //   <li data-compare-kind="property" data-compare-change-family="section">
+  //     <span class="compare-kind">Property changed</span>
+  //     <span class="compare-where">in the document's definitions</span></li>
+  //
+  // Three of four rows named nothing. The owner's words on this surface were
+  // "what the fuck will i understand from this", and the markup is why.
+  //
+  // THE CONDITION IS A FORMATTING-ONLY CHANGE, deliberately: a text edit already
+  // rendered its excerpt, so a test that only inserted a paragraph passed over
+  // the defect — which is exactly what the four tests above do.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.type("Formatted. ");
+  await saveDocument(page);
+
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+Home`);
+  for (let i = 0; i < 8; i += 1) await page.keyboard.press("Shift+ArrowRight");
+  await page.locator("#bold").click();
+
+  await runAppMenuCommand(page, "file", "file.versionHistory");
+  const rows = page.locator("#versionPanelBody .version-item");
+  await expect(rows, "two versions, or there is nothing to compare against").toHaveCount(2, {
+    timeout: 45_000,
+  });
+  await rows.last().locator(".version-item-menu").click();
+  const changes = page.locator('#versionRowMenu [data-command-id="version.changes"]');
+  await expect(changes).toBeEnabled();
+  await changes.click();
+  await expect(page.locator("#compareBody [data-compare-total]")).toBeVisible({
+    timeout: 45_000,
+  });
+
+  const entries = page.locator("#compareBody .compare-changes li");
+  // NON-VACUITY: a comparison that found nothing would make every assertion
+  // below pass over an empty list, and a formatting change is exactly the kind
+  // this build might have failed to detect.
+  await expect(entries, "no entries, so the assertions below prove nothing").not.toHaveCount(0);
+  const kinds = await entries.locator(".compare-kind").allInnerTexts();
+  const whole = await entries.allInnerTexts();
+  expect(whole).toHaveLength(kinds.length);
+
+  // THE RULE: every entry says more than its kind. The row is kind + one of
+  // (text excerpt | typed field paths | bracketed object name), and a row that
+  // carries only the kind label is the defect.
+  for (const [index, text] of whole.entries()) {
+    const kind = kinds[index].trim();
+    const rest = text.replace(kind, "").replace(/\s+/g, " ").trim();
+    expect(
+      rest.length,
+      `entry ${index + 1} reads only "${kind}" — it says a change happened and ` +
+        "refuses to say what changed",
+    ).toBeGreaterThan(0);
+  }
+
+  // And at least one of them is a formatting or property row, so the condition
+  // this test needs really was created rather than silently becoming a text-only
+  // comparison.
+  const rowKinds = await entries.evaluateAll((items) =>
+    items.map((item) => item.dataset.compareKind ?? ""),
+  );
+  expect(rowKinds.some((kind) => kind === "formatting" || kind === "property")).toBe(true);
+
+  // The corrected sentence, and not the one that said a finished comparison had
+  // not finished. `record.rs`: `complete` is false whenever `findings` is
+  // non-empty, which an inline object in the demo document makes true.
+  await expect(page.locator("#compareBody")).not.toContainText(/did not finish/i);
+  expect(consoleErrors).toEqual([]);
+});

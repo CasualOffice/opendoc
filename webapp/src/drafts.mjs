@@ -137,6 +137,61 @@ export const DRAFT_EXPORT_MODES = Object.freeze([
   "semantic",
 ]);
 
+/** Every reason string a draft write can carry.
+ *
+ *  THIS LIST EXISTS BECAUSE THE DRAFT PATH AND VERSION HISTORY DRIFTED APART.
+ *  `writeDraft(reason)` passes its reason straight through to
+ *  `versionHistory.capture(reason, snapshot)`, where `version_history.mjs`
+ *  classifies it — and two of the five strings `main.js` fires, `pagehide` and
+ *  `restored`, were not in `CAPTURE_REASON` at all. A reason nothing has heard of
+ *  does not fail loudly there; it gets the fallback answer, and the fallback was
+ *  "capture even if nothing changed". That wrote byte-identical version rows,
+ *  which the owner reported twice.
+ *
+ *  So the strings live here, both sides import them, and
+ *  `version_history.test.mjs` asserts this list is a subset of `CAPTURE_REASON`
+ *  with every member classified. A new trigger that forgets to register itself
+ *  fails the unit gate instead of quietly adding noise to somebody's timeline.
+ *
+ *    quiesce / ceiling   `DraftScheduler`'s own two timers.
+ *    hidden              `visibilitychange` to hidden.
+ *    pagehide            the tab is going away.
+ *    restored            a recovered draft is written back into its own slot.
+ */
+export const DRAFT_WRITE_REASONS = Object.freeze({
+  QUIESCE: "quiesce",
+  CEILING: "ceiling",
+  HIDDEN: "hidden",
+  PAGEHIDE: "pagehide",
+  RESTORED: "restored",
+});
+
+/**
+ * Wires the two events that mean "this tab may be about to die" to a flush.
+ *
+ * `visibilitychange` rather than `beforeunload`: the hidden transition is the
+ * only one browsers reliably fire for a background-tab discard or a mobile app
+ * switch, which is where the tab most often dies. `pagehide` is the belt.
+ *
+ * Here rather than inline in `main.js` so the two reasons are emitted beside the
+ * list that declares them — the drift this list exists to stop was exactly a
+ * reason fired from `main.js` that nothing else had heard of — and so the rule is
+ * testable in node, which it was not while it was two anonymous listeners bound
+ * at module scope.
+ *
+ * O(1), twice. The flush itself is `DraftScheduler`'s, and does nothing when the
+ * document is not dirty.
+ *
+ * @param {{flush: (reason: string) => unknown}} scheduler
+ * @param {{doc?: Document, win?: Window}} [targets] injected for node.
+ */
+export function bindDraftFlushOnExit(scheduler, { doc = globalThis.document, win = globalThis } = {}) {
+  doc?.addEventListener("visibilitychange", () => {
+    if (doc.visibilityState === "hidden") scheduler.flush(DRAFT_WRITE_REASONS.HIDDEN);
+  });
+  win?.addEventListener("pagehide", () => scheduler.flush(DRAFT_WRITE_REASONS.PAGEHIDE));
+}
+
 /** This tab's slot id, kept in `sessionStorage` — whose lifetime is exactly a
  *  tab. It survives a reload and a renderer-crash reload, so a tab reclaims its
  *  own slot and is offered its own pre-crash draft; it disappears with the tab.
@@ -380,7 +435,7 @@ export class DraftScheduler {
     if (this.quiesceHandle !== null) this.clearTimer(this.quiesceHandle);
     this.quiesceHandle = this.setTimer(() => {
       this.quiesceHandle = null;
-      this.fire("quiesce");
+      this.fire(DRAFT_WRITE_REASONS.QUIESCE);
     }, this.quiesceMs);
     // The ceiling is NOT restarted per edit — that is the point of it. It runs
     // from the first edit after a write, so continuous typing cannot push the
@@ -388,7 +443,7 @@ export class DraftScheduler {
     if (this.ceilingHandle === null) {
       this.ceilingHandle = this.setTimer(() => {
         this.ceilingHandle = null;
-        this.fire("ceiling");
+        this.fire(DRAFT_WRITE_REASONS.CEILING);
       }, this.ceilingMs);
     }
   }

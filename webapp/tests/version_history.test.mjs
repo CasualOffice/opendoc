@@ -33,6 +33,7 @@ import {
   sanitiseVersionName,
   suppressesUnchanged,
 } from "../src/version_history.mjs";
+import { DRAFT_WRITE_REASONS } from "../src/drafts.mjs";
 import { DEFAULT_SETTINGS } from "../src/settings_defaults.mjs";
 import { announcementRegion, needsToast } from "../src/status_policy.mjs";
 import { fakeIndexedDB, quotaError } from "./fake_indexeddb.mjs";
@@ -323,13 +324,51 @@ test("every capture reason is classified as suppressed-or-kept when nothing chan
   ]) {
     assert.equal(suppressesUnchanged(reason), false, `${reason} is an integrity capture`);
   }
-  // As are the two explicit user acts: a command that appears to do nothing is the
-  // worse failure, and content addressing makes the duplicate one row.
+  // As is the one remaining explicit user act: a command that appears to do
+  // nothing is the worse failure, and content addressing makes the duplicate one
+  // row. `MANUAL` used to be here and is not any more — its only caller is the
+  // pre-copy safety capture, which nobody asks for by name, and the row it left
+  // behind is one of the rows the owner reported. See `SUPPRESS_UNCHANGED`.
   assert.equal(suppressesUnchanged(CAPTURE_REASON.NAME), false);
-  assert.equal(suppressesUnchanged(CAPTURE_REASON.MANUAL), false);
-  // And the owner's two targets are on the suppressed side.
+  assert.equal(suppressesUnchanged(CAPTURE_REASON.MANUAL), true);
+  // And the owner's targets are on the suppressed side.
   assert.equal(suppressesUnchanged(CAPTURE_REASON.OPEN), true);
   assert.equal(suppressesUnchanged(CAPTURE_REASON.SAVE), true);
+});
+
+test("a reason nobody classified suppresses rather than keeps", () => {
+  // THE DEFECT THIS IS FOR, measured in Chromium on 2026-10-04. `main.js` fires
+  // `draftScheduler.flush("pagehide")` and `writeDraft("restored")`, and neither
+  // string was in `CAPTURE_REASON`. `suppressesUnchanged` asked
+  // `SUPPRESS_UNCHANGED.includes(reason)`, which answers `false` for a reason it
+  // has never heard of, so the capture ran unsuppressed:
+  //
+  //   [VH] capture(pagehide) accepted kind=auto
+  //   [VH] captureNow reason=pagehide kind=auto suppress=false bytes=16384 ...
+  //   [VH] -> status=history.recorded ok=true
+  //
+  // — a row whose content hash was already in the timeline. The predicate now
+  // asks `KEEP_UNCHANGED`, so the dangerous default is suppression.
+  for (const unknown of ["pagehide-v2", "autosave", "", null, undefined, "QUIESCE"]) {
+    assert.equal(
+      suppressesUnchanged(unknown),
+      true,
+      `${String(unknown)} is not a classified reason and must not write a duplicate`,
+    );
+  }
+  // Belt: the strings the draft path really fires are all REGISTERED, so the
+  // suppression above is a safety net rather than the mechanism. A new trigger
+  // that forgets to register itself fails here.
+  for (const reason of Object.values(DRAFT_WRITE_REASONS)) {
+    assert.ok(
+      Object.values(CAPTURE_REASON).includes(reason),
+      `the draft path fires "${reason}", which CAPTURE_REASON does not declare`,
+    );
+    assert.ok(
+      SUPPRESS_UNCHANGED.includes(reason) !== KEEP_UNCHANGED.includes(reason),
+      `"${reason}" is not classified exactly once`,
+    );
+  }
 });
 
 test("a capture with nothing new in it writes nothing, and says so without calling it an error", async () => {
@@ -388,10 +427,31 @@ test("a capture with nothing new in it writes nothing, and says so without calli
   store.close();
 });
 
-test("unchanged means identical to the HEAD, not identical to anything ever stored", async () => {
-  // The distinction matters: a document edited, reverted by hand and then saved has
-  // bytes that match an OLDER version, and that is a real point in its past. Only
-  // the head — the state already on screen — is the one a new row would duplicate.
+test("unchanged means identical to anything in the lineage, and the head follows the bytes", async () => {
+  // REVERSED ON 2026-10-04, and the argument it replaces is written out because it
+  // was not silly. This test used to assert the opposite — "unchanged means
+  // identical to the HEAD, not identical to anything ever stored" — on the ground
+  // that a document edited, reverted by hand and then saved has bytes matching an
+  // OLDER version and that is a real point in its past.
+  //
+  // What beat it is a measurement, in Chromium, of what the head-only rule costs on
+  // the commonest gesture there is. Open a document, edit it, save, reload the same
+  // file:
+  //
+  //   after reload 1: import cp=fb07bd2d | saved cp=28c11967 | import cp=fb07bd2d
+  //
+  // The third row is byte-identical to the first. It was written because the head
+  // was `saved` at that moment, and one more arrived on every reload, forever —
+  // these are the rows the owner reported twice. A "real point in its past" that a
+  // reader cannot tell from an earlier row, cannot act on differently, and cannot
+  // stop accumulating is not information.
+  //
+  // AND THE HEAD MOVES, which is what makes suppression honest rather than merely
+  // tidy. The head is "the only version that still describes the document"
+  // (`deleteVersion` refuses to delete it on that ground), so after the reload above
+  // it was pointing at `saved` while the document on screen held the `import` bytes.
+  // Correcting it is the half of this change that stops the panel lying about which
+  // version is current.
   const indexedDB = fakeIndexedDB();
   const store = await openHistoryStore({ indexedDB, name: "opendoc-drafts", subtle: null });
   const { lineageId } = await store.openLineage({ docKey: "k1", name: "a.docx", now: NOW });
@@ -409,11 +469,29 @@ test("unchanged means identical to the HEAD, not identical to anything ever stor
       skipIfUnchanged: true,
     });
 
-  assert.equal((await capture(a, 1)).status, HISTORY_STATUS.RECORDED, "the first has no head");
+  assert.equal((await capture(a, 1)).status, HISTORY_STATUS.RECORDED, "the first has no twin");
+  const firstA = await store.head(lineageId);
   assert.equal((await capture(a, 2)).status, HISTORY_STATUS.UNCHANGED, "a is the head");
   assert.equal((await capture(b, 3)).status, HISTORY_STATUS.RECORDED);
-  assert.equal((await capture(a, 4)).status, HISTORY_STATUS.RECORDED, "a is no longer the head");
-  assert.equal((await store.listVersions(lineageId)).length, 3);
+  const bVersion = await store.head(lineageId);
+
+  // The reload: `a` again, with `b` as the head. One row, not two.
+  const again = await capture(a, 4);
+  assert.equal(again.status, HISTORY_STATUS.UNCHANGED, "a is already in this lineage");
+  assert.equal((await store.listVersions(lineageId)).length, 2, "no duplicate row was written");
+  // The head is on the row that holds the bytes the document actually has — which
+  // is the row `again.version` named, and no longer `b`.
+  assert.equal(again.version?.versionId, firstA);
+  assert.equal(await store.head(lineageId), firstA, "the head followed the bytes");
+  assert.notEqual(await store.head(lineageId), bVersion);
+  // Nothing was rewritten to achieve that: `b` is still there, still at its own
+  // timestamp, and the twin kept its original `createdAt` rather than being bumped
+  // to now. A pointer correction, not a rewind.
+  const rows = await store.listVersions(lineageId);
+  assert.deepEqual(
+    rows.map((row) => row.createdAt).sort((x, y) => x - y),
+    [NOW + 60_000, NOW + 3 * 60_000],
+  );
   store.close();
 });
 
