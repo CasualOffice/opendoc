@@ -2012,29 +2012,36 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
         })
         .collect();
     assert_eq!(polygons.len(), 3);
+    // The vertex ORDER below is the specification's, not a hand-written list's.
+    // These shapes stopped being hand-coded vertex lists and are now resolved from
+    // the committed ECMA-376 table, which starts each polygon at a different vertex
+    // and winds the other way. The point SETS are identical — that was measured for
+    // all eighteen collapsed presets before the hand-written code was deleted — so
+    // this re-pins the same geometry against its new source of truth rather than
+    // recording a change in what is drawn.
     assert_eq!(
         polygons[0],
         vec![
+            Point::new(Twip(1_440), Twip(2_880)),
             Point::new(Twip(2_160), Twip(1_440)),
             Point::new(Twip(2_880), Twip(2_880)),
-            Point::new(Twip(1_440), Twip(2_880)),
         ]
     );
     assert_eq!(
         polygons[1],
         vec![
+            Point::new(Twip(2_880), Twip(2_880)),
             Point::new(Twip(2_880), Twip(1_440)),
             Point::new(Twip(4_320), Twip(2_880)),
-            Point::new(Twip(2_880), Twip(2_880)),
         ]
     );
     assert_eq!(
         polygons[2],
         vec![
+            Point::new(Twip(4_320), Twip(2_160)),
             Point::new(Twip(5_040), Twip(1_440)),
             Point::new(Twip(5_760), Twip(2_160)),
             Point::new(Twip(5_040), Twip(2_880)),
-            Point::new(Twip(4_320), Twip(2_160)),
         ]
     );
 
@@ -3118,14 +3125,16 @@ fn new_presets_resolve_to_their_documented_outlines() {
     );
 
     // The regular `pentagon`, apex up, filling the box.
+    // Re-pinned in the specification's vertex order; see the note in
+    // `angular_presets_reach_exact_polygon_display_primitives`. Same five points.
     assert_eq!(
         outline(ShapeGeometry::Pentagon, Vec::new()),
         vec![
+            at(1_440, 1_990),
             at(2_160, 1_440),
             at(2_880, 1_990),
             at(2_605, 2_880),
             at(1_715, 2_880),
-            at(1_440, 1_990),
         ]
     );
 
