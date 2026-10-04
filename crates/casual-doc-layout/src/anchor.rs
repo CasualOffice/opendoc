@@ -1177,6 +1177,45 @@ fn preset_geometry_content(
         })
 }
 
+/// The painted content of one preset or custom geometry, for a caller that is not
+/// paginating a document.
+///
+/// The seam a slide's layout paints through (ADR-055 part 2). It wraps the same
+/// resolution a floating DOCX shape uses — the committed ECMA-376 preset table, the
+/// guide evaluator, and the four primitives kept because a path cannot express a true
+/// ellipse or an arrow end — so the two document classes cannot disagree about what a
+/// `prstGeom` looks like.
+///
+/// Complexity: O(1) in document size; O(guides + commands) in the preset, both fixed.
+#[must_use]
+pub fn shape_geometry_content(
+    geometry: ShapeGeometry,
+    preset: Option<&str>,
+    adjustments: &[ShapeAdjustment],
+    rect: Rect,
+    fill: Option<&Fill>,
+    stroke: Option<ShapeStroke>,
+) -> AnchorContent {
+    preset_geometry_content(geometry, preset, adjustments, rect, fill, stroke)
+}
+
+/// A shape's fill and outline with its theme style reference resolved.
+///
+/// Published for the presentation layer, which needs it MORE than the document layer
+/// does: Word writes an explicit `spPr` fill on most shapes, while PowerPoint leans on
+/// the style matrix, so a deck whose `a:fillRef` did not resolve would render almost
+/// entirely unfilled. An explicit fill on the shape still wins.
+///
+/// Complexity: O(1) per shape, plus O(stops) for a gradient entry, bounded by the
+/// theme.
+#[must_use]
+pub fn themed_shape_appearance(
+    shape: &GroupShape,
+    definitions: &Definitions,
+) -> (Option<Fill>, Option<ShapeStroke>) {
+    themed_appearance(shape, definitions)
+}
+
 /// The shape a grouped text box paints behind its text, or `None` when the box
 /// is the plain rectangle whose fill and outline the text-box content itself
 /// already draws.
@@ -1343,7 +1382,15 @@ fn push(layout: &mut PaginatedLayout, page_index: usize, anchor: PlacedAnchor) {
 /// the rigid group transform exactly — the rect position absorbs the translation,
 /// so no fixed point is needed there either.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct GroupPose {
+/// The accumulated rotation, flip and translation a nested group imposes on its
+/// children.
+///
+/// Published for a second document class (ADR-055 part 2): a slide's shape tree is
+/// the same `GroupChild` vocabulary rooted in a `p:spTree` rather than a `wpg:wgp`,
+/// and it needs this composition rather than a second copy of it. Flips XOR and an
+/// inner rotation NEGATES when the outer pose mirrors exactly one axis — that rule is
+/// the reason this is a type and not three loose fields.
+pub struct GroupPose {
     /// Clockwise rotation in 60000ths of a degree (`a:xfrm@rot`).
     rotation: i32,
     /// Mirror across the vertical axis (`a:xfrm@flipH`).
@@ -1357,7 +1404,8 @@ struct GroupPose {
 
 impl GroupPose {
     /// The pose that changes nothing.
-    const IDENTITY: Self = Self {
+    /// The pose that changes nothing: no rotation, no flip, no translation.
+    pub const IDENTITY: Self = Self {
         rotation: 0,
         flip_h: false,
         flip_v: false,
@@ -1371,7 +1419,8 @@ impl GroupPose {
 
     /// The pose of `rotation`/`flip_h`/`flip_v` applied about `center`, i.e.
     /// `T(c) * R * Flip * T(-c)` flattened into `L` and `t`.
-    fn about(center: Point, rotation: i32, flip_h: bool, flip_v: bool) -> Self {
+    #[must_use]
+    pub fn about(center: Point, rotation: i32, flip_h: bool, flip_v: bool) -> Self {
         let bare = Self {
             rotation,
             flip_h,
@@ -1395,7 +1444,8 @@ impl GroupPose {
     /// `self` applied AFTER `inner`, i.e. the composite `self ∘ inner`.
     ///
     /// `(L_s, t_s) ∘ (L_i, t_i) = (L_s*L_i, L_s*t_i + t_s)`.
-    fn after(self, inner: Self) -> Self {
+    #[must_use]
+    pub fn after(self, inner: Self) -> Self {
         if inner.is_identity() {
             return self;
         }
@@ -1442,7 +1492,8 @@ impl GroupPose {
     /// The child's rect, moved so its centre lands where the pose sends it. Size is
     /// unchanged: the rect stays axis-aligned and the orientation rides the
     /// `ShapeTransform` instead.
-    fn reposition(self, rect: Rect) -> Rect {
+    #[must_use]
+    pub fn reposition(self, rect: Rect) -> Rect {
         if self.is_identity() {
             return rect;
         }
@@ -1457,7 +1508,8 @@ impl GroupPose {
     }
 
     /// The child's own `a:xfrm` rot/flip composed under this pose.
-    fn compose_child(
+    #[must_use]
+    pub fn compose_child(
         self,
         rotation: Option<i32>,
         flip_h: bool,
@@ -1507,8 +1559,15 @@ fn rect_center(rect: Rect) -> Point {
 /// A group's child-space → page-twips mapping: an affine (in EMU) from child
 /// coordinates to the top group's box space, evaluated against the group's placed
 /// `origin`. Composed for nested groups.
-#[derive(Clone, Copy)]
-struct GroupMapper {
+#[derive(Clone, Copy, Debug)]
+/// Maps a group's child coordinate space onto its placed box.
+///
+/// `a:chOff`/`a:chExt` against `a:off`/`a:ext` is a ratio, which is what lets a group
+/// be resized without its children moving relative to one another. Published for the
+/// same reason as [`GroupPose`]: a slide's `p:spTree` carries the identical transform
+/// and must map it the identical way. Fields stay private — the construction is the
+/// contract, not the four scalars.
+pub struct GroupMapper {
     scale_x: f64,
     scale_y: f64,
     tx: f64,
@@ -1522,7 +1581,9 @@ impl GroupMapper {
         Self::from_transform(&group.transform)
     }
 
-    fn from_transform(t: &casual_doc_model::v1::GroupTransform) -> Self {
+    /// The mapper for a transform: child EMU to box EMU.
+    #[must_use]
+    pub fn from_transform(t: &casual_doc_model::v1::GroupTransform) -> Self {
         let scale_x = ratio(t.extent.width_emu, t.child_extent.width_emu);
         let scale_y = ratio(t.extent.height_emu, t.child_extent.height_emu);
         Self {
@@ -1535,7 +1596,8 @@ impl GroupMapper {
 
     /// Composes `self` (parent) with a nested group's transform: the nested
     /// transform applies first (child → nested-parent space), then `self`.
-    fn compose(&self, nested: &WordprocessingGroup) -> Self {
+    #[must_use]
+    pub fn compose(&self, nested: &WordprocessingGroup) -> Self {
         let inner = Self::from_transform(&nested.transform);
         Self {
             scale_x: self.scale_x * inner.scale_x,
@@ -1547,7 +1609,8 @@ impl GroupMapper {
 
     /// The page-twips rectangle of a child at `offset` (child EMU) sized `extent`,
     /// relative to the group's placed `origin`.
-    fn child_rect(
+    #[must_use]
+    pub fn child_rect(
         &self,
         origin: Point,
         offset: casual_doc_model::v1::PointEmu,
@@ -1790,7 +1853,7 @@ fn rgba(c: Rgba) -> [u8; 4] {
 /// rotating/flipping about the (already-resolved) `rect`'s center. Returns `None`
 /// when the object is unrotated and unflipped (the common case) so it paints
 /// through the identity path.
-fn shape_transform(
+pub fn shape_transform(
     rect: Rect,
     flip_h: bool,
     flip_v: bool,
@@ -1811,7 +1874,13 @@ fn shape_transform(
     })
 }
 
-fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
+/// Converts a model outline into the display list's stroke.
+///
+/// Published alongside the other anchor seams so a slide's outline is converted by
+/// the same code a document's is — the `None` dash defaulting to solid is a
+/// decision, not an incidental, and two copies of it would drift.
+#[must_use]
+pub fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
     stroke.map(|s| AnchorStroke {
         color: rgba(s.color),
         width: emu_to_twip_extent(s.width_emu),
