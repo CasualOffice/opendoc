@@ -87,75 +87,14 @@ impl TextAnchor {
     }
 }
 
-/// Text flow direction (`a:bodyPr@vert`, `ST_TextVerticalType`).
+/// Text flow direction (`a:bodyPr@vert`).
 ///
-/// Modeled in full even though this build draws only the horizontal case: a vertical
-/// layout silently rendered horizontally is a different slide, and two of
-/// `ST_SlideLayoutType`'s own kinds (`vertTx`, `vertTitleAndTx`) exist specifically
-/// to use these.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum TextVertical {
-    /// `horz` — ordinary horizontal rows. The default.
-    #[default]
-    Horizontal,
-    /// `vert` — rotated 90° clockwise.
-    Vertical,
-    /// `vert270` — rotated 270°.
-    Vertical270,
-    /// `wordArtVert` — stacked, one character per line.
-    WordArtVertical,
-    /// `eaVert` — East Asian vertical.
-    EastAsianVertical,
-    /// `mongolianVert` — Mongolian vertical.
-    MongolianVertical,
-    /// `wordArtVertRtl` — stacked, right to left.
-    WordArtVerticalRtl,
-}
-
-impl TextVertical {
-    /// The `a:bodyPr@vert` token.
-    #[must_use]
-    pub const fn token(self) -> &'static str {
-        match self {
-            Self::Horizontal => "horz",
-            Self::Vertical => "vert",
-            Self::Vertical270 => "vert270",
-            Self::WordArtVertical => "wordArtVert",
-            Self::EastAsianVertical => "eaVert",
-            Self::MongolianVertical => "mongolianVert",
-            Self::WordArtVerticalRtl => "wordArtVertRtl",
-        }
-    }
-
-    /// Reads an `a:bodyPr@vert` token; anything else is the default.
-    #[must_use]
-    pub fn from_token(token: &str) -> Self {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.token() == token)
-            .unwrap_or(Self::Horizontal)
-    }
-
-    /// Whether this direction is anything other than ordinary horizontal rows, which
-    /// is what a renderer that only draws the horizontal case must branch on — and
-    /// report rather than draw wrongly.
-    #[must_use]
-    pub const fn is_rotated(self) -> bool {
-        !matches!(self, Self::Horizontal)
-    }
-
-    /// Every direction, so a guard derives the count.
-    pub const ALL: [Self; 7] = [
-        Self::Horizontal,
-        Self::Vertical,
-        Self::Vertical270,
-        Self::WordArtVertical,
-        Self::EastAsianVertical,
-        Self::MongolianVertical,
-        Self::WordArtVerticalRtl,
-    ];
-}
+/// Re-exported from the document model rather than declared here. It was declared
+/// twice: `wps:bodyPr@vert` is a DOCUMENT construct — `105` FID-L-08 tracks it as a
+/// DOCX defect — so the shared vocabulary belongs in the layer that is depended on,
+/// not in the one that depends. Two copies of a seven-variant token table would have
+/// disagreed the first time one gained a variant.
+pub use casual_doc_model::v1::TextVertical;
 
 /// Whether text wraps inside the shape (`a:bodyPr@wrap`).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

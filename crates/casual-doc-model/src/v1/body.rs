@@ -1686,6 +1686,111 @@ pub struct GroupPicture {
     pub rotation: Option<i32>,
 }
 
+/// The flow direction of text in a DrawingML text body (`a:bodyPr@vert`,
+/// `ST_TextVerticalType`).
+///
+/// # Why this lives in the document model
+///
+/// It is a **document** construct first: `wps:bodyPr@vert` is what a rotated Word
+/// text box carries, and `docs/105` FID-L-08 tracks it as a DOCX defect. A
+/// presentation needs the identical enum — two of `ST_SlideLayoutType`'s own kinds
+/// (`vertTx`, `vertTitleAndTx`) exist to use it — so declaring it in the
+/// presentation model, as a first draft of this did, put the shared vocabulary in
+/// the layer that depends rather than the layer that is depended on. One
+/// declaration, re-exported upward.
+///
+/// Modeled in full even where this build draws only the horizontal case: a vertical
+/// layout silently rendered horizontally is a different document, and the renderer
+/// must be able to branch on [`TextVertical::is_rotated`] and report rather than
+/// draw it wrongly.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextVertical {
+    /// `horz` — ordinary horizontal rows. The default.
+    #[default]
+    Horizontal,
+    /// `vert` — the text block is rotated 90 degrees clockwise.
+    Vertical,
+    /// `vert270` — rotated 270 degrees.
+    Vertical270,
+    /// `wordArtVert` — stacked, one character per line, upright.
+    WordArtVertical,
+    /// `eaVert` — East Asian vertical.
+    EastAsianVertical,
+    /// `mongolianVert` — Mongolian vertical.
+    MongolianVertical,
+    /// `wordArtVertRtl` — stacked, right to left.
+    WordArtVerticalRtl,
+}
+
+impl TextVertical {
+    /// The `a:bodyPr@vert` token.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horz",
+            Self::Vertical => "vert",
+            Self::Vertical270 => "vert270",
+            Self::WordArtVertical => "wordArtVert",
+            Self::EastAsianVertical => "eaVert",
+            Self::MongolianVertical => "mongolianVert",
+            Self::WordArtVerticalRtl => "wordArtVertRtl",
+        }
+    }
+
+    /// Reads an `a:bodyPr@vert` token; anything unrecognized is the default, because
+    /// the attribute is a hint about flow and refusing the file over one would cost
+    /// the whole document.
+    #[must_use]
+    pub fn from_token(token: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.token() == token)
+            .unwrap_or(Self::Horizontal)
+    }
+
+    /// Whether the flow is anything other than ordinary horizontal rows.
+    ///
+    /// What a renderer that draws only the horizontal case branches on, so the rest
+    /// are reported rather than drawn axis-aligned and wrong.
+    #[must_use]
+    pub const fn is_rotated(self) -> bool {
+        !matches!(self, Self::Horizontal)
+    }
+
+    /// The clockwise rotation, in 60000ths of a degree, this flow direction paints
+    /// its text block at — or `None` when the direction is not a plain rotation.
+    ///
+    /// `vert` and `vert270` are rotations and nothing else, so they can be painted
+    /// exactly by the existing layer transform. `eaVert` and the WordArt directions
+    /// are NOT: they re-order and re-orient individual glyphs, which a layer
+    /// transform cannot express, so they return `None` and must be reported rather
+    /// than approximated by a rotation that would look deliberate.
+    #[must_use]
+    pub const fn layer_rotation(self) -> Option<i32> {
+        match self {
+            Self::Horizontal => Some(0),
+            Self::Vertical => Some(5_400_000),
+            Self::Vertical270 => Some(16_200_000),
+            Self::WordArtVertical
+            | Self::EastAsianVertical
+            | Self::MongolianVertical
+            | Self::WordArtVerticalRtl => None,
+        }
+    }
+
+    /// Every direction, so a guard derives the count rather than hand-maintaining it.
+    pub const ALL: [Self; 7] = [
+        Self::Horizontal,
+        Self::Vertical,
+        Self::Vertical270,
+        Self::WordArtVertical,
+        Self::EastAsianVertical,
+        Self::MongolianVertical,
+        Self::WordArtVerticalRtl,
+    ];
+}
+
 /// DrawingML text-box internal margins (`wps:bodyPr@lIns/tIns/rIns/bIns`), in
 /// signed EMU. The asymmetric defaults are defined by DrawingML: 0.1 inch on
 /// the physical left/right and 0.05 inch on the top/bottom.
@@ -1823,6 +1928,24 @@ pub struct TextBoxBodyProperties {
     /// Text/shape autofit behavior.
     #[serde(default, skip_serializing_if = "is_default_text_box_auto_fit")]
     pub auto_fit: TextBoxAutoFit,
+    /// `wps:bodyPr@vert` — the flow direction of the text block.
+    ///
+    /// Additive: omitted when horizontal, so existing snapshots serialize
+    /// byte-identically. Until this landed the attribute was not read at all, so a
+    /// Word text box with vertical text imported and rendered axis-aligned with
+    /// nothing reported (`105` FID-L-08).
+    #[serde(default, skip_serializing_if = "is_horizontal_text")]
+    pub vertical: TextVertical,
+    /// `wps:bodyPr@rot` — the text block's OWN rotation, in 60000ths of a degree,
+    /// separate from the shape's `a:xfrm@rot`. Both apply, which is why this is not
+    /// folded into the shape's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_rotation: Option<i32>,
+}
+
+/// `skip_serializing_if` helper: an omitted `wps:bodyPr@vert` is horizontal.
+fn is_horizontal_text(vertical: &TextVertical) -> bool {
+    matches!(vertical, TextVertical::Horizontal)
 }
 
 impl TextBoxBodyProperties {

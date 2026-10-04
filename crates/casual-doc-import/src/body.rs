@@ -52,7 +52,7 @@ use casual_doc_model::v1::WrapSide;
 use casual_doc_model::v1::{
     CompoundLine, DashStop, GradientDetail, GradientPath, LineCap, LineJoin, MAX_CUSTOM_DASH_STOPS,
     MAX_PATTERN_PRESET_LEN, PatternFill, PenAlignment, PictureFill, PictureFillMode, RectAlignment,
-    RelativeRect, ShapeFillDetail, StrokeDetail, TileFlip,
+    RelativeRect, ShapeFillDetail, StrokeDetail, TextVertical, TileFlip,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -5627,6 +5627,35 @@ impl BodyParser<'_> {
                     TextBoxVerticalOverflow::Overflow
                 }
             };
+        }
+        // `@vert` — the flow direction. An unrecognized token leaves the horizontal
+        // default and is reported; a RECOGNIZED one this build cannot draw is stored
+        // and reported separately, because losing the authored direction is worse
+        // than knowing we cannot paint it (`105` FID-L-08).
+        if let Some(value) = attribute_value(element, b"vert") {
+            let vertical = TextVertical::from_token(value.as_str());
+            if vertical == TextVertical::Horizontal && value.as_str() != "horz" {
+                invalid = true;
+            }
+            properties.vertical = vertical;
+            if vertical.layer_rotation().is_none() {
+                // `eaVert` and the WordArt directions re-order and re-orient
+                // individual glyphs, which a layer transform cannot express, so they
+                // are retained and reported rather than approximated by a rotation
+                // that would look deliberate.
+                self.reporter.report(b"bodyPr/@vert");
+            }
+        }
+        // `@rot` — the text block's own rotation, separate from the shape's
+        // `a:xfrm@rot`. Bounded to one turn either way; outside that is not a
+        // rotation anyone authored.
+        if let Some(value) = attribute_value(element, b"rot") {
+            match value.parse::<i32>() {
+                Ok(rotation) if (-21_600_000..=21_600_000).contains(&rotation) => {
+                    properties.text_rotation = (rotation != 0).then_some(rotation);
+                }
+                _ => invalid = true,
+            }
         }
         if let Some(shape) = self.pending_shape.as_mut() {
             shape.body_properties = properties;

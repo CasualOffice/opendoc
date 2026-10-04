@@ -37,7 +37,7 @@ use casual_doc_model::v1::DashStyle;
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
 // Own `use` line, for the same anti-conflict reason as the two above: the
 // shared `GroupChild` walk needs the text-box type and the nesting bound.
-use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH, StrokeDetail};
+use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH, StrokeDetail, TextBoxBodyProperties};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -792,14 +792,27 @@ fn collect_inlines(
                 let (page_index, refs) =
                     target(layout, ctx, paragraph, scope, section, known_target);
                 let mut rect = resolve_anchor_rect(&anchor, extent, &refs);
+                // Same treatment as a grouped text box: a quarter turn flows the
+                // text along the box's short axis, so it is measured transposed.
+                let text_rotation = text_content_rotation(&text_box.body_properties);
+                let quarter_turn = text_rotation.is_some_and(is_quarter_turn);
+                let flow_size = if quarter_turn {
+                    Size::new(rect.size.height, rect.size.width)
+                } else {
+                    rect.size
+                };
                 let flowed = flow_anchored_text_box(
                     ctx.document,
                     &text_box.blocks,
                     ctx.shaper,
-                    rect.size,
+                    flow_size,
                     &text_box.body_properties,
                 );
-                rect.size = flowed.size;
+                rect.size = if quarter_turn {
+                    Size::new(flowed.size.height, flowed.size.width)
+                } else {
+                    flowed.size
+                };
                 push(
                     layout,
                     page_index,
@@ -815,6 +828,9 @@ fn collect_inlines(
                             // importer REPORTS the dropped preset rather than
                             // letting it vanish.
                             backdrop: None,
+                            text_transform: text_rotation.and_then(|rotation| {
+                                shape_transform(rect, false, false, Some(rotation))
+                            }),
                         },
                         rect,
                         behind_doc: anchor.behind_doc,
@@ -1135,14 +1151,33 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
 
     fn emit_text_box(&mut self, text_box: &GroupTextBox, rect: Rect) {
         let mut rect = rect;
+        // `wps:bodyPr@vert` plus `@rot`: the text block's own rotation, which is NOT
+        // the shape's `a:xfrm@rot`. A quarter turn means the text flows along the
+        // box's SHORT axis, so it is measured against a transposed box — flowing it
+        // against the upright one and then rotating would break every line at the
+        // wrong width, which is the half of this that looks like a layout bug rather
+        // than a missing attribute.
+        let text_rotation = text_content_rotation(&text_box.body_properties);
+        let quarter_turn = text_rotation.is_some_and(is_quarter_turn);
+        let flow_size = if quarter_turn {
+            Size::new(rect.size.height, rect.size.width)
+        } else {
+            rect.size
+        };
         let flowed = flow_anchored_text_box(
             self.ctx.document,
             &text_box.blocks,
             self.ctx.shaper,
-            rect.size,
+            flow_size,
             &text_box.body_properties,
         );
-        rect.size = flowed.size;
+        // A transposed flow grows along the box's height, so its measured size comes
+        // back transposed too and must be un-transposed before it becomes the rect.
+        rect.size = if quarter_turn {
+            Size::new(flowed.size.height, flowed.size.width)
+        } else {
+            flowed.size
+        };
         let z = AnchorZ {
             relative_height: self.relative_height,
             order: self.ctx.next_order(),
@@ -1167,13 +1202,19 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
                         .flatten(),
                     content_layout: flowed.content_layout,
                     backdrop,
+                    // The content's own rotation, painted through the layer seam
+                    // `PaintItem::PushLayer` has been waiting for since the
+                    // watermark introduced it (`105` FID-L-08).
+                    text_transform: text_rotation
+                        .and_then(|rotation| shape_transform(rect, false, false, Some(rotation))),
                 },
                 rect,
                 behind_doc: self.behind_doc,
                 z,
                 descr: None,
-                // Rotated text-box CONTENT is a follow-up; the box paints
-                // axis-aligned for now.
+                // The BOX is unrotated: `wps:bodyPr@rot` turns the text, not the
+                // chrome. A shape-level `a:xfrm@rot` is a separate rotation and is
+                // not modeled for a grouped text box.
                 transform: None,
             },
         );
@@ -2052,6 +2093,29 @@ pub fn shape_transform(
             Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
         ),
     })
+}
+
+/// The rotation a text box's CONTENT paints at: `wps:bodyPr@vert` combined with
+/// `@rot`, in 60000ths of a degree, or `None` when the text is upright or when the
+/// direction is one this build cannot express as a rotation.
+///
+/// `eaVert` and the WordArt directions return `None` from
+/// [`TextVertical::layer_rotation`] because they re-order and re-orient individual
+/// glyphs — a layer transform cannot express that, and approximating them with a
+/// quarter turn would look deliberate. The importer reports them.
+#[must_use]
+fn text_content_rotation(properties: &TextBoxBodyProperties) -> Option<i32> {
+    let from_direction = properties.vertical.layer_rotation()?;
+    let total = from_direction.saturating_add(properties.text_rotation.unwrap_or(0));
+    (total % 21_600_000 != 0).then_some(total)
+}
+
+/// Whether a rotation is an odd quarter turn, which is what transposes a text box's
+/// flow axis. A half turn leaves the axis alone.
+#[must_use]
+fn is_quarter_turn(rotation: i32) -> bool {
+    let turns = rotation.rem_euclid(21_600_000) / 5_400_000;
+    turns % 2 == 1
 }
 
 /// Converts a model outline into the display list's stroke.

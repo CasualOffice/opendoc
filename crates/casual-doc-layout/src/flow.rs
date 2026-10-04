@@ -15825,6 +15825,11 @@ mod tests {
                 horizontal_overflow: TextBoxHorizontalOverflow::Clip,
                 vertical_overflow: TextBoxVerticalOverflow::Clip,
                 auto_fit: TextBoxAutoFit::None,
+                // Not what this fixture asserts: the flow direction and the text's own
+                // rotation have their own guards, so they are deliberately unstated here
+                // rather than defaulted to quiet the compiler.
+                vertical: casual_doc_model::v1::TextVertical::Horizontal,
+                text_rotation: None,
             },
             blocks: inner.clone(),
         }));

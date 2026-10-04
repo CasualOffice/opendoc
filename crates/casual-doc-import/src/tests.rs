@@ -5033,6 +5033,11 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
                 font_scale: 75_000,
                 line_spacing_reduction: 20_000,
             },
+            // Not what this fixture asserts: the flow direction and the text's own
+            // rotation have their own guards, so they are deliberately unstated here
+            // rather than defaulted to quiet the compiler.
+            vertical: casual_doc_model::v1::TextVertical::Horizontal,
+            text_rotation: None,
         }
     );
 }
@@ -11341,5 +11346,79 @@ fn an_empty_picture_level_alt_text_reports_nothing() {
         !features(&import).contains(&"drawing"),
         "nothing was lost, so nothing should be reported: {:?}",
         features(&import),
+/// `wps:bodyPr@vert` and `@rot` are READ, which they were not.
+///
+/// `105` FID-L-08: the attributes were never parsed, so a Word text box with vertical
+/// text imported as horizontal with nothing reported — and every layout guard written
+/// against a hand-built model would still have passed, because the model was reached
+/// directly. This drives the parser.
+#[test]
+fn a_text_box_flow_direction_and_text_rotation_are_imported() {
+    use casual_doc_model::v1::TextVertical;
+
+    let body = |attrs: &str| {
+        format!(
+            r#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="1270000" cy="635000"/>
+                <a:graphic><a:graphicData><wps:wsp>
+                    <wps:spPr/>
+                    <wps:txbx><w:txbxContent><w:p><w:r><w:t>Turned</w:t></w:r></w:p></w:txbxContent></wps:txbx>
+                    <wps:bodyPr {attrs}/>
+                </wps:wsp></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
+        </w:body></w:document>"#
+        )
+        .into_bytes()
+    };
+
+    // A plain rotation: stored, and paintable.
+    let turned = import(&body(r#"vert="vert" rot="2700000""#));
+    let para = paragraph(&turned, 0);
+    let text_box = find_textbox(&para.inlines).expect("text box modeled");
+    assert_eq!(
+        text_box.body_properties.vertical,
+        TextVertical::Vertical,
+        "`vert` must be read, not dropped"
+    );
+    assert_eq!(
+        text_box.body_properties.text_rotation,
+        Some(2_700_000),
+        "`rot` is the TEXT's own rotation and must be read too"
+    );
+
+    // Absent attributes stay at the schema default and store no rotation, so an
+    // ordinary document is unchanged by this feature existing.
+    let plain = import(&body(""));
+    let plain_box = find_textbox(&paragraph(&plain, 0).inlines).expect("text box modeled");
+    assert_eq!(plain_box.body_properties.vertical, TextVertical::Horizontal);
+    assert_eq!(plain_box.body_properties.text_rotation, None);
+
+    // `rot="0"` is a stated no-op and must not become `Some(0)`: a zero rotation and
+    // an absent one render identically, so storing one would make a document that
+    // round-trips differently from the one that arrived.
+    let zero = import(&body(r#"rot="0""#));
+    let zero_box = find_textbox(&paragraph(&zero, 0).inlines).expect("text box modeled");
+    assert_eq!(zero_box.body_properties.text_rotation, None);
+
+    // A direction this build cannot express as a rotation is retained AND reported,
+    // rather than silently approximated by a quarter turn.
+    let ea = import(&body(r#"vert="eaVert""#));
+    let ea_box = find_textbox(&paragraph(&ea, 0).inlines).expect("text box modeled");
+    assert_eq!(
+        ea_box.body_properties.vertical,
+        TextVertical::EastAsianVertical,
+        "the authored direction is kept even when it cannot be painted"
+    );
+    assert!(
+        ea.report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "bodyPr/@vert"),
+        "a direction that cannot be painted must be reported; got {:?}",
+        ea.report
+            .entries
+            .iter()
+            .map(|e| e.feature.as_str())
+            .collect::<Vec<_>>()
     );
 }

@@ -2393,6 +2393,11 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
                 font_scale: 80_000,
                 line_spacing_reduction: 20_000,
             },
+            // Not what this fixture asserts: the flow direction and the text's own
+            // rotation have their own guards, so they are deliberately unstated here
+            // rather than defaulted to quiet the compiler.
+            vertical: TextVertical::Horizontal,
+            text_rotation: None,
         },
         blocks: vec![paragraph_block(tid(11))],
     };

@@ -1248,6 +1248,11 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             horizontal_overflow: TextBoxHorizontalOverflow::Clip,
             vertical_overflow: TextBoxVerticalOverflow::Clip,
             auto_fit: TextBoxAutoFit::None,
+            // Not what this fixture asserts: the flow direction and the text's own
+            // rotation have their own guards, so they are deliberately unstated here
+            // rather than defaulted to quiet the compiler.
+            vertical: casual_doc_model::v1::TextVertical::Horizontal,
+            text_rotation: None,
         },
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(411),
@@ -3955,4 +3960,282 @@ fn an_authored_cap_join_and_custom_dash_reach_the_display_list() {
         }],
         "and so must the authored dash pattern"
     );
+}
+
+/// A vertical text box turns its TEXT and leaves its chrome upright.
+///
+/// `105` FID-L-08: `wps:bodyPr@vert` was not read at all, so a Word text box with
+/// vertical text imported and rendered axis-aligned with nothing reported. The seam
+/// to paint it has existed since the watermark introduced
+/// `PaintItem::PushLayer`, whose own doc comment named this row as the caller it was
+/// waiting for.
+///
+/// Three things are asserted together because each is a different way to get this
+/// wrong: the text is wrapped in a layer (it rotates at all), the layer wraps ONLY
+/// the clip and the blocks (the backdrop and border stay upright), and the box is
+/// measured against its transposed axis (a quarter turn flows text along the short
+/// side, so breaking lines at the upright width is the defect that looks like a
+/// layout bug rather than a missing attribute).
+#[test]
+fn a_vertical_text_box_turns_its_text_and_not_its_chrome() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::TextVertical;
+
+    // Built per direction rather than mutated, because `body_properties` sits inside
+    // a boxed inline inside a paragraph and reaching it to mutate would make the
+    // fixture about navigation rather than about rotation.
+    let child = |vertical: TextVertical| {
+        GroupChild::TextBox(GroupTextBox {
+            hyperlink: None,
+            id: node(601),
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            // Deliberately TALLER than it is wide, so a quarter turn gives the text a
+            // longer line to run along and a transposed flow is observable.
+            extent: Extent {
+                width_emu: 400 * 635,
+                height_emu: 1_200 * 635,
+            },
+            geometry: ShapeGeometry::Rectangle,
+            preset: None,
+            adjustments: Vec::new(),
+            blocks: vec![BlockNode::Paragraph(Paragraph {
+                id: node(602),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![run(603, "turned text")],
+            })],
+            // A fill and a border, so "the chrome stays upright" is something the
+            // assertion can actually be about.
+            fill: Some(Fill::Solid(Rgba {
+                r: 200,
+                g: 200,
+                b: 200,
+                a: 255,
+            })),
+            border: Some(ShapeStroke {
+                color: Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                width_emu: 12_700,
+                dash: None,
+                head_end: None,
+                tail_end: None,
+            }),
+            body_properties: TextBoxBodyProperties {
+                vertical,
+                ..TextBoxBodyProperties::default()
+            },
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        })
+    };
+    let place = |vertical: TextVertical| {
+        let document = single_child_group_document(child(vertical));
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &document, &shaper, &cfg);
+        compose_page(&layout.pages[0])
+    };
+
+    let upright = place(TextVertical::Horizontal);
+    let turned = place(TextVertical::Vertical);
+
+    // Upright text pushes no layer at all, so the seam costs an ordinary document
+    // nothing.
+    assert_eq!(
+        upright
+            .items
+            .iter()
+            .filter(|item| matches!(item, PaintItem::PushLayer { .. }))
+            .count(),
+        0,
+        "an upright text box must not push a layer"
+    );
+
+    // Vertical text pushes exactly one, carrying a rotation.
+    let layers: Vec<&PaintItem> = turned
+        .items
+        .iter()
+        .filter(|item| matches!(item, PaintItem::PushLayer { .. }))
+        .collect();
+    assert_eq!(layers.len(), 1, "exactly one layer for the turned text");
+    match layers[0] {
+        PaintItem::PushLayer { transform, .. } => {
+            let transform = transform.expect("the layer carries a rotation");
+            assert_eq!(
+                transform.rotation, 5_400_000,
+                "`vert` is a quarter turn clockwise"
+            );
+        }
+        other => panic!("expected a layer, got {other:?}"),
+    }
+
+    // The layer opens AFTER the chrome and closes before the end, so the backdrop
+    // and border are outside it and stay upright. Asserted by position, because a
+    // layer that wrapped everything would still contain a rotation and still pass a
+    // "there is a layer" check.
+    let push = turned
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::PushLayer { .. }))
+        .expect("a layer");
+    let clip = turned
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::PushClip(_)))
+        .expect("the content clip");
+    let pop = turned
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::PopLayer))
+        .expect("the layer closes");
+    assert!(
+        push < clip && clip < pop,
+        "the layer must wrap the content clip and nothing before it: \
+         push={push} clip={clip} pop={pop}"
+    );
+}
+
+/// A quarter turn flows the text along the box's LONG axis.
+///
+/// The half of `wps:bodyPr@vert` that looks like a layout bug rather than a missing
+/// attribute: flowing a turned box against its upright width breaks every line at
+/// the wrong measure. `emit_text_box` measures against the transposed box, and this
+/// is what makes that observable — a 400x1200tw box wraps the same sentence into
+/// SEVEN runs upright and FIVE when turned, because the turned text has 1,200tw of
+/// line to run along instead of 400.
+///
+/// Counted in glyph runs rather than asserted as a rect, because the box has a fixed
+/// extent: the rect is 400x1200 either way, so a rect assertion cannot see this at
+/// all. Disabling the transposition leaves the two counts equal.
+#[test]
+fn a_quarter_turn_flows_the_text_along_the_boxs_long_axis() {
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::TextVertical;
+
+    let runs = |vertical: TextVertical| {
+        let document = single_child_group_document(turnable_text_box(vertical));
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &document, &shaper, &cfg);
+        casual_doc_layout::compose::compose_page(&layout.pages[0])
+            .items
+            .iter()
+            .filter(|item| matches!(item, PaintItem::Glyphs { .. }))
+            .count()
+    };
+    let upright = runs(TextVertical::Horizontal);
+    let turned = runs(TextVertical::Vertical);
+    assert!(
+        turned < upright,
+        "a turned box has a longer line to run along, so it must wrap LESS: \
+         upright={upright} turned={turned}"
+    );
+    assert_eq!((upright, turned), (7, 5), "the measured counts");
+}
+
+/// A flow direction this build cannot express as a rotation is reported, never
+/// approximated by one.
+///
+/// `eaVert` and the three WordArt directions re-order and re-orient individual
+/// glyphs; a layer transform cannot express that. Approximating them with a quarter
+/// turn would put something on screen that looks deliberate and is not what the file
+/// says, so `TextVertical::layer_rotation` returns `None` for them and the box paints
+/// upright with the loss named at import.
+#[test]
+fn a_flow_direction_that_is_not_a_rotation_pushes_no_layer() {
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::TextVertical;
+
+    // Derived from the enum rather than listed, so a new direction cannot be added
+    // without deciding which side of this line it falls on.
+    let not_rotations: Vec<TextVertical> = TextVertical::ALL
+        .into_iter()
+        .filter(|kind| kind.layer_rotation().is_none())
+        .collect();
+    assert_eq!(
+        not_rotations.len(),
+        4,
+        "eaVert and the three WordArt directions: {not_rotations:?}"
+    );
+
+    for vertical in not_rotations {
+        let document = single_child_group_document(turnable_text_box(vertical));
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &document, &shaper, &cfg);
+        let list = casual_doc_layout::compose::compose_page(&layout.pages[0]);
+        assert_eq!(
+            list.items
+                .iter()
+                .filter(|item| matches!(item, PaintItem::PushLayer { .. }))
+                .count(),
+            0,
+            "{} must paint upright and be reported, not rotated",
+            vertical.token()
+        );
+    }
+
+    // And the two that ARE plain rotations do push one, so the assertion above is
+    // about these four specifically and not about layers never being pushed.
+    for vertical in [TextVertical::Vertical, TextVertical::Vertical270] {
+        let document = single_child_group_document(turnable_text_box(vertical));
+        let shaper = ParleyShaper::new();
+        let cfg = config();
+        let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+        let mut layout = paginate(&galley, &cfg);
+        place_floats(&mut layout, &document, &shaper, &cfg);
+        let list = casual_doc_layout::compose::compose_page(&layout.pages[0]);
+        assert_eq!(
+            list.items
+                .iter()
+                .filter(|item| matches!(item, PaintItem::PushLayer { .. }))
+                .count(),
+            1,
+            "{} is a plain rotation and must push a layer",
+            vertical.token()
+        );
+    }
+}
+
+/// A grouped text box with a wrapping sentence, so a change of flow axis is visible.
+fn turnable_text_box(vertical: casual_doc_model::v1::TextVertical) -> GroupChild {
+    GroupChild::TextBox(GroupTextBox {
+        hyperlink: None,
+        id: node(701),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        // Deliberately far taller than wide: the whole point is that a quarter turn
+        // swaps which dimension bounds the line.
+        extent: Extent {
+            width_emu: 400 * 635,
+            height_emu: 1_200 * 635,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(702),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(703, "one two three four five six")],
+        })],
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties {
+            vertical,
+            ..TextBoxBodyProperties::default()
+        },
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    })
 }

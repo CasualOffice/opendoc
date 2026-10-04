@@ -237,6 +237,15 @@ pub enum AnchorContent {
         /// exactly as before this field existed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         backdrop: Option<Box<AnchorContent>>,
+        /// The rotation the text CONTENT paints at (`wps:bodyPr@vert` and
+        /// `@rot` combined), about the box centre — or `None` for upright text.
+        ///
+        /// Separate from [`PlacedAnchor::transform`], which rotates the box and its
+        /// chrome. They are different rotations: a shape can be rotated while its
+        /// text is upright, and a text block can be rotated inside an unrotated
+        /// shape. Folding them together would make one unexpressible.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_transform: Option<crate::display::ShapeTransform>,
     },
     /// A **positioned (floating) table** — `w:tblPr/w:tblpPr` — lifted out of
     /// block flow and placed against a page/margin/text reference frame, with

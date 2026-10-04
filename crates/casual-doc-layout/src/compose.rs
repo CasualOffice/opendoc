@@ -950,6 +950,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
             border,
             content_layout,
             backdrop,
+            text_transform,
         } => {
             // A text-bearing shape with a real preset geometry paints THAT
             // behind its text — through the identical mapping a text-free shape
@@ -988,12 +989,36 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                 anchor.rect.origin.x + content_layout.origin.x,
                 anchor.rect.origin.y + content_layout.origin.y,
             );
+            // `wps:bodyPr@vert`/`@rot`: the text block turns inside its box while
+            // the chrome above stays upright. This is the caller
+            // `PaintItem::PushLayer` was introduced for and then waited on — the
+            // backdrop, fill and border are already painted, so wrapping only the
+            // clip and the blocks rotates the glyphs and nothing else.
+            //
+            // A quarter turn also swaps which box dimension bounds the line width,
+            // and `emit_text_box` has already flowed against the transposed box, so
+            // the inner width below is taken from the axis the text actually ran
+            // along.
+            let turned = text_transform.is_some();
+            if let Some(transform) = text_transform {
+                list.push(PaintItem::PushLayer {
+                    transform: Some(*transform),
+                    blend: LayerBlend::Normal,
+                });
+            }
             let clip = text_box_clip(anchor.rect, *content_layout);
             list.push(PaintItem::PushClip(clip));
-            let inner =
-                Twip((anchor.rect.size.width.raw() - 2 * content_layout.origin.x.raw()).max(0));
+            let along = if turned {
+                anchor.rect.size.height
+            } else {
+                anchor.rect.size.width
+            };
+            let inner = Twip((along.raw() - 2 * content_layout.origin.x.raw()).max(0));
             compose_blocks(list, blocks, content_origin, inner, marks);
             list.push(PaintItem::PopClip);
+            if turned {
+                list.push(PaintItem::PopLayer);
+            }
         }
         AnchorContent::Table { rows } => {
             // A positioned table's rows are ordinary block fragments stacked
@@ -2635,6 +2660,8 @@ mod tests {
                 // This guard is about the CLIP rectangle, which a backdrop
                 // shape does not take part in.
                 backdrop: None,
+                // Upright: this fixture asserts the clip, not the rotation.
+                text_transform: None,
             },
             rect,
         );
