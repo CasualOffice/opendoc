@@ -52,10 +52,7 @@ async function findGroup(page, box) {
  *  layout shifts, and a sweep that misses the shapes would pass this test by
  *  reaching nothing. */
 async function childrenReachableByClick(page, seed) {
-  const outline = await page
-    .locator(".overlay .object-outline")
-    .first()
-    .boundingBox();
+  const outline = await stableBox(page.locator(".overlay .object-outline").first());
   expect(
     outline,
     "a selected group must draw an outline to sweep",
@@ -82,10 +79,7 @@ async function childrenReachableByClick(page, seed) {
  *  a shape inside the group, not over the group's own background. Found by
  *  sweeping the group's outline, so it survives a layout change. */
 async function pointOverAChild(page, seed) {
-  const outline = await page
-    .locator(".overlay .object-outline")
-    .first()
-    .boundingBox();
+  const outline = await stableBox(page.locator(".overlay .object-outline").first());
   expect(
     outline,
     "a selected group must draw an outline to sweep",

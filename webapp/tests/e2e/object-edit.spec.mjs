@@ -5,7 +5,7 @@
 // Suggesting. The `?fixture=float` document holds one top-level floating image
 // (the shipped sample docs contain none); it is selected exactly as in
 // object-anchor.spec.mjs.
-import { test, expect, expectNothingToUndo } from "./fixtures.mjs";
+import { expect, expectNothingToUndo, stableBox, test } from "./fixtures.mjs";
 
 // The floating image sits near the top-left of page 1 in the float fixture.
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
@@ -24,7 +24,7 @@ async function gotoFloat(page) {
 
 async function selectFloat(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * FLOAT_POS.fx, y: box.height * FLOAT_POS.fy } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
@@ -140,7 +140,7 @@ test("dragging a crop handle crops the image as one undoable action (Word/Docs s
 
   // Drag the SE handle (index 4) up-and-left to crop off the right + bottom.
   const se = page.locator('.object-crop-handle[data-handle="4"]');
-  const b = await se.boundingBox();
+  const b = await stableBox(se);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x - 40, b.y - 30, { steps: 8 });
@@ -177,7 +177,7 @@ test("Escape cancels a crop with no change", async ({ page, consoleErrors }) => 
 
   // Drag then Escape — the crop is discarded: mode exits and nothing is undoable.
   const se = page.locator('.object-crop-handle[data-handle="4"]');
-  const b = await se.boundingBox();
+  const b = await stableBox(se);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x - 30, b.y - 20, { steps: 6 });

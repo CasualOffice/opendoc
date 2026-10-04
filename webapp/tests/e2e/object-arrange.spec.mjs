@@ -25,8 +25,7 @@ async function selectFloat(page) {
 }
 
 const capabilities = (page) => page.locator("#pages").getAttribute("data-object-capabilities");
-const outlineBox = async (page) =>
-  page.locator(".overlay .object-outline").first().boundingBox();
+const outlineBox = async (page) => stableBox(page.locator(".overlay .object-outline").first());
 
 // ---- The case the owner reported -------------------------------------------
 

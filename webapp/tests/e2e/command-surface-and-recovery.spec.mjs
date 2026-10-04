@@ -1,18 +1,12 @@
 // Guards for a batch of fixes that shipped without any (docs/104 HF-059, HF-065,
 // HF-074, HF-076). They share one shape: a capability existed, and the user
 // could not reach it or could not tell it had failed.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  expectEditorFocused,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 async function openContextMenu(page) {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  const box = await page.locator("#pages").boundingBox();
+  const box = await stableBox(page.locator("#pages"));
   await page.mouse.click(box.x + box.width / 2, box.y + 120, { button: "right" });
   const menu = page.locator(".editor-context-menu");
   await expect(menu).toBeVisible();
@@ -168,7 +162,7 @@ test("the object inspector follows the selection instead of describing the last 
 
   // Select the fixture's floating image and open the inspector on it.
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * 0.14, y: box.height * 0.11 } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
   await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
@@ -189,7 +183,7 @@ test("the object inspector follows the selection instead of describing the last 
   // Picking a preset ARMS the pointer, as it does in Word; the gesture on the
   // page is what places the shape. A bare click takes the default size.
   {
-    const sheet = await page.locator(".page-wrap .page").first().boundingBox();
+    const sheet = await stableBox(page.locator(".page-wrap .page").first());
     await page.mouse.click(sheet.x + sheet.width * 0.3, sheet.y + sheet.height * 0.3);
   }
   await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "shape");

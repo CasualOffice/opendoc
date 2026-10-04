@@ -1,10 +1,4 @@
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  runAppMenuCommand,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, runAppMenuCommand, stableBox, test } from "./fixtures.mjs";
 
 async function insertTwoByTwoTable(page) {
   await gotoEditor(page);
@@ -97,7 +91,7 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   await page.locator("#tableBtn").click();
   const formatMenu = page.locator("#tableMenu");
   await expect(formatMenu).toBeVisible();
-  const bounds = await formatMenu.boundingBox();
+  const bounds = await stableBox(formatMenu);
   const viewport = page.viewportSize();
   expect(bounds.y).toBeGreaterThanOrEqual(8);
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height - 8);
@@ -236,7 +230,7 @@ test("live table properties remain reachable on a narrow viewport", async ({
   // column to clear and a sheet is allowed to span the width. Pinning the old
   // geometry made this red on a change that removed nothing — what the test is
   // for is that the panel is reachable and cannot overflow the window.
-  const bounds = await panel.boundingBox();
+  const bounds = await stableBox(panel);
   expect(bounds.x).toBeGreaterThanOrEqual(0);
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
   expect(bounds.y).toBeGreaterThanOrEqual(0);

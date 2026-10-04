@@ -5,7 +5,7 @@
 // `.site-nav` was `display: none` under 820px with no toggle and no replacement,
 // so Docs and Fidelity were reachable only by URL or Back. This spec measures
 // what a phone actually renders.
-import { test, expect } from "./fixtures.mjs";
+import { expect, stableBox, test } from "./fixtures.mjs";
 
 const NAV_LINKS = ["Overview", "Editor", "Docs", "Fidelity"];
 const PHONES = [
@@ -52,12 +52,12 @@ test("the wide-window header is untouched: one row, nav beside the brand", async
   await page.goto("/");
 
   const header = page.locator(".site-header-inner");
-  const brand = await header.locator(".brand").boundingBox();
-  const nav = await header.locator(".site-nav").boundingBox();
+  const brand = await stableBox(header.locator(".brand"));
+  const nav = await stableBox(header.locator(".site-nav"));
 
   // Same row as the brand — the nav has not been pushed onto a line of its own
   // at desktop width.
   expect(Math.abs(nav.y - brand.y)).toBeLessThan(brand.height);
   expect(nav.x).toBeGreaterThan(brand.x);
-  expect((await header.boundingBox()).height).toBeLessThanOrEqual(60);
+  expect((await stableBox(header)).height).toBeLessThanOrEqual(60);
 });

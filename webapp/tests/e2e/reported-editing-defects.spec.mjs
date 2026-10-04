@@ -6,7 +6,7 @@
 //
 // Each drives the editor the way the report describes and asserts what the user
 // expected to happen, so a red here IS the reported bug.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 /** Opens the editor on a genuinely MULTI-PAGE document.
  *
@@ -91,7 +91,7 @@ async function scrollToPage(page, number) {
   let box = null;
   await expect
     .poll(async () => {
-      box = await page.locator(`${selector} .page`).first().boundingBox();
+      box = await stableBox(page.locator(`${selector} .page`).first());
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);
@@ -111,7 +111,7 @@ async function enterHeaderAt(page, target) {
     // detach/repaint after `scrollToPage`; replaying an old viewport coordinate
     // then double-clicks empty space and turns a harness race into a product
     // failure. The lightweight page wrapper is stable across those repaints.
-    const box = await target.boundingBox();
+    const box = await stableBox(target);
     if (!box) continue;
     await target.dblclick({ position: { x: box.width * 0.5, y: 12 } });
     if ((await page.locator("#pages").getAttribute("data-running-edit")) === "header") break;
@@ -123,7 +123,7 @@ async function enterHeaderAt(page, target) {
 /** Clicks into a page's text column and reports whether a caret landed. */
 async function clickIntoPage(page, target) {
   for (let fy = 0.18; fy < 0.8; fy += 0.06) {
-    const box = await target.boundingBox();
+    const box = await stableBox(target);
     if (!box) continue;
     await target.click({ position: { x: box.width * 0.45, y: box.height * fy } });
     if ((await page.locator(".overlay .caret").count()) === 1) return true;
@@ -280,7 +280,7 @@ async function enterHeader(page) {
   let box = null;
   await expect
     .poll(async () => {
-      box = await canvas.boundingBox();
+      box = await stableBox(canvas);
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);
@@ -311,7 +311,7 @@ test("[5] clicking the empty space below the header line keeps the context", asy
   const box = await enterHeader(page);
   // Inside the band the editor itself draws, near its lower edge — derived from
   // the product's own geometry rather than a guessed pixel offset.
-  const band = await page.locator(".running-band").first().boundingBox();
+  const band = await stableBox(page.locator(".running-band").first());
   await page.mouse.click(box.x + box.width * 0.3, band.y + band.height - 4);
   await expect(page.locator("#pages")).toHaveAttribute("data-running-edit", "header");
   await page.keyboard.type("BELOW");
@@ -336,7 +336,7 @@ test("[7] clicking the footer band while in the header moves to the footer", asy
   // without this lands outside the window entirely.
   await page.locator(".page-wrap").first().evaluate((el) => el.scrollIntoView({ block: "end" }));
   await page.waitForTimeout(300);
-  const box = await page.locator(".page-wrap .page").first().boundingBox();
+  const box = await stableBox(page.locator(".page-wrap .page").first());
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height - 14);
   // Word switches stories rather than dropping you into the body.
   await expect(page.locator("#pages")).toHaveAttribute("data-running-edit", "footer");

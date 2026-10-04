@@ -4,7 +4,7 @@
 // open looking clean: the changes were kept on save but never listed, painted,
 // navigable or decidable, and Accept All reported "no tracked revisions"
 // (docs/104 HF-156). This drives the whole reviewer path through the real UI.
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 import { makeParagraphRevisionsDocx } from "./large-docx.mjs";
 
 async function openParagraphRevisions(page) {
@@ -103,8 +103,8 @@ test("Next reaches paragraph-level suggestions, and Accept all decides them", as
   // The formatting bar sits in the page margin, left of the text column, not
   // beside the centred text it describes.
   const bar = page.locator(".review-paragraph-format-bar");
-  const pageBox = await page.locator(".page-wrap .page").first().boundingBox();
-  const barBox = await bar.boundingBox();
+  const pageBox = await stableBox(page.locator(".page-wrap .page").first());
+  const barBox = await stableBox(bar);
   expect(barBox.x - pageBox.x).toBeLessThan(pageBox.width * 0.2);
 
   await page.locator("#reviewAcceptAll").click();

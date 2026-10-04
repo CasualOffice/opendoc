@@ -14,13 +14,13 @@
 // `tableCellRangeRects` — so reading them is reading the engine's answer, not a
 // re-derivation of it.
 import {
-  test,
+  MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
-  clickIntoFirstPage,
   moveCaretToDocStart,
   stableBox,
-  MOD,
+  test,
 } from "./fixtures.mjs";
 
 /** Inserts a 3-row x 3-column table below a first paragraph. */

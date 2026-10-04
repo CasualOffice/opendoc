@@ -281,7 +281,7 @@ test("a multi-child group selects as a unit and Enter descends with a stable ref
     return { left: rect.left, right: rect.right, width: rect.width };
   });
   const west = page.locator('.overlay .object-handle[data-handle="7"]').first();
-  const westBox = await west.boundingBox();
+  const westBox = await stableBox(west);
   await page.mouse.move(westBox.x + westBox.width / 2, westBox.y + westBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(westBox.x - 45, westBox.y + westBox.height / 2, { steps: 6 });

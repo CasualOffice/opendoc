@@ -27,7 +27,7 @@
 // the paper it sits above, and its unshaded span covers exactly that page's text
 // column. A later change may compute either from somewhere else and should still
 // be held to both.
-import { test, expect, documentPageCount, pageSheet } from "./fixtures.mjs";
+import { documentPageCount, expect, pageSheet, stableBox, test } from "./fixtures.mjs";
 
 /** The fixture's committed geometry, in twips. Asserted against the engine by
  *  `generate_sections_fixture_docx`, so these are not a second source of truth —
@@ -69,7 +69,7 @@ async function caretOnPage(page, index) {
   const wrap = page.locator(`#pages .page-wrap[data-page-number="${index + 1}"]`);
   await wrap.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await expect.poll(() => wrap.locator("canvas.page").count()).toBe(1);
-  const box = await wrap.boundingBox();
+  const box = await stableBox(wrap);
   await page.mouse.click(box.x + box.width / 2, box.y + Math.min(140, box.height / 2));
 }
 
@@ -92,9 +92,7 @@ async function rulerShape(page) {
 /** The rendered width of one page's paper, scrolling it into existence first. */
 async function paperWidth(page, index) {
   await pageSheet(page, index + 1);
-  const box = await page
-    .locator(`#pages .page-wrap[data-page-number="${index + 1}"]`)
-    .boundingBox();
+  const box = await stableBox(page.locator(`#pages .page-wrap[data-page-number="${index + 1}"]`));
   return box.width;
 }
 
@@ -179,7 +177,7 @@ test.describe("the ruler follows the caret's page geometry", () => {
       await caretOnPage(page, index);
       const one = page.locator(".ruler .ruler-num").filter({ hasText: /^1$/ }).first();
       await expect(one).toBeVisible();
-      const [shape, tick] = await Promise.all([rulerShape(page), one.boundingBox()]);
+      const [shape, tick] = await Promise.all([rulerShape(page), stableBox(one)]);
       const rulerLeft = await page.evaluate(
         () => document.querySelector(".ruler").getBoundingClientRect().left,
       );

@@ -7,15 +7,7 @@
 // (the one undoable action the setHyperlink op produces) and the hover chip the
 // canvas hit-test surfaces over a link. Canvas geometry is read after the caret
 // paints, via boundingBox/expect.poll, never a fixed sleep.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  setReviewMode,
-  MOD,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test } from "./fixtures.mjs";
 
 // Selects `count` characters forward from the current caret.
 async function selectForward(page, count) {
@@ -35,7 +27,7 @@ async function clickTwoCharsIn(page) {
   await moveCaretToDocStart(page);
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
-  const box = await page.locator(".overlay .caret").first().boundingBox();
+  const box = await stableBox(page.locator(".overlay .caret").first());
   await page.mouse.click(box.x + 2, box.y + box.height / 2);
 }
 

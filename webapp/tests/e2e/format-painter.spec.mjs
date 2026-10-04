@@ -9,7 +9,7 @@
 // The demo corpus already contains colored text, so each target is first forced
 // to a known state (not bold, explicit blue) — paint (→ red) versus no paint
 // (→ stays blue) is then an unambiguous signal independent of demo content.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
 
 const RED = "rgb(255, 0, 0)";
 const BLUE = "rgb(0, 0, 255)";
@@ -50,7 +50,7 @@ async function prepareBlueTarget(page) {
   await moveCaretToDocStart(page);
   for (let i = 0; i < 25; i += 1) await page.keyboard.press("ArrowRight");
   await selectForward(page, 4);
-  const box = await page.locator(".page-wrap .overlay .highlight").first().boundingBox();
+  const box = await stableBox(page.locator(".page-wrap .overlay .highlight").first());
   expect(box).not.toBeNull();
   const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await page.mouse.dblclick(point.x, point.y); // select the whole word
@@ -79,7 +79,7 @@ async function wordPointAt(page, start) {
   await moveCaretToDocStart(page);
   for (let i = 0; i < start; i += 1) await page.keyboard.press("ArrowRight");
   await selectForward(page, 4);
-  const box = await page.locator(".page-wrap .overlay .highlight").first().boundingBox();
+  const box = await stableBox(page.locator(".page-wrap .overlay .highlight").first());
   expect(box).not.toBeNull();
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }

@@ -1,11 +1,4 @@
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  runAppMenuCommand,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, runAppMenuCommand, stableBox, test } from "./fixtures.mjs";
 
 test("history labels and mixed run formatting reflect engine state", async ({
   page,
@@ -140,7 +133,7 @@ test("paragraph inspector stays viewport-bounded on a narrow editor", async ({
   // sheet spanning the window, which satisfies "viewport-bounded" better than
   // the numbers did and fails every one of them. The defect those numbers were
   // written for is a panel hanging off an edge, so that is what is asserted.
-  const bounds = await panel.boundingBox();
+  const bounds = await stableBox(panel);
   const window = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
   expect(bounds.x, "the panel starts inside the window").toBeGreaterThanOrEqual(0);
   expect(bounds.x + bounds.width, "the panel ends inside the window").toBeLessThanOrEqual(window.w + 1);

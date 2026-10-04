@@ -25,16 +25,7 @@
 // exist for: a ⋮ inside a list is only worth having if a keyboard and a screen
 // reader can reach it, so the keyboard route is asserted for every action rather
 // than assumed from the pointer route working.
-import {
-  clickIntoFirstPage,
-  expect,
-  expectEditorFocused,
-  gotoEditor,
-  moveCaretToDocStart,
-  runFilePageCommand,
-  saveDocument,
-  test,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, moveCaretToDocStart, runFilePageCommand, saveDocument, stableBox, test } from "./fixtures.mjs";
 
 const panel = "#versionPanel";
 const list = "#versionPanelBody";
@@ -593,7 +584,7 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   const trigger = older.locator(".version-item-menu");
   // A 44px target, painted at all times — never revealed by hover, which is no
   // affordance at all on a phone.
-  const box = await trigger.boundingBox();
+  const box = await stableBox(trigger);
   expect(box.width, "the ⋮ is below the touch floor").toBeGreaterThanOrEqual(44);
   expect(box.height, "the ⋮ is below the touch floor").toBeGreaterThanOrEqual(44);
   await expect(trigger).toHaveAttribute("aria-haspopup", "menu");
@@ -646,7 +637,7 @@ test("the row's ⋮ menu carries that row's actions, and opens from the keyboard
   // later as focus that had left the grid. A fixed coordinate is a guard pinned
   // to a measured size; this one is pinned to the guarantee (a press OUTSIDE the
   // menu closes it) and survives the menu changing shape.
-  const menuBox = await page.locator(rowMenu).boundingBox();
+  const menuBox = await stableBox(page.locator(rowMenu));
   await page.mouse.click(Math.max(8, Math.round(menuBox.x) - 80), Math.round(menuBox.y) + 20);
   await expect(page.locator(rowMenu)).toBeHidden();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");

@@ -11,12 +11,12 @@
 // for so long. `fixtures/generated/inline-text-box.docx` is a minimal document
 // with one VML text box, built for exactly this.
 import {
-  test,
   expect,
-  gotoEditor,
-  stableBox,
-  mirrorBlocks,
   expectTypedIntoOneBlock,
+  gotoEditor,
+  mirrorBlocks,
+  stableBox,
+  test,
 } from "./fixtures.mjs";
 
 const FIXTURE = "../fixtures/generated/inline-text-box.docx";

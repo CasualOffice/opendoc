@@ -19,17 +19,17 @@
 //     `info@docscentre.com`.
 
 import {
-  test,
-  expect,
+  MOD,
   documentPageCount,
+  expect,
   gotoEditor,
   openCommandPalette,
   pageSheet,
-  MOD,
   runAppMenuCommand,
+  runFilePageCommand,
   setReviewMode,
   stableBox,
-  runFilePageCommand,
+  test,
 } from "./fixtures.mjs";
 import { GRAMMAR_DOUBLED, makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
 

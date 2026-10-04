@@ -4,15 +4,7 @@
 // (VS Code convention) and ⌘K authors a link on the current selection; a batch
 // of previously mouse-only commands (review mode, add comment, accept/reject
 // all, super/subscript) gained command-palette entries with shortcut hints.
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  MOD,
-  shortcutHint,
-} from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, shortcutHint, stableBox, test } from "./fixtures.mjs";
 
 async function typeAndSelect(page, marker) {
   await clickIntoFirstPage(page);
@@ -38,7 +30,7 @@ test("⌘K authors a link on the selection and no longer opens the command palet
 
   // The selection is now a hyperlink: right-clicking it offers edit/remove
   // (not add), which is only true when a link exists over the range.
-  const box = await page.locator(".overlay .highlight").first().boundingBox();
+  const box = await stableBox(page.locator(".overlay .highlight").first());
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
   const menu = page.locator(".editor-context-menu");
   await expect(menu.locator('[data-command-id="link.edit"]')).toBeVisible();

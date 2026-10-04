@@ -1,4 +1,4 @@
-import { test, expect, gotoEditor, openFilePage } from "./fixtures.mjs";
+import { expect, gotoEditor, openFilePage, stableBox, test } from "./fixtures.mjs";
 
 // The localisation seam, through a real browser (docs/124).
 //
@@ -345,13 +345,13 @@ test("the footer picker works at 390px, where the footer is crowded", async ({
   await gotoEditor(page);
   await expect(page.locator("#statChars")).toBeHidden();
   await expect(page.locator("#languageStatus")).toBeVisible();
-  const target = await page.locator("#languageStatus").boundingBox();
+  const target = await stableBox(page.locator("#languageStatus"));
   expect(target.width, "a 24px touch target").toBeGreaterThanOrEqual(24);
   expect(target.height).toBeGreaterThanOrEqual(24);
 
   await page.locator("#languageStatus").click();
   await expect(page.locator("#languageMenu")).toBeVisible();
-  const narrow = await page.locator("#languageMenu").boundingBox();
+  const narrow = await stableBox(page.locator("#languageMenu"));
   expect(narrow.x, "the menu must not paint off the left edge").toBeGreaterThanOrEqual(0);
   expect(narrow.x + narrow.width).toBeLessThanOrEqual(390);
   await page.locator("#languageMenuList .menu-item-label[lang='ja']").click();
@@ -369,7 +369,7 @@ test("the footer picker works at 390px, where the footer is crowded", async ({
   await page.locator("#languageStatus").click();
   const menu = page.locator("#languageMenu");
   await expect(menu).toBeVisible();
-  const box = await menu.boundingBox();
+  const box = await stableBox(menu);
   expect(box.y, "the menu must not paint off the top of the window").toBeGreaterThanOrEqual(0);
   expect(box.y + box.height).toBeLessThanOrEqual(600);
   // And it must stay a POPOVER rather than becoming a takeover: the control is

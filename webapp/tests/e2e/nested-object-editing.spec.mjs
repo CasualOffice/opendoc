@@ -8,14 +8,7 @@
 //
 // No fixture had a group or a floating text box, which is why this went
 // unverified. Both are built for these tests.
-import {
-  test,
-  expect,
-  gotoEditor,
-  stableBox,
-  mirrorBlocks,
-  expectTypedIntoOneBlock,
-} from "./fixtures.mjs";
+import { expect, expectTypedIntoOneBlock, gotoEditor, mirrorBlocks, stableBox, test } from "./fixtures.mjs";
 
 const GROUPED = "../fixtures/generated/grouped-text-boxes.docx";
 const FLOATING = "../fixtures/generated/floating-text-box.docx";
@@ -132,7 +125,7 @@ test("a grouped text box keeps inside clicks and Escape climbs out one level at 
   );
   const outline = page.locator(".overlay .object-outline");
   await expect(outline).toBeVisible();
-  const rect = await outline.boundingBox();
+  const rect = await stableBox(outline);
   expect(rect).not.toBeNull();
 
   // Re-enter near the text, then click the empty far side. A missing glyph hit

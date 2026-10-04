@@ -6,13 +6,13 @@
 // reports the angle; a rotated object still shows its eight grips and can still
 // be resized; Shift lands on 15-degree steps. The pure arithmetic — the snap
 // rule, the object-space mapping — is `tests/object_rotate.test.mjs`.
-import { test, expect, gotoEditor, MOD } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
 
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
 async function selectImage(page) {
   const canvas = page.locator(".page-wrap .page").first();
-  const box = await canvas.boundingBox();
+  const box = await stableBox(canvas);
   await canvas.click({ position: { x: box.width * IMAGE_POS.fx, y: box.height * IMAGE_POS.fy } });
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
@@ -49,8 +49,8 @@ async function paintedAngle(page) {
 async function dragRotationGrip(page, degrees, { shift = false } = {}) {
   const grip = page.locator(".overlay .object-rotate-handle").first();
   const outline = page.locator(".overlay .object-outline").first();
-  const g = await grip.boundingBox();
-  const o = await outline.boundingBox();
+  const g = await stableBox(grip);
+  const o = await stableBox(outline);
   const centre = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
   const radius = Math.hypot(g.x + g.width / 2 - centre.x, g.y + g.height / 2 - centre.y);
   const target = ((degrees - 90) * Math.PI) / 180;
@@ -136,7 +136,7 @@ test("a rotated object still shows its eight grips and still resizes", async ({
   };
   const before = await sizeOf();
   const grip = page.locator('.overlay .object-handle[data-handle="4"]').first();
-  const b = await grip.boundingBox();
+  const b = await stableBox(grip);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2 + 70, b.y + b.height / 2 + 70, { steps: 6 });
@@ -174,7 +174,7 @@ test("the rotation grip is a keyboard control, and it agrees with the menu", asy
 test("the object bar clears the rotation grip instead of sitting on it", async ({ page }) => {
   await gotoEditor(page);
   await selectImage(page);
-  const grip = await page.locator(".overlay .object-rotate-handle").first().boundingBox();
+  const grip = await stableBox(page.locator(".overlay .object-rotate-handle").first());
   // Whatever answers a press at the grip's centre must be the grip. The bar has
   // been placed over a grip's target before (`docs/104` HF-058 neighbourhood),
   // and the symptom is a control that simply cannot be grabbed.

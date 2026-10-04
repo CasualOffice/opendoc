@@ -1,12 +1,4 @@
-import {
-  test,
-  expect,
-  gotoEditor,
-  clickIntoFirstPage,
-  moveCaretToDocStart,
-  setReviewMode,
-  expectEditorFocused,
-} from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test } from "./fixtures.mjs";
 
 async function selectTypedMarker(page, marker) {
   await clickIntoFirstPage(page);
@@ -57,7 +49,7 @@ test("right-click preserves a text selection and exposes context-aware commands"
   await selectTypedMarker(page, "CONTEXT_SELECTION");
   const highlightsBefore = await page.locator(".overlay .highlight").count();
   expect(highlightsBefore).toBeGreaterThan(0);
-  const box = await page.locator(".overlay .highlight").first().boundingBox();
+  const box = await stableBox(page.locator(".overlay .highlight").first());
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
     button: "right",
   });
@@ -71,7 +63,7 @@ test("right-click preserves a text selection and exposes context-aware commands"
   await expect(menu.locator('[data-command-id="paragraph.properties"]')).toBeVisible();
   await expect(page.locator(".overlay .highlight")).toHaveCount(highlightsBefore);
 
-  const bounds = await menu.boundingBox();
+  const bounds = await stableBox(menu);
   const viewport = page.viewportSize();
   expect(bounds.x).toBeGreaterThanOrEqual(8);
   expect(bounds.y).toBeGreaterThanOrEqual(8);
@@ -145,7 +137,7 @@ test("link and comment ranges receive their exact contextual actions", async ({
   await page.locator("#linkUrlInput").press("Enter");
   await expect(page.locator("#linkDialog")).toBeHidden();
 
-  let box = await page.locator(".overlay .highlight").first().boundingBox();
+  let box = await stableBox(page.locator(".overlay .highlight").first());
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
     button: "right",
   });
@@ -163,7 +155,7 @@ test("link and comment ranges receive their exact contextual actions", async ({
   await page.locator('[data-testid="review-comment-submit"]').click();
   const marker = page.locator(".review-comment-marker").first();
   await expect(marker).toBeVisible();
-  box = await marker.boundingBox();
+  box = await stableBox(marker);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
     button: "right",
   });
@@ -243,7 +235,7 @@ test("the menu is contextual — a table cell exposes table tools a text selecti
   // Prose selection: text tools present, table submenus absent.
   await gotoEditor(page);
   await selectTypedMarker(page, "CONTEXTUAL_MENU");
-  const box = await page.locator(".overlay .highlight").first().boundingBox();
+  const box = await stableBox(page.locator(".overlay .highlight").first());
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
     button: "right",
   });

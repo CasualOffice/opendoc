@@ -1,14 +1,7 @@
 // Zoom is a geometry change, not an editing-context transition. Rebuilding the
 // page DOM must preserve the model selection, its owning story, the visible
 // context chrome, and the destination of the next keystroke (docs/58).
-import {
-  test,
-  expect,
-  gotoEditor,
-  stableBox,
-  mirrorBlocks,
-  expectTypedIntoOneBlock,
-} from "./fixtures.mjs";
+import { expect, expectTypedIntoOneBlock, gotoEditor, mirrorBlocks, stableBox, test } from "./fixtures.mjs";
 
 const TEXTBOX = "../fixtures/generated/inline-text-box.docx";
 
@@ -98,7 +91,7 @@ test("zoom preserves text-box context, caret, and typing destination", async ({
   await selectTextBox(page, box);
   const outline = page.locator(".overlay .object-outline");
   await expect(outline).toBeVisible();
-  const rect = await outline.boundingBox();
+  const rect = await stableBox(outline);
   expect(rect).not.toBeNull();
   await page.mouse.dblclick(
     rect.x + rect.width * 0.15,

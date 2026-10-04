@@ -24,7 +24,7 @@
 // points must return to the same lines. That makes the assertion "painting and
 // hit-testing agree", which is precisely what a user means by aligned, and it
 // stays true however the document is laid out.
-import { test, expect } from "./fixtures.mjs";
+import { expect, stableBox, test } from "./fixtures.mjs";
 
 const FIXTURE = "../fixtures/generated/pagination-fidelity.docx";
 
@@ -57,7 +57,7 @@ test("clicking returns the caret to the line the engine painted it on", async ({
   await expect.poll(() => page.locator(".page-wrap").count(), { timeout: 45_000 }).toBeGreaterThan(0);
   await page.waitForTimeout(800);
 
-  const first = await page.locator(".page-wrap").first().boundingBox();
+  const first = await stableBox(page.locator(".page-wrap").first());
   await page.mouse.click(first.x + 40, first.y + first.height * 0.06);
   await page.waitForTimeout(200);
 
