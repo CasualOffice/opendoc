@@ -226,7 +226,7 @@ The owner constraint, made measurable. These are exit gates for Phase 6, not gui
 | **B2** | Transform cost per incoming remote operation is **O(concurrent ops since its base revision)**, never O(log length) and never O(document) | **Held by two guards since 2026-10-01** — see §4.3 |
 | **B3** | Typing **coalesces** into one transaction per run, split on caret discontinuity, ~500 ms idle, or a structural op | Partly built: `typing_history` already requires exact caret continuity to coalesce. One commit per character would make the log, undo, and the network all quadratic in felt cost |
 | **B4** | No operation on the typing path rewrites a paragraph. `SetInlines` is a paragraph-rewrite vehicle and must stay off that path — it is an undo/inverse mechanism, not an edit primitive | A rewrite op defeats both OT granularity and B1 |
-| **B5** | Snapshots are **periodic, never per-operation**; the steady-state write is one appended operation | **Held by the relay's journal since 2026-10-02** (ADR-058): the steady-state write is one appended frame plus one `fsync`, and a checkpoint is written once per `CHECKPOINT_EVERY` (1024) appends. The number bounds **recovery time** rather than file size, which is why it counts records: recovery replays that many O(1) `commit` calls. `compaction_leaves_one_checkpoint_and_nothing_to_replay` is the guard |
+| **B5** | Snapshots are **periodic, never per-operation**; the steady-state write is one appended operation | **Held by the relay's journal since 2026-10-02** (ADR-058): the steady-state write is one appended frame plus one `fsync`, and a checkpoint is written once per `CHECKPOINT_EVERY` (1024) appends. The number bounds **recovery time** rather than file size, which is why it counts records: recovery replays that many O(1) `commit` calls. `compaction_leaves_one_checkpoint_and_nothing_to_replay` was the only guard, and it measures the **degenerate** case — compact, reopen, replay zero — which is consistent with a bound and equally consistent with no bound at all. **The quantity is guarded since 2026-10-04**: `cold_replay_is_bounded_by_the_checkpoint_and_not_by_the_log_s_history` asserts that four times the pre-checkpoint history with the same tail replays the same number, and that *n* and *2n* appends after a checkpoint replay *n* and *2n* — the bound and the quantity it bounds. Records, not milliseconds: a clock cannot tell a bounded replay from a fast one on a quiet machine |
 | **B6** | Layout invalidation stays incremental. `incremental.rs` and `dirty_pages` already exist; a remote operation must use them, not force a full repaginate | A remote keystroke must cost what a local one costs |
 | **B7** | The log is **bounded**: compaction (§5.2) caps replay work and memory, and the bound is explicit like the `HARD_MAX_*` package limits | **Bound closed 2026-10-01** — it bounded undo *steps* and not commits. See §4.3 |
 
@@ -234,6 +234,16 @@ Benchmarks to add to the existing harness (`29`), since none of the four committ
 cases covers layout, render, or repaint (`105` EV-002): local keystroke latency, remote-op
 apply latency at several concurrency depths, transform cost vs concurrent-op count, snapshot
 write cost, and cold replay from snapshot + N operations.
+
+**Three of those five are already guarded as counters rather than clocks, and that is the
+better form rather than a substitute for it.** `SKILL` §8: guard complexity, not milliseconds —
+a timing threshold is flaky and cannot tell a slow constant from a quadratic, while a ratio at
+*n* and *2n* catches the thing that actually kills a large document. §4.1 holds the keystroke
+cost in block visits, §4.3 holds transform cost against concurrent-op count in `transforms()`,
+and B5's row now holds cold replay in **records**. What the timing harness is still owed is the
+two that are genuinely wall-clock questions — *felt* keystroke latency and remote-op apply
+latency — and those need a quiet machine with a blessed baseline, which is a separate piece of
+work from the budgets themselves.
 
 ### 4.1 What a keystroke actually costs, measured — B1
 

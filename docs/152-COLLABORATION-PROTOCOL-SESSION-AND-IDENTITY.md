@@ -218,6 +218,11 @@ and the roster is fanned out to everyone — the *n*-th participant's cost is pa
 participant already in a full room may still **move**: the cap is on membership, not on
 movement, or every caret in a busy room would freeze.
 
+**The relay enforced neither of these until 2026-10-04**, which made this a bound in the wrong
+place: a room's connection count was unbounded input from the network, and the only thing 128
+could refuse was a caret. §2c has the ceiling, the refusal code, and why the relay reuses this
+same number rather than declaring one of its own.
+
 ### Presence does not reach the log, and that is structural
 
 `presence_is_never_written_to_the_revision_log` scans the production half of `lib.rs` and
@@ -240,6 +245,147 @@ edits changed.
 second participant arrives. A roster with nothing rendering it is built and unreachable, which
 is the pattern `SKILL` §9.4 names; this is reported with every increment of this lane until the
 chrome lands.
+
+## 2c. Room occupancy and back-pressure — decided 2026-10-04
+
+Two gaps, both found by a research pass that set out to answer a different question (whether
+`tokio` is needed for parity; it is not — see the evidence table at the end of this section).
+Neither is about the transport. Both are about what the relay does when a bound is reached, and
+in both cases the answer was *nothing in particular*.
+
+### The participant ceiling
+
+**The gap.** §2b caps the roster at `MAX_PARTICIPANTS` = 128 and the relay enforced nothing. A
+room's connection count was therefore unbounded input from the network, with a cap one layer
+further in that could only ever refuse a *caret*. A 500-participant room would have admitted
+every one of them, fanned every chunk to all 500 under one lock, and then refused the 129th
+caret with `Roster::Full` — a bound in the wrong place, protecting the wrong resource.
+
+**The decision.** The ceiling is enforced at **admission**, in `Relay::handle`'s `Join` arm,
+and it refuses **by name**: `ServerMessage::Stopped { reason: Refusal::RoomFull { limit } }`,
+`ODC-7010`. Not a listener that stops accepting, because a socket that quietly stops answering
+is indistinguishable from a dead host, and that is the one thing a client must not have to
+guess.
+
+Three details are decisions rather than details:
+
+- **One number, not two.** The relay reuses `presence::MAX_PARTICIPANTS` rather than declaring
+  its own. A relay ceiling *above* the roster's would admit somebody into a room where their
+  own caret is refused; one *below* it would make the roster bound dead. The consequence worth
+  stating is that `Roster::Full` becomes unreachable in a room driven by this relay — that is
+  defence in depth and not a dead branch, because `Roster` is a public type a host may drive
+  directly.
+- **After the grant, before the journal.** After the grant, because a caller holding no grant
+  must not be able to use the refusal to measure how full a room it was never admitted to is;
+  that is the rule `GrantRefusal` already follows when it collapses three causes into one
+  undetailed `NotAuthorised` on the wire. Before `Room::join`, because that call *journals* the
+  admission (ADR-058), and a durable `Record::Admitted` for a participant who was then refused
+  is a lie in the log.
+- **The test is pessimistic, and the cost is named.** Checking before `Room::join` means the
+  relay cannot yet know whether a join would *grow* the set — a resume carries a `ResumeKey`
+  and the session resolves it to a participant number afterwards. So at exactly the ceiling, a
+  reconnect whose predecessor has not yet been reaped is refused too. That is narrow, loud and
+  self-healing: every exit path runs `disconnected`, and the client's next connection is
+  admitted. The two alternatives are worse in both available directions — journalling an
+  admission and then refusing it, or exempting a join that merely *claims* `resume`, which is a
+  ceiling any client bypasses by setting one field.
+
+**`PROTOCOL_VERSION` 3 → 4.** This is the version rule applied, not waived. `Refusal` is a
+tagged enum on the wire, it derives a plain `Deserialize` with no `#[serde(other)]` fallback,
+and it travels *inside* `ServerMessage::Stopped` — so a version-3 peer meeting the `RoomFull`
+tag fails to decode the whole `Stopped` frame and never learns it was refused at all. It would
+report `ODC-7007` ("the message could not be read") for a room that is simply full: the wrong
+cause rather than a missing one, which is what the `session.*`/`document.*` split exists to
+prevent. `#[non_exhaustive]` does not help — it constrains Rust callers matching on the enum,
+not `serde`'s tag resolution.
+
+**The rule was prose, and that is now fixed too.** Adding the variant and leaving
+`PROTOCOL_VERSION` at 3 was verified to leave the whole workspace green.
+`a_new_wire_enum_variant_is_a_protocol_version_decision` counts the declared variants of
+`ClientMessage`, `ServerMessage` and `Refusal` and fails when the set changes, with the rule and
+the required action in the failure message — the count changing is the moment somebody has to
+make the decision.
+
+### Back-pressure: the persistently-behind participant
+
+**The gap.** `Participants::fan_out` returns the participants it could not write to, which is
+the hook ONLYOFFICE's design entirely lacks. What was done with it was an `eprintln!` in the
+binary, and the participant **stayed in the set** — so the next chunk was written to the same
+dead socket and reported as failed again, for the life of the room. That is the exact harm
+`Relay::disconnected`'s own doc comment names ("a socket every future chunk is written to and
+reported as failed forever"), reachable without anybody having made a mistake. *A log line is
+evidence; it is not a policy,* and "whatever the socket buffer does" was the whole of the
+written policy.
+
+**The pattern, named before the code: back-pressure.** The textbook has four answers.
+
+| Option | Why not, or why |
+| --- | --- |
+| **Block** until the slow reader drains | The relay holds one lock across decide, journal, answer and fan out, so one unresponsive socket freezes the room for everybody — including the author still waiting for its acknowledgement. Head-of-line blocking, which `fanout`'s module docs already name as what a slow participant costs. |
+| **Buffer per participant, unbounded** | Memory exhaustion from the network: a reader that never drains is an out-of-memory condition with extra steps. |
+| **Drop the frame and carry on** | Fatal. The log is *ordered*, so a dropped `Apply` makes that replica silently divergent with nothing able to say so. Reported to be ONLYOFFICE's answer, with `drop` as the only overload remedy in their design — **attributed rather than source-verified**, because `reference/` holds only `sdkjs` and `web-apps`, both client repositories, and the server repository that would carry it is not cloned. The decision below does not rest on it: dropping an ordered frame is refused here because it diverges a replica silently, which is true whoever else does it. |
+| **Evict the participant and let it resume** | **The decision.** §5.5's resume exists precisely to catch a participant up from the position it reached; it keeps its `ClientId`, so `(client, seq)` still suppresses duplicates, and if the gap has fallen outside the retained window `Room::history_since` already answers with the **announced** bounded-offline refusal rather than a silent hole. |
+
+(4) is the only one of the four that preserves the ordered log, and every mechanism it needs is
+already built.
+
+**The threshold is one failed write, and there is deliberately no counter.** Under this
+transport a *slow* reader does not fail: the socket buffer absorbs it and then the blocking
+`write_all` absorbs it. An `Err` means the connection is broken or its buffer is gone. So
+"persistently behind" has no second meaning to count up to here, and a retry counter would be a
+knob pretending to be a policy. If the transport ever becomes non-blocking, *that* is when a
+watermark becomes a real design — and the decision to make then is how much to buffer, not
+whether to evict.
+
+**It applies to presence too, which is one mechanism rather than two.** The policy is about
+**reachability**, not about ordering. A participant whose socket refused a caret frame is not
+merely behind an order it was never part of; it is gone, and leaving it in the set is what made
+a dead writer outlive its connection. What remains true is §2b's point: it is not *behind*
+anything, so nothing needs catching up.
+
+**Eviction is a queue, not one pass.** Announcing a departure is itself a fan-out, so a write
+that fails while announcing identifies *another* unreachable participant — which the same
+policy owns, so it goes back on the queue. Swallowing it is how one dead socket hides the next
+one behind it. The loop terminates because every pass either removes one member of a finite set
+or skips a member already removed.
+
+`Handled.behind` is accordingly renamed `Handled.evicted` and now means "removed from the room",
+not "failed a write and is still here". A caller still wants the list — the eviction is the
+policy and the log line is the evidence — but it no longer has to do anything for the room to
+stay correct.
+
+### The transport question this came out of, with the evidence
+
+`tokio` is **not** needed for parity, and the research that settled it is not re-litigated here.
+What was owed was the `cargo deny` evidence, as the `dependency-policy` CI job invokes it, and
+it had never been run. It has now, and it moved the question rather than answering it: the
+supply-chain cost is nil and the **build-gate** cost is not.
+
+| Configuration | `Cargo.lock` crates | `cargo deny --locked check bans licenses sources` | `cargo audit --deny warnings` | `cargo check --workspace --all-features --locked --target wasm32-unknown-unknown` |
+| --- | --- | --- | --- | --- |
+| as committed | 162 | ok (4 pre-existing `duplicate` warnings) | ok | ok |
+| `+ tokio 1` with `rt-multi-thread` and `net` | 170 | ok (the same 4, none new) | ok | **FAILS** |
+| `+ tokio 1` with `rt-multi-thread`, no `net` | 166 | — | — | **FAILS** |
+| `+ tokio 1`, `default-features = false`, `sync macros io-util rt time` | 166 | ok | ok | ok |
+
+The eight crates a full `tokio` adds are `bytes`, `mio`, `pin-project-lite`, `socket2`,
+`tokio`, `tokio-macros`, `wasi` and `windows-sys`. All pass `bans`, `licenses` and `sources`
+unchanged, and none of them introduces a new duplicate-version warning.
+
+The `wasm` job is the finding. It runs `cargo check --workspace …` and `opendoc-relay` is a
+workspace member, so the whole check goes red:
+
+```text
+error: This wasm target is unsupported by mio. If using Tokio, disable the net feature.
+error: Only features sync,macros,io-util,rt,time are supported on wasm.
+```
+
+Only the fourth row is green, and it is green because it contains no `net` and no multi-thread
+runtime — that is to say, it is not a transport. So adopting `tokio` for the relay is not a
+licence or advisory decision at all; it is a decision to exclude `opendoc-relay` from the
+workspace `wasm` gate, or to move it out of the workspace. That is a structural change and it
+should be argued on its own terms if anybody wants it, which is why the numbers are recorded
+here rather than acted on.
 
 ---
 
@@ -654,8 +800,8 @@ operation repairs it. Paying less is §10 Q1.
 
 ## 7. How it is verified
 
-<!-- session-suite-count: 38 -->
-**38 tests** over the state machines, driving **two replicas and a relay in one process**. The
+<!-- session-suite-count: 39 -->
+**39 tests** over the state machines, driving **two replicas and a relay in one process**. The
 number is **derived, not maintained**: `the_session_suite_count_in_the_design_doc_is_derived`
 counts the suite and fails if this line disagrees, because a hand-kept count in a published
 document has twice drifted into a false public claim here (`104` read 114/47 against an actual
@@ -776,7 +922,7 @@ Each is out for a reason, not for lack of time.
 | ~~**The byte codec**~~ | **Built 2026-10-02 — ADR-057.** The two findings that were moving the shapes are answered on the envelope (ADR-056), so **no `Operation` variant changed** and the two findings that were moving the *existing* shapes
 no longer do — the set may still grow (ADR-054, ADR-059), and the format is additive under that by
 construction rather than by promise. The op set derives `serde` — one schema definition rather than 58 hand-written encoders — inside a versioned length-delimited frame whose payload encoding is a *field*, so the pending CBOR decision is not pre-empted. Field names are therefore the surface, and `GOLDEN_CHUNK` is the only guard that can see a rename. `107` §8 Q5, `150` §10 Q5 closed for operations; the **snapshot** encoding is still open and must measure Q6's 4× before reusing JSON. |
-| ~~**The relay binary**~~ | **Built 2026-10-02 — ADR-058.** A workspace member under `server/`, with `nothing_under_crates_depends_on_the_relay` reading the *manifests* so the engine can never acquire a server by accident. Durability is a checkpoint plus a write-ahead tail whose recovery **re-takes the ordering decision and checks it**, rather than trusting the file; a torn tail is discarded and counted, a torn middle refused. `Room::commit` journals before it answers, because a client drops an acknowledged chunk. The transport is `std` only and thread-per-connection — a stated limit, since an async runtime is a dependency decision. Fan-out **is** built: the author is excluded, a failed write is returned so the resume path can catch that participant up, and a duplicate is acknowledged without being fanned again. Presence fan-out **is** built, with the identity the relay attaches rather than one a client could claim: a stale update is dropped, presence before a join is dropped, and a departure is announced. **Not** built: a typed cursor payload, which still waits on `107` P-4. |
+| ~~**The relay binary**~~ | **Built 2026-10-02 — ADR-058.** A workspace member under `server/`, with `nothing_under_crates_depends_on_the_relay` reading the *manifests* so the engine can never acquire a server by accident. Durability is a checkpoint plus a write-ahead tail whose recovery **re-takes the ordering decision and checks it**, rather than trusting the file; a torn tail is discarded and counted, a torn middle refused. `Room::commit` journals before it answers, because a client drops an acknowledged chunk. The transport is `std` only and thread-per-connection — a stated limit, since an async runtime is a dependency decision, and §2c now records what that decision actually costs: `cargo deny` and `cargo audit` pass with `tokio` added and the `wasm` job does not. Fan-out **is** built: the author is excluded, a participant that cannot be written to is now **evicted** rather than merely reported, so the resume path can catch it up (§2c), and a duplicate is acknowledged without being fanned again. Presence fan-out **is** built, with the identity the relay attaches rather than one a client could claim: a stale update is dropped, presence before a join is dropped, and a departure is announced. **Not** built: a typed cursor payload, which still waits on `107` P-4. |
 | ~~**Presence and cursors**~~ | **Presence built 2026-10-01 — §2b.** One entry per client, overwritten wholesale, no merge therefore no transform, never persisted or replayed, and a payload that is deliberately **opaque** so it promises nothing `107` P-4 has not delivered. A *typed* cursor still waits on P-4. **The relay's fan-out of it landed 2026-10-02 (ADR-058).** |
 | ~~**The host-signed grant**~~ | **Built 2026-10-02 — ADR-060.** `Join.grant`, `capabilities` on `Welcome`/`Resumed`, `casual_doc_edit::access` as the engine's enforcement point, and `server::access` as the verification seam. **No signature profile** is chosen; §10 Q4 says why that is a decision rather than an omission. `Refusal::{NotAuthorised, ReadOnlyAccess}` are now emitted, which is the pair §7 used as its example of described-but-unreachable wire surface. |
 | **Collaborative undo** | `150` §11 already records what the transform commits us to, and the sibling's `docs/69` is the reference. It is a **local** decision taken before submitting, needs no wire field and no protocol bump, and its primitive — `Rebase::Tombstoned` — already exists. |

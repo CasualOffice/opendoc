@@ -55,6 +55,18 @@ use crate::wire::WireOperation;
 ///   [`ServerMessage::Departed`] are **new enum variants**, which the rule above calls a hard
 ///   break: a version-2 peer receiving an `Awareness` tag does not deserialize the message at
 ///   all, so it would drop the frame rather than skip a field. Nothing about edits changed.
+/// - **4** — [`Refusal::RoomFull`], the per-room participant ceiling. The **same** rule as
+///   version 3 and not a new argument: [`Refusal`] is an enum on the wire, it derives a plain
+///   `Deserialize` with no `#[serde(other)]` fallback, and it travels *inside*
+///   [`ServerMessage::Stopped`] — so a version-3 peer meeting the `RoomFull` tag fails to
+///   decode the whole `Stopped` frame and never learns it was refused at all. It would report
+///   `ODC-7007` ("the message could not be read") for a room that is simply full, which is the
+///   wrong cause rather than a missing one, and naming the wrong cause is what the
+///   `session.*`/`document.*` split in `casual_doc_edit::access` exists to prevent.
+///
+///   `#[non_exhaustive]` on [`Refusal`] does **not** help here: it constrains Rust callers
+///   matching on the enum, not `serde`'s tag resolution, so it buys source compatibility in
+///   this workspace and nothing at all on the wire.
 ///
 /// **Not bumped for the host-signed grant** (ADR-060), and the reasoning is the rule above
 /// applied rather than waived. [`Join::grant`] and the `capabilities` field on
@@ -66,7 +78,7 @@ use crate::wire::WireOperation;
 /// The case for bumping anyway is that a grantless client is refused from a room that requires
 /// one; that refusal is `ODC-7003` with a reason, which is the opposite of the **silent**
 /// disagreement version 2 existed for. A loud refusal is not a protocol break.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// How many of a client's own chunks may be in flight before it stops sending.
 ///
@@ -510,6 +522,25 @@ pub enum Refusal {
     IdCollision,
     /// The message could not be read. **Do not send it again.**
     Malformed,
+    /// The room already holds as many participants as it admits —
+    /// [`MAX_PARTICIPANTS`](crate::presence::MAX_PARTICIPANTS).
+    ///
+    /// Terminal for *this* connection and deliberately **not** retryable on it: a client that
+    /// resent the same `Join` down the same socket would spin. A room's occupancy is a property
+    /// of a moment, though, so a later connection may be admitted — and that is a new session
+    /// rather than a retry of this one, which is why the distinction lives in
+    /// [`Refusal::is_retryable`] rather than in prose a client has to read.
+    ///
+    /// Separate from [`Refusal::NotAuthorised`] because the two send a reader to different
+    /// places: one is about who they are and the other about how busy the room is, and only one
+    /// of them is worth waiting out. Checked **after** the grant, so a caller with no grant
+    /// cannot use the refusal to measure how full a room it was never admitted to is.
+    RoomFull {
+        /// How many participants the room admits. Returned rather than left to the client's
+        /// own copy of the constant, because the two ends are separately versioned and a
+        /// ceiling the client guessed is a ceiling it can report wrongly.
+        limit: usize,
+    },
 }
 
 impl Refusal {
@@ -529,6 +560,7 @@ impl Refusal {
             Self::Malformed => "ODC-7007",
             Self::IdCollision => "ODC-7008",
             Self::StaleBase { .. } => "ODC-7009",
+            Self::RoomFull { .. } => "ODC-7010",
         }
     }
 
@@ -547,7 +579,10 @@ impl Refusal {
     pub const fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::ProtocolVersion { .. } | Self::NotAuthorised | Self::NotSaving
+            Self::ProtocolVersion { .. }
+                | Self::NotAuthorised
+                | Self::NotSaving
+                | Self::RoomFull { .. }
         )
     }
 }

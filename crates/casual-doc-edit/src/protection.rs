@@ -1097,6 +1097,464 @@ mod tests {
         );
     }
 
+    /// **The same operation is an accept on one document and a reject on another.**
+    ///
+    /// The guard `is_review_only` was owed and the one that makes the predicate's claim
+    /// falsifiable. `UpdateReviewState` carries the *resulting* inlines, so an operation on its
+    /// own has no direction at all: `[run 11, run 31]` is an accepted insertion against one
+    /// document and a rejected deletion against another, and the two differ only in what the
+    /// paragraph already held. A guard that asserted one direction on one fixture would be
+    /// satisfied by a predicate keyed on operation *shape* — which is precisely the mistake
+    /// `is_tracked_only` made when it was read as answering this question.
+    ///
+    /// Four cells: two operations × two documents, one per (direction, revision kind) pair.
+    /// Each cell also asserts **which half recognised it**, because that is the observable
+    /// consequence of the two projections doing different work — the same operation is caught
+    /// by `after_projection` on one document and by `before_projection` on the other.
+    #[test]
+    fn one_operation_is_an_accept_on_one_document_and_a_reject_on_another() {
+        // The same inner run id in both, so the two documents differ in the revision KIND and
+        // in nothing else. That is what lets one operation be submitted against both.
+        let holds_an_insertion = vec![
+            run(11, "abc"),
+            revision(30, RevisionKind::Insertion, vec![run(31, "xyz")]),
+        ];
+        let holds_a_deletion = vec![
+            run(11, "abc"),
+            revision(40, RevisionKind::Deletion, vec![run(31, "xyz")]),
+        ];
+        // The revision gone and its text gone with it.
+        let decided_away = vec![run(11, "abc")];
+        // The revision gone and its text left standing as plain content.
+        let decided_plain = vec![run(11, "abc"), run(31, "xyz")];
+
+        // `(after-projection preserved, before-projection preserved)` — exactly one of them,
+        // per cell, and which one is the direction of the decision.
+        const ACCEPTED: (bool, bool) = (true, false);
+        const REJECTED: (bool, bool) = (false, true);
+
+        for (what, held, proposed, direction) in [
+            (
+                "rejecting an insertion",
+                &holds_an_insertion,
+                &decided_away,
+                REJECTED,
+            ),
+            (
+                "accepting a deletion",
+                &holds_a_deletion,
+                &decided_away,
+                ACCEPTED,
+            ),
+            (
+                "accepting an insertion",
+                &holds_an_insertion,
+                &decided_plain,
+                ACCEPTED,
+            ),
+            (
+                "rejecting a deletion",
+                &holds_a_deletion,
+                &decided_plain,
+                REJECTED,
+            ),
+        ] {
+            let document = holding(held.clone());
+            let op = review(proposed.clone());
+            assert!(
+                is_review_only(&document, &op),
+                "{what} is not a review decision"
+            );
+            assert_eq!(
+                (
+                    after_projection(held) == after_projection(proposed),
+                    before_projection(held) == before_projection(proposed),
+                ),
+                direction,
+                "{what} was recognised by the wrong half: the two projections are what make \
+                 one operation mean opposite things on two documents, so a rule keyed on the \
+                 operation's shape would answer both cells the same way"
+            );
+        }
+
+        // THE SENSITIVITY A READER WILL WONDER ABOUT, named here rather than found later. The
+        // projections compare inlines by **full equality, `NodeId` included**, so accepting an
+        // insertion must hand back the same run and not an equal-looking new one: a client that
+        // re-mints the id while unwrapping the revision is refused.
+        let reminted = review(vec![run(11, "abc"), run(999, "xyz")]);
+        assert!(
+            !is_review_only(&holding(holds_an_insertion.clone()), &reminted),
+            "a decision that re-minted the accepted run's id was admitted, so the identity the \
+             rest of the engine anchors comments, carets and revisions to is not preserved \
+             across an accept"
+        );
+
+        // And that is a CONVENTION this module has kept since ADR-052 rather than something new
+        // `is_review_only` introduced — asserted, because a reader has every reason to check.
+        // `is_tracked_only` compares the same way: a tracked deletion that re-wrapped the text
+        // under a fresh run id is not the same before-state.
+        let plain = holding(vec![run(11, "abc")]);
+        assert!(
+            is_tracked_only(
+                &plain,
+                &review(vec![revision(
+                    40,
+                    RevisionKind::Deletion,
+                    vec![run(11, "abc")]
+                )])
+            ),
+            "a tracked deletion that keeps the run's identity is a suggestion"
+        );
+        assert!(
+            !is_tracked_only(
+                &plain,
+                &review(vec![revision(
+                    40,
+                    RevisionKind::Deletion,
+                    vec![run(999, "abc")]
+                )])
+            ),
+            "`is_tracked_only` has compared ids since ADR-052, so `is_review_only` doing the \
+             same is one convention rather than two"
+        );
+    }
+
+    /// An untracked edit smuggled beside a decision is refused, **and the bare decision is
+    /// not**.
+    ///
+    /// Both halves, because a predicate that refused everything would satisfy the first one on
+    /// its own. This is the property the whole design rests on: every projection retains all
+    /// plain content, so an edit carried in alongside a decision moves *both* projections and
+    /// no clause can explain the result.
+    #[test]
+    fn an_edit_smuggled_beside_a_decision_is_refused_and_the_bare_decision_is_admitted() {
+        let held = vec![
+            run(11, "abc"),
+            revision(30, RevisionKind::Insertion, vec![run(31, "xyz")]),
+        ];
+        let document = holding(held);
+
+        // The two bare decisions, asserted admitted FIRST so the refusals below are known to be
+        // about the smuggling and not about the fixture.
+        for (what, op) in [
+            ("accepting it", review(vec![run(11, "abc"), run(31, "xyz")])),
+            ("rejecting it", review(vec![run(11, "abc")])),
+        ] {
+            assert!(
+                is_review_only(&document, &op),
+                "{what} must be admitted, or this guard cannot tell a smuggled edit from a \
+                 decision"
+            );
+        }
+
+        for (what, op) in [
+            (
+                "a character typed into the plain text beside an accept",
+                review(vec![run(11, "abcQ"), run(31, "xyz")]),
+            ),
+            (
+                "a character typed into the plain text beside a reject",
+                review(vec![run(11, "abcQ")]),
+            ),
+            (
+                "a brand-new untracked run beside an accept",
+                review(vec![run(11, "abc"), run(31, "xyz"), run(50, "!")]),
+            ),
+            (
+                "a character typed into the text being accepted",
+                review(vec![run(11, "abc"), run(31, "xyzQ")]),
+            ),
+        ] {
+            assert!(
+                !is_review_only(&document, &op),
+                "{what} was admitted as a review decision: an untracked edit must move BOTH \
+                 projections, which is the only reason this class is exact"
+            );
+        }
+    }
+
+    /// A reviewer authors nothing and a suggester decides nothing — in both directions.
+    ///
+    /// The two classes are **disjoint**, not rungs on one ladder, and that is why `review` is
+    /// its own clause in `refuse_if_not_permitted` rather than an ordering of the others. Each
+    /// gesture is asserted against *both* predicates, so a change that quietly widened either
+    /// one is caught by the half that should have said no.
+    #[test]
+    fn a_reviewer_authors_nothing_and_a_suggester_decides_nothing() {
+        let plain = holding(vec![run(11, "abcdefgh")]);
+        for (what, op) in [
+            (
+                "a proposed insertion",
+                review(vec![
+                    revision(30, RevisionKind::Insertion, vec![run(31, "x")]),
+                    run(11, "abcdefgh"),
+                ]),
+            ),
+            (
+                "a proposed deletion",
+                review(vec![revision(
+                    40,
+                    RevisionKind::Deletion,
+                    vec![run(11, "abcdefgh")],
+                )]),
+            ),
+        ] {
+            assert!(
+                is_tracked_only(&plain, &op),
+                "{what} must be a suggestion, or this guard measures the wrong thing"
+            );
+            assert!(
+                !is_review_only(&plain, &op),
+                "{what} reached `review`: a reviewer resolves what it did not author, so a \
+                 preset that grants `review` and not `suggest` would be handing over the wider \
+                 right by the back door"
+            );
+        }
+
+        let holds_an_insertion = vec![
+            run(11, "abc"),
+            revision(30, RevisionKind::Insertion, vec![run(31, "xyz")]),
+        ];
+        let holds_a_deletion = vec![
+            run(11, "abc"),
+            revision(40, RevisionKind::Deletion, vec![run(31, "xyz")]),
+        ];
+        for (what, held, proposed) in [
+            (
+                "accepting an insertion",
+                &holds_an_insertion,
+                vec![run(11, "abc"), run(31, "xyz")],
+            ),
+            (
+                "rejecting an insertion",
+                &holds_an_insertion,
+                vec![run(11, "abc")],
+            ),
+            (
+                "accepting a deletion",
+                &holds_a_deletion,
+                vec![run(11, "abc")],
+            ),
+            (
+                "rejecting a deletion",
+                &holds_a_deletion,
+                vec![run(11, "abc"), run(31, "xyz")],
+            ),
+        ] {
+            let document = holding(held.clone());
+            let op = review(proposed);
+            assert!(is_review_only(&document, &op), "{what} is not a decision");
+            assert!(
+                !is_tracked_only(&document, &op),
+                "{what} reached `suggest`: the tracked-changes class must not be able to \
+                 resolve somebody else's suggestion, which is the whole reason `review` had to \
+                 become a positive rule"
+            );
+        }
+
+        // The cases that charge the *new revision id* clause specifically, and the reason it is
+        // not redundant with the projections. `before_projection` is **blind to both revision
+        // kinds** — an insertion contributes nothing and a deletion contributes its content
+        // unwrapped — so authoring a brand-new tracked mark over text that is already there
+        // leaves the before-projection untouched. Rejecting somebody else's suggestion in the
+        // same operation then supplies `resolved_any`, and every clause but the id check is
+        // satisfied by an operation that authored a suggestion.
+        let document = holding(holds_an_insertion);
+        for (what, proposed) in [
+            (
+                "rejecting a suggestion while authoring a new tracked insertion",
+                vec![
+                    run(11, "abc"),
+                    revision(50, RevisionKind::Insertion, vec![run(51, "!")]),
+                ],
+            ),
+            (
+                "rejecting a suggestion while authoring a new tracked deletion",
+                vec![revision(50, RevisionKind::Deletion, vec![run(11, "abc")])],
+            ),
+        ] {
+            assert_eq!(
+                before_projection(&[
+                    run(11, "abc"),
+                    revision(30, RevisionKind::Insertion, vec![run(31, "xyz")]),
+                ]),
+                before_projection(&proposed),
+                "{what} must leave the before-projection untouched, or this case does not reach \
+                 the id clause at all"
+            );
+            assert!(
+                !is_review_only(&document, &review(proposed)),
+                "{what} was admitted: a reviewer authored a suggestion of their own, which the \
+                 projections cannot see and only the vanished-and-appeared id ledger can"
+            );
+        }
+    }
+
+    /// Opposite decisions in **one** paragraph are refused and across **two** are not.
+    ///
+    /// The narrowing `is_review_only` documents, asserted in both directions so that it is a
+    /// stated limit rather than a hidden one. Each decision alone is asserted admitted first:
+    /// without that the refusal could be a predicate that cannot read this fixture at all.
+    #[test]
+    fn opposite_decisions_collide_in_one_paragraph_and_do_not_across_two() {
+        let holds_both = vec![
+            revision(30, RevisionKind::Insertion, vec![run(31, "ins")]),
+            run(11, "abc"),
+            revision(40, RevisionKind::Deletion, vec![run(41, "del")]),
+        ];
+        let document = holding(holds_both);
+
+        let accept_the_insertion = review(vec![
+            run(31, "ins"),
+            run(11, "abc"),
+            revision(40, RevisionKind::Deletion, vec![run(41, "del")]),
+        ]);
+        let reject_the_deletion = review(vec![
+            revision(30, RevisionKind::Insertion, vec![run(31, "ins")]),
+            run(11, "abc"),
+            run(41, "del"),
+        ]);
+        assert!(
+            is_review_only(&document, &accept_the_insertion),
+            "accepting one of two revisions and leaving the other alone must be admitted"
+        );
+        assert!(
+            is_review_only(&document, &reject_the_deletion),
+            "rejecting one of two revisions and leaving the other alone must be admitted"
+        );
+
+        let collided = review(vec![run(31, "ins"), run(11, "abc"), run(41, "del")]);
+        assert!(
+            !is_review_only(&document, &collided),
+            "one paragraph accepting one revision and rejecting another in a single operation \
+             satisfies neither projection, and the refusal is the documented narrowing: no Word \
+             or Docs gesture produces it, and a client that batched two opposite decisions into \
+             one paragraph's rewrite can split them"
+        );
+
+        // The SAME two decisions, one paragraph each: admitted, because the test is per
+        // paragraph. This is the half that makes the narrowing narrow rather than a ban on
+        // deciding in both directions at once.
+        let split = holding_two(
+            vec![
+                revision(30, RevisionKind::Insertion, vec![run(31, "ins")]),
+                run(11, "abc"),
+            ],
+            vec![
+                run(12, "def"),
+                revision(40, RevisionKind::Deletion, vec![run(41, "del")]),
+            ],
+        );
+        let across = Operation::UpdateReviewState {
+            paragraphs: vec![
+                ReviewParagraphState {
+                    node: n(10),
+                    inlines: vec![run(31, "ins"), run(11, "abc")],
+                },
+                ReviewParagraphState {
+                    node: n(20),
+                    inlines: vec![run(12, "def"), run(41, "del")],
+                },
+            ],
+            comments: None,
+        };
+        assert!(
+            is_review_only(&split, &across),
+            "two DIFFERENT paragraphs deciding in opposite directions in one operation must be \
+             admitted — accept-all over a document holding both kinds is exactly this shape"
+        );
+    }
+
+    /// `resolved_any`, which is not decoration: a comment-marker-only change satisfies **every
+    /// other clause** in `is_review_only`.
+    ///
+    /// No revision id appears or disappears, and *both* projections are unchanged, because both
+    /// drop comment markers. So without the final `resolved_any` a reviewer would be able to
+    /// move comment markers through a class that is supposed to be about resolving suggestions —
+    /// `comment`'s business reachable through `review`, and a predicate reporting a decision
+    /// where none was made.
+    #[test]
+    fn a_comment_marker_change_is_comment_s_business_and_is_unreachable_through_review() {
+        let held = vec![
+            run(11, "abc"),
+            revision(30, RevisionKind::Insertion, vec![run(31, "xyz")]),
+        ];
+        let document = holding(held.clone());
+        let anchored = vec![
+            comment_range(20, 21),
+            run(11, "abc"),
+            revision(30, RevisionKind::Insertion, vec![run(31, "xyz")]),
+            InlineNode::CommentRangeEnd(CommentRangeEnd {
+                id: n(22),
+                comment: CommentId::new(n(21)),
+            }),
+        ];
+
+        // The precondition, explicit: every other clause really is satisfied, so this guard is
+        // charged to `resolved_any` and not to a projection that happened to differ.
+        assert_eq!(
+            before_projection(&held),
+            before_projection(&anchored),
+            "the before-projection must be unchanged, or this guard is not about `resolved_any`"
+        );
+        assert_eq!(
+            after_projection(&held),
+            after_projection(&anchored),
+            "the after-projection must be unchanged, or this guard is not about `resolved_any`"
+        );
+        assert_eq!(
+            revision_ids(&held),
+            revision_ids(&anchored),
+            "no revision may appear or disappear, or this guard is not about `resolved_any`"
+        );
+
+        assert!(
+            !is_review_only(&document, &review(anchored.clone())),
+            "moving a comment marker was admitted as a review decision"
+        );
+        assert!(
+            is_comment_only(&document, &review(anchored)),
+            "and it must still be a comment, or the gesture is refused to everybody"
+        );
+
+        // The same hole with nothing in it at all: an operation that changes nothing.
+        let unchanged = review(held);
+        assert!(
+            !is_review_only(&document, &unchanged),
+            "an operation that resolves nothing is not a review decision"
+        );
+        assert!(is_comment_only(&document, &unchanged));
+    }
+
+    /// One **unprotected** paragraph, numbered 10, holding `inlines`.
+    ///
+    /// Unprotected deliberately: `is_review_only` reads the named paragraph's inlines and
+    /// nothing else — no level, no enforcement flag, no settings — so a protected fixture would
+    /// add a variable the predicate does not consult and invite a reader to think it does. The
+    /// protection-level guards above use [`protected`] for the same reason in reverse.
+    fn holding(inlines: Vec<InlineNode>) -> Document {
+        document_of(vec![block(10, inlines)])
+    }
+
+    /// Two unprotected paragraphs, numbered 10 and 20.
+    fn holding_two(first: Vec<InlineNode>, second: Vec<InlineNode>) -> Document {
+        document_of(vec![block(10, first), block(20, second)])
+    }
+
+    fn block(id: u64, inlines: Vec<InlineNode>) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: n(id),
+            properties: ParagraphProperties::default().into(),
+            inlines,
+        })
+    }
+
+    fn document_of(body: Vec<BlockNode>) -> Document {
+        let mut ids = IdGenerator::new(1);
+        let document_id = ids.next_id().expect("an id");
+        Document::new(document_id, body, Definitions::default()).expect("a valid document")
+    }
+
     /// `SetDocumentProtection { protection: None }` — Word's "Stop Protection".
     fn lift() -> Operation {
         Operation::SetDocumentProtection { protection: None }

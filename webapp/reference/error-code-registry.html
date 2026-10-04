@@ -357,6 +357,12 @@
         <td>The submission was written against an ordered position the document has moved past. Nothing is lost: the client rebases it and resubmits with the same sequence number.</td>
         </tr>
         <tr>
+        <td><code>ODC-7010</code></td>
+        <td><code>collaboration_room_full</code></td>
+        <td>fatal</td>
+        <td>The room already holds as many participants as it admits, so this connection was not admitted. Terminal for this connection and <strong>not</strong> retryable on it — a client that resends the same join down the same socket spins — but a room's occupancy is a property of a moment, so a later connection may be admitted. Separate from <code>ODC-7003</code> because only one of the two is worth waiting out.</td>
+        </tr>
+        <tr>
         <td><code>ODC-8001</code></td>
         <td><code>plugin_failed</code></td>
         <td>error</td>

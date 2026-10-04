@@ -429,7 +429,7 @@ fn every_refusal_code_has_a_row_in_the_register() {
     // Every refusal this crate can send, by construction rather than by a list someone
     // maintains: one of each variant, so adding a variant without a code fails to compile and
     // adding one without a register row fails here.
-    let every: [Refusal; 9] = [
+    let every: [Refusal; 10] = [
         Refusal::ProtocolVersion {
             server: 1,
             client: 2,
@@ -447,6 +447,9 @@ fn every_refusal_code_has_a_row_in_the_register() {
         Refusal::CannotMerge,
         Refusal::IdCollision,
         Refusal::Malformed,
+        Refusal::RoomFull {
+            limit: crate::presence::MAX_PARTICIPANTS,
+        },
     ];
     let mut codes = std::collections::BTreeSet::new();
     for refusal in every {
@@ -2322,4 +2325,97 @@ fn an_anchored_arrival_is_resolved_before_it_is_applied() {
         "the paste must still sit immediately before the block it was authored before; \
          body order was {order:?}"
     );
+}
+
+/// Counts the variants declared by one `pub enum` in `protocol.rs`.
+///
+/// A source scan because the thing being counted is a **declaration** and
+/// `std::mem::variant_count` is unstable. Line-wise, so it needs no parser: a variant is a line
+/// indented exactly four spaces whose first character is uppercase, which is what rustfmt
+/// produces for every variant of these three enums and for nothing else inside them — their
+/// fields are indented eight.
+///
+/// CRLF-normalised first and cut at the test module, for the reason `containers.rs` records in
+/// full: `include_str!` hands back the bytes as they sit on disk, this repository has no
+/// `.gitattributes`, and a pattern spanning a line break silently stops matching on a Windows
+/// checkout.
+fn declared_variants(source: &str, declaration: &str) -> usize {
+    let source = source.replace("\r\n", "\n");
+    let production = source
+        .split_once("\n#[cfg(test)]\n")
+        .map_or(source.as_str(), |(before, _)| before);
+    let body = production
+        .split_once(declaration)
+        .and_then(|(_, rest)| rest.split_once("\n}\n"))
+        .map_or_else(
+            || panic!("`{declaration}` is not declared in the production half of protocol.rs"),
+            |(body, _)| body.to_owned(),
+        );
+    body.lines()
+        .filter(|line| {
+            line.strip_prefix("    ").is_some_and(|rest| {
+                rest.chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_uppercase())
+            })
+        })
+        .count()
+}
+
+/// **The version rule, armed.** It was prose, and prose is what version 4 nearly shipped
+/// without.
+///
+/// `PROTOCOL_VERSION`'s own doc comment states it: "a new enum variant is a hard break, because
+/// a tagged enum with an unknown tag does not deserialize at all". `Refusal`, `ClientMessage`
+/// and `ServerMessage` are all tagged enums on the wire and none of them has a
+/// `#[serde(other)]` fallback, so a peer that meets a tag it does not know cannot decode the
+/// **whole frame** carrying it — not the unknown field, the frame.
+///
+/// Nothing in this workspace would have noticed. `Refusal::RoomFull` was added for the relay's
+/// participant ceiling, every `Stopped` frame carrying it became undecodable for a version-3
+/// peer, and `cargo test -p casual-doc-transaction` was green with `PROTOCOL_VERSION` still
+/// reading 3 — verified by making exactly that change and running the suite. `#[non_exhaustive]`
+/// does not help here either: it constrains Rust callers matching on the enum, not `serde`'s tag
+/// resolution.
+///
+/// So this is a ratchet, deliberately, and its value is in the failure **message**: the count
+/// changing is the moment somebody has to make the version decision, and the message is where
+/// the rule and the required action are stated. A ratchet whose message only said "expected 10,
+/// got 11" would be a number to bump; this one is a question to answer.
+#[test]
+fn a_new_wire_enum_variant_is_a_protocol_version_decision() {
+    let source = include_str!("protocol.rs");
+    for (declaration, counted_at_version_4) in [
+        ("pub enum ClientMessage {", 4),
+        ("pub enum ServerMessage {", 8),
+        ("pub enum Refusal {", 10),
+    ] {
+        let found = declared_variants(source, declaration);
+        assert_eq!(
+            found, counted_at_version_4,
+            "`{declaration}` now declares {found} variants rather than \
+             {counted_at_version_4}. Every variant is a TAG on the wire and none of these enums \
+             has a `#[serde(other)]` fallback, so a peer that does not know the tag cannot \
+             decode the frame carrying it at all — which `PROTOCOL_VERSION`'s own doc comment \
+             calls a hard break. `PROTOCOL_VERSION` currently reads {PROTOCOL_VERSION}. Decide \
+             whether it moves, record the reasoning in that doc comment the way versions 2, 3 \
+             and 4 do, and then update this number. Do not update this number first."
+        );
+    }
+
+    // And the counter has to be able to SEE a variant, or it is a guard that always reports the
+    // number it was written with. Planted in both line endings, because the cut and the scan
+    // both span line breaks.
+    let planted = "pub enum Refusal {\n    One,\n    Two {\n        field: u32,\n    },\n}\n";
+    for (what, text) in [
+        ("LF", planted.to_owned()),
+        ("CRLF", planted.replace('\n', "\r\n")),
+    ] {
+        assert_eq!(
+            declared_variants(&text, "pub enum Refusal {"),
+            2,
+            "with {what} line endings the scan miscounts a planted enum, so it cannot be trusted \
+             to notice a real variant — and an eight-space field line must not be counted as one"
+        );
+    }
 }

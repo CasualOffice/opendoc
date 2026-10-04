@@ -109,6 +109,46 @@ fn anchored_comment() -> Operation {
     ])
 }
 
+/// The same one paragraph, already **holding** the suggestion [`tracked_suggestion`] proposes.
+///
+/// The condition is created rather than inherited, which is the rule every guard in this file
+/// follows: on [`document`] there is nothing to accept or reject, so an accept/reject matrix
+/// written against it would be measuring the absence of a revision and not a participant's
+/// right to decide one.
+fn document_holding_a_suggestion() -> Document {
+    let mut document = document(None);
+    if let Some(BlockNode::Paragraph(paragraph)) = document.body_mut().first_mut() {
+        paragraph.inlines = vec![
+            run(11, "abcdefgh"),
+            InlineNode::Revision(Box::new(Revision {
+                id: n(30),
+                kind: RevisionKind::Insertion,
+                author: Some("Reviewer".to_owned()),
+                date: None,
+                revision_id: None,
+                editor_group: None,
+                inlines: vec![run(31, "!")],
+            })),
+        ];
+    }
+    document
+}
+
+/// Accepting the suggestion [`document_holding_a_suggestion`] holds: the text goes plain.
+///
+/// Run 31 keeps its id, which is not cosmetic — the projections compare inlines by full
+/// equality, `NodeId` included, so an accept that re-minted the run would not be recognised as
+/// an accept at all. `protection`'s own guards assert that sensitivity and that
+/// `is_tracked_only` has shared it since ADR-052.
+fn accept_the_suggestion() -> Operation {
+    review(vec![run(11, "abcdefgh"), run(31, "!")])
+}
+
+/// Rejecting it: the revision and its text go together, leaving the before-state.
+fn reject_the_suggestion() -> Operation {
+    review(vec![run(11, "abcdefgh")])
+}
+
 /// The same text with one character proposed as a tracked insertion — a suggestion.
 fn tracked_suggestion() -> Operation {
     review(vec![
@@ -262,6 +302,12 @@ fn comment_suggest_and_type_travel_as_one_operation_and_are_told_apart_exactly()
         (Capabilities::viewer(), [false, false, false]),
         (Capabilities::commenter(), [true, false, false]),
         (Capabilities::suggester(), [true, true, false]),
+        // A reviewer reads exactly like a commenter on these three gestures, and that is the
+        // row that says the class is DISJOINT from `suggest` rather than a rung above it: a
+        // reviewer may not author the suggestion in column two. What a reviewer may do that a
+        // commenter may not needs a document that already holds a suggestion, which is
+        // `a_reviewer_decides_what_it_did_not_author_and_a_suggester_does_not`.
+        (Capabilities::reviewer(), [true, false, false]),
         (Capabilities::editor(), [true, true, true]),
     ];
     for (capabilities, allowed) in expected {
@@ -275,6 +321,134 @@ fn comment_suggest_and_type_travel_as_one_operation_and_are_told_apart_exactly()
             );
         }
     }
+}
+
+#[test]
+fn a_reviewer_decides_what_it_did_not_author_and_a_suggester_does_not() {
+    // The `review` class, as an access matrix over a document that ALREADY holds a suggestion —
+    // the one fixture on which accept and reject are expressible at all. Five roles × two
+    // directions, written out rather than derived, so a change of behaviour is a change of table.
+    //
+    // The two interesting rows are adjacent and opposite: a **suggester** may author the
+    // suggestion and may not decide it; a **reviewer** may decide it and may not author it. That
+    // is why `reviewer()` is deliberately not a superset of `suggester()`, and why `review` is
+    // its own clause in `refuse_if_not_permitted` rather than an ordering of the others.
+    let document = document_holding_a_suggestion();
+    let cases = [
+        ("accepting it", accept_the_suggestion()),
+        ("rejecting it", reject_the_suggestion()),
+    ];
+    let expected = [
+        (Capabilities::viewer(), [false, false]),
+        (Capabilities::commenter(), [false, false]),
+        (Capabilities::suggester(), [false, false]),
+        (Capabilities::reviewer(), [true, true]),
+        (Capabilities::editor(), [true, true]),
+    ];
+    for (capabilities, allowed) in expected {
+        for ((what, op), should_allow) in cases.iter().zip(allowed) {
+            let answer =
+                refuse_if_not_permitted(Some(&document), std::slice::from_ref(op), capabilities);
+            assert_eq!(
+                answer.is_ok(),
+                should_allow,
+                "{capabilities:?} and {what}: expected allowed={should_allow}, got {answer:?}"
+            );
+        }
+    }
+
+    // The mirror half, on the same document: a reviewer may not author a suggestion of its own
+    // even where one already exists, and a suggester may. Without this the table above could be
+    // satisfied by a `review` bit that simply meant `suggest` on a different fixture.
+    assert_eq!(
+        refuse_if_not_permitted(
+            Some(&document),
+            &[review(vec![
+                run(11, "abcdefgh"),
+                InlineNode::Revision(Box::new(Revision {
+                    id: n(30),
+                    kind: RevisionKind::Insertion,
+                    author: Some("Reviewer".to_owned()),
+                    date: None,
+                    revision_id: None,
+                    editor_group: None,
+                    inlines: vec![run(31, "!")],
+                })),
+                InlineNode::Revision(Box::new(Revision {
+                    id: n(40),
+                    kind: RevisionKind::Insertion,
+                    author: Some("Someone else".to_owned()),
+                    date: None,
+                    revision_id: None,
+                    editor_group: None,
+                    inlines: vec![run(41, "?")],
+                })),
+            ])],
+            Capabilities::reviewer()
+        ),
+        Err(AccessRefusal::ReviewOnly),
+        "a reviewer authored a tracked change of its own: the class is `accept/reject and \
+         moderate comments`, and a preset that granted the wider right silently is how this \
+         capability spent its first increment"
+    );
+
+    // And the refusal a reviewer gets names what a reviewer may do, rather than borrowing a
+    // sentence that would misdescribe the class.
+    assert_eq!(
+        refuse_if_not_permitted(
+            Some(&document),
+            &[untracked_typing_in_the_review_vehicle()],
+            Capabilities::reviewer()
+        ),
+        Err(AccessRefusal::ReviewOnly)
+    );
+}
+
+#[test]
+fn the_review_only_refusal_is_reachable() {
+    // `AccessRefusal::ReviewOnly` shipped without this, and a refusal variant nothing can produce
+    // is a `session.*` code a host routes and never sees — the "built is not reachable" failure
+    // the working contract names, inside a permission vocabulary where it is worst. So: the
+    // narrowest grant that holds `review` and nothing else, on an ordinary keystroke.
+    let bare_reviewer = Capabilities::viewer().with_review();
+    assert!(bare_reviewer.may_review());
+    assert!(
+        !bare_reviewer.may_comment() && !bare_reviewer.may_suggest() && !bare_reviewer.may_edit(),
+        "the point of this grant is that `review` is the ONLY thing it holds, or the refusal \
+         below could be charged to another class"
+    );
+    assert!(
+        bare_reviewer.may_write(),
+        "`review` must count as a write at the relay, which holds no document and can only ask \
+         whether this participant changes the document at all"
+    );
+    let document = document(None);
+    for op in [typing(), deleting()] {
+        assert_eq!(
+            refuse_if_not_permitted(Some(&document), std::slice::from_ref(&op), bare_reviewer),
+            Err(AccessRefusal::ReviewOnly),
+            "{op:?} from a review-only participant must be refused AS review-only"
+        );
+    }
+    // `reviewer()` itself reports the same class, because `comment` is not the widest write
+    // class it holds — the ordering in `refusal_for` is what decides this, and it is asserted
+    // rather than left to be read off the `if`/`else` chain.
+    assert_eq!(
+        refuse_if_not_permitted(Some(&document), &[typing()], Capabilities::reviewer()),
+        Err(AccessRefusal::ReviewOnly),
+        "a reviewer was told they may only comment, which names the narrower of the two rights \
+         they hold"
+    );
+    // And a participant holding BOTH is told about suggesting, which `refusal_for` documents as
+    // deliberate: it is the class whose gestures are the commoner ones.
+    assert_eq!(
+        refuse_if_not_permitted(
+            Some(&document),
+            &[typing()],
+            Capabilities::suggester().with_review()
+        ),
+        Err(AccessRefusal::SuggestionsOnly)
+    );
 }
 
 #[test]
@@ -292,15 +466,37 @@ fn the_relay_s_document_free_answer_never_refuses_what_a_replica_allows() {
         anchored_comment(),
         tracked_suggestion(),
         untracked_typing_in_the_review_vehicle(),
+        // The review decisions too, which are the operations `review` exists for. They are
+        // judged against the suggestion-holding document below, because against this one they
+        // decide nothing and the property would be asserted over a gesture that cannot happen.
+        accept_the_suggestion(),
+        reject_the_suggestion(),
     ];
+    let holding_a_suggestion = document_holding_a_suggestion();
     for capabilities in [
         Capabilities::viewer(),
         Capabilities::commenter(),
         Capabilities::suggester(),
+        Capabilities::reviewer(),
         Capabilities::editor(),
         Capabilities::owner(),
     ] {
         for op in &candidates {
+            for replica_document in [&document, &holding_a_suggestion] {
+                let replica = refuse_if_not_permitted(
+                    Some(replica_document),
+                    std::slice::from_ref(op),
+                    capabilities,
+                );
+                let relay = refuse_if_not_permitted(None, std::slice::from_ref(op), capabilities);
+                if replica.is_ok() {
+                    assert!(
+                        relay.is_ok(),
+                        "the relay refused {op:?} for {capabilities:?} while a replica allows \
+                         it: the weaker answer is not weaker"
+                    );
+                }
+            }
             let replica =
                 refuse_if_not_permitted(Some(&document), std::slice::from_ref(op), capabilities);
             let relay = refuse_if_not_permitted(None, std::slice::from_ref(op), capabilities);
@@ -413,6 +609,35 @@ fn a_grant_can_only_ever_narrow() {
     assert_ne!(Capabilities::suggester(), Capabilities::commenter());
     assert_ne!(Capabilities::editor(), Capabilities::suggester());
     assert_ne!(Capabilities::owner(), Capabilities::editor());
+
+    // Except that `reviewer` is NOT on that ladder, and the asymmetry is the role: a reviewer
+    // resolves what it did not author. A preset granting more than its name says is how this
+    // capability spent its first increment, so the two directions are pinned here rather than
+    // left to be read off `reviewer()`'s body.
+    assert!(
+        !Capabilities::reviewer().may_suggest(),
+        "`reviewer()` grants `suggest`: a reviewer would be able to author the suggestions it \
+         exists to decide, and the preset would be wider than its name"
+    );
+    assert!(
+        !Capabilities::suggester().may_review(),
+        "`suggester()` grants `review`: a suggester would be able to accept its own proposal, \
+         which is the whole point of separating the two"
+    );
+    // A host that wants both composes them, and the composition is commutative — a narrowing
+    // vocabulary with an order-dependent union would not be one.
+    assert_eq!(
+        Capabilities::suggester().with_review(),
+        Capabilities::reviewer().with_suggest()
+    );
+    // An editor holds `review` because it can already produce any state a reviewer can;
+    // withholding the bit would make the bit a lie rather than a restriction.
+    assert!(Capabilities::editor().may_review());
+    assert!(
+        Capabilities::reviewer().may_write(),
+        "a reviewer must count as a writer, or the relay — which holds no document — would \
+         refuse every decision it is admitted to make"
+    );
 }
 
 #[test]
@@ -497,6 +722,7 @@ fn every_access_refusal_carries_a_distinct_routed_reason() {
         AccessRefusal::ReadOnly,
         AccessRefusal::CommentsOnly,
         AccessRefusal::SuggestionsOnly,
+        AccessRefusal::ReviewOnly,
         AccessRefusal::NoProtectionChange,
     ];
     let mut codes = Vec::new();

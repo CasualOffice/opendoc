@@ -722,3 +722,105 @@ fn a_checkpoint_round_trips_its_whole_retained_window_as_separate_frames() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// Orders `before` chunks, compacts, then orders `after` more — and returns what a restart had
+/// to replay.
+///
+/// The condition is built rather than waited for: `should_compact` fires at `CHECKPOINT_EVERY`
+/// (1024), and a guard that ordered 1024 chunks to reach a checkpoint would be measuring the
+/// constant instead of the rule.
+fn replayed_after_a_checkpoint(name: &str, before: u64, after: u64) -> (usize, usize) {
+    let path = scratch(name);
+    let mut session = ServerSession::default();
+    let client = joined(&mut session, "ada");
+    let mut journal = Journal::create(&path, &session).expect("a fresh journal");
+    let mut seq = 0_u64;
+    let order = |session: &mut ServerSession, journal: &mut Journal, seq: &mut u64| {
+        *seq += 1;
+        let head = session.head();
+        let offered = chunk(client, *seq, Base::Revision(head), "a");
+        let Outcome::Ordered { revision } = session.commit(&offered) else {
+            panic!("chunk {seq} must order");
+        };
+        journal.append(&offered, revision).expect("it journals");
+    };
+    for _ in 0..before {
+        order(&mut session, &mut journal, &mut seq);
+    }
+    journal.compact(&session).expect("it compacts");
+    for _ in 0..after {
+        order(&mut session, &mut journal, &mut seq);
+    }
+    drop(journal);
+
+    let (_, recovered) = Journal::open(&path).expect("it reopens");
+    let ordered_in_total = usize::try_from(before + after).expect("a small count");
+    assert_eq!(
+        recovered
+            .session
+            .history_since(Revision::new(0))
+            .map_or(0, |entries| entries.len()),
+        ordered_in_total,
+        "recovery must have the whole order, whatever it had to replay to get it — a cheap \
+         replay that lost ordered work would satisfy a bound and nothing else"
+    );
+    let _ = std::fs::remove_file(&path);
+    (recovered.replayed, recovered.readmitted)
+}
+
+/// **B5/B7: cold replay is bounded by the checkpoint, not by the log's history** — `107` §4.
+///
+/// §4 states it in those words — "the number bounds **recovery time** rather than file size,
+/// which is why it counts records: recovery replays that many O(1) `commit` calls" — and the
+/// only guard on it was `compaction_leaves_one_checkpoint_and_nothing_to_replay`, which
+/// measures the **degenerate** case: compact, reopen, replay zero. Zero is consistent with a
+/// bound and equally consistent with no bound at all, because a log with nothing after its
+/// checkpoint replays nothing however recovery is written.
+///
+/// So this asserts the quantity instead, in the two directions that together are the rule:
+///
+/// 1. **Replay tracks what follows the checkpoint**, and the guard can see it move: *n* and
+///    *2n* appends after a checkpoint replay *n* and *2n*. A recovery that replayed the whole
+///    file would answer `before + after` for both.
+/// 2. **Replay does NOT track the history before it.** Four times the pre-checkpoint history
+///    with the same tail replays the same number. This is the half that is actually the bound,
+///    and the half the degenerate case cannot express.
+///
+/// No clock and no baseline: it counts records, which is the unit §4 chose precisely because a
+/// millisecond cannot tell a bounded replay from a fast one on a quiet machine. `SKILL` §8's
+/// rule — guard complexity, not milliseconds, by comparing *n* against *2n*.
+#[test]
+fn cold_replay_is_bounded_by_the_checkpoint_and_not_by_the_log_s_history() {
+    // One participant joins before the checkpoint, so `readmitted` is 0 throughout and the
+    // admission half of recovery is asserted not to be replaying history either.
+    let (short_tail, readmitted_short) = replayed_after_a_checkpoint("replay-n", 8, 5);
+    let (long_tail, _) = replayed_after_a_checkpoint("replay-2n", 8, 10);
+    let (long_history, readmitted_long) = replayed_after_a_checkpoint("replay-history", 32, 5);
+
+    // The bound first, because it is the claim: four times the pre-checkpoint history, the same
+    // tail, the same replay. Asserted ahead of the quantities so that a recovery which lost the
+    // bound reports losing the bound, rather than reporting whichever count happened to be
+    // compared first.
+    assert_eq!(
+        long_history, short_tail,
+        "four times the pre-checkpoint history replayed {long_history} rather than \
+         {short_tail}: recovery cost is growing with the log's lifetime, which is exactly what \
+         `CHECKPOINT_EVERY` exists to stop and what `107` §4 B7 claims it does"
+    );
+    assert_eq!(
+        short_tail, 5,
+        "recovery replayed {short_tail} chunks for a 5-chunk tail, so it is not replaying the \
+         tail — it is replaying something else"
+    );
+    assert_eq!(
+        long_tail, 10,
+        "doubling the tail must double the replay, or this guard cannot see the quantity it \
+         claims to bound"
+    );
+    assert_eq!(
+        (readmitted_short, readmitted_long),
+        (0, 0),
+        "an admission before the checkpoint is IN the checkpoint, so re-admitting it would be \
+         the same unbounded growth in the other half of recovery"
+    );
+}
