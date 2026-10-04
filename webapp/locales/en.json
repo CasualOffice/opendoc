@@ -1587,7 +1587,6 @@
   "site.index.constructFamily": "Construct family",
   "site.index.contentEngineDoesNot": "Content the engine does not understand is carried through untouched or named\n                in a compatibility report. Of",
   "site.index.corpusDocumentsMatchingLibreoffice": "corpus documents matching LibreOffice's page count exactly; worst delta",
-  "site.index.customShapePaths": "custom shape paths",
   "site.index.delivery": "Delivery",
   "site.index.designPrinciple": "Design principle",
   "site.index.deterministicLayout": "Deterministic layout",
