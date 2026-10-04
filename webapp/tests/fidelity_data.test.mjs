@@ -553,7 +553,10 @@ test("every Charts grade is derived from the painter, the writer and the host su
   // a writer, "none"/"preserved" understates it; with declined families, "full"
   // overstates it, because those survive only through retention.
   const exporter = read("casual-doc-export/src/chart.rs");
-  const writes = /pub\(crate\) fn write_chart_part/.test(exporter);
+  // Anchored on the opening parenthesis: an unanchored
+  // /fn write_chart_part/ also matches `write_chart_part_renamed`, so renaming
+  // the writer away left this check green. Found by mutating it.
+  const writes = /pub\(crate\) fn write_chart_part\(/.test(exporter);
   assert.ok(
     writes,
     "casual-doc-export/src/chart.rs no longer exposes write_chart_part — if the " +
