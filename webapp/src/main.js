@@ -211,7 +211,11 @@ import {
   renderFilePane,
   setFilePane,
 } from "./file_pane.mjs";
-import { revealControl } from "./surface_reveal.mjs";
+import { revealOnSettings } from "./surface_reveal.mjs";
+
+/** Settings' two homes, for `revealOnSettings`. The gear is deliberately NOT
+ *  routed through this: it TOGGLES, which is a real difference. */
+const SETTINGS_SURFACE = { showPane: () => showSettingsPane(), openDialog: () => toggleSettings(true) };
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
 import {
   BLANK_DOCX_PARTS,
@@ -10244,10 +10248,6 @@ function inchTwips(input) {
 }
 
 /** An inches field's value → signed twips; blank/non-numeric → 0. */
-function signedInchTwips(input) {
-  return signedInchesToTwips(input.value);
-}
-
 function setMixedCheckbox(input, state) {
   input.indeterminate = state === 2;
   input.checked = state === 1;
@@ -10516,8 +10516,9 @@ const measurement = createMeasurementUnits({
   onChanged: () => pageSetup.reflectUnits(),
   setStatus,
   openChooser: () => {
-    showSettings();
-    revealControl(document.getElementById("measurementUnitSelect"), { group: ".settings-section" });
+    revealOnSettings(SETTINGS_SURFACE, document.getElementById("measurementUnitSelect"), {
+      group: ".settings-section",
+    });
   },
 });
 const documentProtection = createDocumentProtection({
@@ -10588,10 +10589,6 @@ let tablePropertiesCurrent = null;
 let tablePropertiesNode = null;
 
 /** An optional inches field's value → twips, or -1 for "leave it unset". */
-function optionalDialogTwips(input) {
-  return optionalInchesToTwips(input.value);
-}
-
 function updateTableRowHeightField() {
   const automatic = tableRowHeightRule.value === "auto";
   tableRowHeight.disabled = automatic;
@@ -10629,16 +10626,16 @@ function reflectTableProperties(node = selection?.focus.node) {
 
   tablePropertiesCurrent = {
     alignment: info.alignment,
-    tableWidthTwips: optionalDialogTwips(tableWidth),
-    tableIndentTwips: signedInchTwips(tableIndent),
+    tableWidthTwips: optionalInchesToTwips(tableWidth.value),
+    tableIndentTwips: signedInchesToTwips(tableIndent.value),
     fixedLayout: info.fixedLayout,
     headerRow: info.headerRow,
-    columnWidthTwips: optionalDialogTwips(tableColumnWidth),
+    columnWidthTwips: optionalInchesToTwips(tableColumnWidth.value),
     rowHeightTwips:
-      tableRowHeightRule.value === "auto" ? -1 : optionalDialogTwips(tableRowHeight),
+      tableRowHeightRule.value === "auto" ? -1 : optionalInchesToTwips(tableRowHeight.value),
     rowHeightRule: info.rowHeightRule || "auto",
-    cellMarginTwips: optionalDialogTwips(tableCellMargin),
-    cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
+    cellMarginTwips: optionalInchesToTwips(tableCellMargin.value),
+    cellSpacingTwips: optionalInchesToTwips(tableCellSpacing.value),
     caption: tableCaption.value,
     description: tableDescription.value,
   };
@@ -10710,16 +10707,16 @@ function tablePropertiesPatch() {
 
   const next = {
     alignment: tableAlignGroup.value() ?? "left",
-    tableWidthTwips: optionalDialogTwips(tableWidth),
-    tableIndentTwips: signedInchTwips(tableIndent),
+    tableWidthTwips: optionalInchesToTwips(tableWidth.value),
+    tableIndentTwips: signedInchesToTwips(tableIndent.value),
     fixedLayout: tableFixedLayout.checked,
     headerRow: tableHeaderRow.checked,
-    columnWidthTwips: optionalDialogTwips(tableColumnWidth),
+    columnWidthTwips: optionalInchesToTwips(tableColumnWidth.value),
     rowHeightTwips:
-      tableRowHeightRule.value === "auto" ? -1 : optionalDialogTwips(tableRowHeight),
+      tableRowHeightRule.value === "auto" ? -1 : optionalInchesToTwips(tableRowHeight.value),
     rowHeightRule: tableRowHeightRule.value,
-    cellMarginTwips: optionalDialogTwips(tableCellMargin),
-    cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
+    cellMarginTwips: optionalInchesToTwips(tableCellMargin.value),
+    cellSpacingTwips: optionalInchesToTwips(tableCellSpacing.value),
     caption: tableCaption.value,
     description: tableDescription.value,
   };
@@ -11839,7 +11836,7 @@ function editorCommands(context = { surface: "palette" }) {
     // while the panel was open would have closed it. `noDoc` because theme,
     // accent and reviewer identity are host preferences that do not need a
     // document open, and the gear is the only other way to reach them.
-    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => showSettings() },
+    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => revealOnSettings(SETTINGS_SURFACE) },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => pageSetup.open(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
     { id: "layout.tabStops", label: t("tabStops.command"), group: "Layout", kw: "tab tabs stop stops ruler decimal bar align position", enabled: !!selection && reviewMode !== "viewing", disabledReason: selection ? mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }) : t("paragraph.caretRequired"), run: () => tabStopsDialog.open() },
@@ -15989,14 +15986,6 @@ function toggleSettings(open) {
   else settingsModal.close();
 }
 
-/** Shows Settings wherever it currently lives — ADR-062 C1, for every route that
- *  wants it OPEN rather than toggled. The dialog and the pane are the same
- *  element and the File page reparents it, so asking the pane first is the only
- *  way not to raise a half-dialog out of a pane. The gear keeps its own body
- *  below because it toggles, which is a real difference and not a second copy. */
-function showSettings() {
-  if (!showSettingsPane()) toggleSettings(true);
-}
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   // The Settings DIALOG and the Settings PANE are the same element, and while
