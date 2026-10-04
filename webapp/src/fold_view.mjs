@@ -377,21 +377,40 @@ export function pageCountCaveat(foldedCount, t) {
 
 /** Where the in-body fold chevron goes, or that it does not go anywhere.
  *
- *  The chevron lives in the page MARGIN beside the heading, which is where Word
- *  puts it. The rule that matters is the one a clamp got wrong: it must never
- *  cover the text. It is an absolutely-positioned button, so a single pixel of
- *  overlap captures the tap that should place the caret — worse than no control.
+ *  The chevron lives in the MARGIN beside the heading, which is where Word puts
+ *  it. The rule that matters is the one a clamp got wrong: it must never cover
+ *  the text. It is an absolutely-positioned button, so a single pixel of overlap
+ *  captures the tap that should place the caret — worse than no control.
  *
- *  Withholding it costs no capability: folding stays on the outline tree, on
- *  View ▸ Show and in the palette.
+ *  `overhang` is how far LEFT of the host box there is somewhere to paint, and
+ *  it is what makes the chevron reachable in reflow at all. Two
+ *  individually-correct rules used to compose into a capability nobody could
+ *  reach: the chevron needs more margin than the 16px gutter a reflow tile has,
+ *  and it is only shown while the outline panel is open — so a heading in the
+ *  view where folding matters most carried no collapse control at all. The
+ *  premise behind the first rule was that beyond the page box lies the DESK, and
+ *  a button on the desk is a button on nothing. In reflow that premise is now
+ *  false: the surface is one colour edge to edge (`--paper-surface`), so the
+ *  space beside the measure is the same surface the text is on and a disclosure
+ *  there is in a margin rather than off the page. The caller passes how much of
+ *  it there is; `0` — the default, and every paged view — restores the old rule
+ *  exactly, which is what keeps the clamp defect closed where it was real.
+ *
+ *  Withholding it still costs no capability: folding stays on the outline tree,
+ *  on View ▸ Show and in the palette.
  *
  *  O(1).
  *
  *  @param {{x: number}} rect   the heading's rectangle in the overlay's space
  *  @param {number} gutter      the chevron's width plus its gap
+ *  @param {number} [overhang]  paintable surface left of the host box, in the
+ *         same space as `rect.x`. Never widens the chevron's reach INTO the
+ *         text: the left edge is always `rect.x - gutter`, so a bigger overhang
+ *         only ever turns a refusal into the same placement it would have had.
  *  @returns {{show: boolean, left: number}}
  */
-export function chevronPlacement(rect, gutter) {
+export function chevronPlacement(rect, gutter, overhang = 0) {
   const left = rect.x - gutter;
-  return left < 0 ? { show: false, left: 0 } : { show: true, left };
+  const floor = -Math.max(0, Number(overhang) || 0);
+  return left < floor ? { show: false, left: 0 } : { show: true, left };
 }

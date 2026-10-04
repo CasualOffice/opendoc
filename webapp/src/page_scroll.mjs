@@ -92,6 +92,30 @@ export const PAGE_WINDOW_OVERSCAN_PX = 1000;
  *    `height` is the scroll container's height (`min(docHeight, maxScroll)`);
  *    `scale` is `docHeight / height`, exactly 1 when nothing is compressed.
  */
+/**
+ * [`buildPageBand`]'s options for a given layout view — i.e. what the pitch
+ * between two page boxes IS, which is a question about the view and not about
+ * the geometry.
+ *
+ * On paper it is `PAGE_GAP_PX`: the desk between two sheets. In reflow it is
+ * ZERO, and that is not a tightening of a decoration — there are no pages in
+ * reflow, so there is no desk to show between them. A tile is a rasterisation
+ * unit cut mid-paragraph at a line boundary, so 22px of anything across one
+ * would be a band drawn through the middle of a sentence. It is `0` HERE rather
+ * than a `gap` in CSS because the tile positions have to be computable for tiles
+ * that are not in the DOM (`docs/113` §8.6), and it lives in this module rather
+ * than at the one call site so the rule can be asserted in `node` — the
+ * stylesheet's half of the same claim is `#viewport.is-reflow`.
+ *
+ * Complexity: O(1).
+ *
+ * @param {boolean} reflowing whether the engine is laying out reflowed.
+ * @returns {{gap:number, maxScroll:number}} spreadable into `buildPageBand`.
+ */
+export function pageBandPitch(reflowing) {
+  return { gap: reflowing ? 0 : PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX };
+}
+
 export function buildPageBand(sizes, cssPerTwip, options = {}) {
   const gap = options.gap ?? PAGE_GAP_PX;
   const maxScroll = options.maxScroll ?? MAX_SCROLL_PX;

@@ -349,3 +349,120 @@ test("printing while a heading is folded prints the whole document and keeps the
 
   expect(consoleErrors).toEqual([]);
 });
+
+// ---- The in-body disclosure: it works at all, and it survives reflow --------
+//
+// TWO claims, and the first one was not supposed to need a test. `grep -rn
+// "fold-body-chevron" tests/e2e` was ZERO hits before this, and the control was
+// inert in EVERY view: `preventDefault` on `mousedown` stops the browser's own
+// focus and selection side effects and does nothing about the editor's handler,
+// which is bound to `pointerdown` on `#pages`. So every press on the chevron
+// also ran a hit test and moved the caret, and the `click` that followed asked
+// `caretHeading()` about wherever the caret had just landed. A control that had
+// been made clickable (#777) and still folded nothing — which is the shape
+// `SKILL.md` §9.4 names: built is not reachable.
+//
+// The second claim is reflow. Two individually-correct rules used to compose
+// into a capability that could not be reached from the document in the view
+// where folding matters most: the chevron needs more margin than a reflow
+// tile's 16px gutter, and it is only shown while the outline panel is open. The
+// uniform surface answers the first — beyond the tile is now the same surface
+// the text is on, not the desk — and reflow opening the outline answers the
+// second.
+
+/** Waits until the page band has been REBUILT at the reflow column.
+ *
+ *  Not `is-reflow`, and the difference is why the first version of this test was
+ *  racy: `renderAll` is asynchronous and writes that class early, inside the
+ *  same pass that talks to the engine, so a caret move placed in between paints
+ *  a chevron against page records the finishing render then replaces. The tile's
+ *  own width is the band's report that it is done. */
+async function reflowSettled(page) {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const wrap = document.querySelector(".page-band > .page-wrap");
+          return wrap ? Math.round(wrap.getBoundingClientRect().width) : 0;
+        }),
+      { message: "the band never re-built at the reflow column", timeout: 30_000 },
+    )
+    .toBeLessThan(600);
+}
+
+test("the in-body chevron folds the heading, on paper and in reflow", async ({
+  page,
+  consoleErrors,
+}) => {
+  // A SHORT document, not `openHeadings`'s 60-line one, and the reason is a
+  // separate finding rather than convenience: the chevron is painted by
+  // `drawSelection`, which runs when the caret MOVES, while `navigateToNode`
+  // scrolls afterwards — so for a heading on a page the window has not
+  // materialized yet there is no overlay to anchor to at paint time, and nothing
+  // re-runs `drawSelection` once the scroll settles. That is true on paper too,
+  // it is not what this test is about, and it is reported rather than worked
+  // around here. The fixture keeps all three headings on page one.
+  await gotoEditor(page);
+  await page.locator("#file").setInputFiles(tocDocx("folding-reflow.docx", 2));
+  await page.waitForFunction(
+    () => /of\s+\d+/.test(document.getElementById("statPages")?.textContent ?? ""),
+    null,
+    { timeout: 45_000 },
+  );
+  const chevron = page.locator(".overlay .fold-body-chevron");
+  const beta = () => outlineRow(page, BETA_PARENT).row;
+
+  // ---- 1. ON PAPER: it is painted in the margin, and it FOLDS ---------------
+  await openOutline(page);
+  await caretInHeading(page, BETA_PARENT);
+  await expect(chevron, "Word's margin chevron is not painted at all").toBeVisible();
+  await expect(beta(), "the heading must start expanded, or a fold proves nothing").toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await chevron.click();
+  await expect(beta(), "the margin chevron folded nothing — a dead control").toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  // The ENGINE holds it, not the row: rebuilt from `foldState()`.
+  expect(await foldStateFromEngine(page, BETA_PARENT)).toBe("false");
+  await runPaletteCommand(page, "view.fold.none", "expand all");
+  await expect(beta()).toHaveAttribute("aria-expanded", "true");
+
+  // ---- 2. IN REFLOW: still painted, beside the measure, and it still folds --
+  await runPaletteCommand(page, "view.reflow", "reflow");
+  await expect(page.locator("#viewport")).toHaveClass(/is-reflow/);
+  await reflowSettled(page);
+  await caretInHeading(page, BETA_PARENT);
+  await expect(chevron, "a heading in reflow has no collapse control").toBeVisible();
+
+  // Beside the measure, not on it. This is the rule a clamp got wrong (#775):
+  // the chevron is an absolutely-positioned button, so one pixel over the
+  // heading's first glyph captures the tap that should place the caret. And it
+  // must still be inside the scroller — surface is somewhere to paint,
+  // off-screen is not.
+  const geometry = await page.evaluate(() => {
+    const el = document.querySelector(".overlay .fold-body-chevron");
+    const box = el.getBoundingClientRect();
+    const wrap = el.closest(".page-wrap").getBoundingClientRect();
+    const port = document.getElementById("viewport").getBoundingClientRect();
+    return { left: box.left, right: box.right, textLeft: wrap.left + 16, portLeft: port.left };
+  });
+  expect(
+    geometry.right,
+    `the chevron reaches ${geometry.right}, over text that starts at ${geometry.textLeft}`,
+  ).toBeLessThanOrEqual(geometry.textLeft + 1);
+  expect(
+    geometry.left,
+    `the chevron is painted at ${geometry.left}, outside a scroller that starts at ` +
+      `${geometry.portLeft}`,
+  ).toBeGreaterThanOrEqual(geometry.portLeft);
+
+  await chevron.click();
+  expect(
+    await foldStateFromEngine(page, BETA_PARENT),
+    "the reflow chevron did not fold anything",
+  ).toBe("false");
+  expect(consoleErrors).toEqual([]);
+});
