@@ -2047,6 +2047,76 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 // --- Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01 --------
 
 /// A custom path resolves to a polyline inside the shape's box, and the two
+/// An untyped preset token resolves its real outline from the committed ECMA-376
+/// table instead of painting as its bounding rectangle (`109` FID-L-04).
+///
+/// This is the row that made every Word arrow, callout, banner and flowchart symbol
+/// draw as a box: `ShapeGeometry` types 22 of the 187 presets and everything else fell
+/// through to a rectangle. The assertion is on the OUTLINE rather than on a type,
+/// because "it is a path now" would pass for a path that happened to be four corners —
+/// the point is that the shape has the vertex count its recipe produces and visits
+/// points the bounding box does not.
+#[test]
+fn an_untyped_preset_resolves_its_outline_from_the_table() {
+    use casual_doc_layout::page::AnchorContent;
+
+    let content = |token: &str| {
+        only_anchor_content(&single_child_group_document(GroupChild::Shape(
+            GroupShape {
+                hyperlink: None,
+                id: node(91),
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                },
+                geometry: ShapeGeometry::Other,
+                preset: Some(token.to_owned()),
+                adjustments: Vec::new(),
+                path: None,
+                fill: None,
+                stroke: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+        )))
+    };
+
+    // `plus` is a twelve-vertex cross, arc-free, and nothing like its bounding box.
+    let AnchorContent::Path {
+        commands, closed, ..
+    } = content("plus")
+    else {
+        panic!("a cross must not paint as a rectangle");
+    };
+    assert_eq!(commands.len(), 12, "a plus has twelve vertices");
+    assert!(closed, "and it is a closed outline");
+    // The box is 1440 twips square at (1440, 1440). A cross visits its edge MIDPOINTS,
+    // which a rectangle never does — that is the assertion a type check cannot make.
+    let xs: Vec<i32> = commands.iter().map(|c| c.endpoint().x.raw()).collect();
+    let ys: Vec<i32> = commands.iter().map(|c| c.endpoint().y.raw()).collect();
+    assert!(
+        xs.iter().any(|x| *x > 1_440 && *x < 2_880),
+        "a vertex strictly inside the horizontal span: {xs:?}"
+    );
+    assert!(
+        ys.iter().any(|y| *y > 1_440 && *y < 2_880),
+        "and inside the vertical span: {ys:?}"
+    );
+
+    // A preset needing arcs keeps today's behaviour rather than being flattened.
+    assert!(
+        matches!(content("ellipse"), AnchorContent::Rectangle { .. }),
+        "an arc-bearing preset still falls back, reported, to its bounding rectangle"
+    );
+    // An unknown token likewise.
+    assert!(matches!(
+        content("notAShapeAtAll"),
+        AnchorContent::Rectangle { .. }
+    ));
+}
+
 /// A shape with no `spPr` fill resolves its appearance from the theme style its
 /// `wps:style` names (`156` §6 row 0.2).
 ///
