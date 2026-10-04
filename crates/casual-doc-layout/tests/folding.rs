@@ -177,6 +177,11 @@ fn pages(layout: &PaginatedLayout) -> usize {
 
 /// Every paragraph id the layout actually placed, in page order — "what the
 /// reader can see", which is what folding is about.
+///
+/// Consecutive duplicates are collapsed: a paragraph that straddles a page
+/// boundary is placed as two fragments and is still one paragraph, and the
+/// question these guards ask is which paragraphs are visible, not how many
+/// pieces each was cut into.
 fn placed_paragraphs(layout: &PaginatedLayout) -> Vec<NodeId> {
     let mut out = Vec::new();
     for page in &layout.pages {
@@ -184,6 +189,7 @@ fn placed_paragraphs(layout: &PaginatedLayout) -> Vec<NodeId> {
             collect_paragraph_ids(&placed.fragment, &mut out);
         }
     }
+    out.dedup();
     out
 }
 
@@ -222,27 +228,69 @@ fn laid_out(document: &Document, folds: &FoldSet) -> PaginatedLayout {
 /// An empty fold set changes **nothing**: the fold parameter is as inert as the
 /// `LayoutView` parameter was when it arrived.
 ///
-/// Mutation that reddens it: make `fold::step` resolve the outline level before
-/// the `folds.is_empty()` fast exit and arm on any heading — i.e. treat "a
-/// heading" as "a folded heading". The page count then falls for a document
-/// nobody folded.
+/// The assertion that carries the weight is the **absolute** one — with an empty
+/// fold set, *every* paragraph of the body is laid out, in document order. A
+/// before-versus-after comparison alone cannot prove inertness, because both
+/// sides run the same engine: a filter that hid content for an unfolded document
+/// would hide it identically on both sides and the comparison would stay green.
+/// That was found by mutation rather than reasoned about, and this test is the
+/// shape it had to be rewritten into.
+///
+/// The other half of the claim is `geometry_snapshot.golden`, a committed
+/// artifact that cannot move with the code — this file cannot replace it.
+///
+/// Mutation that reddens it: in `fold::step`, remove the `folds.is_empty()` fast
+/// exit and arm on any heading rather than on a folded one. The body of `Alpha`
+/// then disappears from a document nobody folded.
 #[test]
 fn an_empty_fold_set_is_byte_for_byte_the_old_layout() {
     let document = two_section_report(30);
     let shaper = ParleyShaper::new();
-    let before = paginate_document_in(&document, &shaper, ReviewView::Editing, LayoutView::Paged);
     let after = laid_out(&document, &FoldSet::EMPTY);
     assert_eq!(
-        pages(&before),
-        pages(&after),
-        "an unfolded document must paginate exactly as it did before folding existed",
+        placed_paragraphs(&after),
+        every_body_paragraph(&document),
+        "with nothing folded, every body paragraph is laid out, in document order",
     );
-    assert_eq!(placed_paragraphs(&before), placed_paragraphs(&after));
+    // And the two entry points agree, so the delegating one cannot drift from
+    // the one that takes the fold set.
+    let before = paginate_document_in(&document, &shaper, ReviewView::Editing, LayoutView::Paged);
     assert_eq!(
         format!("{before:?}"),
         format!("{after:?}"),
         "the whole layout, not just its page count",
     );
+}
+
+/// Every paragraph id in the document body, in document order, descending into
+/// tables and content controls — "what a layout of an unfolded document must
+/// contain".
+fn every_body_paragraph(document: &Document) -> Vec<NodeId> {
+    fn walk(block: &BlockNode, out: &mut Vec<NodeId>) {
+        match block {
+            BlockNode::Paragraph(paragraph) => out.push(paragraph.id),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        for nested in &cell.blocks {
+                            walk(nested, out);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                for nested in &sdt.blocks {
+                    walk(nested, out);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    let mut out = Vec::new();
+    for block in document.body() {
+        walk(block, &mut out);
+    }
+    out
 }
 
 // --------------------------------------------------------------------------
@@ -628,20 +676,30 @@ fn marker_glyphs(layout: &PaginatedLayout, target: NodeId) -> usize {
     0
 }
 
-/// Suppression must not leak across a recursive flow: a table cell's content is
-/// its own block sequence, and a fold armed in the body must not swallow it.
+/// A heading **inside a table cell** can be folded, and its range is the rest of
+/// that cell — nothing outside it.
 ///
-/// Mutation that reddens it: drop the `ctx.suppress_above_level.take()` at the
-/// top of `flow_blocks_into` so a nested call inherits the armed level. The
-/// cell's paragraph then vanishes from a visible table.
+/// This is `SKILL`'s uniform-flow rule applied to folding: a cell flows through
+/// the same pipeline the body does, so it gets the same feature, not a
+/// context-limited subset. It is also the reachable half of the
+/// suppression-scoping decision. The *other* half — a fold armed in the body
+/// leaking into a cell — is unreachable by construction and is stated here rather
+/// than asserted: a suppressed block is never descended into, so the body walk
+/// can never recurse while armed, and `flow_blocks_into` TAKES the integer at
+/// entry and writes it back at exit so a nested sequence cannot see it even if
+/// that ever changed.
+///
+/// Mutation that reddens it: in `flow_blocks_into`, return `Visible`
+/// unconditionally when `ctx.table_depth > 0` — i.e. "no folding inside tables",
+/// the context-limited feature set the uniform-flow rule forbids. The cell's
+/// hidden paragraph then reappears.
 #[test]
-fn suppression_does_not_leak_into_a_table_cell() {
-    let cell_paragraph = paragraph_with(41, ParagraphProperties::default(), "in a cell");
+fn a_heading_inside_a_table_cell_folds_within_the_cell() {
     let table = BlockNode::Table(Box::new(Table {
         id: node(40),
         properties: TableProperties::default(),
         grid: vec![GridColumn {
-            width_twips: Some(4_000),
+            width_twips: Some(6_000),
         }],
         rows: vec![TableRow {
             id: node(42),
@@ -649,33 +707,43 @@ fn suppression_does_not_leak_into_a_table_cell() {
             cells: vec![TableCell {
                 id: node(43),
                 properties: TableCellProperties::default(),
-                blocks: vec![cell_paragraph],
+                blocks: vec![
+                    heading(44, 2, "Cell heading"),
+                    paragraph_with(45, ParagraphProperties::default(), "under the cell heading"),
+                ],
             }],
         }],
         grid_change: None,
     }));
-    // H1 "Alpha" is folded; the table comes AFTER the fold ends at "Omega", so
-    // the cell must be laid out.
     let document = document(
         vec![
             heading(10, 1, "Alpha"),
-            body(11),
-            heading(20, 1, "Omega"),
             table,
+            paragraph_with(46, ParagraphProperties::default(), "after the table"),
         ],
         Definitions {
             sections: vec![letter_section(7_000_001)],
             ..Definitions::default()
         },
     );
-    let folded = laid_out(&document, &fold(&[10]));
+    let unfolded = placed_paragraphs(&laid_out(&document, &FoldSet::EMPTY));
     assert!(
-        placed_paragraphs(&folded).contains(&node(41)),
-        "a table after the fold's end keeps its cell content",
+        unfolded.contains(&node(45)),
+        "the fixture must lay the cell's second paragraph out when nothing is folded",
+    );
+    let folded = placed_paragraphs(&laid_out(&document, &fold(&[44])));
+    assert!(
+        folded.contains(&node(44)),
+        "the cell's folded heading stays visible",
     );
     assert!(
-        !placed_paragraphs(&folded).contains(&node(11)),
-        "and the folded range is still hidden",
+        !folded.contains(&node(45)),
+        "and the paragraph under it, in the same cell, hides",
+    );
+    assert!(
+        folded.contains(&node(46)),
+        "while the body paragraph after the table is untouched — the cell's fold \
+         does not escape the cell",
     );
 }
 
