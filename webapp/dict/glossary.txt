@@ -255,6 +255,7 @@ attaches
 auditable
 auth
 authorable
+autocorrect
 autofit
 autoformat
 autosave
@@ -284,6 +285,7 @@ casualoffice
 charset
 checkable
 checkboxes
+checkmark
 checksums
 clippy
 cmap
@@ -582,6 +584,7 @@ unrepresentable
 unresolvable
 unrotated
 unrouted
+unsourced
 unstyled
 untracked
 untrusted
