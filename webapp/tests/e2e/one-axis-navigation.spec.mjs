@@ -308,6 +308,19 @@ const PALETTE_ONLY = new Map([
   // because Tab means "insert a tab" in a paragraph and "next cell" in a table —
   // declaring it as this command's global chord would be a false claim on a
   // user-facing surface.
+  // Recorded, with the tradeoff stated rather than hidden. `collab.reconnect`
+  // is the reader's way back after a shared session stops, and it has no menu
+  // row because the Review menu has no band it belongs in — proofing, comments,
+  // tracking, changes, allChanges, compare and protect are all about a
+  // document's content, not its session. A new band means a new `menuGroup.*`
+  // key in nineteen catalogues for one row, which is the same trade the fold
+  // level rungs refused below.
+  //
+  // It is NOT invisible: the connection state is on the status line in all three
+  // of its states, and the row itself is enabled only in `stopped` and otherwise
+  // carries the sentence saying which fact applies. If a session band is ever
+  // minted for presence or a participant list, this row belongs in it.
+  ["collab.reconnect", "no Review band fits a session action; the status line carries the state"],
   ["object.selectNext", "by design: the Tab key IS the affordance"],
   ["object.selectPrevious", "by design: Shift+Tab IS the affordance"],
   // By design. The ten rungs of the fold-level picker (`show every level`, then

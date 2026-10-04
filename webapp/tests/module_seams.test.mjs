@@ -402,7 +402,7 @@ const SRC = new URL("../src/", import.meta.url);
  *      behaviour and the `w:sz` clamps are asserted rather than pressed.
  *  MEASURED with `wc -l` on this tree AFTER the rebase onto `origin/main`
  *  564db686, not carried from the branch. */
-const MAIN_JS_LINE_CEILING = 16177;
+const MAIN_JS_LINE_CEILING = 16172;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
