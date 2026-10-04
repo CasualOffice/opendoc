@@ -478,28 +478,39 @@ test("the unified diff expands its context, and an entry scrolls to its change",
   page,
   consoleErrors,
 }) => {
-  // THE FIXTURE'S PARAGRAPH COUNT IS WRITTEN IN THIS FILE, which is the point of
-  // doing this on the file route rather than on the demo document: the hunk sits
-  // at paragraph 20 of 40, so there are unchanged blocks in BOTH directions and
-  // both expand controls are genuinely live. On the version-history fixture the
-  // edit is at `Ctrl+Home`, where "above" is the end of the document — a correct
-  // disabled control, and no way to test the reveal.
+  // THE FIXTURE'S SHAPE IS WRITTEN IN THIS FILE, which is the point of doing this
+  // on the file route rather than on the demo document. Two properties are needed
+  // and neither is available there:
+  //
+  //   * the change is in the MIDDLE, so there are unchanged blocks in both
+  //     directions and both expand controls are genuinely live — on the
+  //     version-history fixture the edit is at `Ctrl+Home`, where "above" is the
+  //     end of the document (a correct disabled control, and no way to test the
+  //     reveal);
+  //   * the document is LONGER THAN A PAGE, so the paragraph the entry navigates
+  //     to is off-screen and "it took me there" is observable as the canvas
+  //     moving rather than being true by accident.
+  const COUNT = 200;
+  const AT = 119; // zero-based, so "Paragraph 120" in the panel's own numbering.
+  const unchanged = (index) => `Paragraph number ${index + 1} is unchanged`;
   const lines = (changed) =>
-    Array.from({ length: 40 }, (_, index) =>
-      index === 19 ? changed : `Paragraph number ${index + 1} is unchanged`,
-    ).join("\n");
-  await openText(page, textFile("mine.txt", `${lines("The twentieth paragraph as I wrote it")}\n`));
-  await compareAgainst(page, textFile("theirs.txt", `${lines("The twentieth paragraph as THEY wrote it")}\n`), {
-    via: "rail",
-  });
+    Array.from({ length: COUNT }, (_, index) => (index === AT ? changed : unchanged(index))).join(
+      "\n",
+    );
+  await openText(page, textFile("mine.txt", `${lines("This paragraph is as I wrote it")}\n`));
+  await compareAgainst(
+    page,
+    textFile("theirs.txt", `${lines("This paragraph is as THEY wrote it")}\n`),
+    { via: "rail" },
+  );
 
   const diff = page.locator("#compareBody [data-compare-diff]");
   await expect(diff).toBeVisible();
-  // One hunk, named by position. 40 paragraphs differing in exactly one place
-  // cannot produce two hunks, so this also catches a grouping rule that split
-  // on every change.
+  // One hunk, named by position. 200 paragraphs differing in exactly one place
+  // cannot produce two hunks, so this also catches a grouping rule that split on
+  // every change.
   await expect(diff.locator('[data-compare-row="hunk"]')).toHaveCount(1);
-  await expect(diff.locator('[data-compare-row="hunk"]')).toContainText("Paragraph 20");
+  await expect(diff.locator('[data-compare-row="hunk"]')).toContainText(`Paragraph ${AT + 1}`);
 
   // REMOVED then ADDED, GitHub's order, with the real text on both sides — the
   // half a summary count cannot show. `openText` opened MINE, so mine is the
@@ -515,16 +526,16 @@ test("the unified diff expands its context, and an entry scrolls to its change",
   // CONTEXT ON BOTH SIDES, with the actual neighbouring paragraphs in it. These
   // are in NEITHER side's sidecar — a change record names only what changed — so
   // this is the proof that `blockTextAt` is wired to the right side and the
-  // right path. 19 and 21 bracket the change; naming them is what distinguishes
-  // real context from three blank rows.
+  // right path. The two blocks that bracket the change are named; naming them is
+  // what distinguishes real context from three blank rows.
   const context = diff.locator('[data-compare-row="context"]');
   await expect(context).toHaveCount(6, { timeout: 45_000 });
-  await expect(diff).toContainText("Paragraph number 19 is unchanged");
-  await expect(diff).toContainText("Paragraph number 21 is unchanged");
+  await expect(diff).toContainText(unchanged(AT - 1));
+  await expect(diff).toContainText(unchanged(AT + 1));
   await expect(
     diff,
-    "paragraph 16 is four blocks away and is showing before anything was expanded",
-  ).not.toContainText("Paragraph number 16 is unchanged");
+    "a block ten away is showing before anything was expanded, so the context is not bounded",
+  ).not.toContainText(unchanged(AT - 10));
 
   // AND YOU CAN SEE MORE — the owner's "while you can expect to see more". Both
   // controls are live here, and pressing one must actually add rows: a button
@@ -544,7 +555,7 @@ test("the unified diff expands its context, and an entry scrolls to its change",
   await expect(
     diff,
     "the expand control was enabled and revealed nothing above",
-  ).toContainText("Paragraph number 16 is unchanged");
+  ).toContainText(unchanged(AT - 10));
   const expanded = await sizerHeight();
   expect(expanded, "the row array did not grow when context was revealed").toBeGreaterThan(start);
   await below.click();
@@ -573,15 +584,28 @@ test("the unified diff expands its context, and an entry scrolls to its change",
   // unrelated paragraph and report nothing wrong.
   const goto = diff.locator("[data-compare-goto]").first();
   await expect(goto).toBeVisible();
+  // THE OBSERVABLE IS NOT `window.getSelection()`, and that is measured rather
+  // than assumed: this editor paints its own selection onto an overlay and the
+  // body is a canvas, so `getSelection().toString()` is `""` however well the
+  // navigation worked. (That is what this assertion tried first, and it waited
+  // out the full 45 s on an empty string.) The effects that ARE observable are
+  // the selection highlight the overlay paints over the navigated range, and the
+  // canvas moving — which is why the fixture is 200 paragraphs long: paragraph
+  // 120 is off-screen, so "it took me there" cannot be true by accident.
+  const highlight = page.locator("#pages .overlay .highlight");
+  await expect(
+    highlight,
+    "a highlight is already painted, so the one below proves nothing",
+  ).toHaveCount(0);
+  const scrollBefore = await page.locator("#viewport").evaluate((element) => element.scrollTop);
   await goto.click();
-  // The EFFECT, not the mechanism: the caret is now in the paragraph the change
-  // is about. Asserted through the selection rather than through a scroll
-  // position, because a scroll offset is a measured number and the guarantee is
-  // "the reader is taken to that paragraph".
+  await expect(highlight, "nothing was selected, so nothing was navigated to").not.toHaveCount(0, {
+    timeout: 45_000,
+  });
   await expect
-    .poll(async () => page.evaluate(() => window.getSelection()?.toString() ?? ""), {
+    .poll(async () => page.locator("#viewport").evaluate((element) => element.scrollTop), {
       timeout: 45_000,
     })
-    .toContain("as I wrote it");
+    .toBeGreaterThan(scrollBefore);
   expect(consoleErrors).toEqual([]);
 });
