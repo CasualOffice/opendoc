@@ -35,6 +35,8 @@ use crate::ImportError;
 use crate::color::read_solid_fill;
 use crate::ids::Ids;
 use crate::loss::Reporter;
+// Own line (anti-conflict): the theme a run's colour resolves against.
+use crate::theme::Resolver;
 use crate::xml::{
     Cursor, attribute, boolean_attribute, children, enter, integer_attribute, local_name,
 };
@@ -48,6 +50,7 @@ pub(crate) fn read_text_body(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     ids: &mut Ids,
+    resolver: Resolver,
 ) -> Result<TextBody, ImportError> {
     let part = cursor.part().to_owned();
     let limits = cursor.limits();
@@ -64,7 +67,7 @@ pub(crate) fn read_text_body(
             if empty {
                 return Ok(false);
             }
-            list_style = read_list_style(cursor, reporter, ids)?;
+            list_style = read_list_style(cursor, reporter, ids, resolver)?;
             Ok(true)
         }
         b"p" => {
@@ -75,7 +78,7 @@ pub(crate) fn read_text_body(
             let paragraph = if empty {
                 TextParagraph::empty(ids.next()?)
             } else {
-                read_paragraph(cursor, reporter, ids)?
+                read_paragraph(cursor, reporter, ids, resolver)?
             };
             paragraphs.push(paragraph);
             Ok(!empty)
@@ -209,6 +212,7 @@ pub(crate) fn read_list_style(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     ids: &mut Ids,
+    resolver: Resolver,
 ) -> Result<ListStyle, ImportError> {
     let part = cursor.part().to_owned();
     let mut levels: Vec<Option<TextParagraphProperties>> = vec![None; TEXT_LEVELS];
@@ -218,7 +222,8 @@ pub(crate) fn read_list_style(
             reporter.omitted(&part, local);
             return Ok(false);
         };
-        let properties = read_paragraph_properties(cursor, reporter, ids, element, empty)?;
+        let properties =
+            read_paragraph_properties(cursor, reporter, ids, element, empty, resolver)?;
         if let Some(slot) = levels.get_mut(usize::from(level)) {
             *slot = Some(properties);
         }
@@ -250,6 +255,7 @@ fn read_paragraph(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     ids: &mut Ids,
+    resolver: Resolver,
 ) -> Result<TextParagraph, ImportError> {
     let part = cursor.part().to_owned();
     let limits = cursor.limits();
@@ -262,7 +268,8 @@ fn read_paragraph(
         let local = local_name(element);
         match local {
             b"pPr" => {
-                let read = read_paragraph_properties(cursor, reporter, ids, element, empty)?;
+                let read =
+                    read_paragraph_properties(cursor, reporter, ids, element, empty, resolver)?;
                 if !read.is_empty() {
                     properties = Some(Box::new(read));
                 }
@@ -273,11 +280,13 @@ fn read_paragraph(
                     reporter.invalid(&part, local);
                     return Ok(false);
                 }
-                let consumed = read_run(cursor, reporter, ids, element, empty, local, &mut runs)?;
+                let consumed = read_run(
+                    cursor, reporter, ids, element, empty, local, &mut runs, resolver,
+                )?;
                 Ok(consumed)
             }
             b"endParaRPr" => {
-                let read = read_character_properties(cursor, reporter, element, empty)?;
+                let read = read_character_properties(cursor, reporter, element, empty, resolver)?;
                 if !read.is_empty() {
                     end_properties = Some(Box::new(read));
                 }
@@ -301,6 +310,13 @@ fn read_paragraph(
 
 /// Reads one paragraph child into `runs`, returning whether its subtree was
 /// consumed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a run reader needs the cursor, the reporter, the id source, the \
+              element and its self-closing flag, the local name that selected this \
+              arm, the sink it pushes into, and the theme its colour resolves \
+              against; bundling them would hide which of them it writes"
+)]
 fn read_run(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
@@ -309,6 +325,7 @@ fn read_run(
     empty: bool,
     local: &[u8],
     runs: &mut Vec<TextRun>,
+    resolver: Resolver,
 ) -> Result<bool, ImportError> {
     let part = cursor.part().to_owned();
     let limits = cursor.limits();
@@ -322,7 +339,13 @@ fn read_run(
             if !empty {
                 children(cursor, |cursor, child, child_empty| {
                     if local_name(child) == b"rPr" {
-                        let read = read_character_properties(cursor, reporter, child, child_empty)?;
+                        let read = read_character_properties(
+                            cursor,
+                            reporter,
+                            child,
+                            child_empty,
+                            resolver,
+                        )?;
                         if !read.is_empty() {
                             properties = Some(Box::new(read));
                         }
@@ -344,8 +367,13 @@ fn read_run(
                 children(cursor, |cursor, child, child_empty| {
                     match local_name(child) {
                         b"rPr" => {
-                            let read =
-                                read_character_properties(cursor, reporter, child, child_empty)?;
+                            let read = read_character_properties(
+                                cursor,
+                                reporter,
+                                child,
+                                child_empty,
+                                resolver,
+                            )?;
                             if !read.is_empty() {
                                 properties = Some(Box::new(read));
                             }
@@ -426,6 +454,7 @@ fn read_paragraph_properties(
     ids: &mut Ids,
     element: &BytesStart<'_>,
     empty: bool,
+    resolver: Resolver,
 ) -> Result<TextParagraphProperties, ImportError> {
     let part = cursor.part().to_owned();
     let mut properties = TextParagraphProperties {
@@ -501,7 +530,8 @@ fn read_paragraph_properties(
                 if empty {
                     return Ok(false);
                 }
-                properties.bullet_color = read_solid_fill(cursor, reporter)?.style_color();
+                properties.bullet_color =
+                    read_solid_fill(cursor, reporter, resolver)?.style_color();
                 Ok(true)
             }
             b"buSzPct" => {
@@ -530,7 +560,7 @@ fn read_paragraph_properties(
                 Ok(true)
             }
             b"defRPr" => {
-                let read = read_character_properties(cursor, reporter, child, empty)?;
+                let read = read_character_properties(cursor, reporter, child, empty, resolver)?;
                 if !read.is_empty() {
                     properties.default_character = Some(Box::new(read));
                 }
@@ -647,6 +677,7 @@ fn read_character_properties(
     reporter: &mut Reporter,
     element: &BytesStart<'_>,
     empty: bool,
+    resolver: Resolver,
 ) -> Result<TextCharacterProperties, ImportError> {
     let part = cursor.part().to_owned();
     let mut properties = TextCharacterProperties {
@@ -710,7 +741,7 @@ fn read_character_properties(
                 // A run's colour is a `StyleColor`, not an `Rgba`: `a:phClr` is a
                 // formal parameter, and resolving it here would give every styled
                 // run the same colour.
-                properties.fill = read_solid_fill(cursor, reporter)?.style_color();
+                properties.fill = read_solid_fill(cursor, reporter, resolver)?.style_color();
                 Ok(true)
             }
             b"noFill" | b"gradFill" | b"blipFill" | b"pattFill" | b"grpFill" => {

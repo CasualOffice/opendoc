@@ -48,6 +48,7 @@ mod text_cascade;
 mod text_paragraph;
 mod text_run;
 mod text_styles;
+mod theme;
 
 pub use error::{PresentationError, SlideAxis};
 pub use ids::{SlideId, SlideLayoutId, SlideMasterId};
@@ -56,6 +57,7 @@ pub use placeholder::{Placeholder, PlaceholderKind, PlaceholderOrientation, Plac
 pub use presentation::{Presentation, SCHEMA_VERSION, Slide, SlideLayout, SlideMaster};
 pub use shape_tree::{ShapeTree, SlideNode};
 pub use slide_size::{MAX_SLIDE_EMU, MIN_SLIDE_EMU, SlideSize, SlideSizeKind};
+// Own line (anti-conflict): the theme indirection a deck has and a document does not.
 pub use text_body::{
     ListStyle, MAX_TEXT_LEVEL, TEXT_LEVELS, TextAnchor, TextAutoFit, TextBody, TextBodyProperties,
     TextVertical, TextWrap,
@@ -71,6 +73,10 @@ pub use text_run::{
     TextCharacterProperties, TextStrike, TextUnderline, Typeface,
 };
 pub use text_styles::TextStyles;
+pub use theme::{
+    ColorMap, ColorMapping, ColorRole, SchemeColorToken, THEME_COLOR_SLOTS, ThemeColorSlot,
+    ThemeFontReference, ThemeFontScript, ThemePalette,
+};
 
 #[cfg(test)]
 mod tests;

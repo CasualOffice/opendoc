@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{Definitions, Fill};
+use casual_doc_model::v1::{Definitions, Fill, ShapeStyleRef};
 // Own line (anti-conflict): the `p:defaultTextStyle` tier's type.
 use casual_pres_model::ListStyle;
 use casual_pres_model::{
@@ -35,6 +35,8 @@ use crate::loss::Reporter;
 use crate::media::MediaResolver;
 use crate::opc::{PresentationPackage, Relationships};
 use crate::shapes::{Surface, read_background, read_shape_tree};
+// Own line (anti-conflict): the theme a part's colours resolve against.
+use crate::theme::Resolver;
 // Own line (anti-conflict): the master's `p:txStyles` tiers share the
 // `a:lstStyle` reader.
 use crate::text::read_list_style;
@@ -65,6 +67,7 @@ pub(crate) fn read_presentation_part(
     reporter: &mut Reporter,
     ids: &mut Ids,
     limits: crate::limits::ImportLimits,
+    resolver: Resolver,
 ) -> Result<PresentationPart, ImportError> {
     let mut cursor = Cursor::new(bytes, part, limits);
     cursor.root()?;
@@ -127,7 +130,7 @@ pub(crate) fn read_presentation_part(
                 if empty {
                     return Ok(false);
                 }
-                default_text_style = read_list_style(cursor, reporter, ids)?;
+                default_text_style = read_list_style(cursor, reporter, ids, resolver)?;
                 Ok(true)
             }
             b"sldLayoutIdLst" | b"photoAlbum" | b"custShowLst" | b"kinsoku"
@@ -240,6 +243,13 @@ pub(crate) struct CommonSlideData {
     /// a second return value would thread an always-empty tier set through two
     /// readers that cannot use it.
     pub(crate) text_styles: TextStyles,
+    /// Each shape's `p:style`, keyed by the node id minted for it.
+    ///
+    /// Collected into a vector and inserted into `Definitions::shape_styles` by
+    /// the caller rather than written straight into the table, because the media
+    /// resolver already holds `&mut Definitions` for the duration of the shape
+    /// walk and two mutable borrows of it cannot coexist.
+    pub(crate) shape_styles: Vec<(NodeId, ShapeStyleRef)>,
 }
 
 /// Reads a slide, layout or master part's `p:cSld`, plus the root attributes the
@@ -256,6 +266,7 @@ fn read_common_slide_data(
     ids: &mut Ids,
     media: &mut MediaResolver<'_>,
     surface: Surface,
+    resolver: Resolver,
 ) -> Result<CommonSlideData, ImportError> {
     let part = cursor.part().to_owned();
     // `p:cSld@name` is the author-visible name: the slide's own, or the one the
@@ -264,6 +275,7 @@ fn read_common_slide_data(
     let name = attribute(element, b"name", &part)?.filter(|name| !name.is_empty());
     let mut background = None;
     let mut shapes: Option<ShapeTree> = None;
+    let mut shape_styles: Vec<(NodeId, ShapeStyleRef)> = Vec::new();
 
     children(cursor, |cursor, element, empty| {
         let local = local_name(element);
@@ -272,14 +284,22 @@ fn read_common_slide_data(
                 if empty {
                     return Ok(false);
                 }
-                background = read_background(cursor, reporter)?;
+                background = read_background(cursor, reporter, resolver)?;
                 Ok(true)
             }
             b"spTree" => {
                 if empty {
                     return Ok(false);
                 }
-                shapes = Some(read_shape_tree(cursor, reporter, ids, media, surface)?);
+                shapes = Some(read_shape_tree(
+                    cursor,
+                    reporter,
+                    ids,
+                    media,
+                    surface,
+                    resolver,
+                    &mut shape_styles,
+                )?);
                 Ok(true)
             }
             b"custDataLst" | b"controls" | b"extLst" => Ok(false),
@@ -307,6 +327,7 @@ fn read_common_slide_data(
         // `p:txStyles` is a sibling of `p:cSld`, not a child, so this reader never
         // sees one. `read_root_children` substitutes what it read.
         text_styles: TextStyles::default(),
+        shape_styles,
     })
 }
 
@@ -394,6 +415,9 @@ pub(crate) struct PartContext<'a> {
     pub(crate) registered_media: &'a mut BTreeMap<String, NodeId>,
     pub(crate) admitted: &'a BTreeMap<String, Option<String>>,
     pub(crate) limits: crate::limits::ImportLimits,
+    /// The deck's theme under THIS part's effective colour map, which the caller
+    /// has already resolved through the `p:clrMap`/`p:clrMapOvr` chain.
+    pub(crate) resolver: Resolver,
 }
 
 /// Reads a part's root element, returning its `show="0"` flag and its `p:cSld`.
@@ -427,6 +451,7 @@ fn read_root_children(
         definitions,
         registered_media,
         admitted,
+        resolver,
         ..
     } = context;
     children(cursor, |cursor, element, empty| {
@@ -444,16 +469,17 @@ fn read_root_children(
                     admitted,
                 );
                 common = Some(read_common_slide_data(
-                    cursor, element, reporter, ids, &mut media, surface,
+                    cursor, element, reporter, ids, &mut media, surface, *resolver,
                 )?);
                 Ok(true)
             }
             b"clrMap" | b"clrMapOvr" => {
-                // The colour map binds the twelve `a:schemeClr` slots to the
-                // theme's. Not modelled, and it is why a scheme colour is
-                // reported rather than resolved: without the map a `tx1` could be
-                // either of two theme entries.
-                reporter.omitted(part, local);
+                // Read, but not here: the map binds the twelve presentation colour
+                // roles to the theme's twelve slots, and the shape tree above
+                // already needed it. `theme::read_color_map_of` takes a pass of its
+                // own before this one for exactly that reason — the schema puts
+                // `p:clrMap` AFTER `p:cSld`, so by the time this reader sees it
+                // every colour in the part has already been resolved.
                 Ok(false)
             }
             b"transition" | b"timing" => {
@@ -477,7 +503,7 @@ fn read_root_children(
                 if empty {
                     return Ok(false);
                 }
-                text_styles = read_text_styles(cursor, reporter, ids)?;
+                text_styles = read_text_styles(cursor, reporter, ids, *resolver)?;
                 Ok(true)
             }
             b"hf" => {
@@ -492,10 +518,15 @@ fn read_root_children(
         }
     })?;
     match common {
-        Some(common) => Ok(CommonSlideData {
-            text_styles,
-            ..common
-        }),
+        Some(common) => {
+            for (id, style) in &common.shape_styles {
+                definitions.shape_styles.insert(*id, *style);
+            }
+            Ok(CommonSlideData {
+                text_styles,
+                ..common
+            })
+        }
         None => {
             reporter.invalid(part, b"cSld");
             Ok(CommonSlideData {
@@ -506,6 +537,7 @@ fn read_root_children(
                 // whatever `p:txStyles` it carried is not worth salvaging onto a
                 // master with no shapes.
                 text_styles: TextStyles::default(),
+                shape_styles: Vec::new(),
             })
         }
     }
@@ -523,6 +555,7 @@ fn read_text_styles(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     ids: &mut Ids,
+    resolver: Resolver,
 ) -> Result<TextStyles, ImportError> {
     let part = cursor.part().to_owned();
     let mut styles = TextStyles::default();
@@ -544,7 +577,7 @@ fn read_text_styles(
         if empty {
             return Ok(false);
         }
-        *tier = read_list_style(cursor, reporter, ids)?;
+        *tier = read_list_style(cursor, reporter, ids, resolver)?;
         Ok(true)
     })?;
     Ok(styles)

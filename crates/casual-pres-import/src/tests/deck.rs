@@ -20,8 +20,33 @@
 //! plausible* order, and the order guard can actually fail. A fixture named
 //! `slideA`/`slideB`/`slideC` would have let that bug through.
 //!
-//! The deck also carries a theme part that nothing reads, so the whole-part
-//! disposition has a real unconsumed part to report rather than an empty list.
+//! # The second adversarial choice: colours that COMPETE
+//!
+//! The theme part is read now, so the fixture's job changed from "an unconsumed
+//! part to report" to "a palette a wrong answer cannot hit by accident". Three
+//! things are deliberate:
+//!
+//! * **The master's `p:clrMap` is the DARK mapping** (`bg1="dk1"`, `tx1="lt1"`),
+//!   which is what PowerPoint writes for a dark design. So a reader that ignored
+//!   the map and treated `tx1` as `a:dk1` — which is what every alias table does,
+//!   including `casual-doc-import`'s, whose own comment admits it — resolves
+//!   black where the file means white. A fixture mapping `tx1` to `dk1` could not
+//!   tell the two readers apart.
+//! * **Three tiers state three different maps for `accent2`.** The master maps it
+//!   to `a:accent2` (`ED7D31`), `slideLayout2`'s `a:overrideClrMapping` maps it to
+//!   `a:accent4` (`FFC000`), and `slide10`'s maps it to `a:accent5` (`5B9BD5`).
+//!   The same four characters of markup therefore mean three different colours
+//!   depending on which part they sit in, so the override CHAIN is what the guard
+//!   measures rather than the mere presence of a map.
+//! * **Every one of the twelve slots differs from every other**, and `dk1`/`lt1`
+//!   are `a:sysClr` with a `lastClr` while the rest are `a:srgbClr`, so a reader
+//!   that honoured only one of the two forms leaves a hole a guard can see.
+//!
+//! The `a:fmtScheme` is shaped the same way: entry 2 of `a:lnStyleLst` is a
+//! gradient-filled outline this build cannot hold, and it sits AFTER an entry it
+//! can, so a reader that dropped the unmodelled entry instead of keeping a `None`
+//! in its place would resolve `idx="2"` to entry 1 and paint the wrong outline
+//! with nothing reporting it.
 
 use std::io::{Cursor, Write};
 
@@ -106,9 +131,14 @@ const MASTER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:spPr><a:xfrm><a:off x="838200" y="1825625"/><a:ext cx="10515600" cy="4351338"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
 <p:txBody><a:bodyPr vert="horz" anchor="t"/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>
 </p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="4" name="Master Accent"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="0" y="6705600"/><a:ext cx="12192000" cy="152400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent2"/></a:solidFill></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+</p:sp>
 </p:spTree>
 </p:cSld>
-<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+<p:clrMap bg1="dk1" tx1="lt1" bg2="dk2" tx2="lt2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
 <p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rIdLayout1"/><p:sldLayoutId id="2147483650" r:id="rIdLayout2"/></p:sldLayoutIdLst>
 <p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle><p:bodyStyle><a:lvl1pPr marL="228600" indent="-228600"><a:buChar char="&#8226;"/><a:defRPr sz="2800"/></a:lvl1pPr></p:bodyStyle><p:otherStyle><a:lvl1pPr/></p:otherStyle></p:txStyles>
 </p:sldMaster>"#;
@@ -146,6 +176,11 @@ const LAYOUT_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 </p:sldLayout>"#;
 
 /// `slideLayout2.xml` — title and content, with a `body` slot at `idx="1"`.
+///
+/// Its `p:clrMapOvr` is a REAL `a:overrideClrMapping`, not the usual
+/// `<a:masterClrMapping/>`, and it rebinds `accent2` to `a:accent4`. Every slide
+/// using this layout therefore resolves `accent2` differently from the master —
+/// which is the only way a guard can tell the override chain from the master map.
 const LAYOUT_TWO: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="obj" preserve="1">
 <p:cSld name="Title and Content">
@@ -164,7 +199,7 @@ const LAYOUT_TWO: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes
 </p:sp>
 </p:spTree>
 </p:cSld>
-<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent4" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>
 </p:sldLayout>"#;
 
 const LAYOUT_ONE_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -200,7 +235,7 @@ const SLIDE_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <p:nvSpPr><p:cNvPr id="3" name="Subtitle 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr>
 <p:spPr/>
 <p:txBody><a:bodyPr/><a:lstStyle/>
-<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="2400" i="1"/><a:t>First in presentation order</a:t></a:r><a:br><a:rPr lang="en-US" sz="1200"/></a:br><a:r><a:rPr lang="en-US" sz="2400"/><a:t>second line</a:t></a:r></a:p>
+<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="2400" i="1"/><a:t>First in presentation order</a:t></a:r><a:br><a:rPr lang="en-US" sz="1200"/></a:br><a:r><a:rPr lang="en-US" sz="2400"><a:latin typeface="+mn-lt"/></a:rPr><a:t>second line</a:t></a:r></a:p>
 </p:txBody>
 </p:sp>
 <p:sp>
@@ -213,6 +248,16 @@ const SLIDE_ONE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <a:effectLst/>
 </p:spPr>
 <p:style><a:lnRef idx="2"><a:schemeClr val="accent1"><a:shade val="50000"/></a:schemeClr></a:lnRef><a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></p:style>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="5" name="Themed Band"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="76200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="tx1"/></a:solidFill></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="6" name="Tinted Band"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="0" y="152400"/><a:ext cx="12192000" cy="76200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent1"><a:tint val="40000"/></a:schemeClr></a:solidFill><a:ln w="12700"><a:solidFill><a:schemeClr val="accent1"><a:lumMod val="75000"/><a:lumOff val="25000"/></a:schemeClr></a:solidFill></a:ln></p:spPr>
 <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
 </p:sp>
 </p:spTree>
@@ -274,6 +319,12 @@ const SLIDE_TWO: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>in a group</a:t></a:r></a:p></p:txBody>
 </p:sp>
 </p:grpSp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="8" name="Themed Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="457200" y="6248400"/><a:ext cx="2743200" cy="304800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent2"/></a:solidFill></p:spPr>
+<p:style><a:lnRef idx="1"><a:schemeClr val="accent3"/></a:lnRef><a:fillRef idx="3"><a:schemeClr val="accent3"/></a:fillRef><a:effectRef idx="2"><a:schemeClr val="accent3"/></a:effectRef><a:fontRef idx="major"><a:schemeClr val="dk1"/></a:fontRef></p:style>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+</p:sp>
 </p:spTree>
 </p:cSld>
 <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
@@ -292,6 +343,12 @@ const SLIDE_TWO_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone=
 /// `a:custGeom`, a preset (`wedgeRoundRectCallout`) no typed primitive covers,
 /// and a `p:graphicFrame` holding a table. Each must be *reported*, and the
 /// slide must still import.
+///
+/// It also carries the deepest colour map in the deck: its own
+/// `a:overrideClrMapping` rebinds `accent2` to `a:accent5`, over the layout
+/// override that rebinds it to `a:accent4`, over the master map that leaves it at
+/// `a:accent2`. The run below says `accent2` and must resolve to the slide's
+/// answer, not the layout's and not the master's.
 ///
 /// It is also the third slide in `p:sldIdLst` while sorting SECOND by part name.
 const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -329,7 +386,7 @@ const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs><a:gs pos="100000"><a:srgbClr val="BDD7EE"/></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
 <a:effectLst><a:outerShdw blurRad="50800" dist="38100" dir="2700000"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw></a:effectLst>
 </p:spPr>
-<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"><a:solidFill><a:schemeClr val="accent2"/></a:solidFill></a:rPr><a:t>Themed colour, unresolved</a:t></a:r></a:p></p:txBody>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"><a:solidFill><a:schemeClr val="accent2"><a:alpha val="40000"/><a:satMod val="155000"/></a:schemeClr></a:solidFill></a:rPr><a:t>Themed colour, resolved through this slide own map</a:t></a:r></a:p></p:txBody>
 </p:sp>
 <p:graphicFrame>
 <p:nvGraphicFramePr><p:cNvPr id="5" name="Table 4"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>
@@ -342,7 +399,7 @@ const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 </p:graphicFrame>
 </p:spTree>
 </p:cSld>
-<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent5" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>
 <p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"/></p:par></p:tnLst></p:timing>
 </p:sld>"#;
 
@@ -351,11 +408,46 @@ const SLIDE_TEN_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone=
 <Relationship Id="rIdLayout" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout2.xml"/>
 </Relationships>"#;
 
-/// A theme part nothing reads, so the unconsumed-part disposition has a real
-/// subject. Abridged to one scheme — its size is irrelevant and its *survival in
-/// the report* is not.
+/// `ppt/theme/theme1.xml`.
+///
+/// All twelve `a:clrScheme` slots, with twelve DISTINCT colours — see the module
+/// note on why that matters. `a:dk1`/`a:lt1` are `a:sysClr` with a `lastClr`,
+/// which is what Office writes and what makes honouring `lastClr` observable.
+///
+/// The `a:fontScheme` gives `+mj-lt` and `+mn-lt` different families, so a reader
+/// that resolved the wrong collection would be visible, and leaves `a:ea`/`a:cs`
+/// with the empty `@typeface` that means "fall back to latin" — a case that must
+/// resolve to nothing rather than to the empty string.
+///
+/// The `a:fmtScheme` carries one entry of each kind this build can hold and one
+/// of each it cannot, in positions where confusing them would paint something:
+/// `a:fillStyleLst` is solid, gradient, pattern; `a:lnStyleLst` is a solid outline
+/// then a gradient one; `a:effectStyleLst` is an EMPTY `a:effectLst` then an
+/// `a:outerShdw`, which is the shape that makes reporting on `a:effectRef@idx`
+/// alone wrong.
 const THEME: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme"><a:themeElements><a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2></a:clrScheme><a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme><a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#;
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Opendoc Fixture Theme">
+<a:themeElements>
+<a:clrScheme name="Fixture"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>
+<a:fontScheme name="Fixture"><a:majorFont><a:latin typeface="Calibri Light" panose="020F0302020204030204"/><a:ea typeface=""/><a:cs typeface=""/><a:font script="Hans" typeface="DengXian Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri" panose="020F0502020204030204"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>
+<a:fmtScheme name="Fixture">
+<a:fillStyleLst>
+<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+<a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="105000"/><a:tint val="67000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="103000"/><a:tint val="73000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="109000"/><a:tint val="81000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
+<a:pattFill prst="pct25"><a:fgClr><a:schemeClr val="phClr"/></a:fgClr><a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill>
+</a:fillStyleLst>
+<a:lnStyleLst>
+<a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln>
+<a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:gradFill><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"/></a:gs><a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs></a:gsLst><a:lin ang="0" scaled="0"/></a:gradFill><a:prstDash val="solid"/></a:ln>
+</a:lnStyleLst>
+<a:effectStyleLst>
+<a:effectStyle><a:effectLst/></a:effectStyle>
+<a:effectStyle><a:effectLst><a:outerShdw blurRad="57150" dist="19050" dir="5400000" algn="ctr" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="63000"/></a:srgbClr></a:outerShdw></a:effectLst></a:effectStyle>
+</a:effectStyleLst>
+<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
+</a:fmtScheme>
+</a:themeElements>
+</a:theme>"#;
 
 /// The picture's bytes.
 ///

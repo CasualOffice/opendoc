@@ -33,12 +33,33 @@
 //! `p:defaultTextStyle`, both through the one `CT_TextListStyle` reader
 //! `a:lstStyle` uses.
 //!
-//! **Not read, and reported:** the theme part — so every `a:schemeClr`,
-//! `p:style` reference and `p:clrMap` is a reported gap and no shape gets a
-//! themed fill; `p:transition` and `p:timing`; notes and handout masters;
-//! `p:graphicFrame`, so tables, charts and SmartArt do not arrive at all;
-//! gradient, picture and pattern fills; effects; `a:tbl`; `a:arcTo`; and
-//! `p14:sectionLst`.
+//! The theme is read as well: `ppt/theme/theme1.xml`'s `a:clrScheme` (twelve
+//! slots), `a:fontScheme` (major and minor, latin/ea/cs plus script overrides) and
+//! the modelled subset of `a:fmtScheme`, together with the `p:clrMap` on each
+//! master and the `p:clrMapOvr/a:overrideClrMapping` on any layout or slide that
+//! replaces it. With both halves present an `a:schemeClr` resolves to a concrete
+//! colour with its transforms folded in, a `p:style` reference resolves against
+//! the style matrix, and a `+mj-lt` typeface resolves through
+//! `Presentation::resolve_typeface`.
+//!
+//! **Not read, and reported:** `p:transition` and `p:timing`; notes and handout
+//! masters; `p:graphicFrame`, so tables, charts and SmartArt do not arrive at all;
+//! gradient, picture and pattern fills on a shape; effects; `a:tbl`; `a:arcTo`;
+//! `p14:sectionLst`; `a:fontRef` (neither the collection it names nor its colour
+//! has a field); `a:satMod` and the hue/gamma/channel colour modifiers; the theme
+//! part's `a:objectDefaults`, `a:extraClrSchemeLst` and `a:custClrLst`; and
+//! `a:bgFillStyleLst`, so a `p:bgRef` still resolves to nothing.
+//!
+//! # One theme per deck, and what that costs
+//!
+//! `v1::Definitions` carries ONE `color_scheme`/`font_scheme`/`format_scheme`,
+//! because a WordprocessingML package has one theme part. A deck may have one per
+//! master. So the theme reached from `ppt/presentation.xml` is the deck's, and a
+//! master naming a DIFFERENT theme part is reported rather than silently resolved
+//! against the wrong palette. Every colour in the deck therefore resolves against
+//! one theme, which is consistent with what the model says and honest about what
+//! it cannot say. The fix is a presentation-side theme table keyed by master; it
+//! is additive and it is not built here.
 
 use std::collections::BTreeMap;
 
@@ -47,19 +68,24 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::Definitions;
 use casual_doc_package::{BoundedPackage, PackageLimits};
 use casual_pres_model::{
-    Presentation, Slide, SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId,
+    ColorMap, ColorMapping, Presentation, Slide, SlideLayout, SlideLayoutId, SlideMaster,
+    SlideMasterId,
 };
 
 use crate::ImportError;
 use crate::ids::Ids;
 use crate::limits::ImportLimits;
 use crate::loss::Reporter;
-use crate::opc::{PresentationPackage, SLIDE_LAYOUT_REL};
+use crate::opc::{PresentationPackage, SLIDE_LAYOUT_REL, SLIDE_MASTER_REL, THEME_REL};
 use crate::parts::{
     PartContext, all_of_type, first_of_type, read_layout, read_master, read_presentation_part,
     read_slide, resolve_part,
 };
 use crate::shapes::Surface;
+// Own line (anti-conflict): the theme half of the import.
+use crate::theme::{
+    Resolver, ThemePart, read_color_map_of, read_theme_part, report_unpaintable_style_refs,
+};
 
 /// A `.pptx` imported into the presentation model, with its fidelity report.
 ///
@@ -100,8 +126,12 @@ pub struct ImportedPresentation {
 /// # Complexity
 ///
 /// O(package): one pass over each admitted part that the reference graph reaches,
-/// plus one validation walk over the built deck. This is an open-the-file
-/// operation and must not run on an interaction path (`docs/107` §4).
+/// plus one validation walk over the built deck. A master, layout or slide part is
+/// read TWICE — once by `theme::read_color_map_of` and once in full — because the
+/// schema puts `p:clrMap` after `p:cSld` while the shape tree inside `p:cSld` is
+/// what needs it; that is a factor on the constant, not on the order, and it is
+/// stated rather than hidden. This is an open-the-file operation and must not run
+/// on an interaction path (`docs/107` §4).
 pub fn import_pptx(
     bytes: &[u8],
     package_limits: PackageLimits,
@@ -129,19 +159,7 @@ pub fn import_pptx(
         .collect();
 
     let presentation_part = package.presentation_part().to_owned();
-    let presentation_bytes = package.read_part(&presentation_part)?;
-    let declaration = read_presentation_part(
-        &presentation_bytes,
-        &presentation_part,
-        &mut reporter,
-        &mut ids,
-        limits,
-    )?;
     let presentation_relationships = package.relationships_of(&presentation_part)?;
-    let surface = Surface {
-        width_emu: declaration.slide_size.width_emu,
-        height_emu: declaration.slide_size.height_emu,
-    };
 
     // Which parts the reference graph reached, so the unconsumed remainder can be
     // enumerated rather than assumed empty.
@@ -151,9 +169,46 @@ pub fn import_pptx(
         presentation_part.clone(),
     ];
 
+    // Tier 0: the theme, BEFORE anything that states a colour. A `p:clrMap` is
+    // read per part on top of it; without the palette underneath, every
+    // `a:schemeClr` in the part would have to be deferred, and `v1::Fill` holds a
+    // concrete `Rgba` with nowhere to defer one to — including in
+    // `p:defaultTextStyle`, where PowerPoint writes a `tx1` glyph colour.
+    let theme_part = discover_theme_part(&mut package, &presentation_relationships)?;
+    let theme = match theme_part.as_deref() {
+        Some(part) => {
+            let bytes = package.read_part(part)?;
+            let read = read_theme_part(&bytes, part, &mut reporter, limits)?;
+            consumed.push(part.to_owned());
+            read
+        }
+        None => ThemePart::default(),
+    };
+    // The presentation-level resolver uses the IDENTITY colour map, because only a
+    // master states one and `p:defaultTextStyle` sits above every master.
+    let deck_resolver = Resolver::new(&theme, ColorMap::IDENTITY);
+
+    let presentation_bytes = package.read_part(&presentation_part)?;
+    let declaration = read_presentation_part(
+        &presentation_bytes,
+        &presentation_part,
+        &mut reporter,
+        &mut ids,
+        limits,
+        deck_resolver,
+    )?;
+    let surface = Surface {
+        width_emu: declaration.slide_size.width_emu,
+        height_emu: declaration.slide_size.height_emu,
+    };
+    let mut color_mapping = ColorMapping::default();
+
     // Tier 1: masters, in `p:sldMasterIdLst` order.
     let mut masters: Vec<SlideMaster> = Vec::new();
     let mut master_ids: BTreeMap<String, SlideMasterId> = BTreeMap::new();
+    // The colour map each master established, so a layout that inherits it does
+    // not have to re-resolve a chain through a part list that is still being built.
+    let mut master_maps: BTreeMap<SlideMasterId, ColorMap> = BTreeMap::new();
     for relationship_id in &declaration.master_relationship_ids {
         let part = resolve_part(
             &package,
@@ -167,6 +222,23 @@ pub fn import_pptx(
         let bytes = package.read_part(&part)?;
         let relationships = package.relationships_of(&part)?;
         let id = ids.next()?;
+        // A master may name its own theme part, and `Definitions` holds one theme.
+        // Reported rather than resolved against the wrong palette; see the module
+        // note on what that costs.
+        if let Some(own_theme) = first_of_type(&relationships, THEME_REL)
+            && theme_part.as_deref() != Some(own_theme.as_str())
+        {
+            reporter.degraded_attribute(&part, b"sldMaster", b"theme");
+        }
+        // A master with no `p:clrMap` is malformed — the schema requires one — so
+        // the identity map keeps the deck openable and the fact is reported.
+        let map = match read_color_map_of(&bytes, &part, &mut reporter, limits)? {
+            Some(map) => map,
+            None => {
+                reporter.invalid(&part, b"clrMap");
+                ColorMap::IDENTITY
+            }
+        };
         let mut context = PartContext {
             reporter: &mut reporter,
             ids: &mut ids,
@@ -174,8 +246,11 @@ pub fn import_pptx(
             registered_media: &mut registered_media,
             admitted: &admitted,
             limits,
+            resolver: deck_resolver.with_map(map),
         };
         let master = read_master(&bytes, &part, &relationships, &mut context, surface, id)?;
+        color_mapping.masters.insert(master.id, map);
+        master_maps.insert(master.id, map);
         master_ids.insert(part.clone(), master.id);
         consumed.push(part.clone());
         masters.push(master);
@@ -188,6 +263,8 @@ pub fn import_pptx(
     // between two masters is read once and keeps one identity.
     let mut layouts: Vec<SlideLayout> = Vec::new();
     let mut layout_ids: BTreeMap<String, SlideLayoutId> = BTreeMap::new();
+    // The map in force on each layout, inherited or overridden, for its slides.
+    let mut layout_maps: BTreeMap<SlideLayoutId, ColorMap> = BTreeMap::new();
     for (master_part, master_id) in &master_ids {
         let relationships = package.relationships_of(master_part)?;
         for layout_part in all_of_type(&relationships, SLIDE_LAYOUT_REL) {
@@ -200,6 +277,9 @@ pub fn import_pptx(
             let bytes = package.read_part(&layout_part)?;
             let layout_relationships = package.relationships_of(&layout_part)?;
             let id = ids.next()?;
+            let inherited = master_maps.get(master_id).copied().unwrap_or_default();
+            let overridden = read_color_map_of(&bytes, &layout_part, &mut reporter, limits)?;
+            let in_force = overridden.unwrap_or(inherited);
             let mut context = PartContext {
                 reporter: &mut reporter,
                 ids: &mut ids,
@@ -207,6 +287,7 @@ pub fn import_pptx(
                 registered_media: &mut registered_media,
                 admitted: &admitted,
                 limits,
+                resolver: deck_resolver.with_map(in_force),
             };
             let layout = read_layout(
                 &bytes,
@@ -217,6 +298,13 @@ pub fn import_pptx(
                 surface,
                 id,
             )?;
+            // Only an OVERRIDE is recorded. A layout that states
+            // `<a:masterClrMapping/>` inherits, and storing the inherited value
+            // would make the two indistinguishable in the model.
+            if let Some(map) = overridden {
+                color_mapping.layouts.insert(layout.id, map);
+            }
+            layout_maps.insert(layout.id, in_force);
             layout_ids.insert(layout_part.clone(), layout.id);
             consumed.push(layout_part.clone());
             layouts.push(layout);
@@ -256,6 +344,10 @@ pub fn import_pptx(
                 let layout_bytes = package.read_part(&layout_part)?;
                 let layout_relationships = package.relationships_of(&layout_part)?;
                 let id = ids.next()?;
+                let inherited = master_maps.get(&master_id).copied().unwrap_or_default();
+                let overridden =
+                    read_color_map_of(&layout_bytes, &layout_part, &mut reporter, limits)?;
+                let in_force = overridden.unwrap_or(inherited);
                 let mut context = PartContext {
                     reporter: &mut reporter,
                     ids: &mut ids,
@@ -263,6 +355,7 @@ pub fn import_pptx(
                     registered_media: &mut registered_media,
                     admitted: &admitted,
                     limits,
+                    resolver: deck_resolver.with_map(in_force),
                 };
                 let read = read_layout(
                     &layout_bytes,
@@ -274,6 +367,10 @@ pub fn import_pptx(
                     id,
                 )?;
                 reporter.degraded_attribute(&presentation_part, b"sldMasterId", b"sldLayoutIdLst");
+                if let Some(map) = overridden {
+                    color_mapping.layouts.insert(read.id, map);
+                }
+                layout_maps.insert(read.id, in_force);
                 layout_ids.insert(layout_part.clone(), read.id);
                 consumed.push(layout_part.clone());
                 layouts.push(read);
@@ -282,6 +379,8 @@ pub fn import_pptx(
                     .ok_or_else(|| ImportError::SlideWithoutLayout { part: part.clone() })?
             }
         };
+        let inherited = layout_maps.get(&layout).copied().unwrap_or_default();
+        let overridden = read_color_map_of(&bytes, &part, &mut reporter, limits)?;
         let mut context = PartContext {
             reporter: &mut reporter,
             ids: &mut ids,
@@ -289,8 +388,12 @@ pub fn import_pptx(
             registered_media: &mut registered_media,
             admitted: &admitted,
             limits,
+            resolver: deck_resolver.with_map(overridden.unwrap_or(inherited)),
         };
         let slide = read_slide(&bytes, &part, layout, &relationships, &mut context, surface)?;
+        if let Some(map) = overridden {
+            color_mapping.slides.insert(slide.id, map);
+        }
         consumed.push(part.clone());
         slides.push(slide);
     }
@@ -305,6 +408,25 @@ pub fn import_pptx(
         return Err(ImportError::LayoutWithoutMaster {
             part: presentation_part.clone(),
         });
+    }
+
+    // The theme lands in the SHARED definition tables, not in a presentation-only
+    // one: `v1::Definitions` already carries these three fields for the document
+    // class and `casual-doc-layout` already resolves against them, so a deck and a
+    // document cannot disagree about what a theme is.
+    //
+    // `format_scheme_xml` is deliberately NOT populated. On the document side it is
+    // the verbatim subtree the semantic writer emits back; there is no
+    // PresentationML writer, so retaining the string here would buy nothing and
+    // would read as a retention claim the pipeline cannot honour.
+    definitions.color_scheme = theme.color_scheme.clone();
+    definitions.font_scheme = theme.font_scheme.clone();
+    definitions.format_scheme = theme.format_scheme.clone();
+
+    // Classified AFTER the shapes, because it needs both halves: the matrix says
+    // what an entry is, the side table says which entries are actually asked for.
+    if let Some(scheme) = theme.format_scheme.as_ref() {
+        report_unpaintable_style_refs(scheme, &definitions.shape_styles, &mut reporter);
     }
 
     // Every admitted part the reference graph did not reach. A whole-part
@@ -324,13 +446,50 @@ pub fn import_pptx(
     // The bottom tier of the text cascade, attached after construction because it
     // is an optional part and a seventh positional argument would be a breaking
     // change to every caller for something most packages omit.
-    .with_default_text_style(declaration.default_text_style)?;
+    .with_default_text_style(declaration.default_text_style)?
+    // The colour maps, for the same reason plus one more: they are keyed by part
+    // id, so they can only be attached once those ids exist.
+    .with_color_mapping(color_mapping)?;
     let (report, ledger) = reporter.finish()?;
     Ok(ImportedPresentation {
         presentation,
         report,
         ledger,
     })
+}
+
+/// The deck's theme part: the FIRST master's, else the presentation part's own.
+///
+/// The master comes first because that is where ECMA-376 puts the required theme
+/// relationship; `ppt/presentation.xml`'s is conventional, and a package that
+/// carries only the required one would otherwise import with no theme at all and
+/// every scheme colour reported — which is the gap this whole change closes.
+///
+/// Masters are reached by relationship TYPE here and nowhere else. That is sound
+/// precisely because the question is "which theme", not "which order": see
+/// `SLIDE_MASTER_REL`.
+///
+/// # Complexity
+///
+/// O(masters) relationship-part reads, which is one or two in almost every deck,
+/// and they are the same parts the master tier reads immediately afterwards.
+fn discover_theme_part(
+    package: &mut PresentationPackage<'_>,
+    presentation_relationships: &crate::opc::Relationships,
+) -> Result<Option<String>, ImportError> {
+    for master_part in all_of_type(presentation_relationships, SLIDE_MASTER_REL) {
+        if !package.contains_part(&master_part) {
+            continue;
+        }
+        let relationships = package.relationships_of(&master_part)?;
+        if let Some(theme) =
+            first_of_type(&relationships, THEME_REL).filter(|part| package.contains_part(part))
+        {
+            return Ok(Some(theme));
+        }
+    }
+    Ok(first_of_type(presentation_relationships, THEME_REL)
+        .filter(|part| package.contains_part(part)))
 }
 
 /// Reports each admitted part the semantic projection did not consume.

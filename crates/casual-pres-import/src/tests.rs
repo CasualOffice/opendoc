@@ -13,6 +13,8 @@
 //! code.
 
 mod deck;
+// Own line (anti-conflict): the theme guards, split out at the file ceiling.
+mod theme;
 
 use casual_doc_loss::{ModelOutcome, RetentionOutcome};
 use casual_doc_model::v1::{GroupChild, ShapeGeometry, ShapePathCommand};
@@ -714,17 +716,31 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         // the presentation path yet.
         "timing",
         "transition",
-        // The colour map, which is why a scheme colour cannot be resolved.
-        "clrMap",
         // Fills and effects outside the modelled subset.
         "gradFill",
         "effectLst",
         // A table, a chart or a diagram arrives as nothing at all.
         "graphicFrame",
-        // A themed shape reference, with no theme read to resolve it against.
-        "style",
-        // The theme part itself, as a whole-part disposition.
-        "ppt/theme/theme1.xml",
+        // `a:satMod` has no field on `ColorTransform`, because
+        // `v1::fold_color_modifiers` applies no saturation modifier. Reported
+        // rather than half-applied — adding an approximate fold would change every
+        // colour the document side already resolves, since the arithmetic is one
+        // function shared by both.
+        "satMod",
+        // `a:fontRef` names a font COLLECTION and a colour, and `ShapeStyleRef`
+        // has a field for neither, so a shape whose text takes its typeface from
+        // the theme loses it.
+        "style/@fontRef",
+        // `a:bgFillStyleLst` is not modelled, so a `p:bgRef` still resolves to
+        // nothing. Reported on the list rather than only on the reference, because
+        // the list is what is dropped.
+        "bgFillStyleLst",
+        // The theme's own display name, and the two scheme names that have no
+        // field either. There is no PresentationML writer to re-emit the part, so
+        // the name is gone rather than merely unmodelled.
+        "theme/@name",
+        "fontScheme/@name",
+        "fmtScheme/@name",
     ] {
         assert!(
             features.contains(&expected),
@@ -732,10 +748,42 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         );
     }
 
-    // The two cascade tiers are READ now, so naming either would be claiming a
-    // loss that did not happen. Asserted as absent rather than merely dropped from
-    // the list above, because a list is satisfied by a report that says nothing.
-    for recovered in ["txStyles", "defaultTextStyle"] {
+    // Everything the theme work made resolvable. Asserted ABSENT rather than
+    // merely dropped from the list above, because a list is satisfied by a report
+    // that says nothing (`SKILL` §9.3) — and because each of these was a finding
+    // on this fixture before the change, so a regression puts it straight back.
+    for recovered in [
+        "txStyles",
+        "defaultTextStyle",
+        // The colour map is read, on the master and as an override on a layout and
+        // a slide.
+        "clrMap",
+        "clrMapOvr",
+        // And so every `a:schemeClr` in the fixture resolves: there is no theme
+        // slot left for which this build has no answer.
+        "schemeClr",
+        // A `p:style` reference is read into `Definitions::shape_styles` with its
+        // `a:phClr` argument resolved.
+        "style",
+        // The theme part is consumed, so it is no longer a whole-part loss. This
+        // is the one entry a reader could "fix" by deleting the part, so the
+        // separate guard below asserts the schemes actually arrived.
+        "ppt/theme/theme1.xml",
+        // The schemes themselves, and the slots and collections inside them.
+        "clrScheme",
+        "fontScheme",
+        "fmtScheme",
+        "majorFont",
+        "minorFont",
+        "latin",
+        "accent1",
+        "dk1",
+        "tint",
+        "shade",
+        "alpha",
+        "lumMod",
+        "lumOff",
+    ] {
         assert!(
             !features.contains(&recovered),
             "{recovered} is modelled now, so reporting it would overstate the loss: \
@@ -743,15 +791,33 @@ fn the_report_names_every_construct_the_projection_did_not_recover() {
         );
     }
 
-    // An `a:schemeClr` naming a theme slot is DEGRADED, not omitted: the run is
-    // modelled, and what was lost is its colour.
-    let scheme = imported
-        .report
-        .entries
-        .iter()
-        .find(|entry| entry.feature == "schemeClr")
-        .expect("a themed run colour is reported");
-    assert_eq!(scheme.model_outcome(), ModelOutcome::Degraded);
+    // A `p:style` reference that RESOLVES and still cannot be painted is reported
+    // with the reason, once per reference — the three reasons are the three the
+    // fixture's style matrix provides, and the two references that lose nothing
+    // (`a:fillRef idx="1"`, a solid entry, and `a:effectRef idx="0"`, "no effect")
+    // must not appear.
+    for (feature, reason) in [
+        ("fmtScheme/fillStyleLst", "pattern"),
+        ("fmtScheme/lnStyleLst", "unmodeled"),
+        ("fmtScheme/effectStyleLst", "effect-not-rendered"),
+    ] {
+        let entry = imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == feature)
+            .unwrap_or_else(|| panic!("the report must name {feature}; it named {features:?}"));
+        assert_eq!(
+            entry.location.attribute.as_deref(),
+            Some(reason),
+            "{feature} must say WHY it cannot be painted"
+        );
+        assert_eq!(
+            entry.model_outcome(),
+            ModelOutcome::Degraded,
+            "the shape is still drawn, it just is not wearing the right appearance"
+        );
+    }
 
     // Nothing may claim `preserved`: there is no presentation writer, so no
     // verbatim byte floor exists to license the claim.

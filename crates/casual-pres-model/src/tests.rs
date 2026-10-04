@@ -8,8 +8,9 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Definitions, Extent, GroupChild, GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
-    MediaId, MediaReference, PointEmu, ShapeGeometry, WordprocessingGroup,
+    ColorScheme, ColorTransform, Definitions, Extent, FontCollection, FontScheme, GroupChild,
+    GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH, MediaId, MediaReference, PointEmu,
+    RgbColor, Rgba, SchemeColor, ShapeGeometry, SystemColor, ThemeFontEntry, WordprocessingGroup,
 };
 
 use crate::{
@@ -17,6 +18,11 @@ use crate::{
     PlaceholderSize, Presentation, PresentationError, SCHEMA_VERSION, ShapeTree, Slide, SlideAxis,
     SlideId, SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId, SlideNode, SlideSize,
     SlideSizeKind, TextStyles,
+};
+// Own line (anti-conflict): the theme indirection, new in this change.
+use crate::{
+    ColorMap, ColorMapping, ColorRole, SchemeColorToken, THEME_COLOR_SLOTS, ThemeColorSlot,
+    ThemeFontReference, ThemePalette,
 };
 
 /// A node id from a small counter, so a fixture reads as `id(7)`.
@@ -1483,4 +1489,429 @@ fn a_default_text_style_deeper_than_nine_levels_is_refused() {
             .is_ok(),
         "nine levels is the ceiling, not an error"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The theme indirection: the colour map, the palette, and the font references.
+// ---------------------------------------------------------------------------
+
+/// A scheme with twelve distinguishable slots, so a wrong binding is visible.
+///
+/// `dk1` and `lt1` are `a:sysClr` with a `lastClr`, which is the form Office
+/// writes, and every value differs from every other.
+fn scheme() -> ColorScheme {
+    let srgb = |r, g, b| SchemeColor::Srgb(RgbColor { r, g, b });
+    ColorScheme {
+        name: "Fixture".to_owned(),
+        dark1: SchemeColor::System(SystemColor {
+            value: "windowText".to_owned(),
+            last_color: Some(RgbColor { r: 0, g: 0, b: 0 }),
+        }),
+        light1: SchemeColor::System(SystemColor {
+            value: "window".to_owned(),
+            last_color: Some(RgbColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            }),
+        }),
+        dark2: srgb(0x44, 0x54, 0x6A),
+        light2: srgb(0xE7, 0xE6, 0xE6),
+        accent1: srgb(0x44, 0x72, 0xC4),
+        accent2: srgb(0xED, 0x7D, 0x31),
+        accent3: srgb(0xA5, 0xA5, 0xA5),
+        accent4: srgb(0xFF, 0xC0, 0x00),
+        accent5: srgb(0x5B, 0x9B, 0xD5),
+        accent6: srgb(0x70, 0xAD, 0x47),
+        hyperlink: srgb(0x05, 0x63, 0xC1),
+        followed_hyperlink: srgb(0x95, 0x4F, 0x72),
+    }
+}
+
+/// `tx1` is resolved THROUGH the colour map and `dk1` is not.
+///
+/// This is the distinction the whole type exists for. `ST_SchemeColorVal` admits
+/// both spellings and they mean different things: `tx1` is the presentation's
+/// "text" ROLE, which the master's `p:clrMap` binds, while `dk1` names the
+/// `a:clrScheme` entry itself. Folding the two into one alias table — which is what
+/// a reader naturally does — makes `tx1` unmappable, and under the dark map here
+/// that paints black text on a black background.
+///
+/// Mutation: make `SchemeColorToken::from_token` answer
+/// `Self::Slot(ThemeColorSlot::Dark1)` for `"tx1"`.
+#[test]
+fn a_colour_role_goes_through_the_map_and_a_slot_name_does_not() {
+    // The dark design: PowerPoint writes exactly this for a dark master.
+    let dark = ColorMap {
+        background1: ThemeColorSlot::Dark1,
+        text1: ThemeColorSlot::Light1,
+        background2: ThemeColorSlot::Dark2,
+        text2: ThemeColorSlot::Light2,
+        ..ColorMap::IDENTITY
+    };
+    let palette = ThemePalette::new(&scheme(), dark);
+    let white = Rgba {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    let black = Rgba {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+
+    assert_eq!(
+        palette.resolve("tx1", ColorTransform::default()),
+        Some(white),
+        "tx1 is a role, and this map binds it to a:lt1"
+    );
+    assert_eq!(
+        palette.resolve("dk1", ColorTransform::default()),
+        Some(black),
+        "dk1 names the scheme entry directly and must NOT be remapped"
+    );
+    assert_eq!(
+        palette.resolve("bg1", ColorTransform::default()),
+        Some(black),
+        "and bg1 is the other half of the same swap"
+    );
+
+    // The same markup under the identity map gives the opposite answers, which is
+    // what makes the two readings distinguishable at all.
+    let light = ThemePalette::new(&scheme(), ColorMap::IDENTITY);
+    assert_eq!(light.resolve("tx1", ColorTransform::default()), Some(black));
+    assert_eq!(
+        light.resolve("dk1", ColorTransform::default()),
+        Some(black),
+        "a slot name is map-independent, so this one does not move"
+    );
+
+    // `phClr` is a formal parameter, not a colour, and a token outside the
+    // enumeration is unanswerable rather than defaulted.
+    assert_eq!(palette.resolve("phClr", ColorTransform::default()), None);
+    assert_eq!(palette.resolve("accent9", ColorTransform::default()), None);
+}
+
+/// A colour transform is applied in the per-100000 units the file states, and a
+/// different transform gives a different colour.
+///
+/// Mutation: divide `ColorTransform`'s values by 100 instead of 100000 in
+/// `apply`.
+#[test]
+fn a_palette_folds_a_transform_in_per_100000_units() {
+    let palette = ThemePalette::new(&scheme(), ColorMap::IDENTITY);
+    let tint = ColorTransform {
+        tint: Some(40_000),
+        ..ColorTransform::default()
+    };
+    assert_eq!(
+        palette.resolve("accent1", tint),
+        Some(Rgba {
+            r: 180,
+            g: 199,
+            b: 231,
+            a: 255
+        }),
+        "4472C4 tinted 40% toward white"
+    );
+    let shade = ColorTransform {
+        shade: Some(40_000),
+        ..ColorTransform::default()
+    };
+    assert_ne!(
+        palette.resolve("accent1", shade),
+        palette.resolve("accent1", tint),
+        "a shade of the same magnitude must not equal a tint"
+    );
+    assert_eq!(
+        palette.resolve("accent1", ColorTransform::default()),
+        Some(Rgba {
+            r: 0x44,
+            g: 0x72,
+            b: 0xC4,
+            a: 255
+        }),
+        "and no transform leaves the slot alone"
+    );
+}
+
+/// The colour-map chain is slide, then layout, then master, then the identity —
+/// and an absent entry at one tier falls through rather than defaulting.
+///
+/// Mutation: drop the `slides` lookup from `ColorMapping::in_force`, which makes a
+/// slide's own `a:overrideClrMapping` resolve to its layout's instead.
+#[test]
+fn the_colour_map_chain_is_slide_then_layout_then_master() {
+    let master = SlideMasterId::new(id(10));
+    let layout = SlideLayoutId::new(id(20));
+    let slide = SlideId::new(id(30));
+    let bare = SlideId::new(id(31));
+
+    let map_with = |accent2| ColorMap {
+        accent2,
+        ..ColorMap::IDENTITY
+    };
+    let mut mapping = ColorMapping::default();
+    mapping
+        .masters
+        .insert(master, map_with(ThemeColorSlot::Accent2));
+    mapping
+        .layouts
+        .insert(layout, map_with(ThemeColorSlot::Accent4));
+    mapping
+        .slides
+        .insert(slide, map_with(ThemeColorSlot::Accent5));
+
+    assert_eq!(
+        mapping.in_force(slide, Some(layout), Some(master)).accent2,
+        ThemeColorSlot::Accent5,
+        "the slide's own override wins"
+    );
+    assert_eq!(
+        mapping.in_force(bare, Some(layout), Some(master)).accent2,
+        ThemeColorSlot::Accent4,
+        "a slide with no override takes its layout's"
+    );
+    assert_eq!(
+        mapping.in_force(bare, None, Some(master)).accent2,
+        ThemeColorSlot::Accent2,
+        "and with no layout override, the master's"
+    );
+    assert_eq!(
+        mapping.in_force(bare, None, None),
+        ColorMap::IDENTITY,
+        "a deck that states nothing gets the identity, not an empty map"
+    );
+    assert!(!mapping.is_empty());
+    assert!(ColorMapping::default().is_empty());
+}
+
+/// A colour map keyed by a part the deck does not hold is REFUSED.
+///
+/// The failure mode is a wrong answer rather than a missing one:
+/// [`ColorMapping::in_force`] falls through to the tier above, so a dangling key
+/// silently resolves a role to another tier's slot and repaints the slide.
+///
+/// Mutation: make `theme::validate_mapping` return `Ok(())` unconditionally.
+#[test]
+fn a_colour_map_keyed_by_an_unknown_part_is_refused() {
+    let mut mapping = ColorMapping::default();
+    let stranger = SlideId::new(id(999));
+    mapping.slides.insert(stranger, ColorMap::IDENTITY);
+    assert_eq!(
+        deck().with_color_mapping(mapping).map(|_| ()),
+        Err(PresentationError::DanglingColorMapRef(stranger.node_id())),
+    );
+
+    // And the real slide's id is accepted, so the guard is not refusing everything.
+    let slide = deck().slides()[0].id;
+    let mut good = ColorMapping::default();
+    good.slides.insert(slide, ColorMap::IDENTITY);
+    let deck = deck()
+        .with_color_mapping(good)
+        .expect("a map keyed by a slide this deck holds");
+    assert_eq!(deck.color_mapping().slides.len(), 1);
+    assert_eq!(
+        deck.color_map_of(&deck.slides()[0]),
+        ColorMap::IDENTITY,
+        "and the chain lookup finds it"
+    );
+}
+
+/// A `+mj-lt`-style reference names a collection AND a script axis, and resolves
+/// to the family in that exact cell.
+///
+/// Mutation: swap `major`/`minor` in `ThemeFontReference::resolve`, or map every
+/// suffix to the latin entry.
+#[test]
+fn a_theme_font_reference_names_one_cell_of_the_font_scheme() {
+    let entry = |typeface: &str| ThemeFontEntry {
+        typeface: typeface.to_owned(),
+        panose: None,
+        pitch_family: None,
+        charset: None,
+    };
+    let font_scheme = FontScheme {
+        major: FontCollection {
+            latin: entry("Calibri Light"),
+            ea: entry("Yu Gothic Light"),
+            // The empty "fall back to the latin entry" marker.
+            cs: entry(""),
+            script_overrides: Vec::new(),
+        },
+        minor: FontCollection {
+            latin: entry("Calibri"),
+            ea: entry(""),
+            cs: entry(""),
+            script_overrides: Vec::new(),
+        },
+    };
+
+    for (reference, expected) in [
+        ("+mj-lt", Some("Calibri Light")),
+        ("+mn-lt", Some("Calibri")),
+        ("+mj-ea", Some("Yu Gothic Light")),
+        // Empty is the fall-back marker, not a family: answering `Some("")` would
+        // put a font nobody asked for in front of the matcher.
+        ("+mj-cs", None),
+        ("+mn-ea", None),
+    ] {
+        let parsed = ThemeFontReference::parse(reference)
+            .unwrap_or_else(|| panic!("{reference} is a theme reference"));
+        assert_eq!(
+            parsed.resolve(&font_scheme),
+            expected,
+            "{reference} resolved to the wrong cell"
+        );
+    }
+
+    // A concrete family is not a reference at all.
+    assert_eq!(ThemeFontReference::parse("Calibri"), None);
+    assert_eq!(ThemeFontReference::parse("+mj"), None);
+    assert_eq!(ThemeFontReference::parse("+xx-lt"), None);
+    assert_eq!(ThemeFontReference::parse("+mj-zz"), None);
+}
+
+/// Every role and every slot round-trips through its token spelling.
+///
+/// A silent typo in one of the twenty-four strings would make one binding
+/// unreadable, and a reader that fell back to the identity for it is exactly the
+/// half-applied map the design refuses.
+///
+/// Mutation: misspell any one token, e.g. `ThemeColorSlot::FollowedHyperlink`'s as
+/// `folHLink`.
+#[test]
+fn every_slot_and_role_token_round_trips() {
+    for slot in ThemeColorSlot::ALL {
+        assert_eq!(
+            ThemeColorSlot::from_token(slot.token()),
+            Some(slot),
+            "{} does not round-trip",
+            slot.token()
+        );
+    }
+    for (index, slot) in ThemeColorSlot::ALL.iter().enumerate() {
+        assert_eq!(slot.index(), index, "slot order must be a:clrScheme's");
+    }
+    for role in ColorRole::ALL {
+        // Each role's attribute name is also its `a:schemeClr@val` spelling, and
+        // must parse back as a ROLE rather than as a slot.
+        assert_eq!(
+            SchemeColorToken::from_token(role.attribute()),
+            Some(SchemeColorToken::Role(role)),
+            "{} must parse as a role",
+            role.attribute()
+        );
+        // Under the identity map every role reaches its own default slot.
+        assert_eq!(
+            ColorMap::IDENTITY.slot(role),
+            role.default_slot(),
+            "the identity map must agree with each role's default"
+        );
+    }
+    for slot in [
+        ThemeColorSlot::Dark1,
+        ThemeColorSlot::Light1,
+        ThemeColorSlot::Dark2,
+        ThemeColorSlot::Light2,
+    ] {
+        assert_eq!(
+            SchemeColorToken::from_token(slot.token()),
+            Some(SchemeColorToken::Slot(slot)),
+            "{} must parse as a slot, bypassing the map",
+            slot.token()
+        );
+    }
+    assert_eq!(
+        SchemeColorToken::from_token("phClr"),
+        Some(SchemeColorToken::Placeholder)
+    );
+    assert_eq!(SchemeColorToken::from_token("nonsense"), None);
+    assert_eq!(THEME_COLOR_SLOTS, ThemeColorSlot::ALL.len());
+}
+
+/// The deck-level resolvers answer nothing when the package carried no theme,
+/// rather than substituting Office defaults.
+///
+/// Mutation: make `Presentation::theme_palette_of` fall back to
+/// `ColorScheme::default()`.
+#[test]
+fn a_deck_with_no_theme_resolves_nothing_rather_than_a_default_palette() {
+    let deck = deck();
+    assert!(
+        deck.theme_palette_of(&deck.slides()[0]).is_none(),
+        "no a:clrScheme means no palette, and a fabricated one looks deliberate"
+    );
+    assert_eq!(
+        deck.resolve_typeface(&crate::Typeface {
+            name: "+mn-lt".to_owned(),
+            panose: None,
+        }),
+        None
+    );
+    // A concrete family still passes through, because it needs no theme.
+    assert_eq!(
+        deck.resolve_typeface(&crate::Typeface {
+            name: "Inter".to_owned(),
+            panose: None,
+        }),
+        Some("Inter")
+    );
+}
+
+/// A theme that IS present resolves through the deck, under the slide's own map.
+///
+/// Mutation: make `Presentation::color_map_of` return `ColorMap::IDENTITY`.
+#[test]
+fn a_deck_resolves_its_palette_under_the_slide_effective_map() {
+    let mut deck = deck();
+    deck.definitions_mut().color_scheme = Some(scheme());
+    let slide_id = deck.slides()[0].id;
+    let mut mapping = ColorMapping::default();
+    mapping.slides.insert(
+        slide_id,
+        ColorMap {
+            text1: ThemeColorSlot::Accent6,
+            ..ColorMap::IDENTITY
+        },
+    );
+    let deck = deck
+        .with_color_mapping(mapping)
+        .expect("the map names this deck's slide");
+    let palette = deck
+        .theme_palette_of(&deck.slides()[0])
+        .expect("the deck carries a colour scheme");
+    assert_eq!(
+        palette.resolve("tx1", ColorTransform::default()),
+        Some(Rgba {
+            r: 0x70,
+            g: 0xAD,
+            b: 0x47,
+            a: 255
+        }),
+        "the slide's own map binds tx1 to a:accent6"
+    );
+    assert_eq!(
+        palette.slot(ThemeColorSlot::Dark1),
+        Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255
+        },
+        "and a slot lookup is map-independent, so a:dk1 is still black"
+    );
+
+    // The side table is keyed by a part ID, which is a `NodeId` — and a JSON map
+    // key has to be a string. `NodeId` serializes as one, so this works; asserted
+    // rather than assumed, because a map whose keys could not serialize would make
+    // every snapshot of a themed deck fail and nothing else in the suite carries a
+    // non-empty mapping.
+    let json = serde_json::to_string(&deck).expect("a deck with a colour map serializes");
+    let parsed: Presentation = serde_json::from_str(&json).expect("and round-trips");
+    assert_eq!(parsed, deck);
+    assert_eq!(parsed.color_mapping().slides.len(), 1);
 }

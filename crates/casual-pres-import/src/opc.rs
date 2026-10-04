@@ -60,6 +60,32 @@ const OFFICE_DOCUMENT_STRICT: &str =
 pub(crate) const SLIDE_LAYOUT_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 
+/// The `theme` relationship type.
+///
+/// Reached by TYPE rather than by id, unlike a slide or a master, because nothing
+/// names the theme positionally: a `p:sldMaster` has exactly one theme
+/// relationship and no element pointing at it. Reaching it by the conventional
+/// part name `ppt/theme/theme1.xml` would be the defect this constant avoids —
+/// OPC fixes no part's location, and a deck with two masters has `theme1.xml` and
+/// `theme2.xml` with nothing requiring either spelling.
+pub(crate) const THEME_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+
+/// The `slideMaster` relationship type, used for ONE purpose: finding the theme
+/// before `ppt/presentation.xml` has been read.
+///
+/// The note above still stands — a master is reached by the relationship **id**
+/// that `p:sldMasterIdLst` names, because that id is what carries the order, and
+/// nothing here changes that. Theme discovery is the one question where order is
+/// irrelevant: ECMA-376 §13.3.8 puts the REQUIRED theme relationship on the slide
+/// master, so the master is where the theme authoritatively lives, and the theme
+/// has to be resolved before the presentation part's body is read because
+/// `p:defaultTextStyle` states a colour (PowerPoint writes
+/// `<a:solidFill><a:schemeClr val="tx1"/></a:solidFill>` there). Reading the body
+/// first and the theme second would lose exactly that colour.
+pub(crate) const SLIDE_MASTER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
+
 /// The PresentationML main-part content types this build accepts.
 ///
 /// All four, not one: a `.pptx`, a template (`.potx`), a macro-free show

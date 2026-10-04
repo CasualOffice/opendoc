@@ -7,10 +7,10 @@
 //!
 //! A vertical slice, deliberately deep rather than broad. It opens a real deck —
 //! container, OPC graph, slide order, the three inheritance tiers, the shape tree
-//! with geometry and fills, the placeholder slots, and DrawingML text in full —
-//! and it says precisely what it does not cover. [`import_pptx`]'s module
-//! documentation enumerates both halves of that, families rather than successes
-//! (`SKILL` §9.3).
+//! with geometry and fills, the placeholder slots, DrawingML text in full, and the
+//! theme its colours and fonts resolve against — and it says precisely what it
+//! does not cover. [`import_pptx`]'s module documentation enumerates both halves
+//! of that, families rather than successes (`SKILL` §9.3).
 //!
 //! ```no_run
 //! use casual_doc_package::PackageLimits;
@@ -35,7 +35,7 @@
 //! # }
 //! ```
 //!
-//! # Two things it is not
+//! # Three things it is not
 //!
 //! **It is not a round trip.** There is no PresentationML writer in this
 //! repository, so nothing retains the source bytes and no finding in the report
@@ -43,19 +43,43 @@
 //! `degraded`, which is the honest reading of today's pipeline rather than a
 //! pessimistic one — see `loss.rs`.
 //!
-//! **It does not resolve the theme.** Every TIER of the placeholder text cascade
-//! arrives — the shape's `a:lstStyle`, the placeholder's on the layout and the
-//! master, the master's `p:txStyles` and the presentation's `p:defaultTextStyle` —
-//! `Presentation::text_cascade` folds them, and `casual-pres-layout` shapes the
-//! result into glyphs. What this reader does not do is read `ppt/theme/theme1.xml`
-//! or `p:clrMap`, so an `a:schemeClr` resolves to nothing and a `+mj-lt` typeface
-//! passes through as the token it is. Both are reported.
+//! **Text arrives whole.** Every TIER of the placeholder cascade is read — the
+//! shape's `a:lstStyle`, the placeholder's on the layout and the master, the
+//! master's `p:txStyles` and the presentation's `p:defaultTextStyle` —
+//! `TextCascade::resolve` folds them into one effective property set per outline
+//! level, and `casual-pres-layout` shapes that into glyph runs. What this reader
+//! still does not carry is enumerated in the loss report rather than here, because
+//! a module header that lists gaps goes stale and the report cannot.
 //!
-//! One consequence is worth stating here rather than leaving to be found, because
-//! it is a property of this reader and not of the layer above: `StyleColor` has no
-//! scheme-slot variant, so a theme colour resolved to `None` is **indistinguishable
-//! from a colour the file never stated** by the time the model reaches layout. Only
-//! this crate can report it, and it does.
+//! (That paragraph said "no text is drawn" while this reader was being written, and
+//! it was true then. The shaping lane landed in parallel, which is the ordinary
+//! hazard of a prose claim about a NEIGHBOURING crate — so this one now states what
+//! THIS crate does and points at the report for the rest.)
+//!
+//! **It does not paint every themed appearance.** The theme part IS read — the
+//! twelve `a:clrScheme` slots, the `p:clrMap` that binds them, the
+//! `a:fontScheme` and the modelled subset of `a:fmtScheme` — so a shape stating
+//! `a:solidFill/a:schemeClr` arrives with a concrete colour. A `p:style`
+//! reference is kept AS a reference in `Definitions::shape_styles` with only its
+//! `a:phClr` argument resolved, because folding the theme entry into the shape's
+//! own fill would turn inheritance into authorship.
+//!
+//! Resolving the entry is `casual-doc-layout`'s job, and it already does it for
+//! BOTH document classes: `place_group_child_tree` — the one recursion
+//! `casual-pres-layout` drives a slide through — resolves each shape's
+//! `Definitions::shape_styles` entry against `Definitions::format_scheme`, which
+//! this importer now populates. So a themed fill and a themed outline reach a
+//! slide's display list through the same code that paints them in a document.
+//! That is read from the shared call path rather than measured here: this crate
+//! does not depend on either layout crate, so nothing in these guards can assert
+//! a paint item, and the assertion belongs beside the existing
+//! `imported_deck.rs` seam.
+//!
+//! What still does not paint, and is reported per reference with the reason:
+//! an `a:effectRef` (there is no shadow, glow or soft-edge primitive anywhere in
+//! this build), a pattern fill entry, a non-solid outline entry, `a:fontRef`
+//! (neither the collection nor its colour has a field), and `p:bgRef`, whose
+//! `a:bgFillStyleLst` is deliberately not modelled.
 //!
 //! # Where the security boundary is
 //!
@@ -80,6 +104,7 @@ mod opc;
 mod parts;
 mod shapes;
 mod text;
+mod theme;
 mod xml;
 
 pub use error::ImportError;
