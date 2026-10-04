@@ -41,7 +41,18 @@
 //! * **Grouped text.** A text-bearing `p:sp` *inside* a `p:grpSp` carries no text
 //!   into the model at all — `GroupChild` has nowhere to put an `a:txBody` — so it
 //!   cannot reach here. The importer reports it as `grpSp/txBody`, and it is the
-//!   sharpest remaining gap in slide text.
+//!   sharpest remaining gap in slide text. A grouped shape's `a:noFill` is lost the
+//!   same way and for the same reason, so [`SlideNode::fill`] below can only be
+//!   honoured for a top-level shape.
+//!
+//! # The one appearance decision this crate makes for itself
+//!
+//! Everything about how a shape looks comes from the shared walk — except what the
+//! shape stated about its own fill and outline. `themed_shape_appearance` resolves
+//! a `p:style` theme reference whenever the shape's own value is absent, and a DOCX
+//! shape has no way to say "nothing", so the walk has no third answer to give. A
+//! slide shape does ([`SlideNode::fill`], [`SlideNode::outline`]), and
+//! `SlideHost::without_suppressed` applies it over what the walk resolved.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -151,6 +162,7 @@ pub fn lay_out_slide(
         shaper,
         texts: Vec::new(),
         tables: Vec::new(),
+        suppressed: Vec::new(),
         unresolved: Vec::new(),
     };
     let origin = Point::new(Twip(0), Twip(0));
@@ -163,8 +175,20 @@ pub fn lay_out_slide(
         let mut visible: Vec<GroupChild> = Vec::with_capacity(tier.tree.children.len());
         host.texts.clear();
         host.tables.clear();
+        host.suppressed.clear();
         for child in tier.tree.children.iter().filter(|child| !child.hidden) {
             visible.push(inherited_geometry(child, &tier.fallbacks));
+            // Collected per tier for the same reason the texts are: the shared walk
+            // is what knows each child's rectangle and resolved appearance, so the
+            // override has to happen inside `emit`, and only the `SlideNode` knows
+            // what the file stated.
+            if child.fill.suppresses() || child.outline.suppresses() {
+                host.suppressed.push((
+                    child.id(),
+                    child.fill.suppresses(),
+                    child.outline.suppresses(),
+                ));
+            }
             if tier.paints_text(child)
                 && let Some(prepared) = text::prepare(presentation, slide, child)
             {
@@ -366,6 +390,13 @@ struct SlideHost<'a> {
     /// each frame's rectangle. A `Vec` for the same reason `texts` is one: a
     /// slide holds a handful of frames at most.
     tables: Vec<(NodeId, &'a SlideNode, &'a SlideTable)>,
+    /// The current tier's shapes that state `a:noFill` on their fill, their
+    /// outline, or both — as `(id, fill suppressed, outline suppressed)`.
+    ///
+    /// A `Vec` for the reason `texts` is one, and populated ONLY for a shape that
+    /// suppresses something: a real tier holds a dozen shapes and the scan happens
+    /// once per emitted child.
+    suppressed: Vec<(NodeId, bool, bool)>,
     unresolved: Vec<UnresolvedTextProperty>,
 }
 
@@ -414,10 +445,29 @@ impl GroupChildHost for SlideHost<'_> {
                 return;
             }
         }
-        // From the same resolver the document host uses, so a shape authored with
-        // `a:outerShdw` casts the identical shadow on a slide and in a DOCX.
-        let shadow = anchor_shadow(self.definitions, node);
-        self.push(node, content, rect, descr, transform, shadow);
+        // What the shape STATED about its fill and its outline, applied over what the
+        // shared walk resolved. The walk resolves a shape's `p:style` theme
+        // reference whenever the shape's own value is absent — correctly, and
+        // `themed_shape_appearance`'s own documentation says a deck needs that MORE
+        // than a document does — but a document shape has no way to say "nothing",
+        // so the walk has no third answer to give. A slide shape does, and this is
+        // where the slide says it.
+        //
+        // After the walk rather than before it: the only way to stop the fallback
+        // from the input side would be to hand the walk a shape whose fill is
+        // `Some(something invisible)`, and there is no such value — `Fill` has no
+        // transparent spelling and a zero-width `ShapeStroke` paints a hairline.
+        //
+        // `None` from that call is "nothing left to paint", and nothing is emitted —
+        // the same reason a table's frame is not emitted above. The shape's TEXT
+        // still is: a caption with no box around it is an ordinary slide object.
+        if let Some(content) = self.without_suppressed(node, content) {
+            // From the same resolver the document host uses, so a shape authored
+            // with `a:outerShdw` casts the identical shadow on a slide and in a
+            // DOCX.
+            let shadow = anchor_shadow(self.definitions, node);
+            self.push(node, content, rect, descr, transform, shadow);
+        }
         // The shape's text, emitted from inside `emit` so it takes the very next
         // paint order after the shape it belongs to. Collecting the texts and
         // emitting them after the walk would let a later shape in the same tree
@@ -450,6 +500,102 @@ impl GroupChildHost for SlideHost<'_> {
 }
 
 impl SlideHost<'_> {
+    /// `content` with whatever this node's `p:spPr` suppressed removed, or `None`
+    /// when that leaves nothing to paint.
+    ///
+    /// Consumes the node's entry, as `texts` and `tables` are consumed: one shape
+    /// is emitted once per tier, so a second lookup would be a bug rather than a
+    /// cache miss.
+    ///
+    /// # Complexity
+    ///
+    /// O(suppressing shapes in this tier), and that count is zero for most tiers.
+    fn without_suppressed(
+        &mut self,
+        node: NodeId,
+        content: AnchorContent,
+    ) -> Option<AnchorContent> {
+        let Some(position) = self.suppressed.iter().position(|(id, _, _)| *id == node) else {
+            return Some(content);
+        };
+        let (_, no_fill, no_outline) = self.suppressed.swap_remove(position);
+        Some(match content {
+            // The four geometry arms a `p:sp` reaches, and they are spelled out
+            // rather than reached through a shared accessor because
+            // `AnchorContent`'s variants do not have one — a fifth filled variant
+            // would be a compile error here, which is the point.
+            AnchorContent::Rectangle { fill, stroke } => AnchorContent::Rectangle {
+                fill: fill.filter(|_| !no_fill),
+                stroke: stroke.filter(|_| !no_outline),
+            },
+            AnchorContent::Ellipse { fill, stroke } => AnchorContent::Ellipse {
+                fill: fill.filter(|_| !no_fill),
+                stroke: stroke.filter(|_| !no_outline),
+            },
+            AnchorContent::RoundedRectangle {
+                radius,
+                fill,
+                stroke,
+            } => AnchorContent::RoundedRectangle {
+                radius,
+                fill: fill.filter(|_| !no_fill),
+                stroke: stroke.filter(|_| !no_outline),
+            },
+            AnchorContent::Path {
+                commands,
+                closed,
+                fill,
+                stroke,
+            } => AnchorContent::Path {
+                commands,
+                closed,
+                fill: fill.filter(|_| !no_fill),
+                stroke: stroke.filter(|_| !no_outline),
+            },
+            // A `p:pic`: its image is its `p:blipFill`, not its `p:spPr` fill, so
+            // only the frame outline is suppressible here. A `p:spPr/a:noFill` on a
+            // picture refers to the box behind the image, which nothing paints.
+            AnchorContent::Image {
+                media,
+                crop,
+                border,
+                opacity,
+            } => AnchorContent::Image {
+                media,
+                crop,
+                border: border.filter(|_| !no_outline),
+                opacity,
+            },
+            AnchorContent::PictureFilledShape {
+                commands,
+                closed,
+                media,
+                crop,
+                opacity,
+                stroke,
+            } => AnchorContent::PictureFilledShape {
+                commands,
+                closed,
+                media,
+                crop,
+                opacity,
+                // No fill arm: the fill IS the picture, and `p:spPr`'s fill is a
+                // schema choice, so `a:blipFill` and `a:noFill` cannot both be
+                // stated.
+                stroke: stroke.filter(|_| !no_outline),
+            },
+            // A line is nothing but its stroke, and `AnchorContent::Line`'s stroke
+            // is not optional — so a connector that states `<a:ln><a:noFill/></a:ln>`
+            // has no paintable form and is dropped rather than drawn in a
+            // substituted colour. PowerPoint draws nothing for it either.
+            AnchorContent::Line { .. } if no_outline => return None,
+            // Every other variant belongs to a construct a `SlideNode` cannot be:
+            // a `TextBox` is refused on a slide by the model, and a table reaches
+            // `emit` through the frame arm above, which returns before this.
+            other => other,
+        })
+    }
+
     /// Appends one anchor at the next paint order.
     fn push(
         &mut self,

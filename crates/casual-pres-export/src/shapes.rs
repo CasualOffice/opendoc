@@ -29,7 +29,7 @@ use casual_doc_model::v1::{
     GroupTransform, LineEndKind, PointEmu, Rgba, ShapePath, ShapePathCommand, ShapeStroke,
     StyleColor,
 };
-use casual_pres_model::{Placeholder, ShapeTree, Slide, SlideNode};
+use casual_pres_model::{Placeholder, ShapeTree, Slide, SlideNode, SlidePaint};
 
 use crate::opc::{Relationships, rel};
 use crate::{ExportError, text};
@@ -205,7 +205,15 @@ fn nested_child_xml(
                 "<p:sp><p:nvSpPr>{}<p:cNvSpPr/><p:nvPr/></p:nvSpPr>",
                 non_visual_properties(shape_id, None, "Shape", false)
             );
-            xml.push_str(&shape_properties_xml(shape));
+            // `Inherited` on both, because a group child is a bare `GroupChild`: the
+            // importer reports the `a:noFill` it had to drop here as `spPr/@noFill`,
+            // and inventing a state for it on the way out would re-emit a fact the
+            // model does not hold.
+            xml.push_str(&shape_properties_xml(
+                shape,
+                SlidePaint::Inherited,
+                SlidePaint::Inherited,
+            ));
             // `p:sp` requires a `p:txBody`; a shape with no text gets the minimal
             // valid one rather than being written invalid.
             xml.push_str(EMPTY_TEXT_BODY);
@@ -228,7 +236,7 @@ fn nested_child_xml(
             "<p:pic><p:nvPicPr>{}<p:cNvPicPr/><p:nvPr/></p:nvPicPr>{}{}</p:pic>",
             non_visual_properties(shape_id, picture.descr.as_deref(), "Picture", false),
             blip_fill_xml(picture, context, rels),
-            picture_shape_properties(picture)
+            picture_shape_properties(picture, SlidePaint::Inherited, SlidePaint::Inherited)
         ),
         // A text box cannot occur in a presentation: the model refuses it
         // (`PresentationError::TextBoxShapeOnSlide`), so this is unreachable rather
@@ -301,7 +309,7 @@ fn shape_xml(node: &SlideNode, shape: &GroupShape, shape_id: usize) -> String {
         non_visual_properties(shape_id, node.name.as_deref(), "Shape", node.hidden),
         placeholder_body(node.placeholder.as_ref())
     );
-    xml.push_str(&shape_properties_xml(shape));
+    xml.push_str(&shape_properties_xml(shape, node.fill, node.outline));
     match node.text.as_ref() {
         Some(body) => xml.push_str(&text::text_body_xml(body)),
         None => xml.push_str(EMPTY_TEXT_BODY),
@@ -329,7 +337,7 @@ fn picture_xml(
         placeholder_body(node.placeholder.as_ref())
     );
     xml.push_str(&blip_fill_xml(picture, context, rels));
-    xml.push_str(&picture_shape_properties(picture));
+    xml.push_str(&picture_shape_properties(picture, node.fill, node.outline));
     xml.push_str("</p:pic>");
     xml
 }
@@ -405,7 +413,21 @@ fn placeholder_xml(placeholder: Option<&Placeholder>) -> String {
 }
 
 /// `p:spPr` for a shape.
-fn shape_properties_xml(shape: &GroupShape) -> String {
+///
+/// # Why the two states are parameters rather than read off the shape
+///
+/// `GroupShape` holds `Option<Fill>` and `Option<ShapeStroke>`, and `None` is the
+/// spelling of two different facts on a slide: "the file said nothing" and "the
+/// file said `<a:noFill/>`". Writing a fill only when `Some` therefore turned every
+/// deliberately transparent shape opaque on save — PowerPoint reopening the written
+/// deck applies the placeholder slot's fill, then the shape's `p:style` theme
+/// reference, then the theme default, because that is what an absent fill element
+/// means. The states come from the `SlideNode`, which is where the model keeps them.
+fn shape_properties_xml(
+    shape: &GroupShape,
+    fill_state: SlidePaint,
+    outline_state: SlidePaint,
+) -> String {
     let mut xml = String::from("<p:spPr>");
     xml.push_str(&xfrm_xml(
         shape.offset,
@@ -437,18 +459,39 @@ fn shape_properties_xml(shape: &GroupShape) -> String {
             xml.push_str("</a:avLst></a:prstGeom>");
         }
     }
-    if let Some(fill) = shape.fill.as_ref() {
-        xml.push_str(&fill_xml(fill));
+    // `a:noFill` first in both matches, because the model refuses it beside a value
+    // (`PresentationError::SuppressedPaintCarriesValue`) — so the arm order states
+    // the invariant rather than resolving a conflict that cannot arise. Both sit
+    // where `CT_ShapeProperties` puts them: the fill group after the geometry, the
+    // `a:ln` after the fill.
+    match (fill_state, shape.fill.as_ref()) {
+        (SlidePaint::Suppressed, _) => xml.push_str("<a:noFill/>"),
+        (_, Some(fill)) => xml.push_str(&fill_xml(fill)),
+        (SlidePaint::Inherited | SlidePaint::Authored, None) => {}
     }
-    if let Some(stroke) = shape.stroke.as_ref() {
-        xml.push_str(&outline_xml(stroke));
+    match (outline_state, shape.stroke.as_ref()) {
+        // An `a:ln` wrapping nothing but `a:noFill` is how "explicitly unstroked" is
+        // spelled; an empty `<a:ln/>` would mean "inherit", which is the opposite.
+        (SlidePaint::Suppressed, _) => xml.push_str("<a:ln><a:noFill/></a:ln>"),
+        (_, Some(stroke)) => xml.push_str(&outline_xml(stroke)),
+        (SlidePaint::Inherited | SlidePaint::Authored, None) => {}
     }
     xml.push_str("</p:spPr>");
     xml
 }
 
 /// `p:spPr` for a picture, which is rectangular and carries only a border.
-fn picture_shape_properties(picture: &GroupPicture) -> String {
+///
+/// The two states are parameters for the reason `shape_properties_xml`'s are. A
+/// picture's `p:spPr` fill is the fill BEHIND the image and `GroupPicture` has no
+/// field for it, so `fill_state` can only ever re-emit `<a:noFill/>` — which is
+/// still worth re-emitting, because dropping it makes the box behind a transparent
+/// PNG come back filled from the placeholder slot.
+fn picture_shape_properties(
+    picture: &GroupPicture,
+    fill_state: SlidePaint,
+    outline_state: SlidePaint,
+) -> String {
     let mut xml = String::from("<p:spPr>");
     // The picture's full orientation. An earlier draft passed `None` for the
     // rotation and `false` for the vertical flip, which silently un-rotated and
@@ -462,8 +505,13 @@ fn picture_shape_properties(picture: &GroupPicture) -> String {
         picture.flip_v,
     ));
     xml.push_str(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#);
-    if let Some(border) = picture.border.as_ref() {
-        xml.push_str(&outline_xml(border));
+    if fill_state.suppresses() {
+        xml.push_str("<a:noFill/>");
+    }
+    match (outline_state, picture.border.as_ref()) {
+        (SlidePaint::Suppressed, _) => xml.push_str("<a:ln><a:noFill/></a:ln>"),
+        (_, Some(border)) => xml.push_str(&outline_xml(border)),
+        (SlidePaint::Inherited | SlidePaint::Authored, None) => {}
     }
     xml.push_str("</p:spPr>");
     xml

@@ -80,6 +80,7 @@ fn main() {
     for e in entries.iter().take(25) {
         println!("{:>5}  {}", e.occurrences, e.feature);
     }
+    paint_census(&imported);
     // Slide 1's shapes: where are they, and did they inherit a box?
     for (i, slide) in p.slides().iter().enumerate().take(3) {
         println!(
@@ -121,5 +122,63 @@ fn main() {
                 text.unwrap_or_default()
             );
         }
+    }
+}
+
+/// What the deck's shapes STATE about their fill and their outline, per tier.
+///
+/// The census the `a:noFill` work was read from, and the reason it is here rather
+/// than in a guard: the report says how often a construct was LOST, and once the
+/// loss is fixed the report goes quiet about it — so a deck's `a:noFill` count stops
+/// being visible exactly when it starts mattering. This says how much of a real deck
+/// turns on the distinction whether or not anything is still lost.
+///
+/// `suppressed` is the column to read: every one of those shapes paints nothing and
+/// inherits nothing, and before `casual_pres_model::SlidePaint` every one of them
+/// was a reported loss instead.
+fn paint_census(imported: &casual_pres_import::ImportedPresentation) {
+    use casual_pres_model::{SlideNode, SlidePaint};
+
+    let p = &imported.presentation;
+    let tiers: [(&str, Vec<&SlideNode>); 3] = [
+        (
+            "masters",
+            p.masters()
+                .iter()
+                .flat_map(|master| master.shapes.children.iter())
+                .collect(),
+        ),
+        (
+            "layouts",
+            p.layouts()
+                .iter()
+                .flat_map(|layout| layout.shapes.children.iter())
+                .collect(),
+        ),
+        (
+            "slides",
+            p.slides()
+                .iter()
+                .flat_map(|slide| slide.shapes.children.iter())
+                .collect(),
+        ),
+    ];
+    println!("\n-- stated fill / outline, inherited/authored/suppressed --");
+    for (tier, nodes) in tiers {
+        let tally = |of: &dyn Fn(&SlideNode) -> SlidePaint| {
+            let count = |wanted: SlidePaint| nodes.iter().filter(|node| of(node) == wanted).count();
+            format!(
+                "{}/{}/{}",
+                count(SlidePaint::Inherited),
+                count(SlidePaint::Authored),
+                count(SlidePaint::Suppressed)
+            )
+        };
+        println!(
+            "{tier:>8}: {:>4} shapes   fill {:<12} outline {}",
+            nodes.len(),
+            tally(&|node: &SlideNode| node.fill),
+            tally(&|node: &SlideNode| node.outline),
+        );
     }
 }

@@ -75,6 +75,15 @@
 //! a paint item, and the assertion belongs beside the existing
 //! `imported_deck.rs` seam.
 //!
+//! What a shape STATES about its fill and its outline is carried too, as
+//! `casual_pres_model::SlidePaint`, and that is a third state rather than a
+//! refinement: `<a:noFill/>` is not an absent fill element, because an absent one
+//! inherits — from the placeholder slot, then from the shape's `p:style`, then from
+//! the theme — and `a:noFill` inherits nothing. The distinction has nowhere to live
+//! inside a `p:grpSp` (its children are bare `GroupChild`s) or on an `a:tcPr` (a
+//! cell has an `Option<Fill>` and four `Option<ShapeStroke>` edges), so it is still
+//! reported in exactly those two places and nowhere else.
+//!
 //! What still does not paint, and is reported per reference with the reason:
 //! an `a:effectRef` (there is no shadow, glow or soft-edge primitive anywhere in
 //! this build), a pattern fill entry, a non-solid outline entry, `a:fontRef`

@@ -21,6 +21,13 @@
 //! fields on `GroupShape`, and deliberately so — `GroupShape` has 23 literal
 //! construction sites across six crates, so widening it is a breaking change to all
 //! of them (`SKILL` §5a shape 1) for a field DOCX would never read.
+//!
+//! [`SlidePaint`] joins them for the same reason and closes a named gap: a slide
+//! shape can state `<a:noFill/>`, and `v1::GroupShape::fill` is an `Option<Fill>`
+//! in which `None` would have to mean both "states nothing, so inherit" and
+//! "states nothing deliberately, so inherit nothing". A document has no
+//! placeholder cascade and no theme style matrix behind an absent fill, so the
+//! document model never needed the third state; a slide does.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,7 +37,73 @@ use casual_doc_model::v1::{
 use casual_doc_model::{ModelError, NodeId};
 use serde::{Deserialize, Serialize};
 
-use crate::{Placeholder, PlaceholderKind, PresentationError, SlideTable, TextBody};
+use crate::{PaintProperty, Placeholder, PlaceholderKind, PresentationError, SlideTable, TextBody};
+
+/// What a slide shape's `p:spPr` **states** about one paintable property — its
+/// fill (`a:solidFill` and its siblings) or its outline (`a:ln`).
+///
+/// # Three states, because the file has three
+///
+/// | This value | The markup | What a consumer must do |
+/// | --- | --- | --- |
+/// | [`SlidePaint::Inherited`] | no fill element / no `a:ln` | inherit: the placeholder slot, then the shape's `p:style` theme reference, then the theme default |
+/// | [`SlidePaint::Authored`] | `a:solidFill`, `a:gradFill`, `a:blipFill`, … / an `a:ln` with a line in it | paint what the drawing carries, and inherit nothing |
+/// | [`SlidePaint::Suppressed`] | `<a:noFill/>` / `<a:ln><a:noFill/></a:ln>` | paint **nothing**, and inherit nothing |
+///
+/// # Why this is one enum and not a `bool`
+///
+/// A `bool` beside `Option<Fill>` makes four combinations of which one —
+/// "explicitly nothing, and here is the something" — is not a state any file can
+/// be in, and an unreachable state in a model is a branch every consumer has to
+/// invent an answer for. The three real states are a three-valued enum, and
+/// [`ShapeTree::validate`] refuses the pairing that would reintroduce the fourth
+/// ([`PresentationError::SuppressedPaintCarriesValue`]).
+///
+/// # Why `Authored` is recorded although the value lives elsewhere
+///
+/// It is not redundant with `fill.is_some()`. A stated fill this build cannot
+/// model — `a:gradFill`, `a:pattFill` — arrives as `Authored` with no value, and
+/// that is exactly the case where inheriting would be wrong: the shape is filled
+/// in the file, just not in a way this build can paint, so filling it from the
+/// theme instead would substitute one wrong appearance for another and hide the
+/// reported loss behind a plausible colour.
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum SlidePaint {
+    /// The shape states nothing, so the property is inherited.
+    ///
+    /// The default, because it is what the overwhelming majority of real shapes
+    /// state and what a hand-built model means when it says nothing.
+    #[default]
+    Inherited,
+    /// The shape states the property, and its value — when this build can model
+    /// one — is on the drawing (`v1::GroupShape::fill`, `::stroke`,
+    /// `v1::GroupPicture::border`).
+    Authored,
+    /// The shape states `<a:noFill/>`: deliberately nothing, inheriting nothing.
+    Suppressed,
+}
+
+impl SlidePaint {
+    /// Whether the shape stated nothing.
+    ///
+    /// Public because it is this type's `skip_serializing_if`: an absent field
+    /// deserializes to [`SlidePaint::Inherited`], so writing it out would put the
+    /// default in every node of every snapshot.
+    #[must_use]
+    pub const fn is_inherited(&self) -> bool {
+        matches!(self, Self::Inherited)
+    }
+
+    /// Whether the shape stated `a:noFill` — the one state a painter must act on
+    /// rather than fall through.
+    #[must_use]
+    pub const fn suppresses(&self) -> bool {
+        matches!(self, Self::Suppressed)
+    }
+}
 
 /// One shape on a slide, layout or master: a DrawingML child plus the slide-only
 /// identity it carries.
@@ -51,6 +124,21 @@ pub struct SlideNode {
     /// it.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub hidden: bool,
+    /// What the shape's `p:spPr` states about its FILL.
+    ///
+    /// The drawing holds the fill's value; this holds whether there was one to
+    /// hold. See [`SlidePaint`] for why the third state cannot live on
+    /// `v1::GroupShape`.
+    #[serde(default, skip_serializing_if = "SlidePaint::is_inherited")]
+    pub fill: SlidePaint,
+    /// What the shape's `p:spPr` states about its OUTLINE (`a:ln`).
+    ///
+    /// Separate from `fill` and not folded with it, because a shape states the two
+    /// independently and the common real case states them *differently*: an
+    /// unfilled box with a visible border, and a filled box with none, are both
+    /// ordinary.
+    #[serde(default, skip_serializing_if = "SlidePaint::is_inherited")]
+    pub outline: SlidePaint,
     /// The drawing itself, in the tree's child coordinate space.
     pub content: GroupChild,
     /// The shape's text (`p:txBody`), when it holds any.
@@ -82,17 +170,39 @@ pub struct SlideNode {
 }
 
 impl SlideNode {
-    /// A shape with no placeholder slot, no name and not hidden.
+    /// A shape with no placeholder slot, no name, not hidden, and stating nothing
+    /// about its fill or its outline.
     #[must_use]
     pub const fn new(content: GroupChild) -> Self {
         Self {
             placeholder: None,
             name: None,
             hidden: false,
+            // `Inherited` and not "whatever the drawing carries": a caller that
+            // builds a filled shape by hand has stated the fill on the drawing,
+            // where every painter already reads it, so the only consumer this
+            // choice can mislead is one asking "did the FILE say so" — and the
+            // answer for a hand-built shape is no.
+            fill: SlidePaint::Inherited,
+            outline: SlidePaint::Inherited,
             content,
             text: None,
             table: None,
         }
+    }
+
+    /// Records what the shape stated about its fill.
+    #[must_use]
+    pub const fn stating_fill(mut self, fill: SlidePaint) -> Self {
+        self.fill = fill;
+        self
+    }
+
+    /// Records what the shape stated about its outline.
+    #[must_use]
+    pub const fn stating_outline(mut self, outline: SlidePaint) -> Self {
+        self.outline = outline;
+        self
     }
 
     /// Attaches a text body.
@@ -303,6 +413,7 @@ impl ShapeTree {
             if let Some(table) = child.table.as_ref() {
                 table.validate()?;
             }
+            validate_stated_paint(child)?;
             validate_child(&child.content, definitions, 0)?;
         }
         Ok(())
@@ -350,6 +461,46 @@ impl ShapeTree {
             })
             .collect()
     }
+}
+
+/// Refuses the one combination of [`SlidePaint`] and drawing that no file can be
+/// in: "explicitly nothing" beside a value.
+///
+/// This is what keeps the tri-state a tri-state. Without it the pair
+/// ([`SlidePaint::Suppressed`], `Some(fill)`) is representable, and a painter
+/// reaching it has to invent a rule — which is precisely the fourth, impossible
+/// state a `bool` beside an `Option` would have admitted.
+///
+/// A picture's FILL is deliberately not checked: a `p:pic`'s image is its
+/// `p:blipFill`, not its `p:spPr` fill, so `<a:noFill/>` on a picture's shape
+/// properties says something about the box behind the image — which this model has
+/// no field for — and is consistent with the picture having one.
+///
+/// # Complexity
+///
+/// O(1) per node.
+fn validate_stated_paint(node: &SlideNode) -> Result<(), PresentationError> {
+    let (fill, stroke) = match &node.content {
+        GroupChild::Shape(shape) => (shape.fill.is_some(), shape.stroke.is_some()),
+        GroupChild::Picture(picture) => (false, picture.border.is_some()),
+        // Neither a group nor a text box carries a slide-stated fill or outline in
+        // this model: `WordprocessingGroup` has no fill field at all, and a text
+        // box on a slide is refused outright a few lines above this call.
+        GroupChild::Group(_) | GroupChild::TextBox(_) => (false, false),
+    };
+    if node.fill.suppresses() && fill {
+        return Err(PresentationError::SuppressedPaintCarriesValue {
+            shape: node.id(),
+            property: PaintProperty::Fill,
+        });
+    }
+    if node.outline.suppresses() && stroke {
+        return Err(PresentationError::SuppressedPaintCarriesValue {
+            shape: node.id(),
+            property: PaintProperty::Outline,
+        });
+    }
+    Ok(())
 }
 
 /// Checks one drawing child's nesting bound and media references, recursing into

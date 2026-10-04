@@ -60,7 +60,7 @@
 
 use casual_doc_model::v1::{Extent, GroupChild, GroupShape, PointEmu, ShapeGeometry};
 use casual_pres_model::{
-    CellMerge, SlideNode, SlideTable, TableCell, TableCellProperties, TableGridColumn,
+    CellMerge, SlideNode, SlidePaint, SlideTable, TableCell, TableCellProperties, TableGridColumn,
     TableProperties, TableRow, TableStyle, TableStyles, TextAnchor,
 };
 use quick_xml::events::BytesStart;
@@ -196,6 +196,12 @@ pub(crate) fn read_graphic_frame(
         placeholder: non_visual.placeholder,
         name: non_visual.name,
         hidden: non_visual.hidden,
+        // A `p:graphicFrame` has no `p:spPr` and so states nothing about either:
+        // `CT_GraphicalObjectFrame` is a `p:xfrm` and a payload, with no fill or
+        // outline element in its content model at all. `Inherited` is the reading
+        // of an element that cannot be written, not a default reached for.
+        fill: SlidePaint::Inherited,
+        outline: SlidePaint::Inherited,
         content: GroupChild::Shape(GroupShape {
             id,
             offset,
@@ -588,7 +594,24 @@ fn read_cell_properties(
         if let Some(edge) = edge {
             // `a:lnL` IS an `a:CT_LineProperties` — the same element `a:ln` on a
             // `p:spPr` is — so it goes through the one line reader. `@w` is in EMU.
-            *edge = read_line(cursor, reporter, child, child_empty, resolver)?;
+            let line = read_line(cursor, reporter, child, child_empty, resolver)?;
+            if line.state.suppresses() {
+                // The edge-level half of the `a:noFill` distinction, and the one
+                // place it is still a LOSS: a `p:spPr` carries it on the
+                // `SlideNode`, while `TableCellProperties` has four
+                // `Option<ShapeStroke>` edges and no room for "explicitly no edge".
+                // It matters for the same reason it matters on a shape — a cell
+                // that states no left border must not inherit the table style's —
+                // so it is reported rather than conflated with an absent `a:lnL`.
+                //
+                // Charged to the EDGE's own name rather than to `ln`, so a cell's
+                // suppressed border is distinguishable in the report from a shape's
+                // suppressed outline: they are different losses with different
+                // owners, and one name for both would make a deck look like it lost
+                // the same thing twice.
+                reporter.degraded_attribute(&part, local, b"noFill");
+            }
+            *edge = line.stroke;
             return Ok(!child_empty);
         }
         if matches!(local, b"headers" | b"extLst" | b"lnTlToBr" | b"lnBlToTr") {
@@ -598,6 +621,12 @@ fn read_cell_properties(
         // reader already classifies and reports each kind.
         read_fill_child(cursor, reporter, child, child_empty, &mut fill, resolver)
     })?;
+    if fill.state.suppresses() {
+        // Same gap as the edges above: `TableCellProperties::fill` is an
+        // `Option<Fill>`, so a cell that states `a:noFill` is indistinguishable from
+        // one that states nothing and will take its table style's band fill.
+        reporter.degraded_attribute(&part, b"tcPr", b"noFill");
+    }
     properties.fill = fill.fill;
     Ok(properties)
 }
