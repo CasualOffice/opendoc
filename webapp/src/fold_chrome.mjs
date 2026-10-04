@@ -34,7 +34,7 @@
 // rather than over either printer.
 
 import { t } from "./i18n.mjs";
-import { foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
+import { chevronPlacement, foldCommands, pageCountCaveat, parseOutlineRows } from "./fold_view.mjs";
 
 /**
  * Wires folding.
@@ -301,6 +301,25 @@ export function createFoldChrome({
       }
       if (!anchor) return;
       const { host, rect } = anchor;
+      // The chevron lives in the page MARGIN beside the heading, which is where
+      // Word puts it. When there is no margin to live in, it is not painted.
+      //
+      // This replaces a clamp, and the clamp was a defect dressed as a fix. At
+      // the phone rung reflow pulls the text to a 16px inset, so an 18px chevron
+      // offset by 20px painted at -4px — outside the window. Clamping it to 0
+      // stopped the overflow and put a slice of an absolutely-positioned BUTTON
+      // on top of the heading's first glyph, where it captures the tap that
+      // should place the caret. A control that steals a click from the text is
+      // worse than no control.
+      //
+      // Withholding it costs nothing a reader can reach for: folding is still on
+      // the outline tree, on View ▸ Show and in the palette, so this is a
+      // missing ornament and not a missing capability.
+      const place = chevronPlacement(rect, CHEVRON_GUTTER);
+      if (!place.show) {
+        host.querySelector(".fold-body-chevron")?.remove();
+        return;
+      }
       let chevron = host.querySelector(".fold-body-chevron");
       if (!chevron) {
         chevron = document.createElement("button");
@@ -328,16 +347,7 @@ export function createFoldChrome({
       chevron.setAttribute("aria-label", label);
       chevron.dataset.node = heading.node;
       chevron.querySelector(".ms").textContent = heading.collapsed ? "chevron_right" : "expand_more";
-      // The chevron sits in the page margin beside the heading, which is what
-      // Word does. But the margin is not always wide enough to hold it: at the
-      // phone rung reflow pulls the text to a 16px inset, and an 18px chevron
-      // offset by GUTTER then painted at -4px — outside the window, which
-      // `phone-no-horizontal-scroll` measures and refuses. So the offset is
-      // explicit arithmetic that CLAMPS rather than a negative margin that
-      // cannot. Where the margin has room this is the same position it always
-      // was; where it does not, the chevron tucks against the edge instead of
-      // hanging off it.
-      chevron.style.left = `${Math.max(0, rect.x - CHEVRON_GUTTER)}px`;
+      chevron.style.left = `${place.left}px`;
       chevron.style.top = `${rect.y}px`;
       chevron.style.height = `${rect.height}px`;
     },

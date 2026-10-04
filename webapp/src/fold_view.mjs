@@ -374,3 +374,24 @@ export function pageCountCaveat(foldedCount, t) {
   if (count <= 0) return "";
   return t("fold.pageCountNotPrinted", { count });
 }
+
+/** Where the in-body fold chevron goes, or that it does not go anywhere.
+ *
+ *  The chevron lives in the page MARGIN beside the heading, which is where Word
+ *  puts it. The rule that matters is the one a clamp got wrong: it must never
+ *  cover the text. It is an absolutely-positioned button, so a single pixel of
+ *  overlap captures the tap that should place the caret — worse than no control.
+ *
+ *  Withholding it costs no capability: folding stays on the outline tree, on
+ *  View ▸ Show and in the palette.
+ *
+ *  O(1).
+ *
+ *  @param {{x: number}} rect   the heading's rectangle in the overlay's space
+ *  @param {number} gutter      the chevron's width plus its gap
+ *  @returns {{show: boolean, left: number}}
+ */
+export function chevronPlacement(rect, gutter) {
+  const left = rect.x - gutter;
+  return left < 0 ? { show: false, left: 0 } : { show: true, left };
+}
