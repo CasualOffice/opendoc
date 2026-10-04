@@ -66,7 +66,7 @@ Every row was run in this working tree on 2026-10-04.
 | No CFB/OLE container support anywhere | `grep -rln "CompoundFile\|cfb\|OLE\|EncryptionInfo" crates/casual-doc-package/src crates/casual-doc-io/src` | exit 1, no output |
 | …nor anywhere else under `crates/` | `grep -rln "CompoundFile\|EncryptionInfo\|EncryptedPackage" crates/` | exit 1, no output |
 | No crypto crate in the lockfile | `grep -c '^name = "<p>"$' Cargo.lock` for `aes sha2 sha1 hmac pbkdf2 cipher ring rustls aes-gcm cbc sha3 digest subtle zeroize getrandom rand` | **0 for every one** |
-| `zip` crypto features are deliberately off | `Cargo.toml:58` | `zip = { version = "=7.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }` — and `docs/28` §25 records the reason: "default `zip` features include encryption and multiple codecs that DOCX does not need" |
+| `zip` crypto features are deliberately off | `Cargo.toml:58` | `zip = { version = "=7.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }` — and `docs/28` line 25 records the reason: "default `zip` features include encryption and multiple codecs that DOCX does not require" |
 | PDF export writes no `/Encrypt` | `grep -rn "Encrypt" crates/casual-doc-pdf/src/*.rs` | no output; `docs/18` line 84 already lists encryption as not covered |
 
 ### 1.1 Where the container decision is made
@@ -74,7 +74,7 @@ Every row was run in this working tree on 2026-10-04.
 One place, and it is a byte comparison at offset 0:
 
 ```rust
-// crates/casual-doc-package/src/archive.rs:31
+// crates/casual-doc-package/src/archive.rs:28
 if !bytes.starts_with(LOCAL_FILE_SIGNATURE) {   // b"PK\x03\x04"
     return Err(PackageError::MalformedArchive);
 }
@@ -112,7 +112,7 @@ fn probe(&self, request: ProbeRequest<'_>) -> ProbeResult {
 }
 ```
 
-`DocxAdapter::probe` (`docx.rs:70`) has the same shape. `FormatRegistry::detect` then finds no
+`DocxAdapter::probe` (`docx.rs:71`) has the same shape. `FormatRegistry::detect` then finds no
 match at all and returns `IoError::UnsupportedFormat { requested: None }`, whose `Display` is
 "document format could not be detected" (`crates/casual-doc-io/src/error.rs`).
 
@@ -146,9 +146,9 @@ result never reaches a reader. §11 Phase 0 closes the gap rather than the sente
 | `ProbeRequest` | `crates/casual-doc-io/src/registry.rs` | `{ bytes }` only — a probe cannot report "right format, needs a key". |
 | `AdapterError` | `crates/casual-doc-io/src/error.rs` | a `String` message. A host cannot branch on "needs a password" versus "corrupt". |
 | `IoError` | `crates/casual-doc-io/src/error.rs` | six variants, none of them "password required" or "password wrong". |
-| `REFUSAL_CODES` | `webapp/src/host_contract.mjs:103` | `unknown-command`, `capability-withheld`, `unavailable`, `engine-refused`, `threw`, `bad-request`, `timeout`. No password state. |
-| `REQUIREMENTS` | `webapp/src/host_contract.mjs:69` | the nine capabilities. A password is **not** one of them (§8.3). |
-| wasm façade | `crates/casual-doc-wasm/src/lib.rs:26112` `open` / `:962` `open_as` | `(bytes)` and `(bytes, format_id)`. No third argument, and `open` is a one-shot: there is no "try again with this" without a second entry point. |
+| `REFUSAL_CODES` | `webapp/src/host_contract.mjs:101` | `unknown-command`, `capability-withheld`, `unavailable`, `engine-refused`, `threw`, `bad-request`, `timeout`. No password state. |
+| `REQUIREMENTS` | `webapp/src/host_contract.mjs:70` | the nine capabilities. A password is **not** one of them (§8.3). |
+| wasm façade | `crates/casual-doc-wasm/src/lib.rs:940` `open` / `:959` `open_as` | `(bytes)` and `(bytes, format_id)`. No third argument, and `open` is a one-shot: there is no "try again with this" without a second entry point. |
 | the wasm gate | `.github/workflows/ci.yml:191` | `cargo check --workspace --all-features --locked --target wasm32-unknown-unknown`. Any new workspace member must compile for the browser — the constraint ADR-063 was decided under. |
 
 ---
@@ -879,7 +879,7 @@ The constraint that shapes this: **`ImportRequest` is `Clone, Copy` and not `#[n
 
 ### 7.4 Host contract and the capability model
 
-**A password is not a capability.** `REQUIREMENTS` (`webapp/src/host_contract.mjs:69`) answers
+**A password is not a capability.** `REQUIREMENTS` (`webapp/src/host_contract.mjs:70`) answers
 "may this page do X" — a host-granted permission. A password answers "do you hold the key to
 this file", which the host does not grant and cannot withhold. Adding `password` to the nine
 would be a category error, and the file's own comment already draws the line (`mutate` is not a
