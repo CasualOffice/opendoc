@@ -58,7 +58,7 @@
 //!    **operations** (`107` §3.1 T2 tombstones); a caret needs none of them.
 //!
 //! ADR-056 built the liveness oracle for the identical question one increment earlier, for
-//! block-slot operations: [`BlockTarget`](crate::BlockTarget) answers *where does this node sit
+//! block-slot operations: [`BlockTarget`] answers *where does this node sit
 //! in the state I am about to apply against*, O(1) per query over an index built once per
 //! applied arrival. [`Roster::rebase`] asks it about carets. ADR-056's rule comes with it: a
 //! destroyed anchor is **a reported loss, never a fall-back to the stale value** — so a caret
@@ -1388,6 +1388,32 @@ mod tests {
                      the session envelope, because it is never persisted and never replayed"
                 );
             }
+        }
+
+        // And the same rule in the OTHER direction, which this guard did not previously cover.
+        // `the_keystroke_path_runs_no_transform` used to hold it as a side effect of presence
+        // not being on its collaboration list; a typed caret put `codec::` in this module, so
+        // the list had to classify presence as collaboration, and that would have silently
+        // dropped the check. It is asserted here instead, where it is narrower and visible: a
+        // caret's payload is framed by the codec, and the session is still none of presence's
+        // business.
+        let production = include_str!("presence.rs").replace("\r\n", "\n");
+        let production = production
+            .split_once("\n#[cfg(test)]\n")
+            .map_or(production.as_str(), |(before, _)| before);
+        for forbidden in [
+            "session::",
+            "ClientSession",
+            "ServerSession",
+            "RevisionLog",
+            "Commit",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "presence.rs names `{forbidden}`: the dependency points inwards only — presence \
+                 reads a position map and a block target it is HANDED, and never the session \
+                 that produced them, or ordering a caret becomes possible to attempt"
+            );
         }
     }
 }
