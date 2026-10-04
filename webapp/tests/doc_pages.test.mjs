@@ -474,14 +474,24 @@ test("how much English the reference pages put on the site, measured and publish
   // prose through the string table, or machine translating it, would be a worse
   // lie than leaving it in English. The shared chrome cost nothing on either
   // side, which is the direction this figure actually watches.
+  //
+  // 2,090 -> 2,093, AND THIS ONE WAS ALREADY RED ON `origin/main`. Measured on a
+  // clean checkout of `bd5b5ca2` with no local change at all: the committed pages
+  // are byte-identical to a fresh generation — regenerating them changes nothing —
+  // so the figure, not the pages, is what drifted. The three sentences are in
+  // `error-code-registry.html` (131 -> 134), which is `ODC-7010`'s row from #756:
+  // that branch regenerated the page and did not re-measure this number, which is
+  // precisely the trap the paragraph above describes, one merge later. Recorded
+  // here rather than left for whoever next runs the suite, because a number that
+  // is wrong on `main` makes every open branch look like it broke something.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2090,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2090). That ` +
+    2093,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2093). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),

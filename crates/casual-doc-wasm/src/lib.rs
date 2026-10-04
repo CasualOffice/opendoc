@@ -13210,6 +13210,9 @@ impl WasmDocument {
         if self.capabilities.may_manage_protection() {
             names.push("manageProtection".to_owned());
         }
+        if self.capabilities.may_review() {
+            names.push("review".to_owned());
+        }
         if self.capabilities.may_suggest() {
             names.push("suggest".to_owned());
         }
@@ -13354,12 +13357,13 @@ impl WasmDocument {
             capabilities = match name.as_str() {
                 "comment" => capabilities.with_comment(),
                 "suggest" => capabilities.with_suggest(),
+                "review" => capabilities.with_review(),
                 "edit" => capabilities.with_edit(),
                 "manageProtection" => capabilities.with_manage_protection(),
                 other => {
                     return Err(format!(
                         "unknown capability {other:?}; the grant may name comment, suggest, \
-                         edit or manageProtection"
+                         review, edit or manageProtection"
                     ));
                 }
             };
@@ -45465,6 +45469,65 @@ mod tests {
             d.identity_space(),
             before,
             "a refused participant number moved the minting space anyway"
+        );
+    }
+
+    /// **Every capability the engine models has a facade name, in both directions.**
+    ///
+    /// `Capabilities` grew a `review` field on 2026-10-04 and neither half of the facade
+    /// learnt it: `adopt_participant_capabilities` refused `"review"` as an unknown name, so a
+    /// host handing over a verified `Capabilities::reviewer()` grant got an error rather than a
+    /// reviewer, and `participant_capabilities` could never report it, so a chrome asking what
+    /// this participant may do was told "comment" and disabled the accept/reject controls of
+    /// the one role that exists to use them. `152` §9 rule 4 exactly: built, and unreachable.
+    ///
+    /// The guard is written against `Capabilities::owner()` rather than against a hand-listed
+    /// set of bits, because `owner()` is by construction the value with every capability set.
+    /// So a sixth capability added to the struct and not to the facade cannot be expressed by
+    /// any name list, the intersection in `adopt_participant_capabilities_internal` drops it,
+    /// and the first assertion fails. The second assertion is the other direction: a name the
+    /// setter accepts and the getter cannot emit.
+    #[test]
+    fn every_capability_the_engine_models_has_a_facade_name_in_both_directions() {
+        // Sorted, because the getter promises sorted and a host diffing two grants compares
+        // the lists.
+        let every_name: Vec<String> = ["comment", "edit", "manageProtection", "review", "suggest"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut d = open_document(&text_of_lines(1)).expect("must open");
+        d.adopt_participant_capabilities_internal(&every_name)
+            .expect("every capability the engine models must have a name the facade accepts");
+        assert_eq!(
+            d.capabilities,
+            Capabilities::owner(),
+            "these names cannot express every capability the engine models, so a grant that \
+             held one of them was narrowed away silently at the facade"
+        );
+        assert_eq!(
+            d.participant_capabilities(),
+            every_name,
+            "the facade accepted a capability it cannot report, so a chrome asking what this \
+             participant may do cannot see it"
+        );
+    }
+
+    /// A reviewer's grant survives the facade, and a reviewer is not an editor.
+    ///
+    /// The pair the previous guard's first direction was about, written as the role rather
+    /// than as a bit: `Capabilities::reviewer()` is deliberately **not** a superset of
+    /// `suggester()` (a reviewer resolves what it did not author), so a facade that collapsed
+    /// the two would pass a bit-count check and still hand out the wrong authority.
+    #[test]
+    fn a_reviewer_s_grant_arrives_as_a_reviewer_and_not_as_an_editor() {
+        let mut d = open_document(&text_of_lines(1)).expect("must open");
+        d.adopt_participant_capabilities_internal(&["comment".to_owned(), "review".to_owned()])
+            .expect("a reviewer's grant must be nameable");
+        assert_eq!(d.capabilities, Capabilities::reviewer());
+        assert_eq!(d.participant_capabilities(), ["comment", "review"]);
+        assert!(
+            !d.capabilities.may_edit() && !d.capabilities.may_suggest(),
+            "a reviewer decides other people's changes and authors none of its own"
         );
     }
 

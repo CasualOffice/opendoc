@@ -41,6 +41,7 @@ import { createDropCapDialog } from "./drop_cap.mjs";
 import { createReferenceCommands, objectMenuRows } from "./reference_commands.mjs";
 import { createTocCommands } from "./toc_commands.mjs";
 import {
+  reflectReviewSurface,
   ribbonSurfaceEnabled as surfaceEnabled,
   ribbonSurfaceReason as surfaceReason,
 } from "./ribbon_surface.mjs";
@@ -143,7 +144,8 @@ import { createViewZoom, fitZoomFactor, nextZoomStep, openingZoomMode, parseZoom
 import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
-import { editingModeFor, hostCapabilities, hostChrome, reflectReviewModeAccess } from "./capabilities.mjs";
+import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
+import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
@@ -1196,6 +1198,8 @@ const HOST_CAPS = hostCapabilities();
  *  and is composed away silently. */
 const containerCanEdit = HOST_CAPS.has("edit") || HOST_CAPS.has("comment");
 const HOST_MODE = editingModeFor(HOST_CAPS);
+/** The ROOM's grant — what THIS PARTICIPANT may do, as against what this container may. `session_access.mjs`. */
+const SESSION = sessionAccess(hostConfig(), (key) => t(key));
 /** Which chrome this container paints (`docs/126` phase 3), in both of its shapes:
  *  the container's own, and the same container with its editing chrome composed
  *  away. Resolved from the same URL the capability set came from, applied BEFORE
@@ -1454,6 +1458,7 @@ function updateReviewControls() {
     capabilities: HOST_CAPS,
     readOnlyReason,
     withheldReason: t("capability.embedded"),
+    participant: SESSION.modeAuthority,
   });
   if (!doc) return;
   let count = 0;
@@ -3051,6 +3056,8 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     objectPresence.forget();
     currentSourceFormat = doc.sourceFormat;
     applyActiveAuthorToDocument();
+    // The room's grant into the engine that ENFORCES it, per DOCUMENT because a new document is a new minting base.
+    const grantProblem = SESSION.adopt(doc) || SESSION.problemMessage();
     // Word/Docs: an open document always has an insertion point, so Insert ▸
     // Picture / Symbol / Emoji / Field / Table are live the instant it loads
     // instead of demanding a click first. Seeded from the engine's own
@@ -3096,7 +3103,8 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // not cover is an editable document REPLACING a read-only one, which kept the old
     // mode and, now that chrome follows it, the reading chrome. Skipped only where
     // nothing can have changed — editing to editing.
-    const openMode = readOnlyReason ? "viewing" : HOST_MODE;
+    // ...narrowed by the ROOM's grant too: a read-only guest arrives in Viewing, as a `readonly` container does.
+    const openMode = readOnlyReason ? "viewing" : SESSION.openMode(HOST_MODE);
     if (openMode !== "editing" || reviewMode !== "editing") setReviewMode(openMode, { restoreFocus: false });
     breakTypingSession();
     currentName = name;
@@ -3117,6 +3125,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     spellChecker.reset();
     void spellChecker.loadPersonal();
     setDocumentState("opened");
+    if (grantProblem) setStatus(grantProblem, "error"); // never swallowed: a silent narrowing looks like a working read-only mode
     if (saveBtn) saveBtn.disabled = false;
     populateSaveFormats(saveFormatEl, doc ? doc.availableExportFormats() : [], currentSourceFormat, document);
     // What the IMPORT lost, not a cleared slate. `importReportJson` was a shipped
@@ -8459,7 +8468,7 @@ async function runEdit(thunk, { typing = false, gate = false, keepView = false }
     // simply no longer applies to this document. `apply_group` now restores
     // the pre-edit document and pushes the entry back before returning, so the
     // honest thing to say is that nothing changed (HF-045).
-    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error");
+    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason, routeRefusal: SESSION.sentenceFor }), "error");
     return false;
   }
   await applyEditResult(res, { keepView });
@@ -8953,22 +8962,10 @@ for (const entry of INSERT_SURFACE) {
       if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
     }
   }
-  // Review: a document is the only precondition, except commenting, which needs
-  // text to attach to. The two toggles reflect engine state rather than a local
-  // flag, so the ribbon always agrees with the footer's mode control.
-  // `pressed` replaced three hand-written `setAttribute("aria-pressed", …)`
-  // lines. Declaring it beside the command is what let the two proofing switches
-  // reflect their state without a fourth and fifth copy of the same line, and
-  // what stops the next toggle shipping mute.
-  for (const entry of REVIEW_SURFACE) {
-    for (const button of entry.buttons()) {
-      if (!button) continue;
-      if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range) || (entry.requires === "comment" && !activeReviewCommentId);
-      // A disabled control has to SAY why; the margin "+" beside the page said nothing at all.
-      if (entry.reasonKey) button.title = button.disabled ? t(entry.reasonKey) : authoredTitle(button, EDITOR_KEYBOARD_PLATFORM);
-      if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
-    }
-  }
+  // Review: the whole band's sweep — its preconditions, its reasons, its pressed
+  // states and the ROOM's grant — in `ribbon_surface.mjs` beside the Layout and
+  // References one, with the rationale that used to sit here.
+  reflectReviewSurface(REVIEW_SURFACE, { hasDoc: !!doc, hasRange: !!range, hasComment: !!activeReviewCommentId, refusalFor: (c) => SESSION.refusalFor(c), authoredTitle: (b) => authoredTitle(b, EDITOR_KEYBOARD_PLATFORM) });
   // The ¶ control owns both of its halves and its popover's five checkmarks, so
   // it reflects itself rather than being swept here: its state is the ENGINE's
   // `any`, not a local flag, and nothing else on the band knows how to read it.
@@ -10443,7 +10440,7 @@ function runNodeEdit(thunk) {
     // used to put `err.message` straight on the status line, so the facade's own
     // vocabulary reached the reader — a failed cell-border change could announce
     // "column width requires a regular table" — and none of it was localised.
-    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error");
+    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason, routeRefusal: SESSION.sentenceFor }), "error");
     return false;
   }
   const dirty = res.dirtyPages;
@@ -10530,6 +10527,7 @@ const documentProtection = createDocumentProtection({
   fallbackFocus: () => pagesEl,
   bindRadioGroup,
   setStatus,
+  participantRefusal: () => SESSION.refusalFor("review.restrictEditing"),
   onChanged: () => updateToolbar(),
 });
 const comparePanel = bindComparePanel({ doc: () => doc, currentBytes: () => comparableBytes(doc, currentSourceFormat), engine: { begin: beginVersionDiff, slice: defaultDiffSlice }, yieldToHost: () => new Promise((resolve) => requestAnimationFrame(() => resolve())), setStatus: (text, kind) => setStatus(text, kind), allowed: () => HOST_CAPS.has("open"), refusedReason: t("capability.notGranted") });
@@ -12151,7 +12149,11 @@ function editorCommands(context = { surface: "palette" }) {
   // `command.shortcut`, and the only thing that can set it is the table the
   // dispatcher matches against.
   for (const command of cmds) command.shortcut = shortcutForCommand(command.id, EDITOR_KEYBOARD_PLATFORM);
-  return cmds.filter((command) => doc || command.noDoc);
+  // Narrowed to the ROOM's grant HERE, once, for every surface this registry
+  // feeds — palette, menu bar, compact bar, context menus — rather than by a
+  // clause in each governed row. A review command added later is governed by the
+  // id it already has instead of shipping ungated (`SKILL` §10: fix the pattern).
+  return SESSION.narrow(cmds.filter((command) => doc || command.noDoc));
 }
 
 // ---- One navigation axis: the compact menu bar and the ribbon's File page ---
@@ -12578,7 +12580,7 @@ async function insertShapeObject(geometry, at = null) {
       );
     } catch (err) {
       // The shape exists at its default size; saying so beats silence.
-      setStatus(editRefusalMessage(err), "error");
+      setStatus(editRefusalMessage(err, { routeRefusal: SESSION.sentenceFor }), "error");
     }
   }
   const key = shapeNameKey(geometry);
