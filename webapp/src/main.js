@@ -145,6 +145,9 @@ import { createPhoneChrome } from "./phone_chrome.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 import { editingModeFor, hostCapabilities, hostChrome, hostConfig, reflectReviewModeAccess } from "./capabilities.mjs";
+import { openRoom, resumeKey } from "./collab_transport.mjs";
+import { groupsToOverflow } from "./ribbon_overflow.mjs";
+import { matchWithinScope } from "./find_scope.mjs";
 import { sessionAccess } from "./session_access.mjs"; // the ROOM's grant, a different authority from the container's
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
@@ -953,25 +956,14 @@ function updateRibbonOverflow() {
   // Reserve room for the ⋯ button. Clipboard, Editing, and Mode are persistent
   // anchors; relocate the other groups from right to left until the inline set
   // fits. Mode can fall back to the footer at very small widths.
-  const reserve = 44;
-  let inlineWidth = total;
-  const moved = [];
-  for (let i = groups.length - 1; i >= 0 && inlineWidth > avail - reserve; i--) {
-    const group = groups[i];
-    if (group.hasAttribute("data-ribbon-pinned")) continue;
-    moved.push(group);
-    inlineWidth -= widths.get(group);
-  }
-  // If a future pinned composition cannot fit at an extremely small width,
-  // preserve Clipboard and move the remaining pinned group as the last resort.
-  if (inlineWidth > avail - reserve) {
-    for (let i = groups.length - 1; i >= 0 && inlineWidth > avail - reserve; i--) {
-      const group = groups[i];
-      if (moved.includes(group) || group.dataset.group === "clipboard") continue;
-      moved.push(group);
-      inlineWidth -= widths.get(group);
-    }
-  }
+  const moved = groupsToOverflow({
+    groups,
+    widthOf: (group) => widths.get(group),
+    avail,
+    reserve: 44,
+    isPinned: (group) => group.hasAttribute("data-ribbon-pinned"),
+    isLastResort: (group) => group.dataset.group === "clipboard",
+  });
   for (const group of groups) if (moved.includes(group)) ribbonOverflowMenu.appendChild(group);
   ribbonOverflowBtn.hidden = false;
 }
@@ -2484,6 +2476,10 @@ function backingDpr() {
 
 /** The currently open document handle (or null). Kept so a zoom change re-renders. */
 let doc = null;
+/** The shared session's byte pipe, or `null` in the standalone mode (`152` §2a). */
+let collab = null;
+/** Arrivals paint one at a time: two must not interleave two `renderAll()`s. */
+let arrivalPaint = Promise.resolve();
 /** Measures the rest of a document that opened on a prefix (`docs/116` §7). */
 let backgroundMeasure = null;
 /** Monotonic token so a slow render from a previous file/zoom is discarded. */
@@ -3059,6 +3055,15 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     applyActiveAuthorToDocument();
     // The room's grant into the engine that ENFORCES it, per DOCUMENT because a new document is a new minting base.
     const grantProblem = SESSION.adopt(doc) || SESSION.problemMessage();
+    // The shared session, per DOCUMENT and for the same reason the grant is: a
+    // new document is a new minting base for the NodeIds an op names.
+    collab?.stop();
+    collab = openRoom(doc, hostConfig().room, globalThis.WebSocket, {
+      identity: settings.authorName.trim() || "You",
+      resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
+      onOutcome: (o) => { if (o.documentChanged) arrivalPaint = arrivalPaint.then(() => paintArrival(o)); },
+      onState: (s) => setStatus(t(s.key), s.name === "connected" ? "" : "warn"),
+    });
     // Word/Docs: an open document always has an insertion point, so Insert ▸
     // Picture / Symbol / Emoji / Field / Table are live the instant it loads
     // instead of demanding a click first. Seeded from the engine's own
@@ -8283,6 +8288,15 @@ function adoptEditPosition(node, offset) {
   return at;
 }
 
+/** Repaints what a remote arrival changed. The engine already applied it through
+ *  `ClientSession::receive`; this only paints. The caret is NOT mapped (`107` P-4). */
+async function paintArrival({ dirty = [], pageCount, viewRevision }) {
+  noteDocumentEdited(viewRevision);
+  if (pageCount !== pages.length) await renderAll();
+  else { for (const i of dirty) repaintPage(i); drawSelection(); }
+  scheduleChromeRefresh({ stats: true, outline: true });
+}
+
 async function applyEditResult(res, { keepView = false } = {}) {
   const node = res.node;
   const offset = res.offset;
@@ -13235,21 +13249,7 @@ function findPosLE(aNode, aOff, bNode, bOff) {
 function matchInFindSelection(match) {
   if (!findSelection.checked) return true;
   if (!findScope) return false;
-  const { startNode, startOffset, endNode, endOffset } = findScope;
-  const node = match.startNode;
-  if (node === startNode) {
-    if (match.startOffset < startOffset) return false;
-    // Single-node scope (startNode === endNode) also caps the upper bound.
-    return node === endNode ? match.endOffset <= endOffset : true;
-  }
-  if (node === endNode) {
-    return match.endOffset <= endOffset;
-  }
-  // Interior node: in scope iff scopeStart <= match and match <= scopeEnd.
-  return (
-    findPosLE(startNode, startOffset, node, match.startOffset) &&
-    findPosLE(node, match.endOffset, endNode, endOffset)
-  );
+  return matchWithinScope(match, findScope, findPosLE);
 }
 
 /** Scans every match in document order, starting from the top, up to
