@@ -79,6 +79,9 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::ExportError;
 use crate::report::{Disposition, DocxExport, Reporter};
+// Own `use` line, kept out of the sorted block above: the repo's parallel-PR
+// rule, so two lanes adding imports here do not collide in one list.
+use crate::chart::{GeneratedChartPart, generate_chart_parts, was_generated};
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -594,7 +597,17 @@ pub fn export_package(
     // before the body is written so their ids are reserved against hyperlink
     // minting; the referenced part BYTES come from the side-table (P1F-2).
     let embedded_rels = collect_embedded_rels(document);
-    report_embedded_object_parts(&embedded_rels, retained_parts, &mut reporter);
+    // The chart parts this export must GENERATE: a chart the editor minted has
+    // no retained bytes, so before HF-256 its relationship was emitted beside no
+    // part at all. Computed before the report below so a generated part is not
+    // also reported as missing.
+    let generated_charts = generate_chart_parts(document, retained_parts, &mut reporter)?;
+    report_embedded_object_parts(
+        &embedded_rels,
+        retained_parts,
+        &generated_charts,
+        &mut reporter,
+    );
     // Media relationships are emitted with their verbatim ids so the model
     // round-trips; reserve them (and the embedded-object ids) so hyperlink/part
     // rids do not collide.
@@ -962,6 +975,7 @@ pub fn export_package(
             &available_media,
             has_embedded_fonts,
             retained_parts,
+            &generated_charts,
             kind,
         )?,
     );
@@ -991,6 +1005,16 @@ pub fn export_package(
             );
         }
         parts.push(extra.part_name, extra.bytes);
+    }
+    // Generated chart parts (HF-256). Their `document.xml.rels` entry is already
+    // emitted from the node's verbatim relationship id by `embedded_rels`, so
+    // only the part itself and its own `_rels` companion are added here; the
+    // content-type `Override` went in with the manifest above.
+    for generated in generated_charts {
+        if let Some((rels_name, rels_bytes)) = generated.rels {
+            parts.push(rels_name, rels_bytes);
+        }
+        parts.push(generated.part_name, generated.bytes);
     }
     // Opaque preserved parts (P1F-2): each part verbatim, plus its owned `_rels`
     // companion verbatim (so parts it references stay reachable). Content types
@@ -1101,9 +1125,15 @@ fn available_media(
 /// here rather than repaired, because repairing it means deciding what the body
 /// should say instead of the object, which is FID-R-08's open scope question. The
 /// finding at least makes the state visible to a caller that must warn a user.
+///
+/// A CHART is the one family that can now be repaired instead of reported, so
+/// `generated_charts` is consulted: a part this export wrote from a projection
+/// (HF-256) is not missing, and naming it here would be a report describing a
+/// loss that did not happen.
 fn report_embedded_object_parts(
     embedded_rels: &[EmbeddedRelEntry],
     retained_parts: &RetainedParts,
+    generated_charts: &[GeneratedChartPart],
     reporter: &mut Reporter,
 ) {
     for (_, _, _, part_name) in embedded_rels {
@@ -1111,6 +1141,7 @@ fn report_embedded_object_parts(
             .parts
             .iter()
             .any(|part| &part.part_name == part_name)
+            && !was_generated(generated_charts, part_name)
         {
             reporter.record_part(
                 "docx.export.embedded_object.missing_part",
@@ -1156,15 +1187,18 @@ impl PackageParts {
     }
 }
 
-fn new_writer() -> Writer<Cursor<Vec<u8>>> {
+/// A fresh XML writer over an in-memory buffer.
+pub(crate) fn new_writer() -> Writer<Cursor<Vec<u8>>> {
     Writer::new(Cursor::new(Vec::new()))
 }
 
-fn finish(writer: Writer<Cursor<Vec<u8>>>) -> Vec<u8> {
+/// The bytes a writer accumulated.
+pub(crate) fn finish(writer: Writer<Cursor<Vec<u8>>>) -> Vec<u8> {
     writer.into_inner().into_inner()
 }
 
-fn start<'a>(name: &'a str) -> BytesStart<'a> {
+/// A start tag by name.
+pub(crate) fn start<'a>(name: &'a str) -> BytesStart<'a> {
     BytesStart::new(name)
 }
 
@@ -1200,6 +1234,7 @@ fn content_types_xml(
     media: &DefinitionMap<MediaId, MediaReference>,
     has_embedded_fonts: bool,
     retained_parts: &RetainedParts,
+    generated_charts: &[GeneratedChartPart],
     kind: PackageKind,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
@@ -1260,6 +1295,16 @@ fn content_types_xml(
         let mut over = start("Override");
         over.push_attribute(("PartName", part_name.as_str()));
         over.push_attribute(("ContentType", docprop.content_type));
+        w.write_event(Event::Empty(over)).map_err(pkg)?;
+    }
+    // Generated chart parts. A chart part has no extension `Default` to fall
+    // back on (`.xml` maps to `application/xml`), so without this Override Word
+    // reads the part as generic XML and reports the package as unreadable.
+    for generated in generated_charts {
+        let part_name = format!("/{}", generated.part_name);
+        let mut over = start("Override");
+        over.push_attribute(("PartName", part_name.as_str()));
+        over.push_attribute(("ContentType", generated.content_type));
         w.write_event(Event::Empty(over)).map_err(pkg)?;
     }
     // Opaque preserved parts (P1F-2): merge each part's declared content type as
@@ -8407,6 +8452,8 @@ fn break_token(kind: BreakKind) -> &'static str {
     }
 }
 
-fn pkg<E>(_: E) -> ExportError {
+/// Any writer/ZIP failure collapses to the one package error: the caller can do
+/// nothing different for a `quick_xml` error than for a `zip` one.
+pub(crate) fn pkg<E>(_: E) -> ExportError {
     ExportError::Package
 }

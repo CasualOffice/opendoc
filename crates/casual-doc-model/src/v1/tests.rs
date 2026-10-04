@@ -5874,31 +5874,83 @@ fn document_with_chart(kind: EmbeddedKind, anchor: NodeId) -> Result<Document, M
     )
 }
 
-/// A projection must name an embedded object that is actually a chart.
+/// A projection may not name an embedded object that is NOT a chart — and an
+/// orphan projection, whose anchor is gone, is tolerated (`109` HF-257).
 ///
-/// Three cases, because each fails for its own reason and a validator that caught
-/// only the first would still admit a projection describing a diagram: an anchor
-/// that resolves to nothing, an anchor that resolves to a *diagram*, and the
-/// well-formed case that must still be accepted.
+/// Three states, deliberately not treated alike. `validate_charts`'s header
+/// carries the argument; this pins all three, because the asymmetry is the whole
+/// point and a test that only checked the refusal could not tell the fix from a
+/// validator that had simply been switched off.
 #[test]
-fn a_chart_projection_must_anchor_to_an_embedded_chart_object() {
-    // Accepted: the anchor names the chart object in the body.
+fn a_chart_projection_may_not_anchor_to_a_non_chart_and_may_outlive_its_node() {
+    // 1. Live: the anchor names the chart object in the body.
     document_with_chart(EmbeddedKind::Chart, tid(2)).expect("a chart projection resolves");
 
-    // Refused: no node by that id exists at all.
-    assert_eq!(
-        document_with_chart(EmbeddedKind::Chart, tid(77)),
-        Err(ModelError::DanglingChartObjectRef(tid(77))),
-        "a projection of a node that does not exist describes nothing"
-    );
-
-    // Refused: the node exists but is a SmartArt diagram, not a chart. This is the
-    // case a presence-only check would pass.
+    // 2. Refused: the node exists but is a SmartArt diagram, not a chart. This is
+    //    the case a presence-only check would pass, and it cannot arise from
+    //    editing — only from a wrong write.
     assert_eq!(
         document_with_chart(EmbeddedKind::Diagram, tid(2)),
         Err(ModelError::DanglingChartObjectRef(tid(2))),
         "a chart projection of a diagram is not a chart projection"
     );
+
+    // 3. TOLERATED: no node by that id exists at all. The projection is a derived
+    //    read index whose subject has been removed — stale cache, not corruption.
+    //    Refusing here is what made the NEXT unrelated edit fail after a
+    //    paragraph holding a chart was deleted.
+    let orphaned = document_with_chart(EmbeddedKind::Chart, tid(77))
+        .expect("a projection whose anchor is gone must not invalidate the document");
+    assert_eq!(
+        orphaned.definitions().charts.len(),
+        1,
+        "the orphan is kept, not evicted: undoing the removal brings the node back \
+         and the projection must still be there to draw it"
+    );
+}
+
+/// Removing the paragraph that holds a chart leaves a VALID document, and the
+/// next unrelated edit is accepted (`109` HF-257, the measured case).
+///
+/// This is the shape the defect actually took. A positional removal does not name
+/// the object it takes with it, so nothing could carry the projection out
+/// alongside the node; `DeleteBlocks` does not validate as it applies, so the
+/// document was left invalid and the failure surfaced later, on an edit that had
+/// nothing to do with the chart.
+///
+/// The second half is the half that was missing from the bug report and is the
+/// user-visible one: it is not enough that the removal succeeds, the document has
+/// to still accept work afterwards.
+#[test]
+fn deleting_the_paragraph_that_holds_a_chart_leaves_a_document_that_still_accepts_edits() {
+    let mut document = document_with_chart(EmbeddedKind::Chart, tid(2)).expect("a valid document");
+    // A second paragraph, so removing the chart's does not empty the body — an
+    // empty body is a different refusal and would mask the one under test.
+    document
+        .body_mut()
+        .push(paragraph_block(tid(5)));
+    document.validate().expect("two paragraphs and a chart are valid");
+
+    // The positional removal: the paragraph goes, the projection stays behind.
+    document
+        .body_mut()
+        .retain(|block| !matches!(block, BlockNode::Paragraph(p) if p.id == tid(1)));
+    assert_eq!(
+        document.definitions().charts.len(),
+        1,
+        "the removal leaves the sidecar entry behind — that is the state under test"
+    );
+    document
+        .validate()
+        .expect("a projection whose anchor was removed must not invalidate the document");
+
+    // And the next unrelated edit is accepted. Expressed as "the document still
+    // validates after an edit that has nothing to do with the chart", because
+    // `validate` is precisely the gate that was refusing.
+    document.body_mut().push(paragraph_block(tid(6)));
+    document
+        .validate()
+        .expect("the next unrelated edit must be accepted, which is what HF-257 broke");
 }
 
 /// A `ChartId` is a `NodeId`, so it joins the one walk of the document's

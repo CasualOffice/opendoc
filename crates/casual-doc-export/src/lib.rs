@@ -20,6 +20,7 @@ use casual_doc_import::RetainedSource;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
+mod chart;
 mod report;
 mod semantic;
 pub use report::{

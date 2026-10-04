@@ -1980,7 +1980,59 @@ impl Document {
     }
 
     /// Validates every typed chart projection: its bounds, and that its anchor
-    /// still names an embedded chart object (`docs/155` §8.4).
+    /// does not name something that is not a chart (`docs/155` §8.4).
+    ///
+    /// # The deliberate asymmetry, and why it is this way round (`109` HF-257)
+    ///
+    /// `Definitions::charts` is a sidecar keyed by the object it projects, so a
+    /// projection's anchor can be in three states, and only two of them are
+    /// errors in this document:
+    ///
+    /// 1. **The anchor names a chart object.** Live. Accepted.
+    /// 2. **The anchor names an embedded object that is NOT a chart** — a
+    ///    diagram, an OLE object. Refused. That state cannot arise from editing:
+    ///    nothing turns a chart into a diagram in place. It can only come from a
+    ///    wrong write, and a projection describing a diagram is a claim about the
+    ///    document that is false.
+    /// 3. **The anchor names no embedded object at all.** TOLERATED, and this is
+    ///    the change HF-257 is.
+    ///
+    /// State 3 used to be `DanglingChartObjectRef`, and that was the defect.
+    /// Deleting a paragraph that contained a chart is a positional removal —
+    /// `DeleteBlocks`, a range delete, a dropped table row — and none of those
+    /// operations names the object it takes with it, so none of them could carry
+    /// the projection out alongside it. Neither `DeleteBlocks` nor `SetInlines`
+    /// validates as it applies, so the document was simply left invalid, and the
+    /// NEXT unrelated validating edit was refused — with this error's internal
+    /// vocabulary, charged to an edit that had nothing to do with the chart.
+    ///
+    /// Two fixes were available and this is the one chosen:
+    ///
+    /// * **Cascade the removal** — teach every positional operation to drop the
+    ///   projection with the node. That needs a forward removal-footprint
+    ///   classifier over the whole operation set, it must stay exhaustive forever
+    ///   (the wildcard arm is exactly how this defect arrived), and — the part
+    ///   that decides it — the projection would then have to be RESTORED by undo
+    ///   in the right order, so an incomplete classifier silently turns an undo
+    ///   into a chart that reopens as a `[chart]` placeholder.
+    /// * **Tolerate the orphan** — this one. A `Chart` is a *read projection*, a
+    ///   derived index over a retained part (`v1::chart`'s module header), not
+    ///   authoritative content. A derived index whose subject is gone is **stale
+    ///   cache, not corruption**: the document renders correctly, because nothing
+    ///   consults a projection except through the object that anchors it, and the
+    ///   exporter keys its chart-part writer off the objects it finds in the body
+    ///   rather than off this table, so an orphan writes no part.
+    ///
+    /// Tolerating is also *better* behaviour, not merely cheaper. Nothing is
+    /// evicted, so undoing the removal brings the node back and the projection is
+    /// still there to draw it — where a cascade has to re-install the projection
+    /// after the node, in that order, or lose it.
+    ///
+    /// The cost is bounded garbage: a projection the document can no longer reach
+    /// survives in the table and in a snapshot. It is bounded by the number of
+    /// charts the document ever held, it is invisible to every consumer, and it
+    /// is the price of state 3 never being able to refuse an unrelated edit
+    /// again. State 2 keeps the invariant that matters.
     ///
     /// # Why this is a walk of its own, and why it costs nothing without charts
     ///
@@ -2001,10 +2053,15 @@ impl Document {
         for (_, chart) in self.definitions.charts.iter() {
             check_chart(chart)?;
         }
-        let mut anchors = BTreeSet::new();
+        let mut anchors = EmbeddedObjectIds::default();
         self.visit_chart_object_ids(&mut anchors);
         for (_, chart) in self.definitions.charts.iter() {
-            if !anchors.contains(&chart.object) {
+            // State 2 only: the anchor resolves to an embedded object that is not
+            // a chart. State 3 — it resolves to no embedded object — falls through
+            // deliberately; see this function's header for why.
+            if !anchors.charts.contains(&chart.object)
+                && anchors.others.contains(&chart.object)
+            {
                 return Err(ModelError::DanglingChartObjectRef(chart.object));
             }
         }
@@ -2017,7 +2074,7 @@ impl Document {
     /// Every container is walked, not just the body: a chart can be placed in a
     /// header or a footnote, and a validator that only knew about the body would
     /// reject a legitimate projection there (`SKILL` §9.3 — enumerate families).
-    fn visit_chart_object_ids(&self, found: &mut BTreeSet<NodeId>) {
+    fn visit_chart_object_ids(&self, found: &mut EmbeddedObjectIds) {
         for block in &self.body {
             record_chart_object_ids(block, found);
         }
@@ -2844,10 +2901,27 @@ fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
     Ok(())
 }
 
-/// Records the node id of every `EmbeddedObject` whose kind is `Chart` reachable
-/// from `block`, recursing through every nested container the way
+/// The embedded-object identities a chart projection's anchor can resolve to.
+///
+/// Two sets rather than one because the two outcomes are different states and
+/// get different treatment (see `Document::validate_charts`): an anchor that
+/// names a chart object is live, an anchor that names a non-chart embedded object
+/// is MIS-ANCHORED, and an anchor that names neither is a projection whose node
+/// has been removed. Collected in one walk; both sets are bounded by the number
+/// of embedded objects in the document, not by its size.
+#[derive(Default)]
+struct EmbeddedObjectIds {
+    /// `EmbeddedObject`s whose kind is `Chart`.
+    charts: BTreeSet<NodeId>,
+    /// `EmbeddedObject`s of every other kind — a diagram, an OLE object, an
+    /// unrecognized `a:graphicData` payload.
+    others: BTreeSet<NodeId>,
+}
+
+/// Records the node id of every `EmbeddedObject` reachable from `block`, split by
+/// whether its kind is `Chart`, recursing through every nested container the way
 /// [`record_block_ids`] does.
-fn record_chart_object_ids(block: &BlockNode, found: &mut BTreeSet<NodeId>) {
+fn record_chart_object_ids(block: &BlockNode, found: &mut EmbeddedObjectIds) {
     match block {
         BlockNode::Paragraph(paragraph) => {
             for inline in &paragraph.inlines {
@@ -2873,11 +2947,13 @@ fn record_chart_object_ids(block: &BlockNode, found: &mut BTreeSet<NodeId>) {
 }
 
 /// The inline half of [`record_chart_object_ids`].
-fn record_chart_object_ids_in_inline(inline: &InlineNode, found: &mut BTreeSet<NodeId>) {
+fn record_chart_object_ids_in_inline(inline: &InlineNode, found: &mut EmbeddedObjectIds) {
     match inline {
         InlineNode::EmbeddedObject(object) => {
             if object.kind == EmbeddedKind::Chart {
-                found.insert(object.id);
+                found.charts.insert(object.id);
+            } else {
+                found.others.insert(object.id);
             }
         }
         InlineNode::Hyperlink(link) => {
@@ -2914,7 +2990,7 @@ fn record_chart_object_ids_in_inline(inline: &InlineNode, found: &mut BTreeSet<N
 
 /// The group half of [`record_chart_object_ids`]: a group holds no embedded
 /// object directly, but a text box inside one holds ordinary block content.
-fn record_chart_object_ids_in_group(group: &WordprocessingGroup, found: &mut BTreeSet<NodeId>) {
+fn record_chart_object_ids_in_group(group: &WordprocessingGroup, found: &mut EmbeddedObjectIds) {
     for child in &group.children {
         match child {
             GroupChild::TextBox(text_box) => {

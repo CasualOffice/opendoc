@@ -3095,21 +3095,29 @@ impl WasmDocument {
     ///
     /// A chart is an `InlineNode::EmbeddedObject` **and** a
     /// `Definitions::charts` projection anchored to it; the node alone paints the
-    /// placeholder. The node is inserted first because `Document::validate`
-    /// refuses a projection whose anchor does not exist yet, and both land in one
-    /// transaction, so one undo removes both.
+    /// placeholder. The node is inserted first so the projection is never
+    /// momentarily anchored to nothing, and both land in one transaction, so one
+    /// undo removes both. (`Document::validate` no longer *refuses* a projection
+    /// whose anchor is absent — `109` HF-257 made that state tolerated, because a
+    /// positional removal cannot carry the sidecar entry out with the node. The
+    /// order here is therefore hygiene rather than a requirement, and the
+    /// requirement it replaced is recorded in `validate_charts`.)
     ///
-    /// # What this does not yet do
+    /// # Saving
     ///
-    /// The DOCX chart part is not written. Import keeps a chart's source bytes in
-    /// the retained-parts side table and export emits the relationship from
-    /// there, so an inserted chart has no part to point at and saving the
-    /// document would reference one that is not in the package. The projection is
-    /// marked [`ChartCoverage::Complete`], which is precisely the flag that tells
-    /// a writer it may regenerate the part from the projection
-    /// (`ChartCoverage::permits_regeneration`), and writing it is `109` HF-256
-    /// in `casual-doc-export`. **Until that lands this is an engine capability
-    /// with no safe save path, and no host surface should offer it.**
+    /// The DOCX chart part IS written. `casual-doc-export`'s `chart` module
+    /// generates `word/charts/chartN.xml` — plus its content-type `Override` and,
+    /// when the chart names a workbook the package contains, its own `_rels` —
+    /// for a chart object whose part is not in the retained side table and whose
+    /// projection is [`ChartCoverage::Complete`], which is exactly the flag
+    /// `ChartCoverage::permits_regeneration` gates on. That closes `109` HF-256;
+    /// before it, saving an inserted chart emitted a relationship pointing at a
+    /// part the package did not contain.
+    ///
+    /// Every family [`chart_group_for_kind`] admits is a family that writer can
+    /// emit — `chart_part_writer.rs`'s family sweep is exhaustive over
+    /// `ChartGroupKind`, so an eighth variant stops it compiling rather than
+    /// quietly producing an insertable chart that cannot be saved.
     ///
     /// # Errors
     ///
