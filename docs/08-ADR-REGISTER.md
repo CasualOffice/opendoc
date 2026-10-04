@@ -3491,6 +3491,155 @@ ONLYOFFICE's `sync_StartAction(… BlockInteraction, SlowOperation)` blocking wr
 sidecar is O(changes), not O(document), so it does not change that picture. The worker question
 stays where `compare_documents.mjs` already records it: blocked on COOP/COEP headers GitHub
 Pages cannot send.
+## ADR-062 — A control's surface follows what the control is: command, preference, or selection property
+
+- **Status:** **Proposed**, 2026-10-04, with **corollary C1 implemented** in the same branch —
+  `webapp/src/surface_reveal.mjs`, the measurement-unit reveal, and one `showSettings()`. C1 was
+  taken first because its fix is fully determined by the rule, is the smallest, and repairs a
+  reachable defect the owner reported. **C2 and C3 are not implemented**: collapsing two ribbon
+  toggles into a command plus labelled switches, and five contextual bars into one, are behaviour
+  changes to shipped controls and wait on this ADR being accepted. The four defect classes are
+  inventoried in `159`.
+- **Date:** 2026-10-04.
+- **Closes:** nothing yet. **Occasioned by** two owner defect reports: the Measurement-unit row
+  opening Settings with no measurement parameter visible, and spell check and grammar check
+  sharing one icon.
+- **Relates to:** **ADR-061** most directly — a comparison expressed as tracked changes rather
+  than as a second markup mechanism is corollary C3 reached independently, and its panel-as-index
+  (navigating to changes rather than reporting counts) is this rule's "selection property" row
+  rather than an exception to it. Also `SKILL` §10 (every capability reachable from ≥2 surfaces;
+  never a dead control), `SKILL` §8 (name the known pattern; quote the competitive standard for
+  interaction design), ADR-030 (the extensibility seams, for the same reason: one choke point
+  beats two paths), `docs/84` (the context-menu and command registry), `docs/104` (where the
+  resulting rows go).
+- **Evidence:** `159`, including source-verified ONLYOFFICE behaviour at
+  `reference/web-apps` `9c0ca538c3b211052347df09d2a4d6781f023403`.
+
+### Context: the surface was being chosen by available space
+
+`SKILL` §10 already requires that every capability be reachable from at least two surfaces, and
+that nothing ship as a dead control. Both rules are about *reach*. Neither says which surface a
+control **belongs** on, and so that question has been answered, repeatedly, by where there was
+room in the band — with the ribbon as the default because it is the most visible.
+
+Four consequences, all live, all in `159`: a ribbon row that defers to a control in Settings and
+never reveals it (the `.focus()` call is dead code and has never had an observable effect); two
+as-you-type **preferences** rendered as icon-only ribbon toggles, distinguished by a badge
+borrowed from the table domain, duplicating labelled switches that already read correctly in
+Settings; the same contextual action bar implemented five times with five positioners, three of
+them claiming `role="dialog"`; and an icon vocabulary that nothing owns, so neither "two commands
+share a glyph" nor "this glyph is missing from the subset" is checkable.
+
+The common factor is not carelessness. It is that **the question was never posed**, so there was
+no answer to be inconsistent with.
+
+### The established pattern, named before any code
+
+This is not a new problem and the answer is not ours. It is the **command/preference/property**
+split that every mature editor's UI guidelines state in some form, and it is the same distinction
+the platform accessibility model already draws: a `button` does a thing, a `checkbox` or
+`switch` carries a state, and a property sheet edits the current object. `aria-pressed` on a
+`button` exists precisely because people kept building the middle case out of the first, and it is
+a *mitigation* for screen readers, not a licence — it tells a screen reader a state that a sighted
+reader still cannot see.
+
+The competitor independently lands on the same three homes (`159` §7): the measurement unit is a
+labelled dropdown on a settings page (`cmbUnit`,
+`reference/web-apps/apps/documenteditor/main/app/view/FileMenuPanels.js:747`); the spelling
+preferences are labelled checkboxes on that same page (`chSpell`, `:534-536`), one of which
+**disables its dependents when off** — a relationship an icon cannot express; the as-you-type
+toggle is in the **status bar**, never the ribbon (`ReviewChanges.js:895-910`, rendered only into
+`#btn-doc-spell` at `Statusbar.js:112-113`; `Toolbar.js` has zero `spell` hits); and they ship
+**no grammar check at all**, so the question of a second glyph never arises for them.
+
+### Decision
+
+**A control's surface is a consequence of what the control is, not of where there was room.**
+Three kinds, each with one home:
+
+| Kind | What it is | Home |
+| --- | --- | --- |
+| **Command** | does something once, when invoked | ribbon / menu / palette / context menu — icon **and** label; ≥2 surfaces per `SKILL` §10 |
+| **Preference** | a persistent choice that outlives the selection | a **labelled** control in Settings, state readable in the label. A fast path may be a **menu row with a checkmark** or a status-bar control — never an icon-only ribbon button |
+| **Selection property** | changes with what is selected | contextual bar / properties dialog |
+
+**Corollary C1 — a pointer must point.** A control that defers to a control on another surface
+must *reveal* it: open or select the owning surface, scroll the control into view, and place focus
+on it **after** that surface has finished its own focus management. Opening the container is not
+revealing the control. Where the owning surface defers its own initial focus by a microtask, the
+reveal uses a `requestAnimationFrame` — microtasks always drain before the next animation frame,
+so this is an ordering guarantee rather than a race won by being later.
+
+**Corollary C2 — an icon is a name in a shared vocabulary.** Two *different* commands may not
+wear one ligature, and no command may name a ligature the bundled subset lacks. The same ligature
+on several surfaces for the **same** command is correct and required — so the rule forbids
+collision, not repetition.
+
+**Corollary C3 — one job, one mechanism.** Where two surfaces do the same kind of job they go
+through the same seam. A second implementation of one rule is evidence the abstraction is wrong.
+
+### What this rule predicts
+
+- The measurement row stays where it is — a preference, correctly homed in Settings, with a
+  pointer to it — and the pointer is fixed to actually reveal (C1). **Done in this branch.**
+  The reveal became its own module because inlining it broke `main.js`'s line ratchet, which
+  is the ratchet buying a seam rather than just a smaller file: with the frame scheduler
+  injected, the ordering guarantee is checkable in node. Predicting the fix was not enough on
+  its own, though — the rule also predicted a pane-guard defect that **turned out not to be
+  reachable**, and only running the guard found that out (`159` §3.2). A rule that predicts
+  well still does not excuse a guard from being driven.
+- Spell check and grammar check stop being icon-only ribbon toggles. The labelled switches
+  already in Settings are their home; a checkmarked menu row is the fast path; and the
+  `spellcheck` icon goes to the one thing that is genuinely a command — running a proofing pass.
+  The icon collision dissolves without touching the font subset, and the borrowed
+  `.table-command-badge` goes with it.
+- The five contextual bars collapse onto one `createContextualBar` composing
+  `popover_position.mjs`, `popover_manager.mjs` and `ribbon_nav.mjs` (C3). Scoped as its own
+  lane: it is a behaviour change to five live surfaces.
+- The icon vocabulary acquires an owner, and with it the two guards C2 needs — no ligature
+  serving two distinct commands, and no ligature missing from the subset.
+
+### What is deliberately not decided
+
+- **Whether a document-wide proofing pass exists as an invokable command.** The fix above assumes
+  one. Ten proofing modules exist in `webapp/src/`; which is reachable, and whether a pass is
+  O(document) and therefore owed off-main-thread, cancellable, progress-reporting treatment
+  (`SKILL` §8), is open — `159` §9 Q2.
+- **The replacement glyphs** for the `format_list_numbered` and `format_indent_increase`
+  collisions. Icon choices touch the deliberate design tokens, so they are the owner's
+  (`SKILL` §11).
+- **Whether our status bar should carry fast paths at all.** The competitor's pattern is
+  attractive but our status bar is hand-written markup with no registration seam; adopting it
+  needs the seam first.
+- **Word and Google Docs are not cited as support.** Neither is checked out, so `159` §7.3 is
+  fenced as unsourced recollection. The preference/command distinction rests on ONLYOFFICE,
+  which is sufficient for it; the *combined* spelling-and-grammar pass is not yet established
+  from any source.
+
+### How this will be verified
+
+Three guards, each to be driven red before it is trusted (`SKILL` §4):
+
+1. **A reveal reveals** — **built and driven red.** After invoking a deferring control, the named
+   control is visible and is `document.activeElement`. Two layers: the ordering property in node
+   with the frame scheduler injected (`surface_reveal.test.mjs`, which creates the condition by
+   queueing a microtask that steals focus), and the guarantee in a browser over both reader
+   routes (`e2e/file-page-panes.spec.mjs`). Mutations: a synchronous callback fails the first
+   with `+ "the surface's own initial focus"`; restoring `…?.focus()` fails the second with
+   `Expected: focused / Received: inactive` — the reported defect, reproduced. It asserts the
+   guarantee, not the frame or the pane branch, which is why it survived §3.2's withdrawal
+   intact.
+2. **No ligature serves two commands** — built on the runtime registry rather than a regex over
+   `editor.html`, because a regex sees 38 of 165 icon buttons. Written to permit one ligature on
+   many surfaces for one command. It lands with the fixes, since it must report the three known
+   collisions to be meaningful.
+3. **Every ligature the chrome uses exists in the subset** — parsed from the woff2's ligature
+   table. **Proposed, not promised**: whether a parser is available in this toolchain is untested.
+
+`chrome_fonts.test.mjs` today asserts self-hosting, the `wOF2` magic and the licences, and
+nothing about ligature coverage — so a glyph absent from the subset renders as a blank button with
+no error. Guard 3 is the one that closes that, and it also gives the open `pilcrow` glyph question
+a mechanical answer.
 
 ## Pending ADRs
 
