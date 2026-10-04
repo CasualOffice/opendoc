@@ -155,6 +155,28 @@ mod tests {
     /// A bare `"refused: …"` literal passes the host's marker test and reaches
     /// the reader in English with no way to route it — which is how a second,
     /// codeless family grows back beside the first.
+    /// Everything in `raw` above its test module.
+    ///
+    /// `include_str!` hands back the bytes as they sit on disk and this repository has **no
+    /// `.gitattributes`**, so a Windows checkout is CRLF and any pattern carrying `\n` matches
+    /// nothing there. The fallback then hands the scan the **whole file**, test bodies included,
+    /// and the guard charges a module for its own fixtures — on one platform and not the others.
+    /// It reddened `platform (Windows-x64)` in the sibling object-refusal guard.
+    ///
+    /// The cut is therefore the attribute **alone**, which carries no line break and so cannot
+    /// have this problem by construction. That is the technique `main` chose for this guard while
+    /// this branch was open; it is kept rather than replaced with a normalise-then-split, because
+    /// two techniques for one rule diverge and the newline-free one needs no normalisation to
+    /// reason about.
+    ///
+    /// What this branch adds is the **arming** the technique had no way to prove: the caller
+    /// asserts the cut took effect, and the planted case below drives both line endings on every
+    /// platform. Shared with that planted case on purpose — a cut the real scan performs and the
+    /// planted case re-performs separately is a cut the planted case cannot test.
+    fn production_half(raw: &str) -> &str {
+        raw.find("#[cfg(test)]").map_or(raw, |at| &raw[..at])
+    }
+
     #[test]
     fn no_module_of_this_crate_writes_the_marker_by_hand() {
         for (name, source) in [
@@ -164,18 +186,38 @@ mod tests {
             ("containers.rs", include_str!("containers.rs")),
             ("references.rs", include_str!("references.rs")),
         ] {
-            let production = source
-                // The attribute ALONE: a CRLF checkout makes any pattern
-                // carrying `\n` match nothing, which hands back the whole file
-                // including its own tests, and this scan then charges a test's
-                // own literals to production. It reddened
-                // `platform (Windows-x64)` in the sibling object-refusal guard.
-                .find("#[cfg(test)]")
-                .map_or(source, |at| &source[..at]);
+            let production = production_half(source);
             assert!(
                 !production.contains("\"refused: "),
                 "{name} writes the refusal marker as a literal; use \
                  `refused!(\"code\", \"Sentence.\")` so a host can translate it"
+            );
+            // And the cut has to be TAKING EFFECT, or the scan is reading the test code it was
+            // written to exclude and nobody finds out until a fixture happens to trip it.
+            assert!(
+                production.len() < source.len(),
+                "{name}'s test module was not found, so this scan read the file whole"
+            );
+        }
+
+        // The CRLF case itself, driven on EVERY platform rather than only on Windows. Both
+        // halves: the literal in the production half must be visible, and the one in the test
+        // module must not be — which is the pair that fails when the cut silently misses.
+        let planted = "fn a() {\n    let _ = \"refused: by hand\";\n}\n\
+                       #[cfg(test)]\nmod tests {\n    let _ = \"refused: in a fixture\";\n}\n";
+        for (what, text) in [
+            ("LF", planted.to_owned()),
+            ("CRLF", planted.replace('\n', "\r\n")),
+        ] {
+            let production = production_half(text.as_str());
+            assert!(
+                production.contains("\"refused: by hand\""),
+                "with {what} line endings the scan cannot see the literal it forbids"
+            );
+            assert!(
+                !production.contains("\"refused: in a fixture\""),
+                "with {what} line endings the cut did not take effect, so the scan is charging \
+                 a module for its own test fixtures"
             );
         }
     }

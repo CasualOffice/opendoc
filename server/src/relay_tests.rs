@@ -6,7 +6,7 @@
 //! it does not live there any more.
 
 use casual_doc_edit::access::Capabilities;
-use casual_doc_edit::{Mint, Operation, Pos};
+use casual_doc_edit::{Mint, Operation, Pos, ReviewParagraphState};
 
 use crate::Access;
 use casual_doc_model::{IdGenerator, NodeId};
@@ -102,6 +102,33 @@ fn chunk(client: ClientId, seq: u64, base: Base) -> Submission {
             Operation::InsertText {
                 at: Pos::new(node, 0),
                 text: "q".to_owned(),
+            },
+            mint,
+        )],
+    }
+}
+
+/// A chunk carrying the **review vehicle** — the one operation a reviewer may send.
+///
+/// `UpdateReviewState` is also how a comment, a suggestion and untracked typing travel
+/// (ADR-052), which is exactly why the relay cannot tell them apart: it holds no document
+/// (ADR-047), so `casual_doc_edit::access::admitted_by` answers it with the weakest capability
+/// that could legitimately have sent it. What that gives the relay here is a real line and a
+/// weaker one than a replica's: `review` admits this variant and does not admit `InsertText`.
+fn review_chunk(client: ClientId, seq: u64, base: Base) -> Submission {
+    let node = NodeId::new(0x91).expect("id");
+    let mint = Mint::reserve(&mut IdGenerator::new(0xC0 + seq), 1).expect("a mint");
+    Submission {
+        client,
+        seq: Seq::new(seq),
+        base,
+        operations: vec![WireOperation::of(
+            Operation::UpdateReviewState {
+                paragraphs: vec![ReviewParagraphState {
+                    node,
+                    inlines: Vec::new(),
+                }],
+                comments: None,
             },
             mint,
         )],
@@ -556,6 +583,100 @@ fn a_read_only_room_refuses_every_edit_at_the_relay() {
          about access: {:?}",
         handled.answer
     );
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&other);
+}
+
+#[test]
+fn a_review_only_room_refuses_a_keystroke_and_orders_the_review_vehicle() {
+    // `Capabilities::review` was made a field rather than left as a comment, and this is the
+    // guard that says the bit reaches the **relay** — the only layer that can hold a line
+    // against a client somebody rewrote. Without it `review` would be enforced by every
+    // honest replica and by nothing else, which is the "built is not reachable" failure
+    // inside a permission vocabulary, where it is worst.
+    //
+    // Both halves on ONE relay, which is what makes the refusal about access rather than
+    // about a relay that refuses everything. `a_read_only_room_refuses_every_edit_at_the_relay`
+    // needed two rooms for that, because a viewer may send nothing at all; a reviewer may send
+    // exactly one variant, so the contrast fits inside a single room and a single participant.
+    let (path, mut relay, clients) = with_access(
+        "review-only-room",
+        1,
+        Access::Open(Capabilities::reviewer()),
+    );
+    let ada = clients[0];
+
+    // The half that must be ordered FIRST, so the refusal below cannot be read as this relay
+    // refusing its own participant on principle.
+    let handled = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &ClientMessage::Submit(review_chunk(ada, 1, Base::Revision(Revision::new(0)))),
+        )
+        .expect("handled");
+    assert!(
+        matches!(handled.answer, Some(ServerMessage::Ack { .. })),
+        "a review-only room refused the one operation a reviewer exists to send: {:?}",
+        handled.answer
+    );
+    let ordered_through = relay.room().session().head();
+    assert_eq!(
+        ordered_through,
+        Revision::new(1),
+        "the review decision must have moved the order, or it was not really ordered"
+    );
+
+    // And the keystroke, refused by name on the same relay, at the operation.
+    let handled = relay
+        .handle(
+            Some(ada),
+            &mut None,
+            &ClientMessage::Submit(chunk(ada, 2, Base::Revision(ordered_through))),
+        )
+        .expect("handled");
+    assert_eq!(
+        handled.answer,
+        Some(ServerMessage::Refused {
+            seq: Some(Seq::new(2)),
+            reason: Refusal::ReadOnlyAccess,
+        }),
+        "a review-only room ordered a keystroke"
+    );
+    assert_eq!(
+        relay.room().session().head(),
+        ordered_through,
+        "and the order must not have moved: an answer of \"refused\" over a document that moved \
+         anyway is worse than no check"
+    );
+    assert_eq!(Refusal::ReadOnlyAccess.code(), "ODC-7004");
+
+    // The relay's answer is the **weaker** one, deliberately, and saying so is the point: it
+    // holds no document, so it cannot tell this review chunk from a comment, a suggestion or
+    // untracked typing carried by the same variant. Those four are told apart exactly by every
+    // replica, which `casual_doc_edit::access`'s own guards assert and whose module docs say
+    // out loud rather than implying. What is held here is the line a modified client cannot
+    // cross: `review` is not `edit`.
+    let (other, mut editable, clients) = with_access(
+        "review-only-editable",
+        1,
+        Access::Open(Capabilities::editor()),
+    );
+    let bob = clients[0];
+    let handled = editable
+        .handle(
+            Some(bob),
+            &mut None,
+            &ClientMessage::Submit(chunk(bob, 1, Base::Revision(Revision::new(0)))),
+        )
+        .expect("handled");
+    assert!(
+        matches!(handled.answer, Some(ServerMessage::Ack { .. })),
+        "the identical keystroke must be ordered for an editor, or the refusal above is about \
+         the chunk and not about the grant: {:?}",
+        handled.answer
+    );
+
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&other);
 }
