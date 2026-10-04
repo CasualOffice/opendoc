@@ -813,6 +813,59 @@ pub fn story_blocks<'a>(document: &'a Document, story: &Story) -> Option<&'a [Bl
     }
 }
 
+/// The model block a [`crate::record::DiffAnchor`]'s `story` + `path` names, in
+/// a document the caller still holds. **O(depth)**.
+///
+/// This is the only live-document coordinate a change record carries (see the
+/// crate docs: `node` addresses the parse the comparison ran on), so applying a
+/// comparison to an open document goes through here.
+///
+/// It lives beside the walk that *produced* the path rather than in the caller
+/// for one reason: **the projection's block sequence is not the model's block
+/// list.** A table contributes rows and cells, which are not `BlockNode`s; a
+/// block-level content control contributes itself *and* is descended into; a
+/// paragraph and an alt-chunk are leaves. A hand-rolled walk over
+/// `Document::body()` would be subtly wrong at exactly those three points, and
+/// nothing would catch it drifting. This reuses the producer's own `descend`
+/// walk and [`story_blocks`], so the producer and the resolver cannot disagree.
+///
+/// Returns `None` when the path is empty, names a row or a cell rather than a
+/// block, leaves the document's shape (a stale path against an edited
+/// document), or names a story this document does not have.
+#[must_use]
+pub fn block_at_path<'a>(
+    document: &'a Document,
+    story: &Story,
+    path: &[PathSegment],
+) -> Option<&'a BlockNode> {
+    let (last, container) = path.split_last()?;
+    // A row and a cell are projected blocks and are not `BlockNode`s, so a path
+    // that ends at one names no block. Saying so is the point: the caller
+    // reports it rather than silently resolving the enclosing table.
+    let PathSegment::Block { index } = last else {
+        return None;
+    };
+    let mut list = List::Blocks(story_blocks(document, story)?);
+    for segment in container {
+        list = descend(list, segment_index(*segment))?;
+    }
+    match list {
+        List::Blocks(blocks) => blocks.get(*index as usize),
+        List::Rows(_) | List::Cells(_) => None,
+    }
+}
+
+/// The sibling index a path segment carries, whichever kind it is. The kind
+/// names what the *segment's own block* is; `descend` already knows what a
+/// step into each list yields, so the walk needs only the number.
+const fn segment_index(segment: PathSegment) -> u32 {
+    match segment {
+        PathSegment::Block { index } | PathSegment::Row { index } | PathSegment::Cell { index } => {
+            index
+        }
+    }
+}
+
 /// The projected text of one block, or `None` when the block is not a paragraph.
 ///
 /// **O(the block's inlines)**. Called only for blocks a change record names, so

@@ -42,11 +42,22 @@
 //! all, because it would do so confidently. `crates/casual-doc-diff/src/tests.rs`
 //! proves this with two real imports.
 //!
-//! What ids *are* used for is the thing they are good for: **anchors**. Every
-//! change record carries the `NodeId` of the block on each side, in the same
-//! `{node, start, end}` shape the review surface already uses, so a host can
-//! scroll a live document or a preview session to a change without re-deriving
-//! anything.
+//! What ids *are* used for is the thing they are good for: **anchors into the
+//! state that was compared**. Every change record carries the `NodeId` of the
+//! block on each side, in the same `{node, start, end}` shape the review
+//! surface already uses, so a host that still holds *that* parse — a preview
+//! session opened from the same bytes — can scroll to a change without
+//! re-deriving anything.
+//!
+//! **It does not address a live editing session's document, and nothing but the
+//! path does.** Both sides of a comparison are imported by the caller, including
+//! the side that is a re-export of a live document, and those ids restart per
+//! import — so a live document's own ids are in a different space from the ones
+//! recorded here, for the same reason the two sides' ids are in different spaces
+//! from each other. The coordinate that survives into a live document is
+//! [`record::DiffAnchor::path`], resolved by [`projection::block_at_path`],
+//! which is why applying a comparison belongs to the party that holds the
+//! document.
 //!
 //! The identities that genuinely survive two independent parses are the ones the
 //! *source format* writes, and they are used wherever they exist: a comment's
