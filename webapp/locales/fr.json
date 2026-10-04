@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "Un éditeur de documents sous licence Apache-2.0 qui fonctionne entièrement dans ce navigateur.",
   "aboutDialog.close.title": "Fermer",
   "aboutDialog.closeAbout.label": "Fermer À propos",
+  "aboutDialog.closeButton": "Fermer",
   "aboutDialog.engineVersion": "Version du moteur",
   "aboutDialog.licence": "Licence",
   "aboutDialog.licence2": "Licence",

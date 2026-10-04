@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "完全在本瀏覽器中執行的 Apache-2.0 文件編輯器。",
   "aboutDialog.close.title": "關閉",
   "aboutDialog.closeAbout.label": "關閉「關於」",
+  "aboutDialog.closeButton": "關閉",
   "aboutDialog.engineVersion": "引擎版本",
   "aboutDialog.licence": "授權",
   "aboutDialog.licence2": "授權",

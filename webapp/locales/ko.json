@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "이 브라우저에서 전부 실행되는 Apache-2.0 문서 편집기입니다.",
   "aboutDialog.close.title": "닫기",
   "aboutDialog.closeAbout.label": "정보 닫기",
+  "aboutDialog.closeButton": "닫기",
   "aboutDialog.engineVersion": "엔진 버전",
   "aboutDialog.licence": "라이선스",
   "aboutDialog.licence2": "라이선스",

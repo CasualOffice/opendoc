@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "Редактор документов под лицензией Apache-2.0, работающий полностью в этом браузере.",
   "aboutDialog.close.title": "Закрыть",
   "aboutDialog.closeAbout.label": "Закрыть сведения о программе",
+  "aboutDialog.closeButton": "Закрыть",
   "aboutDialog.engineVersion": "Версия движка",
   "aboutDialog.licence": "Лицензия",
   "aboutDialog.licence2": "Лицензия",
