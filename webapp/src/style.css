@@ -6813,6 +6813,28 @@ body.is-format-painting .page-wrap * {
   text-overflow: ellipsis;
 }
 
+/* The changed range INSIDE a line — GitHub's intra-line highlight. `<mark>`'s UA
+   default is a yellow that belongs to neither theme and to neither meaning, so
+   the row's own colour is deepened instead: the line already says added or
+   removed, and this says where. */
+.compare-diff-mark {
+  background: none;
+  color: inherit;
+  font-weight: 600;
+  border-radius: var(--radius);
+  padding-inline: 1px;
+}
+
+.compare-diff-del .compare-diff-mark {
+  background: var(--review-delete-soft);
+  box-shadow: inset 0 -2px 0 var(--review-delete-line);
+}
+
+.compare-diff-add .compare-diff-mark {
+  background: var(--review-insert-soft);
+  box-shadow: inset 0 -2px 0 var(--review-insert-line);
+}
+
 /* The row is a BUTTON when there is somewhere to go (Review ▸ Compare, where the
    right-hand side is the open document). It fills the row so the whole line is
    the target — a 22px row with a small inline link in it is a pointer target
