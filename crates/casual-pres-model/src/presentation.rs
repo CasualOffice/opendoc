@@ -14,6 +14,8 @@ use crate::{
 };
 // Own line (anti-conflict): the presentation-wide bottom tier of the text cascade.
 use crate::text_body::ListStyle;
+// Own line (anti-conflict): the theme indirection, which has no document analogue.
+use crate::theme::{ColorMap, ColorMapping, ThemeFontReference, ThemePalette, validate_mapping};
 
 /// The schema version stamped on a presentation.
 ///
@@ -141,6 +143,8 @@ pub struct Presentation {
     definitions: Definitions,
     #[serde(default, skip_serializing_if = "ListStyle::is_empty")]
     default_text_style: ListStyle,
+    #[serde(default, skip_serializing_if = "ColorMapping::is_empty")]
+    color_mapping: ColorMapping,
 }
 
 impl Presentation {
@@ -175,6 +179,9 @@ impl Presentation {
             // change to every caller for a part most packages do not carry, and
             // `docs/156` §5a is about exactly that kind of churn.
             default_text_style: ListStyle::default(),
+            // Same reasoning, and one more: the colour map is keyed by part id, so
+            // it can only be built once the ids above exist.
+            color_mapping: ColorMapping::default(),
         };
         presentation.validate()?;
         Ok(presentation)
@@ -192,6 +199,87 @@ impl Presentation {
         self.default_text_style = default_text_style;
         self.validate()?;
         Ok(self)
+    }
+
+    /// Attaches the colour maps the parts state (`p:clrMap` on each master,
+    /// `p:clrMapOvr/a:overrideClrMapping` on a layout or slide that overrides it).
+    ///
+    /// Re-validates, because a key naming a part this deck does not hold would make
+    /// [`ColorMapping::in_force`] fall through and resolve a colour role to the
+    /// wrong theme slot.
+    ///
+    /// # Errors
+    ///
+    /// [`PresentationError::DanglingColorMapRef`] when a key names no part of this
+    /// presentation.
+    pub fn with_color_mapping(
+        mut self,
+        color_mapping: ColorMapping,
+    ) -> Result<Self, PresentationError> {
+        self.color_mapping = color_mapping;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// The colour maps the deck's parts state.
+    #[must_use]
+    pub const fn color_mapping(&self) -> &ColorMapping {
+        &self.color_mapping
+    }
+
+    /// The colour map in force for one slide, following the override chain.
+    ///
+    /// # Complexity
+    ///
+    /// O(layouts + masters) — the two tier lookups are scans over the layout and
+    /// master lists, not over the deck. Hoist it out of a loop over slides.
+    #[must_use]
+    pub fn color_map_of(&self, slide: &Slide) -> ColorMap {
+        let layout = self.layout_of(slide);
+        self.color_mapping.in_force(
+            slide.id,
+            layout.map(|layout| layout.id),
+            layout.map(|layout| layout.master),
+        )
+    }
+
+    /// The resolved theme palette in force for one slide: the deck's `a:clrScheme`
+    /// read through that slide's effective colour map.
+    ///
+    /// `None` when the package carried no theme colour scheme, which is the one
+    /// honest answer — a substituted Office palette would paint a branded deck in
+    /// the wrong brand and look deliberate.
+    ///
+    /// # Complexity
+    ///
+    /// O(layouts + masters), as [`Presentation::color_map_of`].
+    #[must_use]
+    pub fn theme_palette_of(&self, slide: &Slide) -> Option<ThemePalette> {
+        let scheme = self.definitions.color_scheme.as_ref()?;
+        Some(ThemePalette::new(scheme, self.color_map_of(slide)))
+    }
+
+    /// The concrete family a typeface names, following a `+mj-lt`-style theme
+    /// reference through the deck's `a:fontScheme`.
+    ///
+    /// A concrete family is returned unchanged, so this is the one call a consumer
+    /// needs; `None` means the reference does not resolve (no font scheme, or an
+    /// entry whose `@typeface` is the empty "fall back to latin" marker) and the
+    /// caller must choose, rather than being handed a fabricated family.
+    ///
+    /// The reference is NOT folded into the run at import: `+mj-lt` is what the
+    /// file says, and rewriting it as `Calibri Light` would turn a theme reference
+    /// into authorship, so a later theme change would stop following.
+    ///
+    /// # Complexity
+    ///
+    /// O(1).
+    #[must_use]
+    pub fn resolve_typeface<'a>(&'a self, typeface: &'a crate::Typeface) -> Option<&'a str> {
+        match ThemeFontReference::parse(&typeface.name) {
+            Some(reference) => reference.resolve(self.definitions.font_scheme.as_ref()?),
+            None => Some(typeface.name.as_str()),
+        }
     }
 
     /// The presentation-wide `p:defaultTextStyle`, empty when the package carries
@@ -483,6 +571,12 @@ impl Presentation {
         for slide in &self.slides {
             slide.shapes.validate(&self.definitions)?;
         }
+        validate_mapping(
+            &self.color_mapping,
+            &self.masters,
+            &self.layouts,
+            &self.slides,
+        )?;
         Ok(())
     }
 

@@ -14,14 +14,25 @@
 //! for exactly that reason, and this module respects the distinction rather than
 //! flattening one into the other.
 //!
-//! # What a scheme colour resolves to, and why that is reported
+//! # What a scheme colour resolves to, and against what
 //!
-//! `a:schemeClr val="accent1"` names a theme slot. The theme part
-//! (`ppt/theme/theme1.xml`) is **not** read by this importer, so there is no
-//! colour scheme to resolve against. Rather than invent a palette — which would
-//! paint a branded deck in Office defaults and look deliberate — a scheme colour
-//! is reported as degraded and the shape keeps no fill. `SKILL` §12: unsupported
-//! data is preserved where safe or reported explicitly, never guessed.
+//! `a:schemeClr val="accent1"` names a theme slot — but `val="tx1"` names a
+//! presentation *role*, and only the master's `p:clrMap` says which of two theme
+//! entries that role is bound to. Both halves are read now
+//! ([`crate::theme`]), so a scheme colour resolves to a concrete colour through
+//! [`Resolver::scheme_color`] with its `a:tint`/`a:shade`/`a:alpha`/`a:lumMod`/
+//! `a:lumOff` folded in.
+//!
+//! What is still NOT resolved is a slot this build has no palette for: a deck with
+//! no theme part, or a `@val` outside `ST_SchemeColorVal`. Inventing an Office
+//! palette there would paint a branded deck in the wrong brand and look
+//! deliberate, so it stays reported.
+//!
+//! # Units
+//!
+//! Every colour transform is `ST_Percentage` in THOUSANDTHS of a percent, and
+//! [`ColorTransform`] holds them in exactly those units. `a:ln@w` is EMU. Nothing
+//! here converts between the two.
 
 use casual_doc_model::v1::{
     ColorTransform, DashStyle, Fill, LineEnd, LineEndKind, LineEndSize, Rgba, ShapeStroke,
@@ -31,6 +42,7 @@ use quick_xml::events::BytesStart;
 
 use crate::ImportError;
 use crate::loss::Reporter;
+use crate::theme::{Resolver, SchemeOutcome, parse_percentage};
 use crate::xml::{Cursor, attribute, children, integer_attribute, local_name};
 
 /// The outcome of reading a colour-bearing element's child.
@@ -40,13 +52,18 @@ pub(crate) struct ColorRead {
     pub(crate) rgba: Option<Rgba>,
     /// Whether the element named `a:phClr`, the placeholder.
     pub(crate) placeholder: bool,
+    /// The transforms the placeholder carries forward. Meaningful only when
+    /// `placeholder` is set: a transform over a KNOWN base is folded into `rgba`
+    /// immediately, because folding needs the base and here it exists.
+    pub(crate) transform: ColorTransform,
 }
 
 impl ColorRead {
-    /// This colour as a [`StyleColor`], preserving the placeholder.
+    /// This colour as a [`StyleColor`], preserving the placeholder and the
+    /// transform that travels with it.
     pub(crate) fn style_color(self) -> Option<StyleColor> {
         if self.placeholder {
-            return Some(StyleColor::Placeholder(ColorTransform::default()));
+            return Some(StyleColor::Placeholder(self.transform));
         }
         self.rgba.map(StyleColor::Fixed)
     }
@@ -61,6 +78,7 @@ impl ColorRead {
 pub(crate) fn read_solid_fill(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
+    resolver: Resolver,
 ) -> Result<ColorRead, ImportError> {
     let mut read = ColorRead::default();
     let part = cursor.part().to_owned();
@@ -68,31 +86,32 @@ pub(crate) fn read_solid_fill(
         let local = local_name(element);
         match local {
             b"srgbClr" => {
-                read.rgba = parse_srgb(attribute(element, b"val", cursor.part())?.as_deref());
-                if read.rgba.is_none() {
+                let base = parse_srgb(attribute(element, b"val", cursor.part())?.as_deref());
+                if base.is_none() {
                     reporter.invalid(&part, b"srgbClr");
                 }
-                // `a:srgbClr` carries colour transforms as children
-                // (`a:alpha`, `a:lumMod`, `a:tint`, …). The model's shape `Fill`
-                // is a concrete `Rgba` with no room for an unapplied transform,
-                // and applying only some of them would be worse than applying
-                // none, so each is reported and the base colour stands.
-                if !empty {
-                    report_transforms(cursor, reporter, &part, b"srgbClr")?;
-                    return Ok(true);
-                }
+                // The base is known, so the transforms fold NOW. This is the
+                // immediate half of the same arithmetic `ColorTransform::apply`
+                // performs on a deferred placeholder, and it is the same function,
+                // so the two cannot drift.
+                let transform = read_transform_if_any(cursor, reporter, &part, empty)?;
+                read.rgba = base.map(|base| transform.apply(base));
+                Ok(!empty)
             }
             b"schemeClr" => {
-                read.placeholder = attribute(element, b"val", cursor.part())?
-                    .is_some_and(|value| value == "phClr");
-                if !read.placeholder {
-                    // A theme slot with no theme read: reported, not guessed.
-                    reporter.degraded(&part, b"schemeClr");
+                let value = attribute(element, b"val", cursor.part())?.unwrap_or_default();
+                let transform = read_transform_if_any(cursor, reporter, &part, empty)?;
+                match resolver.scheme_color(&value, transform) {
+                    SchemeOutcome::Resolved(color) => read.rgba = Some(color),
+                    SchemeOutcome::Placeholder => {
+                        read.placeholder = true;
+                        read.transform = transform;
+                    }
+                    // A theme slot with no palette to resolve it against, or a
+                    // token outside the enumeration: reported, not guessed.
+                    SchemeOutcome::Unresolved => reporter.degraded(&part, b"schemeClr"),
                 }
-                if !empty {
-                    report_transforms(cursor, reporter, &part, b"schemeClr")?;
-                    return Ok(true);
-                }
+                Ok(!empty)
             }
             b"sysClr" => {
                 // `a:sysClr` carries the host system colour plus a `lastClr`
@@ -100,36 +119,144 @@ pub(crate) fn read_solid_fill(
                 // `lastClr` is the lossless reading: it is the colour the file
                 // was authored to look like, and resolving the system slot on
                 // this machine would make the deck change appearance per host.
-                read.rgba = parse_srgb(attribute(element, b"lastClr", cursor.part())?.as_deref());
-                if read.rgba.is_none() {
+                let base = parse_srgb(attribute(element, b"lastClr", cursor.part())?.as_deref());
+                if base.is_none() {
                     reporter.degraded(&part, b"sysClr");
                 }
-                if !empty {
-                    report_transforms(cursor, reporter, &part, b"sysClr")?;
-                    return Ok(true);
-                }
+                let transform = read_transform_if_any(cursor, reporter, &part, empty)?;
+                read.rgba = base.map(|base| transform.apply(base));
+                Ok(!empty)
             }
             b"prstClr" | b"hslClr" | b"scrgbClr" => {
                 reporter.omitted(&part, local);
+                Ok(false)
             }
-            _ => {}
+            _ => Ok(false),
         }
-        Ok(false)
     })?;
     Ok(read)
 }
 
-/// Reports each colour transform on a colour element, then consumes the subtree.
-fn report_transforms(
+/// Reads a theme-style colour (`a:fmtScheme` entry, `p:style` argument) into
+/// `slot`, matching [`children`]'s callback contract.
+///
+/// A fixed base folds its transform here, because the base is known; `a:phClr`
+/// carries the transform forward, because its base arrives only when a shape's
+/// `a:fillRef`/`a:lnRef` supplies one. That is the whole reason
+/// [`StyleColor::Placeholder`] holds a [`ColorTransform`] and
+/// [`StyleColor::Fixed`] does not: the default Office theme's gradient entries
+/// are three `phClr` stops that differ ONLY in their transforms, so a build that
+/// dropped them would resolve a three-stop gradient to three copies of one colour.
+pub(crate) fn read_style_color(
+    cursor: &mut Cursor<'_>,
+    reporter: &mut Reporter,
+    element: &BytesStart<'_>,
+    empty: bool,
+    part: &str,
+    slot: &mut Option<StyleColor>,
+) -> Result<bool, ImportError> {
+    let local = local_name(element);
+    match local {
+        b"schemeClr" => {
+            let value = attribute(element, b"val", cursor.part())?.unwrap_or_default();
+            let transform = read_transform_if_any(cursor, reporter, part, empty)?;
+            if value == "phClr" {
+                *slot = Some(StyleColor::Placeholder(transform));
+            } else {
+                // A theme-relative colour inside the theme's OWN style matrix. The
+                // matrix is deck-wide while a colour map is per part, so there is
+                // no one map to resolve it through here — the entry stays
+                // unmodelled and its caller reports the whole entry.
+                reporter.degraded(part, b"schemeClr");
+            }
+            Ok(!empty)
+        }
+        b"srgbClr" => {
+            let base = parse_srgb(attribute(element, b"val", cursor.part())?.as_deref());
+            let transform = read_transform_if_any(cursor, reporter, part, empty)?;
+            match base {
+                Some(base) => *slot = Some(StyleColor::Fixed(transform.apply(base))),
+                None => reporter.invalid(part, b"srgbClr"),
+            }
+            Ok(!empty)
+        }
+        b"sysClr" => {
+            let base = parse_srgb(attribute(element, b"lastClr", cursor.part())?.as_deref());
+            let transform = read_transform_if_any(cursor, reporter, part, empty)?;
+            match base {
+                Some(base) => *slot = Some(StyleColor::Fixed(transform.apply(base))),
+                None => reporter.degraded(part, b"sysClr"),
+            }
+            Ok(!empty)
+        }
+        other => {
+            reporter.omitted(part, other);
+            Ok(false)
+        }
+    }
+}
+
+/// Reads a colour element's transform children when it has any.
+///
+/// A self-closing colour element has no children to read AND no end tag, so
+/// entering it would consume the following sibling's events — the bug
+/// [`crate::xml::enter`] exists for. `<a:srgbClr val="4472C4"/>` and
+/// `<a:tint val="40000"/>` are exactly that shape, which is why the attributes
+/// above are read unconditionally and only the descent is guarded.
+pub(crate) fn read_transform_if_any(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     part: &str,
-    _owner: &[u8],
-) -> Result<(), ImportError> {
-    children(cursor, |_cursor, element, _empty| {
-        reporter.omitted(part, local_name(element));
+    empty: bool,
+) -> Result<ColorTransform, ImportError> {
+    if empty {
+        return Ok(ColorTransform::default());
+    }
+    read_color_transform(cursor, reporter, part)
+}
+
+/// Reads the colour transforms on a colour element, having just entered it.
+///
+/// Values stay in the per-100000 units the file states; the single division lives
+/// in `ColorTransform::apply`.
+///
+/// `a:satMod` is reported rather than applied, and that is deliberate rather than
+/// an omission: `ColorTransform` has no saturation field because
+/// `casual_doc_model::v1::fold_color_modifiers` applies none, and adding a
+/// half-correct saturation fold here would change every colour this build already
+/// resolves — on the document side too, since the arithmetic is shared. The same
+/// goes for the hue, gamma and channel-wise modifiers.
+pub(crate) fn read_color_transform(
+    cursor: &mut Cursor<'_>,
+    reporter: &mut Reporter,
+    part: &str,
+) -> Result<ColorTransform, ImportError> {
+    let mut transform = ColorTransform::default();
+    children(cursor, |cursor, element, _empty| {
+        let local = local_name(element);
+        let field = match local {
+            b"lumMod" => &mut transform.lum_mod,
+            b"lumOff" => &mut transform.lum_off,
+            b"tint" => &mut transform.tint,
+            b"shade" => &mut transform.shade,
+            b"alpha" => &mut transform.alpha,
+            other => {
+                reporter.omitted(part, other);
+                return Ok(false);
+            }
+        };
+        match attribute(element, b"val", cursor.part())?
+            .as_deref()
+            .and_then(parse_percentage)
+        {
+            Some(value) => *field = Some(value),
+            // A modifier with no parsable `@val` is a stated transform this build
+            // did not apply, which is a visible colour difference.
+            None => reporter.degraded_attribute(part, local, b"val"),
+        }
         Ok(false)
-    })
+    })?;
+    Ok(transform)
 }
 
 /// Parses a six-hex-digit `val`, which is the only form `ST_HexColorRGB` admits.
@@ -183,6 +310,7 @@ pub(crate) fn read_fill_child(
     element: &BytesStart<'_>,
     empty: bool,
     read: &mut FillRead,
+    resolver: Resolver,
 ) -> Result<bool, ImportError> {
     let local = local_name(element);
     let part = cursor.part().to_owned();
@@ -197,8 +325,12 @@ pub(crate) fn read_fill_child(
                 reporter.invalid(&part, b"solidFill");
                 return Ok(false);
             }
-            let color = read_solid_fill(cursor, reporter)?;
-            read.fill = color.rgba.map(Fill::Solid);
+            // A fill whose colour did not resolve is reported by `read_solid_fill`
+            // on the colour element itself, which is where the fact is; adding a
+            // second finding here would double-count every one of them.
+            read.fill = read_solid_fill(cursor, reporter, resolver)?
+                .rgba
+                .map(Fill::Solid);
             Ok(true)
         }
         b"gradFill" | b"blipFill" | b"pattFill" | b"grpFill" => {
@@ -219,6 +351,7 @@ pub(crate) fn read_line(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     element: &BytesStart<'_>,
+    resolver: Resolver,
 ) -> Result<Option<ShapeStroke>, ImportError> {
     let part = cursor.part().to_owned();
     // `a:ln@w` is in EMU, like every other DrawingML measure here. It is NOT in
@@ -243,7 +376,7 @@ pub(crate) fn read_line(
                     reporter.invalid(&part, b"solidFill");
                     return Ok(false);
                 }
-                color = read_solid_fill(cursor, reporter)?.rgba;
+                color = read_solid_fill(cursor, reporter, resolver)?.rgba;
                 Ok(true)
             }
             b"gradFill" | b"pattFill" => {
@@ -299,8 +432,9 @@ pub(crate) fn read_line(
         None => {
             if width_emu != 0 || dash.is_some() {
                 // The file states an outline but not a colour this build can
-                // resolve — a theme line reference, normally. Dropping it
-                // silently would make a bordered shape reopen unbordered.
+                // resolve — a theme line reference with no theme, normally.
+                // Dropping it silently would make a bordered shape reopen
+                // unbordered.
                 reporter.degraded(&part, b"ln");
             }
             Ok(None)
@@ -342,7 +476,9 @@ fn end_size(token: &str) -> Option<LineEndSize> {
     }
 }
 
-fn dash_style(token: &str) -> Option<DashStyle> {
+/// Maps an `a:prstDash@val` token, shared with the theme's `a:lnStyleLst` reader so
+/// a dash on a shape and a dash in the style matrix cannot be read differently.
+pub(crate) fn dash_style(token: &str) -> Option<DashStyle> {
     Some(match token {
         "solid" => DashStyle::Solid,
         "dot" => DashStyle::Dot,

@@ -38,11 +38,12 @@
 //! the distinction is load-bearing, not theoretical, and every absent `a:xfrm` is
 //! reported as a degraded `p:spPr`.
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Extent, Fill, GroupChild, GroupPicture, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
     MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
     MAX_SHAPE_PATH_COMMANDS, MAX_SHAPE_PRESET_BYTES, MediaId, PointEmu, ShapeAdjustment,
-    ShapeGeometry, ShapePath, ShapePathCommand, ShapeStroke, WordprocessingGroup,
+    ShapeGeometry, ShapePath, ShapePathCommand, ShapeStroke, ShapeStyleRef, WordprocessingGroup,
 };
 use casual_pres_model::{
     Placeholder, PlaceholderKind, PlaceholderOrientation, PlaceholderSize, ShapeTree, SlideNode,
@@ -55,7 +56,9 @@ use crate::color::{FillRead, read_fill_child, read_line};
 use crate::ids::Ids;
 use crate::loss::Reporter;
 use crate::media::MediaResolver;
+// Own line (anti-conflict): the theme a shape's colours and `p:style` resolve against.
 use crate::text::read_text_body;
+use crate::theme::{Resolver, read_shape_style};
 use crate::xml::{
     Cursor, attribute, boolean_attribute, children, enter, integer_attribute, local_name,
 };
@@ -137,6 +140,8 @@ pub(crate) fn read_shape_tree(
     ids: &mut Ids,
     media: &mut MediaResolver<'_>,
     surface: Surface,
+    resolver: Resolver,
+    styles: &mut Vec<(NodeId, ShapeStyleRef)>,
 ) -> Result<ShapeTree, ImportError> {
     let part = cursor.part().to_owned();
     let limits = cursor.limits();
@@ -152,7 +157,8 @@ pub(crate) fn read_shape_tree(
                 if empty {
                     return Ok(false);
                 }
-                transform = read_group_properties(cursor, reporter, &mut FillRead::default())?;
+                transform =
+                    read_group_properties(cursor, reporter, &mut FillRead::default(), resolver)?;
                 Ok(true)
             }
             b"sp" | b"pic" | b"grpSp" | b"graphicFrame" | b"cxnSp" | b"contentPart" => {
@@ -161,7 +167,8 @@ pub(crate) fn read_shape_tree(
                     return Ok(false);
                 }
                 let consumed = read_tree_child(
-                    cursor, reporter, ids, media, element, empty, local, &mut nodes, 0,
+                    cursor, reporter, ids, media, element, empty, local, &mut nodes, 0, resolver,
+                    styles,
                 )?;
                 Ok(consumed)
             }
@@ -227,6 +234,8 @@ fn read_tree_child(
     local: &[u8],
     nodes: &mut Vec<SlideNode>,
     depth: u32,
+    resolver: Resolver,
+    styles: &mut Vec<(NodeId, ShapeStyleRef)>,
 ) -> Result<bool, ImportError> {
     let part = cursor.part().to_owned();
     match local {
@@ -235,7 +244,7 @@ fn read_tree_child(
                 reporter.invalid(&part, b"sp");
                 return Ok(false);
             }
-            if let Some(node) = read_shape(cursor, reporter, ids, false)? {
+            if let Some(node) = read_shape(cursor, reporter, ids, false, resolver, styles)? {
                 nodes.push(node);
             }
             Ok(true)
@@ -251,7 +260,7 @@ fn read_tree_child(
                 return Ok(false);
             }
             reporter.degraded(&part, b"cxnSp");
-            if let Some(node) = read_shape(cursor, reporter, ids, true)? {
+            if let Some(node) = read_shape(cursor, reporter, ids, true, resolver, styles)? {
                 nodes.push(node);
             }
             Ok(true)
@@ -261,7 +270,7 @@ fn read_tree_child(
                 reporter.invalid(&part, b"pic");
                 return Ok(false);
             }
-            if let Some(node) = read_picture(cursor, reporter, ids, media)? {
+            if let Some(node) = read_picture(cursor, reporter, ids, media, resolver, styles)? {
                 nodes.push(node);
             }
             Ok(true)
@@ -278,7 +287,7 @@ fn read_tree_child(
                 reporter.invalid(&part, b"grpSp");
                 return Ok(false);
             }
-            if let Some(node) = read_group(cursor, reporter, ids, media, depth)? {
+            if let Some(node) = read_group(cursor, reporter, ids, media, depth, resolver, styles)? {
                 nodes.push(node);
             }
             Ok(true)
@@ -435,6 +444,8 @@ fn read_shape(
     reporter: &mut Reporter,
     ids: &mut Ids,
     connector: bool,
+    resolver: Resolver,
+    styles: &mut Vec<(NodeId, ShapeStyleRef)>,
 ) -> Result<Option<SlideNode>, ImportError> {
     let part = cursor.part().to_owned();
     let id = ids.next()?;
@@ -460,24 +471,40 @@ fn read_shape(
             // presence-only guard could not see; the count-derived guard in
             // `tests.rs` is what caught it.
             b"spPr" => enter(cursor, empty, |cursor, child, child_empty| {
-                read_shape_property(cursor, reporter, child, child_empty, &mut properties)
+                read_shape_property(
+                    cursor,
+                    reporter,
+                    child,
+                    child_empty,
+                    &mut properties,
+                    resolver,
+                )
             }),
             b"txBody" => {
                 if empty {
                     return Ok(false);
                 }
-                text = Some(read_text_body(cursor, reporter, ids)?);
+                text = Some(read_text_body(cursor, reporter, ids, resolver)?);
                 Ok(true)
             }
             b"style" => {
                 // `p:style` names theme fill/line/effect/font references
-                // (`a:fillRef`, `a:lnRef`, `a:effectRef`, `a:fontRef`). The
-                // document model keeps these in a `Definitions` side table keyed
-                // by node id; this importer does not read the theme part, so
-                // there is nothing to resolve them against and a themed shape
-                // imports unfilled. Reported, not guessed.
-                reporter.omitted(&part, b"style");
-                Ok(false)
+                // (`a:fillRef`, `a:lnRef`, `a:effectRef`, `a:fontRef`), and the
+                // reference is kept AS a reference in the `Definitions` side table
+                // the document class already uses for `wps:style`. Resolving the
+                // matrix entry into `GroupShape::fill` instead would turn the
+                // theme's content into the shape's authorship, so a later theme
+                // change would stop following it.
+                //
+                // An empty `<p:style/>` is malformed — all four children are
+                // required — and entering it would consume the next sibling's
+                // events, so the guard is not cosmetic.
+                if empty {
+                    reporter.invalid(&part, b"style");
+                    return Ok(false);
+                }
+                styles.push((id, read_shape_style(cursor, reporter, resolver)?));
+                Ok(true)
             }
             b"extLst" => Ok(false),
             other => {
@@ -522,6 +549,8 @@ fn read_picture(
     reporter: &mut Reporter,
     ids: &mut Ids,
     media: &mut MediaResolver<'_>,
+    resolver: Resolver,
+    styles: &mut Vec<(NodeId, ShapeStyleRef)>,
 ) -> Result<Option<SlideNode>, ImportError> {
     let part = cursor.part().to_owned();
     let id = ids.next()?;
@@ -550,18 +579,29 @@ fn read_picture(
             // See `read_shape`: the post-loop check is the single reporting
             // site for a shape that states no transform.
             b"spPr" => enter(cursor, empty, |cursor, child, child_empty| {
-                read_shape_property(cursor, reporter, child, child_empty, &mut properties)
+                read_shape_property(
+                    cursor,
+                    reporter,
+                    child,
+                    child_empty,
+                    &mut properties,
+                    resolver,
+                )
             }),
             b"txBody" => {
                 if empty {
                     return Ok(false);
                 }
-                text = Some(read_text_body(cursor, reporter, ids)?);
+                text = Some(read_text_body(cursor, reporter, ids, resolver)?);
                 Ok(true)
             }
             b"style" => {
-                reporter.omitted(&part, b"style");
-                Ok(false)
+                if empty {
+                    reporter.invalid(&part, b"style");
+                    return Ok(false);
+                }
+                styles.push((id, read_shape_style(cursor, reporter, resolver)?));
+                Ok(true)
             }
             b"extLst" => Ok(false),
             other => {
@@ -662,6 +702,8 @@ fn read_group(
     ids: &mut Ids,
     media: &mut MediaResolver<'_>,
     depth: u32,
+    resolver: Resolver,
+    styles: &mut Vec<(NodeId, ShapeStyleRef)>,
 ) -> Result<Option<SlideNode>, ImportError> {
     let part = cursor.part().to_owned();
     let limits = cursor.limits();
@@ -684,7 +726,8 @@ fn read_group(
                 if empty {
                     return Ok(false);
                 }
-                transform = read_group_properties(cursor, reporter, &mut FillRead::default())?;
+                transform =
+                    read_group_properties(cursor, reporter, &mut FillRead::default(), resolver)?;
                 Ok(true)
             }
             b"sp" | b"pic" | b"grpSp" | b"graphicFrame" | b"cxnSp" | b"contentPart" => {
@@ -702,6 +745,8 @@ fn read_group(
                     local,
                     &mut nodes,
                     depth + 1,
+                    resolver,
+                    styles,
                 )
             }
             b"extLst" => Ok(false),
@@ -785,6 +830,7 @@ fn read_group_properties(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     fill: &mut FillRead,
+    resolver: Resolver,
 ) -> Result<Transform, ImportError> {
     let part = cursor.part().to_owned();
     let mut transform = Transform::default();
@@ -802,7 +848,7 @@ fn read_group_properties(
                 Ok(false)
             }
             b"extLst" => Ok(false),
-            _ => read_fill_child(cursor, reporter, element, empty, fill),
+            _ => read_fill_child(cursor, reporter, element, empty, fill, resolver),
         }
     })?;
     Ok(transform)
@@ -826,6 +872,7 @@ fn read_shape_property(
     element: &BytesStart<'_>,
     empty: bool,
     properties: &mut ShapeProperties,
+    resolver: Resolver,
 ) -> Result<bool, ImportError> {
     let part = cursor.part().to_owned();
     {
@@ -853,7 +900,7 @@ fn read_shape_property(
                 if empty {
                     return Ok(false);
                 }
-                properties.stroke = read_line(cursor, reporter, element)?;
+                properties.stroke = read_line(cursor, reporter, element, resolver)?;
                 Ok(true)
             }
             b"effectLst" | b"effectDag" | b"scene3d" | b"sp3d" => {
@@ -865,7 +912,14 @@ fn read_shape_property(
                 Ok(false)
             }
             b"extLst" => Ok(false),
-            _ => read_fill_child(cursor, reporter, element, empty, &mut properties.fill),
+            _ => read_fill_child(
+                cursor,
+                reporter,
+                element,
+                empty,
+                &mut properties.fill,
+                resolver,
+            ),
         }
     }
 }
@@ -1181,6 +1235,7 @@ fn push_command(
 pub(crate) fn read_background(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
+    resolver: Resolver,
 ) -> Result<Option<Fill>, ImportError> {
     let part = cursor.part().to_owned();
     let mut fill = FillRead::default();
@@ -1188,7 +1243,7 @@ pub(crate) fn read_background(
         let local = local_name(element);
         match local {
             b"bgPr" => enter(cursor, empty, |cursor, child, child_empty| {
-                read_fill_child(cursor, reporter, child, child_empty, &mut fill)
+                read_fill_child(cursor, reporter, child, child_empty, &mut fill, resolver)
             }),
             b"bgRef" => {
                 // A background style reference resolves against the theme's

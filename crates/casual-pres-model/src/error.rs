@@ -58,6 +58,13 @@ pub enum PresentationError {
     DanglingMasterRef(SlideLayoutId),
     /// A media reference did not resolve in `Definitions::media`.
     DanglingMediaRef(NodeId),
+    /// A colour-mapping entry was keyed by a part the presentation does not hold.
+    ///
+    /// Refused rather than ignored, because the failure mode is a wrong answer and
+    /// not a missing one: `ColorMapping::in_force` falls through to the tier above,
+    /// so a dangling key resolves `tx1` to the wrong theme slot and repaints the
+    /// slide with nothing reporting it.
+    DanglingColorMapRef(NodeId),
     /// A shape tree had no root transform child space to position children in —
     /// `a:chExt` was zero on an axis while the tree has children.
     ///
@@ -159,6 +166,9 @@ impl fmt::Display for PresentationError {
             }
             Self::DanglingMediaRef(id) => {
                 write!(formatter, "media reference {id} does not resolve")
+            }
+            Self::DanglingColorMapRef(id) => {
+                write!(formatter, "colour map is keyed by unknown part {id}")
             }
             Self::DegenerateChildSpace(id) => {
                 write!(formatter, "shape tree {id} has a zero child extent")

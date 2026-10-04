@@ -102,6 +102,30 @@ impl Reporter {
         );
     }
 
+    /// Reports a `p:style` reference that resolves against the theme's style
+    /// matrix and still cannot be PAINTED, with `reason` naming why.
+    ///
+    /// `Degraded` rather than `Omitted`: the shape is still placed, still sized and
+    /// still drawn, it just is not wearing the appearance the file asked for. The
+    /// reason travels as the location's attribute, which is the one field the
+    /// report carries that can say *which* part while keeping a single feature name
+    /// and a single occurrence count.
+    ///
+    /// There is no part name, and that is not an oversight: a style matrix entry is
+    /// a property of the THEME, while the reference is on a shape in some other
+    /// part, so charging the finding to either one would be the wrong half.
+    pub(crate) fn theme_style_unpainted(&mut self, list: &str, reason: &str) {
+        self.inner.record(
+            format!("fmtScheme/{list}"),
+            FeatureLocation {
+                part_name: None,
+                element: Some(list.to_owned()),
+                attribute: Some(reason.to_owned()),
+            },
+            Finding::Degraded,
+        );
+    }
+
     /// Reports a whole admitted package part the semantic model does not consume.
     ///
     /// The feature identifier is the part name, which is what
