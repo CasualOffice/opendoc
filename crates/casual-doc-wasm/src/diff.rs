@@ -1203,7 +1203,10 @@ mod tests {
             .iter()
             .find(|change| change.family == DiffFamily::Text)
             .expect("the edited paragraph is reported");
-        let right = change.right.as_ref().expect("a text change has a right side");
+        let right = change
+            .right
+            .as_ref()
+            .expect("a text change has a right side");
 
         // `newer` is the document the host holds, which is the comparison's right
         // side — the only side a path is claimed to resolve against.
@@ -1233,14 +1236,12 @@ mod tests {
             "the resolved id is the paragraph the change is about, not a neighbour with the \
              same ordinal"
         );
-        assert_eq!(
+        assert!(
             live.node_at_story_path(
                 &story,
-                &serde_json::to_string(&vec![PathSegment::Block { index: 0 }])
-                    .expect("serializes"),
+                &serde_json::to_string(&vec![PathSegment::Block { index: 0 }]).expect("serializes"),
             )
             .is_some_and(|other| other != resolved),
-            true,
             "and a different path resolves to a different paragraph, so the answer tracks the \
              path rather than being the first block every time"
         );

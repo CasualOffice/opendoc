@@ -6716,6 +6716,11 @@ body.is-format-painting .page-wrap * {
   --diff-row-h: 22px;
   max-height: 46vh;
   overflow: auto;
+  /* A chrome scroller must not hand the wheel to the document behind it when it
+     reaches its end — that reads as the panel stuttering and then the page
+     lurching. `style_tokens.test.mjs` fails the build for any scroller in this
+     stylesheet that omits it, and it caught this one. */
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -6750,6 +6755,11 @@ body.is-format-painting .page-wrap * {
   padding-inline: 8px;
   overflow-x: auto;
   overflow-y: hidden;
+  /* The same rule one axis over. `style_tokens.test.mjs` only matches `overflow`
+     and `overflow-y`, so it does not ask for this — but a row that hands a
+     horizontal gesture to the page rubber-bands the whole frame sideways, which
+     is the defect that guard exists for. */
+  overscroll-behavior: contain;
   white-space: nowrap;
   font-size: var(--fs-small);
   /* The gutter mark a diff is read by. Set per kind below; declared here so a
