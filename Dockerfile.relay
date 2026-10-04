@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The OPTIONAL collaboration relay (`docs/162`, RM-11).
+#
+# Read this first, because the shape of the file follows from it: **opendoc does
+# not need a server.** The editor is a static, local-first web app whose format
+# I/O is in WebAssembly, and it opens, edits and saves a document with nothing
+# running behind it (`Dockerfile.editor`). This image exists only for the second,
+# separable deployment — a room several people edit at once — and it holds **no
+# document**: `server/src/lib.rs` records ADR-047, "a dumb relay", which orders
+# the chunks clients offer, journals the order and fans each chunk out untouched.
+#
+# `server/` is deliberately not under `crates/`, and the test
+# `nothing_under_crates_depends_on_the_relay` fails the build if anything in
+# `crates/` ever depends on it, "because a mandatory server is the one thing this
+# project's position cannot survive".
+#
+# What this image deliberately does NOT do, stated here rather than discovered in
+# production (`docs/162` §8 has the full list):
+#
+#   * It does not terminate TLS. The relay speaks a length-prefixed binary frame
+#     protocol over a plain `TcpListener`; there is no `rustls`/`openssl` anywhere
+#     in its dependency tree. Put a reverse proxy in front of it.
+#   * It verifies NO grants, so it cannot tell two participants apart — every
+#     participant in a room gets the one role named on the command line. The
+#     binary's own module doc says so; per-participant access needs a deployment
+#     that implements `GrantVerifier` and passes `Access::Granted`.
+#   * It is thread-per-connection `std` sockets with a 128-participant ceiling per
+#     room. Tens of participants, not thousands.
+
+# ── Builder ───────────────────────────────────────────────────────────────────
+# Pinned to the toolchain the workspace pins (`rust-toolchain.toml` channel
+# 1.96.0, the same version CI installs and the version `cargo +1.96.0 fmt` is
+# required to be).
+FROM rust:1.96.0-slim-bookworm AS build
+
+# `rust-toolchain.toml` also asks for clippy, rustfmt and the wasm32 target, and
+# honouring it here would make rustup download a second toolchain to build a
+# binary that needs none of them. `RUSTUP_TOOLCHAIN` takes precedence over the
+# file, and the version it names is the version the file names — so the pin is
+# satisfied by the image rather than re-fetched.
+ENV RUSTUP_TOOLCHAIN=1.96.0 \
+    CARGO_TERM_COLOR=never \
+    CARGO_NET_RETRY=3
+
+WORKDIR /src
+
+# No `apt-get install build-essential`: `cargo tree -p opendoc-relay` is eleven
+# crates and every one is pure Rust (`casual-doc-edit`, `casual-doc-transaction`,
+# `casual-doc-model`, serde, serde_json, unicode-segmentation and their proc-macro
+# support). Nothing links a C library, so the slim image is already complete.
+# `tools/` comes along for its MANIFESTS, not to be built: `[workspace].members`
+# lists `tools/opendoc-benchmark` and three siblings, and cargo refuses to load a
+# workspace whose member manifest is missing — the first build of this file failed
+# with exactly that. `--package opendoc-relay` still builds only the relay.
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY tools ./tools
+COPY server ./server
+
+# `--locked` so the image is built from the committed lock file and a build that
+# would need to change it fails instead. `--release` because this is the binary
+# that serves, and `-p/--bin` so the rest of the workspace is not built at all.
+# No separate `strip` step: `[profile.release]` in the workspace manifest already
+# carries `strip = "symbols"` (with `lto = "thin"` and `codegen-units = 1`), so the
+# binary cargo writes is already stripped and a second pass would be a claim that
+# the profile does not do its job.
+RUN cargo build --locked --release --package opendoc-relay --bin opendoc-relay
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+# `debian:bookworm-slim`, not the `rust:` image: no cargo, no rustc, no registry,
+# no source. The runtime carries one statically-known binary and the C runtime it
+# was linked against.
+#
+# Not distroless, and for one concrete reason: the healthcheck below has to prove
+# the port is SERVING, and a distroless image has no shell to prove it with. The
+# alternative was a second binary whose only job is to connect to a socket, in a
+# crate directory this lane does not own. Debian slim already ships a bash with
+# `/dev/tcp`, so the honest trade is ~30 MB of base image for a healthcheck that
+# tests the listener instead of the process table.
+FROM debian:bookworm-slim AS runtime
+
+# A fixed, high, system uid/gid so the journal's ownership is reproducible across
+# rebuilds and legible on a bind mount from the host.
+RUN groupadd --system --gid 10001 relay \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /var/lib/opendoc-relay \
+       --shell /usr/sbin/nologin relay \
+    && mkdir -p /var/lib/opendoc-relay \
+    && chown relay:relay /var/lib/opendoc-relay
+
+COPY --from=build /src/target/release/opendoc-relay /usr/local/bin/opendoc-relay
+
+# The journal is the room's durable log and losing it loses the room's history:
+# `Journal::create` refuses to write over an existing one ("creating over a room's
+# order would destroy the only copy of it"), and `Room::open` replays it rather
+# than starting empty, "because starting empty would silently drop every chunk the
+# relay had already acknowledged". So it lives on a volume, never in the container
+# layer. Declared here so a `docker run` with no `-v` still gets an anonymous
+# volume rather than writing the log into a layer that the next `docker rm`
+# deletes.
+#
+# The DIRECTORY is the volume, not the file: `Journal::compact` writes a fresh
+# journal beside the old one and renames it into place, which needs the
+# containing directory to be writable by the same user.
+VOLUME ["/var/lib/opendoc-relay"]
+
+USER relay:relay
+WORKDIR /var/lib/opendoc-relay
+
+EXPOSE 7070
+
+# Proves the port is SERVING, not that the process exists: it opens a TCP
+# connection to the listener and closes it. `bash`'s `/dev/tcp` redirection is a
+# real `connect(2)`, so it fails while the process is up but not yet bound, and it
+# fails if the listener has gone away — which `pgrep` and `[ -d /proc/1 ]` cannot
+# tell you.
+#
+# What it does NOT prove, said plainly: the relay is thread-per-connection and the
+# kernel completes a handshake into the accept backlog, so a bound listener whose
+# accept loop is wedged still answers this. It is a liveness check on the socket,
+# not on the ordering lock. A connect-and-close is handled cleanly by the server
+# (`participant()` reads one frame, sees `ReadError::Closed` and returns `Ok`), so
+# the check costs one short-lived thread and never occupies a participant slot.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/7070' || exit 1
+
+ENTRYPOINT ["opendoc-relay"]
+
+# DELIBERATELY NO `CMD`. The binary's three subcommands are
+#
+#     opendoc-relay create  <journal>
+#     opendoc-relay inspect <journal>
+#     opendoc-relay serve   <journal> <addr> <viewer|commenter|suggester|editor|owner>
+#
+# and `serve` refuses to start without a role: "a default would be a permission
+# nobody chose". A `CMD` here would be exactly that default — it would make this
+# image choose a room's permission ceiling on an operator's behalf, which is the
+# one decision `server/src/main.rs` goes out of its way not to take. So
+# `docker run opendoc/relay` prints the usage line and exits 2, as the binary
+# does, and `docker-compose.yml` passes the whole command including the role.
+#
+# `create` is separate from `serve` for the same kind of reason: `docs/152`
+# records that the HOST creates the room, not the first client, so the compose
+# file runs `create` as a one-shot service and never as part of `up`.

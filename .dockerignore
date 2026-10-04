@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# An ALLOWLIST, not a deny list, and that is the point.
+#
+# A deny list sends everything it forgot. This tree is a working checkout: it
+# carries a multi-gigabyte `target/`, a `node_modules/`, sibling git worktrees
+# under `.claude/`, and — the reason this file is shaped this way — untracked
+# personal documents the owner keeps beside the source. A build context is
+# copied into the daemon and a `COPY . .` puts it in an image layer, so a deny
+# list that misses one of those publishes it.
+#
+# So: exclude everything, then name what the two Dockerfiles actually need. A
+# new directory is excluded by default and the build fails loudly when it is
+# required, which is the safe direction.
+*
+
+# The workspace: `cargo build --locked` needs the manifests, the lock, the
+# toolchain pin, every path dependency, and the relay itself.
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!server/
+
+# The editor build (`webapp/build.sh`): the webapp, the published package the
+# embedding generator reads, `docs/` for the reference pages and
+# `docs/assets/editor.jpg`, and the two fixtures the script stages as demos.
+!webapp/
+!packages/
+!docs/
+!fixtures/
+!sample.docx
+
+# The static-server configuration the editor image copies.
+!deploy/
+
+# Re-excluded inside the allowed trees: build output, dependencies and test
+# artefacts. All of it is produced by the builder stages, and copying a host
+# `target/` in would both bloat the context and invalidate every cache layer.
+**/target/
+**/node_modules/
+**/.DS_Store
+webapp/pkg/
+webapp/test-results/
+webapp/playwright-report/

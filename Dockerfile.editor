@@ -1,0 +1,153 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The EDITOR (`docs/162`, RM-11).
+#
+# This image is a static file server, and that is the interesting thing about it.
+# `webapp/build.sh` compiles `crates/casual-doc-wasm` to WebAssembly and stages a
+# flat static site beside it, so opening, laying out, editing and writing a DOCX
+# all happen in the browser tab. The runtime stage below contains nginx and a
+# directory of files; there is no application server, no upstream and no document
+# store, and the relay in `Dockerfile.relay` is a SEPARATE, OPTIONAL deployment
+# that this one does not need.
+#
+# That is not a packaging convenience, it is the competitive position: ONLYOFFICE's
+# web client cannot open a file offline because its format I/O is the native `x2t`
+# binary and `core/X2tConverter/build/` has only `Android/` and `Qt/` targets — no
+# WASM build. A container that serves this directory therefore does something
+# theirs cannot, and anything in this file that reached for a backend would be
+# throwing that away.
+#
+# ── Node ──────────────────────────────────────────────────────────────────────
+# Node 22, the version `.github/workflows/ci.yml` installs
+# (`actions/setup-node` with `node-version: "22"`), taken from the official image
+# rather than from a `curl | bash` or a distribution package: Debian bookworm
+# ships Node 18, and `build.sh` runs five generators whose `--check` failing for a
+# runtime reason would be indistinguishable from real drift. The binary is
+# self-contained and this stage shares the builder's base distribution, so
+# copying it across is the whole installation.
+FROM node:22-bookworm-slim AS node
+
+# ── Builder ───────────────────────────────────────────────────────────────────
+# Pinned to the workspace's toolchain: `rust-toolchain.toml` channel 1.96.0, with
+# the `wasm32-unknown-unknown` target that same file asks for, because this build
+# is the one that actually needs it.
+FROM rust:1.96.0-slim-bookworm AS build
+
+ENV RUSTUP_TOOLCHAIN=1.96.0 \
+    CARGO_TERM_COLOR=never \
+    CARGO_NET_RETRY=3
+
+# `wasm-pack@0.15.0` — the exact version CI installs, from the project's own
+# release artefacts. Pinned, because wasm-pack decides which `wasm-bindgen` and
+# `wasm-opt` to fetch and a floating version silently changes the module this
+# image ships.
+ARG WASM_PACK_VERSION=0.15.0
+
+# python3 for `webapp/build-site.py`, curl and ca-certificates to fetch
+# wasm-pack. No `build-essential`: nothing in the wasm build links a C library.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && node --version \
+    && npm --version
+
+RUN rustup target add wasm32-unknown-unknown
+
+# The released binary first; `cargo install` as the fallback so a renamed release
+# asset degrades to a slower build instead of an unbuildable image. Both paths
+# install the SAME pinned version, which is what matters.
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) target=x86_64-unknown-linux-musl ;; \
+      arm64) target=aarch64-unknown-linux-musl ;; \
+      *) target= ;; \
+    esac; \
+    url="https://github.com/drager/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-${target}.tar.gz"; \
+    if [ -n "${target}" ] && curl -fsSL "${url}" -o /tmp/wasm-pack.tar.gz; then \
+      tar -xzf /tmp/wasm-pack.tar.gz -C /tmp; \
+      install -m 0755 "/tmp/wasm-pack-v${WASM_PACK_VERSION}-${target}/wasm-pack" /usr/local/bin/wasm-pack; \
+      rm -rf /tmp/wasm-pack.tar.gz "/tmp/wasm-pack-v${WASM_PACK_VERSION}-${target}"; \
+    else \
+      cargo install wasm-pack --locked --version "${WASM_PACK_VERSION}"; \
+    fi; \
+    wasm-pack --version
+
+WORKDIR /src
+
+# What `build.sh` reads, and nothing else. Enumerated rather than `COPY . .`
+# because the list IS the documentation of the script's inputs, and because the
+# `.dockerignore` in this repository is an allowlist for the same reason: a
+# working checkout has untracked personal files in it.
+#
+#   * the workspace manifests, lock, toolchain pin and `crates/` — wasm-pack
+#     builds `crates/casual-doc-wasm` with `--features web-host-fonts`;
+#   * `tools/` and `server/` for their manifests alone, because cargo refuses to
+#     load a workspace with a member manifest missing;
+#   * `webapp/` — the site, the generators and the static sources;
+#   * `packages/opendoc-embed/` — `build-embed-docs.mjs` reads the published
+#     package's manifest, README and `release.mjs`;
+#   * `docs/` — `build-doc-pages.mjs` renders the published reference pages from
+#     the committed Markdown, and `build.sh` stages `docs/assets/editor.jpg`;
+#   * `fixtures/corpus/real-producer-rich.docx` and `sample.docx` — the two demo
+#     documents `build.sh` copies in by name.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY tools ./tools
+COPY server ./server
+COPY packages ./packages
+COPY docs ./docs
+COPY fixtures ./fixtures
+COPY sample.docx ./sample.docx
+COPY webapp ./webapp
+
+# The real build, unmodified. It compiles the engine to wasm and then runs every
+# generator with `--check`: the embedding guide, the white-label artefacts, the
+# static pages, the published reference pages and the crawler manifests. So this
+# image cannot be built from a checkout whose generated files have drifted from
+# their sources — the same gate CI runs, enforced here as a side effect of
+# building the thing.
+RUN ./webapp/build.sh
+
+# Stage exactly what a browser asks for. Enumerated, not pruned: a deny list ships
+# whatever it forgot, and `webapp/` holds a 3.9 MB test suite, the Playwright
+# config, the generators, the `*.page.html` TEMPLATES (whose flat `*.html` output
+# is what the site serves) and the partials they inline.
+#
+# `src/`, `assets/`, `locales/`, `dict/`, `packs/` and `pkg/` are all fetched at
+# runtime by the editor: the module, the self-hosted fonts, the nineteen locale
+# catalogues, the spelling word lists and the glossary.
+RUN set -eu; \
+    mkdir -p /stage; \
+    cd webapp; \
+    cp -a *.html *.txt *.svg *.png *.docx CNAME sitemap.xml brand.json /stage/; \
+    rm -f /stage/*.page.html; \
+    cp -a src assets locales dict packs pkg reference /stage/; \
+    find /stage -name '.DS_Store' -delete
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+# nginx alpine: a static file server and nothing more. No Rust, no cargo, no
+# Node, no Python, no source — the build toolchain is three stages back and none
+# of it is in this image.
+FROM nginx:1.29-alpine AS runtime
+
+COPY deploy/editor-nginx.conf /etc/nginx/nginx.conf
+COPY --from=build /stage /usr/share/opendoc/webapp
+
+# The unprivileged user the official image already defines (uid 101). Everything
+# nginx writes is under /tmp by configuration, so this needs no `chown` of the
+# document root and the root filesystem can be mounted read-only — which
+# `docker-compose.yml` does.
+USER nginx
+
+EXPOSE 8080
+
+# Proves the port is SERVING: it asks for a real page over HTTP and fails on a
+# non-2xx. `busybox wget` is already in the alpine image, so this costs nothing
+# and tests the one thing that matters — that a browser asking for the editor
+# gets the editor.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=3s --retries=3 \
+    CMD wget --quiet --spider --tries=1 http://127.0.0.1:8080/editor.html || exit 1
