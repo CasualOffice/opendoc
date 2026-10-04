@@ -27,9 +27,8 @@
 use std::collections::BTreeMap;
 
 use casual_doc_export::{export_document, write_document, write_document_with_retained_parts};
-use casual_doc_import::{
-    ImportConfig, ImportMode, RetainedPart, RetainedParts, import_package,
-};
+use casual_doc_import::{ImportConfig, ImportMode, RetainedPart, RetainedParts, import_package};
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Axis, AxisKind, AxisPosition, BarDirection, BarGrouping, BlockNode, Chart, ChartCoverage,
     ChartGroup, ChartGroupKind, ChartId, ChartLine, ChartText, ChartTitle, ChartValue, Color,
@@ -38,7 +37,6 @@ use casual_doc_model::v1::{
     ParagraphProperties, PlotArea, RgbColor, ScatterStyle, Series, ThemeColor, ThemeColorRef,
     TickLabelPosition, TickMark,
 };
-use casual_doc_model::NodeId;
 // Own `use` line: `Document` is the v1 one, not the crate-root re-export.
 use casual_doc_model::v1::Document;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -728,9 +726,8 @@ fn the_chart_parts_own_rels_is_written_only_when_the_workbook_is_there() {
         rels.contains(r#"Id="rId1""#) && rels.contains(PACKAGE_REL_TYPE),
         "the workbook relationship must keep its id and type: {rels}"
     );
-    let chart_xml =
-        String::from_utf8(package.read_part(CHART_PART).expect("the chart part reads"))
-            .expect("the chart part is UTF-8");
+    let chart_xml = String::from_utf8(package.read_part(CHART_PART).expect("the chart part reads"))
+        .expect("the chart part is UTF-8");
     assert!(
         chart_xml.contains(r#"<c:externalData r:id="rId1">"#),
         "the chart must name the workbook it now has: {chart_xml}"
@@ -848,7 +845,14 @@ const SCHEMA_ORDER: &[(&str, &[&str])] = &[
     // CT_AreaChart
     (
         "areaChart",
-        &["grouping", "varyColors", "ser", "dLbls", "dropLines", "axId"],
+        &[
+            "grouping",
+            "varyColors",
+            "ser",
+            "dLbls",
+            "dropLines",
+            "axId",
+        ],
     ),
     // CT_PieChart
     ("pieChart", &["varyColors", "ser", "dLbls", "firstSliceAng"]),
@@ -939,7 +943,14 @@ const SCHEMA_ORDER: &[(&str, &[&str])] = &[
     // CT_Legend
     (
         "legend",
-        &["legendPos", "legendEntry", "layout", "overlay", "spPr", "txPr"],
+        &[
+            "legendPos",
+            "legendEntry",
+            "layout",
+            "overlay",
+            "spPr",
+            "txPr",
+        ],
     ),
     // CT_CatAx / CT_ValAx / CT_DateAx share this prefix; the writer emits
     // nothing after `crossAx`, where they diverge.
@@ -985,9 +996,30 @@ const SCHEMA_ORDER: &[(&str, &[&str])] = &[
     // expects and the mistake this row exists to catch.
     ("scaling", &["logBase", "orientation", "max", "min"]),
     // CT_ShapeProperties, trimmed to what this writer can emit.
-    ("spPr", &["xfrm", "custGeom", "prstGeom", "noFill", "solidFill", "gradFill", "ln"]),
+    (
+        "spPr",
+        &[
+            "xfrm",
+            "custGeom",
+            "prstGeom",
+            "noFill",
+            "solidFill",
+            "gradFill",
+            "ln",
+        ],
+    ),
     ("ln", &["noFill", "solidFill", "gradFill", "prstDash"]),
-    ("solidFill", &["scrgbClr", "srgbClr", "hslClr", "sysClr", "schemeClr", "prstClr"]),
+    (
+        "solidFill",
+        &[
+            "scrgbClr",
+            "srgbClr",
+            "hslClr",
+            "sysClr",
+            "schemeClr",
+            "prstClr",
+        ],
+    ),
     ("schemeClr", &["tint", "shade", "alpha", "lumMod", "lumOff"]),
     // CT_ExternalData
     ("externalData", &["autoUpdate"]),
@@ -1040,9 +1072,8 @@ fn assert_schema_order(xml: &[u8]) {
                 })
                 .1;
             let position = sequence.iter().position(|child| *child == name);
-            let position = position.unwrap_or_else(|| {
-                panic!("<{name}> is not a child <{parent}> admits in ECMA-376")
-            });
+            let position = position
+                .unwrap_or_else(|| panic!("<{name}> is not a child <{parent}> admits in ECMA-376"));
             assert!(
                 position >= *highest,
                 "<{name}> is out of sequence inside <{parent}>: it belongs at position \

@@ -2059,9 +2059,7 @@ impl Document {
             // State 2 only: the anchor resolves to an embedded object that is not
             // a chart. State 3 — it resolves to no embedded object — falls through
             // deliberately; see this function's header for why.
-            if !anchors.charts.contains(&chart.object)
-                && anchors.others.contains(&chart.object)
-            {
+            if !anchors.charts.contains(&chart.object) && anchors.others.contains(&chart.object) {
                 return Err(ModelError::DanglingChartObjectRef(chart.object));
             }
         }

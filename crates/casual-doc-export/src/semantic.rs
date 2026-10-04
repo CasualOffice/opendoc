@@ -637,8 +637,12 @@ pub fn export_package(
     for (id, _, _, _) in &embedded_rels {
         reserved_rel_ids.insert(id.clone());
     }
-    let (document_xml, rels) =
-        document_xml(document, &available_media, &available_embedded, reserved_rel_ids)?;
+    let (document_xml, rels) = document_xml(
+        document,
+        &available_media,
+        &available_embedded,
+        reserved_rel_ids,
+    )?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
     // and a document relationship; they appear only when the model has the

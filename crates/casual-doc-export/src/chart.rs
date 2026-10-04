@@ -46,16 +46,16 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+use casual_doc_import::RetainedParts;
 use casual_doc_model::strip_xml_forbidden;
 use casual_doc_model::v1::{
     Axis, AxisKind, AxisOrientation, AxisPosition, BarDirection, BarGrouping, BlockNode, Chart,
-    ChartGroup, ChartGroupKind, ChartLine, ChartText, ChartTitle, ChartValue, Color, DataLabelPosition,
-    DataLabels, DataRange, DisplayBlanks, Document, EmbeddedKind, EmbeddedObject, Grouping,
-    InlineNode, Legend, LegendPosition, PlotArea, ScatterStyle, Series, ThemeColor, ThemeColorRef,
-    TickLabelPosition, TickMark,
+    ChartGroup, ChartGroupKind, ChartLine, ChartText, ChartTitle, ChartValue, Color,
+    DataLabelPosition, DataLabels, DataRange, DisplayBlanks, Document, EmbeddedKind,
+    EmbeddedObject, Grouping, InlineNode, Legend, LegendPosition, PlotArea, ScatterStyle, Series,
+    ThemeColor, ThemeColorRef, TickLabelPosition, TickMark,
 };
 use casual_doc_model::{NodeId, v1::EmbeddedPart};
-use casual_doc_import::RetainedParts;
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesText, Event};
 
@@ -298,7 +298,10 @@ fn chart_part_rels(
     let mut rel = start("Relationship");
     rel.push_attribute(("Id", external.relationship_id.as_str()));
     rel.push_attribute(("Type", external.relationship_type.as_str()));
-    rel.push_attribute(("Target", chart_relative_target(&external.part_name).as_str()));
+    rel.push_attribute((
+        "Target",
+        chart_relative_target(&external.part_name).as_str(),
+    ));
     w.write_event(Event::Empty(rel)).map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
@@ -389,14 +392,17 @@ fn write_title(w: &mut Writer<Cursor<Vec<u8>>>, title: &ChartTitle) -> Result<()
 /// run is therefore the whole of what is known, not a simplification of it.
 fn write_rich_text(w: &mut Writer<Cursor<Vec<u8>>>, text: &str) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:rich"))).map_err(pkg)?;
-    w.write_event(Event::Empty(start("a:bodyPr"))).map_err(pkg)?;
+    w.write_event(Event::Empty(start("a:bodyPr")))
+        .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:lstStyle")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("a:p"))).map_err(pkg)?;
     w.write_event(Event::Start(start("a:r"))).map_err(pkg)?;
     write_text_element(w, "a:t", text)?;
-    w.write_event(Event::End(BytesEnd::new("a:r"))).map_err(pkg)?;
-    w.write_event(Event::End(BytesEnd::new("a:p"))).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:r")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:p")))
+        .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("c:rich")))
         .map_err(pkg)
 }
@@ -413,7 +419,8 @@ fn write_plot_area(w: &mut Writer<Cursor<Vec<u8>>>, plot: &PlotArea) -> Result<(
         .map_err(pkg)?;
     // Empty = automatic layout, which is what the projection means by holding no
     // manual one (`chart_noop` reads it the same way).
-    w.write_event(Event::Empty(start("c:layout"))).map_err(pkg)?;
+    w.write_event(Event::Empty(start("c:layout")))
+        .map_err(pkg)?;
     for group in &plot.groups {
         write_group(w, group)?;
     }
@@ -518,7 +525,8 @@ fn write_group(w: &mut Writer<Cursor<Vec<u8>>>, group: &ChartGroup) -> Result<()
             write_val(w, "c:axId", &id.to_string())?;
         }
     }
-    w.write_event(Event::End(BytesEnd::new(element))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new(element)))
+        .map_err(pkg)
 }
 
 /// The `c:*Chart` element name for a family.
@@ -596,21 +604,20 @@ fn write_series(
     if series.smooth && (scatter || matches!(kind, ChartGroupKind::Line { .. })) {
         write_val(w, "c:smooth", "1")?;
     }
-    w.write_event(Event::End(BytesEnd::new("c:ser"))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new("c:ser")))
+        .map_err(pkg)
 }
 
 /// `CT_SerTx` is `(strRef | v)` — unlike a title's `CT_Tx`, a series name has a
 /// literal spelling, so a cached name with no formula is one `c:v`.
-fn write_series_name(
-    w: &mut Writer<Cursor<Vec<u8>>>,
-    name: &ChartText,
-) -> Result<(), ExportError> {
+fn write_series_name(w: &mut Writer<Cursor<Vec<u8>>>, name: &ChartText) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("c:tx"))).map_err(pkg)?;
     match &name.formula {
         Some(formula) => write_str_ref(w, formula, std::slice::from_ref(&name.text))?,
         None => write_text_element(w, "c:v", &name.text)?,
     }
-    w.write_event(Event::End(BytesEnd::new("c:tx"))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new("c:tx")))
+        .map_err(pkg)
 }
 
 /// `c:spPr` with the solid fill and the line the projection holds, or nothing
@@ -625,9 +632,8 @@ fn write_shape_properties(
     line: Option<&ChartLine>,
 ) -> Result<(), ExportError> {
     let fill_element = fill.filter(|color| !matches!(color, Color::Auto));
-    let has_line = line.is_some_and(|line| {
-        line.no_fill || line.color.is_some() || line.width_emu.is_some()
-    });
+    let has_line =
+        line.is_some_and(|line| line.no_fill || line.color.is_some() || line.width_emu.is_some());
     if fill_element.is_none() && !has_line {
         return Ok(());
     }
@@ -643,17 +649,21 @@ fn write_shape_properties(
         }
         if line.no_fill {
             w.write_event(Event::Start(element)).map_err(pkg)?;
-            w.write_event(Event::Empty(start("a:noFill"))).map_err(pkg)?;
-            w.write_event(Event::End(BytesEnd::new("a:ln"))).map_err(pkg)?;
+            w.write_event(Event::Empty(start("a:noFill")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("a:ln")))
+                .map_err(pkg)?;
         } else if let Some(color) = line.color.as_ref().filter(|c| !matches!(c, Color::Auto)) {
             w.write_event(Event::Start(element)).map_err(pkg)?;
             write_solid_fill(w, color)?;
-            w.write_event(Event::End(BytesEnd::new("a:ln"))).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("a:ln")))
+                .map_err(pkg)?;
         } else {
             w.write_event(Event::Empty(element)).map_err(pkg)?;
         }
     }
-    w.write_event(Event::End(BytesEnd::new("c:spPr"))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new("c:spPr")))
+        .map_err(pkg)
 }
 
 /// `a:solidFill` wrapping one DrawingML colour.
@@ -774,13 +784,15 @@ fn write_data_labels(
     write_val(w, "c:showCatName", bool_val(labels.show_category_name))?;
     write_val(w, "c:showSerName", bool_val(labels.show_series_name))?;
     write_val(w, "c:showPercent", bool_val(labels.show_percent))?;
-    w.write_event(Event::End(BytesEnd::new("c:dLbls"))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new("c:dLbls")))
+        .map_err(pkg)
 }
 
 /// `CT_Legend` sequence: `legendPos?`, `legendEntry*`, `layout?`, `overlay?`,
 /// `spPr?`, `txPr?`.
 fn write_legend(w: &mut Writer<Cursor<Vec<u8>>>, legend: &Legend) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("c:legend"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("c:legend")))
+        .map_err(pkg)?;
     write_val(
         w,
         "c:legendPos",
@@ -793,7 +805,8 @@ fn write_legend(w: &mut Writer<Cursor<Vec<u8>>>, legend: &Legend) -> Result<(), 
         },
     )?;
     write_val(w, "c:overlay", bool_val(legend.overlay))?;
-    w.write_event(Event::End(BytesEnd::new("c:legend"))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new("c:legend")))
+        .map_err(pkg)
 }
 
 /// One axis, as `c:catAx`, `c:valAx` or `c:dateAx`.
@@ -821,7 +834,8 @@ fn write_axis(
     write_val(w, "c:axId", &axis.id.to_string())?;
     // `CT_Scaling` sequence: logBase?, orientation?, max?, min? — max BEFORE min,
     // which is the opposite of the order a reader expects and a common mistake.
-    w.write_event(Event::Start(start("c:scaling"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("c:scaling")))
+        .map_err(pkg)?;
     write_val(
         w,
         "c:orientation",
@@ -897,7 +911,8 @@ fn write_axis(
             .map_or(axis.id, |other| other.id)
     });
     write_val(w, "c:crossAx", &cross.to_string())?;
-    w.write_event(Event::End(BytesEnd::new(element))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new(element)))
+        .map_err(pkg)
 }
 
 /// The `c:majorTickMark`/`c:minorTickMark` token.
@@ -925,7 +940,8 @@ fn write_num_source(
     w.write_event(Event::Start(start(element))).map_err(pkg)?;
     match &range.formula {
         Some(formula) => {
-            w.write_event(Event::Start(start("c:numRef"))).map_err(pkg)?;
+            w.write_event(Event::Start(start("c:numRef")))
+                .map_err(pkg)?;
             write_text_element(w, "c:f", formula)?;
             write_num_data(w, "c:numCache", range)?;
             w.write_event(Event::End(BytesEnd::new("c:numRef")))
@@ -933,7 +949,8 @@ fn write_num_source(
         }
         None => write_num_data(w, "c:numLit", range)?,
     }
-    w.write_event(Event::End(BytesEnd::new(element))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new(element)))
+        .map_err(pkg)
 }
 
 /// A `CT_AxDataSource` (`c:cat`): the numeric or the string spelling, chosen from
@@ -955,14 +972,16 @@ fn write_category_source(
             .all(|(_, value)| matches!(value, ChartValue::Number(_) | ChartValue::Blank));
     match (&range.formula, numeric) {
         (Some(formula), true) => {
-            w.write_event(Event::Start(start("c:numRef"))).map_err(pkg)?;
+            w.write_event(Event::Start(start("c:numRef")))
+                .map_err(pkg)?;
             write_text_element(w, "c:f", formula)?;
             write_num_data(w, "c:numCache", range)?;
             w.write_event(Event::End(BytesEnd::new("c:numRef")))
                 .map_err(pkg)?;
         }
         (Some(formula), false) => {
-            w.write_event(Event::Start(start("c:strRef"))).map_err(pkg)?;
+            w.write_event(Event::Start(start("c:strRef")))
+                .map_err(pkg)?;
             write_text_element(w, "c:f", formula)?;
             write_str_data(w, "c:strCache", range)?;
             w.write_event(Event::End(BytesEnd::new("c:strRef")))
@@ -971,7 +990,8 @@ fn write_category_source(
         (None, true) => write_num_data(w, "c:numLit", range)?,
         (None, false) => write_str_data(w, "c:strLit", range)?,
     }
-    w.write_event(Event::End(BytesEnd::new("c:cat"))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new("c:cat")))
+        .map_err(pkg)
 }
 
 /// `CT_NumData`/`CT_NumLit`: `formatCode?`, `ptCount?`, `pt*`.
@@ -986,7 +1006,8 @@ fn write_num_data(
     }
     write_val(w, "c:ptCount", &range.point_count.to_string())?;
     write_points(w, range)?;
-    w.write_event(Event::End(BytesEnd::new(element))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new(element)))
+        .map_err(pkg)
 }
 
 /// `CT_StrData`/`CT_StrLit`: `ptCount?`, `pt*`.
@@ -1004,7 +1025,8 @@ fn write_str_data(
     w.write_event(Event::Start(start(element))).map_err(pkg)?;
     write_val(w, "c:ptCount", &range.point_count.to_string())?;
     write_points(w, range)?;
-    w.write_event(Event::End(BytesEnd::new(element))).map_err(pkg)
+    w.write_event(Event::End(BytesEnd::new(element)))
+        .map_err(pkg)
 }
 
 /// The `c:pt` children of a cache, in `idx` order.
@@ -1039,7 +1061,8 @@ fn write_points(w: &mut Writer<Cursor<Vec<u8>>>, range: &DataRange) -> Result<()
         element.push_attribute(("idx", index.to_string().as_str()));
         w.write_event(Event::Start(element)).map_err(pkg)?;
         write_text_element(w, "c:v", text)?;
-        w.write_event(Event::End(BytesEnd::new("c:pt"))).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("c:pt")))
+            .map_err(pkg)?;
     }
     Ok(())
 }
@@ -1050,16 +1073,19 @@ fn write_str_ref(
     formula: &str,
     values: &[String],
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("c:strRef"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("c:strRef")))
+        .map_err(pkg)?;
     write_text_element(w, "c:f", formula)?;
-    w.write_event(Event::Start(start("c:strCache"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("c:strCache")))
+        .map_err(pkg)?;
     write_val(w, "c:ptCount", &values.len().to_string())?;
     for (index, value) in values.iter().enumerate() {
         let mut element = start("c:pt");
         element.push_attribute(("idx", index.to_string().as_str()));
         w.write_event(Event::Start(element)).map_err(pkg)?;
         write_text_element(w, "c:v", value)?;
-        w.write_event(Event::End(BytesEnd::new("c:pt"))).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("c:pt")))
+            .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("c:strCache")))
         .map_err(pkg)?;
@@ -1087,11 +1113,7 @@ fn write_external_data(
 
 /// `<name val="value"/>` — the `CT_*` "one attribute" shape most chart elements
 /// take.
-fn write_val(
-    w: &mut Writer<Cursor<Vec<u8>>>,
-    name: &str,
-    value: &str,
-) -> Result<(), ExportError> {
+fn write_val(w: &mut Writer<Cursor<Vec<u8>>>, name: &str, value: &str) -> Result<(), ExportError> {
     let mut element = start(name);
     element.push_attribute(("val", value));
     w.write_event(Event::Empty(element)).map_err(pkg)

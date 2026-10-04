@@ -5926,10 +5926,10 @@ fn deleting_the_paragraph_that_holds_a_chart_leaves_a_document_that_still_accept
     let mut document = document_with_chart(EmbeddedKind::Chart, tid(2)).expect("a valid document");
     // A second paragraph, so removing the chart's does not empty the body — an
     // empty body is a different refusal and would mask the one under test.
+    document.body_mut().push(paragraph_block(tid(5)));
     document
-        .body_mut()
-        .push(paragraph_block(tid(5)));
-    document.validate().expect("two paragraphs and a chart are valid");
+        .validate()
+        .expect("two paragraphs and a chart are valid");
 
     // The positional removal: the paragraph goes, the projection stays behind.
     document
