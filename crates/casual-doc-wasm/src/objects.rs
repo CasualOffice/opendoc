@@ -3867,10 +3867,19 @@ mod tests {
     }
 
     /// The text of a module before its test module — the only half that ships.
+    ///
+    /// Split on the attribute ALONE, with no surrounding newlines: a Windows
+    /// checkout presents this file with CRLF, so a pattern carrying `\n`
+    /// matches nothing there, `production` hands back the WHOLE file including
+    /// its own tests, and the scan then reports string literals out of the test
+    /// bodies as production refusals. That is not hypothetical — it reddened
+    /// `platform (Windows-x64)` while every POSIX runner was green, with
+    /// offenders like `"INSIDE"` and `"…"` that exist only inside this module's
+    /// tests.
     fn production(source: &str) -> &str {
         source
-            .split_once("\n#[cfg(test)]\nmod tests {")
-            .map_or(source, |(head, _)| head)
+            .find("#[cfg(test)]")
+            .map_or(source, |at| &source[..at])
     }
 
     /// The byte index of the closing quote of the string literal that starts at

@@ -165,8 +165,13 @@ mod tests {
             ("references.rs", include_str!("references.rs")),
         ] {
             let production = source
-                .split_once("\n#[cfg(test)]\nmod tests {")
-                .map_or(source, |(head, _)| head);
+                // The attribute ALONE: a CRLF checkout makes any pattern
+                // carrying `\n` match nothing, which hands back the whole file
+                // including its own tests, and this scan then charges a test's
+                // own literals to production. It reddened
+                // `platform (Windows-x64)` in the sibling object-refusal guard.
+                .find("#[cfg(test)]")
+                .map_or(source, |at| &source[..at]);
             assert!(
                 !production.contains("\"refused: "),
                 "{name} writes the refusal marker as a literal; use \
