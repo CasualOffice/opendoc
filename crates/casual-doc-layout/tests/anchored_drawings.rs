@@ -3039,3 +3039,441 @@ fn preset_shape_child(geometry: ShapeGeometry, adjustments: Vec<ShapeAdjustment>
         rotation: None,
     })
 }
+
+// --- Square-family wrap exclusion arithmetic (`crate::wrap_side`) ----------
+//
+// Every guard below places a square float somewhere OTHER than hard against a
+// margin — a mid-column `posOffset` (what dragging a shape produces), a
+// centred `align`, a `Page`-relative anchor — because flush-left was the one
+// position where the old arithmetic happened to agree with Word, and every
+// existing float guard used it.
+//
+// They assert the GUARANTEE, not a pixel count: text keeps its measure on the
+// side the float is not on, and does not run through the float.
+
+/// The authored width of every float in this section.
+const WRAP_FLOAT_WIDTH: Twip = Twip(1_500);
+/// Tall enough that the clearance reaches several lines of the anchor paragraph
+/// and still carries into the next paragraph of the same cell.
+const WRAP_FLOAT_HEIGHT: Twip = Twip(1_800);
+/// A `wrapSquare` rectangle anchored to its paragraph's top, positioned
+/// horizontally by `position` against `relative_from`.
+fn wrap_float(
+    id: u64,
+    media: MediaId,
+    relative_from: HorizontalAnchor,
+    position: HorizontalPosition,
+    vertical: AnchorVertical,
+) -> InlineNode {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
+        opacity: None,
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: i64::from(WRAP_FLOAT_WIDTH.raw()) * 635,
+            height_emu: i64::from(WRAP_FLOAT_HEIGHT.raw()) * 635,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from,
+                position,
+            },
+            vertical,
+            wrap: WrapMode::Square,
+            wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
+            behind_doc: false,
+        },
+        descr: None,
+        relative_height: None,
+        crop: None,
+        border: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    }))
+}
+
+/// A float anchored to the top of its own paragraph.
+fn at_paragraph_top() -> AnchorVertical {
+    AnchorVertical {
+        relative_from: VerticalAnchor::Paragraph,
+        position: VerticalPosition::Offset(0),
+    }
+}
+
+/// Enough text that any available measure is filled and the wrap is visible.
+fn wrap_filler(id: u64) -> InlineNode {
+    run(
+        id,
+        &"text that must keep the measure in front of the shape ".repeat(14),
+    )
+}
+
+/// How far a line's text commits to the measure, relative to the paragraph's
+/// content box: the pen position of its LAST glyph, not the pen position after
+/// it.
+///
+/// A soft-wrapped line keeps the space that broke it, and that space's advance
+/// hangs past the break point — Word does the same — so counting it would
+/// charge a line for whitespace that paints nothing.
+fn line_right_extent(line: &casual_doc_layout::text::Line) -> Twip {
+    line.runs
+        .iter()
+        .map(|run| {
+            let keep = run.glyphs.len().saturating_sub(1);
+            Twip(
+                run.origin.x.raw()
+                    + run
+                        .glyphs
+                        .iter()
+                        .take(keep)
+                        .map(|glyph| glyph.advance.raw())
+                        .sum::<i32>(),
+            )
+        })
+        .max()
+        .unwrap_or(Twip::ZERO)
+}
+
+/// A one-cell, 6,000-twip table whose cell holds exactly two paragraphs, so a
+/// float anchored in the first can be seen to narrow both. A table cell is the
+/// container the page-level float pass deliberately does not reach, so what is
+/// asserted through this helper is the paragraph-local and carry arithmetic in
+/// `flow`.
+fn wrap_cell_table(first: Vec<InlineNode>, second: Vec<InlineNode>) -> BlockNode {
+    BlockNode::Table(Box::new(Table {
+        id: node(850),
+        grid: vec![GridColumn {
+            width_twips: Some(6_000),
+        }],
+        grid_change: None,
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: node(851),
+            properties: TableRowProperties::default(),
+            cells: vec![TableCell {
+                id: node(852),
+                properties: TableCellProperties::default(),
+                blocks: vec![
+                    BlockNode::Paragraph(Paragraph {
+                        id: node(853),
+                        properties: ParagraphProperties::default().into(),
+                        inlines: first,
+                    }),
+                    BlockNode::Paragraph(Paragraph {
+                        id: node(854),
+                        properties: ParagraphProperties::default().into(),
+                        inlines: second,
+                    }),
+                ],
+            }],
+        }],
+    }))
+}
+
+/// Flows `table` and returns the row's single cell fragment.
+fn wrap_cell(table: BlockNode, definitions: Definitions) -> casual_doc_layout::block::CellFragment {
+    let document = Document::new(node(840), vec![table], definitions).unwrap();
+    let galley = build_galley(
+        &document,
+        &ParleyShaper::new(),
+        config().content_area().size.width,
+    );
+    let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+        panic!("expected a table row fragment");
+    };
+    cells[0].clone()
+}
+
+/// The cell's content measure — the box the cell's paragraphs lay out in, and
+/// therefore the coordinate space a float's `posOffset` and the text's
+/// `origin.x` share.
+fn wrap_cell_measure(cell: &casual_doc_layout::block::CellFragment) -> Twip {
+    Twip(cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw())
+}
+
+/// The lines of `block` the float's clearance covers.
+fn covered_lines(block: &BlockFragment) -> Vec<&casual_doc_layout::text::Line> {
+    let BlockFragment::Paragraph { lines, .. } = block else {
+        panic!("expected a paragraph fragment");
+    };
+    let mut covered = Vec::new();
+    let mut y = Twip::ZERO;
+    for line in &lines.lines {
+        if y.raw() < WRAP_FLOAT_HEIGHT.raw() && !line.runs.is_empty() {
+            covered.push(line);
+        }
+        y = Twip(y.raw() + line.height.raw());
+    }
+    covered
+}
+
+#[test]
+fn a_mid_column_float_leaves_the_text_the_measure_in_front_of_it() {
+    let (media, definitions) = media_defs();
+
+    // Control: the same paragraph with no float fills the whole cell measure,
+    // so the assertions below cannot pass vacuously. It also reports the cell's
+    // real measure, which is what the float's `posOffset` is placed against —
+    // guessing it is how a guard ends up asserting the wrong side.
+    let control = wrap_cell(
+        wrap_cell_table(vec![wrap_filler(862)], Vec::new()),
+        definitions.clone(),
+    );
+    let measure = wrap_cell_measure(&control);
+    // Three fifths in: a mid-column drag, flush against neither edge, and the
+    // leading gap is the larger one — so text must keep ITS OWN leading edge
+    // and stop at the float, instead of being indented past it.
+    let offset = Twip(measure.raw() * 3 / 5);
+    assert!(
+        offset.raw() > WRAP_FLOAT_WIDTH.raw()
+            && offset.raw() + WRAP_FLOAT_WIDTH.raw() < measure.raw(),
+        "the float must sit strictly inside the cell measure"
+    );
+    assert!(
+        covered_lines(&control.blocks[0])
+            .iter()
+            .any(|line| line_right_extent(line).raw() > offset.raw()),
+        "without the float, text reaches past the float's leading edge"
+    );
+
+    let float = wrap_float(
+        860,
+        media,
+        HorizontalAnchor::Column,
+        HorizontalPosition::Offset(i64::from(offset.raw()) * 635),
+        at_paragraph_top(),
+    );
+
+    // The anchor paragraph's own lines (the paragraph-local exclusion).
+    let anchored = wrap_cell(
+        wrap_cell_table(vec![float.clone(), wrap_filler(863)], Vec::new()),
+        definitions.clone(),
+    );
+    let covered = covered_lines(&anchored.blocks[0]);
+    assert!(covered.len() >= 3, "the clearance covers several lines");
+    for line in covered {
+        assert_eq!(
+            line.runs[0].origin.x,
+            Twip::ZERO,
+            "text keeps its own leading edge; the float is not on that side"
+        );
+        assert!(
+            line_right_extent(line).raw() <= offset.raw(),
+            "text must stop at the float's leading edge ({}), reached {}",
+            offset.raw(),
+            line_right_extent(line).raw()
+        );
+    }
+
+    // The following paragraph in the same cell (the carried exclusion).
+    let carried = wrap_cell(
+        wrap_cell_table(vec![float], vec![wrap_filler(864)]),
+        definitions,
+    );
+    let BlockFragment::Paragraph { lines, .. } = &carried.blocks[1] else {
+        panic!("expected the second cell paragraph");
+    };
+    let first = lines
+        .lines
+        .iter()
+        .find(|line| !line.runs.is_empty())
+        .expect("the following paragraph has text");
+    assert_eq!(first.runs[0].origin.x, Twip::ZERO);
+    assert!(
+        line_right_extent(first).raw() <= offset.raw(),
+        "the carried exclusion must also stop at the float, reached {}",
+        line_right_extent(first).raw()
+    );
+}
+
+#[test]
+fn a_centred_float_still_displaces_the_text_around_it() {
+    let (media, definitions) = media_defs();
+    let float = wrap_float(
+        870,
+        media,
+        HorizontalAnchor::Column,
+        HorizontalPosition::Align(HorizontalAlign::Center),
+        at_paragraph_top(),
+    );
+    let cell = wrap_cell(
+        wrap_cell_table(vec![float, wrap_filler(871)], Vec::new()),
+        definitions,
+    );
+    // A centred float's band starts half the slack in from the leading edge.
+    let band_start = Twip((wrap_cell_measure(&cell).raw() - WRAP_FLOAT_WIDTH.raw()) / 2);
+    let covered = covered_lines(&cell.blocks[0]);
+    assert!(covered.len() >= 3, "the clearance covers several lines");
+    for line in covered {
+        assert!(
+            line_right_extent(line).raw() <= band_start.raw(),
+            "text ran through the centred float: reached {} with the float at {}",
+            line_right_extent(line).raw(),
+            band_start.raw()
+        );
+    }
+}
+
+#[test]
+fn a_floating_text_box_excludes_text_in_its_own_table_cell() {
+    let (_, definitions) = media_defs();
+    let text_box = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
+        id: node(880),
+        anchor: Some(DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Column,
+                position: HorizontalPosition::Align(HorizontalAlign::Left),
+            },
+            vertical: at_paragraph_top(),
+            wrap: WrapMode::Square,
+            wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
+            behind_doc: false,
+        }),
+        relative_height: None,
+        extent: Some(Extent {
+            width_emu: i64::from(WRAP_FLOAT_WIDTH.raw()) * 635,
+            height_emu: i64::from(WRAP_FLOAT_HEIGHT.raw()) * 635,
+        }),
+        fill: None,
+        border: None,
+        body_properties: Default::default(),
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(881),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(882, "pull quote")],
+        })],
+    }));
+
+    let control = wrap_cell(
+        wrap_cell_table(Vec::new(), vec![wrap_filler(883)]),
+        definitions.clone(),
+    );
+    let BlockFragment::Paragraph { lines, .. } = &control.blocks[1] else {
+        panic!("expected the second cell paragraph");
+    };
+    assert_eq!(
+        lines.lines[0].runs[0].origin.x,
+        Twip::ZERO,
+        "without the text box the following paragraph starts at the cell edge"
+    );
+
+    let cell = wrap_cell(
+        wrap_cell_table(vec![text_box], vec![wrap_filler(884)]),
+        definitions,
+    );
+    let BlockFragment::Paragraph { lines, .. } = &cell.blocks[1] else {
+        panic!("expected the second cell paragraph");
+    };
+    let first = lines
+        .lines
+        .iter()
+        .find(|line| !line.runs.is_empty())
+        .expect("the following paragraph has text");
+    assert!(
+        first.runs[0].origin.x.raw() >= WRAP_FLOAT_WIDTH.raw(),
+        "a floating text box must exclude the following paragraph in its own \
+         cell; the line starts at {} with the box {} wide",
+        first.runs[0].origin.x.raw(),
+        WRAP_FLOAT_WIDTH.raw()
+    );
+}
+
+#[test]
+fn a_page_relative_float_centred_in_the_measure_narrows_the_trailing_edge() {
+    use casual_doc_layout::document_layout::paginate_document;
+
+    // US-Letter with 1-inch margins (`paginate_document`'s fallback for a
+    // document that declares no section): the body measure is 1440..10800.
+    let body_start = Twip(1_440);
+    let measure = Twip(9_360);
+    // A `Page`-relative `posOffset` that centres the float's band in the body
+    // measure — the one position the old midpoint comparison resolved the wrong
+    // way, sending the text to the far side of the page instead of leaving it
+    // at its own leading edge.
+    let band_start = Twip(body_start.raw() + (measure.raw() - WRAP_FLOAT_WIDTH.raw()) / 2);
+    let gap = Twip(band_start.raw() - body_start.raw());
+
+    let (media, definitions) = media_defs();
+    let float = wrap_float(
+        890,
+        media,
+        HorizontalAnchor::Page,
+        HorizontalPosition::Offset(i64::from(band_start.raw()) * 635),
+        AnchorVertical {
+            relative_from: VerticalAnchor::Page,
+            position: VerticalPosition::Offset(i64::from(body_start.raw()) * 635),
+        },
+    );
+    let body = |inlines: Vec<InlineNode>| {
+        vec![
+            BlockNode::Paragraph(Paragraph {
+                id: node(891),
+                properties: ParagraphProperties::default().into(),
+                inlines,
+            }),
+            BlockNode::Paragraph(Paragraph {
+                id: node(892),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![wrap_filler(893)],
+            }),
+        ]
+    };
+    let lines_of = |blocks: Vec<BlockNode>, definitions: Definitions| {
+        let document = Document::new(node(894), blocks, definitions).unwrap();
+        let layout = paginate_document(&document, &ParleyShaper::new());
+        let placed = layout.pages[0]
+            .placed
+            .iter()
+            .find(|placed| placed.fragment.node_id() == node(891))
+            .expect("the anchoring paragraph is placed")
+            .clone();
+        let BlockFragment::Paragraph { lines, .. } = &placed.fragment else {
+            panic!("expected a paragraph fragment");
+        };
+        lines.clone()
+    };
+
+    let control = lines_of(
+        body(vec![wrap_filler(895)]),
+        Definitions {
+            media: definitions.media.clone(),
+            ..Definitions::default()
+        },
+    );
+    assert!(
+        control
+            .lines
+            .iter()
+            .filter(|line| !line.runs.is_empty())
+            .any(|line| line_right_extent(line).raw() > gap.raw()),
+        "without the float the paragraph reaches past the float's leading edge"
+    );
+
+    let wrapped = lines_of(body(vec![float, wrap_filler(896)]), definitions);
+    let covered: Vec<_> = wrapped
+        .lines
+        .iter()
+        .filter(|line| !line.runs.is_empty())
+        .take(3)
+        .collect();
+    assert_eq!(covered.len(), 3, "the clearance covers several lines");
+    for line in covered {
+        assert_eq!(
+            line.runs[0].origin.x,
+            Twip::ZERO,
+            "a float centred in the measure must not push the text to the far \
+             side of the page"
+        );
+        assert!(
+            line_right_extent(line).raw() <= gap.raw(),
+            "text ran through the float: reached {} with the float at {}",
+            line_right_extent(line).raw(),
+            gap.raw()
+        );
+    }
+}

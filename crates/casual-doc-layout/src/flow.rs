@@ -80,7 +80,11 @@ use crate::text::InlineTransform;
 use crate::text::TabExtent;
 // Own line (anti-conflict): the EMU boundary converter, per `156` §6 row 0.6.
 use crate::units::emu_to_twip_extent;
+// Own line (anti-conflict): the signed EMU boundary converter.
+use crate::units::emu_to_twip_offset;
 use crate::units::{Point, Size, Twip};
+// Own line (anti-conflict): the single wrap-side rule.
+use crate::wrap_side::{band_exclusion, wrap_sides};
 
 /// One page-derived edge exclusion applied at the start of a body paragraph.
 /// These are produced by the bounded cross-paragraph float pass after an initial
@@ -3548,7 +3552,7 @@ fn collect_items_with_measure<'a>(
             InlineNode::EmbeddedObject(object) => embedded_object_items(object, out, ctx),
             InlineNode::AnchoredDrawing(drawing) => {
                 if intrinsic.is_none()
-                    && let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent)
+                    && let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent, width)
                 {
                     out.push(item);
                 }
@@ -3609,7 +3613,7 @@ fn collect_items_with_measure<'a>(
             InlineNode::TextBox(text_box) => {
                 if intrinsic.is_none()
                     && let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
-                    && let Some(item) = float_flow_item(anchor, extent)
+                    && let Some(item) = float_flow_item(anchor, extent, width)
                 {
                     out.push(item);
                 }
@@ -3617,7 +3621,7 @@ fn collect_items_with_measure<'a>(
             InlineNode::Group(group) => {
                 if intrinsic.is_none()
                     && let Some(anchor) = &group.anchor
-                    && let Some(item) = float_flow_item(anchor, &group.extent)
+                    && let Some(item) = float_flow_item(anchor, &group.extent, width)
                 {
                     out.push(item);
                 }
@@ -3835,11 +3839,15 @@ fn note_number_run(mark: &NoteNumberMark, label: &str, ctx: &mut FlowCtx) -> Sty
     styled_owned_run(label.to_owned(), &properties, ctx)
 }
 
-/// Converts a paragraph-local anchored object into its non-painting flow marker.
-/// Top-and-bottom wrapping reserves vertical space; left/right square-family
-/// wrapping narrows only lines that intersect the object's vertical clearance.
-/// Page-relative and cross-paragraph exclusions remain outside this local slice.
-fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'static>> {
+/// The vertical clearance a paragraph-anchored float imposes, measured from the
+/// anchoring paragraph's own top: `vOffset + object height + distB`.
+///
+/// `None` unless the object is anchored to the paragraph or the line vertically
+/// at a top-aligned or offset position — the cases this local slice resolves —
+/// or the clearance collapses to nothing.
+///
+/// O(1).
+fn float_clearance(anchor: &DrawingAnchor, extent: &Extent) -> Option<Twip> {
     if !matches!(
         anchor.vertical.relative_from,
         VerticalAnchor::Paragraph | VerticalAnchor::Line
@@ -3851,14 +3859,61 @@ fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'
         VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
         _ => return None,
     };
-    let clearance_emu = offset_emu
-        .saturating_add(extent.height_emu)
-        .saturating_add(anchor.wrap_distances.bottom_emu)
-        .max(0);
-    let height = emu_to_twip_extent(clearance_emu);
-    if height.raw() <= 0 {
-        return None;
-    }
+    let height = emu_to_twip_extent(
+        offset_emu
+            .saturating_add(extent.height_emu)
+            .saturating_add(anchor.wrap_distances.bottom_emu)
+            .max(0),
+    );
+    (height.raw() > 0).then_some(height)
+}
+
+/// One float's horizontal wrap band inside its container's content box, in
+/// container-relative twips and **including** the authored `w:distL`/`w:distR`
+/// wrap distances.
+///
+/// This is the single place an authored horizontal position becomes a band: an
+/// `align` resolves against the content width (`left`/`inside` flush leading,
+/// `right`/`outside` flush trailing, `center` centred), a `posOffset` is taken
+/// as the band's own leading edge. Before this existed, `center` and every
+/// `posOffset` were simply unhandled on the paragraph-local path — a centred
+/// shape excluded nothing, so text ran straight through it.
+///
+/// O(1).
+fn float_band(anchor: &DrawingAnchor, extent: &Extent, content_width: Twip) -> (Twip, Twip) {
+    let object = emu_to_twip_extent(extent.width_emu);
+    let start = match anchor.horizontal.position {
+        HorizontalPosition::Align(HorizontalAlign::Left | HorizontalAlign::Inside) => Twip::ZERO,
+        HorizontalPosition::Align(HorizontalAlign::Right | HorizontalAlign::Outside) => {
+            Twip((content_width.raw() - object.raw()).max(0))
+        }
+        HorizontalPosition::Align(HorizontalAlign::Center) => {
+            Twip(((content_width.raw() - object.raw()) / 2).max(0))
+        }
+        HorizontalPosition::Offset(offset) => emu_to_twip_offset(offset),
+    };
+    (
+        start - emu_to_twip_extent(anchor.wrap_distances.start_emu),
+        start + object + emu_to_twip_extent(anchor.wrap_distances.end_emu),
+    )
+}
+
+/// Converts a paragraph-local anchored object into its non-painting flow marker.
+/// Top-and-bottom wrapping reserves vertical space; square-family wrapping
+/// narrows only lines that intersect the object's vertical clearance, on the
+/// side [`crate::wrap_side::band_exclusion`] resolves — the SAME rule the
+/// cross-paragraph carry ([`wrap_carry`]) and the page-level pass
+/// (`document_layout::paragraph_float_exclusions`) use, so one float can no
+/// longer wrap two different ways depending on which pass saw it.
+/// Page-relative exclusions remain outside this local slice.
+///
+/// O(1).
+fn float_flow_item(
+    anchor: &DrawingAnchor,
+    extent: &Extent,
+    content_width: Twip,
+) -> Option<FlowItem<'static>> {
+    let height = float_clearance(anchor, extent)?;
     if anchor.wrap == WrapMode::TopAndBottom {
         return Some(FlowItem::FloatBarrier { height });
     }
@@ -3871,21 +3926,17 @@ fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'
     ) {
         return None;
     }
-    let side = match anchor.horizontal.position {
-        HorizontalPosition::Align(HorizontalAlign::Left) => InlineFloatSide::Left,
-        HorizontalPosition::Align(HorizontalAlign::Right) => InlineFloatSide::Right,
-        _ => return None,
-    };
-    let exclusion_emu = anchor
-        .wrap_distances
-        .start_emu
-        .saturating_add(extent.width_emu)
-        .saturating_add(anchor.wrap_distances.end_emu)
-        .max(0);
-    let width = emu_to_twip_extent(exclusion_emu);
-    (width.raw() > 0).then_some(FlowItem::FloatExclusion {
-        side,
-        width,
+    let (band_start, band_end) = float_band(anchor, extent, content_width);
+    let exclusion = band_exclusion(
+        band_start,
+        band_end,
+        Twip::ZERO,
+        content_width,
+        wrap_sides(anchor),
+    )?;
+    Some(FlowItem::FloatExclusion {
+        side: exclusion.side,
+        width: exclusion.width,
         height,
     })
 }
@@ -3906,6 +3957,22 @@ fn paragraph_wrap_carries(
             InlineNode::AnchoredDrawing(drawing) => {
                 wrap_carry(&drawing.anchor, drawing.extent, content_width)
             }
+            // A FLOATING text box carries exactly as a drawing or a group does.
+            // It used to be omitted here while `collect_items` and
+            // `anchor::collect_body_wrap_inlines` both handled it, so a floating
+            // text box inside a table cell excluded nothing in that cell — the
+            // one container the page-level pass cannot reach. An inline text box
+            // (no anchor) is ordinary flow content and carries nothing.
+            //
+            // The authored `wp:extent` is used as-is: flowing the box's content
+            // here to discover a content-driven size would run a nested layout
+            // for every paragraph of every document, which is the O(document²)
+            // shape `SKILL.md` §8 forbids. A box with no authored extent
+            // therefore carries nothing, which is what it did before.
+            InlineNode::TextBox(text_box) => match (&text_box.anchor, &text_box.extent) {
+                (Some(anchor), Some(extent)) => wrap_carry(anchor, *extent, content_width),
+                _ => None,
+            },
             InlineNode::Group(group) => match &group.anchor {
                 Some(anchor) => wrap_carry(anchor, group.extent, content_width),
                 None => None,
@@ -3919,15 +3986,21 @@ fn paragraph_wrap_carries(
     carries
 }
 
-/// One anchored float's square-family wrap exclusion: its side, full width
-/// (`distL + object + distR`), and full clearance height from the anchor
-/// paragraph's top (`vOffset + object + distB`). `None` unless it is a
-/// non-behind, square/tight/through float anchored to the paragraph vertically
-/// and to the margin/column horizontally.
+/// One anchored float's square-family wrap exclusion carried to the FOLLOWING
+/// paragraphs of the same block sequence: its side, its width, and its full
+/// clearance height from the anchor paragraph's top (`vOffset + object +
+/// distB`). `None` unless it is a non-behind, square/tight/through float
+/// anchored to the paragraph vertically and to the margin/column horizontally.
 ///
-/// Side detection is geometric so a left-margin logo positioned by a near-zero
-/// `posOffset` (not `align="left"`) is still recognized as a left float — the
-/// specific under-exclusion this fixes.
+/// Side and width come from [`crate::wrap_side::band_exclusion`] — the same
+/// rule [`float_flow_item`] and the page-level pass use. Before that, this
+/// function guessed the side from the float's centre and then always excluded
+/// `distL + object + distR` as if the float were flush against a margin, so a
+/// float dragged into mid-column discarded the whole gap between the margin and
+/// the float, and crossing the column centre flipped the text from one side to
+/// the other.
+///
+/// O(1).
 fn wrap_carry(
     anchor: &DrawingAnchor,
     extent: Extent,
@@ -3939,64 +4012,24 @@ fn wrap_carry(
             WrapMode::Square | WrapMode::Tight | WrapMode::Through
         )
         || !matches!(
-            anchor.vertical.relative_from,
-            VerticalAnchor::Paragraph | VerticalAnchor::Line
-        )
-        || !matches!(
             anchor.horizontal.relative_from,
             HorizontalAnchor::Margin | HorizontalAnchor::Column
         )
     {
         return None;
     }
-    let vertical_offset = match anchor.vertical.position {
-        VerticalPosition::Offset(offset) => offset,
-        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
-        _ => return None,
-    };
-    let height = emu_to_twip_extent(
-        vertical_offset
-            .saturating_add(extent.height_emu)
-            .saturating_add(anchor.wrap_distances.bottom_emu)
-            .max(0),
-    );
-    let width = emu_to_twip_extent(
-        anchor
-            .wrap_distances
-            .start_emu
-            .saturating_add(extent.width_emu)
-            .saturating_add(anchor.wrap_distances.end_emu)
-            .max(0),
-    );
-    if height.raw() <= 0 || width.raw() <= 0 {
-        return None;
-    }
-    // An explicit `align` is authoritative; a `posOffset` resolves geometrically:
-    // the float sits on the side of the column its horizontal centre falls in.
-    let side = match anchor.horizontal.position {
-        HorizontalPosition::Align(HorizontalAlign::Left | HorizontalAlign::Inside) => {
-            InlineFloatSide::Left
-        }
-        HorizontalPosition::Align(HorizontalAlign::Right | HorizontalAlign::Outside) => {
-            InlineFloatSide::Right
-        }
-        HorizontalPosition::Align(HorizontalAlign::Center) => return None,
-        HorizontalPosition::Offset(offset) => {
-            let centre = emu_to_twip_extent(offset)
-                .raw()
-                .saturating_add(emu_to_twip_extent(extent.width_emu).raw() / 2);
-            if centre.saturating_mul(2) <= content_width.raw().max(1) {
-                InlineFloatSide::Left
-            } else {
-                InlineFloatSide::Right
-            }
-        }
-    };
-    // Never exclude the whole column — always leave at least one twip for text.
-    let width = Twip(width.raw().clamp(1, (content_width.raw() - 1).max(1)));
+    let height = float_clearance(anchor, &extent)?;
+    let (band_start, band_end) = float_band(anchor, &extent, content_width);
+    let exclusion = band_exclusion(
+        band_start,
+        band_end,
+        Twip::ZERO,
+        content_width,
+        wrap_sides(anchor),
+    )?;
     Some(ParagraphFloatExclusion {
-        side,
-        width,
+        side: exclusion.side,
+        width: exclusion.width,
         height,
     })
 }
@@ -8726,6 +8759,7 @@ mod tests {
         // A left-margin logo positioned by a near-zero `posOffset` (NOT
         // `align="left"`) must still be recognized as a left-side square wrap of
         // its full width — the specific under-exclusion this fixes.
+
         let anchor = |position| DrawingAnchor {
             horizontal: AnchorHorizontal {
                 relative_from: HorizontalAnchor::Margin,
@@ -8753,7 +8787,11 @@ mod tests {
         )
         .expect("a left-margin offset float is a left wrap");
         assert_eq!(offset.side, InlineFloatSide::Left);
-        assert_eq!(offset.width, Twip(2000), "full object width is excluded");
+        assert_eq!(
+            offset.width,
+            Twip(2000),
+            "a sub-twip posOffset rounds to the margin, so the object's own width is excluded"
+        );
         assert_eq!(offset.height, Twip(800), "clearance is the object height");
 
         // An explicit `align="left"` resolves to the same side.
@@ -8765,8 +8803,12 @@ mod tests {
         .expect("an align-left float is a left wrap");
         assert_eq!(aligned.side, InlineFloatSide::Left);
 
-        // A float whose centre falls in the right half is a right wrap
-        // (offset is in EMU: 3_000_000 EMU ≈ 4724 twips, well past the mid-column).
+        // A float that leaves more room on its left than on its right keeps the
+        // text on the left, so the exclusion sits on the RIGHT edge and reaches
+        // back to the float's near side — it does not swallow the 4724 twips of
+        // measure the author left in front of it.
+        // (Offset is in EMU: 3_000_000 EMU ≈ 4724 twips, so the band is
+        // 4724..6724 of a 9000-twip measure.)
         let right = wrap_carry(
             &anchor(HorizontalPosition::Offset(3_000_000)),
             extent,
@@ -8774,6 +8816,11 @@ mod tests {
         )
         .expect("a right-positioned offset float is a right wrap");
         assert_eq!(right.side, InlineFloatSide::Right);
+        assert_eq!(
+            right.width,
+            Twip(9000 - 4724),
+            "the exclusion starts at the float, not at the paragraph edge"
+        );
     }
 
     #[test]
@@ -15256,6 +15303,7 @@ mod tests {
                 width_emu: 1500 * 635,
                 height_emu: 1500 * 635,
             },
+            Twip(9_000),
         )
         .expect("supported paragraph-local square wrap");
         assert!(matches!(
