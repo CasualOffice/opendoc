@@ -339,6 +339,62 @@ impl Presentation {
         self.master_of(layout)?.shapes.slot(kind, index)
     }
 
+    /// The text inheritance chain in effect for one shape on one slide.
+    ///
+    /// Built once per shape and then queried per outline level, because the two
+    /// placeholder-slot lookups scan a layout's and a master's children: doing them
+    /// per paragraph would be `O(paragraphs x shapes)`, which is the shape of the
+    /// `O(n^2)` that shipped on the outline path (`SKILL` §8).
+    ///
+    /// A shape in no slot still inherits, but through a different pair of tiers: it
+    /// takes the master's `p:otherStyle` AND `p:defaultTextStyle`, with the two slot
+    /// tiers empty. A PLACEHOLDER takes its slot chain and its matching master tier
+    /// and **not** `p:defaultTextStyle` — ECMA-376 §19.2.1.8 scopes that part to
+    /// text "not in a placeholder", so applying it to a placeholder would let a
+    /// deck-wide default leak past the master tier that is supposed to govern it.
+    /// The one exception is a master with no `p:txStyles` at all: there is then no
+    /// tier for the placeholder to inherit from, and the deck default is all there
+    /// is.
+    ///
+    /// # Complexity
+    ///
+    /// O(layouts + masters + shapes-per-tree), independent of the slide count.
+    #[must_use]
+    pub fn text_cascade<'a>(
+        &'a self,
+        slide: &'a Slide,
+        node: &'a crate::SlideNode,
+    ) -> crate::TextCascade<'a> {
+        let layout = self.layout_of(slide);
+        let master = layout.and_then(|layout| self.master_of(layout));
+        let list_style_of = |node: Option<&'a crate::SlideNode>| {
+            node.and_then(|node| node.text.as_ref())
+                .map(|text| &text.list_style)
+        };
+        // The slot tiers apply only to a shape that IS in a slot; a shape with no
+        // `p:ph` matches nothing on the layout or the master, and asking for slot
+        // `None` would silently match the first unplaced shape there.
+        let slot = node.placeholder.map(|placeholder| placeholder.slot());
+        crate::TextCascade {
+            shape: list_style_of(Some(node)),
+            layout: slot.and_then(|(kind, index)| {
+                list_style_of(layout.and_then(|layout| layout.shapes.slot(kind, index)))
+            }),
+            master_slot: slot.and_then(|(kind, index)| {
+                list_style_of(master.and_then(|master| master.shapes.slot(kind, index)))
+            }),
+            master_tier: master.map(|master| {
+                master
+                    .text_styles
+                    .tier(node.placeholder.map(|slot| slot.kind))
+            }),
+            // Scoped, not unconditional — see the note above.
+            deck: (node.placeholder.is_none()
+                || master.is_none_or(|master| master.text_styles.is_empty()))
+            .then_some(&self.default_text_style),
+        }
+    }
+
     /// Visits every node id in the presentation, in a deterministic order.
     ///
     /// Shares the document model's definition and drawing traversals rather than

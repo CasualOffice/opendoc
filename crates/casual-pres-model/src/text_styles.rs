@@ -66,29 +66,35 @@ impl TextStyles {
         self.title.is_empty() && self.body.is_empty() && self.other.is_empty()
     }
 
-    /// The tier a shape in `slot` inherits from, or `body` for a shape that is in
-    /// no slot.
+    /// The tier a shape in `slot` inherits from, or `p:otherStyle` for a shape that
+    /// is in no slot at all.
     ///
-    /// # The mapping, and the one entry that is not guessable
+    /// # The mapping, and the entry I first got wrong
     ///
     /// `title` and `ctrTitle` take `p:titleStyle`; `body`, `subTitle` and `obj`
-    /// take `p:bodyStyle`; everything else takes `p:otherStyle`. ECMA-376 governs
-    /// the first two groups, and `obj` landing in the body tier rather than the
-    /// other tier is the entry worth stating: a content placeholder is a body
-    /// placeholder for inheritance even though it is a distinct `ST_PlaceholderType`.
+    /// take `p:bodyStyle`; every other placeholder kind, **and a shape with no
+    /// `p:ph` whatsoever**, take `p:otherStyle`.
     ///
-    /// **A shape with no placeholder also takes `p:bodyStyle`**, which is the entry
-    /// that cannot be guessed from the element names — `p:otherStyle` is the
-    /// plausible reading and it is wrong. A text box dropped on a slide inherits
-    /// the body tier, so its text is body-sized rather than footer-sized.
-    /// Confirmed against PowerPoint's own behaviour before being written down.
+    /// `obj` landing in the body tier is worth stating: a content placeholder is a
+    /// body placeholder for inheritance even though it is a distinct
+    /// `ST_PlaceholderType`. And because the importer reads an absent `p:ph@type`
+    /// as `obj` — the schema's own default — a bare `<p:ph/>` reaches here as
+    /// `Some(Object)` and correctly takes the body tier.
+    ///
+    /// `None` is therefore **not** "a placeholder with no type"; it is "not a
+    /// placeholder". Those are different shapes with different tiers, and
+    /// conflating them is the mistake this comment exists to stop: an earlier
+    /// version of this function mapped `None` to `p:bodyStyle`, on the strength of
+    /// a no-type placeholder resolving to body. A plain text box dropped on a slide
+    /// is not a placeholder and takes `p:otherStyle`.
     #[must_use]
     pub fn tier(&self, slot: Option<PlaceholderKind>) -> &ListStyle {
         match slot {
             Some(PlaceholderKind::Title | PlaceholderKind::CtrTitle) => &self.title,
-            Some(PlaceholderKind::Body | PlaceholderKind::SubTitle | PlaceholderKind::Object)
-            | None => &self.body,
-            Some(_) => &self.other,
+            Some(PlaceholderKind::Body | PlaceholderKind::SubTitle | PlaceholderKind::Object) => {
+                &self.body
+            }
+            Some(_) | None => &self.other,
         }
     }
 }

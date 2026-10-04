@@ -44,6 +44,7 @@ mod shape_tree;
 mod slide_size;
 mod text_body;
 mod text_bullet;
+mod text_cascade;
 mod text_paragraph;
 mod text_run;
 mod text_styles;
@@ -60,6 +61,7 @@ pub use text_body::{
     TextVertical, TextWrap,
 };
 pub use text_bullet::{AutoNumberScheme, TextBullet};
+pub use text_cascade::{ResolvedText, TextCascade};
 pub use text_paragraph::{
     MAX_TEXT_MARGIN_EMU, TextAlign, TextField, TextLineBreak, TextParagraph,
     TextParagraphProperties, TextRun, TextRunText, TextSpacing, TextTabStop,

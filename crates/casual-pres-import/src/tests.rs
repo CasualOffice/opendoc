@@ -1106,7 +1106,7 @@ fn the_master_text_style_tiers_and_the_default_text_style_are_read() {
             Some(PlaceholderKind::SlideNumber),
             &master.text_styles.other,
         ),
-        (None, &master.text_styles.body),
+        (None, &master.text_styles.other),
     ] {
         assert_eq!(
             master.text_styles.tier(slot),
@@ -1254,5 +1254,415 @@ fn a_line_breaks_run_properties_are_read() {
         break_properties.size_hundredths_point,
         Some(1_200),
         "12pt, from the break's own self-closing a:rPr"
+    );
+}
+
+/// The fold: a run that states nothing resolves a real font size through the
+/// chain, and a run that states one wins.
+///
+/// This is the assertion the whole cascade exists for, driven from a real package
+/// rather than a hand-built model — so it covers the importer AND the resolver, and
+/// a tier that is read but never folded fails here.
+#[test]
+fn a_run_that_states_nothing_inherits_a_size_through_the_whole_chain() {
+    let imported = import_fixture();
+    let presentation = &imported.presentation;
+    let slide = &presentation.slides()[1];
+
+    // Slide 2's content placeholder: its paragraphs state `a:pPr` metrics and its
+    // runs state sizes, so the cascade is exercised with real competition.
+    let body = slide
+        .shapes
+        .slot(PlaceholderKind::Object, 1)
+        .expect("slide 2 fills the content slot");
+    let cascade = presentation.text_cascade(slide, body);
+
+    // Level 0 inherits the master's BODY tier: 28pt, a 228600 EMU hanging indent
+    // and a bullet, none of which the shape or the layout state.
+    let level0 = cascade.resolve(0);
+    assert_eq!(
+        level0.character.size_hundredths_point,
+        Some(2_800),
+        "28pt comes from the master's p:bodyStyle, four tiers up"
+    );
+    assert_eq!(level0.paragraph.margin_left_emu, Some(228_600));
+    assert_eq!(level0.paragraph.indent_emu, Some(-228_600));
+    assert!(
+        level0.paragraph.bullet.is_some(),
+        "the body tier's bullet is inherited, not invented"
+    );
+
+    // Level 1 inherits the SHAPE's own `a:lstStyle`, which states level 2 only.
+    // The size still comes from the tier above, because the shape's level states
+    // none — which is the mixed case a single-tier test cannot produce.
+    let level1 = cascade.resolve(1);
+    assert_eq!(
+        level1.paragraph.margin_left_emu,
+        Some(742_950),
+        "the shape's own a:lvl2pPr wins for its margin"
+    );
+    assert_eq!(
+        level1
+            .paragraph
+            .bullet_font
+            .as_ref()
+            .map(|font| font.name.as_str()),
+        Some("Courier New"),
+        "and for its bullet font"
+    );
+
+    // A level no tier in THIS chain states resolves to nothing — and that is two
+    // separate facts, both deliberate. A missing `a:lvl9pPr` does NOT fall back to
+    // `a:lvl1pPr`: each level is its own definition, and substituting level 1 would
+    // give a ninth-level bullet the first level's indent. And a placeholder does not
+    // take `p:defaultTextStyle`, which is the only tier here that states level 1,
+    // so nothing is left to inherit.
+    let level8 = cascade.resolve(8);
+    assert_eq!(
+        level8.character.size_hundredths_point, None,
+        "an undeclared level inherits nothing rather than borrowing level 1's 18pt"
+    );
+
+    // And the run's own `a:rPr` beats every inherited tier. Asserted with a size
+    // the fixture does NOT contain: this paragraph's real run states `sz="2800"`,
+    // the same value it inherits, so overlaying it proves nothing about direction —
+    // a resolver that ignored the run entirely would pass. 3600 can only appear if
+    // the overlay actually ran, and the inherited value can only survive if it did
+    // not.
+    let mut with_run = cascade.resolve(0);
+    assert_eq!(
+        with_run.character.size_hundredths_point,
+        Some(2_800),
+        "the inherited value before the run is overlaid"
+    );
+    with_run.overlay_run(&casual_pres_model::TextCharacterProperties {
+        size_hundredths_point: Some(3_600),
+        ..casual_pres_model::TextCharacterProperties::default()
+    });
+    assert_eq!(
+        with_run.character.size_hundredths_point,
+        Some(3_600),
+        "a run that states its own size wins over every tier it inherits from"
+    );
+    assert_eq!(
+        with_run.paragraph.margin_left_emu,
+        Some(228_600),
+        "and a property the run says nothing about keeps what it inherited — an \
+         overlay that replaced the whole layer would have cleared this"
+    );
+}
+
+/// A shape in NO placeholder slot inherits through the OTHER pair of tiers:
+/// `p:otherStyle` and `p:defaultTextStyle`.
+///
+/// Two facts at once, and they are the two I had to correct. A non-placeholder
+/// shape is not a no-type placeholder — the first takes `p:otherStyle`, the second
+/// takes `p:bodyStyle` — and `p:defaultTextStyle` applies to exactly this case,
+/// text "not in a placeholder" (ECMA-376 §19.2.1.8), which is why a placeholder
+/// does not see it.
+///
+/// So the fixture's unplaced shape resolves 18pt from the deck default, NOT the
+/// 28pt its `p:bodyStyle` states — and reading 28pt here is the signature of the
+/// bug this guard replaced.
+#[test]
+fn a_shape_in_no_slot_inherits_the_other_tier_and_the_deck_default() {
+    let imported = import_fixture();
+    let presentation = &imported.presentation;
+    let slide = &presentation.slides()[0];
+    let unplaced = slide
+        .shapes
+        .children
+        .iter()
+        .find(|child| child.placeholder.is_none())
+        .expect("the title slide carries a shape in no slot");
+
+    let resolved = presentation.text_cascade(slide, unplaced).resolve(0);
+    assert_eq!(
+        resolved.character.size_hundredths_point,
+        Some(1_800),
+        "18pt from p:defaultTextStyle: the fixture's p:otherStyle states no size, \
+         and 28pt here would mean the body tier had been applied to a shape that \
+         is not a placeholder"
+    );
+}
+
+/// Tier PRECEDENCE, on a deck perturbed so the tiers actually disagree.
+///
+/// # Why a perturbed deck and not the plain fixture
+///
+/// The plain fixture states each property at exactly one tier, so no two tiers
+/// ever compete — and four separate mutations of the resolver stayed green on it:
+/// reversing the whole overlay order, making the overlay clobber unstated fields,
+/// applying `p:defaultTextStyle` to a placeholder, and matching the slot tiers for
+/// a shape with no `p:ph`. A cascade guard with no competition is the
+/// "assertion cannot tell which path it is charged to" shape `SKILL` §4 names.
+///
+/// So this one authors the conflict. Three tiers each state level 1, with
+/// deliberately different values:
+///
+/// * `p:defaultTextStyle` — 18pt, right-aligned;
+/// * the master's `p:bodyStyle` — 28pt, LEFT-aligned;
+/// * the content shape's own `a:lstStyle` — 32pt, and no alignment at all.
+///
+/// Every one of the four mutations is then observable from the three assertions
+/// below, which is the point.
+#[test]
+fn the_tiers_disagree_and_the_higher_one_wins() {
+    use casual_pres_model::TextAlign;
+
+    let master = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slideMasters/slideMaster1.xml")
+            .expect("the fixture carries the master")
+            .1,
+    )
+    .expect("the master part is UTF-8");
+    // `algn="l"` on the body tier, where the shape states none: an overlay that
+    // replaced the whole layer rather than filling unstated fields would lose it.
+    let body_before = r#"<p:bodyStyle><a:lvl1pPr marL="228600" indent="-228600">"#;
+    let body_after = r#"<p:bodyStyle><a:lvl1pPr algn="l" marL="228600" indent="-228600">"#;
+    assert!(master.contains(body_before), "the body tier moved");
+    let master = master.replace(body_before, body_after);
+
+    // Two SLOTS on the master, each with a property no other tier states:
+    //
+    //  * `(obj, 1)`, which slide 2's content placeholder matches — so its
+    //    `defTabSz` proves the master-slot tier is consulted at all;
+    //  * `(obj, 0)`, which NOTHING matches — so its `rtl` proves a shape with no
+    //    `p:ph` is not resolved as though it were in slot `(obj, 0)`.
+    //
+    // Both are written as self-closing `a:lvl1pPr` deliberately: that is the form
+    // real `p:txStyles` tiers use, and reading it was the second defect this test
+    // uncovered.
+    let slot_shapes = r#"<p:sp>
+<p:nvSpPr><p:cNvPr id="9" name="Matched Slot"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="obj" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100000" cy="100000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr defTabSz="12700"/></a:lstStyle><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="10" name="Unmatched Slot"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="obj"/></p:nvPr></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100000" cy="100000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr rtl="1"/></a:lstStyle><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>
+</p:sp>
+</p:spTree>"#;
+    assert_eq!(master.matches("</p:spTree>").count(), 1, "one shape tree");
+    let master = master.replace("</p:spTree>", slot_shapes);
+
+    let presentation_part = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/presentation.xml")
+            .expect("the fixture carries the presentation part")
+            .1,
+    )
+    .expect("the presentation part is UTF-8");
+    // `algn="r"` on the deck default, which a PLACEHOLDER must never see — and
+    // `marR`, which NO other tier states anywhere. The alignment alone cannot catch
+    // a deck tier wrongly applied to a placeholder, because the master tier's
+    // `algn="l"` overrides it either way; `marR` is the property with no competitor,
+    // so its presence is the only observable difference.
+    let deck_before = r#"<p:defaultTextStyle><a:lvl1pPr><a:defRPr sz="1800"/></a:lvl1pPr>"#;
+    let deck_after =
+        r#"<p:defaultTextStyle><a:lvl1pPr algn="r" marR="99999"><a:defRPr sz="1800"/></a:lvl1pPr>"#;
+    assert!(
+        presentation_part.contains(deck_before),
+        "the deck default moved"
+    );
+    let presentation_part = presentation_part.replace(deck_before, deck_after);
+
+    let layout_two = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slideLayouts/slideLayout2.xml")
+            .expect("the fixture carries slideLayout2.xml")
+            .1,
+    )
+    .expect("the layout part is UTF-8");
+    // The layout's own `(obj, 1)` slot, one tier nearer the shape than the master's.
+    // `spcBef` is stated nowhere else at level 1.
+    let layout_before = r#"<p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="838200" y="1825625"/><a:ext cx="10515600" cy="4351338"/></a:xfrm></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle/>"#;
+    let layout_after = r#"<p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="838200" y="1825625"/><a:ext cx="10515600" cy="4351338"/></a:xfrm></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr><a:spcBef><a:spcPts val="700"/></a:spcBef></a:lvl1pPr></a:lstStyle>"#;
+    assert!(
+        layout_two.contains(layout_before),
+        "the layout's content slot moved"
+    );
+    let layout_two = layout_two.replace(layout_before, layout_after);
+
+    let slide_two = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slides/slide2.xml")
+            .expect("the fixture carries slide2.xml")
+            .1,
+    )
+    .expect("the slide part is UTF-8");
+    // 32pt on the SHAPE's own tier, competing with the master tier's 28pt.
+    let shape_before = r#"<a:lstStyle><a:lvl2pPr marL="742950""#;
+    let shape_after =
+        r#"<a:lstStyle><a:lvl1pPr><a:defRPr sz="3200"/></a:lvl1pPr><a:lvl2pPr marL="742950""#;
+    assert!(slide_two.contains(shape_before), "the shape's tier moved");
+    let slide_two = slide_two.replace(shape_before, shape_after);
+
+    let mut parts = deck::deck_parts();
+    for (name, body) in [
+        ("ppt/slideMasters/slideMaster1.xml", master),
+        ("ppt/slideLayouts/slideLayout2.xml", layout_two),
+        ("ppt/presentation.xml", presentation_part),
+        ("ppt/slides/slide2.xml", slide_two),
+    ] {
+        let slot = parts
+            .iter_mut()
+            .find(|(part, _)| part == name)
+            .expect("the part exists");
+        slot.1 = body.into_bytes();
+    }
+    let imported = import_pptx(
+        &deck::build_pptx(&parts),
+        casual_doc_package::PackageLimits::default(),
+        ImportLimits::default(),
+    )
+    .expect("the perturbed deck imports");
+
+    let presentation = &imported.presentation;
+    let slide = &presentation.slides()[1];
+    let body = slide
+        .shapes
+        .slot(PlaceholderKind::Object, 1)
+        .expect("slide 2 fills the content slot");
+    let resolved = presentation.text_cascade(slide, body).resolve(0);
+
+    assert_eq!(
+        resolved.character.size_hundredths_point,
+        Some(3_200),
+        "the SHAPE's 32pt beats the master tier's 28pt — reversing the overlay \
+         order gives 28pt here"
+    );
+    assert_eq!(
+        resolved.paragraph.alignment,
+        Some(TextAlign::Left),
+        "the master tier's left alignment survives a shape tier that states none \
+         — an overlay that clobbered unstated fields clears this"
+    );
+    assert_ne!(
+        resolved.paragraph.alignment,
+        Some(TextAlign::Right),
+        "and p:defaultTextStyle's right alignment must NOT reach a placeholder"
+    );
+    assert_eq!(
+        resolved.paragraph.margin_left_emu,
+        Some(228_600),
+        "the body tier's margin still inherits through all of it"
+    );
+    assert_eq!(
+        resolved.paragraph.default_tab_emu,
+        Some(12_700),
+        "the MASTER's matching slot tier is consulted — dropping it from the \
+         cascade loses this and nothing else"
+    );
+    assert!(
+        resolved.paragraph.space_before.is_some(),
+        "and so is the LAYOUT's, one tier nearer: {:?}",
+        resolved.paragraph.space_before
+    );
+    assert_eq!(
+        resolved.paragraph.right_to_left, None,
+        "the master's UNMATCHED (obj, 0) slot must not contribute to an (obj, 1) \
+         placeholder"
+    );
+    assert_eq!(
+        resolved.paragraph.margin_right_emu, None,
+        "p:defaultTextStyle's marR has no competitor at any tier, so a placeholder \
+         resolving it is proof the deck tier was applied where it must not be"
+    );
+
+    // The non-placeholder case, where the deck default DOES apply and the slot
+    // tiers must not be consulted at all.
+    let unplaced = presentation.slides()[0]
+        .shapes
+        .children
+        .iter()
+        .find(|child| child.placeholder.is_none())
+        .expect("the title slide carries a shape in no slot");
+    let unplaced = presentation
+        .text_cascade(&presentation.slides()[0], unplaced)
+        .resolve(0);
+    assert_eq!(
+        unplaced.paragraph.alignment,
+        Some(TextAlign::Right),
+        "a shape in no slot sees p:defaultTextStyle, which a placeholder does not"
+    );
+    assert_eq!(
+        unplaced.character.size_hundredths_point,
+        Some(1_800),
+        "and takes its 18pt, not the body tier's 28pt"
+    );
+    assert_eq!(
+        unplaced.paragraph.margin_right_emu,
+        Some(99_999),
+        "the deck tier's uncontested marR DOES reach a shape in no slot — the \
+         other half of the assertion above, so neither direction is vacuous"
+    );
+    assert_eq!(
+        unplaced.paragraph.right_to_left, None,
+        "and the master's (obj, 0) slot must not be consulted for a shape that is \
+         not a placeholder at all — resolving it as slot (obj, 0) is the plausible \
+         shortcut, and this is what refuses it"
+    );
+    assert_eq!(
+        unplaced.paragraph.default_tab_emu, None,
+        "nor the (obj, 1) one"
+    );
+}
+
+/// A self-closing `a:pPr` keeps its attributes — the paragraph's own call site.
+///
+/// `<a:pPr algn="ctr"/>` and `<a:pPr lvl="1"/>` are how a paragraph states one
+/// thing and nothing else, and `@lvl` is the single most load-bearing attribute on
+/// a slide: it selects which level of every tier applies. Dropped, every bullet
+/// below the first resolves at level 0 and the whole outline flattens.
+///
+/// Separate from the `a:lvlNpPr` row because the two call sites are different lines
+/// in different functions: reverting either leaves the other green, which is what
+/// the mutation run showed.
+#[test]
+fn a_self_closing_paragraph_properties_element_keeps_its_attributes() {
+    use casual_pres_model::TextAlign;
+
+    assert!(
+        String::from_utf8_lossy(
+            &deck::deck_parts()
+                .into_iter()
+                .find(|(name, _)| name == "ppt/slides/slide1.xml")
+                .expect("the fixture carries slide1.xml")
+                .1
+        )
+        .contains(r#"<a:pPr algn="ctr"/>"#),
+        "the fixture must still carry a self-closing a:pPr with an attribute, or \
+         this guard is vacuous"
+    );
+
+    let imported = import_fixture();
+    let properties = imported.presentation.slides()[0]
+        .shapes
+        .children
+        .iter()
+        .find(|child| {
+            child
+                .placeholder
+                .is_some_and(|slot| slot.kind == PlaceholderKind::SubTitle)
+        })
+        .and_then(|node| node.text.as_ref())
+        .and_then(|text| text.paragraphs.first())
+        .and_then(|paragraph| paragraph.properties.as_deref())
+        .expect("the subtitle's paragraph states properties");
+    assert_eq!(
+        properties.alignment,
+        Some(TextAlign::Center),
+        "algn=\"ctr\" from a self-closing a:pPr"
     );
 }

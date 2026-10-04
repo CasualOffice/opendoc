@@ -218,11 +218,7 @@ pub(crate) fn read_list_style(
             reporter.omitted(&part, local);
             return Ok(false);
         };
-        let properties = if empty {
-            TextParagraphProperties::default()
-        } else {
-            read_paragraph_properties(cursor, reporter, ids, element)?
-        };
+        let properties = read_paragraph_properties(cursor, reporter, ids, element, empty)?;
         if let Some(slot) = levels.get_mut(usize::from(level)) {
             *slot = Some(properties);
         }
@@ -266,11 +262,7 @@ fn read_paragraph(
         let local = local_name(element);
         match local {
             b"pPr" => {
-                let read = if empty {
-                    TextParagraphProperties::default()
-                } else {
-                    read_paragraph_properties(cursor, reporter, ids, element)?
-                };
+                let read = read_paragraph_properties(cursor, reporter, ids, element, empty)?;
                 if !read.is_empty() {
                     properties = Some(Box::new(read));
                 }
@@ -414,12 +406,26 @@ fn read_run(
     }
 }
 
-/// Reads `a:pPr` (or one `a:lvlNpPr`) and its children.
+/// Reads `a:pPr` (or one `a:lvlNpPr`): its attributes always, and its children when
+/// it has any.
+///
+/// `empty` is a parameter for the same reason it is on `read_character_properties`,
+/// and the bug was the same: both call sites wrote
+/// `if empty { default() } else { read(..) }`, which discards a self-closing
+/// element's ATTRIBUTES. `<a:lvl1pPr marL="342900" indent="-342900"/>` is what real
+/// `p:txStyles` tiers are mostly made of, and `<a:pPr lvl="1"/>` is how a paragraph
+/// states its outline level with nothing else — so the margins, the indent and the
+/// level were being dropped whenever the element had no children.
+///
+/// Found by a mutation that refused to go red: a master slot tier whose only
+/// content was `<a:lvl1pPr defTabSz="12700"/>` contributed nothing, so removing the
+/// tier from the cascade changed no result.
 fn read_paragraph_properties(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     ids: &mut Ids,
     element: &BytesStart<'_>,
+    empty: bool,
 ) -> Result<TextParagraphProperties, ImportError> {
     let part = cursor.part().to_owned();
     let mut properties = TextParagraphProperties {
@@ -443,7 +449,7 @@ fn read_paragraph_properties(
         ..TextParagraphProperties::default()
     };
 
-    children(cursor, |cursor, child, empty| {
+    enter(cursor, empty, |cursor, child, empty| {
         let local = local_name(child);
         match local {
             b"lnSpc" => {
