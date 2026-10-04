@@ -363,8 +363,19 @@ const SRC = new URL("../src/", import.meta.url);
  *  `reflow_chrome.mjs` from the one step table and spread into the registry, so
  *  `main.js` carries one line for four commands and the three-line rationale that
  *  used to sit over `view.reflow` moved to live with the control. MEASURED from
- *  this tree, not carried from the branch. */
-const MAIN_JS_LINE_CEILING = 16189;
+ *  this tree, not carried from the branch.
+ *
+ *  Lowered to 16,168 by the chrome-capability-guards round, which added no lines
+ *  to `main.js` at all and is paying down a ratchet that had gone STALE. #732
+ *  moved the ribbon's whole tooltip subsystem into `ribbon_tooltip.mjs` and left
+ *  this number where it was, so the file sat 21 lines under its own ceiling — and
+ *  a ceiling with slack in it is not a ratchet, it is an allowance. RE-MEASURED
+ *  FROM THE MERGED TREE at `origin/main` e8e7ed8b (`wc -l src/main.js` = 16168),
+ *  which is the only number that describes this file: #732's extraction and the
+ *  reflow round's both landed, so arithmetic on either branch's figure would be
+ *  wrong in both directions — the merge trap the notes above record six times
+ *  over. */
+const MAIN_JS_LINE_CEILING = 16168;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

@@ -90,7 +90,19 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  markup carries its English beside every key, so an untranslated string
  *  reads as English rather than as an identifier, and what has to be true is
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
- *  faces across the seam: one number goes down, the other goes up. */
+ *  faces across the seam: one number goes down, the other goes up.
+ *
+ *  RE-MEASURED FROM THE MERGED TREE at `origin/main` e8e7ed8b, because #732 added
+ *  57 keys to all nineteen catalogues and a ratchet is only worth what its last
+ *  measurement is worth. Every locale answers **1,637** of the 2,211 keys English
+ *  now defines, which is exactly the floor below — so this one is NOT stale and
+ *  there is nothing to raise. Recorded rather than left silent: the next lane
+ *  should not have to re-derive "no change needed" to find out that it is not a
+ *  finding. (The 2,211 total moved and the 1,637 did not, because the three
+ *  rounds after #732 routed new English without translating it — which is the
+ *  shape this ratchet is built to allow: routing and translating are two days'
+ *  work and a gate that refuses the first until the second lands means the
+ *  routing never starts.) */
 const COVERAGE = new Map([
   ["ar", 1637],
   ["de", 1637],
