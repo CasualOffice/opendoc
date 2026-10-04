@@ -10,11 +10,15 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+casual-doc-loss.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 casual-doc-package.workspace = true
 casual-pres-model.workspace = true
 quick-xml.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
 
 [lints]
 workspace = true
