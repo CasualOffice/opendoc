@@ -1,4 +1,4 @@
-// The side panels share one shell, measured (HF-233 D1/D2).
+// The side panels share one shell, measured (HF-265 D1/D2).
 //
 // The owner's report was that the chrome "looks like stock HTML: top left and
 // flow bottom". The dialogs were not the problem — all 23 go through

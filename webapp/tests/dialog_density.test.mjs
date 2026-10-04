@@ -33,7 +33,7 @@ const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
  *  edge case, it is the guard being structurally unable to read the thing it
  *  exists to check: `.dialog-head`, `.dialog-body` and `.dialog-foot` all went
  *  back to `padding: 16px` inside `@media (max-width: 620px)`, and the token
- *  test below passed the whole time (HF-233 D7).
+ *  test below passed the whole time (HF-265 D7).
  *
  *  A guard that can only read one of several declarations reports on whichever
  *  one happens to come first, which is worse than not checking: it is cited as
@@ -56,7 +56,7 @@ function rule(selector) {
 // of this test named `--dlg-pad-x` and `--dlg-pad-y` as two literals — so
 // `--dlg-gap`, declared beside them and referenced nowhere, and
 // `--dialog-width-wide`, the widest rung of a four-rung scale, both sat dead for
-// as long as they liked while the guard reported the family clean (HF-233 D8).
+// as long as they liked while the guard reported the family clean (HF-265 D8).
 // A guard whose subject is a list is a guard that only covers what somebody
 // remembered to add to it.
 const SCALE_FAMILY = /^--(?:dlg-|dialog-width-|pnl-|file-page-)/;
@@ -83,7 +83,7 @@ test("every token in the dialog and panel scale is actually used, not merely dec
 test("dialog and panel chrome take their padding from the tokens, not from pixels", () => {
   // `.panel-head`/`.panel-body` are here because the nine side panels had no
   // shared shell at all: `0 8px 0 14px` on the head over `padding: 6px` on the
-  // body, and five panels overriding even that (HF-233 D2).
+  // body, and five panels overriding even that (HF-265 D2).
   const SUBJECTS = [
     [".dialog-head", /--dlg-pad-[xy]/],
     [".dialog-body", /--dlg-pad-[xy]/],
@@ -207,7 +207,7 @@ test("a dialog that shrank its contents is allowed to shrink", () => {
     ".about-dialog",
     ".bookmark-dialog",
     // Desktop-qualified so the phone bottom-sheet rung, which is (0,2,0), is
-    // not outranked by an ID selector (HF-233 D5).
+    // not outranked by an ID selector (HF-265 D5).
     "body:not(.phone-mode) #splitCellDialog .dialog-card",
     "body:not(.phone-mode) #confirmDialog .dialog-card",
   ]) {

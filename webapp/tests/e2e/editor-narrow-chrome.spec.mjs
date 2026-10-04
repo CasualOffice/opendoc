@@ -163,7 +163,7 @@ test("a narrow window spends nothing on rail captions, and loses no destination 
 });
 
 // The caption shed is about SPACE, so it has to ask whether there is any
-// (HF-233 D6).
+// (HF-265 D6).
 //
 // The rule that sheds them — `:root:has(#viewport.has-review-sidebar:not(
 // .review-sheet)) .rail-btn > span:not(.ms)` — carried NO width condition,

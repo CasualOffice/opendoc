@@ -73,7 +73,7 @@ for (const dialog of DIALOGS()) {
     // A dialog whose body scrolls must also SAY where it ends. Keyboard
     // shortcuts had no footer at all, which is what turned its overflow from
     // "scroll for more" into "the keymap runs off the edge of the card with
-    // nothing under it" (HF-233 D3). Every other dialog here already closes
+    // nothing under it" (HF-265 D3). Every other dialog here already closes
     // from its own action row as well as from the X.
     if (fit.client > 0) {
       expect(

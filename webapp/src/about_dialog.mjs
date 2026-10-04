@@ -163,7 +163,7 @@ export function createAboutDialog(engineVersion, fallbackFocus) {
   };
 
   // Both dismissals, not just the X: About has a body and now has an action row
-  // under it too (HF-233 D3), and `[data-about-dismiss]` is how one handler
+  // under it too (HF-265 D3), and `[data-about-dismiss]` is how one handler
   // serves both so neither can be the one that is wired and neither forgotten.
   for (const button of dialog?.querySelectorAll("[data-about-dismiss]") ?? []) {
     button.addEventListener("click", () => toggle(false));
