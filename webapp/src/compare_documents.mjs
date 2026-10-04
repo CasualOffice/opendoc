@@ -80,15 +80,58 @@ import { n, t } from "./i18n.mjs";
  *
  *  Returns `null` when no mode produced bytes, which the panel reports as such.
  *
- *  Complexity: O(document), once, on an explicit gesture.
+ *  **Complexity: O(document), once, on an explicit gesture, ON THE MAIN THREAD —
+ *  and MEASURED rather than asserted.** Driven through the real panel in Chromium
+ *  on 2026-10-04, over plain-text documents of n, 2n and 4n paragraphs:
+ *
+ *    |  paragraphs | mode               |     bytes | export |
+ *    | ----------: | ------------------ | --------: | -----: |
+ *    |       5,000 | exact_if_unchanged |   358,889 |  10 ms |
+ *    |      10,000 | exact_if_unchanged |   718,889 |  19 ms |
+ *    |      20,000 | exact_if_unchanged | 1,448,889 |  34 ms |
+ *    |       5,000 | preserve_when_safe |   358,896 |  12 ms |
+ *    |      10,000 | preserve_when_safe |   718,896 |  23 ms |
+ *    |      20,000 | preserve_when_safe | 1,448,896 |  44 ms |
+ *
+ *  Linear, confirmed by the doubling SKILL §8 asks for rather than by a timing
+ *  threshold: 12 → 23 → 44 ms is 1.9× per doubling on the regenerating ladder,
+ *  which is the one a comparison after real editing takes (`exact_if_unchanged`
+ *  refuses an edited document).
+ *
+ *  THE MILLISECONDS ARE ONE MACHINE'S, THE RATIO IS THE CLAIM. The table is a
+ *  single-worker run on one laptop and a loaded runner has produced 13 → 27 → 55
+ *  on the same build; what did not move is the slope, which stayed at 2.0× per
+ *  doubling. So `compare-cost.spec.mjs` holds the RATIO and never a budget — a
+ *  millisecond bound here would be flaky under contention and would still not
+ *  tell a slow constant from a quadratic, which is the distinction that matters.
+ *
+ *  SO THE CONSTANT IS SMALL AND THE SHAPE IS NOT. 44 ms at 20,000 paragraphs does
+ *  not freeze a tab; the same slope at the viewer's own admission ceiling
+ *  (`MAX_VIEWER_BLOCKS`, 1,800,000) is seconds of main-thread work that nothing
+ *  can interrupt, because an export is one synchronous call into wasm.
+ *
+ *  It cannot be moved off the thread from here, and the module header says why at
+ *  length: the wasm instance holds the live document, a second instance in a
+ *  worker would need `SharedArrayBuffer`, and that needs COOP/COEP headers GitHub
+ *  Pages cannot send. What CAN be fixed from here is that the reader used to get
+ *  no feedback and no way out before the block — `compareWith` exported first and
+ *  rendered the progress bar afterwards — and that is fixed: the progress state
+ *  and its Cancel are painted and a frame is yielded BEFORE this is called.
+ *
+ *  The marks are a real instrument, not test scaffolding: `opendoc.compare.export`
+ *  is the one document-sized cost on this path and a host profiling a slow
+ *  comparison needs to see it by name. They are also what lets the complexity
+ *  guard measure a ratio instead of asserting a millisecond budget.
  */
 export function comparableBytes(doc, sourceFormat) {
   if (!doc) return null;
   for (const mode of ["exact_if_unchanged", "preserve_when_safe", "semantic"]) {
     try {
+      mark("opendoc.compare.export.start");
       const artifact = doc.exportAs(sourceFormat, mode);
       const bytes = artifact.bytes;
       artifact.free();
+      measure("opendoc.compare.export", "opendoc.compare.export.start");
       return bytes;
     } catch {
       // Try the next mode. The failure is reported only if every mode fails,
@@ -97,6 +140,26 @@ export function comparableBytes(doc, sourceFormat) {
     }
   }
   return null;
+}
+
+/** `performance.mark`, guarded. The API is missing in no browser this ships to
+ *  and present in none of the node tests, and an instrument that throws is worse
+ *  than no instrument. O(1). */
+function mark(name) {
+  try {
+    globalThis.performance?.mark?.(name);
+  } catch {
+    // An instrument may not be the reason a comparison fails.
+  }
+}
+
+/** `performance.measure` from a start mark, guarded the same way. O(1). */
+function measure(name, from) {
+  try {
+    globalThis.performance?.measure?.(name, from);
+  } catch {
+    // Same: a missing start mark must not take the comparison with it.
+  }
 }
 
 /** The phases `WasmVersionDiff.step` returns. Named here so a typo in a
@@ -656,12 +719,32 @@ export function bindComparePanel(io) {
     running = true;
     cancelled = false;
     try {
+      // PAINT AND ARM CANCEL BEFORE THE BLOCK, which this did not used to do.
+      // `io.currentBytes()` is `comparableBytes` — one synchronous, O(document)
+      // export into wasm, measured at 44 ms per 20,000 paragraphs and linear in
+      // document size — and it ran first, with the chooser (or the previous
+      // result) still on screen and no Cancel anywhere. SKILL §8 is explicit:
+      // anything O(document) must show real progress and be cancellable. One
+      // yielded frame is what makes both true, and it costs a frame on a gesture
+      // that is already about to take longer than one.
+      //
+      // The export itself still cannot be interrupted — it is one call into the
+      // engine — so a Cancel pressed during it takes effect at the first slice
+      // boundary afterwards, which is where `runComparison` already asks. That is
+      // the honest limit of what the chrome can do; moving the export off the
+      // thread needs a worker, and the module header says why there is not one.
+      renderProgress({ phase: PARSING, done: 0, total: 0 });
+      mark("opendoc.compare.progress");
+      await io.yieldToHost();
+      if (cancelled) {
+        render([paragraph(t("compare.cancelled"), "muted")]);
+        return;
+      }
       const mine = io.currentBytes();
       if (!mine) {
         render([paragraph(t("compare.cannotExport"), "muted")]);
         return;
       }
-      renderProgress({ phase: PARSING, done: 0, total: 0 });
       const outcome = await runComparison({
         // The ORDER is review's: the other document is the left (older) side and
         // this one is the right, so an insertion is what this document has and
