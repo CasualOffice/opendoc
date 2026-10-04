@@ -3363,6 +3363,135 @@ One of them **passed on its first writing** and had to be strengthened, which is
 against a relay with no identity check at all. Rewritten to **create the condition** — an accepted
 chunk first, so the chain resolves — it reddens.
 
+## ADR-061 — A comparison is expressed as tracked changes, not as a second markup mechanism
+
+- **Status:** **Proposed**, 2026-10-04. The analysis is complete and sourced (`158`); the
+  implementation is **not started** and is an engine addition, so nothing here is claimed as
+  shipped. The chrome half (§"What the chrome owes") is small and blocked on the engine half.
+- **Date:** 2026-10-04.
+- **Design doc:** `158` — ONLYOFFICE source findings plus Word and Google Docs behaviour.
+- **Closes:** `105` OO-007 ("pre-existing tracked changes accepted on compare… result saved as a
+  new version") as a *design* question. Answers `153` `review.compare-documents`' "merged third
+  document… is not started" with a decision about what to build.
+- **Relates to:** ADR-052 (protection enforced at the operation — a comparison that writes
+  revisions is a mutation and is subject to it), ADR-033 / `107` §459 (which already records
+  "emit the result as tracked changes into the existing revision model" as the intended answer),
+  `140` invariant 5 (diff is read-only derived data, and creates tracked changes *only* through
+  an explicit Compare action — this ADR is that action).
+- **Corrects:** `webapp/src/compare_documents.mjs`'s header, which records the change-list panel
+  as the decided shape of this feature. It was the right call for what was reachable; it is not
+  the right destination, and the file says so as though it were.
+
+### Context
+
+The product owner's report, 2026-10-04: *"show changes and compare is fucked up .. i cant even
+see what is being changed… it should be diff on canvas .. check how onlyoffice or google docs
+does it"*. The panel reports `Compared with <date> / Differences: 1 / Text edits: 1 / Removed`.
+
+`158` establishes that **no reference product presents a comparison as a count**. Word emits a
+merged third document of tracked changes; ONLYOFFICE mutates the open document, setting
+`reviewtype_Add` / `reviewtype_Remove` on runs with an author and a timestamp
+(`sdkjs/word/Editor/Comparison.js:3864`, `:179`), and its Compare button sits *on the Review
+band* beside Accept, Reject, Previous, Next and the four-way display-mode picker; Google Docs
+produces a third document whose differences are suggestions. In all three, a comparison **is**
+review markup, and the reader's primitives are the review primitives.
+
+`158` §7 then measured our side. The `Revision` model exists with settable `author`/`date`
+(`casual-doc-model/src/v1/body.rs:2409`); it is painted as author-coloured underline for an
+insertion and strikethrough for a deletion by `apply_revision_markup`
+(`casual-doc-layout/src/flow.rs:159`), structurally the same function as ONLYOFFICE's
+`addLines`; and `decideRevision`, `decideMovePair`, `decideRevisionGroup`,
+`decideAllRevisions`, `setShowChanges` and the chrome's `review.next` / `review.previous` are
+all shipped. **The canvas rendering of a diff has been built the whole time.** Two things are
+missing, and together they are why the panel is a list:
+
+1. **A revision cannot be injected from JavaScript.** The entire authoring surface is ten
+   `suggest*` methods, each meaning "perform *this* edit and record it". From Rust the seam
+   exists and is the right one — `Operation::UpdateReviewState`
+   (`casual-doc-edit/src/lib.rs:747`), whose paragraph entries (`:301`) each carry a node id
+   plus an arbitrary inline list, so one of them can be a revision with any author and date.
+   Every `suggest*` method is already built on it.
+2. **The sidecar's anchor does not address the live document.** `casual-doc-wasm/src/diff.rs:228-244`
+   imports *both* sides freshly, and the chrome's right-hand side is
+   `comparableBytes(doc, …)` — a re-export of the live document. Ids restart per import, so
+   `right.node` belongs to a throwaway parse. Only `right.path` survives, and there is no
+   `path → NodeId` resolver: `blockIndexOf` is the inverse, `documentOutline` covers only
+   headings, and `accessibilityTreeWindow` projects no node id at all.
+
+### Decision
+
+**A document comparison is applied to the open document as tracked changes, through the
+revision model that already exists, and is read with the review surface that already exists.**
+
+One function is added to the engine, `applyDiffAsRevisions(sidecar, author, date)` — exact
+signature in `158` §7.4 — which turns each `DiffChange` into an `InlineNode::Revision` and
+applies the lot as **one** `Operation::UpdateReviewState` under `HistoryKind::Review`: a single
+undo step, and every downstream surface inherits it with no further change —
+`listRevisions`, the canvas markup, `setShowChanges`, accept/reject per change and in bulk,
+next/previous, the review gutter, and DOCX `w:ins`/`w:del` on export.
+
+Three consequences are accepted deliberately:
+
+- **The open document becomes the merged document.** This is ONLYOFFICE's answer rather than
+  Word's and Google's, and it is why no third-document construction is needed. The result is
+  then an ordinary edited document: saving it is an ordinary save, which is how `105` OO-007's
+  "result saved as a new version" falls out for free rather than needing its own mechanism.
+- **A comparison refuses on a document that already carries revisions**, with a reason, rather
+  than merging the two. One `reviewType` field cannot carry both "a person suggested this" and
+  "a comparison computed this" without the two accepting and rejecting each other. ONLYOFFICE
+  resolves it by accepting all existing changes first, on consent
+  (`Comparison.js:3910-3921`); we refuse instead, because silently destroying a reviewer's
+  suggestions to run a comparison is the kind of data loss §12 puts first. The consent dialog
+  is a later option, not a default.
+- **Authorship is a synthetic author**, so the author colour means something and the changes are
+  distinguishable from a human's. `setActiveAuthor` is the existing seam; the name comes from
+  the compared document.
+
+### Alternatives rejected
+
+- **Render the sidecar as its own canvas overlay, in the chrome, beside the review overlay.**
+  Rejected: it is a second mechanism painting the same thing, which `SKILL` §8 forbids and which
+  this repository has been burnt by — two implementations of one rule diverge. It would also
+  duplicate the author palette (already mirrored in two places), would need its own
+  accept/reject or would have none, and **cannot be built anyway** without a `path → NodeId`
+  resolver, so it buys a worse design at a comparable cost.
+- **Keep the change list and add click-to-scroll.** Rejected as the *destination* — though it is
+  the natural fallback if the engine half is deferred. It leaves the reader reading a list of
+  the document instead of reading the document, which is the owner's complaint restated, and
+  every reference product rejected it.
+- **Produce a merged third document, as Word and Google Docs do.** Rejected for now, not
+  forever: it is a document construction with its own correctness questions, and mutating the
+  open document delivers the same reader experience with no new machinery. Recorded as `158`
+  §8 open question 4 rather than closed.
+- **Replay the diff as `suggest*` edits in Suggesting mode**, to avoid an engine change.
+  Rejected: it routes a comparison through the typing path, so undo granularity, caret
+  side-effects and move handling all become wrong in ways a sidecar application does not, and it
+  would be O(changes) round trips across the wasm boundary instead of one operation.
+- **Four display modes (Word's and ONLYOFFICE's "Display for Review").** Not rejected —
+  deliberately unresolved. `ReviewProjection` already declares `Original` and `Final`
+  (`body.rs:2347`, `:2349`) and neither is constructed outside tests; `93` §91 already lists
+  them as a later extension. A comparison makes them more valuable, not less, and `158` §8 Q2
+  carries it.
+
+### What the chrome owes, once the engine half exists
+
+Small, and all in `compare_documents.mjs` and the review chrome: route the comparison's result
+into `applyDiffAsRevisions` instead of into `renderResult`; keep the panel as the **index** (the
+Google Docs role — an entry scrolls the canvas to its change) rather than as the report; make
+each entry **name its object** the way `Deleted: <text>` does
+(`web-apps/.../controller/ReviewChanges.js:1192-1196`), because `Removed` with no object is the
+same defect as a refusal with no reason; and turn `setShowChanges` on when a comparison
+produces changes.
+
+### What is deliberately not decided
+
+Whether the comparison runs in a worker. It must not block the tab, and today it does not — the
+existing driver slices, reports progress and cancels at a boundary, which is already better than
+ONLYOFFICE's `sync_StartAction(… BlockInteraction, SlowOperation)` blocking wrap. Applying the
+sidecar is O(changes), not O(document), so it does not change that picture. The worker question
+stays where `compare_documents.mjs` already records it: blocked on COOP/COEP headers GitHub
+Pages cannot send.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
