@@ -864,6 +864,35 @@ fn compose_emphasis_marks(
 /// stroked rectangle, a line/connector, or a text box (fill + border + its flowed
 /// content, offset into the box by the internal margin, exactly like an inline
 /// text box).
+/// Composes a free-standing set of placed anchors into a display list.
+///
+/// The seam a slide composes through (ADR-055 part 2). A slide is **only** a float
+/// layer: there is no text layer to sit above or below, no header or footer band, and
+/// no column separators, so `compose_page` cannot serve it — but the per-anchor
+/// composition can and must be the same one, or a shape would paint differently on a
+/// slide than in a document.
+///
+/// Anchors are sorted by their z key exactly as a page's are, so a child's index in
+/// its group remains its paint order. `behind_doc` is ignored rather than honoured:
+/// with no text layer there is nothing for an anchor to be behind, and silently
+/// dropping or reordering such an anchor would lose it.
+///
+/// # Complexity
+///
+/// O(n log n) in the anchors, from the sort — the same cost a page pays, and bounded
+/// by the shapes on one slide rather than by the deck.
+#[must_use]
+pub fn compose_anchors(anchors: &[PlacedAnchor]) -> DisplayList {
+    let mut list = DisplayList::new();
+    let mut marks = MarkLayer::new(FormattingMarks::default());
+    let mut ordered: Vec<&PlacedAnchor> = anchors.iter().collect();
+    ordered.sort_by_key(|anchor| anchor.z);
+    for anchor in ordered {
+        compose_anchor(&mut list, anchor, &mut marks);
+    }
+    list
+}
+
 fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut MarkLayer) {
     match &anchor.content {
         AnchorContent::Image {

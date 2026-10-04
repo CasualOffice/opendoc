@@ -35,6 +35,9 @@ use casual_doc_model::v1::DashStyle;
 // Its own `use` line on purpose: a new v1 import added into the sorted block
 // above conflicts with every other branch doing the same.
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
+// Own `use` line, for the same anti-conflict reason as the two above: the
+// shared `GroupChild` walk needs the text-box type and the nesting bound.
+use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -911,21 +914,80 @@ fn collect_inlines(
 /// Places every child of a group at `origin + mapper(child.offset)`, each sized by
 /// its own extent, in document (paint) order. Nested groups compose the mapper.
 #[allow(clippy::too_many_arguments)]
-fn place_group_children(
-    layout: &mut PaginatedLayout,
-    ctx: &mut FloatCtx<'_>,
-    group: &WordprocessingGroup,
-    page_index: usize,
+/// What a host must supply for the shared `GroupChild` walk, and nothing more.
+///
+/// # Why this is a trait and not a `bool`
+///
+/// A DOCX float and a slide shape paint the SAME `GroupChild` vocabulary, and the
+/// arithmetic that positions them — the child-space mapper, the accumulated pose, the
+/// preset table, the theme style matrix — must be identical or a shape looks one way
+/// in a document and another on a slide. Branching on the document class inside the
+/// walk would put that `if` in front of every one of those decisions, and the first
+/// one somebody forgot would be a silent divergence.
+///
+/// It had already happened: a second walk written for slides handled
+/// [`GroupShape::geometry`](casual_doc_model::v1::GroupShape::geometry) but not
+/// [`GroupShape::path`](casual_doc_model::v1::GroupShape::path), so a slide carrying a
+/// custom geometry painted its bounding preset instead of its authored outline. One
+/// exhaustive match fixes that class of bug by construction: a fifth `GroupChild`
+/// variant is a compile error in exactly one place, which is what `109` HF-212 asks
+/// for after finding 33 container walks each deciding independently.
+///
+/// So the walk owns all the geometry and the host owns only what it alone knows: its
+/// z band, and whether it can flow text.
+pub trait GroupChildHost {
+    /// The definition tables media and theme references resolve in.
+    fn definitions(&self) -> &Definitions;
+
+    /// Receives one placed child. The host supplies the fields only it knows — its
+    /// z band and ordering, its `behind_doc` state — and is responsible for ordering
+    /// successive calls monotonically, since a child's call order IS its paint order.
+    fn emit(
+        &mut self,
+        node: NodeId,
+        content: AnchorContent,
+        rect: Rect,
+        descr: Option<String>,
+        transform: Option<ShapeTransform>,
+    );
+
+    /// Places a grouped text box, which needs a document and a shaper to flow.
+    ///
+    /// Defaulted to doing nothing so a host that cannot flow text does not have to
+    /// pretend: a slide refuses `GroupChild::TextBox` in the model
+    /// (`PresentationError::TextBoxShapeOnSlide`) because slide text is `a:txBody` on
+    /// the shape, so for a slide this arm is unreachable rather than unimplemented.
+    /// Overriding it is how the document host flows one.
+    fn emit_text_box(&mut self, text_box: &GroupTextBox, rect: Rect) {
+        let _ = (text_box, rect);
+    }
+}
+
+/// Walks a group's children once, for any host.
+///
+/// Children are visited in document order, which IS their paint order: a later child
+/// paints over an earlier one, and nesting is depth-first so a group's children stay
+/// contiguous in that order.
+///
+/// # Complexity
+///
+/// O(children) in the subtree, bounded by [`MAX_GROUP_DEPTH`] levels of nesting.
+pub fn place_group_child_tree(
+    children: &[GroupChild],
     origin: Point,
     mapper: &GroupMapper,
     pose: GroupPose,
-    relative_height: u32,
-    behind_doc: bool,
+    depth: u32,
+    host: &mut dyn GroupChildHost,
 ) {
-    for child in &group.children {
+    for child in children {
         match child {
             GroupChild::Picture(picture) => {
-                let Some(media) = ctx.document.definitions().media.get(&picture.media) else {
+                let Some(media) = host.definitions().media.get(&picture.media) else {
+                    // A dangling media reference is refused by model validation, so
+                    // this is unreachable for a validated document; skipping rather
+                    // than painting a placeholder keeps a malformed file from
+                    // inventing content.
                     continue;
                 };
                 let media = media.part_name.clone();
@@ -933,31 +995,21 @@ fn place_group_children(
                     pose.reposition(mapper.child_rect(origin, picture.offset, picture.extent));
                 let (rotation, flip_h, flip_v) =
                     pose.compose_child(picture.rotation, picture.flip_h, picture.flip_v);
-                let z = AnchorZ {
-                    relative_height,
-                    order: ctx.next_order(),
-                };
-                push(
-                    layout,
-                    page_index,
-                    PlacedAnchor {
-                        // A group child's identity, so a click on it resolves to
-                        // the model like any other object. Left as `None` before,
-                        // which is why grouped content rendered but could not be
-                        // selected, entered, or edited at all.
-                        node: Some(picture.id),
-                        content: AnchorContent::Image {
-                            media,
-                            crop: picture.crop,
-                            border: shape_stroke(picture.border),
-                            opacity: picture.opacity,
-                        },
-                        rect,
-                        behind_doc,
-                        z,
-                        descr: picture.descr.clone(),
-                        transform: shape_transform(rect, flip_h, flip_v, rotation),
+                host.emit(
+                    // A group child's identity, so a click on it resolves to the
+                    // model like any other object. Left as `None` before, which is
+                    // why grouped content rendered but could not be selected,
+                    // entered, or edited at all.
+                    picture.id,
+                    AnchorContent::Image {
+                        media,
+                        crop: picture.crop,
+                        border: shape_stroke(picture.border),
+                        opacity: picture.opacity,
                     },
+                    rect,
+                    picture.descr.clone(),
+                    shape_transform(rect, flip_h, flip_v, rotation),
                 );
             }
             GroupChild::TextBox(text_box) => {
@@ -967,64 +1019,20 @@ fn place_group_children(
                 // would spin the chrome and leave the glyphs behind — visibly worse
                 // than an unrotated box in the right place. Rotated text-box content
                 // is the already-tracked follow-up this waits on.
-                let mut rect =
+                let rect =
                     pose.reposition(mapper.child_rect(origin, text_box.offset, text_box.extent));
-                let flowed = flow_anchored_text_box(
-                    ctx.document,
-                    &text_box.blocks,
-                    ctx.shaper,
-                    rect.size,
-                    &text_box.body_properties,
-                );
-                rect.size = flowed.size;
-                let z = AnchorZ {
-                    relative_height,
-                    order: ctx.next_order(),
-                };
-                // "Modeled is not shipped": a text-bearing `wps:wsp` whose
-                // preset is an ellipse or a star must PAINT as one, with its
-                // text inside. The backdrop comes from the same mapping a
-                // text-free shape uses, and takes the fill/outline with it so
-                // the rectangular box path below paints nothing over it.
-                let backdrop = text_box_backdrop(text_box, rect);
-                push(
-                    layout,
-                    page_index,
-                    PlacedAnchor {
-                        node: Some(text_box.id),
-                        content: AnchorContent::TextBox {
-                            blocks: flowed.blocks,
-                            fill: backdrop.is_none().then(|| text_box.fill.clone()).flatten(),
-                            border: backdrop
-                                .is_none()
-                                .then(|| text_box.border.map(text_box_stroke))
-                                .flatten(),
-                            content_layout: flowed.content_layout,
-                            backdrop,
-                        },
-                        rect,
-                        behind_doc,
-                        z,
-                        descr: None,
-                        // Rotated text-box CONTENT is a follow-up; the box paints
-                        // axis-aligned for now.
-                        transform: None,
-                    },
-                );
+                host.emit_text_box(text_box, rect);
             }
             GroupChild::Shape(shape) => {
                 let rect = pose.reposition(mapper.child_rect(origin, shape.offset, shape.extent));
                 let (rotation, flip_h, flip_v) =
                     pose.compose_child(shape.rotation, shape.flip_h, shape.flip_v);
-                let z = AnchorZ {
-                    relative_height,
-                    order: ctx.next_order(),
-                };
                 // A custom geometry outranks the preset enum: the importer only
                 // attaches a path when the authored `a:custGeom` is inside the
                 // drawable subset, and `geometry` stays `Other` beside it
-                // (docs/119 §6).
-                let (fill, stroke) = themed_appearance(shape, ctx.document.definitions());
+                // (docs/119 §6). Getting this order wrong is what made a slide paint
+                // a freeform's bounding preset instead of its outline.
+                let (fill, stroke) = themed_appearance(shape, host.definitions());
                 let content = if let Some(path) = shape.path.as_ref() {
                     custom_path_content(path, rect, fill, stroke)
                 } else {
@@ -1037,21 +1045,21 @@ fn place_group_children(
                         stroke,
                     )
                 };
-                push(
-                    layout,
-                    page_index,
-                    PlacedAnchor {
-                        node: Some(shape.id),
-                        content,
-                        rect,
-                        behind_doc,
-                        z,
-                        descr: None,
-                        transform: shape_transform(rect, flip_h, flip_v, rotation),
-                    },
+                host.emit(
+                    shape.id,
+                    content,
+                    rect,
+                    None,
+                    shape_transform(rect, flip_h, flip_v, rotation),
                 );
             }
             GroupChild::Group(nested) => {
+                if depth + 1 > MAX_GROUP_DEPTH {
+                    // Model validation refuses this, so it is unreachable for a
+                    // validated document; bounded here too because this walk is
+                    // public and a caller could hand it an unvalidated tree.
+                    continue;
+                }
                 let nested_mapper = mapper.compose(nested);
                 // The nested group's own `a:xfrm` rot/flip act about ITS box centre,
                 // measured in the parent's UNROTATED space; the parent pose then
@@ -1064,20 +1072,131 @@ fn place_group_children(
                     nested.transform.flip_h,
                     nested.transform.flip_v,
                 ));
-                place_group_children(
-                    layout,
-                    ctx,
-                    nested,
-                    page_index,
+                place_group_child_tree(
+                    &nested.children,
                     origin,
                     &nested_mapper,
                     nested_pose,
-                    relative_height,
-                    behind_doc,
+                    depth + 1,
+                    host,
                 );
             }
         }
     }
+}
+
+/// The document's host: a page's float layer, with the band and ordering a paginated
+/// document needs.
+struct PageFloatHost<'a, 'c> {
+    layout: &'a mut PaginatedLayout,
+    ctx: &'a mut FloatCtx<'c>,
+    page_index: usize,
+    relative_height: u32,
+    behind_doc: bool,
+}
+
+impl GroupChildHost for PageFloatHost<'_, '_> {
+    fn definitions(&self) -> &Definitions {
+        self.ctx.document.definitions()
+    }
+
+    fn emit(
+        &mut self,
+        node: NodeId,
+        content: AnchorContent,
+        rect: Rect,
+        descr: Option<String>,
+        transform: Option<ShapeTransform>,
+    ) {
+        let z = AnchorZ {
+            relative_height: self.relative_height,
+            order: self.ctx.next_order(),
+        };
+        push(
+            self.layout,
+            self.page_index,
+            PlacedAnchor {
+                node: Some(node),
+                content,
+                rect,
+                behind_doc: self.behind_doc,
+                z,
+                descr,
+                transform,
+            },
+        );
+    }
+
+    fn emit_text_box(&mut self, text_box: &GroupTextBox, rect: Rect) {
+        let mut rect = rect;
+        let flowed = flow_anchored_text_box(
+            self.ctx.document,
+            &text_box.blocks,
+            self.ctx.shaper,
+            rect.size,
+            &text_box.body_properties,
+        );
+        rect.size = flowed.size;
+        let z = AnchorZ {
+            relative_height: self.relative_height,
+            order: self.ctx.next_order(),
+        };
+        // "Modeled is not shipped": a text-bearing `wps:wsp` whose preset is an
+        // ellipse or a star must PAINT as one, with its text inside. The backdrop
+        // comes from the same mapping a text-free shape uses, and takes the
+        // fill/outline with it so the rectangular box path below paints nothing over
+        // it.
+        let backdrop = text_box_backdrop(text_box, rect);
+        push(
+            self.layout,
+            self.page_index,
+            PlacedAnchor {
+                node: Some(text_box.id),
+                content: AnchorContent::TextBox {
+                    blocks: flowed.blocks,
+                    fill: backdrop.is_none().then(|| text_box.fill.clone()).flatten(),
+                    border: backdrop
+                        .is_none()
+                        .then(|| text_box.border.map(text_box_stroke))
+                        .flatten(),
+                    content_layout: flowed.content_layout,
+                    backdrop,
+                },
+                rect,
+                behind_doc: self.behind_doc,
+                z,
+                descr: None,
+                // Rotated text-box CONTENT is a follow-up; the box paints
+                // axis-aligned for now.
+                transform: None,
+            },
+        );
+    }
+}
+
+// Nine arguments: the page band, the pose and the mapper all have to arrive
+// together, and splitting them into a struct only to destructure it immediately
+// would hide the call site's meaning rather than simplify it.
+#[allow(clippy::too_many_arguments)]
+fn place_group_children(
+    layout: &mut PaginatedLayout,
+    ctx: &mut FloatCtx<'_>,
+    group: &WordprocessingGroup,
+    page_index: usize,
+    origin: Point,
+    mapper: &GroupMapper,
+    pose: GroupPose,
+    relative_height: u32,
+    behind_doc: bool,
+) {
+    let mut host = PageFloatHost {
+        layout,
+        ctx,
+        page_index,
+        relative_height,
+        behind_doc,
+    };
+    place_group_child_tree(&group.children, origin, mapper, pose, 0, &mut host);
 }
 
 /// Resolves the common `roundRect` `adj` guide. DrawingML uses 100000-based

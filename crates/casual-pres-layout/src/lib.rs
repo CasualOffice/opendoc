@@ -14,10 +14,10 @@
 //!
 //! So this crate deliberately contains no geometry, no theme resolution and no preset
 //! evaluation. All three come from `casual_doc_layout::anchor`'s published seams
-//! ([`shape_geometry_content`](casual_doc_layout::anchor::shape_geometry_content),
-//! [`themed_shape_appearance`](casual_doc_layout::anchor::themed_shape_appearance),
-//! [`GroupMapper`](casual_doc_layout::anchor::GroupMapper) and
-//! [`GroupPose`](casual_doc_layout::anchor::GroupPose)), so a `prstGeom` cannot look
+//! ([`casual_doc_layout::anchor::shape_geometry_content`],
+//! [`casual_doc_layout::anchor::themed_shape_appearance`],
+//! [`GroupMapper`] and
+//! [`GroupPose`]), so a `prstGeom` cannot look
 //! one way in a document and another on a slide.
 //!
 //! # What this does NOT do
@@ -34,10 +34,12 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-use casual_doc_layout::anchor::{GroupMapper, GroupPose, shape_geometry_content};
+use casual_doc_layout::anchor::{GroupChildHost, GroupMapper, GroupPose, place_group_child_tree};
+use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::page::{AnchorContent, AnchorZ, PlacedAnchor};
-use casual_doc_layout::units::{Point, Rect, Size, emu_to_twip_extent};
-use casual_doc_model::v1::{Definitions, GroupChild, MAX_GROUP_DEPTH};
+use casual_doc_layout::units::{Point, Rect, Size, Twip, emu_to_twip_extent};
+use casual_doc_model::NodeId;
+use casual_doc_model::v1::{Definitions, GroupChild};
 use casual_pres_model::{Presentation, ShapeTree, Slide};
 
 /// One slide, resolved to a surface size and a paint-ordered display list.
@@ -48,6 +50,20 @@ pub struct SlideCanvas {
     /// What to paint, in paint order: the master's shapes, then the layout's, then
     /// the slide's own.
     pub anchors: Vec<PlacedAnchor>,
+}
+
+/// Composes a laid-out slide into the backend-neutral display list.
+///
+/// The same `DisplayList` a DOCX page produces, which is the point: the `tiny-skia`
+/// raster backend, the PDF writer and the hit-tester all consume it already, so a
+/// slide reaches a screen and a PDF through code that has no notion of slides.
+///
+/// # Complexity
+///
+/// O(n log n) in this slide's anchors, from the paint-order sort.
+#[must_use]
+pub fn compose_slide(canvas: &SlideCanvas) -> casual_doc_layout::display::DisplayList {
+    casual_doc_layout::compose::compose_anchors(&canvas.anchors)
 }
 
 /// Lays out the slide at `index` in presentation order.
@@ -77,14 +93,30 @@ pub fn lay_out_slide(presentation: &Presentation, index: usize) -> Option<SlideC
         emu_to_twip_extent(surface.width_emu),
         emu_to_twip_extent(surface.height_emu),
     );
-    let mut anchors = Vec::new();
-    let mut order = 0_u32;
-    let definitions = presentation.definitions();
-
+    let mut host = SlideHost {
+        definitions: presentation.definitions(),
+        anchors: Vec::new(),
+        order: 0,
+    };
+    let origin = Point::new(Twip(0), Twip(0));
     for tree in cascade_trees(presentation, slide) {
-        place_tree(tree, definitions, size, &mut anchors, &mut order);
+        // The tree's own transform maps its child space onto the surface. A
+        // `p:spTree` normally declares a child space equal to `p:sldSz`, so this is
+        // usually the identity — but it is applied rather than assumed, because a
+        // deck authored at a different `a:chExt` is legal and renders scaled.
+        let mapper = GroupMapper::from_transform(&tree.transform);
+        let visible: Vec<GroupChild> = tree
+            .children
+            .iter()
+            .filter(|child| !child.hidden)
+            .map(|child| child.content.clone())
+            .collect();
+        place_group_child_tree(&visible, origin, &mapper, GroupPose::IDENTITY, 0, &mut host);
     }
-    Some(SlideCanvas { size, anchors })
+    Some(SlideCanvas {
+        size,
+        anchors: host.anchors,
+    })
 }
 
 /// The three trees that paint a slide, in paint order.
@@ -107,171 +139,56 @@ fn cascade_trees<'a>(presentation: &'a Presentation, slide: &'a Slide) -> Vec<&'
     trees
 }
 
-/// Places one shape tree's children onto the surface.
-fn place_tree(
-    tree: &ShapeTree,
-    definitions: &Definitions,
-    size: Size,
-    out: &mut Vec<PlacedAnchor>,
-    order: &mut u32,
-) {
-    // The tree's own transform maps its child space onto the surface. A `p:spTree`
-    // normally declares a child space identical to the slide, so this is usually the
-    // identity — but it is applied rather than assumed, because a deck authored at a
-    // different `a:chExt` than its `p:sldSz` is legal and renders scaled.
-    let mapper = GroupMapper::from_transform(&tree.transform);
-    let origin = Point::new(
-        casual_doc_layout::units::Twip(0),
-        casual_doc_layout::units::Twip(0),
-    );
-    for child in &tree.children {
-        if child.hidden {
-            continue;
-        }
-        place_child(
-            &child.content,
-            definitions,
-            origin,
-            &mapper,
-            GroupPose::IDENTITY,
-            out,
-            order,
-            0,
-        );
-        let _ = size;
+/// The slide's host for the shared `GroupChild` walk: a flat float layer over the
+/// surface, with one monotonic paint order.
+///
+/// Implementing [`GroupChildHost`] rather than writing a second recursion is the
+/// whole point. A slide and a DOCX float paint the same vocabulary, so the mapper,
+/// the pose, the preset table, the theme matrix AND the custom-geometry path all come
+/// from one walk — this crate's first draft had its own copy and silently omitted
+/// `GroupShape::path`, so a slide carrying an `a:custGeom` painted its bounding preset
+/// instead of its authored outline.
+struct SlideHost<'a> {
+    definitions: &'a Definitions,
+    anchors: Vec<PlacedAnchor>,
+    order: u32,
+}
+
+impl GroupChildHost for SlideHost<'_> {
+    fn definitions(&self) -> &Definitions {
+        self.definitions
     }
-}
 
-/// Places one drawing child, recursing into nested groups.
-#[allow(clippy::too_many_arguments)]
-fn place_child(
-    child: &GroupChild,
-    definitions: &Definitions,
-    origin: Point,
-    mapper: &GroupMapper,
-    pose: GroupPose,
-    out: &mut Vec<PlacedAnchor>,
-    order: &mut u32,
-    depth: u32,
-) {
-    match child {
-        GroupChild::Shape(shape) => {
-            let rect = pose.reposition(mapper.child_rect(origin, shape.offset, shape.extent));
-            let (fill, stroke) =
-                casual_doc_layout::anchor::themed_shape_appearance(shape, definitions);
-            let content = shape_geometry_content(
-                shape.geometry,
-                shape.preset.as_deref(),
-                &shape.adjustments,
-                rect,
-                fill.as_ref(),
-                stroke,
-            );
-            let (rotation, flip_h, flip_v) =
-                pose.compose_child(shape.rotation, shape.flip_h, shape.flip_v);
-            push(
-                out,
-                order,
-                Some(shape.id),
-                content,
-                rect,
-                rotation,
-                flip_h,
-                flip_v,
-            );
-        }
-        GroupChild::Picture(picture) => {
-            let Some(media) = definitions.media.get(&picture.media) else {
-                // A validated presentation cannot reach this; skipping rather than
-                // painting a placeholder keeps a malformed deck from inventing content.
-                return;
-            };
-            let rect = pose.reposition(mapper.child_rect(origin, picture.offset, picture.extent));
-            let content = AnchorContent::Image {
-                media: media.part_name.clone(),
-                crop: picture.crop,
-                border: casual_doc_layout::anchor::shape_stroke(picture.border),
-                opacity: picture.opacity,
-            };
-            let (rotation, flip_h, flip_v) =
-                pose.compose_child(picture.rotation, picture.flip_h, picture.flip_v);
-            push(
-                out,
-                order,
-                Some(picture.id),
-                content,
-                rect,
-                rotation,
-                flip_h,
-                flip_v,
-            );
-        }
-        GroupChild::Group(group) => {
-            if depth + 1 > MAX_GROUP_DEPTH {
-                return;
-            }
-            let nested_mapper = mapper.compose(group);
-            let nested_box =
-                mapper.child_rect(origin, group.transform.offset, group.transform.extent);
-            let nested_pose = pose.after(GroupPose::about(
-                rect_center(nested_box),
-                group.transform.rotation.unwrap_or(0),
-                group.transform.flip_h,
-                group.transform.flip_v,
-            ));
-            for nested in &group.children {
-                place_child(
-                    nested,
-                    definitions,
-                    origin,
-                    &nested_mapper,
-                    nested_pose,
-                    out,
-                    order,
-                    depth + 1,
-                );
-            }
-        }
-        // A slide's text lives in `SlideNode::text`, and `GroupChild::TextBox` is
-        // refused on a slide by the model — so this arm is unreachable for a
-        // validated presentation and paints nothing rather than guessing.
-        GroupChild::TextBox(_) => {}
+    fn emit(
+        &mut self,
+        node: NodeId,
+        content: AnchorContent,
+        rect: Rect,
+        descr: Option<String>,
+        transform: Option<ShapeTransform>,
+    ) {
+        self.anchors.push(PlacedAnchor {
+            node: Some(node),
+            content,
+            rect,
+            // A slide has no text layer, so nothing can be behind the document.
+            behind_doc: false,
+            z: AnchorZ {
+                // A slide carries no `wp:anchor@relativeHeight`; call order alone
+                // decides, which is what makes the three-tier cascade a paint order.
+                relative_height: 0,
+                order: self.order,
+            },
+            descr,
+            transform,
+        });
+        self.order = self.order.saturating_add(1);
     }
-}
 
-/// The center of a rectangle, for the pose a nested group rotates about.
-fn rect_center(rect: Rect) -> Point {
-    Point::new(
-        casual_doc_layout::units::Twip(rect.origin.x.raw() + rect.size.width.raw() / 2),
-        casual_doc_layout::units::Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
-    )
-}
-
-/// Appends a placed anchor, assigning the next paint-order key.
-#[allow(clippy::too_many_arguments)]
-fn push(
-    out: &mut Vec<PlacedAnchor>,
-    order: &mut u32,
-    node: Option<casual_doc_model::NodeId>,
-    content: AnchorContent,
-    rect: Rect,
-    rotation: Option<i32>,
-    flip_h: bool,
-    flip_v: bool,
-) {
-    out.push(PlacedAnchor {
-        node,
-        content,
-        rect,
-        behind_doc: false,
-        z: AnchorZ {
-            relative_height: 0,
-            order: *order,
-        },
-        descr: None,
-        transform: casual_doc_layout::anchor::shape_transform(rect, flip_h, flip_v, rotation),
-    });
-    *order = order.saturating_add(1);
+    // `emit_text_box` is deliberately NOT overridden. Slide text is `a:txBody` on the
+    // shape (`SlideNode::text`) and the model refuses `GroupChild::TextBox` on a
+    // slide, so the default no-op is unreachable rather than unimplemented — and the
+    // trait's default documents that, instead of this crate silently dropping an arm.
 }
 
 #[cfg(test)]

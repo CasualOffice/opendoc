@@ -205,7 +205,7 @@ fn a_child_space_smaller_than_the_box_scales_its_children() {
 
 #[test]
 fn a_nested_group_composes_its_transform_with_its_parents() {
-    let size = SlideSize::DEFAULT_16X9;
+    let _size = SlideSize::DEFAULT_16X9;
     let inner = shape_at(id(42), 0, 0, 914_400, 914_400);
     let group = GroupChild::Group(Box::new(WordprocessingGroup {
         id: id(41),
@@ -238,13 +238,28 @@ fn a_nested_group_composes_its_transform_with_its_parents() {
     }));
     let mut deck = three_tier_deck();
     deck.slides_mut()[0].shapes.children = vec![SlideNode::new(group)];
+    // The PARENT tree must not be the identity, or `compose` and `from_transform`
+    // return the same mapper and this guard cannot tell them apart. It could not:
+    // replacing the composition with the nested transform alone left this GREEN until
+    // the slide tree was given a child space of its own. A guard whose fixture makes
+    // the bug invisible is the shape of green-but-wrong this repository has shipped
+    // before (`105` CQ-003).
+    deck.slides_mut()[0].shapes.transform.child_extent = Extent {
+        width_emu: SlideSize::DEFAULT_16X9.width_emu / 2,
+        height_emu: SlideSize::DEFAULT_16X9.height_emu / 2,
+    };
     let canvas = lay_out_slide(&deck, 0).expect("slide 0");
     let shape = canvas.anchors.last().expect("the grouped shape");
-    // The group sits at 1in and doubles its child space, so a child at the group's
-    // origin lands at 1in and a 1in child becomes 2in. Mutation: not composing the
-    // mapper placed it at the un-nested position.
-    assert_eq!(shape.rect.origin.x.raw(), 1_440);
-    assert_eq!(shape.rect.size.width.raw(), 2_880);
+    // The slide tree doubles (half child space over a full box); the group then
+    // doubles again (1in child space in a 2in box) and sits at 1in in child space,
+    // which the tree's doubling puts at 2in. So the child lands at 2in = 2,880tw and
+    // is 1in x 4 = 4in = 5,760tw wide.
+    assert_eq!(
+        shape.rect.origin.x.raw(),
+        2_880,
+        "the group's own offset, scaled by the tree"
+    );
+    assert_eq!(shape.rect.size.width.raw(), 5_760, "both scales compose");
 }
 
 #[test]
@@ -391,4 +406,137 @@ fn laying_out_one_slide_does_not_depend_on_the_decks_length() {
         1,
         "one slide's cost must not grow with the deck"
     );
+}
+
+#[test]
+fn a_slide_composes_into_the_same_display_list_a_page_produces() {
+    // The reason this crate exists: the raster backend, the PDF writer and the
+    // hit-tester consume `DisplayList` and must need no slide-specific path. A slide
+    // is only a float layer, so `compose_page` cannot serve it — but the per-anchor
+    // composition is the same one, which is what this asserts.
+    let canvas = lay_out_slide(&three_tier_deck(), 0).expect("slide 0");
+    let list = crate::compose_slide(&canvas);
+    assert_eq!(
+        list.items.len(),
+        3,
+        "three shapes, three paint items: {:?}",
+        list.items
+    );
+}
+
+#[test]
+fn composition_paints_in_z_order_not_vector_order() {
+    // Mutation: dropping the sort in `compose_anchors` made this pass only because
+    // the vector happened to be ordered — so the anchors are deliberately handed over
+    // SHUFFLED, which is the only way the assertion can tell a sort from luck.
+    let canvas = lay_out_slide(&three_tier_deck(), 0).expect("slide 0");
+    let mut shuffled = canvas.clone();
+    shuffled.anchors.reverse();
+    let from_shuffled = crate::compose_slide(&shuffled);
+    let from_ordered = crate::compose_slide(&canvas);
+    assert_eq!(
+        from_shuffled.items.len(),
+        from_ordered.items.len(),
+        "the same anchors must compose to the same number of items"
+    );
+    // Reversing the input must not reverse the output, because the z keys decide.
+    assert_eq!(
+        format!("{:?}", from_shuffled.items),
+        format!("{:?}", from_ordered.items),
+        "paint order followed vector order instead of the z key"
+    );
+}
+
+#[test]
+fn a_slide_shape_with_a_custom_geometry_paints_its_path_not_its_preset() {
+    // THE bug that unifying the walk fixed, and the reason this crate must not own a
+    // second recursion. The first draft matched on `GroupShape::geometry` and omitted
+    // `GroupShape::path`, so a slide carrying an `a:custGeom` painted the bounding
+    // preset instead of the authored outline — silently, and only on slides.
+    //
+    // The importer attaches a path only for a custom geometry inside the drawable
+    // subset and leaves `geometry` as `Other` beside it (docs/119 §6), which is
+    // exactly the shape built here.
+    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+
+    let size = SlideSize::DEFAULT_16X9;
+    let path = ShapePath {
+        width_emu: 914_400,
+        height_emu: 914_400,
+        commands: vec![
+            ShapePathCommand::MoveTo { point: ORIGIN },
+            ShapePathCommand::LineTo {
+                point: PointEmu {
+                    x_emu: 914_400,
+                    y_emu: 0,
+                },
+            },
+            ShapePathCommand::LineTo {
+                point: PointEmu {
+                    x_emu: 0,
+                    y_emu: 914_400,
+                },
+            },
+            ShapePathCommand::Close,
+        ],
+    };
+    let mut freeform = match shape_at(id(60), 0, 0, 914_400, 914_400) {
+        GroupChild::Shape(shape) => shape,
+        other => panic!("expected a shape, got {other:?}"),
+    };
+    freeform.geometry = ShapeGeometry::Other;
+    freeform.path = Some(path);
+
+    let master = SlideMaster {
+        id: SlideMasterId::new(id(10)),
+        shapes: tree(id(11), Vec::new(), size),
+        name: None,
+        background: None,
+    };
+    let layout = SlideLayout {
+        id: SlideLayoutId::new(id(20)),
+        master: master.id,
+        kind: LayoutKind::Blank,
+        shapes: tree(id(21), Vec::new(), size),
+        name: None,
+        background: None,
+    };
+    let slide = Slide {
+        id: SlideId::new(id(30)),
+        layout: layout.id,
+        shapes: tree(
+            id(31),
+            vec![SlideNode::new(GroupChild::Shape(freeform))],
+            size,
+        ),
+        name: None,
+        hidden: false,
+        background: None,
+    };
+    let presentation = Presentation::new(
+        id(1),
+        size,
+        vec![master],
+        vec![layout],
+        vec![slide],
+        Definitions::default(),
+    )
+    .expect("a deck with a freeform");
+
+    let canvas = lay_out_slide(&presentation, 0).expect("slide 0");
+    match &canvas.anchors[0].content {
+        AnchorContent::Path { commands, .. } => {
+            // Three vertices and a close: a triangle, not the four-corner rectangle
+            // the bounding preset would have produced.
+            assert_eq!(
+                commands.len(),
+                3,
+                "the authored path's own commands: {commands:?}"
+            );
+        }
+        other => panic!(
+            "a custom geometry must paint as a path, not as {other:?} — this is the \
+             divergence the shared walk exists to prevent"
+        ),
+    }
 }
