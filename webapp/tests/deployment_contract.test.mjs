@@ -299,6 +299,15 @@ test("the roles named in compose and in docs/162 are exactly the five the binary
         "is not one the binary accepts",
     );
   }
+
+  // The COUNT in §2's derived-constants table, which is the one a reader quotes
+  // without opening the role table. Every other row in that table is asserted
+  // against its source below; this one closes it.
+  assert.equal(
+    Number(statedConstant("Roles")),
+    roles.length,
+    "docs/162 §2 states a number of roles that open_room_role does not match",
+  );
 });
 
 test("the relay's port agrees across compose, the serve address, EXPOSE and docs/162", () => {
