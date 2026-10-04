@@ -3889,3 +3889,165 @@ asserted a join ordering a queue-everything implementation also satisfies, and o
 the phases whichever of two redundant gates happened to check first. The second of those is now
 **one** gate in `connect`, for the reason `SKILL` §8 gives about two mechanisms for one rule: a
 gate split in two is a gate whose halves cannot both be driven red.
+
+## ADR-064 — Version history's Show changes is a read-only projection against the predecessor; ADR-061's mutation stays with Review ▸ Compare
+
+**Status:** accepted. **Supersedes ADR-061 for one of its two routes.** `docs/139` §9.4 and
+`docs/140` §11.4/§11.6 are corrected in the same change.
+
+### The decision
+
+Two entry points reach one comparison engine, and they are now two decisions rather than one:
+
+| | Review ▸ Compare | Version history ▸ Show changes |
+| --- | --- | --- |
+| The other side | a document the reader chose off the disk | the selected version's **predecessor** |
+| This side | the open document, exported | the selected version's checkpoint |
+| What happens to the open document | tracked changes written into it, one undo step (**ADR-061, unchanged**) | **nothing** |
+| Where the differences are read | the canvas, through the review surface | a read-only **unified diff** in the panel |
+| Reference this matches | ONLYOFFICE | Word, Google Docs, and ONLYOFFICE's own history |
+
+### Why one ADR could not cover both
+
+ADR-061 asked "how is a comparison expressed?" and answered "as tracked changes, not as a
+second markup mechanism". That answer is right for Review ▸ Compare, and it was applied to a
+route whose question is different: *what changed in this version?* Three measured facts, not
+three opinions:
+
+1. **It compared a version against itself, and could only ever say "No differences".**
+   Clicking a row runs `void openPreview(row.versionId)` — "a click is a decision already
+   made" — and `showVersionPreview` assigns `doc = previewDoc`, so the module-level live
+   document *is* the historical one while a preview is up. The panel's own side is
+   `comparableBytes(doc, …)`; a freshly parsed preview has `revision == 0`; and
+   `ExportMode::ExactIfUnchanged` returns the retained original bytes **verbatim**. So the
+   bytes handed in as "mine" were byte-identical to the checkpoint handed in as "theirs".
+   The ⋮ is a SIBLING of the row's own click target (`item.append(entry, actionCell)`), so a
+   test that pressed only the ⋮ never opened a preview and never saw this — which is why the
+   spec covering this route stayed green for as long as the feature was broken.
+2. **No competitor routes history through a mutation.** Word and Google each produce a third
+   document and leave the sources untouched; ONLYOFFICE mutates only from Review ▸ Compare and
+   its history UI never mentions comparison at all (`docs/164` §5, established by five
+   independent greps of the vendored checkout). Writing tracked changes into a reader's current
+   document because they asked a question about the past is a behaviour nobody has — so the
+   behaviour the owner was unhappy with was not a weak version of a competitor's feature.
+3. **`docs/139` §9.4 already specified the read-only answer**, and ADR-061 reversed it for both
+   routes when it needed to reverse it for one. `docs/164` §7.2 found the two documents
+   publishing the opposite of the code, and noted that the superseded requirement was the one
+   matching the majority of the references.
+
+### Why the predecessor rather than the live document
+
+Google's model — a stored version against the current document — is a legitimate answer and is
+what was intended here. It is also the answer that cannot survive this product's own preview:
+the preview *is* the live document while it is up, so one of the two sides disappears exactly
+when a reader uses the feature. Comparing against the predecessor answers the question the
+panel is opened to ask, is stable regardless of what is on screen, and needs no live-document
+state at all — which is what makes the read-only guarantee mechanical rather than a promise.
+
+Two consequences, both deliberate:
+
+- **The head row is live now.** It used to refuse with "comparing it with itself", which was
+  true of a comparison against the document on screen. Against its predecessor the head is the
+  most useful row in the panel: what changed in the latest save?
+- **The earliest version kept refuses instead**, because there is nothing before it. Disabled
+  with that reason, and the same sentence also exists as a status message, because the command
+  is reachable from more than one surface and a refusal that exists only as a disabled control
+  is not a refusal on the others.
+
+### What "read-only" means mechanically, so it is checkable and not a claim
+
+Both sides are checkpoint byte arrays. The live document is not read, not exported and not
+written; `applyDiffAsRevisions` is not called; `io.landed` is not called, so
+`setShowingChanges` never fires and no `Operation::UpdateReviewState` is built. There is
+nothing to undo because nothing happened. The panel renders `[data-compare-read-only]` and
+never `[data-compare-marked]`, which is the marker `compare-on-canvas.spec.mjs` asserts
+**visible** for Review ▸ Compare — so one attribute distinguishes the two routes, and a guard
+on either side fails if they are ever confused.
+
+The route is also deliberately **not** behind the Viewing-mode mutation gate. A comparison that
+writes revisions is a mutation and goes through that gate; this one writes nothing, and a
+preview is read-only by definition — so gating it there would refuse the feature in precisely
+the state a reader reaches it from.
+
+### The presentation, and the prior art it is named after
+
+A **unified diff** over blocks: changed regions as added/removed lines, each hunk with a few
+unchanged blocks of context and a control that pulls more. Not side-by-side, which needs two
+synchronised document renders when our body is one canvas, and which Word's own documentation
+concedes "is not the best tool for making changes to your document". Not a summary count,
+which is what the panel used to be.
+
+Three established patterns carry it, named before any code was written (`SKILL` §8):
+
+- **hunks with expandable elisions** — the diff's own shape, with a BLOCK as the unit because
+  the engine's projection is a block forest, which is the honest unit rather than an
+  approximation of a text line;
+- **windowed (virtual) scrolling** — a flat fixed-height row array, a sizer of
+  `rows × height`, and only the visible slice in the DOM, so a scroll tick is O(window) and
+  not O(changes) (`docs/107` §4). The previous renderer built one `<li>` per change in one
+  synchronous uncapped loop. Rows are `nowrap` with their own horizontal overflow, which is
+  what a GitHub diff line does and is what keeps every row exactly one row tall — the
+  virtualizer's correctness depends on it, so JS owns the height and writes it to CSS as
+  `--diff-row-h` rather than the two repeating one number;
+- **lazy pull for context** — the unchanged blocks are in neither side's sidecar, because a
+  change record names only what changed. They are read from the comparison's two parsed sides,
+  O(depth) each, on the press that asks for them. That is why `WasmVersionDiff` now keeps its
+  parsed sides until the handle is freed instead of dropping them on completion: the peak
+  memory is unchanged (both were resident for the whole comparison), the duration is bounded by
+  the panel being open, and the release points are the panel closing, the next comparison, and
+  a result with no differences.
+
+### Two engine exports this needed, and why the host could not do either itself
+
+- **`WasmDocument.nodeAtStoryPath(story, path)`** over
+  `casual_doc_diff::projection::block_at_path` — a resolver that was merged and not exposed.
+  `DiffAnchor` carries a `node`, and it is a trap: both sides of a comparison are parsed by the
+  diff facade and ids are minted per import, so that id addresses a throwaway parse whose
+  counter restarted at 1. `navigateToReviewAnchor` takes `{node, start, end}`, a byte-for-byte
+  match for `DiffAnchor`, so handing it one scrolls silently to an unrelated paragraph with the
+  same ordinal — wrong destination, no error, nothing to tell the reader from. The path is the
+  coordinate that survives, and resolving it is not a walk a host should write: the projection's
+  block sequence is not the model's block list (a table contributes rows and cells, which are
+  not `BlockNode`s; a block-level content control contributes itself *and* is descended into).
+  Returns `None` — never a guess — for a path that names a row or a cell, leaves the shape,
+  names an absent story, or names a non-paragraph block.
+- **`WasmVersionDiff.blockTextAt(side, story, path)`** for the context, with `None` at the end
+  of a sibling list, which is how an expand control learns the document stops there rather than
+  needing a second "how many siblings" call.
+
+Navigation is offered only where a path can resolve, which is Review ▸ Compare: there the
+right-hand side **is** the open document. In version history's read-only route neither compared
+state is on screen, so there is nowhere to scroll to — and the unified diff is itself the
+reading surface, which is why no row pretends otherwise.
+
+### The summary beside the counts
+
+Word's Reviewing Pane is the sourced spec: "the total number of changes and the number of
+insertions, deletions, moves, formatting changes, and comments". Those five ship, from the
+engine's own `kindCounts` rather than recomputed in the host, so the breakdown and the total
+cannot drift apart. Three places the mapping is not one-to-one, each decided rather than
+fudged: a move is counted **once**, at its destination — the engine reports both halves, and
+adding them prints "2 moves" for one block that moved; comments are a **family** here and a
+category there, so that number comes from `familyCounts`; and `property` is ours and Word has
+no word for it, so it is published as a sixth row rather than folded into formatting (which
+would overstate a formatting count) or dropped (absence from a published breakdown is an
+overstatement by omission, `SKILL` §9.3). Every row is published even at zero: "0 deletions"
+is a fact a redline reader wants, and a surface whose rows come and go cannot be read at a
+glance or asserted by a guard.
+
+### What this does not decide
+
+- Whether a merged **third** document is ever built (`docs/164` §9 question 6). §5 gives it
+  competitive weight — two of three references — and not a decision.
+- Whether two **arbitrary** stored versions can be compared. No reference does it; if we build
+  it we are first, and the risk is ours (`docs/164` §5).
+- Compare's **options**. Word documents ten toggles plus granularity and destination;
+  ONLYOFFICE exposes one; we still expose zero. `docs/164` §8 row 7 queues word/character
+  granularity first, and this change deliberately does not pre-empt it.
+- The tracked-changes **refusal dead end** (`docs/164` §8 row 6). Untouched, and it only ever
+  applied to the route that mutates — so one effect of this split is that version history can
+  no longer meet it at all.
+- **Retention** (`docs/164` §8 row 8). Unchanged here, and worth noting that it now bears on
+  this feature: pruning the middle of a lineage changes what "the predecessor" is, and
+  `predecessorOf` deliberately answers "the one before it in what is still kept", which is
+  also what the reader sees on screen.
