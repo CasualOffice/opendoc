@@ -80,6 +80,51 @@ test("docs/109: no id is queued twice", () => {
   }
 });
 
+// An id must be unique across the WHOLE document, not just the open queue.
+//
+// This exists because HF-263 was minted twice in one day for two unrelated
+// pieces of work — a deferred Pages action bump, which landed in the queue, and
+// a print hang, which was worked and filed under "Closed since the queue was
+// opened". Both guards above passed: the uniqueness check reads `queueRows`, so
+// a closed row reusing a queued id is invisible to it, and so is a closed row
+// duplicated within the closed table.
+//
+// That is not cosmetic. The id is how a commit, a code comment and a doc cite a
+// row; two rows sharing one means a citation resolves to whichever the reader
+// finds first, and the other piece of work has no name at all. Two parallel
+// lanes each taking "the next free number" from the queue is exactly how it
+// happens, and it will happen again.
+test("docs/109: no id is minted twice anywhere in the document", () => {
+  const text = read(BACKLOG);
+  const queued = new Map(queueRows(text).map((r) => [r.id, `queue row ${r.n}`]));
+
+  // The closed table's rows start with the Id directly, having no `#`.
+  const closedAt = text.indexOf("## Closed since the queue was opened");
+  assert.ok(closedAt > 0, "docs/109 must carry a 'Closed since the queue was opened' section");
+  const closed = new Map();
+  const clashes = [];
+  for (const line of text.slice(closedAt).split("\n")) {
+    const row = line.match(/^\|\s*([A-Z]+[A-Z0-9-]*-[A-Z0-9]+)\s*\|/);
+    if (!row) continue;
+    const id = row[1];
+    if (closed.has(id)) clashes.push(`${id}: listed twice among the closed rows`);
+    else if (queued.has(id)) clashes.push(`${id}: ${queued.get(id)} AND a closed row`);
+    closed.set(id, true);
+  }
+
+  assert.ok(
+    closed.size >= 10,
+    `expected to read the closed rows, found ${closed.size} — a guard that reads no rows ` +
+      "passes for the wrong reason",
+  );
+  assert.deepEqual(
+    clashes,
+    [],
+    "these ids name two different pieces of work; the one that has NOT already merged " +
+      "takes the next free number, and the renumber is recorded in its Notes cell",
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Invariant 2 — the `#` column enumerates the queue.
 test("docs/109: the # column runs 1..N", () => {
