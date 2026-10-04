@@ -165,12 +165,6 @@ const GROUP_TOO_FEW: &str = refused!(
     "Select at least two objects to group."
 );
 
-/// An object whose model carries no rotation or flip.
-const NO_ROTATION: &str = refused!(
-    "object.no-rotation",
-    "This object has no rotation or flip to change."
-);
-
 /// One of the ids handed to a grouping command no longer resolves.
 const GROUP_MEMBER_MISSING: &str = refused!(
     "object.group-member-missing",
@@ -308,6 +302,75 @@ pub(crate) const NOT_FLOATING_MOVE: &str = refused!(
 pub(crate) const NOT_FLOATING_WRAP: &str = refused!(
     "object.not-floating-wrap",
     "Only a floating object has text wrapping to change."
+);
+
+// ---------------------------------------------------------------------------
+// The capability reasons
+//
+// A `false` in `ObjectCapabilities` used to be able to say nothing at all: the
+// payload carries ten booleans, the host gates on bare truthiness, and the
+// reader therefore met a control that did nothing and no explanation — `SKILL`
+// §10's dead control, once per unavailable capability per carrier. These are the
+// sentences `capability_refusals` publishes beside the bits.
+//
+// They are declared HERE, beside the command refusals above, because several of
+// them ARE the command refusal: an inline object's unavailable move publishes
+// `NOT_FLOATING_MOVE`, which is the same string `setObjectAnchorPosition` throws
+// if the host tries anyway. One sentence for one fact, in one place, is what
+// stops the chrome and the engine disagreeing about why.
+
+/// An object whose model carries no rotation or flip. Also the `canRotate`
+/// reason: a carrier whose rotation no pass paints must not be offered a handle,
+/// and the reader is owed the reason rather than a missing grip.
+pub(crate) const NO_ROTATION: &str = refused!(
+    "object.no-rotation",
+    "This object has no rotation or flip to change."
+);
+
+/// Alternative text on a carrier with no field for it.
+pub(crate) const NO_ALT_TEXT: &str = refused!(
+    "object.no-alt-text",
+    "Alternative text is stored on a picture here, and this object is not one — its \
+     description is not modelled yet."
+);
+
+/// Cropping something with no source image to trim.
+pub(crate) const NOT_CROPPABLE: &str = refused!(
+    "object.not-croppable",
+    "Cropping trims a picture's source image, and this object has none."
+);
+
+/// A fill on something that is not a shape.
+pub(crate) const NOT_FILLABLE: &str = refused!(
+    "object.not-fillable",
+    "A fill colour belongs to a shape, and this object is not one."
+);
+
+/// An outline on something that is not a shape.
+pub(crate) const NOT_STROKEABLE: &str = refused!(
+    "object.not-strokeable",
+    "An outline belongs to a shape, and this object is not one."
+);
+
+/// Typing into something with no text story of its own.
+pub(crate) const NO_TEXT_STORY: &str = refused!(
+    "object.no-text-story",
+    "This object holds no text of its own to edit."
+);
+
+/// Removing something whose removal this build cannot invert exactly.
+pub(crate) const NOT_DELETABLE: &str = refused!(
+    "object.not-deletable",
+    "This object cannot be removed on its own in this document."
+);
+
+/// The last resort, and a value that must never actually be published: it exists
+/// so an eleventh capability added without a reason degrades to a sentence
+/// instead of panicking inside a getter, and
+/// `every_unavailable_capability_says_why` fails the build when it appears.
+pub(crate) const CAPABILITY_UNAVAILABLE: &str = refused!(
+    "object.capability-unavailable",
+    "That change doesn't apply to this object."
 );
 
 // ---------------------------------------------------------------------------

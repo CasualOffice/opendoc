@@ -102,26 +102,46 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  rounds after #732 routed new English without translating it — which is the
  *  shape this ratchet is built to allow: routing and translating are two days'
  *  work and a gate that refuses the first until the second lands means the
- *  routing never starts.) */
+ *  routing never starts.)
+ *
+ *  1,637 -> 1,675. Twenty of the thirty-eight are this change: the five
+ *  `session.*` access refusals, the four `document.protected-*` ones, the
+ *  sentence for a grant this build could not read, and all ten `ODC-7xxx`
+ *  collaboration refusals (`session_access.mjs`), translated into all eighteen
+ *  languages in the commit that routed them. They are script-side with no
+ *  English in the markup to fall back on — a refusal reaches the status bar
+ *  through `t()` — so a locale that could not answer `collab.roomFull` would
+ *  print the dotted key where the reason belongs, which is the one outcome this
+ *  gate exists to refuse.
+ *
+ *  The other EIGHTEEN were already translated and were never recorded, the drift
+ *  every note above describes. MEASURED from the merged tree, and measured with
+ *  THIS TEST'S OWN counter rather than by counting keys: a first pass counted
+ *  raw catalogue keys, read 1,662 for twelve locales and 1,655 for six, and was
+ *  about to publish a per-locale split that does not exist. `shape` collapses a
+ *  plural family to ONE entry — six Arabic forms of one sentence are one
+ *  answered string, not six — so the figure the gate compares is uniform across
+ *  all eighteen, and a floor derived by any other arithmetic is a floor measuring
+ *  something the gate does not. */
 const COVERAGE = new Map([
-  ["ar", 1637],
-  ["de", 1637],
-  ["es", 1637],
-  ["fr", 1637],
-  ["hi", 1637],
-  ["id", 1637],
-  ["it", 1637],
-  ["ja", 1637],
-  ["ko", 1637],
-  ["nl", 1637],
-  ["pl", 1637],
-  ["pt-BR", 1637],
-  ["ru", 1637],
-  ["tr", 1637],
-  ["uk", 1637],
-  ["vi", 1637],
-  ["zh-Hans", 1637],
-  ["zh-Hant", 1637],
+  ["ar", 1675],
+  ["de", 1675],
+  ["es", 1675],
+  ["fr", 1675],
+  ["hi", 1675],
+  ["id", 1675],
+  ["it", 1675],
+  ["ja", 1675],
+  ["ko", 1675],
+  ["nl", 1675],
+  ["pl", 1675],
+  ["pt-BR", 1675],
+  ["ru", 1675],
+  ["tr", 1675],
+  ["uk", 1675],
+  ["vi", 1675],
+  ["zh-Hans", 1675],
+  ["zh-Hant", 1675],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;

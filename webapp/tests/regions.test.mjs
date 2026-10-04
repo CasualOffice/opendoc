@@ -222,7 +222,9 @@ test("the URL is the one configuration channel, read in one place", () => {
   // first frame.
   const view = {
     location: {
-      search: "?mode=readonly&can=-print&chrome=-find&autosave=1&prefs=%7B%22spellcheck%22%3Afalse%7D",
+      search:
+        "?mode=readonly&can=-print&chrome=-find&autosave=1&prefs=%7B%22spellcheck%22%3Afalse%7D" +
+        "&granted=comment,review&participant=4",
     },
     self: 1,
     top: 2,
@@ -237,8 +239,20 @@ test("the URL is the one configuration channel, read in one place", () => {
     // the other four. Two places that know how a host configures this editor is
     // how `autosave` came to be known by both this file and `main.js`.
     prefs: '{"spellcheck":false}',
+    // The ROOM's grant — a different authority from `withhold`, resolved by
+    // `session_access.mjs` and read HERE so there is still one place that knows
+    // how a host configures this editor.
+    granted: "comment,review",
+    participant: "4",
     framed: true,
   });
+  // And absent on a page nobody shared: a document opened from a file has no
+  // room, so the two must come back `null` rather than as an empty grant — which
+  // is the difference between "standalone" and "a participant granted nothing".
+  assert.deepEqual(
+    [hostConfig({ location: { search: "" } }).granted, hostConfig({ location: { search: "" } }).participant],
+    [null, null],
+  );
   assert.deepEqual([...hostRegions(view)].sort(), regions({ mode: "readonly", framed: true, withhold: "-find" }));
   // A cross-origin parent makes `self !== top` throw in some engines; a throw means
   // we ARE framed, which is the safer answer.

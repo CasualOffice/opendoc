@@ -1025,12 +1025,21 @@ fn the_keystroke_path_runs_no_transform() {
     // the check that presence does not reach `session::` — is taken back in a tighter place,
     // by `presence::tests::presence_is_never_written_to_the_revision_log`, which scans that
     // module's own production half in **both** directions.
-    const COLLABORATION: [&str; 5] = [
+    //
+    // `combine.rs` joined on the same argument and it is the clearest case of it: a combine
+    // needs TWO branches of one document, with their commits and their participant numbers, and
+    // a single-user keystroke has one branch and no participant number at all. It is also not
+    // in `MAY_TRANSFORM` and must not be — it reaches `ClientSession` and the sequence rebase
+    // *through* it, rather than calling `transform(` itself, which is the "one mechanism"
+    // property the module argues for. So this list grants it the collaboration membership and
+    // the other half of the guard still holds it to the transform rule.
+    const COLLABORATION: [&str; 6] = [
         "protocol.rs",
         "wire.rs",
         "session.rs",
         "codec.rs",
         "presence.rs",
+        "combine.rs",
     ];
 
     let engine = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

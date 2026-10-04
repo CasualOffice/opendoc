@@ -75,6 +75,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::Document;
 
 pub mod codec;
+pub mod combine;
 pub mod intent;
 pub mod presence;
 pub mod protocol;

@@ -272,9 +272,20 @@ export function createDocumentProtection(io) {
     /** The one command row. The label is Word's own menu wording, and the row is
      *  live whenever a document is open — including on a document that is ALREADY
      *  read-only-protected, which is the whole point: a restriction nobody can
-     *  reach the dialog to lift is worse than no restriction at all. */
+     *  reach the dialog to lift is worse than no restriction at all.
+     *
+     *  EXCEPT for a participant the room did not grant `manageProtection`
+     *  (ADR-060, `152` §10 Q5). That row was `requires: "doc"` with no reference
+     *  to the grant, so it stayed enabled for someone who may not change the
+     *  policy and the refusal arrived only after they had chosen a level and
+     *  pressed Apply. The reason comes in as `io.participantRefusal` — a sentence
+     *  this module does not write, like every other sentence it shows — and it
+     *  outranks "open a document first" by the one rule `session_access.mjs`
+     *  states for every control with two reasons to refuse: the PERMANENT truth
+     *  wins, because advice the reader can follow is worthless when following it
+     *  cannot help. */
     commands: () => {
-      const reason = io.getDoc() ? "" : t("command.needsDocument");
+      const reason = io.participantRefusal?.() || (io.getDoc() ? "" : t("command.needsDocument"));
       return [
         {
           id: "review.restrictEditing",

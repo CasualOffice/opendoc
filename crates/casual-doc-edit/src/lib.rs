@@ -63,6 +63,9 @@ use casual_doc_model::v1::SectionBoundary;
 // The editing restriction `SetDocumentProtection` installs or lifts (ADR-059). Its own
 // `use` line, per the parallel-lane rule above.
 use casual_doc_model::v1::DocumentProtection;
+// The typed chart projection `SetChartDefinition` installs or removes (`docs/155`).
+// Its own `use` line, per the parallel-lane rule above.
+use casual_doc_model::v1::{Chart, ChartId};
 
 // Captions and cross-references: the OOXML field markup (`SEQ`, `REF`, `PAGEREF`,
 // `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005). Its own module
@@ -660,7 +663,8 @@ pub enum Operation {
         descr: Option<String>,
     },
     /// Remove the resolved object node (an inline drawing, floating anchored
-    /// drawing, text box, or group) from its inline container. Inverse:
+    /// drawing, text box, group, or embedded chart/diagram/OLE object) from its
+    /// inline container. Inverse:
     /// [`Operation::InsertObjectNode`], carrying the removed node + its position, so
     /// undo restores it verbatim (the retained-content pattern, like
     /// [`Operation::DeleteTable`]). This is a pure structural removal (surrounding
@@ -670,6 +674,13 @@ pub enum Operation {
     /// revision, or inline content control), or removing it would leave two
     /// mergeable equal-property runs adjacent — the host merges/reformats those
     /// siblings (or uses a range delete) before removing such an object.
+    ///
+    /// A CHART object carries one more rejection, and it is the model's rule
+    /// rather than this operation's: `Definitions::charts` is a sidecar keyed by
+    /// the object it projects, and `Document::validate` refuses a projection
+    /// whose anchor is gone. So removing a projected chart is
+    /// [`Operation::SetChartDefinition`] with `chart: None` **and then** this
+    /// operation, in one transaction.
     DeleteObject {
         /// The object to remove.
         object: NodeId,
@@ -866,6 +877,45 @@ pub enum Operation {
         id: MediaId,
         /// The reference to install, or `None` to remove `id`.
         reference: Option<Box<MediaReference>>,
+    },
+    /// Install, replace, or remove one **typed chart projection**
+    /// (`Definitions::charts`).
+    ///
+    /// # Why it exists
+    ///
+    /// Charts paint from this table and nothing could write it. Tier 1A/1B
+    /// (#744/#753) made seven families paint from a projection, the importer is
+    /// the only thing that ever produced one, and a chart with no projection
+    /// paints a labelled placeholder by design — so "insert a chart" was not one
+    /// operation short of reachable, it was missing its data entirely. This is
+    /// the other half of the insert path: the `InlineNode::EmbeddedObject` is the
+    /// anchor, and this is what makes it draw something.
+    ///
+    /// # The ordering rule, which is the model's and not this operation's
+    ///
+    /// The table is a **sidecar keyed by the object it projects** (ADR-030 I4),
+    /// and `Document::validate` refuses a projection whose anchor is not an
+    /// embedded chart object in some block container. So within one transaction:
+    ///
+    /// * installing a projection comes **after** the object node is inserted;
+    /// * removing the object comes **after** its projection is removed.
+    ///
+    /// Both orders keep every intermediate state valid, which matters because
+    /// several operations validate the whole document as they apply.
+    ///
+    /// Inverse: the same operation carrying the previous projection, or `None` —
+    /// the retained-value shape of [`Operation::SetMediaReference`], so it
+    /// inverts in both directions. Boxed because [`Chart`] is the widest value in
+    /// the op set.
+    ///
+    /// Rejected (table restored) when the result does not validate: a projection
+    /// over the chart model's bounds, or one whose `object` names no embedded
+    /// chart object. O(1) in the table plus the one `validate` the swap pays.
+    SetChartDefinition {
+        /// The chart id to install, replace, or remove.
+        id: ChartId,
+        /// The projection to install, or `None` to remove `id`.
+        chart: Option<Box<Chart>>,
     },
     /// Install or remove the document's editing restriction
     /// (`w:documentProtection`) — ADR-059.
@@ -2405,6 +2455,34 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             Ok(Operation::SetMediaReference {
                 id: *id,
                 reference: previous.map(Box::new),
+            })
+        }
+        // The same validate-and-roll-back shape as the definition tables above, and for
+        // the same reason twice over: the chart model has bounds (`check_chart`) and the
+        // table is a sidecar whose key must still name an embedded chart object, so a swap
+        // can be refused from either direction. Rolling the table back by hand rather than
+        // cloning the document keeps an insert O(1) in document size.
+        Operation::SetChartDefinition { id, chart } => {
+            let table = &mut doc.definitions_mut().charts;
+            let previous = match chart {
+                Some(chart) => table.insert(*id, (**chart).clone()),
+                None => table.remove(id),
+            };
+            if doc.validate().is_err() {
+                let table = &mut doc.definitions_mut().charts;
+                match &previous {
+                    Some(prev) => {
+                        table.insert(*id, prev.clone());
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetChartDefinition {
+                id: *id,
+                chart: previous.map(Box::new),
             })
         }
         // ADR-059. A swap, and deliberately not a validate-and-roll-back like the four
@@ -3993,9 +4071,6 @@ fn object_descr_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Str
     None
 }
 
-/// Whether `node` is a removable object (the target set of
-/// [`Operation::DeleteObject`]): an inline drawing, a floating anchored drawing, a
-/// text box, or a DrawingML group.
 /// Whether `node` is something the [`Operation::InsertInlineObject`] /
 /// [`Operation::RemoveInlineObject`] pair owns: every drawing object, **plus the
 /// explicit `w:br` break** that pair also authors.
@@ -4014,6 +4089,20 @@ fn is_removable_inline_node(node: &InlineNode) -> bool {
     is_object_node(node) || matches!(node, InlineNode::Break(_))
 }
 
+/// Whether `node` is a drawing object: the set object selection offers handles
+/// on and [`Operation::DeleteObject`] removes.
+///
+/// `EmbeddedObject` is in the set, and leaving it out was the sharpest form of
+/// the "built is not reachable" failure (`SKILL` §9 rule 4). A chart, diagram or
+/// OLE object paints — as a composed chart box, or as its cached preview
+/// picture — and `casual-doc-wasm`'s `collect_para_objects` reports it as a
+/// selectable object, so the host drew a selection frame and a delete affordance
+/// on it. Every one of them answered `NodeNotFound`, because the only thing that
+/// decided whether `DeleteObject` could find a node was this predicate. That is
+/// worse than a dead gesture: the capability payload said `canDelete: true` and
+/// the command then errored.
+///
+/// O(1).
 fn is_object_node(node: &InlineNode) -> bool {
     matches!(
         node,
@@ -4021,6 +4110,7 @@ fn is_object_node(node: &InlineNode) -> bool {
             | InlineNode::AnchoredDrawing(_)
             | InlineNode::TextBox(_)
             | InlineNode::Group(_)
+            | InlineNode::EmbeddedObject(_)
     )
 }
 

@@ -59,3 +59,62 @@ export function ribbonSurfaceReason(entry, state) {
   }
   return "";
 }
+
+/**
+ * Reflects the REVIEW band: every row's disabled state, its reason, and its
+ * pressed state, in one sweep.
+ *
+ * Moved out of `main.js` with its rationale rather than left there (`109`
+ * HF-085). The rationale, kept because it is the reason the table exists:
+ * declaring `pressed` beside the command replaced three hand-written
+ * `setAttribute("aria-pressed", …)` lines, is what let the two proofing switches
+ * reflect their state without a fourth and fifth copy of the same line, and is
+ * what stops the next toggle shipping mute. The two mode toggles read ENGINE
+ * state rather than a local flag, so the ribbon always agrees with the footer's
+ * mode control.
+ *
+ * THREE AUTHORITIES, IN ORDER OF SPECIFICITY. A room's grant
+ * (`session_access.mjs`) is permanent for this participant, so it is checked
+ * FIRST and its sentence wins: telling a reviewer with no `manageProtection`
+ * to "open a document first" would send them to fix something that is not
+ * wrong. Then the document's presence, then the row's own transient
+ * precondition — a selection, a comment under the caret.
+ *
+ * A disabled control always says why. The margin "+" beside the page said
+ * nothing at all, which is the defect this shape closed.
+ *
+ * Complexity: O(rows × buttons). Runs on every toolbar sync, and nothing here
+ * walks the document.
+ *
+ * @param {readonly object[]} rows the `REVIEW_SURFACE` table
+ * @param {object} state
+ * @param {boolean} state.hasDoc
+ * @param {boolean} state.hasRange
+ * @param {boolean} state.hasComment the caret is inside a commented range
+ * @param {(command: string) => string} state.refusalFor the room's sentence for
+ *        this command, or `""` when the participant's grant admits it
+ * @param {(button: Element) => string} state.authoredTitle the title the markup
+ *        authored, restored when a row becomes available again
+ */
+export function reflectReviewSurface(rows, state) {
+  for (const entry of rows) {
+    const room = state.refusalFor(entry.command);
+    for (const button of entry.buttons()) {
+      if (!button) continue;
+      if (entry.requires !== "always") {
+        button.disabled =
+          !state.hasDoc ||
+          (entry.requires === "range" && !state.hasRange) ||
+          (entry.requires === "comment" && !state.hasComment);
+      }
+      // Separately, and never folded into the expression above: `always` means a
+      // row that is live with no document — a preference — and a room's grant
+      // must be able to withhold one without the `!hasDoc` clause coming along.
+      if (room) button.disabled = true;
+      if (room || entry.reasonKey) {
+        button.title = button.disabled ? room || t(entry.reasonKey) : state.authoredTitle(button);
+      }
+      if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
+    }
+  }
+}
