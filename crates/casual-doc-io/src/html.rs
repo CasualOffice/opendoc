@@ -1032,13 +1032,7 @@ mod tests {
         resources: &DocumentResources,
     ) -> (String, CompatibilityReport) {
         let artifact = HtmlAdapter::default()
-            .export(ExportRequest {
-                document,
-                resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(document, resources))
             .expect("html export");
         assert_eq!(artifact.mime_type, HTML_MIME);
         assert_eq!(artifact.suggested_extension, "html");
@@ -1257,13 +1251,7 @@ mod tests {
             max_output_bytes: 8,
             ..HtmlLimits::default()
         })
-        .export(ExportRequest {
-            document: &source,
-            resources: &resources,
-            source: None,
-            source_unchanged: false,
-            mode: ExportMode::Semantic,
-        })
+        .export(ExportRequest::new(&source, &resources))
         .expect_err("an eight-byte ceiling must refuse");
         assert!(
             format!("{error}").contains("html_output_bytes"),
@@ -1280,13 +1268,7 @@ mod tests {
                 max_embedded_bytes: HtmlLimits::HARD_MAX_EMBEDDED_BYTES + 1,
                 ..HtmlLimits::default()
             })
-            .export(ExportRequest {
-                document: &source,
-                resources: &resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(&source, &resources))
             .is_err()
         );
     }
@@ -1296,13 +1278,11 @@ mod tests {
         let source = document("<w:p><w:r><w:t>x</w:t></w:r></w:p>");
         let resources = DocumentResources::default();
         let error = HtmlAdapter::default()
-            .export(ExportRequest {
-                document: &source,
-                resources: &resources,
-                source: None,
-                source_unchanged: true,
-                mode: ExportMode::ExactIfUnchanged,
-            })
+            .export(
+                ExportRequest::new(&source, &resources)
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
+            )
             .expect_err("html has no source bytes to return");
         assert!(format!("{error}").contains("no importer"), "{error}");
     }

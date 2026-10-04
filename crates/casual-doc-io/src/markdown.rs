@@ -1038,13 +1038,7 @@ mod tests {
     fn markdown(document: &Document) -> (String, CompatibilityReport) {
         let resources = DocumentResources::default();
         let artifact = MarkdownAdapter::default()
-            .export(ExportRequest {
-                document,
-                resources: &resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(document, &resources))
             .expect("markdown export");
         assert_eq!(artifact.mime_type, MARKDOWN_MIME);
         assert_eq!(artifact.suggested_extension, "md");
@@ -1391,13 +1385,7 @@ mod tests {
             max_output_bytes: 4,
             ..MarkdownLimits::default()
         })
-        .export(ExportRequest {
-            document: &source,
-            resources: &resources,
-            source: None,
-            source_unchanged: false,
-            mode: ExportMode::Semantic,
-        })
+        .export(ExportRequest::new(&source, &resources))
         .expect_err("a four-byte ceiling must refuse");
         assert!(
             format!("{error}").contains("markdown_output_bytes"),
@@ -1414,13 +1402,7 @@ mod tests {
                 max_output_bytes: MarkdownLimits::HARD_MAX_OUTPUT_BYTES + 1,
                 ..MarkdownLimits::default()
             })
-            .export(ExportRequest {
-                document: &source,
-                resources: &resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(&source, &resources))
             .is_err()
         );
     }
@@ -1430,13 +1412,11 @@ mod tests {
         let source = document("<w:p><w:r><w:t>x</w:t></w:r></w:p>");
         let resources = DocumentResources::default();
         let error = MarkdownAdapter::default()
-            .export(ExportRequest {
-                document: &source,
-                resources: &resources,
-                source: None,
-                source_unchanged: true,
-                mode: ExportMode::ExactIfUnchanged,
-            })
+            .export(
+                ExportRequest::new(&source, &resources)
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
+            )
             .expect_err("markdown has no source bytes to return");
         assert!(
             format!("{error}").contains("no importer"),

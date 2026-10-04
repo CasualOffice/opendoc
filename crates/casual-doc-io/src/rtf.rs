@@ -222,10 +222,7 @@ mod tests {
         // quietly wrong — or quietly absent — until the writer landed.
         let adapter = RtfAdapter::default();
         let retained = adapter
-            .import(ImportRequest {
-                bytes: SAMPLE,
-                retain_source: true,
-            })
+            .import(ImportRequest::new(SAMPLE).retain_source(true))
             .expect("import succeeds");
         assert_eq!(
             adapter.retained_source_bytes(&retained.source),
@@ -233,10 +230,7 @@ mod tests {
         );
 
         let plain = adapter
-            .import(ImportRequest {
-                bytes: SAMPLE,
-                retain_source: false,
-            })
+            .import(ImportRequest::new(SAMPLE))
             .expect("import succeeds");
         assert_eq!(
             adapter.retained_source_bytes(&plain.source),
@@ -247,10 +241,7 @@ mod tests {
         // A foreign envelope must not be mined for bytes just because its
         // adapter-private payload happens to have a compatible shape.
         let text = PlainTextAdapter::default()
-            .import(ImportRequest {
-                bytes: b"not rtf",
-                retain_source: true,
-            })
+            .import(ImportRequest::new(b"not rtf").retain_source(true))
             .expect("text import succeeds");
         assert_eq!(adapter.retained_source_bytes(&text.source), None);
     }

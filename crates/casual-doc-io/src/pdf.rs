@@ -161,10 +161,7 @@ mod tests {
     /// test does not hand-assemble a model.
     fn document(text: &str) -> Document {
         PlainTextAdapter::new(PlainTextLimits::default())
-            .import(ImportRequest {
-                bytes: text.as_bytes(),
-                retain_source: false,
-            })
+            .import(ImportRequest::new(text.as_bytes()))
             .expect("import plain text")
             .document
     }
@@ -194,13 +191,7 @@ mod tests {
         let artifact = registry
             .export(
                 &FormatId::new(formats::PDF).unwrap(),
-                ExportRequest {
-                    document: &document,
-                    resources: &resources,
-                    source: None,
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                },
+                ExportRequest::new(&document, &resources),
             )
             .expect("export through the registry");
         assert_eq!(artifact.mime_type, PDF_MIME);
@@ -236,13 +227,7 @@ mod tests {
         // resource table does.
         let resources = DocumentResources::default();
         let artifact = PdfAdapter::default()
-            .export(ExportRequest {
-                document: &imported.document,
-                resources: &resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(&imported.document, &resources))
             .expect("export");
         let degraded: Vec<&str> = artifact
             .report
@@ -277,13 +262,11 @@ mod tests {
             ExportMode::ExactIfUnchanged,
         ] {
             let artifact = adapter
-                .export(ExportRequest {
-                    document: &document,
-                    resources: &resources,
-                    source: None,
-                    source_unchanged: true,
-                    mode,
-                })
+                .export(
+                    ExportRequest::new(&document, &resources)
+                        .source_unchanged(true)
+                        .mode(mode),
+                )
                 .expect("export");
             assert!(artifact.bytes.starts_with(b"%PDF-"), "{mode:?}");
         }

@@ -680,13 +680,7 @@ mod tests {
                 .document;
         let resources = DocumentResources::default();
         let exported = PlainTextAdapter::default()
-            .export(ExportRequest {
-                document: &document,
-                resources: &resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(&document, &resources))
             .expect("plain-text export");
         assert_eq!(
             String::from_utf8(exported.bytes).unwrap(),
@@ -701,39 +695,30 @@ mod tests {
         let adapter = PlainTextAdapter::default();
         let original = b"\xef\xbb\xbffirst\r\n\tsecond\rlast\n";
         let imported = adapter
-            .import(ImportRequest {
-                bytes: original,
-                retain_source: true,
-            })
+            .import(ImportRequest::new(original).retain_source(true))
             .unwrap();
         let canonical = adapter
-            .import(ImportRequest {
-                bytes: b"first\n\tsecond\nlast\n",
-                retain_source: false,
-            })
+            .import(ImportRequest::new(b"first\n\tsecond\nlast\n"))
             .unwrap();
         assert_eq!(imported.document, canonical.document);
         assert_eq!(imported.document.body().len(), 4);
 
         let semantic = adapter
-            .export(ExportRequest {
-                document: &imported.document,
-                resources: &imported.resources,
-                source: Some(&imported.source),
-                source_unchanged: true,
-                mode: ExportMode::Semantic,
-            })
+            .export(
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .source_unchanged(true),
+            )
             .unwrap();
         assert_eq!(semantic.bytes, b"first\n\tsecond\nlast\n");
         assert!(semantic.report.entries.is_empty());
         let exact = adapter
-            .export(ExportRequest {
-                document: &imported.document,
-                resources: &imported.resources,
-                source: Some(&imported.source),
-                source_unchanged: true,
-                mode: ExportMode::ExactIfUnchanged,
-            })
+            .export(
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
+            )
             .unwrap();
         assert_eq!(exact.bytes, original);
     }
@@ -743,41 +728,24 @@ mod tests {
         let adapter = PlainTextAdapter::default();
         for bytes in [b"bad\0text".as_slice(), &[0xff_u8][..]] {
             assert_eq!(
-                adapter.probe(ProbeRequest { bytes }),
+                adapter.probe(ProbeRequest::new(bytes)),
                 ProbeResult::no_match("text.invalid-or-over-limit")
             );
-            assert!(
-                adapter
-                    .import(ImportRequest {
-                        bytes,
-                        retain_source: false,
-                    })
-                    .is_err()
-            );
+            assert!(adapter.import(ImportRequest::new(bytes)).is_err());
         }
 
         let limited = PlainTextAdapter::new(PlainTextLimits {
             max_paragraphs: 1,
             ..PlainTextLimits::default()
         });
-        assert!(
-            limited
-                .import(ImportRequest {
-                    bytes: b"one\ntwo",
-                    retain_source: false,
-                })
-                .is_err()
-        );
+        assert!(limited.import(ImportRequest::new(b"one\ntwo")).is_err());
         let invalid_configuration = PlainTextAdapter::new(PlainTextLimits {
             max_input_bytes: usize::MAX,
             ..PlainTextLimits::default()
         });
         assert!(
             invalid_configuration
-                .import(ImportRequest {
-                    bytes: b"text",
-                    retain_source: false,
-                })
+                .import(ImportRequest::new(b"text"))
                 .is_err()
         );
     }
@@ -786,10 +754,7 @@ mod tests {
     fn valid_json_wins_over_the_possible_text_probe() {
         let registry = builtin_registry();
         let text = PlainTextAdapter::default()
-            .import(ImportRequest {
-                bytes: b"hello",
-                retain_source: false,
-            })
+            .import(ImportRequest::new(b"hello"))
             .unwrap();
         let json = text.document.to_json().unwrap();
         let detected = registry
@@ -821,13 +786,9 @@ mod tests {
         let exported = registry
             .export(
                 &FormatId::new(formats::TEXT).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: true,
-                    mode: ExportMode::Semantic,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .source_unchanged(true),
             )
             .unwrap();
         assert!(std::str::from_utf8(&exported.bytes).is_ok());
@@ -846,10 +807,7 @@ mod tests {
     fn output_limit_is_enforced_without_partial_artifact() {
         let importer = PlainTextAdapter::default();
         let imported = importer
-            .import(ImportRequest {
-                bytes: b"four",
-                retain_source: true,
-            })
+            .import(ImportRequest::new(b"four").retain_source(true))
             .unwrap();
         let exporter = PlainTextAdapter::new(PlainTextLimits {
             max_output_bytes: 3,
@@ -857,24 +815,17 @@ mod tests {
         });
         assert!(
             exporter
-                .export(ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: None,
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                })
+                .export(ExportRequest::new(&imported.document, &imported.resources))
                 .is_err()
         );
         assert!(
             exporter
-                .export(ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: true,
-                    mode: ExportMode::ExactIfUnchanged,
-                })
+                .export(
+                    ExportRequest::new(&imported.document, &imported.resources)
+                        .source(Some(&imported.source))
+                        .source_unchanged(true)
+                        .mode(ExportMode::ExactIfUnchanged)
+                )
                 .is_err()
         );
     }
@@ -882,12 +833,7 @@ mod tests {
     #[test]
     fn semantic_export_canonicalizes_embedded_carriage_returns() {
         let adapter = PlainTextAdapter::default();
-        let mut imported = adapter
-            .import(ImportRequest {
-                bytes: b"source",
-                retain_source: false,
-            })
-            .unwrap();
+        let mut imported = adapter.import(ImportRequest::new(b"source")).unwrap();
         let BlockNode::Paragraph(paragraph) = &mut imported.document.body_mut()[0] else {
             panic!("plain text creates a paragraph");
         };
@@ -896,13 +842,7 @@ mod tests {
         };
         run.text = "one\r\ntwo\rthree".to_owned();
         let exported = adapter
-            .export(ExportRequest {
-                document: &imported.document,
-                resources: &imported.resources,
-                source: None,
-                source_unchanged: false,
-                mode: ExportMode::Semantic,
-            })
+            .export(ExportRequest::new(&imported.document, &imported.resources))
             .unwrap();
         assert_eq!(exported.bytes, b"one\ntwo\nthree");
     }

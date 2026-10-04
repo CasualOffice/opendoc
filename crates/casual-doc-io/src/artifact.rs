@@ -126,12 +126,47 @@ pub struct ImportArtifact {
 }
 
 /// Import request passed to a selected adapter after detection.
+///
+/// `#[non_exhaustive]` plus a builder, deliberately, and *before* the field this
+/// shape exists to carry. A widely-constructed struct that can be written as a
+/// literal breaks every literal on every other open branch the moment a field is
+/// added, and the merge then compiles on neither branch alone — `SKILL` §5a-5,
+/// which this repository has already paid for twice (#645/#646, #738/#739).
+/// Construction goes through [`ImportRequest::new`], so adding a field later is
+/// one line here and nothing anywhere else.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ImportRequest<'a> {
     /// Untrusted source bytes.
     pub bytes: &'a [u8],
     /// Whether to retain the original bytes for exact unchanged export.
     pub retain_source: bool,
+}
+
+impl<'a> ImportRequest<'a> {
+    /// Creates a request over `bytes` that does **not** retain the source.
+    ///
+    /// Not retaining is the default because retention costs a second copy of the
+    /// whole input; a caller that wants exact-unchanged export asks for it with
+    /// [`ImportRequest::retain_source`].
+    ///
+    /// Complexity: O(1). Borrows the bytes, never copies them.
+    #[must_use]
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            retain_source: false,
+        }
+    }
+
+    /// Sets whether the original bytes are retained for exact unchanged export.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub const fn retain_source(mut self, retain: bool) -> Self {
+        self.retain_source = retain;
+        self
+    }
 }
 
 /// Requested export behavior.
@@ -146,7 +181,13 @@ pub enum ExportMode {
 }
 
 /// Export request passed to the explicitly selected target adapter.
+///
+/// `#[non_exhaustive]` plus a builder for the same reason as [`ImportRequest`],
+/// and here the risk was never hypothetical: `casual-doc-wasm` builds this type
+/// from *outside* this crate, so a field added here was already a compile error
+/// in another crate — exactly the cross-branch shape `SKILL` §5a-5 describes.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ExportRequest<'a> {
     /// Immutable normalized document snapshot.
     pub document: &'a Document,
@@ -158,6 +199,55 @@ pub struct ExportRequest<'a> {
     pub source_unchanged: bool,
     /// Requested export behavior.
     pub mode: ExportMode,
+}
+
+impl<'a> ExportRequest<'a> {
+    /// Creates a semantic export request carrying no preservation state.
+    ///
+    /// The defaults are the conservative ones: no source envelope, the document
+    /// treated as **changed**, and [`ExportMode::Semantic`]. Preservation and
+    /// exact-if-unchanged both rest on facts only the caller holds, and a default
+    /// that claimed either would emit source-native opaque data, or the original
+    /// bytes, that nobody vouched for.
+    ///
+    /// Complexity: O(1). Borrows the document and resources, never clones them.
+    #[must_use]
+    pub const fn new(document: &'a Document, resources: &'a DocumentResources) -> Self {
+        Self {
+            document,
+            resources,
+            source: None,
+            source_unchanged: false,
+            mode: ExportMode::Semantic,
+        }
+    }
+
+    /// Attaches the source-format preservation state, when there is one.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub const fn source(mut self, source: Option<&'a SourceEnvelope>) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// Declares whether the document is unchanged since import.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub const fn source_unchanged(mut self, unchanged: bool) -> Self {
+        self.source_unchanged = unchanged;
+        self
+    }
+
+    /// Sets the requested export behavior.
+    ///
+    /// Complexity: O(1).
+    #[must_use]
+    pub const fn mode(mut self, mode: ExportMode) -> Self {
+        self.mode = mode;
+        self
+    }
 }
 
 /// Complete result of a successful export.

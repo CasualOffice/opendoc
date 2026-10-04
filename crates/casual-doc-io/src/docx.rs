@@ -729,13 +729,9 @@ mod tests {
         let exported = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::PreserveWhenSafe,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .mode(ExportMode::PreserveWhenSafe),
             )
             .unwrap();
         let reopened = registry
@@ -782,13 +778,8 @@ mod tests {
         let exported = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source)),
             )
             .expect("it exports");
         assert!(
@@ -823,13 +814,7 @@ mod tests {
         let exported = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &DocumentResources::default(),
-                    source: None,
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                },
+                ExportRequest::new(&imported.document, &DocumentResources::default()),
             )
             .expect("it still exports");
         let entry = exported
@@ -897,13 +882,8 @@ mod tests {
         let semantic = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source)),
             )
             .expect("it exports");
         let entry = semantic
@@ -919,13 +899,9 @@ mod tests {
         let preserving = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::PreserveWhenSafe,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .mode(ExportMode::PreserveWhenSafe),
             )
             .expect("it exports");
         assert!(
@@ -952,13 +928,10 @@ mod tests {
         let exact = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: true,
-                    mode: ExportMode::ExactIfUnchanged,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
             )
             .unwrap();
         assert_eq!(exact.bytes, MINIMAL_DOCX);
@@ -966,13 +939,9 @@ mod tests {
         let error = registry
             .export(
                 &FormatId::new(formats::DOCX).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::ExactIfUnchanged,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .mode(ExportMode::ExactIfUnchanged),
             )
             .unwrap_err();
         assert!(matches!(error, crate::IoError::ExportFailed { .. }));

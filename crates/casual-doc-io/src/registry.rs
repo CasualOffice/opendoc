@@ -21,7 +21,15 @@ pub enum ProbeConfidence {
 }
 
 /// Deterministic result of one adapter probe.
+///
+/// `#[non_exhaustive]`, deliberately and *before* a field is added. Measured in
+/// this tree, all 21 construction sites already go through the three `const fn`
+/// constructors and there is no struct literal anywhere, so the attribute costs
+/// nothing here — but the fields are `pub`, so a *host's* adapter could be
+/// writing a literal, and a field added without this would break it (`SKILL`
+/// §5a-5).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ProbeResult {
     /// Match confidence.
     pub confidence: ProbeConfidence,
@@ -59,10 +67,24 @@ impl ProbeResult {
 }
 
 /// Bounded probe input. Adapters must not mutate external state while probing.
+///
+/// `#[non_exhaustive]` plus [`ProbeRequest::new`], for the same reason as
+/// [`ProbeResult`] and [`ImportRequest`].
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ProbeRequest<'a> {
     /// Untrusted input bytes. Adapter-level admission limits still apply.
     pub bytes: &'a [u8],
+}
+
+impl<'a> ProbeRequest<'a> {
+    /// Creates a probe over `bytes`.
+    ///
+    /// Complexity: O(1). Borrows the bytes, never copies them.
+    #[must_use]
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
 }
 
 /// Import adapter contract.
@@ -205,9 +227,7 @@ impl FormatRegistry {
             let Some(importer) = &registered.importer else {
                 continue;
             };
-            let probe = importer.probe(ProbeRequest {
-                bytes: request.bytes,
-            });
+            let probe = importer.probe(ProbeRequest::new(request.bytes));
             if probe.confidence != ProbeConfidence::NoMatch {
                 matches.push((id, registered, probe.confidence));
             }
@@ -252,10 +272,7 @@ impl FormatRegistry {
             .as_ref()
             .expect("detected importer must remain registered");
         importer
-            .import(ImportRequest {
-                bytes: detection.bytes,
-                retain_source,
-            })
+            .import(ImportRequest::new(detection.bytes).retain_source(retain_source))
             .map_err(|source| IoError::ImportFailed { format, source })
     }
 

@@ -370,10 +370,7 @@ mod tests {
         let bytes = odt_bytes_with_image();
         let adapter = OdtAdapter::default();
         let imported = adapter
-            .import(ImportRequest {
-                bytes: &bytes,
-                retain_source: true,
-            })
+            .import(ImportRequest::new(&bytes).retain_source(true))
             .unwrap();
         let state = imported.source.state::<OdtSourceState>().unwrap();
         let part = state
@@ -387,13 +384,11 @@ mod tests {
         // PreserveWhenSafe re-emits the image via the semantic (edit-tolerant)
         // path and repackages the retained bytes.
         let exported = adapter
-            .export(ExportRequest {
-                document: &imported.document,
-                resources: &imported.resources,
-                source: Some(&imported.source),
-                source_unchanged: false,
-                mode: ExportMode::PreserveWhenSafe,
-            })
+            .export(
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .mode(ExportMode::PreserveWhenSafe),
+            )
             .unwrap();
         assert!(exported.report.entries.iter().any(|entry| {
             entry.feature == "odt.export.retained_parts"
@@ -403,31 +398,21 @@ mod tests {
 
         // The written package reopens with the image reference intact...
         let reopened = adapter
-            .import(ImportRequest {
-                bytes: &exported.bytes,
-                retain_source: true,
-            })
+            .import(ImportRequest::new(&exported.bytes).retain_source(true))
             .unwrap();
         assert_eq!(reopened.document.definitions().media.len(), 1);
         // ...and re-preserving it is byte-identical (fixed point).
         let reexported = adapter
-            .export(ExportRequest {
-                document: &reopened.document,
-                resources: &reopened.resources,
-                source: Some(&reopened.source),
-                source_unchanged: false,
-                mode: ExportMode::PreserveWhenSafe,
-            })
+            .export(
+                ExportRequest::new(&reopened.document, &reopened.resources)
+                    .source(Some(&reopened.source))
+                    .mode(ExportMode::PreserveWhenSafe),
+            )
             .unwrap();
         assert_eq!(reexported.bytes, exported.bytes);
 
         // Without retention nothing is captured.
-        let plain = adapter
-            .import(ImportRequest {
-                bytes: &bytes,
-                retain_source: false,
-            })
-            .unwrap();
+        let plain = adapter.import(ImportRequest::new(&bytes)).unwrap();
         assert!(
             plain
                 .source
@@ -514,13 +499,7 @@ mod tests {
         let exported = registry
             .export(
                 &FormatId::new(formats::ODT).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: None,
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                },
+                ExportRequest::new(&imported.document, &imported.resources),
             )
             .unwrap();
         assert_eq!(exported.format.version.as_deref(), Some("1.4"));
@@ -561,13 +540,9 @@ mod tests {
         let exported = registry
             .export(
                 &FormatId::new(formats::ODT).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::PreserveWhenSafe,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .mode(ExportMode::PreserveWhenSafe),
             )
             .unwrap();
         assert!(exported.report.entries.iter().any(|entry| {
@@ -601,13 +576,10 @@ mod tests {
         let exact = registry
             .export(
                 &FormatId::new(formats::ODT).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: true,
-                    mode: ExportMode::ExactIfUnchanged,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
             )
             .unwrap();
         assert_eq!(exact.bytes, bytes);
@@ -616,13 +588,9 @@ mod tests {
         let error = registry
             .export(
                 &FormatId::new(formats::ODT).unwrap(),
-                ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: false,
-                    mode: ExportMode::ExactIfUnchanged,
-                },
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .mode(ExportMode::ExactIfUnchanged),
             )
             .unwrap_err();
         assert!(matches!(error, IoError::ExportFailed { .. }));
@@ -641,13 +609,10 @@ mod tests {
         let error = registry
             .export(
                 &FormatId::new(formats::ODT).unwrap(),
-                ExportRequest {
-                    document: &without_retention.document,
-                    resources: &without_retention.resources,
-                    source: Some(&without_retention.source),
-                    source_unchanged: true,
-                    mode: ExportMode::ExactIfUnchanged,
-                },
+                ExportRequest::new(&without_retention.document, &without_retention.resources)
+                    .source(Some(&without_retention.source))
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
             )
             .unwrap_err();
         assert!(matches!(error, IoError::ExportFailed { .. }));
@@ -661,19 +626,15 @@ mod tests {
             },
         );
         let bounded_import = bounded_adapter
-            .import(ImportRequest {
-                bytes: &bytes,
-                retain_source: true,
-            })
+            .import(ImportRequest::new(&bytes).retain_source(true))
             .unwrap();
         let error = bounded_adapter
-            .export(ExportRequest {
-                document: &bounded_import.document,
-                resources: &bounded_import.resources,
-                source: Some(&bounded_import.source),
-                source_unchanged: true,
-                mode: ExportMode::ExactIfUnchanged,
-            })
+            .export(
+                ExportRequest::new(&bounded_import.document, &bounded_import.resources)
+                    .source(Some(&bounded_import.source))
+                    .source_unchanged(true)
+                    .mode(ExportMode::ExactIfUnchanged),
+            )
             .unwrap_err();
         assert!(error.message().contains("package byte limit"));
     }

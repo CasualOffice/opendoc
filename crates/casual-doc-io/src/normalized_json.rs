@@ -179,23 +179,18 @@ mod tests {
     fn strict_v1_import_and_canonical_export_are_deterministic() {
         let adapter = NormalizedJsonAdapter::default();
         assert_eq!(
-            adapter.probe(ProbeRequest { bytes: MINIMAL_V1 }),
+            adapter.probe(ProbeRequest::new(MINIMAL_V1)),
             ProbeResult::definite("normalized-json.schema-v1")
         );
         let imported = adapter
-            .import(ImportRequest {
-                bytes: MINIMAL_V1,
-                retain_source: true,
-            })
+            .import(ImportRequest::new(MINIMAL_V1).retain_source(true))
             .unwrap();
         let semantic = adapter
-            .export(ExportRequest {
-                document: &imported.document,
-                resources: &imported.resources,
-                source: Some(&imported.source),
-                source_unchanged: true,
-                mode: ExportMode::Semantic,
-            })
+            .export(
+                ExportRequest::new(&imported.document, &imported.resources)
+                    .source(Some(&imported.source))
+                    .source_unchanged(true),
+            )
             .unwrap();
         assert_eq!(
             Document::from_json(&semantic.bytes, SnapshotLimits::default()).unwrap(),
@@ -203,13 +198,12 @@ mod tests {
         );
         assert_eq!(
             adapter
-                .export(ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: Some(&imported.source),
-                    source_unchanged: true,
-                    mode: ExportMode::ExactIfUnchanged,
-                })
+                .export(
+                    ExportRequest::new(&imported.document, &imported.resources)
+                        .source(Some(&imported.source))
+                        .source_unchanged(true)
+                        .mode(ExportMode::ExactIfUnchanged)
+                )
                 .unwrap()
                 .bytes,
             MINIMAL_V1
@@ -223,28 +217,18 @@ mod tests {
             ..SnapshotLimits::default()
         });
         assert_eq!(
-            adapter.probe(ProbeRequest { bytes: MINIMAL_V1 }),
+            adapter.probe(ProbeRequest::new(MINIMAL_V1)),
             ProbeResult::no_match("normalized-json.not-valid-v1")
         );
-        assert!(
-            adapter
-                .import(ImportRequest {
-                    bytes: MINIMAL_V1,
-                    retain_source: false,
-                })
-                .is_err()
-        );
+        assert!(adapter.import(ImportRequest::new(MINIMAL_V1)).is_err());
         let unknown = br#"{"schemaVersion":1,"unknown":true}"#;
         assert_eq!(
-            NormalizedJsonAdapter::default().probe(ProbeRequest { bytes: unknown }),
+            NormalizedJsonAdapter::default().probe(ProbeRequest::new(unknown)),
             ProbeResult::no_match("normalized-json.not-valid-v1")
         );
 
         let imported = NormalizedJsonAdapter::default()
-            .import(ImportRequest {
-                bytes: MINIMAL_V1,
-                retain_source: false,
-            })
+            .import(ImportRequest::new(MINIMAL_V1))
             .unwrap();
         let output_limited = NormalizedJsonAdapter::new(SnapshotLimits {
             max_input_bytes: 1,
@@ -252,13 +236,7 @@ mod tests {
         });
         assert!(
             output_limited
-                .export(ExportRequest {
-                    document: &imported.document,
-                    resources: &imported.resources,
-                    source: None,
-                    source_unchanged: false,
-                    mode: ExportMode::Semantic,
-                })
+                .export(ExportRequest::new(&imported.document, &imported.resources))
                 .is_err()
         );
     }

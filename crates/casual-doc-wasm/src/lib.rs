@@ -984,13 +984,10 @@ impl WasmDocument {
         let artifact = registry
             .export(
                 &format,
-                ExportRequest {
-                    document: &self.document,
-                    resources: &self.resources,
-                    source: self.format_state.source.as_ref(),
-                    source_unchanged: self.revision == 0,
-                    mode,
-                },
+                ExportRequest::new(&self.document, &self.resources)
+                    .source(self.format_state.source.as_ref())
+                    .source_unchanged(self.revision == 0)
+                    .mode(mode),
             )
             .map_err(|error| format!("export {format}: {error}"))?;
         let report_json = compatibility_report_json(&artifact.report)?;

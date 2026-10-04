@@ -153,13 +153,7 @@ mod tests {
     fn export(mode: ExportMode) -> Result<ExportArtifact, AdapterError> {
         let source = document();
         let resources = DocumentResources::default();
-        DotxAdapter::default().export(ExportRequest {
-            document: &source,
-            resources: &resources,
-            source: None,
-            source_unchanged: false,
-            mode,
-        })
+        DotxAdapter::default().export(ExportRequest::new(&source, &resources).mode(mode))
     }
 
     #[test]
