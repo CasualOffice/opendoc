@@ -4642,6 +4642,16 @@ pub(crate) struct FlowedTextBox {
     pub(crate) content_layout: TextBoxContentLayout,
 }
 
+impl FlowedTextBox {
+    /// The stacked height of the flowed content, before the box model places it
+    /// inside the resolved outer height. This is what a `normAutofit` solve
+    /// compares against the box's vertical budget.
+    #[must_use]
+    pub(crate) fn content_height(&self) -> Twip {
+        block_stack_height(&self.blocks)
+    }
+}
+
 /// Flows a floating or grouped text box through a fresh running-content context.
 /// `outer_size` is the anchor/group rectangle before shape autofit; the returned
 /// height may grow for `a:spAutoFit`.
@@ -4738,6 +4748,228 @@ fn combine_percentage_reductions(outer: u32, inner: u32) -> u32 {
     100_000u32.saturating_sub(retained as u32)
 }
 
+/// Quantisation step of a **re-solved** `a:normAutofit@fontScale`, in
+/// per-100000 units: `5_000` = 5 percentage points.
+///
+/// The attribute's own value space does not quantise. `fontScale` is an
+/// `ST_Percentage`-shaped percentage in thousandths of a percent, and this
+/// repository's importer accepts the whole `1_000..=100_000` domain in both the
+/// integer form (`fontScale="50000"`) and the percent-string form
+/// (`fontScale="50%"`). So a step size is a *producer convention*, not a schema
+/// fact, and it has to come from a producer.
+///
+/// The convention adopted here is a 5-percentage-point ladder from 100% down to
+/// 25%, read off the one mature implementation available for inspection
+/// (ONLYOFFICE sdkjs, which hard-codes a 16-entry table of exactly those values
+/// and expresses 100% by clearing the attributes). No finer grid — 2.5%, 1%, or
+/// per-1000 rounding — exists anywhere in that implementation, and no
+/// Word-authored or PowerPoint-authored file carrying `a:normAutofit` exists in
+/// this repository to measure, so **no claim is made about Microsoft's own
+/// ladder**. If one is measured later, this constant and
+/// [`AUTOFIT_MIN_FONT_SCALE`] are the only two numbers that move.
+pub const AUTOFIT_FONT_SCALE_STEP: u32 = 5_000;
+
+/// The top rung of the re-solve ladder: unscaled text (100%).
+pub const AUTOFIT_MAX_FONT_SCALE: u32 = 100_000;
+
+/// The bottom rung of the re-solve ladder (25%). Text that still overflows at
+/// this scale is left overflowing — the box's `vertOverflow` policy decides
+/// whether it clips — rather than shrunk to illegibility.
+pub const AUTOFIT_MIN_FONT_SCALE: u32 = 25_000;
+
+/// Rungs on the ladder: 100% down to 25% in [`AUTOFIT_FONT_SCALE_STEP`] steps,
+/// both ends inclusive.
+pub const AUTOFIT_LADDER_RUNGS: u32 =
+    (AUTOFIT_MAX_FONT_SCALE - AUTOFIT_MIN_FONT_SCALE) / AUTOFIT_FONT_SCALE_STEP + 1;
+
+/// Added `a:normAutofit@lnSpcReduction` per rung descended, in per-100000 units.
+///
+/// This is the coupling `lnSpcReduction = 20% × (100% − fontScale)` expressed on
+/// the ladder, so the bottom rung pairs 25% text with a 15-point line-spacing
+/// reduction. It is the coupling the ONLYOFFICE implementation uses, and it is
+/// the only evidence available; PowerPoint emits its own pairs and may well pair
+/// them differently. Keeping the reduction a *function* of the font scale is
+/// also what keeps the fit predicate one-dimensional and monotone, which is what
+/// makes the bisection below sound.
+pub const AUTOFIT_LINE_SPACING_REDUCTION_PER_RUNG: u32 = AUTOFIT_FONT_SCALE_STEP / 5;
+
+/// Fit evaluations performed by [`solve_text_box_normal_autofit`] — **exactly
+/// this many, for every input**, which is the property the complexity guard in
+/// `tests/text_box_autofit.rs` pins.
+///
+/// A lower-bound bisection halves `hi - lo` on either branch, and 15
+/// (= [`AUTOFIT_LADDER_RUNGS`] − 1) is a fixed point of that halving:
+/// 15 → 7 → 3 → 1 → 0 regardless of which way each probe goes. That is why the
+/// ladder's bottom rung is the clamp and is never probed.
+pub const AUTOFIT_SOLVER_PASSES: u32 = 4;
+
+/// One rung of the re-solve ladder as a model autofit value: the font scale at
+/// `index` rungs below 100%, paired with its coupled line-spacing reduction.
+///
+/// `index` saturates at the bottom rung. That clamp is **defensive and currently
+/// unreachable**: the bisection never forms an index above `AUTOFIT_LADDER_RUNGS - 1`,
+/// so removing it leaves every test green — verified by mutation rather than assumed.
+/// It is kept because the function is reachable from more than one call site and a
+/// silent wrap would be worse than a clamp, but it is not a tested behaviour and is
+/// not described as one.
+#[must_use]
+fn autofit_rung(index: u32) -> TextBoxAutoFit {
+    let index = index.min(AUTOFIT_LADDER_RUNGS - 1);
+    TextBoxAutoFit::Normal {
+        font_scale: AUTOFIT_MAX_FONT_SCALE - index * AUTOFIT_FONT_SCALE_STEP,
+        line_spacing_reduction: index * AUTOFIT_LINE_SPACING_REDUCTION_PER_RUNG,
+    }
+}
+
+/// What a re-solve decided, and how much layout it cost to decide it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NormalAutofitSolution {
+    /// The autofit value to store back on the edited text body. Always a
+    /// `TextBoxAutoFit::Normal` on a `normAutofit` box, and the input value
+    /// untouched on any other box.
+    pub auto_fit: TextBoxAutoFit,
+    /// Fit evaluations performed — one flow of **this text box** each. Zero when
+    /// nothing had to be solved. Exposed so a test can guard the solver's
+    /// complexity by counting work instead of timing it.
+    pub passes: u32,
+}
+
+/// Re-solves `a:normAutofit@fontScale` / `@lnSpcReduction` for a text body whose
+/// **content has just been edited**.
+///
+/// # This must not run on load
+///
+/// A producer's persisted `fontScale`/`lnSpcReduction` are authoritative and are
+/// honoured verbatim by the flow path (`text_box_text_adjustments`). Word and
+/// PowerPoint computed them with their own font metrics; recomputing them with
+/// ours gives a different answer on every overflowing box, which in real
+/// documents is most of them, so re-solving at load would *lose* fidelity
+/// (`docs/156` §4.4 rank 4 — it ranks the present load behaviour as already
+/// correct). Nothing in this module calls this function; it exists for the edit
+/// path, which owns the decision that the authored scale now describes text that
+/// no longer exists. `tests/text_box_autofit.rs` guards the load side.
+///
+/// # Mechanism — bisection on a monotone predicate
+///
+/// "Does the text fit at scale *s*" is monotone in *s*: run metrics are scaled by
+/// a flooring integer multiply, so a lower rung never yields a larger run size,
+/// never a wider line, never more lines, and never a taller stack. The solver
+/// therefore does a **lower-bound bisection** for the least rung that fits, not a
+/// 100 → 99 → 98 walk, and returns the *largest* scale that fits.
+///
+/// The predicate measures through the same code the renderer uses — it builds
+/// candidate body properties and calls the ordinary anchored-text-box flow, then
+/// reads the stacked block height that the box model itself resolves against. No
+/// parallel estimator exists to drift out of step.
+///
+/// Only height is fitted; text wraps, so width cannot overflow a `normAutofit`
+/// box.
+///
+/// # Complexity
+///
+/// Exactly [`AUTOFIT_SOLVER_PASSES`] fit evaluations, each one flow of **this
+/// text box's own blocks**. O(log rungs × one text box) — and `log rungs` is a
+/// compile-time constant, so per-interaction work is **O(edited text box)** and
+/// in particular O(1) in document size: the solver never walks the body, never
+/// paginates, and never touches a sibling. The pass count is independent of the
+/// text box's own size too, which is what makes it assertable.
+///
+/// # Behaviour at the edges
+///
+/// - A box that is not `normAutofit` is returned unchanged with zero passes:
+///   `noAutofit` keeps its text at authored size and `spAutoFit` grows the shape
+///   instead of shrinking the text.
+/// - A box with no positive authored height has no budget to overflow — the box
+///   model resolves its height from its content — so the solve is skipped and
+///   full scale returned, which is also what clears a now-meaningless stale
+///   scale.
+/// - If even the bottom rung overflows, the bottom rung is returned. The ladder
+///   stops at [`AUTOFIT_MIN_FONT_SCALE`]; it does not chase the schema minimum.
+///
+/// # Deliberate differences from the implementation this was read against
+///
+/// ONLYOFFICE's search confirms a boundary with `contentHeight >= clipRect.h`
+/// while testing fit with `<=`, so a box whose text is exactly flush terminates
+/// one rung early, and its loop can also exit on a shift-magnitude test without
+/// having confirmed any boundary at all. A lower-bound bisection has neither
+/// property: the returned rung fits and the rung above it was measured not to.
+/// Its ladder is a literal table whose 16th entry is `10000`, unreachable only by
+/// accident of the shift arithmetic; this ladder is computed from its step, so
+/// there is no entry to mistype. Its placeholder-title floor of 90% is a
+/// PresentationML placeholder rule and is deliberately absent here.
+#[must_use]
+pub fn solve_text_box_normal_autofit(
+    document: &Document,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    outer_size: Size,
+    properties: &TextBoxBodyProperties,
+) -> NormalAutofitSolution {
+    if !matches!(properties.auto_fit, TextBoxAutoFit::Normal { .. }) {
+        return NormalAutofitSolution {
+            auto_fit: properties.auto_fit,
+            passes: 0,
+        };
+    }
+    let insets = text_box_insets(properties);
+    let Some(budget) = normal_autofit_budget(outer_size.height, insets) else {
+        return NormalAutofitSolution {
+            auto_fit: autofit_rung(0),
+            passes: 0,
+        };
+    };
+
+    // Least rung that fits. `hi` is the bottom rung, the clamp: its fit is
+    // accepted by definition and `mid < hi` always, so it is never measured.
+    let mut lo = 0;
+    let mut hi = AUTOFIT_LADDER_RUNGS - 1;
+    let mut passes = 0;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let candidate = TextBoxBodyProperties {
+            auto_fit: autofit_rung(mid),
+            ..*properties
+        };
+        let flowed = flow_anchored_text_box(document, blocks, shaper, outer_size, &candidate);
+        passes += 1;
+        if flowed.content_height() <= budget {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    NormalAutofitSolution {
+        auto_fit: autofit_rung(lo),
+        passes,
+    }
+}
+
+/// The vertical space a `normAutofit` body has to fit into: the authored height
+/// less the top and bottom insets. `None` when there is no positive authored
+/// height, which is the case that cannot overflow.
+#[must_use]
+fn normal_autofit_budget(outer_height: Twip, insets: ResolvedTextBoxInsets) -> Option<Twip> {
+    (outer_height.raw() > 0).then(|| {
+        clamp_twip(
+            i64::from(outer_height.raw())
+                .saturating_sub(i64::from(insets.top.raw()))
+                .saturating_sub(i64::from(insets.bottom.raw()))
+                .max(0),
+        )
+    })
+}
+
+/// The stacked height of a flowed block list. The single definition of "how tall
+/// is this content", shared by the text box's box-model resolution and by the
+/// autofit fit predicate so the two cannot disagree.
+#[must_use]
+fn block_stack_height(blocks: &[BlockFragment]) -> Twip {
+    blocks
+        .iter()
+        .map(BlockFragment::height)
+        .fold(Twip::ZERO, |a, h| a + h)
+}
+
 fn finish_text_box(
     blocks: Vec<BlockFragment>,
     outer_width: Twip,
@@ -4745,10 +4977,7 @@ fn finish_text_box(
     insets: ResolvedTextBoxInsets,
     properties: &TextBoxBodyProperties,
 ) -> FlowedTextBox {
-    let content_height = blocks
-        .iter()
-        .map(BlockFragment::height)
-        .fold(Twip::ZERO, |a, h| a + h);
+    let content_height = block_stack_height(&blocks);
     let natural_height = clamp_twip(
         i64::from(insets.top.raw())
             .saturating_add(i64::from(content_height.raw()))
