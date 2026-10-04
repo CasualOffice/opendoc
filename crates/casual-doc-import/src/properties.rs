@@ -5,12 +5,12 @@
 //! (unknown, or present-but-out-of-domain/degraded).
 
 use casual_doc_model::v1::{
-    Alignment, BreakKind, Color, DropCapFrame, DropCapMode, EmphasisMark, FontName, FontRef,
-    FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
-    FrameWrap, HighlightColor, Indentation, Language, LineRule, MAX_SYMBOL_FONT_LEN,
-    ParagraphProperties, RgbColor, RunFontHint, RunProperties, Shading, Spacing, StyleKind,
-    TableWidth, ThemeColor, ThemeColorRef, ThemeFont, ThemeFontRef, UnderlineStyle,
-    VerticalAlignment, VerticalTextAlignment, WidthType,
+    Alignment, BorderEdge, BreakKind, Color, DropCapFrame, DropCapMode, EmphasisMark, FontName,
+    FontRef, FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment,
+    FrameVerticalAnchor, FrameWrap, HighlightColor, Indentation, Language, LineRule,
+    MAX_SYMBOL_FONT_LEN, ParagraphProperties, RgbColor, RunFontHint, RunProperties, Shading,
+    Spacing, StyleKind, TableWidth, ThemeColor, ThemeColorRef, ThemeFont, ThemeFontRef,
+    UnderlineStyle, VerticalAlignment, VerticalTextAlignment, WidthType,
 };
 use quick_xml::events::BytesStart;
 // Separate `use` lines to minimize import-block merge conflicts.
@@ -697,49 +697,6 @@ pub(crate) fn parse_table_width(element: &BytesStart<'_>) -> Option<TableWidth> 
     Some(TableWidth { value, width_type })
 }
 
-/// The theme-colour attributes a border edge may carry, in schema order.
-///
-/// `CT_Border` admits `w:themeColor`, `w:themeTint` and `w:themeShade` beside the
-/// concrete `w:color`, exactly as `CT_Color` does on a run.
-const BORDER_THEME_ATTRIBUTES: [&[u8]; 3] = [b"themeColor", b"themeTint", b"themeShade"];
-
-/// Reports every theme-colour attribute on a border edge that the model cannot
-/// hold, as one `Degraded` attribute finding each.
-///
-/// `BorderEdge::color` is `Option<RgbColor>` — explicit sRGB only — and the
-/// model's own doc comment on that field already says `auto`/theme is
-/// "reported". It was not. Measured over the owner's corpus, **five of nineteen
-/// documents** lose a border or shading theme colour with a compatibility report
-/// that never mentions it, across `w:top`, `w:bottom`, `w:left`, `w:right`,
-/// `w:insideH` and `w:insideV`, carrying real slots (`accent1`…`accent5`,
-/// `text1`, `background1`) and real `w:themeTint` bytes. It is the largest
-/// genuine silent loss the corpus produced on the attribute axis.
-///
-/// A theme reference is reported rather than modelled here deliberately: giving
-/// `BorderEdge::color` the `Color` type that runs already use would change a
-/// widely-constructed model struct, and honouring it on the page needs a consumer
-/// in the layout engine. Both are follow-on work. What this closes is the part
-/// that `35-DISPOSITION-TAXONOMY.md` makes non-negotiable and that the
-/// element-name loss gate structurally cannot see — the *silence*.
-///
-/// The disposition is `Degraded`, not `Omitted`: the edge itself is captured with
-/// its style, width and padding, and only the colour reference is lost.
-///
-/// `O(1)` per edge, and it allocates nothing unless a theme attribute is present.
-pub(crate) fn report_border_theme_color(
-    reporter: &mut crate::report::Reporter,
-    element: &BytesStart<'_>,
-) {
-    let local = element.local_name();
-    for attribute in BORDER_THEME_ATTRIBUTES {
-        // An empty value says nothing, and a writer that omits the attribute
-        // produces the same document — so only a substantive value is a loss.
-        if attribute_value(element, attribute).is_some_and(|value| !value.is_empty()) {
-            reporter.report_attribute(local.as_ref(), attribute);
-        }
-    }
-}
-
 /// Whether a property element carries no attributes at all.
 ///
 /// This separates two documents that a `parsed == Default::default()` test cannot
@@ -952,6 +909,57 @@ pub(crate) fn parse_shading(element: &BytesStart<'_>) -> (Shading, bool) {
         },
         degraded,
     )
+}
+
+/// Parses one border-edge element (`w:top`/`w:start`/`w:bottom`/`w:end`/
+/// `w:insideH`/`w:insideV`/`w:bar`/`w:between`, and the `w:pgBorders` edges) into
+/// a [`BorderEdge`]. Returns `None` — the caller reports the element — when the
+/// required `w:val` style token is missing, empty, or past the 32-byte bound.
+///
+/// This is the **single** mapping for a border edge. It existed twice, once in
+/// the body parser and once in the styles parser, and the duplication is why the
+/// theme-colour triple below had to be added in two places to be added at all.
+///
+/// `@w:themeColor` (with `@w:themeTint`/`@w:themeShade`) is modeled, not
+/// dropped. Word writes a concrete `@w:color` beside the theme reference as the
+/// fallback for a consumer with no theme, so **both** are kept: the reference in
+/// [`BorderEdge::theme_color`] and the fallback in [`BorderEdge::color`]. An
+/// unmappable theme token (or `none`) leaves the reference absent and the
+/// concrete colour stands alone, which is the same precedence
+/// [`apply_run_property`] gives `w:color`.
+///
+/// Complexity: O(attributes on the element).
+pub(crate) fn parse_border_edge(element: &BytesStart<'_>) -> Option<BorderEdge> {
+    let style =
+        attribute_value(element, b"val").filter(|value| !value.is_empty() && value.len() <= 32)?;
+    let size_eighth_points = attribute_value(element, b"sz")
+        .and_then(|value| value.parse::<u32>().ok())
+        .map(|size| size.min(1024));
+    let color = attribute_value(element, b"color")
+        .filter(|value| value != "auto")
+        .and_then(|value| parse_rgb(&value));
+    let theme_color = attribute_value(element, b"themeColor")
+        .as_deref()
+        .and_then(theme_color_ref)
+        .map(|slot| ThemeColor {
+            slot,
+            theme_tint: attribute_value(element, b"themeTint")
+                .as_deref()
+                .and_then(parse_hex_byte),
+            theme_shade: attribute_value(element, b"themeShade")
+                .as_deref()
+                .and_then(parse_hex_byte),
+        });
+    let space_points = attribute_value(element, b"space")
+        .and_then(|value| value.parse::<u32>().ok())
+        .map(|space| space.min(31));
+    Some(BorderEdge {
+        style,
+        size_eighth_points,
+        color,
+        theme_color,
+        space_points,
+    })
 }
 
 #[cfg(test)]

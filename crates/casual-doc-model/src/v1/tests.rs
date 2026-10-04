@@ -1250,6 +1250,7 @@ fn table_borders_and_margins_round_trip_and_reject_bad_style() {
             size_eighth_points: Some(8),
             color: Some(RgbColor { r: 1, g: 2, b: 3 }),
             space_points: Some(4),
+            theme_color: None,
         }),
         ..TableBorders::default()
     };
@@ -1295,6 +1296,7 @@ fn table_borders_and_margins_round_trip_and_reject_bad_style() {
                     size_eighth_points: None,
                     color: None,
                     space_points: None,
+                    theme_color: None,
                 }),
                 ..TableBorders::default()
             },
@@ -1759,6 +1761,7 @@ fn paragraph_borders_shading_tabs_round_trip_and_bound() {
                 size_eighth_points: Some(8),
                 color: None,
                 space_points: Some(4),
+                theme_color: None,
             }),
             ..ParagraphBorders::default()
         }
@@ -4704,6 +4707,7 @@ fn an_absent_border_set_is_indistinguishable_from_an_empty_one() {
         size_eighth_points: None,
         color: None,
         space_points: None,
+        theme_color: None,
     });
     emptied.top = None;
 

@@ -24,10 +24,11 @@ use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
-    apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_rgb,
-    parse_shading, parse_table_width, style_kind_from,
+    apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_shading,
+    parse_table_width, style_kind_from,
 };
 // Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::parse_border_edge;
 use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 
@@ -968,7 +969,7 @@ fn read_run_container(
                 }
                 run.shading = shading;
             }
-            b"bdr" => match border_edge(ctx, &child) {
+            b"bdr" => match border_edge(&child) {
                 Some(edge) => run.border = Some(edge),
                 None => ctx.report(b"bdr"),
             },
@@ -1244,7 +1245,7 @@ fn read_borders(
             Node::Empty(child) => (child, false),
             Node::Close | Node::Eof => break,
         };
-        let edge = border_edge(ctx, &child);
+        let edge = border_edge(&child);
         let slot = match child.local_name().as_ref() {
             b"top" => Some(&mut borders.top),
             b"bottom" => Some(&mut borders.bottom),
@@ -1376,7 +1377,7 @@ fn read_paragraph_borders(
             _ => None,
         };
         match slot {
-            Some(slot) => match border_edge(ctx, &child) {
+            Some(slot) => match border_edge(&child) {
                 Some(edge) => *slot = Some(edge),
                 None => ctx.report(b"pBdr"),
             },
@@ -1477,28 +1478,12 @@ fn dxa_twips(element: &BytesStart<'_>) -> Option<i32> {
 
 /// Builds a `BorderEdge` from an edge element; `None` when the `w:val` style is
 /// missing/empty/oversized (the caller reports the container).
-fn border_edge(ctx: &mut Ctx<'_>, element: &BytesStart<'_>) -> Option<BorderEdge> {
-    // Charged before the early return, so an edge rejected for a missing `w:val`
-    // still reports the theme reference it carried: the caller reports the
-    // container on `None`, which names the element but not the attribute.
-    crate::properties::report_border_theme_color(ctx.reporter, element);
-    let style =
-        attribute_value(element, b"val").filter(|value| !value.is_empty() && value.len() <= 32)?;
-    let size_eighth_points = attribute_value(element, b"sz")
-        .and_then(|value| value.parse::<u32>().ok())
-        .map(|size| size.min(1024));
-    let color = attribute_value(element, b"color")
-        .filter(|value| value != "auto")
-        .and_then(|value| parse_rgb(&value));
-    let space_points = attribute_value(element, b"space")
-        .and_then(|value| value.parse::<u32>().ok())
-        .map(|space| space.min(31));
-    Some(BorderEdge {
-        style,
-        size_eighth_points,
-        color,
-        space_points,
-    })
+///
+/// A thin alias for the shared [`parse_border_edge`]: this parser had its own
+/// copy of the mapping, which is why `@w:themeColor` was dropped here and in the
+/// body parser independently.
+fn border_edge(element: &BytesStart<'_>) -> Option<BorderEdge> {
+    parse_border_edge(element)
 }
 
 /// Applies a `w:tblLook`: explicit boolean attributes when present, else the

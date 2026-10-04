@@ -35,6 +35,9 @@ use casual_doc_model::v1::{
     SectionColumns, SectionId, Table, TableCell, TableCellProperties, TableProperties, TableRow,
     TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition, WrapDistances, WrapMode,
 };
+// Separate `use` line (anti-conflict): the authored wrap side, read by
+// `an_authored_wrap_text_decides_the_side_the_text_keeps`.
+use casual_doc_model::v1::WrapSide;
 
 /// The vertices a resolved path arrives at, in order.
 ///
@@ -3072,6 +3075,22 @@ fn wrap_float(
     position: HorizontalPosition,
     vertical: AnchorVertical,
 ) -> InlineNode {
+    // The float's authored side is absent, so `wrap_side()` answers Word's
+    // default of `bothSides`. These guards are about WHERE the band lands, not
+    // which side the producer asked for; the authored side has its own guard,
+    // `an_authored_wrap_text_decides_the_side_the_text_keeps`.
+    wrap_float_sided(id, media, relative_from, position, vertical, None)
+}
+
+/// The same float with an explicit `w:wrap@wrapText`.
+fn wrap_float_sided(
+    id: u64,
+    media: MediaId,
+    relative_from: HorizontalAnchor,
+    position: HorizontalPosition,
+    vertical: AnchorVertical,
+    wrap_text: Option<WrapSide>,
+) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         hyperlink: None,
         opacity: None,
@@ -3088,10 +3107,7 @@ fn wrap_float(
             },
             vertical,
             wrap: WrapMode::Square,
-            // The float's authored side is absent, so `wrap_side()` answers
-            // Word's default of `bothSides`. These guards are about WHERE the
-            // band lands, not which side the producer asked for.
-            wrap_text: None,
+            wrap_text,
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
@@ -3489,6 +3505,103 @@ fn a_page_relative_float_centred_in_the_measure_narrows_the_trailing_edge() {
             "text ran through the float: reached {} with the float at {}",
             line_right_extent(line).raw(),
             gap.raw()
+        );
+    }
+}
+
+/// **The authored `w:wrap@wrapText` decides which gap the text keeps, and it
+/// beats the geometry.**
+///
+/// `casual-doc-layout::wrap_side::wrap_sides` used to **ignore its argument** and
+/// answer `BothSides` for every float, so `DrawingAnchor::wrap_text` — imported,
+/// modelled and exported by #738/#739 — was discarded at layout for every float
+/// in every document. The exclusion arithmetic in `band_exclusion` was complete
+/// and guarded the whole time, including `authored_sides_override_the_geometry`;
+/// what no guard asked was whether the engine ever *handed* it the authored
+/// value. That is the shape of a test that cannot fail, so this guard is written
+/// at the only altitude that could have caught it: a laid-out paragraph.
+///
+/// The float sits three fifths across the measure, so the **leading** gap is the
+/// wider one and `bothSides` keeps it (the documented approximation — our line
+/// geometry is one measure with two insets, so a hole in the middle of a line is
+/// not representable, and `bothSides` therefore keeps the wider gap, identical
+/// to `largest`). An authored `right` asks for the gap geometry would NOT have
+/// chosen, which is what makes the two cases distinguishable: under the stub
+/// both read identically.
+///
+/// Asserted as a guarantee rather than a pixel count: with `bothSides` the text
+/// keeps its own leading edge and stops before the float; with `right` the text
+/// starts beyond the float's trailing edge. Neither bound is a measured constant.
+#[test]
+fn an_authored_wrap_text_decides_the_side_the_text_keeps() {
+    let (media, definitions) = media_defs();
+
+    let measure = wrap_cell_measure(&wrap_cell(
+        wrap_cell_table(vec![wrap_filler(872)], Vec::new()),
+        definitions.clone(),
+    ));
+    let offset = Twip(measure.raw() * 3 / 5);
+    let band_end = Twip(offset.raw() + WRAP_FLOAT_WIDTH.raw());
+    assert!(
+        offset.raw() > measure.raw() - band_end.raw(),
+        "the float must sit so the LEADING gap is the wider one, otherwise \
+         `bothSides` and `right` would agree and this guard could not fail"
+    );
+
+    let laid_out = |wrap_text: Option<WrapSide>| {
+        let float = wrap_float_sided(
+            870,
+            media,
+            HorizontalAnchor::Column,
+            HorizontalPosition::Offset(i64::from(offset.raw()) * 635),
+            at_paragraph_top(),
+            wrap_text,
+        );
+        let cell = wrap_cell(
+            wrap_cell_table(vec![float, wrap_filler(871)], Vec::new()),
+            definitions.clone(),
+        );
+        let lines = covered_lines(&cell.blocks[0]);
+        assert!(
+            !lines.is_empty(),
+            "the float's clearance must cover at least one line of text, or \
+             there is nothing for either case to be measured on"
+        );
+        lines
+            .iter()
+            .map(|line| {
+                let start = line
+                    .runs
+                    .iter()
+                    .map(|run| run.origin.x)
+                    .min()
+                    .expect("a covered line has a run");
+                (start, line_right_extent(line))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // Default (absent `wrapText`): text keeps the wider LEADING gap.
+    for (start, end) in laid_out(None) {
+        assert_eq!(
+            start,
+            Twip::ZERO,
+            "with the default `bothSides` the text keeps its own leading edge"
+        );
+        assert!(
+            end.raw() <= offset.raw(),
+            "with the default `bothSides` the text stops at the float's leading edge: \
+             ends at {end:?}, float starts at {offset:?}"
+        );
+    }
+
+    // Authored `right`: text flows only down the channel to the float's right,
+    // which is the NARROWER gap here, so geometry alone would never pick it.
+    for (start, _) in laid_out(Some(WrapSide::Right)) {
+        assert!(
+            start.raw() >= band_end.raw(),
+            "an authored right-side wrapText puts the text beyond the float's \
+             trailing edge: starts at {start:?}, float ends at {band_end:?}"
         );
     }
 }

@@ -12,7 +12,7 @@
 
 use casual_doc_model::v1::{BorderEdge, PageBorderDisplay, PageBorderOffset, PageBorders};
 
-use crate::flow::resolve_edge;
+use crate::flow::{ResolvedPalette, resolve_edge};
 use crate::page::ResolvedPageBorders;
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -27,11 +27,16 @@ fn space_twips(edge: Option<&BorderEdge>) -> i32 {
 ///
 /// `section_page_number` is the 1-based page number *within the section* — the
 /// `firstPage`/`notFirstPage` policy is section-relative (title-page semantics).
+///
+/// `palette` is the document's resolved `a:clrScheme`, so a page border carrying
+/// `@w:themeColor` paints its theme colour rather than the black an unresolved
+/// reference falls back to. `None` for a document with no theme colour scheme.
 pub(crate) fn resolve_page_borders(
     borders: &PageBorders,
     section_page_number: u32,
     page_size: Size,
     content_area: Rect,
+    palette: Option<&ResolvedPalette>,
 ) -> Option<ResolvedPageBorders> {
     let shown = match borders.display.unwrap_or(PageBorderDisplay::AllPages) {
         PageBorderDisplay::AllPages => true,
@@ -44,10 +49,10 @@ pub(crate) fn resolve_page_borders(
 
     // A `nil`/`none` edge resolves to `None` (suppressed), so a declared border
     // with only such edges paints nothing.
-    let top = resolve_edge(&[borders.top.as_ref()]);
-    let bottom = resolve_edge(&[borders.bottom.as_ref()]);
-    let start = resolve_edge(&[borders.start.as_ref()]);
-    let end = resolve_edge(&[borders.end.as_ref()]);
+    let top = resolve_edge(&[borders.top.as_ref()], palette);
+    let bottom = resolve_edge(&[borders.bottom.as_ref()], palette);
+    let start = resolve_edge(&[borders.start.as_ref()], palette);
+    let end = resolve_edge(&[borders.end.as_ref()], palette);
     if top.is_none() && bottom.is_none() && start.is_none() && end.is_none() {
         return None;
     }
@@ -89,6 +94,7 @@ mod tests {
             size_eighth_points: Some(size),
             color: Some(RgbColor { r: 0, g: 0, b: 0 }),
             space_points: Some(space),
+            theme_color: None,
         }
     }
 
@@ -128,6 +134,7 @@ mod tests {
             1,
             page_size(),
             content_area(),
+            None,
         )
         .expect("a border on every page");
         // 24pt space → 480 twips inset from each page edge.
@@ -146,6 +153,7 @@ mod tests {
             1,
             page_size(),
             content_area(),
+            None,
         )
         .expect("a border measured from text");
         // 24pt (480 twips) outside the content edges.
@@ -159,8 +167,8 @@ mod tests {
             Some(PageBorderDisplay::FirstPage),
             Some(PageBorderOffset::Page),
         );
-        assert!(resolve_page_borders(&borders, 1, page_size(), content_area()).is_some());
-        assert!(resolve_page_borders(&borders, 2, page_size(), content_area()).is_none());
+        assert!(resolve_page_borders(&borders, 1, page_size(), content_area(), None).is_some());
+        assert!(resolve_page_borders(&borders, 2, page_size(), content_area(), None).is_none());
     }
 
     #[test]
@@ -169,8 +177,8 @@ mod tests {
             Some(PageBorderDisplay::NotFirstPage),
             Some(PageBorderOffset::Page),
         );
-        assert!(resolve_page_borders(&borders, 1, page_size(), content_area()).is_none());
-        assert!(resolve_page_borders(&borders, 2, page_size(), content_area()).is_some());
+        assert!(resolve_page_borders(&borders, 1, page_size(), content_area(), None).is_none());
+        assert!(resolve_page_borders(&borders, 2, page_size(), content_area(), None).is_some());
     }
 
     #[test]
@@ -181,13 +189,14 @@ mod tests {
             size_eighth_points: None,
             color: None,
             space_points: None,
+            theme_color: None,
         });
-        let resolved =
-            resolve_page_borders(&borders, 1, page_size(), content_area()).expect("others remain");
+        let resolved = resolve_page_borders(&borders, 1, page_size(), content_area(), None)
+            .expect("others remain");
         assert!(resolved.top.is_none(), "the none edge is suppressed");
         assert!(resolved.bottom.is_some());
 
         let empty = PageBorders::default();
-        assert!(resolve_page_borders(&empty, 1, page_size(), content_area()).is_none());
+        assert!(resolve_page_borders(&empty, 1, page_size(), content_area(), None).is_none());
     }
 }

@@ -2023,12 +2023,19 @@ fn flow_table<S: GalleySink + ?Sized>(
             };
             let mut cell_spacing = cell_box_spacing(row_spacing, slot_width);
             let mut borders = if row_spacing > 0 {
-                resolve_separated_cell_borders(&border_candidates[row_index][index])
+                resolve_separated_cell_borders(&border_candidates[row_index][index], ctx.palette)
             } else {
-                resolve_cell_borders(&table.rows, &border_candidates, row_index, index, &edges)
+                resolve_cell_borders(
+                    &table.rows,
+                    &border_candidates,
+                    row_index,
+                    index,
+                    &edges,
+                    ctx.palette,
+                )
             };
             let mut table_borders = if row_spacing > 0 {
-                resolve_table_perimeter_borders(table, &style_layers, row_index, index)
+                resolve_table_perimeter_borders(table, &style_layers, row_index, index, ctx.palette)
             } else {
                 CellBorders::default()
             };
@@ -2395,21 +2402,22 @@ fn resolve_table_perimeter_borders(
     layers: &[Vec<TableStyleLayer>],
     row_index: usize,
     cell_index: usize,
+    palette: Option<&ResolvedPalette>,
 ) -> CellBorders {
     let row = &table.rows[row_index];
     let borders = effective_table_borders(table, &layers[row_index][cell_index]);
     CellBorders {
         top: (row_index == 0)
-            .then(|| resolve_edge(&[borders.top.as_ref()]))
+            .then(|| resolve_edge(&[borders.top.as_ref()], palette))
             .flatten(),
         start: (cell_index == 0)
-            .then(|| resolve_edge(&[borders.start.as_ref()]))
+            .then(|| resolve_edge(&[borders.start.as_ref()], palette))
             .flatten(),
         bottom: (row_index + 1 == table.rows.len())
-            .then(|| resolve_edge(&[borders.bottom.as_ref()]))
+            .then(|| resolve_edge(&[borders.bottom.as_ref()], palette))
             .flatten(),
         end: (cell_index + 1 == row.cells.len())
-            .then(|| resolve_edge(&[borders.end.as_ref()]))
+            .then(|| resolve_edge(&[borders.end.as_ref()], palette))
             .flatten(),
         top_segments: Vec::new(),
         bottom_segments: Vec::new(),
@@ -3179,12 +3187,14 @@ fn max_line_width(layout: &crate::text::LineLayout) -> i32 {
 /// following row. The compact whole-side winner is retained for compatibility,
 /// while top/bottom segment lists resolve each abutting grid interval
 /// independently for composition.
+#[allow(clippy::too_many_arguments)]
 fn resolve_cell_borders(
     rows: &[TableRow],
     effective: &[Vec<TableBorders>],
     row_index: usize,
     index: usize,
     column_edges: &[i32],
+    palette: Option<&ResolvedPalette>,
 ) -> CellBorders {
     let row = &rows[row_index].cells;
     let own = &effective[row_index][index];
@@ -3237,6 +3247,7 @@ fn resolve_cell_borders(
                 end_col,
                 column_edges,
                 false,
+                palette,
             )
         });
     let bottom_segments = rows.get(row_index + 1).map_or_else(Vec::new, |below| {
@@ -3249,14 +3260,15 @@ fn resolve_cell_borders(
             end_col,
             column_edges,
             true,
+            palette,
         )
     });
 
     CellBorders {
-        top: resolve_edge(&top_candidates),
-        bottom: resolve_edge(&bottom_candidates),
-        start: resolve_edge(&[left_end, own_start]),
-        end: resolve_edge(&[own_end, right_start]),
+        top: resolve_edge(&top_candidates, palette),
+        bottom: resolve_edge(&bottom_candidates, palette),
+        start: resolve_edge(&[left_end, own_start], palette),
+        end: resolve_edge(&[own_end, right_start], palette),
         top_segments,
         bottom_segments,
     }
@@ -3265,12 +3277,15 @@ fn resolve_cell_borders(
 /// Resolves one cell's already materialized sides without consulting adjacent
 /// cells. This is the non-zero-spacing mode: each side remains visible in its
 /// own inset cell box instead of collapsing to one shared winner.
-fn resolve_separated_cell_borders(effective: &TableBorders) -> CellBorders {
+fn resolve_separated_cell_borders(
+    effective: &TableBorders,
+    palette: Option<&ResolvedPalette>,
+) -> CellBorders {
     CellBorders {
-        top: resolve_edge(&[effective.top.as_ref()]),
-        start: resolve_edge(&[effective.start.as_ref()]),
-        bottom: resolve_edge(&[effective.bottom.as_ref()]),
-        end: resolve_edge(&[effective.end.as_ref()]),
+        top: resolve_edge(&[effective.top.as_ref()], palette),
+        start: resolve_edge(&[effective.start.as_ref()], palette),
+        bottom: resolve_edge(&[effective.bottom.as_ref()], palette),
+        end: resolve_edge(&[effective.end.as_ref()], palette),
         top_segments: Vec::new(),
         bottom_segments: Vec::new(),
     }
@@ -3288,6 +3303,7 @@ fn resolve_horizontal_segments<'a>(
     end_col: usize,
     column_edges: &[i32],
     own_first: bool,
+    palette: Option<&ResolvedPalette>,
 ) -> Vec<ResolvedBorderSegment> {
     let mut breaks = vec![start_col, end_col];
     let mut adjacent_ranges = Vec::new();
@@ -3337,7 +3353,7 @@ fn resolve_horizontal_segments<'a>(
         if !own_first {
             candidates.push(own);
         }
-        let Some(edge) = resolve_edge(&candidates) else {
+        let Some(edge) = resolve_edge(&candidates, palette) else {
             continue;
         };
         let offset = Twip(coordinate(segment_start) - cell_start_x);
@@ -3415,7 +3431,10 @@ fn effective_border<'a>(
 /// drawable [`ResolvedEdge`] (or `None` if none is visible). An explicit `nil`
 /// suppresses the conflicting edge. Exact ranking ties keep the first candidate
 /// in reading order.
-pub(crate) fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<ResolvedEdge> {
+pub(crate) fn resolve_edge(
+    candidates: &[Option<&BorderEdge>],
+    palette: Option<&ResolvedPalette>,
+) -> Option<ResolvedEdge> {
     let mut winner: Option<&BorderEdge> = None;
     for edge in candidates.iter().filter_map(|candidate| *candidate) {
         if edge.style == "nil" {
@@ -3424,14 +3443,12 @@ pub(crate) fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<Resolve
         if !is_visible_border(edge) {
             continue;
         }
-        if winner.is_none_or(|current| border_rank(edge) > border_rank(current)) {
+        if winner.is_none_or(|current| border_rank(edge, palette) > border_rank(current, palette)) {
             winner = Some(edge);
         }
     }
     let winner = winner?;
-    let color = winner
-        .color
-        .map_or([0, 0, 0, 255], |c| [c.r, c.g, c.b, 255]);
+    let color = edge_color(winner, palette);
     // `w:sz` is in eighths of a point; a point is 20 twips.
     let width = winner
         .size_eighth_points
@@ -3468,9 +3485,37 @@ fn is_visible_border(edge: &BorderEdge) -> bool {
     !matches!(edge.style.as_str(), "" | "nil" | "none")
 }
 
+/// The paint colour of one border edge, in opaque RGBA.
+///
+/// A `w:themeColor` reference wins over the concrete `w:color` Word writes beside
+/// it as a fallback (see `BorderEdge::theme_color`), and resolves against the
+/// document's theme palette with any `w:themeTint`/`w:themeShade` applied — the
+/// same resolution [`run_color`] gives a run's colour, deliberately through the
+/// same two helpers rather than a second copy of the arithmetic. With no palette
+/// (a document declaring no `a:clrScheme`) the concrete fallback stands; with
+/// neither, black, which is what Word paints for an `auto` border.
+///
+/// Complexity: O(1).
+fn edge_color(edge: &BorderEdge, palette: Option<&ResolvedPalette>) -> [u8; 4] {
+    if let Some(theme) = edge.theme_color
+        && let Some(palette) = palette
+    {
+        return apply_tint_shade(
+            palette.slot(theme.slot),
+            theme.theme_tint.map(tint_shade_factor),
+            theme.theme_shade.map(tint_shade_factor),
+        );
+    }
+    edge.color.map_or([0, 0, 0, 255], |c| [c.r, c.g, c.b, 255])
+}
+
 /// The border-conflict ranking key (higher wins): a visible border beats none,
 /// then wider beats narrower, then a higher style rank, then a darker color.
-fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
+///
+/// The darkness tie-break reads the *resolved* colour, so a themed edge is
+/// ranked by the colour it paints rather than by the black an unresolved
+/// reference used to fall back to.
+fn border_rank(edge: &BorderEdge, palette: Option<&ResolvedPalette>) -> (u32, u32, u32) {
     let width = edge.size_eighth_points.unwrap_or(0);
     let style: u32 = match edge.style.as_str() {
         "double" => 3,
@@ -3485,9 +3530,8 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
         _ => 0,
     };
     // Darker colors win ties: rank by inverse luminance (absent color = black).
-    let luminance = edge
-        .color
-        .map_or(0, |c| u32::from(c.r) + u32::from(c.g) + u32::from(c.b));
+    let rgba = edge_color(edge, palette);
+    let luminance = u32::from(rgba[0]) + u32::from(rgba[1]) + u32::from(rgba[2]);
     (width, style, 765 - luminance)
 }
 
@@ -6585,7 +6629,7 @@ fn styled_owned_run(
             ctx.text_scale,
         ),
         color: run_color(effective.color, ctx.palette),
-        decoration: run_decoration(&effective),
+        decoration: run_decoration(&effective, ctx.palette),
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading, ctx.palette),
         baseline_shift,
@@ -6627,7 +6671,7 @@ fn build_styled_run<'a>(
             ctx.text_scale,
         ),
         color: run_color(properties.color, ctx.palette),
-        decoration: run_decoration(properties),
+        decoration: run_decoration(properties, ctx.palette),
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading, ctx.palette),
         baseline_shift,
@@ -6705,7 +6749,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             ctx.text_scale,
         ),
         color: run_color(effective.color, ctx.palette),
-        decoration: run_decoration(&effective),
+        decoration: run_decoration(&effective, ctx.palette),
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading, ctx.palette),
         baseline_shift,
@@ -6927,7 +6971,7 @@ fn build_script_run<'a>(
             ctx.text_scale,
         ),
         color: run_color(properties.color, ctx.palette),
-        decoration: run_decoration(properties),
+        decoration: run_decoration(properties, ctx.palette),
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading, ctx.palette),
         baseline_shift,
@@ -6951,7 +6995,7 @@ fn push_small_caps_runs<'a>(
         ctx.text_scale,
     );
     let color = run_color(properties.color, ctx.palette);
-    let decoration = run_decoration(properties);
+    let decoration = run_decoration(properties, ctx.palette);
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading, ctx.palette);
     let family = requested_family(properties, ctx.scheme);
@@ -7029,7 +7073,7 @@ fn small_caps_spans(text: &str) -> Vec<(&str, bool)> {
 /// decoration geometry — they need outline stroking and offset/relief passes in
 /// the raster backend, not an arm here — so they are a separate piece of work
 /// rather than a line in this function.
-fn run_decoration(properties: &RunProperties) -> Decoration {
+fn run_decoration(properties: &RunProperties, palette: Option<&ResolvedPalette>) -> Decoration {
     Decoration {
         underline: properties.underline.unwrap_or(false),
         strikethrough: properties.strike.unwrap_or(false),
@@ -7039,7 +7083,7 @@ fn run_decoration(properties: &RunProperties) -> Decoration {
         emphasis: properties
             .emphasis
             .filter(|mark| *mark != EmphasisMark::None),
-        border: resolve_edge(&[properties.border.as_ref()]),
+        border: resolve_edge(&[properties.border.as_ref()], palette),
     }
 }
 
@@ -7071,14 +7115,14 @@ fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4]
 /// per slot, so a `w:themeColor` reference resolves to the real color rather than
 /// silently rendering black.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ResolvedPalette {
+pub(crate) struct ResolvedPalette {
     /// The twelve slots, in `ColorScheme` field order (see [`theme_slot_index`]).
     slots: [[u8; 4]; 12],
 }
 
 impl ResolvedPalette {
     /// The resolved RGBA for a theme color slot.
-    fn slot(&self, slot: ThemeColorRef) -> [u8; 4] {
+    pub(crate) fn slot(&self, slot: ThemeColorRef) -> [u8; 4] {
         self.slots[theme_slot_index(slot)]
     }
 }
@@ -7105,7 +7149,7 @@ fn theme_slot_index(slot: ThemeColorRef) -> usize {
 /// Resolves a document's [`ColorScheme`] to a [`ResolvedPalette`]: each slot's
 /// `a:srgbClr` becomes its RGB and each `a:sysClr` resolves to its `lastClr` (or a
 /// sensible default for the named system color when none was recorded).
-fn resolve_palette(scheme: &ColorScheme) -> ResolvedPalette {
+pub(crate) fn resolve_palette(scheme: &ColorScheme) -> ResolvedPalette {
     ResolvedPalette {
         slots: [
             resolve_scheme_color(&scheme.dark1),
@@ -8792,49 +8836,63 @@ mod tests {
     fn a_runs_emphasis_mark_and_border_reach_its_decoration() {
         use casual_doc_model::v1::BorderEdge;
 
-        let plain = run_decoration(&RunProperties::default());
+        let plain = run_decoration(&RunProperties::default(), None);
         assert_eq!(plain.emphasis, None, "an unmarked run carries no mark");
         assert_eq!(plain.border, None, "an unbordered run carries no box");
 
-        let marked = run_decoration(&RunProperties {
-            emphasis: Some(EmphasisMark::Comma),
-            ..RunProperties::default()
-        });
+        let marked = run_decoration(
+            &RunProperties {
+                emphasis: Some(EmphasisMark::Comma),
+                ..RunProperties::default()
+            },
+            None,
+        );
         assert_eq!(marked.emphasis, Some(EmphasisMark::Comma));
 
         // `w:em="none"` is an explicit CLEAR, not a mark: it must resolve to no
         // mark, otherwise a run that deliberately turns emphasis off would start
         // painting sesame dots.
-        let cleared = run_decoration(&RunProperties {
-            emphasis: Some(EmphasisMark::None),
-            ..RunProperties::default()
-        });
+        let cleared = run_decoration(
+            &RunProperties {
+                emphasis: Some(EmphasisMark::None),
+                ..RunProperties::default()
+            },
+            None,
+        );
         assert_eq!(cleared.emphasis, None, "`w:em=\"none\"` clears the mark");
 
         // The border goes through the shared edge resolution, so its width comes
         // from `w:sz` eighth-points and a `nil` edge is suppressed.
-        let bordered = run_decoration(&RunProperties {
-            border: Some(BorderEdge {
-                style: "single".to_owned(),
-                size_eighth_points: Some(8),
-                color: Some(casual_doc_model::v1::RgbColor { r: 1, g: 2, b: 3 }),
-                space_points: None,
-            }),
-            ..RunProperties::default()
-        });
+        let bordered = run_decoration(
+            &RunProperties {
+                border: Some(BorderEdge {
+                    style: "single".to_owned(),
+                    size_eighth_points: Some(8),
+                    color: Some(casual_doc_model::v1::RgbColor { r: 1, g: 2, b: 3 }),
+                    space_points: None,
+                    theme_color: None,
+                }),
+                ..RunProperties::default()
+            },
+            None,
+        );
         let edge = bordered.border.expect("a single-style `w:bdr` is drawable");
         assert_eq!(edge.width, Twip(20), "8 eighth-points = 1pt = 20 twips");
         assert_eq!(edge.color, [1, 2, 3, 255]);
 
-        let suppressed = run_decoration(&RunProperties {
-            border: Some(BorderEdge {
-                style: "nil".to_owned(),
-                size_eighth_points: Some(8),
-                color: None,
-                space_points: None,
-            }),
-            ..RunProperties::default()
-        });
+        let suppressed = run_decoration(
+            &RunProperties {
+                border: Some(BorderEdge {
+                    style: "nil".to_owned(),
+                    size_eighth_points: Some(8),
+                    color: None,
+                    space_points: None,
+                    theme_color: None,
+                }),
+                ..RunProperties::default()
+            },
+            None,
+        );
         assert_eq!(
             suppressed.border, None,
             "a `nil` edge is suppressed, not drawn as a hairline"
@@ -9713,6 +9771,157 @@ mod tests {
             sizes,
             [180, 240].into_iter().collect(),
             "the lowercase span is 3/4 size (180) and the rest full size (240): {sizes:?}"
+        );
+    }
+
+    /// A border carrying `@w:themeColor` paints the slot colour, flowed end to
+    /// end, and a tint is applied on the way.
+    ///
+    /// The altitude is deliberate: the invariant is "the painted edge colour is
+    /// the resolved theme colour", not "`resolve_edge` was handed a palette". The
+    /// run border is the one border reachable from a single paragraph, so this is
+    /// the shortest full-pipeline path to the shared [`resolve_edge`] every table,
+    /// cell, paragraph and page edge also goes through.
+    ///
+    /// The `assert_ne!` against black is the half that fails under the original
+    /// defect: before `BorderEdge::theme_color` existed, a themed edge arrived
+    /// with `color: None` and painted `[0, 0, 0, 255]`.
+    #[test]
+    fn a_themed_run_border_paints_the_theme_slot_not_black() {
+        use casual_doc_model::v1::{
+            BorderEdge, ColorScheme, RgbColor, SchemeColor, ThemeColor, ThemeColorRef,
+        };
+        let scheme = ColorScheme {
+            accent2: SchemeColor::Srgb(RgbColor {
+                r: 0x40,
+                g: 0x80,
+                b: 0xC0,
+            }),
+            ..ColorScheme::default()
+        };
+        let defs = Definitions {
+            color_scheme: Some(scheme),
+            ..Definitions::default()
+        };
+        let props = RunProperties {
+            border: Some(BorderEdge {
+                style: "single".to_owned(),
+                size_eighth_points: Some(8),
+                // The concrete sRGB Word writes beside the theme reference as the
+                // fallback. It is deliberately a colour the theme slot is NOT, so
+                // a reader that honours only the fallback fails here.
+                color: Some(RgbColor {
+                    r: 0xFF,
+                    g: 0x00,
+                    b: 0x00,
+                }),
+                theme_color: Some(ThemeColor {
+                    slot: ThemeColorRef::Accent2,
+                    theme_tint: None,
+                    theme_shade: None,
+                }),
+                space_points: None,
+            }),
+            ..RunProperties::default()
+        };
+        let doc = Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![paragraph(10, vec![run_node(11, "bordered", props)])],
+            defs,
+        )
+        .unwrap();
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let run = &first_paragraph_lines(&galley).lines[0].runs[0];
+        let edge = run
+            .decoration
+            .border
+            .expect("a single-style run border is drawable");
+        assert_eq!(
+            edge.color,
+            [0x40, 0x80, 0xC0, 255],
+            "the border's theme slot resolves to its real RGB, flowed end to end"
+        );
+        assert_ne!(
+            edge.color,
+            [0, 0, 0, 255],
+            "a resolvable theme border colour is not black"
+        );
+        assert_ne!(
+            edge.color,
+            [0xFF, 0x00, 0x00, 255],
+            "the theme reference wins over the concrete `w:color` fallback"
+        );
+    }
+
+    /// The three remaining halves of edge colour resolution, at the choke point
+    /// every border edge in the engine passes through: a tint blends the slot
+    /// toward white, a document with no `a:clrScheme` falls back to the concrete
+    /// `w:color`, and the conflict ranking's darkness tie-break reads the
+    /// *resolved* colour rather than the black an unresolved reference used to be.
+    #[test]
+    fn edge_colour_applies_tint_falls_back_without_a_palette_and_ranks_by_the_resolved_colour() {
+        use casual_doc_model::v1::{
+            BorderEdge, ColorScheme, RgbColor, SchemeColor, ThemeColor, ThemeColorRef,
+        };
+        let scheme = ColorScheme {
+            accent1: SchemeColor::Srgb(RgbColor { r: 0, g: 0, b: 0 }),
+            accent2: SchemeColor::Srgb(RgbColor {
+                r: 0xFF,
+                g: 0xFF,
+                b: 0xFF,
+            }),
+            ..ColorScheme::default()
+        };
+        let palette = resolve_palette(&scheme);
+        let themed = |slot, tint| BorderEdge {
+            style: "single".to_owned(),
+            size_eighth_points: Some(8),
+            color: Some(RgbColor {
+                r: 0x12,
+                g: 0x34,
+                b: 0x56,
+            }),
+            theme_color: Some(ThemeColor {
+                slot,
+                theme_tint: tint,
+                theme_shade: None,
+            }),
+            space_points: None,
+        };
+
+        // A half tint keeps half the (black) slot and blends the rest to white:
+        // `0 * 0x80/255 + 255 * (1 - 0x80/255)` rounds to 127.
+        let tinted = themed(ThemeColorRef::Accent1, Some(0x80));
+        assert_eq!(
+            edge_color(&tinted, Some(&palette)),
+            [127, 127, 127, 255],
+            "`w:themeTint=80` over a black slot is mid grey, not black"
+        );
+
+        // With no theme scheme the concrete `w:color` Word wrote beside the
+        // reference is the only thing left, and it is what paints.
+        assert_eq!(
+            edge_color(&tinted, None),
+            [0x12, 0x34, 0x56, 255],
+            "with no palette the concrete fallback paints, not black"
+        );
+
+        // Same width, same style: the darker RESOLVED colour wins. The white slot
+        // must lose to the black one even though both edges carry the identical
+        // concrete `w:color`, which is the only thing the old ranking could see.
+        let dark = themed(ThemeColorRef::Accent1, None);
+        let light = themed(ThemeColorRef::Accent2, None);
+        assert!(
+            border_rank(&dark, Some(&palette)) > border_rank(&light, Some(&palette)),
+            "a black theme slot outranks a white one at equal width and style"
+        );
+        assert_eq!(
+            resolve_edge(&[Some(&light), Some(&dark)], Some(&palette))
+                .expect("a visible winner")
+                .color,
+            [0, 0, 0, 255],
+            "the conflict winner is the edge whose resolved colour is darker"
         );
     }
 
@@ -11253,6 +11462,7 @@ mod tests {
                         size_eighth_points: Some(8),
                         color: None,
                         space_points: Some(4),
+                        theme_color: None,
                     }),
                     ..ParagraphBorders::default()
                 }
@@ -11312,6 +11522,7 @@ mod tests {
             size_eighth_points: Some(12), // 12/8 pt = 30 twips
             color: None,
             space_points: Some(space),
+            theme_color: None,
         };
         let para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(30, 1).unwrap(),
@@ -11326,6 +11537,7 @@ mod tests {
                         size_eighth_points: Some(12),
                         color: None,
                         space_points: Some(4),
+                        theme_color: None,
                     }),
                     ..ParagraphBorders::default()
                 }
@@ -11538,6 +11750,7 @@ mod tests {
             size_eighth_points: Some(sz),
             color: None,
             space_points: None,
+            theme_color: None,
         }
     }
 
@@ -13213,6 +13426,7 @@ mod tests {
             size_eighth_points: Some(8),
             color: None,
             space_points: None,
+            theme_color: None,
         };
         let broken = [
             "dashed",
@@ -13225,8 +13439,8 @@ mod tests {
         for style in broken {
             for other in broken {
                 assert_eq!(
-                    border_rank(&edge(style)),
-                    border_rank(&edge(other)),
+                    border_rank(&edge(style), None),
+                    border_rank(&edge(other), None),
                     "{style} and {other} are both visible broken lines of one width, so \
                      neither may outrank the other"
                 );
@@ -13234,7 +13448,7 @@ mod tests {
             // …and a broken line still beats an invisible edge of the same declared width,
             // which is the precondition that makes the equality above mean something.
             assert!(
-                border_rank(&edge(style)) > border_rank(&edge("nil")),
+                border_rank(&edge(style), None) > border_rank(&edge("nil"), None),
                 "{style} must outrank an invisible edge"
             );
         }
