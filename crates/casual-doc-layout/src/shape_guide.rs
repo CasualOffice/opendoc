@@ -226,19 +226,39 @@ fn from_radians(radians: f64) -> f64 {
 /// the right answer rather than producing an infinity: the caller keeps the
 /// documented default, which is a shape someone chose, where an infinity would be a
 /// shape nobody chose.
+///
+/// # The one over-long formula the specification itself writes
+///
+/// No opcode takes more than three operands, but ECMA-376's own normative preset
+/// data writes eight guides with four, always with a redundant trailing `0`:
+/// `+- xH 0 dxB 0` in `circularArrow`, `leftCircularArrow` and
+/// `leftRightCircularArrow` (`fixtures/spec/presetShapeDefinitions.xml`, e.g. line
+/// 4363). The reading is not ambiguous — the guide directly above each one is
+/// `+- xH dxG 0` with `dxG == dxB`, so the pair is the two arrowhead corners either
+/// side of `xH` — and a trailing zero cannot change `x + y - z` whichever way it is
+/// grouped. So a FOURTH operand is dropped when it is exactly zero, and refused
+/// otherwise; without this the three circular-arrow presets cannot resolve at all,
+/// for a reason that has nothing to do with the commands in their paths. A fifth
+/// operand, or a non-zero fourth, is still not a formula in this language.
 #[must_use]
 fn evaluate(formula: &str, shape: GuideBox, resolved: &[Guide<'_>]) -> Option<f64> {
     let mut tokens = formula.split_whitespace();
     let op = tokens.next()?;
-    let mut args = [0.0_f64; 3];
+    let mut args = [0.0_f64; 4];
     let mut count = 0_usize;
     for token in tokens {
         if count == args.len() {
-            // A fourth operand means this is not a formula in the language.
+            // A fifth operand means this is not a formula in the language.
             return None;
         }
         args[count] = operand(token, shape, resolved)?;
         count += 1;
+    }
+    if count == 4 {
+        if args[3] != 0.0 {
+            return None;
+        }
+        count = 3;
     }
     let (x, y, z) = (args[0], args[1], args[2]);
     let value = match (op, count) {
@@ -435,6 +455,36 @@ mod tests {
         assert_eq!(eval("*/ 1 2"), None, "too few operands for */");
         assert_eq!(eval("val 1 2 3 4"), None, "beyond three operands");
         assert_eq!(eval("val mystery"), None, "unknown name");
+    }
+
+    #[test]
+    fn the_specifications_own_redundant_fourth_operand_is_dropped() {
+        // ECMA-376's normative preset data writes eight guides with one operand more
+        // than any opcode takes, always a trailing zero: `+- xH 0 dxB 0`, in
+        // `circularArrow`, `leftCircularArrow` and `leftRightCircularArrow`. Strict
+        // arity refused them, which refused those three presets entirely — and for a
+        // reason that has nothing to do with the arcs in their paths, so it hid
+        // behind the arc refusal until arcs started drawing.
+        //
+        // The reading is not a guess: the guide immediately above each one is
+        // `+- xH dxG 0` with `dxG` and `dxB` the same formula, so the pair is the two
+        // arrowhead corners either side of `xH`, and a trailing zero cannot change
+        // `x + y - z` however it is grouped.
+        assert_eq!(
+            eval("+- 10 0 3 0"),
+            Some(7.0),
+            "the specification's own shape"
+        );
+        assert_eq!(eval("+- 10 3 0 0"), Some(13.0));
+        // A fourth operand that is NOT zero could change the answer, so it still means
+        // this is not a formula in the language — as does a fifth.
+        assert_eq!(eval("+- 10 0 3 1"), None, "not padding");
+        assert_eq!(eval("+- 10 0 3 0 0"), None, "a fifth operand");
+        assert_eq!(
+            eval("*/ 10 3 2 5"),
+            None,
+            "and the same for the other opcodes"
+        );
     }
 
     #[test]
