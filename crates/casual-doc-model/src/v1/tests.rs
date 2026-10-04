@@ -6237,3 +6237,256 @@ fn the_shape_fill_detail_table_is_additive_and_round_trips() {
          type's own default (a `0` miter limit, a `None` vertical tile scale)"
     );
 }
+
+/// `a:satMod` scales HSL saturation, and the amount is asserted EXACTLY rather
+/// than as "something changed".
+///
+/// The arithmetic, for Office accent1 `#4472C4` at `val="155000"`:
+/// `max = 196`, `min = 68`, so `2L = 264` and `L = 132`; chroma `= 128` and the
+/// ceiling at that lightness is `min(264, 510 − 264) = 246`, so `128 × 1.55 =
+/// 198.4 ≤ 246` and `k = 1.55` unclamped. Then
+/// `r = 132 + 1.55·(68 − 132) = 32.8 → 33`,
+/// `g = 132 + 1.55·(114 − 132) = 104.1 → 104`,
+/// `b = 132 + 1.55·(196 − 132) = 231.2 → 231` — `#2168E7`.
+///
+/// Mutation: apply the factor channel-wise (`*c *= factor`) instead of about `L`.
+#[test]
+fn sat_mod_scales_saturation_about_the_lightness_by_the_exact_amount() {
+    let accent = Rgba {
+        r: 0x44,
+        g: 0x72,
+        b: 0xC4,
+        a: 255,
+    };
+    let saturated = ColorTransform {
+        sat_mod: Some(155_000),
+        ..ColorTransform::default()
+    }
+    .apply(accent);
+    assert_eq!(
+        saturated,
+        Rgba {
+            r: 33,
+            g: 104,
+            b: 231,
+            a: 255
+        },
+        "satMod 155% of #4472C4 is #2168E7: each channel scaled 1.55x about L = 132"
+    );
+
+    // The inverse direction, same colour, same arithmetic:
+    // `132 + 0.6·(68 − 132) = 93.6 → 94`, `132 + 0.6·(114 − 132) = 121.2 → 121`,
+    // `132 + 0.6·(196 − 132) = 170.4 → 170`.
+    let desaturated = ColorTransform {
+        sat_mod: Some(60_000),
+        ..ColorTransform::default()
+    }
+    .apply(accent);
+    assert_eq!(
+        desaturated,
+        Rgba {
+            r: 94,
+            g: 121,
+            b: 170,
+            a: 255
+        },
+        "satMod 60% of #4472C4 is #5E79AA"
+    );
+
+    // Hue and lightness are the invariants: `(max + min)` is unchanged by either
+    // direction, which is `2L`.
+    for color in [saturated, desaturated] {
+        let max = u32::from(color.r.max(color.g).max(color.b));
+        let min = u32::from(color.r.min(color.g).min(color.b));
+        assert_eq!(
+            max + min,
+            u32::from(accent.r.max(accent.g).max(accent.b))
+                + u32::from(accent.r.min(accent.g).min(accent.b)),
+            "saturation modulation must not move the lightness"
+        );
+    }
+}
+
+/// `val="100000"` is a bit-exact no-op, and a grey base is untouched at any value.
+///
+/// Both are properties, not conveniences: a theme that writes `satMod` at 100%
+/// (several do, on `phClr` stops) must not shift a colour, and a greyscale
+/// decoration has no saturation to modulate.
+///
+/// Mutation: drop the `if k == 1.0 { return; }` early exit and the `chroma <= 0.0`
+/// guard in `modulate_saturation`.
+#[test]
+fn sat_mod_is_a_no_op_at_one_hundred_percent_and_on_grey() {
+    let accent = Rgba {
+        r: 0x44,
+        g: 0x72,
+        b: 0xC4,
+        a: 255,
+    };
+    assert_eq!(
+        ColorTransform {
+            sat_mod: Some(100_000),
+            ..ColorTransform::default()
+        }
+        .apply(accent),
+        accent,
+        "satMod 100% must return the base bit-for-bit"
+    );
+
+    let grey = Rgba {
+        r: 0x80,
+        g: 0x80,
+        b: 0x80,
+        a: 255,
+    };
+    for value in [0, 40_000, 300_000] {
+        assert_eq!(
+            ColorTransform {
+                sat_mod: Some(value),
+                ..ColorTransform::default()
+            }
+            .apply(grey),
+            grey,
+            "a grey base has no saturation to modulate at {value}"
+        );
+    }
+}
+
+/// A `satMod` that would push saturation past 1 saturates at the ceiling INSTEAD
+/// of clipping each channel independently, because per-channel clipping shifts the
+/// hue.
+///
+/// `#008000` is already fully saturated: `max = 128`, `min = 0`, `2L = 128`,
+/// chroma `= 128` and the ceiling at that lightness is `min(128, 382) = 128`, so
+/// `S == 1` and `k` clamps to `1`. A channel-wise `×1.5` would give
+/// `(0, 192, 0)`, which is a different colour at a different lightness.
+///
+/// Mutation: remove the `.min(chroma_ceiling)` so `k` can exceed the ceiling.
+#[test]
+fn sat_mod_saturates_at_the_ceiling_rather_than_clipping_a_channel() {
+    let pure_green = Rgba {
+        r: 0,
+        g: 0x80,
+        b: 0,
+        a: 255,
+    };
+    assert_eq!(
+        ColorTransform {
+            sat_mod: Some(150_000),
+            ..ColorTransform::default()
+        }
+        .apply(pure_green),
+        pure_green,
+        "a fully saturated base cannot be made more saturated"
+    );
+}
+
+/// Composition order, with TWO transforms that do not commute, asserted to the
+/// exact byte.
+///
+/// `a:satMod` and `a:tint` are each affine about a different fixed point, so they
+/// commute while the modulation has headroom and diverge the moment it saturates.
+/// `#008000` saturates: it has `S == 1`, so `satMod` first is a no-op and the
+/// tint alone decides the result; `tint` first lightens it to `S < 1`, which gives
+/// the modulation room and lands somewhere else entirely.
+///
+/// - the order this build applies (`satMod`, then `tint`):
+///   `satMod` clamps to `k = 1` → `(0, 128, 0)`; `tint 0.75` →
+///   `0.75·0 + 63.75 = 63.75 → 64`, `0.75·128 + 63.75 = 159.75 → 160`,
+///   `63.75 → 64` = **`#40A040`**.
+/// - the order it must NOT apply (`tint`, then `satMod`):
+///   `tint 0.75` → `(63.75, 159.75, 63.75)`, where `2L = 223.5`, chroma `= 96`
+///   and the ceiling is `223.5`, so `k = 1.5` survives →
+///   `111.75 ± 1.5·48` = `(39.75, 183.75, 39.75)` → `#28B828`.
+///
+/// Mutation: move the `sat_mod` block in `fold_color_modifiers` below the `tint`
+/// block.
+#[test]
+fn sat_mod_composes_before_tint_and_the_two_do_not_commute() {
+    let base = Rgba {
+        r: 0,
+        g: 0x80,
+        b: 0,
+        a: 255,
+    };
+    let folded = ColorTransform {
+        sat_mod: Some(150_000),
+        tint: Some(75_000),
+        ..ColorTransform::default()
+    }
+    .apply(base);
+    assert_eq!(
+        folded,
+        Rgba {
+            r: 64,
+            g: 160,
+            b: 64,
+            a: 255
+        },
+        "satMod is applied BEFORE tint (#40A040); tint-then-satMod would be #28B828"
+    );
+
+    // And the reversed order really is reachable from this same fold, so the
+    // assertion above discriminates between two live answers rather than against
+    // an impossibility: folding the tint first and the modulation second gives
+    // #28B828.
+    let tinted = ColorTransform {
+        tint: Some(75_000),
+        ..ColorTransform::default()
+    }
+    .apply(base);
+    let then_saturated = ColorTransform {
+        sat_mod: Some(150_000),
+        ..ColorTransform::default()
+    }
+    .apply(tinted);
+    assert_eq!(
+        then_saturated,
+        Rgba {
+            r: 40,
+            g: 184,
+            b: 40,
+            a: 255
+        },
+        "tint-then-satMod is #28B828, computed through the same fold in two steps"
+    );
+    assert_ne!(
+        folded, then_saturated,
+        "the two orders are different colours, which is what makes the order a \
+         contract rather than a convention"
+    );
+}
+
+/// A `ColorTransform` carrying `satMod` survives a snapshot round trip, and a
+/// transform without one still serializes without the key.
+///
+/// The second half is the compatibility half: `skip_serializing_if` is what keeps
+/// every committed snapshot byte-identical, and a guard that only checked the
+/// populated case would not notice it being dropped.
+#[test]
+fn sat_mod_round_trips_through_json_and_is_omitted_when_absent() {
+    let populated = ColorTransform {
+        lum_mod: Some(110_000),
+        sat_mod: Some(105_000),
+        tint: Some(67_000),
+        ..ColorTransform::default()
+    };
+    let json = serde_json::to_string(&populated).unwrap();
+    assert_eq!(
+        json, r#"{"lumMod":110000,"satMod":105000,"tint":67000}"#,
+        "satMod serializes under its OOXML name, in the fold's application order"
+    );
+    assert_eq!(
+        serde_json::from_str::<ColorTransform>(&json).unwrap(),
+        populated
+    );
+    assert_eq!(
+        serde_json::to_string(&ColorTransform {
+            tint: Some(50_000),
+            ..ColorTransform::default()
+        })
+        .unwrap(),
+        r#"{"tint":50000}"#,
+        "a transform with no saturation must not grow a key"
+    );
+}

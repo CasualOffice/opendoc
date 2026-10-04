@@ -554,6 +554,9 @@ struct PendingColor {
     base: [u8; 4],
     lum_mod: Option<f32>,
     lum_off: Option<f32>,
+    /// `a:satMod` — in the fold's application order, between the luminance pair
+    /// and the blends.
+    sat_mod: Option<f32>,
     tint: Option<f32>,
     shade: Option<f32>,
     alpha: Option<f32>,
@@ -3912,6 +3915,7 @@ impl BodyParser<'_> {
                         base,
                         lum_mod: None,
                         lum_off: None,
+                        sat_mod: None,
                         tint: None,
                         shade: None,
                         alpha: None,
@@ -3951,6 +3955,7 @@ impl BodyParser<'_> {
                         base,
                         lum_mod: None,
                         lum_off: None,
+                        sat_mod: None,
                         tint: None,
                         shade: None,
                         alpha: None,
@@ -3959,7 +3964,7 @@ impl BodyParser<'_> {
                 }
             }
             // Color transform modifiers, applied when the color element closes.
-            b"lumMod" | b"lumOff" | b"tint" | b"shade" | b"alpha"
+            b"lumMod" | b"lumOff" | b"satMod" | b"tint" | b"shade" | b"alpha"
                 if self.pending_color.is_some() =>
             {
                 if let Some(color) = self.pending_color.as_mut()
@@ -3970,6 +3975,7 @@ impl BodyParser<'_> {
                     match local {
                         b"lumMod" => color.lum_mod = Some(factor),
                         b"lumOff" => color.lum_off = Some(factor),
+                        b"satMod" => color.sat_mod = Some(factor),
                         b"tint" => color.tint = Some(factor),
                         b"shade" => color.shade = Some(factor),
                         _ => color.alpha = Some(factor),
@@ -9203,6 +9209,7 @@ fn fold_color(color: &PendingColor) -> Rgba {
         },
         color.lum_mod,
         color.lum_off,
+        color.sat_mod,
         color.tint,
         color.shade,
         color.alpha,

@@ -506,7 +506,7 @@ enum ColorSlot {
 struct PendingStyleColor {
     /// The base: the placeholder, or a concrete colour the theme fixed.
     base: Option<Rgba>,
-    /// `a:lumMod`/`a:lumOff`/`a:tint`/`a:shade`/`a:alpha`, per-100000.
+    /// `a:lumMod`/`a:lumOff`/`a:satMod`/`a:tint`/`a:shade`/`a:alpha`, per-100000.
     transform: ColorTransform,
     slot: ColorSlot,
 }
@@ -758,7 +758,7 @@ impl SchemeParser {
                     }
                 }
             }
-            b"lumMod" | b"lumOff" | b"tint" | b"shade" | b"alpha" => {
+            b"lumMod" | b"lumOff" | b"satMod" | b"tint" | b"shade" | b"alpha" => {
                 if let Some(pending) = self.pending_color.as_mut()
                     && let Some(value) = attribute_value(element, b"val")
                         .as_deref()
@@ -768,6 +768,7 @@ impl SchemeParser {
                     match local {
                         b"lumMod" => pending.transform.lum_mod = Some(value),
                         b"lumOff" => pending.transform.lum_off = Some(value),
+                        b"satMod" => pending.transform.sat_mod = Some(value),
                         b"tint" => pending.transform.tint = Some(value),
                         b"shade" => pending.transform.shade = Some(value),
                         _ => pending.transform.alpha = Some(value),

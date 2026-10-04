@@ -11544,3 +11544,100 @@ fn a_pictures_effect_list_is_still_reported_as_a_loss() {
 
 /// A `pic:pic` whose `pic:spPr` carries whatever `@@EFFECTS@@` is replaced with.
 const PICTURE_EFFECT_DOCUMENT: &str = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="500000" cy="500000"/><wp:docPr id="1" name="Pic"/><a:graphic><a:graphicData uri="urn:pic"><pic:pic><pic:nvPicPr><pic:cNvPr id="2" name="Pic"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/>@@EFFECTS@@</pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+
+/// `<a:satMod val="…"/>` on a shape's own `a:solidFill` is APPLIED, by the exact
+/// amount, and no longer reported as a loss.
+///
+/// The element is self-closing and carries its whole meaning in `@val`, which is
+/// the shape a modifier always has, so a reader that only looked at element names
+/// would see nothing to do here.
+///
+/// `#4472C4` at `val="155000"`: `L = 132`, chroma `128`, ceiling `246`, so
+/// `k = 1.55` and each channel scales about `132` → `#2168E7`. The arithmetic is
+/// `casual_doc_model::v1::fold_color_modifiers`, which has its own exactness and
+/// composition-order guards; this one proves the DOCX reader REACHES it.
+///
+/// Mutation: drop `b"satMod"` from the modifier arm in `body.rs` (restoring the
+/// five-modifier match) — the fill comes back as the unmodulated `#4472C4` and
+/// `satMod` reappears in the report.
+#[test]
+fn a_sat_mod_on_a_shape_fill_is_applied_and_no_longer_reported() {
+    use casual_doc_model::v1::{Fill, GroupChild, Rgba};
+
+    let import = import_standalone_drawingml_shape_with_style(
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"><a:satMod val="155000"/></a:srgbClr></a:solidFill>"#,
+        "",
+    );
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    assert_eq!(
+        shape.fill,
+        Some(Fill::Solid(Rgba {
+            r: 0x21,
+            g: 0x68,
+            b: 0xE7,
+            a: 255
+        })),
+        "satMod 155% of #4472C4 must resolve to #2168E7, not to the base colour"
+    );
+    assert!(
+        !features(&import).contains(&"satMod"),
+        "a modifier this build now applies must not also be reported as a loss; \
+         the report said {:?}",
+        features(&import)
+    );
+}
+
+/// The same modifier inside a theme `a:fmtScheme` entry reaches the DEFERRED half
+/// of the fold: a transform over `a:phClr` cannot be applied at parse time, so it
+/// travels on the `StyleColor::Placeholder` and is folded when a shape's
+/// `a:fillRef` supplies the base.
+///
+/// Two readers exist for these six modifiers — `body.rs` for a colour whose base
+/// is known and `theme.rs` for one whose base is not — and a change that taught
+/// only the first would lose every themed shape's saturation while looking
+/// complete. This guard is what makes that asymmetry visible.
+///
+/// Mutation: drop `b"satMod"` from the modifier arm in `theme.rs` — the retained
+/// placeholder's transform comes back with `sat_mod: None`.
+#[test]
+fn a_sat_mod_in_a_theme_format_scheme_entry_travels_on_the_placeholder() {
+    use casual_doc_model::v1::{ColorTransform, FillStyle, StyleColor};
+
+    let import = import_with_theme(
+        PLAIN_BODY,
+        br#"<a:theme xmlns:a="urn:a" name="T">
+          <a:themeElements>
+            <a:fmtScheme name="Office">
+              <a:fillStyleLst>
+                <a:solidFill><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="105000"/><a:tint val="67000"/></a:schemeClr></a:solidFill>
+              </a:fillStyleLst>
+            </a:fmtScheme>
+          </a:themeElements>
+        </a:theme>"#,
+    );
+    let scheme = import
+        .document
+        .definitions()
+        .format_scheme
+        .as_ref()
+        .expect("the modelled format scheme is parsed");
+    let Some(FillStyle::Solid { color }) = scheme.fill_styles[0].as_ref() else {
+        panic!("expected a modelled solid fill-style entry");
+    };
+    assert_eq!(
+        *color,
+        StyleColor::Placeholder(ColorTransform {
+            lum_mod: Some(110_000),
+            sat_mod: Some(105_000),
+            tint: Some(67_000),
+            ..ColorTransform::default()
+        }),
+        "all three modifiers travel unapplied, in the thousandths-of-a-percent \
+         units the file states"
+    );
+}

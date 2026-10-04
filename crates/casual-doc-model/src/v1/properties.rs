@@ -754,6 +754,14 @@ pub struct ColorTransform {
     /// `a:lumOff@val` — luminance offset, per-100000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lum_off: Option<i32>,
+    /// `a:satMod@val` — saturation multiplier, per-100000.
+    ///
+    /// Declared after the luminance pair and before `tint`/`shade` because that is
+    /// the order [`fold_color_modifiers`] applies them in, and a field order that
+    /// contradicts the application order is how a reader infers the wrong
+    /// composition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sat_mod: Option<i32>,
     /// `a:tint@val` — blend toward white, per-100000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<i32>,
@@ -786,6 +794,7 @@ impl ColorTransform {
             base,
             frac(self.lum_mod),
             frac(self.lum_off),
+            frac(self.sat_mod),
             frac(self.tint),
             frac(self.shade),
             frac(self.alpha),
@@ -797,8 +806,9 @@ impl ColorTransform {
 /// (`0.67`, not `67000`).
 ///
 /// `lumMod` scales and `lumOff` offsets luminance (applied channel-wise, exact
-/// for the grayscale bases these decorations use); `tint` lightens toward white
-/// and `shade` darkens toward black; `alpha` sets opacity.
+/// for the grayscale bases these decorations use); `satMod` scales saturation in
+/// HSL (see [`fold_color_modifiers`] body and the note below); `tint` lightens
+/// toward white and `shade` darkens toward black; `alpha` sets opacity.
 ///
 /// One function rather than two: the importer folds modifiers over a base it
 /// already knows, and [`ColorTransform::apply`] folds the same modifiers over a
@@ -806,9 +816,17 @@ impl ColorTransform {
 /// and a divergence here would show as a themed shape painting a slightly
 /// different colour from an explicitly-filled one.
 ///
-/// `a:satMod` is absent on purpose: nothing in this build applies a saturation
-/// modifier, and adding a half-correct one here would be a silent change to every
-/// existing colour. The detail survives in the retained `a:fmtScheme`.
+/// # The order is part of the contract
+///
+/// `lumMod`, `lumOff`, `satMod`, `tint`, `shade`, `alpha` — the HSL modifiers
+/// first, then the two toward-white/toward-black blends, then opacity. Two pieces
+/// of evidence put `satMod` in that slot rather than at the end: ECMA-376
+/// §20.1.2.3 lists the `EG_ColorTransform` children alphabetically, where
+/// `satMod` falls after `lumMod`/`lumOff` and before `shade`/`tint`; and Office's
+/// own default theme writes them in that document order
+/// (`<a:lumMod/><a:satMod/><a:tint/>`). The order matters: `satMod` and `tint` do
+/// **not** commute whenever the modulation saturates (see the unit guards), so
+/// appending it after the blends would paint a different colour.
 ///
 /// Complexity: O(1).
 #[must_use]
@@ -816,6 +834,7 @@ pub fn fold_color_modifiers(
     base: Rgba,
     lum_mod: Option<f32>,
     lum_off: Option<f32>,
+    sat_mod: Option<f32>,
     tint: Option<f32>,
     shade: Option<f32>,
     alpha: Option<f32>,
@@ -830,6 +849,9 @@ pub fn fold_color_modifiers(
         for c in &mut rgb {
             *c += o * 255.0;
         }
+    }
+    if let Some(m) = sat_mod {
+        modulate_saturation(&mut rgb, m);
     }
     if let Some(t) = tint {
         let t = t.clamp(0.0, 1.0);
@@ -849,6 +871,77 @@ pub fn fold_color_modifiers(
         g: clamp(rgb[1]),
         b: clamp(rgb[2]),
         a: alpha.map_or(base.a, |a| clamp(a.clamp(0.0, 1.0) * 255.0)),
+    }
+}
+
+/// Scales an sRGB triple's HSL **saturation** by `factor` in place, keeping its
+/// hue and lightness exactly (`a:satMod`, ECMA-376 §20.1.2.3.26).
+///
+/// # Why this is not a channel-wise multiply
+///
+/// Saturation is not an RGB quantity. In HSL, with `L` the lightness and `C` the
+/// chroma, every channel is affine in chroma for a fixed hue and lightness:
+/// `c = L + C·(p − ½)` where `p` depends only on the hue. Scaling `S` scales `C`
+/// by the same factor, so modulating saturation is **exactly** a linear scaling
+/// of every channel about `L`:
+///
+/// ```text
+/// L  = (max + min) / 2
+/// c' = L + (c − L) · k
+/// ```
+///
+/// That identity is what lets this stay in the RGB domain without an HSL round
+/// trip: converting to HSL and back would introduce two rounding errors for an
+/// operation that provably needs none, and would lose the hue of a colour whose
+/// chroma the conversion flattened. Hue is preserved because every `(c − L)`
+/// scales by the same `k`, and lightness because `max' + min' = 2L` again.
+///
+/// # The ceiling
+///
+/// `S` cannot exceed `1`, so `C` cannot exceed the chroma a fully saturated
+/// colour has at this lightness, `min(2L, 510 − 2L)`. A `satMod` that would push
+/// past it saturates there rather than wrapping or clipping per channel — clipping
+/// a channel independently would shift the hue, which is the one thing a
+/// saturation modifier must not do. This ceiling is also the only reason `satMod`
+/// fails to commute with `tint`/`shade`/`lumMod`: all four of those are affine
+/// maps, and the scaling above commutes with any affine map at a fixed `k`.
+///
+/// # Exactness
+///
+/// `<a:satMod val="100000"/>` is a bit-exact no-op, and that is a **measured**
+/// property of the arithmetic rather than a special case: `k` is then exactly `1`
+/// and `L + (c − L)·1` was verified to round back to `c` for all 2^24 sRGB bases,
+/// so an `if k == 1.0 { return }` short circuit was written, shown to change no
+/// colour, and deliberately removed — an unfalsifiable line in a colour path is
+/// worse than none (`SKILL` §4).
+///
+/// An achromatic base returns immediately, and that one IS load-bearing: its
+/// chroma is zero, so `k` would be `0/0`.
+///
+/// The channels are brought back into gamut first, because HSL is defined only on
+/// in-gamut sRGB and `a:lumOff` can push a channel past `255`. That clamp lives
+/// inside this function rather than in the fold, so a colour carrying no
+/// `a:satMod` folds bit-identically to how it folded before saturation existed.
+///
+/// Complexity: O(1).
+fn modulate_saturation(rgb: &mut [f32; 3], factor: f32) {
+    for channel in rgb.iter_mut() {
+        *channel = channel.clamp(0.0, 255.0);
+    }
+    let max = rgb[0].max(rgb[1]).max(rgb[2]);
+    let min = rgb[0].min(rgb[1]).min(rgb[2]);
+    let chroma = max - min;
+    if chroma <= 0.0 {
+        return;
+    }
+    // `2L` in 0.0..=510.0, so the ceiling is integral arithmetic on the same scale
+    // as the channels and needs no division.
+    let double_lum = max + min;
+    let chroma_ceiling = double_lum.min(510.0 - double_lum);
+    let k = (chroma * factor.max(0.0)).min(chroma_ceiling) / chroma;
+    let lum = double_lum / 2.0;
+    for channel in rgb.iter_mut() {
+        *channel = lum + (*channel - lum) * k;
     }
 }
 
