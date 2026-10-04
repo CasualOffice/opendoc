@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "다른 문서에는 있고 이 문서에는 없는 단락 전체입니다. 변경 내용은 이 문서에 있는 텍스트를 표시하므로, 여기에는 표시할 단락이 없습니다.",
   "compare.unmarked.incompleteComparison": "비교 자체가 완전하지 않았으므로, 이것이 차이점 전부는 아닙니다.",
   "compare.unmarked.notMarkable": "실제 차이점이지만 여기에 표시할 텍스트 구간이 없습니다.",
+  "compare.unmarked.otherStory": "머리글, 바닥글, 주석 또는 메모의 차이점입니다. 비교는 본문에만 기록됩니다.",
   "compare.unmarked.trackedMove": "이동의 반대쪽 절반입니다. 내용이 어디에서 왔는지는 다른 문서에만 있습니다.",
   "compare.unmarked.truncatedText": "삭제된 텍스트가 너무 길어 그대로 기록할 수 없으므로, 삭제를 복원하지 않고 보고합니다.",
   "compare.unmarkedTitle": "찾았지만 문서에 표시하지 못함:",

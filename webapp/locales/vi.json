@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Toàn bộ đoạn văn mà tài liệu kia có và tài liệu này không có — một thay đổi được theo dõi đánh dấu văn bản hiện có ở đây, và ở đây không có đoạn nào để đánh dấu.",
   "compare.unmarked.incompleteComparison": "Bản thân phép so sánh chưa đầy đủ, nên đây không phải là tất cả những gì khác biệt.",
   "compare.unmarked.notMarkable": "Một khác biệt thực sự nhưng ở đây không có đoạn văn bản nào để đánh dấu.",
+  "compare.unmarked.otherStory": "Khác biệt trong đầu trang, chân trang, ghi chú hoặc nhận xét: phép so sánh chỉ được ghi vào phần thân tài liệu.",
   "compare.unmarked.trackedMove": "Nửa còn lại của một lần di chuyển: nơi nội dung xuất phát chỉ có trong tài liệu kia.",
   "compare.unmarked.truncatedText": "Văn bản đã xóa quá dài để ghi lại nguyên văn, nên việc xóa được báo cáo chứ không được tái tạo.",
   "compare.unmarkedTitle": "Đã tìm thấy, nhưng không được đánh dấu trong tài liệu:",

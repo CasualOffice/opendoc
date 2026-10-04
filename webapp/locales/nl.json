@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Volledige alinea’s die het andere document heeft en dit niet — een bijgehouden wijziging markeert tekst die hier staat, en hier is geen alinea om te markeren.",
   "compare.unmarked.incompleteComparison": "De vergelijking zelf was niet volledig, dus dit is niet alles wat verschilt.",
   "compare.unmarked.notMarkable": "Een echt verschil zonder enig stuk tekst hier om het op te markeren.",
+  "compare.unmarked.otherStory": "Verschillen in een koptekst, voettekst, notitie of opmerking: een vergelijking wordt alleen in de hoofdtekst geschreven.",
   "compare.unmarked.trackedMove": "De andere helft van een verplaatsing: waar de inhoud vandaan kwam, staat alleen in het andere document.",
   "compare.unmarked.truncatedText": "Verwijderde tekst die te lang is om woord voor woord vast te leggen, dus de verwijdering wordt gemeld in plaats van gereconstrueerd.",
   "compare.unmarkedTitle": "Gevonden, maar niet gemarkeerd in het document:",

@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Diğer belgede olup bunda olmayan tam paragraflar — izlenen bir değişiklik burada bulunan metni işaretler ve burada işaretlenecek bir paragraf yok.",
   "compare.unmarked.incompleteComparison": "Karşılaştırmanın kendisi eksiksiz değildi, dolayısıyla bu, farklı olan her şey değil.",
   "compare.unmarked.notMarkable": "Gerçek bir fark; ancak burada işaretlenecek bir metin parçası yok.",
+  "compare.unmarked.otherStory": "Üst bilgi, alt bilgi, not veya açıklamadaki farklar: bir karşılaştırma yalnızca gövdeye yazılır.",
   "compare.unmarked.trackedMove": "Bir taşımanın öbür yarısı: içeriğin nereden geldiği yalnızca diğer belgede.",
   "compare.unmarked.truncatedText": "Kaldırılan metin kelimesi kelimesine kaydedilemeyecek kadar uzun, bu nedenle silme yeniden oluşturulmak yerine bildiriliyor.",
   "compare.unmarkedTitle": "Bulundu, ancak belgede işaretlenmedi:",

@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Whole paragraphs the other document has and this one does not — a tracked change marks text that is here, and there is no paragraph here to mark.",
   "compare.unmarked.incompleteComparison": "The comparison itself stopped short of exhaustive, so this is not everything that differs.",
   "compare.unmarked.notMarkable": "A real difference with no run of text here to mark it on.",
+  "compare.unmarked.otherStory": "Differences in a header, footer, note or comment: a comparison is written into the body only.",
   "compare.unmarked.trackedMove": "The far half of a move: where the content came from is in the other document only.",
   "compare.unmarked.truncatedText": "Removed text too long to record word for word, so the deletion is reported rather than reconstructed.",
   "compare.unmarkedTitle": "Found, but not marked in the document:",

@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "另一份文件有而本文件沒有的整個段落——追蹤的變更標記的是本文件中存在的文字，而這裡沒有可標記的段落。",
   "compare.unmarked.incompleteComparison": "比較本身並不完整，因此這並非全部差異。",
   "compare.unmarked.notMarkable": "一處真實差異，但這裡沒有可供標記的文字。",
+  "compare.unmarked.otherStory": "頁首、頁尾、註腳或註解中的差異：比較只寫入文件本文。",
   "compare.unmarked.trackedMove": "移動的另一半：內容的來源只在另一份文件中。",
   "compare.unmarked.truncatedText": "刪除的文字過長，無法逐字記錄，因此只回報該刪除而不重建它。",
   "compare.unmarkedTitle": "已找到，但未在文件中標記：",

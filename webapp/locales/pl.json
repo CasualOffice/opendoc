@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Całe akapity, które ma drugi dokument, a ten nie — śledzona zmiana oznacza tekst obecny tutaj, a tutaj nie ma akapitu do oznaczenia.",
   "compare.unmarked.incompleteComparison": "Samo porównanie nie było wyczerpujące, więc to nie wszystko, co się różni.",
   "compare.unmarked.notMarkable": "Rzeczywista różnica, dla której nie ma tutaj fragmentu tekstu do oznaczenia.",
+  "compare.unmarked.otherStory": "Różnice w nagłówku, stopce, przypisie lub komentarzu: porównanie jest zapisywane tylko w treści dokumentu.",
   "compare.unmarked.trackedMove": "Druga połowa przeniesienia: skąd pochodziła treść, znajduje się tylko w drugim dokumencie.",
   "compare.unmarked.truncatedText": "Usunięty tekst jest zbyt długi, by zapisać go słowo w słowo, więc usunięcie jest zgłaszane, a nie odtwarzane.",
   "compare.unmarkedTitle": "Znalezione, ale nieoznaczone w dokumencie:",

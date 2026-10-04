@@ -588,7 +588,14 @@ export const REFUSAL_KEY = Object.freeze({
  *  catalogues: a thirteenth noun for `formatting` would be a second spelling of
  *  one thing in one panel.
  *
- *  The five below are the reasons that are not a family. Five engine keys share
+ *  `otherStory` is here because the engine applies a comparison to the BODY only,
+ *  deliberately: the right-hand side is a re-export of this document, so a body
+ *  path maps back by identity, while a header, footer, note or comment story is
+ *  paired by semantic position or by ordinal and depends on the export writing
+ *  the same section structure back — unmeasured, and an unmeasured mapping would
+ *  place a revision in the wrong header rather than refuse to.
+ *
+ *  The six below are the reasons that are not a family. Five engine keys share
  *  `notMarkable` on purpose — `unresolvedAnchor`, `offsetSpace`,
  *  `nonParagraphBlock`, `notParagraphText` and `insertionNotText` are five
  *  internal distinctions about offsets and block kinds, and one reader-facing
@@ -598,6 +605,7 @@ export const REFUSAL_KEY = Object.freeze({
 export const UNMARKED_KEY = Object.freeze({
   blockDeletion: "compare.unmarked.blockDeletion",
   trackedMove: "compare.unmarked.trackedMove",
+  otherStory: "compare.unmarked.otherStory",
   truncatedText: "compare.unmarked.truncatedText",
   incompleteComparison: "compare.unmarked.incompleteComparison",
   unresolvedAnchor: "compare.unmarked.notMarkable",

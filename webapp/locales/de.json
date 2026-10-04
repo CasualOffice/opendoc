@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Ganze Absätze, die das andere Dokument hat und dieses nicht — eine nachverfolgte Änderung markiert Text, der hier vorhanden ist, und hier ist kein Absatz zum Markieren.",
   "compare.unmarked.incompleteComparison": "Der Vergleich selbst war nicht vollständig, dies ist also nicht alles, was sich unterscheidet.",
   "compare.unmarked.notMarkable": "Ein echter Unterschied, für den es hier keinen Textbereich zum Markieren gibt.",
+  "compare.unmarked.otherStory": "Unterschiede in einer Kopfzeile, Fußzeile, Notiz oder einem Kommentar: Ein Vergleich wird nur in den Textkörper geschrieben.",
   "compare.unmarked.trackedMove": "Die andere Hälfte einer Verschiebung: woher der Inhalt kam, steht nur im anderen Dokument.",
   "compare.unmarked.truncatedText": "Entfernter Text, der zu lang ist, um wortgetreu festgehalten zu werden; die Löschung wird daher gemeldet und nicht rekonstruiert.",
   "compare.unmarkedTitle": "Gefunden, aber nicht im Dokument markiert:",

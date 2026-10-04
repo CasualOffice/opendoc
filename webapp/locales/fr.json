@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Des paragraphes entiers que l’autre document possède et celui-ci non — une modification suivie marque du texte présent ici, et il n’y a ici aucun paragraphe à marquer.",
   "compare.unmarked.incompleteComparison": "La comparaison elle-même n’a pas été exhaustive : ceci n’est donc pas tout ce qui diffère.",
   "compare.unmarked.notMarkable": "Une vraie différence, sans aucune portion de texte ici sur laquelle la marquer.",
+  "compare.unmarked.otherStory": "Différences dans un en-tête, un pied de page, une note ou un commentaire : une comparaison n’est écrite que dans le corps du document.",
   "compare.unmarked.trackedMove": "L’autre moitié d’un déplacement : l’origine du contenu ne se trouve que dans l’autre document.",
   "compare.unmarked.truncatedText": "Texte supprimé trop long pour être consigné mot pour mot ; la suppression est donc signalée plutôt que reconstituée.",
   "compare.unmarkedTitle": "Trouvé, mais non marqué dans le document :",

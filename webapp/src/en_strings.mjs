@@ -329,6 +329,14 @@ export const EN_STRINGS = Object.freeze({
     "Whole paragraphs the other document has and this one does not — a tracked change marks text that is here, and there is no paragraph here to mark.",
   "compare.unmarked.trackedMove":
     "The far half of a move: where the content came from is in the other document only.",
+  // The body only, and deliberately. A body path maps back to this document by
+  // identity because the comparison's right-hand side is its own re-export; a
+  // header, footer, note or comment story is paired by position or ordinal and
+  // depends on the export writing the same section structure back, which is
+  // unmeasured — and an unmeasured mapping would put a revision in the WRONG
+  // header rather than refuse to.
+  "compare.unmarked.otherStory":
+    "Differences in a header, footer, note or comment: a comparison is written into the body only.",
   "compare.unmarked.truncatedText":
     "Removed text too long to record word for word, so the deletion is reported rather than reconstructed.",
   "compare.unmarked.incompleteComparison":

@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "もう一方の文書にあってこの文書にない段落全体です。変更履歴はこの文書にある文字列に印を付けるため、印を付ける段落がここにありません。",
   "compare.unmarked.incompleteComparison": "比較そのものが網羅的ではなかったため、これが相違点のすべてではありません。",
   "compare.unmarked.notMarkable": "実際の相違点ですが、ここに印を付けられる文字列がありません。",
+  "compare.unmarked.otherStory": "ヘッダー、フッター、注、コメント内の相違点です。比較は本文にのみ書き込まれます。",
   "compare.unmarked.trackedMove": "移動のもう一方の端です。内容の移動元はもう一方の文書にのみあります。",
   "compare.unmarked.truncatedText": "削除された文字列が長すぎて一字一句記録できないため、削除は再現せずに報告します。",
   "compare.unmarkedTitle": "検出されましたが、文書内には記録されていません:",

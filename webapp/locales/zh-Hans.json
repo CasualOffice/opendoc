@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "另一个文档有而本文档没有的整个段落——修订标记的是本文档中存在的文字，而这里没有可标记的段落。",
   "compare.unmarked.incompleteComparison": "比较本身并不完整，因此这并非全部差异。",
   "compare.unmarked.notMarkable": "一处真实差异，但这里没有可供标记的文字。",
+  "compare.unmarked.otherStory": "页眉、页脚、注释或批注中的差异：比较只写入文档正文。",
   "compare.unmarked.trackedMove": "移动的另一半：内容的来源只在另一个文档中。",
   "compare.unmarked.truncatedText": "删除的文字过长，无法逐字记录，因此只报告该删除而不重建它。",
   "compare.unmarkedTitle": "已找到，但未在文档中标记：",

@@ -212,6 +212,7 @@
   "compare.unmarked.blockDeletion": "Paragraf utuh yang dimiliki dokumen lain dan tidak ada di sini — perubahan terlacak menandai teks yang ada di sini, dan di sini tidak ada paragraf untuk ditandai.",
   "compare.unmarked.incompleteComparison": "Perbandingannya sendiri tidak menyeluruh, jadi ini bukan semua yang berbeda.",
   "compare.unmarked.notMarkable": "Perbedaan nyata tanpa potongan teks apa pun di sini untuk menandainya.",
+  "compare.unmarked.otherStory": "Perbedaan di header, footer, catatan, atau komentar: perbandingan hanya dituliskan ke badan dokumen.",
   "compare.unmarked.trackedMove": "Separuh lainnya dari sebuah pemindahan: asal kontennya hanya ada di dokumen lain.",
   "compare.unmarked.truncatedText": "Teks yang dihapus terlalu panjang untuk dicatat kata demi kata, jadi penghapusannya dilaporkan alih-alih direkonstruksi.",
   "compare.unmarkedTitle": "Ditemukan, tetapi tidak ditandai di dokumen:",
