@@ -782,8 +782,23 @@ impl Parser {
                 }
                 Ok(Step::Leaf)
             }
-            // ---- cached text (`c:tx`): a `c:strRef` cache or a `c:rich` body ----
+            // ---- cached text (`c:tx`): a `c:strRef` cache, a `c:rich` body, or
+            // (for a SERIES name only) a bare literal `c:v` ----
             (Scope::Text, b"strRef" | b"rich") => Ok(Step::Push(Scope::TextSource)),
+            // `CT_SerTx` is `(strRef | v)`, so a series whose name is literal text
+            // rather than a workbook reference spells it as one `c:v` directly
+            // under `c:tx`. This arm was missing, and the cost was two faults at
+            // once: the name was dropped, AND the unconsumed `v` made the whole
+            // projection `ChartCoverage::Partial` — which is the flag that forbids
+            // regenerating the part, so one unread element disabled the writer for
+            // an otherwise fully-understood chart. `commit_text` already routes a
+            // `c:v` outside a data range to the cached-text accumulator, which is
+            // where a `c:strCache`'s one-cell value lands too, so the two
+            // spellings converge on one field exactly as `ChartText` intends.
+            (Scope::Text, b"v") => {
+                self.value_text = Some(String::new());
+                Ok(Step::Leaf)
+            }
             (Scope::TextSource, b"f") => {
                 self.value_text = Some(String::new());
                 Ok(Step::Leaf)
@@ -1860,6 +1875,48 @@ mod tests {
         assert!(
             chart.coverage.permits_regeneration(),
             "a complete projection is the only one a writer may regenerate from"
+        );
+    }
+
+    /// `CT_SerTx` is `(strRef | v)`, so a series name can be literal text with no
+    /// workbook reference behind it — and that spelling was unread.
+    ///
+    /// # Why this is two defects and not one
+    ///
+    /// The obvious half is that the name was dropped. The expensive half is that
+    /// the unread `c:v` landed in `unconsumed`, which makes the whole projection
+    /// [`ChartCoverage::Partial`], and `Partial` is the flag that FORBIDS
+    /// regenerating the part. So one unread element in a chart whose every other
+    /// construct was understood disabled the chart part writer for that chart
+    /// (`109` HF-256) and the compatibility report claimed a loss that was the
+    /// reader's, not the document's.
+    ///
+    /// Both halves are asserted, because a fix that read the name while still
+    /// recording the element would leave the second one in place.
+    #[test]
+    fn a_series_name_spelled_as_a_literal_c_v_is_read_and_does_not_cost_coverage() {
+        const LITERAL_NAME: &str = r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>Series 1</c:v></c:tx><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>4.3</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart>"#;
+        let read = read(&chart_space(LITERAL_NAME));
+        assert!(
+            read.unconsumed.is_empty(),
+            "a literal series name is modeled, so nothing in this chart is a loss; got {:?}",
+            read.unconsumed
+        );
+        let chart = read.projection.expect("a projection");
+        assert_eq!(
+            chart.coverage,
+            ChartCoverage::Complete,
+            "an unread `c:v` must not cost the chart its regeneration licence"
+        );
+        let name = chart.plot_area.groups[0].series[0]
+            .name
+            .as_ref()
+            .expect("the literal series name must be read");
+        assert_eq!(name.text, "Series 1");
+        assert_eq!(
+            name.formula, None,
+            "a literal name has no formula to carry, and inventing one would be a \
+             reference nothing resolves"
         );
     }
 

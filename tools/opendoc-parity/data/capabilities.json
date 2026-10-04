@@ -167,18 +167,18 @@
         "partial": {
           "evidence": {
             "anchor": {
-              "file": "webapp/src/fidelity.js",
-              "literal": "preserved byte-for-byte"
+              "file": "crates/casual-doc-layout/src/chart.rs",
+              "literal": "pub fn is_drawable"
             }
           },
-          "missing": "live chart rendering; only the file's own preview image, or a text placeholder, is painted"
+          "missing": "the families `is_drawable` refuses — every `*3DChart`, surface, stock, radar, bubble and pie-of-pie — which keep a text placeholder; and no chart is editable as a chart"
         }
       },
       "theirs": {
         "api": "asc_docs_api.asc_getChartObject"
       },
       "rank": 1,
-      "note": "A chart in an imported document is modelled as a reference and exports unchanged, so nothing is lost, but the page does not show the real chart."
+      "note": "Bar/column, line, area, pie, doughnut and scatter are painted from the typed projection, and a chart the editor mints now writes its own `word/charts/chartN.xml` part. What is still partial is the rest of the families, which keep a text placeholder, and that no chart can be edited AS a chart — there is no data grid, no type switch and no host surface that inserts one."
     },
     {
       "id": "object.chart-type-style",

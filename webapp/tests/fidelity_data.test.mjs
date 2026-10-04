@@ -179,11 +179,24 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // rendering is partial. Upgrade only when comment anchors reach the display
   // list in the default view.
   assert.equal(by["Comments"].rendered, "partial");
-  // Charts / SmartArt are preserved, not rendered as charts/diagrams.
-  assert.equal(by["Charts"].rendered, "preserved");
+  // SmartArt is preserved, not rendered as a diagram.
+  //
+  // CORRECTED 2026-10-04: this pair said "Charts / SmartArt are preserved, not
+  // rendered as charts/diagrams" and pinned `Charts.rendered` to "preserved".
+  // That was a guard holding the public page BELOW the code — `SKILL` §9.6: a
+  // grade pinned at a value the code has outgrown is as false as one pinned
+  // above it, and understating is also lying. `casual-doc-layout/src/chart.rs`
+  // paints all six modeled families (`is_drawable` returns true for every
+  // `ChartGroupKind` variant, pie and doughnut through the shared arc/sector
+  // geometry), so a chart is drawn, not stood in for. The Charts row is now
+  // derived from the painter, the part writer and the host surface by the test
+  // at the bottom of this file rather than pinned here.
   assert.equal(by["SmartArt"].rendered, "preserved");
   // Nothing claims "full" editable for content the editor cannot author at all
-  // (charts, SmartArt, math) or can only partly author. Headers and footers are
+  // (SmartArt, math) or can only partly author — charts moved into the second
+  // group on 2026-10-04: an existing one selects, resizes and deletes through
+  // the generic object surface, and the gap is that nothing can CREATE one.
+  // Headers and footers are
   // NOT on this list any more — they are a complete editing surface, held to that
   // by the operation × surface matrix and the formatting-toggle audit.
   //
@@ -418,5 +431,230 @@ test("a family the importer does not parse may not claim it is modeled", () => {
           "`preview: None` on every path, so no document can ever produce one",
       );
     }
+  }
+});
+
+// Every Charts cell is derived from the code that decides it (`109` HF-256).
+//
+// The Charts row has been wrong in both directions. It carried `roundtrips:
+// "full"` while a chart the editor minted saved as a drawing pointing at a part
+// the package did not contain, and `rendered: "preserved"` with a note saying "a
+// text placeholder stands in" while `casual-doc-layout/src/chart.rs` painted all
+// six modeled families. One overstatement, one understatement, both published,
+// and `rendered` was PINNED here at the understated value — which is `SKILL` §9.6
+// exactly: a guard can hold a page to a claim that has gone false.
+//
+// So each of the four cells is keyed to a fact read out of the tree, and every
+// check fails in BOTH directions: the grade may not rise above the code, and the
+// code may not move past the grade. The three bindings are the chart painter
+// (`is_drawable`), the chart part writer (`write_chart_part`) and the host
+// surface (`insertChart`), plus the importer's own list of families it declines,
+// which must appear in the note family by family — §9 rule 3: absence from a
+// matrix is an overstatement by omission.
+test("every Charts grade is derived from the painter, the writer and the host surface", () => {
+  const CRATES = new URL("../../crates/", import.meta.url);
+  const read = (path) => readFileSync(new URL(path, CRATES), "utf8");
+  const charts = FIDELITY.find((row) => row.family === "Charts");
+  assert.ok(charts, "fidelity.js no longer grades Charts");
+
+  // --- rendered: the painter ------------------------------------------------
+  // `is_drawable` is the single place the layout engine decides whether a chart
+  // group paints at all; a family it returns true for is drawn, so claiming the
+  // family is only "preserved" or stood in for by a "placeholder" denies code
+  // that is right there.
+  // The body is sliced to the first LINE-START `}` — `split("}")[0]` stops at
+  // the brace inside `ChartGroupKind::Bar { .. }`, which is how the first
+  // version of this guard read one family, skipped its own `rendered` check and
+  // stayed green while the grade was put back to "preserved" by hand.
+  const painter = read("casual-doc-layout/src/chart.rs");
+  const opens = painter.indexOf("pub fn is_drawable");
+  assert.notEqual(
+    opens,
+    -1,
+    "casual-doc-layout/src/chart.rs no longer defines is_drawable — re-derive " +
+      "Charts.rendered from whatever decides it now rather than leaving this blind",
+  );
+  const closes = painter.indexOf("\n}", opens);
+  assert.ok(
+    closes > opens,
+    "is_drawable has no line-start closing brace, so this guard cannot tell " +
+      "where the function ends and is reading an arbitrary prefix",
+  );
+  const drawable = painter.slice(opens, closes);
+  const DRAWN = ["Bar", "Line", "Area", "Scatter", "Pie", "Doughnut"];
+  // Only the arm that yields `true` counts. Matching the whole function body
+  // counted a family whose arm returned FALSE — mutating `Pie` to
+  // `=> false` left this green, because the substring `ChartGroupKind::Pie` was
+  // still there. So the body is split at `=> true` and a family named after it
+  // is treated as a guard that can no longer read the function, not as a
+  // family that paints.
+  const yields = drawable.indexOf("=> true");
+  assert.ok(
+    yields > 0,
+    "is_drawable no longer has a `=> true` arm; this guard reads which " +
+      "families paint by position relative to it and cannot read the new shape",
+  );
+  const paints = DRAWN.filter((family) =>
+    drawable.slice(0, yields).includes(`ChartGroupKind::${family}`),
+  );
+  const afterwards = DRAWN.filter((family) =>
+    drawable.slice(yields).includes(`ChartGroupKind::${family}`),
+  );
+  assert.deepEqual(
+    afterwards,
+    [],
+    `is_drawable names ${afterwards.join(", ")} AFTER its \`=> true\` arm, so ` +
+      "there is an arm this guard cannot read — a family may have stopped " +
+      "painting. Re-derive Charts.rendered from the new shape; do not relax this",
+  );
+  assert.equal(
+    paints.length,
+    DRAWN.length,
+    `is_drawable names ${paints.length} of the ${DRAWN.length} chart families ` +
+      `(${paints.join(", ") || "none"}). Either a family stopped painting — in ` +
+      "which case say so in the note before touching this number — or this " +
+      "guard is reading the wrong text, which is worse than no guard",
+  );
+  // "preserved", "placeholder" and "none" each say nothing is painted. One
+  // family drawing is enough to make all three false.
+  assert.ok(
+    !["preserved", "placeholder", "none"].includes(charts.rendered),
+    `casual-doc-layout/src/chart.rs paints ${paints.join(", ")}, so ` +
+      `Charts.rendered may not be "${charts.rendered}" — that grade says ` +
+      "nothing is painted and a text placeholder stands in",
+  );
+  assert.doesNotMatch(
+    charts.note,
+    /not rendered as a live chart|a text placeholder stands in\b/i,
+    "the note denies the painter in casual-doc-layout/src/chart.rs",
+  );
+
+  // --- modeled: the importer's declined families, enumerated ----------------
+  // `out_of_scope_family` is the importer's own list of the families it refuses
+  // to project. Each must be named in the note: a reader who sees "bar, line,
+  // area, pie, doughnut, scatter are typed" and no list of what is not infers
+  // coverage that does not exist.
+  const importer = read("casual-doc-import/src/chart.rs");
+  const scope = importer.slice(importer.indexOf("fn out_of_scope_family"));
+  const declined = [
+    ...scope.slice(0, scope.indexOf("\n}")).matchAll(/b"(\w+Chart)"/g),
+  ].map((match) => match[1]);
+  assert.ok(
+    declined.length >= 5,
+    `out_of_scope_family named ${declined.length} families and this guard ` +
+      "expected the five it has carried since docs/155 §4.3 (surface, stock, " +
+      "radar, bubble, ofPie) — it is reading the wrong function",
+  );
+  for (const family of declined) {
+    assert.match(
+      charts.note,
+      new RegExp(family, "i"),
+      `the importer declines c:${family} and the note does not say so — ` +
+        "SKILL §9 rule 3: absence from a support matrix is an overstatement " +
+        "by omission, so enumerate the families, not the successes",
+    );
+  }
+  assert.ok(
+    declined.length === 0 || charts.modeled !== "full",
+    "the importer declines whole chart families, so Charts cannot be fully modeled",
+  );
+  // The 3-D rule is a suffix match rather than a list, so it has to be checked
+  // for separately or a note that dropped it would still pass the loop above.
+  if (scope.includes('ends_with(b"3DChart")')) {
+    assert.match(
+      charts.note,
+      /3DChart/,
+      "the importer declines every `*3DChart` by suffix and the note must say so",
+    );
+  }
+
+  // --- roundtrips: the part writer ------------------------------------------
+  // Before HF-256 every `word/charts/...` write lived in a `#[cfg(test)]`
+  // module, so a minted chart saved as a relationship pointing at nothing while
+  // this cell read "full". The cell is now tied to the writer being real: with
+  // a writer, "none"/"preserved" understates it; with declined families, "full"
+  // overstates it, because those survive only through retention.
+  const exporter = read("casual-doc-export/src/chart.rs");
+  // Anchored on the opening parenthesis: an unanchored
+  // /fn write_chart_part/ also matches `write_chart_part_renamed`, so renaming
+  // the writer away left this check green. Found by mutating it.
+  const writes = /pub\(crate\) fn write_chart_part\(/.test(exporter);
+  assert.ok(
+    writes,
+    "casual-doc-export/src/chart.rs no longer exposes write_chart_part — if the " +
+      "chart part writer was removed, Charts.roundtrips must go back to " +
+      '"preserved" and this guard must be rewritten, not deleted',
+  );
+  assert.ok(
+    !["none", "preserved"].includes(charts.roundtrips),
+    "a real chart part writer ships, so Charts.roundtrips may not say the family " +
+      "only survives as preserved bytes",
+  );
+  assert.notEqual(
+    charts.roundtrips,
+    "full",
+    `${declined.length} chart families decline projection, so a semantic-mode ` +
+      "save keeps them only through retention — partial, not full",
+  );
+
+  // --- editable: the host surface -------------------------------------------
+  // §9 rule 4: "built" is not "reachable". `insertChart` exists on the engine
+  // and nothing in the host calls it, so a reader cannot create a chart. The
+  // grade must not claim creation, and the moment a surface lands it must stop
+  // denying it.
+  const host = readFileSync(
+    new URL("../src/main.js", import.meta.url),
+    "utf8",
+  );
+  const engineInserts = /js_name = insertChart/.test(
+    read("casual-doc-wasm/src/lib.rs"),
+  );
+  const hostInserts = host.includes("insertChart");
+  assert.ok(
+    engineInserts,
+    "the engine's insertChart is gone; re-derive this cell from whatever " +
+      "replaced it rather than leaving the grade unguarded",
+  );
+  if (!hostInserts) {
+    assert.notEqual(
+      charts.editable,
+      "full",
+      "no host surface calls insertChart, so chart editing cannot be full",
+    );
+    assert.match(
+      charts.note,
+      /no host surface calls the engine's `insertChart`/,
+      "the engine can insert a chart and the host cannot reach it — the note has " +
+        "to say which of the two is true, or the page claims the engine's " +
+        "capability as the product's (SKILL §9 rule 4)",
+    );
+  } else {
+    assert.doesNotMatch(
+      charts.note,
+      /no host surface calls the engine's `insertChart`/,
+      "a host surface now calls insertChart and the note still denies it",
+    );
+  }
+  // And the other half of "partial": an existing chart is published as an
+  // object with resize grips, so the grade may not be "none" either.
+  const publishesChart = /kind: "chart"/.test(read("casual-doc-wasm/src/lib.rs"));
+  if (publishesChart) {
+    assert.notEqual(
+      charts.editable,
+      "none",
+      'the engine publishes a chart as an ObjectBox with kind: "chart" and ' +
+        "embedded-object capabilities, so it selects, resizes and deletes " +
+        'through the generic object surface — "none" understates that',
+    );
+  } else {
+    // The other direction, so losing the capability cannot quietly relax the
+    // guard: with no chart ObjectBox and no host insert path there is nothing
+    // left to author, and the grade has to say so.
+    assert.equal(
+      charts.editable,
+      "none",
+      "the engine no longer publishes a chart as a selectable object, so " +
+        `"${charts.editable}" claims editing that nothing provides`,
+    );
   }
 });
