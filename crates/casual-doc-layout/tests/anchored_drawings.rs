@@ -2594,6 +2594,110 @@ fn place_themed_text_box(
     layout.pages[0].anchored[0].content.clone()
 }
 
+/// A grouped TEXT BOX with `a:outerShdw` casts it too, through the same resolver.
+///
+/// This is the seam that matters for the second document class: `emit_text_box` is a
+/// `GroupChildHost` method, so wiring the shadow there is what gives a slide's text
+/// box one as well — and the shadow is cast by the layer, which means it is the
+/// silhouette of the box and the text inside it rather than of a rectangle.
+#[test]
+fn a_grouped_text_box_with_an_outer_shadow_casts_it_too() {
+    use casual_doc_model::v1::{Definitions, OuterShadow, ShapeFillDetail};
+
+    let box_id = node(95);
+    let child = GroupChild::TextBox(GroupTextBox {
+        hyperlink: None,
+        id: box_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(96),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(97, "shadowed")],
+        })],
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties::default(),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+    let extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
+        id: node(94),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(11),
+        extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        children: vec![child],
+    }));
+    let mut definitions = Definitions::default();
+    definitions.shape_fill_detail.insert(
+        box_id,
+        ShapeFillDetail {
+            picture: None,
+            pattern: None,
+            gradient: None,
+            stroke: None,
+            outer_shadow: Some(OuterShadow {
+                blur_radius_emu: 50_800,
+                // Straight down: 5400000 is 90 degrees, so the whole distance lands
+                // on y and none on x. A convention that measured from +y instead
+                // would put it all on x, and this is the row that tells them apart.
+                distance_emu: 25_400,
+                direction: 5_400_000,
+                color: Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 161,
+                },
+            }),
+        },
+    );
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+
+    let shadow = layout.pages[0].anchored[0]
+        .shadow
+        .expect("the text box carries its shadow onto the page");
+    assert_eq!(shadow.blur, Twip(80));
+    assert_eq!(shadow.offset_x, Twip(0), "90 degrees puts nothing on x");
+    assert_eq!(
+        shadow.offset_y,
+        Twip(40),
+        "and the whole 40 twips on y, downward"
+    );
+    assert_eq!(shadow.color, [0, 0, 0, 161]);
+}
+
 /// An adjustment guide that COMPUTES its value is honoured, not passed over for the
 /// preset default (`109` FID-G-02 / FID-L-04 groundwork).
 ///
@@ -4073,6 +4177,8 @@ fn an_authored_cap_join_and_custom_dash_reach_the_display_list() {
                     space: 200_000,
                 }],
             }),
+            // Not what this fixture asserts; the shadow has its own guards.
+            outer_shadow: None,
         },
     );
 
@@ -4399,6 +4505,220 @@ fn turnable_text_box(vertical: casual_doc_model::v1::TextVertical) -> GroupChild
 /// Asserted as the expansion rather than as one item, because the whole point is that
 /// it is three: clip, image, unclip — and the outline stroked OVER the picture, which
 /// is the order Word draws it in. A stroke under a stretched fill is half-covered.
+/// A Word shape carrying `a:outerShdw` casts a shadow: the anchor's paint items are
+/// bracketed in a layer that states the blur, the cartesian offset and the colour.
+///
+/// This is the end of the chain the row needed — importer, model, layout, display
+/// list, raster. The raster primitive has its own guards in `casual-doc-render`; what
+/// this one asserts is that something actually ASKS for it, which is the half that
+/// was missing when the blur landed: a shape could carry a shadow nothing emitted.
+#[test]
+fn a_shape_with_an_outer_shadow_casts_it_through_a_layer() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::{OuterShadow, ShapeFillDetail};
+
+    let shape_id = node(93);
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: Some(Fill::Solid(Rgba {
+            r: 0x44,
+            g: 0x72,
+            b: 0xC4,
+            a: 255,
+        })),
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+
+    let mut document = single_child_group_document(child);
+    document.definitions_mut().shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: None,
+            pattern: None,
+            gradient: None,
+            stroke: None,
+            outer_shadow: Some(OuterShadow {
+                // 50800 EMU = 80 twips of blur.
+                blur_radius_emu: 50_800,
+                // 25400 EMU = 40 twips of distance, thrown at 45 degrees.
+                distance_emu: 25_400,
+                direction: 2_700_000,
+                color: Rgba {
+                    r: 0x80,
+                    g: 0x80,
+                    b: 0x80,
+                    a: 128,
+                },
+            }),
+        },
+    );
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+
+    let layer_at = list
+        .items
+        .iter()
+        .position(|item| {
+            matches!(
+                item,
+                PaintItem::PushLayer {
+                    shadow: Some(_),
+                    ..
+                }
+            )
+        })
+        .expect("the shadowed shape opens a layer that states its shadow");
+    let PaintItem::PushLayer {
+        shadow: Some(shadow),
+        ..
+    } = &list.items[layer_at]
+    else {
+        unreachable!("matched above")
+    };
+    assert_eq!(shadow.blur, Twip(80), "50800 EMU of blurRad is 80 twips");
+    // `@dist`/`@dir` are polar; the display list is cartesian. 40 twips at 45
+    // degrees is 40 * cos(45) on each axis, and BOTH are positive because the
+    // page's y axis points down — a negated sine would throw the shadow up-left,
+    // which reads as a light source nobody chose.
+    assert_eq!(shadow.offset_x, Twip(28));
+    assert_eq!(shadow.offset_y, Twip(28));
+    assert_eq!(
+        (
+            shadow.color.r,
+            shadow.color.g,
+            shadow.color.b,
+            shadow.color.a
+        ),
+        (0x80, 0x80, 0x80, 128),
+        "the shadow's own colour and its folded alpha reach the backend"
+    );
+
+    // The shape paints INSIDE the layer, and the layer closes. A shadow whose
+    // bracket did not contain the shape would cast the shadow of nothing.
+    let shape_at = list
+        .items
+        .iter()
+        .skip(layer_at)
+        .position(|item| matches!(item, PaintItem::Shape { .. }))
+        .map(|offset| offset + layer_at)
+        .expect("the shape paints");
+    let pop_at = list
+        .items
+        .iter()
+        .skip(shape_at)
+        .position(|item| matches!(item, PaintItem::PopLayer))
+        .map(|offset| offset + shape_at)
+        .expect("the layer closes");
+    assert!(
+        layer_at < shape_at && shape_at < pop_at,
+        "layer={layer_at} shape={shape_at} pop={pop_at}"
+    );
+}
+
+/// A fully transparent shadow colour is NOT a layer.
+///
+/// Word writes `<a:alpha val="0"/>` on a shadow that has been switched off in the
+/// UI rather than removing the effect, so this is the common case and not a corner:
+/// an off-screen composite per shape for ink nobody can see is a cost with no
+/// picture to show for it.
+#[test]
+fn an_invisible_shadow_opens_no_layer() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::{OuterShadow, ShapeFillDetail};
+
+    let shape_id = node(94);
+    let child = GroupChild::Shape(GroupShape {
+        hyperlink: None,
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: Some(Fill::Solid(Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        })),
+        stroke: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    });
+
+    let mut document = single_child_group_document(child);
+    document.definitions_mut().shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: None,
+            pattern: None,
+            gradient: None,
+            stroke: None,
+            outer_shadow: Some(OuterShadow {
+                blur_radius_emu: 50_800,
+                distance_emu: 25_400,
+                direction: 2_700_000,
+                color: Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 0,
+                },
+            }),
+        },
+    );
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+
+    assert!(
+        !list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::PushLayer {
+                shadow: Some(_),
+                ..
+            }
+        )),
+        "a shadow with zero alpha is not painted, so it opens no layer: {:?}",
+        list.items
+    );
+    assert!(
+        list.items
+            .iter()
+            .any(|item| matches!(item, PaintItem::Shape { .. })),
+        "and the shape itself is unaffected"
+    );
+}
+
 #[test]
 fn a_picture_filled_shape_clips_its_image_to_its_outline() {
     use casual_doc_layout::compose::compose_page;
@@ -4464,6 +4784,8 @@ fn a_picture_filled_shape_clips_its_image_to_its_outline() {
             pattern: None,
             gradient: None,
             stroke: None,
+            // Not what this fixture asserts; the shadow has its own guards.
+            outer_shadow: None,
         },
     );
 
@@ -4601,6 +4923,8 @@ fn a_tiled_picture_fill_is_not_painted_as_a_stretch() {
             pattern: None,
             gradient: None,
             stroke: None,
+            // Not what this fixture asserts; the shadow has its own guards.
+            outer_shadow: None,
         },
     );
 

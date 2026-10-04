@@ -34,7 +34,9 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-use casual_doc_layout::anchor::{GroupChildHost, GroupMapper, GroupPose, place_group_child_tree};
+use casual_doc_layout::anchor::{
+    GroupChildHost, GroupMapper, GroupPose, anchor_shadow, place_group_child_tree,
+};
 use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::page::{AnchorContent, AnchorZ, PlacedAnchor};
 use casual_doc_layout::units::{Point, Rect, Size, Twip, emu_to_twip_extent};
@@ -181,6 +183,9 @@ impl GroupChildHost for SlideHost<'_> {
             },
             descr,
             transform,
+            // From the same resolver the document host uses, so a shape authored with
+            // `a:outerShdw` casts the identical shadow on a slide and in a DOCX.
+            shadow: anchor_shadow(self.definitions, node),
         });
         self.order = self.order.saturating_add(1);
     }

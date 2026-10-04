@@ -517,11 +517,11 @@ fn draw_layer(
     // picture-filled one and a text box alike: it is the shadow of what was actually
     // painted, not of a bounding box.
     if let Some(shadow) = shadow
-        && let Some(cast) = shadow_pixmap(&offscreen.pixmap, shadow)
+        && let Some(cast) = shadow_pixmap(&offscreen.pixmap, shadow, dpi)
     {
         surface.pixmap.draw_pixmap(
-            shadow.offset_x.round() as i32,
-            shadow.offset_y.round() as i32,
+            shadow.offset_x.to_device_px(dpi).round() as i32,
+            shadow.offset_y.to_device_px(dpi).round() as i32,
             cast.as_ref(),
             &PixmapPaint {
                 quality: FilterQuality::Nearest,
@@ -571,7 +571,7 @@ fn draw_layer(
 ///
 /// O(pixels) per pass, six passes (three horizontal, three vertical), independent of
 /// the blur radius.
-fn shadow_pixmap(layer: &Pixmap, shadow: LayerShadow) -> Option<Pixmap> {
+fn shadow_pixmap(layer: &Pixmap, shadow: LayerShadow, dpi: f32) -> Option<Pixmap> {
     let (width, height) = (layer.width(), layer.height());
     let count = (width as usize).checked_mul(height as usize)?;
     // The silhouette: the layer's alpha, as f32 so the running sums do not quantise
@@ -584,7 +584,7 @@ fn shadow_pixmap(layer: &Pixmap, shadow: LayerShadow) -> Option<Pixmap> {
     if alpha.len() != count {
         return None;
     }
-    let radius = shadow.blur_px.max(0.0).round() as usize;
+    let radius = shadow.blur.to_device_px(dpi).max(0.0).round() as usize;
     if radius > 0 {
         let mut scratch = vec![0.0_f32; count];
         for _ in 0..3 {
@@ -4229,10 +4229,12 @@ mod tests {
             b: 128,
             a: 255,
         };
+        // Rendered at 1440 dpi below, so one twip is one pixel and these radii read
+        // directly as the pixel assertions underneath.
         let shadowed = square_with_shadow(Some(LayerShadow {
-            blur_px: 4.0,
-            offset_x: 8.0,
-            offset_y: 8.0,
+            blur: Twip(4),
+            offset_x: Twip(8),
+            offset_y: Twip(8),
             color: grey,
         }));
         let plain = square_with_shadow(None);
@@ -4274,11 +4276,11 @@ mod tests {
             b: 128,
             a: 255,
         };
-        let reach = |blur_px: f32| {
+        let reach = |blur: i32| {
             let surface = square_with_shadow(Some(LayerShadow {
-                blur_px,
-                offset_x: 0.0,
-                offset_y: 0.0,
+                blur: Twip(blur),
+                offset_x: Twip::ZERO,
+                offset_y: Twip::ZERO,
                 color: grey,
             }));
             // Scan right along the square's mid-line from its right edge and find
@@ -4287,8 +4289,8 @@ mod tests {
                 .take_while(|x| pixel_at(&surface, 100, *x, 25)[0] < 250)
                 .count()
         };
-        let narrow = reach(2.0);
-        let wide = reach(10.0);
+        let narrow = reach(2);
+        let wide = reach(10);
         assert!(
             wide > narrow,
             "a wider blur must reach further: narrow={narrow} wide={wide}"

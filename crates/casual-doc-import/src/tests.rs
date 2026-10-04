@@ -9990,11 +9990,15 @@ fn a_shape_that_loses_nothing_reports_none_of_this_class() {
 #[test]
 fn the_same_markup_carrying_something_is_still_reported() {
     for (from, to, feature) in [
-        // A populated effect list is a shadow or a glow this model does not paint.
+        // A populated effect list holds an effect, and the effect is named. The
+        // name is the EFFECT's, not the container's: `a:outerShdw` is modeled,
+        // painted and re-emitted now, so a container-level finding would report a
+        // loss that did not happen for every shadowed shape in the corpus. A glow
+        // is genuinely unmodeled, which is why it is the row here.
         (
             "<a:effectLst/>",
-            r#"<a:effectLst><a:outerShdw blurRad="50800"/></a:effectLst>"#,
-            "effectLst",
+            r#"<a:effectLst><a:glow rad="50800"/></a:effectLst>"#,
+            "glow",
         ),
         // A lock that locks something is a restriction the document asked for
         // and did not get.
@@ -11422,3 +11426,118 @@ fn a_text_box_flow_direction_and_text_rotation_are_imported() {
             .collect::<Vec<_>>()
     );
 }
+
+/// A shape's `a:outerShdw` reaches the model, with its colour folded through the
+/// same alpha path every other shape colour uses — and raises NO loss, because it
+/// is painted and re-emitted.
+///
+/// The second half is the half that was wrong before this row: a populated
+/// `a:effectLst` was classified as a lost effect by its container, so a shadow this
+/// build paints was reported as dropped. An overstated loss is still a false report,
+/// and the compatibility report is the whole answer to "what did this import lose".
+#[test]
+fn a_shapes_drop_shadow_is_modeled_and_is_not_reported_as_a_loss() {
+    let import = import_standalone_drawingml_shape(
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:effectLst><a:outerShdw blurRad="50800" dist="25400" dir="2700000"><a:srgbClr val="808080"><a:alpha val="50000"/></a:srgbClr></a:outerShdw></a:effectLst>"#,
+    );
+    let shadow = import
+        .document
+        .definitions()
+        .shape_fill_detail
+        .iter()
+        .find_map(|(_, detail)| detail.outer_shadow.as_ref())
+        .expect("the shape's a:outerShdw reached the fill side table");
+    assert_eq!(shadow.blur_radius_emu, 50_800, "blurRad in EMU");
+    assert_eq!(shadow.distance_emu, 25_400, "dist in EMU");
+    assert_eq!(shadow.direction, 2_700_000, "dir in 60000ths of a degree");
+    assert_eq!(
+        shadow.color,
+        casual_doc_model::v1::Rgba {
+            r: 128,
+            g: 128,
+            b: 128,
+            a: 128,
+        },
+        "the a:alpha child folds into the colour, as it does for every other shape \
+         colour — a 50% shadow is half-transparent, not opaque grey"
+    );
+    let reported = features(&import);
+    assert!(
+        !reported.contains(&"effectLst") && !reported.contains(&"outerShdw"),
+        "a shadow that paints and round-trips is not a loss, so neither the effect \
+         list nor the shadow may be reported: {reported:?}"
+    );
+}
+
+/// The other half of the same classification: the container going quiet must not
+/// take the effects this build really does drop with it.
+#[test]
+fn an_effect_the_build_cannot_paint_is_still_reported_by_its_own_name() {
+    let import = import_standalone_drawingml_shape(
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:effectLst><a:glow rad="50800"/></a:effectLst>"#,
+    );
+    let reported = features(&import);
+    assert!(
+        reported.contains(&"glow"),
+        "a glow is not modeled and must still be named: {reported:?}"
+    );
+    assert!(
+        !reported.contains(&"effectLst"),
+        "and it is named ONCE, by the effect rather than by its container: \
+         {reported:?}"
+    );
+}
+
+/// A shadow carrying a skew or a scale is a perspective shadow the offset-and-blur
+/// primitive cannot express, so it is modeled as the offset shadow it is closest to
+/// and the lost part is named.
+#[test]
+fn a_sheared_shadow_keeps_its_offset_and_reports_the_shear() {
+    let import = import_standalone_drawingml_shape(
+        r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:effectLst><a:outerShdw blurRad="50800" dist="25400" dir="2700000" kx="600000" sy="60000"><a:srgbClr val="000000"/></a:outerShdw></a:effectLst>"#,
+    );
+    assert!(
+        import
+            .document
+            .definitions()
+            .shape_fill_detail
+            .iter()
+            .any(|(_, detail)| detail.outer_shadow.is_some()),
+        "the offset and blur are still carried; only the shear is lost"
+    );
+    let reported = features(&import);
+    for attribute in ["outerShdw/@kx", "outerShdw/@sy"] {
+        assert!(
+            reported.contains(&attribute),
+            "{attribute} shears the shadow into a shape the primitive cannot draw, \
+             and a sheared shadow drawn as an offset one is in the wrong PLACE: \
+             {reported:?}"
+        );
+    }
+}
+
+/// What the shape-scoped arm protects: a PICTURE's effect list is still a loss.
+///
+/// `a:effectLst` goes quiet only inside a `wps:wsp`, because that is the only
+/// element whose shadow is filed, painted and re-emitted. A `pic:spPr` files none,
+/// so a shadowed picture must still be named — and this is the guard that makes the
+/// arm's narrowness load-bearing. Widening it to every context leaves the three
+/// shape-side assertions green and loses this one, which is how a correct
+/// suppression becomes a silent drop.
+#[test]
+fn a_pictures_effect_list_is_still_reported_as_a_loss() {
+    let document = PICTURE_EFFECT_DOCUMENT.replace(
+        "@@EFFECTS@@",
+        r#"<a:effectLst><a:outerShdw blurRad="50800" dist="25400" dir="2700000"><a:srgbClr val="808080"/></a:outerShdw></a:effectLst>"#,
+    );
+    let import = import_every_part(document.as_bytes(), None, None, None, None, None);
+    let reported = features(&import);
+    assert!(
+        reported.contains(&"effectLst"),
+        "nothing resolves a picture's shadow, so dropping it is a real loss and \
+         must be named: {reported:?}"
+    );
+}
+
+/// A `pic:pic` whose `pic:spPr` carries whatever `@@EFFECTS@@` is replaced with.
+const PICTURE_EFFECT_DOCUMENT: &str = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="500000" cy="500000"/><wp:docPr id="1" name="Pic"/><a:graphic><a:graphicData uri="urn:pic"><pic:pic><pic:nvPicPr><pic:cNvPr id="2" name="Pic"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/>@@EFFECTS@@</pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;

@@ -459,18 +459,20 @@ pub enum PaintItem {
 
 /// A drop shadow cast by a [`PaintItem::PushLayer`] group (`a:outerShdw`).
 ///
-/// Everything is already resolved to device units and a concrete colour, so the
-/// backend needs no DrawingML knowledge: `a:outerShdw`'s `@dist` and `@dir` are polar
-/// and are converted to a cartesian offset during layout, where the DPI is known.
+/// In twips like every other length in this list, and for the same reason: the device
+/// scale belongs to the backend, so a shadow authored once renders at every zoom. The
+/// DrawingML knowledge is what has already been spent — `a:outerShdw`'s `@dist` and
+/// `@dir` are polar, and layout converts them to a cartesian offset, so the backend
+/// sees an offset, a radius and a colour and needs no effect vocabulary at all.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct LayerShadow {
-    /// `a:outerShdw@blurRad` as a device-pixel blur radius. Zero is a hard-edged
-    /// offset copy, which is a legal shadow and not a no-op.
-    pub blur_px: f32,
-    /// The horizontal offset in device pixels, from `@dist` and `@dir`.
-    pub offset_x: f32,
-    /// The vertical offset in device pixels.
-    pub offset_y: f32,
+    /// `a:outerShdw@blurRad` as a blur radius. Zero is a hard-edged offset copy,
+    /// which is a legal shadow and not a no-op.
+    pub blur: Twip,
+    /// The horizontal offset, from `@dist` and `@dir`.
+    pub offset_x: Twip,
+    /// The vertical offset. Positive is DOWN, matching the page's y axis.
+    pub offset_y: Twip,
     /// The shadow colour, with the effect's alpha already folded in.
     pub color: Color,
 }

@@ -1247,6 +1247,49 @@ pub struct ShapeFillDetail {
     /// The `a:ln` geometry [`ShapeStroke`] discards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<StrokeDetail>,
+    /// `a:effectLst/a:outerShdw`, the only effect this build can paint.
+    ///
+    /// In this table rather than a second one because the table is already
+    /// "appearance detail the hot types have nowhere to put" — it carries
+    /// `StrokeDetail`, not only fills — and a second side table would mean a second
+    /// lookup per shape on the paint path for no gain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outer_shadow: Option<OuterShadow>,
+}
+
+/// An outer drop shadow (`a:effectLst/a:outerShdw`).
+///
+/// # What is modeled and what is not
+///
+/// The four attributes that decide where the shadow lands and what it looks like:
+/// blur, distance, direction and colour. `a:outerShdw` also carries `@sx`/`@sy`
+/// (scale), `@kx`/`@ky` (skew), `@algn` and `@rotWithShape`, which together let a
+/// shadow be a sheared, scaled copy — a perspective shadow. Those are NOT modeled:
+/// the layer shadow this paints through is an offset blur, and a sheared shadow
+/// approximated by an offset one would be in the wrong place. The importer reports
+/// them.
+///
+/// `a:innerShdw`, `a:glow`, `a:softEdge`, `a:reflection` and the 3-D effects are not
+/// modeled either. `docs/156` §6 row 0.4 judged outer shadow, glow and soft edge to
+/// be most of the value and 3-D none of it; this is the first of those three.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OuterShadow {
+    /// `@blurRad`, the blur radius in EMU. Zero is a hard-edged offset copy, which
+    /// is a legal shadow rather than an absent one.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub blur_radius_emu: i64,
+    /// `@dist`, how far the shadow is displaced, in EMU.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub distance_emu: i64,
+    /// `@dir`, the direction of that displacement in 60000ths of a degree,
+    /// clockwise from the positive x-axis. Polar with `distance_emu`; resolved to a
+    /// cartesian offset at layout, where the DPI is known.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub direction: i32,
+    /// The shadow's colour with its alpha, resolved from the effect's own colour
+    /// child. A shadow is almost always a partly transparent black.
+    pub color: Rgba,
 }
 
 impl ShapeFillDetail {
@@ -1260,6 +1303,7 @@ impl ShapeFillDetail {
             && self.pattern.is_none()
             && self.gradient.is_none()
             && self.stroke.is_none()
+            && self.outer_shadow.is_none()
     }
 }
 

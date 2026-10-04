@@ -47,7 +47,8 @@ use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
-    AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
+    AnchorContent, AnchorShadow, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor,
+    PlacedFragment,
 };
 use crate::paginate::PageConfig;
 use crate::shape_guide::{GuideBox, guide_value};
@@ -778,6 +779,12 @@ fn collect_inlines(
                             drawing.flip_v,
                             drawing.rotation,
                         ),
+                        // A `pic:pic`'s `pic:spPr/a:effectLst` is NOT filed in the
+                        // shape-keyed side table — the importer fills that only for a
+                        // `wps:wsp` — so a picture's own shadow is still a loss, and
+                        // still reported as one. Resolving by id here would silently
+                        // find nothing and read as support.
+                        shadow: None,
                     },
                 );
             }
@@ -841,6 +848,9 @@ fn collect_inlines(
                         // Rotated text-box CONTENT is a follow-up; the box paints
                         // axis-aligned for now.
                         transform: None,
+                        // A standalone text box's shadow resolves from its own id,
+                        // through the one helper both document classes use.
+                        shadow: anchor_shadow(ctx.document.definitions(), text_box.id),
                     },
                 );
             }
@@ -1156,6 +1166,7 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
             relative_height: self.relative_height,
             order: self.ctx.next_order(),
         };
+        let shadow = anchor_shadow(self.ctx.document.definitions(), node);
         push(
             self.layout,
             self.page_index,
@@ -1167,6 +1178,7 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
                 z,
                 descr,
                 transform,
+                shadow,
             },
         );
     }
@@ -1252,6 +1264,11 @@ impl GroupChildHost for PageFloatHost<'_, '_> {
                 // chrome. A shape-level `a:xfrm@rot` is a separate rotation and is
                 // not modeled for a grouped text box.
                 transform: None,
+                // A text-bearing `wps:wsp` files its `a:outerShdw` in the same side
+                // table a text-free one does, so it resolves the same way — and the
+                // shadow is cast by the layer, which means it is the silhouette of the
+                // box AND its text, not of a bounding rectangle.
+                shadow: anchor_shadow(self.definitions(), text_box.id),
             },
         );
     }
@@ -2265,6 +2282,39 @@ pub fn shape_stroke(
         custom_dash: detail
             .map(|detail| detail.custom_dash.clone())
             .unwrap_or_default(),
+    })
+}
+
+/// The drop shadow a node's own id resolves to, as layout units.
+///
+/// Resolved from the id rather than passed down the walk, so neither the trait nor
+/// its two hosts gained a parameter — and both get it from one place, which is what
+/// keeps a slide's shadow and a document's identical. `a:outerShdw`'s polar
+/// `@dist`/`@dir` become a cartesian twip offset here.
+///
+/// `None` when the file states no shadow, and also when the resolved colour is fully
+/// transparent: a shadow nothing can see is not worth an off-screen composite.
+#[must_use]
+pub fn anchor_shadow(definitions: &Definitions, node: NodeId) -> Option<AnchorShadow> {
+    let shadow = definitions
+        .shape_fill_detail
+        .get(&node)?
+        .outer_shadow
+        .as_ref()?;
+    if shadow.color.a == 0 {
+        return None;
+    }
+    // `@dir` is clockwise from +x in 60000ths of a degree, and the layout's y axis
+    // points DOWN — so a positive angle moves down-right, which is why the sine is
+    // not negated. A shadow placed up-left instead would look like a light source
+    // nobody chose.
+    let radians = (f64::from(shadow.direction) / 60_000.0).to_radians();
+    let distance = shadow.distance_emu as f64;
+    Some(AnchorShadow {
+        blur: emu_to_twip_extent(shadow.blur_radius_emu),
+        offset_x: emu_to_twip_rounded(distance * radians.cos()),
+        offset_y: emu_to_twip_rounded(distance * radians.sin()),
+        color: rgba(shadow.color),
     })
 }
 

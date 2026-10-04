@@ -51,8 +51,8 @@ use casual_doc_model::v1::WrapSide;
 // it is built from (`docs/156` §6 row 0.3).
 use casual_doc_model::v1::{
     CompoundLine, DashStop, GradientDetail, GradientPath, LineCap, LineJoin, MAX_CUSTOM_DASH_STOPS,
-    MAX_PATTERN_PRESET_LEN, PatternFill, PenAlignment, PictureFill, PictureFillMode, RectAlignment,
-    RelativeRect, ShapeFillDetail, StrokeDetail, TextVertical, TileFlip,
+    MAX_PATTERN_PRESET_LEN, OuterShadow, PatternFill, PenAlignment, PictureFill, PictureFillMode,
+    RectAlignment, RelativeRect, ShapeFillDetail, StrokeDetail, TextVertical, TileFlip,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -412,6 +412,16 @@ struct PendingShapeBlip {
 /// which arrive as `a:fgClr`/`a:bgClr` children and fold like any other
 /// DrawingML colour.
 #[derive(Default)]
+/// An `a:outerShdw` being read: its attributes, held until its colour child closes.
+struct PendingOuterShadow {
+    blur_radius_emu: i64,
+    distance_emu: i64,
+    direction: i32,
+    /// The folded colour child. `None` when the file states none, which is not a
+    /// shadow anyone authored — see `finish_outer_shadow`.
+    color: Option<Rgba>,
+}
+
 struct PendingPatternFill {
     /// `@prst`, as the file spells it.
     preset: String,
@@ -531,6 +541,10 @@ enum ColorDest {
     PatternForeground,
     /// An `a:pattFill/a:bgClr` — the pattern's ground.
     PatternBackground,
+    /// The colour child of an `a:outerShdw`. Through the same fold as every other
+    /// shape colour, so an `a:alpha` on a shadow — which nearly every real shadow
+    /// carries — is honoured rather than needing a second path.
+    OuterShadow,
 }
 
 /// A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`) being accumulated,
@@ -1237,6 +1251,8 @@ struct BodyParser<'a> {
     shape_blip: PendingShapeBlip,
     /// The shape `a:pattFill` being accumulated.
     pending_patt: Option<PendingPatternFill>,
+    /// The `a:outerShdw` being read, held until its colour child closes.
+    pending_shadow: Option<PendingOuterShadow>,
     /// Which half of the open `a:pattFill` a colour inside it belongs to, so a
     /// `a:srgbClr` under `a:fgClr` does not land on the shape's flat fill.
     patt_color_dest: Option<ColorDest>,
@@ -1542,6 +1558,7 @@ impl<'a> BodyParser<'a> {
             shape_blip_depth: 0,
             shape_blip: PendingShapeBlip::default(),
             pending_patt: None,
+            pending_shadow: None,
             patt_color_dest: None,
             relative_size_pct: None,
             pending_color: None,
@@ -3720,6 +3737,52 @@ impl BodyParser<'_> {
             // but NOT painted — the same answer `FillStyle::Pattern` gives for the
             // theme's pattern entry one level up, because substituting a solid
             // colour for a hatch looks deliberate.
+            // A shape's `a:effectLst` is a CONTAINER, judged by its children: each
+            // effect inside it reports on its own terms (`a:glow`, `a:reflection`,
+            // `a:innerShdw`, …) through the catch-all, and `a:outerShdw` below is
+            // consumed, modeled and re-emitted. Reporting the container as well
+            // would duplicate the finding for the first kind and invent one for the
+            // second — the shape would be named as having lost an effect that
+            // paints and survives a save. The wrapper precedent is
+            // `wp14:sizeRelH`'s, in `noop`'s unconditional class for the same
+            // reason; this one stays here because only the shape context makes it
+            // true (a chart's or a text box's effect list is still a loss, and
+            // still reports).
+            b"effectLst" if self.pending_shape.is_some() && self.ln_depth == 0 => {}
+            // `a:outerShdw` — the one effect this build paints. Only inside a shape
+            // and outside an `a:ln`, the same guard the fills use, so a line's own
+            // effect list cannot be mistaken for the shape's.
+            b"outerShdw" if self.pending_shape.is_some() && self.ln_depth == 0 => {
+                // `@sx`/`@sy` scale and `@kx`/`@ky` skew make a shadow a sheared,
+                // scaled copy — a perspective shadow the offset-blur primitive
+                // cannot express. Reported rather than ignored, because a sheared
+                // shadow painted as an offset one is in the wrong PLACE, which reads
+                // as a second object rather than as a missing effect.
+                for unmodeled in [
+                    b"sx".as_slice(),
+                    b"sy".as_slice(),
+                    b"kx".as_slice(),
+                    b"ky".as_slice(),
+                    b"algn".as_slice(),
+                    b"rotWithShape".as_slice(),
+                ] {
+                    if attribute_value(element, unmodeled).is_some() {
+                        self.reporter.report_attribute(b"outerShdw", unmodeled);
+                    }
+                }
+                self.pending_shadow = Some(PendingOuterShadow {
+                    blur_radius_emu: attr_i64(element, b"blurRad").unwrap_or(0).max(0),
+                    distance_emu: attr_i64(element, b"dist").unwrap_or(0).max(0),
+                    direction: attr_i32(element, b"dir").unwrap_or(0),
+                    color: None,
+                });
+                // The colour child is claimed through the SAME destination hook the
+                // pattern's `a:fgClr` uses, so the shadow's colour goes through the
+                // one colour fold every other shape colour does — which is how an
+                // `a:alpha`, carried by nearly every real shadow, is honoured
+                // without a second code path.
+                self.patt_color_dest = Some(ColorDest::OuterShadow);
+            }
             b"pattFill" if self.pending_shape.is_some() && self.ln_depth == 0 => {
                 let preset = attribute_value(element, b"prst").unwrap_or_default();
                 let preset = if preset.len() > MAX_PATTERN_PRESET_LEN {
@@ -5307,6 +5370,7 @@ impl BodyParser<'_> {
             b"fgClr" | b"bgClr" if self.patt_color_dest.is_some() => {
                 self.patt_color_dest = None;
             }
+            b"outerShdw" if self.pending_shadow.is_some() => self.finish_outer_shadow(),
             b"pattFill" if self.pending_patt.is_some() => self.finish_pattern_fill(),
             // An `a:custDash` closes: a refused pattern is dropped whole and
             // reported, never truncated.
@@ -5723,6 +5787,11 @@ impl BodyParser<'_> {
             // One half of an `a:pattFill`. Through the same fold as every other
             // shape colour, so `lumMod`/`tint`/`alpha` on a pattern colour are
             // honoured rather than needing a second code path.
+            ColorDest::OuterShadow => {
+                if let Some(shadow) = self.pending_shadow.as_mut() {
+                    shadow.color = Some(rgba);
+                }
+            }
             ColorDest::PatternForeground | ColorDest::PatternBackground => {
                 let foreground = matches!(color.dest, ColorDest::PatternForeground);
                 if let Some(pattern) = self.pending_patt.as_mut() {
@@ -5955,6 +6024,36 @@ impl BodyParser<'_> {
     /// white: a two-colour hatch with a guessed half is a different hatch.
     ///
     /// Complexity: O(1).
+    /// Moves a completed `a:outerShdw` onto the open shape.
+    ///
+    /// A shadow with no colour child is refused rather than defaulted to black: the
+    /// colour is what makes a shadow a shadow, and inventing one would paint
+    /// something the file does not state. An authored shadow essentially always
+    /// carries a colour with an `a:alpha`.
+    ///
+    /// Unlike the pattern and picture fills this does NOT report an unpainted
+    /// finding, because it IS painted — which is the whole point of the primitive
+    /// landing first. The unmodeled scale and skew attributes are reported where
+    /// they are read.
+    fn finish_outer_shadow(&mut self) {
+        let Some(pending) = self.pending_shadow.take() else {
+            return;
+        };
+        self.patt_color_dest = None;
+        let Some(color) = pending.color else {
+            self.reporter.report_invalid(b"outerShdw");
+            return;
+        };
+        if let Some(shape) = self.pending_shape.as_mut() {
+            shape.fill_detail.outer_shadow = Some(OuterShadow {
+                blur_radius_emu: pending.blur_radius_emu,
+                distance_emu: pending.distance_emu,
+                direction: pending.direction,
+                color,
+            });
+        }
+    }
+
     fn finish_pattern_fill(&mut self) {
         let Some(pending) = self.pending_patt.take() else {
             return;

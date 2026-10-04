@@ -6223,6 +6223,8 @@ fn the_shape_fill_detail_table_is_additive_and_round_trips() {
                     space: 100_000,
                 }],
             }),
+            // Not what this fixture asserts; the shadow has its own guards.
+            outer_shadow: None,
         },
     );
     let populated = Document::new(tid(1), body, definitions).unwrap();

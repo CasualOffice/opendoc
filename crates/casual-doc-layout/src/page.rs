@@ -323,6 +323,32 @@ pub struct PlacedAnchor {
     /// text-box content is a follow-up (content stays axis-aligned).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<ShapeTransform>,
+    /// The drop shadow this float casts (`a:effectLst/a:outerShdw`), already
+    /// resolved from polar `@dist`/`@dir` to a twip offset.
+    ///
+    /// On the ANCHOR rather than inside `AnchorContent`, so one bracket serves every
+    /// content kind: a shape, a picture-filled shape and a text box all cast the
+    /// shadow of what they paint without each variant carrying the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<AnchorShadow>,
+}
+
+/// The drop shadow a placed float casts, in layout units.
+///
+/// `a:outerShdw`'s `@dist`/`@dir` are polar; they are resolved to a cartesian twip
+/// offset here, where the shape's rectangle is known, rather than in the backend —
+/// the backend should not need DrawingML's angle convention.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnchorShadow {
+    /// The blur radius in twips. Zero is a hard-edged offset copy.
+    pub blur: Twip,
+    /// The horizontal displacement in twips.
+    pub offset_x: Twip,
+    /// The vertical displacement in twips.
+    pub offset_y: Twip,
+    /// The shadow colour, alpha included.
+    pub color: [u8; 4],
 }
 
 /// A column separator rule (`w:cols/@w:sep`) to paint on a page: a thin vertical

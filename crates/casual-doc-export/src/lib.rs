@@ -1752,6 +1752,108 @@ mod semantic_tests {
         assert_eq!(m1, m2, "shape pattern fills survive write -> reopen");
     }
 
+    /// A shape's `a:outerShdw` must import, be re-emitted after the `a:ln` in
+    /// `CT_ShapeProperties` order, and come back identical.
+    ///
+    /// This closes the loop the shadow needed to stop being a reported loss: the
+    /// model carries it and layout paints it, but until the writer emitted it, a
+    /// save destroyed the shadow — so the import report naming `a:effectLst` as a
+    /// loss was *correct*, and silencing it would have been the lie. Both halves
+    /// moved together, which is why this guard and the importer's live in one
+    /// change.
+    #[test]
+    fn shape_drop_shadow_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, Rgba};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="500000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="500000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Shadowed"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln><a:effectLst><a:outerShdw blurRad="57150" dist="19050" dir="5400000"><a:srgbClr val="000000"><a:alpha val="63000"/></a:srgbClr></a:outerShdw></a:effectLst></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+        let (m1, report) = reopen_with_report(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let shadow = m1
+            .definitions()
+            .shape_fill_detail
+            .get(&shape.id)
+            .and_then(|detail| detail.outer_shadow)
+            .expect("the shape's drop shadow");
+        assert_eq!(shadow.blur_radius_emu, 57_150);
+        assert_eq!(shadow.distance_emu, 19_050);
+        assert_eq!(shadow.direction, 5_400_000, "straight down");
+        assert_eq!(
+            shadow.color,
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 161,
+            },
+            "63% of 255 is 161: the a:alpha folds into the colour on the way in"
+        );
+        assert!(
+            reported(&report, "shape/effectLst").is_none()
+                && reported(&report, "shape/outerShdw").is_none(),
+            "a shadow that paints and round-trips raises no finding"
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written_xml = written_main_document(&written);
+        // `63000` comes back as `63137` because the model stores alpha in 8 bits:
+        // 63% is 161/255, and 161/255 written back as a `ST_Percentage` is 63137.
+        // That is the whole model's colour precision, not something this effect
+        // does, and it is stable — a second reopen reads 161 again, which is what
+        // the `m1 == m2` check below proves.
+        assert!(
+            written_xml.contains(
+                r#"<a:effectLst><a:outerShdw blurRad="57150" dist="19050" dir="5400000"><a:srgbClr val="000000"><a:alpha val="63137"/></a:srgbClr></a:outerShdw></a:effectLst>"#
+            ),
+            "the shadow is written back whole, alpha included: {written_xml}"
+        );
+        // Schema order: `EG_EffectProperties` follows `a:ln`. Word rejects a file
+        // whose spPr children are out of order, so this is not a cosmetic check.
+        let ln = written_xml.find("<a:ln ").expect("the outline is written");
+        let effects = written_xml
+            .find("<a:effectLst>")
+            .expect("the effect list is written");
+        assert!(
+            ln < effects,
+            "a:ln must precede a:effectLst in CT_ShapeProperties: {written_xml}"
+        );
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "shape drop shadows survive write -> reopen");
+    }
+
+    /// And a text BOX's shadow, which travels a different writer.
+    ///
+    /// Worth its own guard rather than folding into the shape's: the two `wps:wsp`
+    /// writers share nothing but a helper call, and the text box's is the one the
+    /// shared `GroupChildHost` emit path feeds. Dropping the call from either leaves
+    /// the other green.
+    #[test]
+    fn text_box_drop_shadow_survives_the_semantic_round_trip() {
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="500000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="500000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Text Box"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:effectLst><a:outerShdw blurRad="38100" dist="12700" dir="2700000"><a:srgbClr val="333333"/></a:outerShdw></a:effectLst></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Shadowed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+        let (m1, _) = reopen_with_report(&pack(document_xml, document_rels));
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written_xml = written_main_document(&written);
+        assert!(
+            written_xml.contains(
+                r#"<a:effectLst><a:outerShdw blurRad="38100" dist="12700" dir="2700000"><a:srgbClr val="333333"/></a:outerShdw></a:effectLst>"#
+            ),
+            "the text box's shadow is written back whole: {written_xml}"
+        );
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "text box drop shadows survive write -> reopen");
+    }
+
     /// The `a:ln` geometry `ShapeStroke` cannot hold — `@cap`, `@cmpd`, `@algn`,
     /// the corner join and an authored `a:custDash` — must survive, be written in
     /// `CT_LineProperties` order, and be reported as unpainted. A `a:custDash`

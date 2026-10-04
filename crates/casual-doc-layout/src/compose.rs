@@ -18,7 +18,7 @@ use crate::display::{
 use crate::display::ShapeTransform;
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 // Own line: keeps the watermark's import out of the shared sorted list above.
-use crate::display::LayerBlend;
+use crate::display::{LayerBlend, LayerShadow};
 // Own line (anti-conflict): the chart lane's path and dash primitives.
 use crate::display::PathCommand;
 // Own line (anti-conflict): the solid dash a chart's furniture strokes with.
@@ -907,7 +907,37 @@ pub fn compose_anchors(anchors: &[PlacedAnchor]) -> DisplayList {
     list
 }
 
+/// Paints one anchor, inside its own shadow layer when it casts one.
+///
+/// The shadow goes on a layer around the whole anchor rather than on each primitive,
+/// so what casts it is the silhouette of everything the anchor actually paints: a
+/// shape plus its outline, a picture clipped to a custom outline, a text box with its
+/// text. A per-primitive shadow would have to re-derive that union, and would double
+/// the ink where a fill and its stroke overlap.
+///
+/// The layer itself is untransformed: each primitive already carries `anchor.transform`,
+/// so the rendered silhouette is the rotated one, and rotating the layer too would
+/// apply the rotation twice.
 fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut MarkLayer) {
+    let Some(shadow) = anchor.shadow else {
+        compose_anchor_content(list, anchor, marks);
+        return;
+    };
+    list.push(PaintItem::PushLayer {
+        transform: None,
+        blend: LayerBlend::Normal,
+        shadow: Some(LayerShadow {
+            blur: shadow.blur,
+            offset_x: shadow.offset_x,
+            offset_y: shadow.offset_y,
+            color: rgba(shadow.color),
+        }),
+    });
+    compose_anchor_content(list, anchor, marks);
+    list.push(PaintItem::PopLayer);
+}
+
+fn compose_anchor_content(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut MarkLayer) {
     match &anchor.content {
         AnchorContent::Image {
             media,
@@ -2756,6 +2786,10 @@ mod tests {
             },
             descr: None,
             transform: None,
+            // These compose fixtures assert the item sequence a given content kind
+            // expands to; the shadow is a layer around that sequence and has its own
+            // guards, so leaving it off keeps each fixture about one thing.
+            shadow: None,
         }
     }
 

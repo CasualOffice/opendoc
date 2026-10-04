@@ -306,6 +306,9 @@ pub(crate) fn place_floating_tables(
             },
             descr: None,
             transform: None,
+            // A positioned table casts no DrawingML shadow: it is table furniture,
+            // not a drawing object.
+            shadow: None,
         });
     }
 }

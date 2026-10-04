@@ -76,9 +76,9 @@ use casual_doc_model::v1::{
     VerticalTextAlignment, WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use casual_doc_model::v1::{
-    CompoundLine, GradientDetail, GradientPath, LineCap, LineJoin, PatternFill, PenAlignment,
-    PictureFill, PictureFillMode, RectAlignment, RelativeRect, ShapeFillDetail, StrokeDetail,
-    TileFlip,
+    CompoundLine, GradientDetail, GradientPath, LineCap, LineJoin, OuterShadow, PatternFill,
+    PenAlignment, PictureFill, PictureFillMode, RectAlignment, RelativeRect, ShapeFillDetail,
+    StrokeDetail, TileFlip,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -7011,6 +7011,9 @@ fn write_group_shape(
         shape.stroke,
         detail.and_then(|detail| detail.stroke.as_ref()),
     )?;
+    // `EG_EffectProperties` follows `a:ln` in `CT_ShapeProperties`, which is why
+    // this is the last spPr child written.
+    write_effect_list(w, detail.and_then(|detail| detail.outer_shadow.as_ref()))?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("wps:bodyPr")))
@@ -7077,6 +7080,7 @@ fn write_group_text_box(
         text_box.border,
         detail.and_then(|detail| detail.stroke.as_ref()),
     )?;
+    write_effect_list(w, detail.and_then(|detail| detail.outer_shadow.as_ref()))?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:txbx")))
@@ -7264,6 +7268,56 @@ fn write_srgb_color(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
         w.write_event(Event::End(BytesEnd::new("a:srgbClr")))
             .map_err(pkg)?;
     }
+    Ok(())
+}
+
+/// Emits a shape's `a:effectLst` carrying its drop shadow, or nothing when the
+/// shape casts none.
+///
+/// Nothing is written for a shadowless shape rather than an empty `<a:effectLst/>`:
+/// the empty element means "no effects", so writing one would be a correct but
+/// noisier file, and the importer's own no-op class treats it as carrying nothing.
+///
+/// Only `a:outerShdw` is written, because it is the only effect modeled. A file
+/// whose `a:effectLst` held a glow or a reflection still loses it on this path, and
+/// the import report still names the one it lost — the container being
+/// re-emitted here must not be read as the whole effect list surviving.
+fn write_effect_list(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shadow: Option<&OuterShadow>,
+) -> Result<(), ExportError> {
+    let Some(shadow) = shadow else {
+        return Ok(());
+    };
+    w.write_event(Event::Start(start("a:effectLst")))
+        .map_err(pkg)?;
+    let mut outer = start("a:outerShdw");
+    // Written in `CT_OuterShadowEffect` attribute order. Each is omitted at its
+    // schema default, so a shadow authored with only a blur round-trips as the
+    // three-attribute element it was rather than growing two zero attributes.
+    let (blur, dist, dir) = (
+        shadow.blur_radius_emu.to_string(),
+        shadow.distance_emu.to_string(),
+        shadow.direction.to_string(),
+    );
+    if shadow.blur_radius_emu != 0 {
+        outer.push_attribute(("blurRad", blur.as_str()));
+    }
+    if shadow.distance_emu != 0 {
+        outer.push_attribute(("dist", dist.as_str()));
+    }
+    if shadow.direction != 0 {
+        outer.push_attribute(("dir", dir.as_str()));
+    }
+    w.write_event(Event::Start(outer)).map_err(pkg)?;
+    // The colour is a required child of `a:outerShdw` (`EG_ColorChoice`), and its
+    // alpha is folded back into an `a:alpha` by the shared colour writer — which is
+    // what makes a 63%-opaque Word shadow survive a save.
+    write_srgb_color(w, shadow.color)?;
+    w.write_event(Event::End(BytesEnd::new("a:outerShdw")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:effectLst")))
+        .map_err(pkg)?;
     Ok(())
 }
 
@@ -8189,6 +8243,7 @@ fn write_text_box(
         text_box.border,
         detail.and_then(|detail| detail.stroke.as_ref()),
     )?;
+    write_effect_list(w, detail.and_then(|detail| detail.outer_shadow.as_ref()))?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:txbx")))

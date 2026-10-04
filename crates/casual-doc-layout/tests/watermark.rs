@@ -180,6 +180,9 @@ fn behind_text_picture() -> casual_doc_layout::page::PlacedAnchor {
         },
         descr: None,
         transform: None,
+        // This fixture exists for the z-order assertion; a shadow would change what
+        // the watermark layer composites over without changing the order under test.
+        shadow: None,
     }
 }
 
