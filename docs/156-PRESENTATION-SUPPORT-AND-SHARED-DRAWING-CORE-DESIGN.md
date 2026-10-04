@@ -415,10 +415,21 @@ the dark map. And slide text is shaped: the resolved runs go to the SAME
 `LineShaper` a DOCX text box uses, so there is one shaping path in the engine rather
 than two.
 
-So Tier 2 is down to **`a:tbl` + `tableStyles.xml`** — the only genuinely PPTX-only
-item in it — and **`casual-pres-wasm`**. Everything else in this tier has landed,
-and `casual-pres-export` landed beside it although the order above places a writer
-here only implicitly.
+**`casual-pres-wasm` has landed too**, so Tier 2 is down to **`a:tbl` +
+`tableStyles.xml`** — the only genuinely PPTX-only item in it. Everything else in
+this tier is done, and `casual-pres-export` landed beside it although the order
+above places a writer here only implicitly.
+
+The facade is worth one note, because it decided something the plan did not
+anticipate: **it holds the original package bytes.** The importer returns media part
+names rather than content, and retention needs the same bytes, so one copy serves
+the renderer's pictures and the writer's pass-through both. The plan assumed a
+facade would be a thin dispatch; it is, except for that.
+
+It also **cannot edit, by design.** Tier 3 below lists the editing surfaces, and
+every one of them has to route through `casual-doc-transaction` — `105` CQ-002
+records what happened on the document path when the live editing path bypassed it,
+and a presentation surface that repeated the shortcut would repeat the defect.
 
 Two findings from doing it, recorded because they are properties of the plan rather
 than of the code. **Theme discovery belongs on the master**, not on the presentation
