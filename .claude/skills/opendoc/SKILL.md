@@ -26,8 +26,12 @@ then update this file.
 enterprise grade is the baseline, not an aspiration. Phasing is delivery order only.
 
 The roadmap is `docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md` (8 phases + a cross-cutting
-quality track). Ranked rows live in `docs/105-AUDIT-2026-09-TRACKER.md`. The defect queue
-is `docs/104-HOTFIX-TRACKER.md`. Cite row ids (UX-001, FID-L-03, CQ-002, HF-011) in
+quality track). **The one queue you work from is `docs/109-BACKLOG.md`** — 192 rows in
+fix-first order. `docs/104` (defects), `docs/105` (the 2026-09 audit rows), `docs/106`
+(the roadmap), `docs/99` (unfinished capability) and `docs/14` (per-slice execution state)
+are **archives, closed to new rows**: they hold the evidence and `109` holds the order.
+`webapp/tests/tracker_single_queue.test.mjs` fails the build if a row open in any of the
+five is not reachable from `109`. Cite row ids (UX-001, FID-L-03, CQ-002, HF-011) in
 commits and PRs.
 
 ### Why Apache-2.0 is the whole wedge
@@ -244,15 +248,26 @@ origin first**, because removing the worktree is easy to do before noticing the 
 never merged.
 
 **Every agent prompt must say:** commit your work on your branch; do NOT merge; do NOT open
-a PR; do NOT edit `docs/105` or any tracker. Agents have left work uncommitted and have
-taken unrequested actions. Also tell them the mutation rule and the full gate list — they
-will otherwise skip `cargo doc` and the browser suite.
+a PR; **add your one row to `docs/109-BACKLOG.md` in the implementation commit, and resolve
+any conflict there by rebasing.** Agents have left work uncommitted and have taken
+unrequested actions. Also tell them the mutation rule and the full gate list — they will
+otherwise skip `cargo doc` and the browser suite.
+
+**This instruction used to read "do NOT edit `docs/105` or any tracker", and that was the
+cause of a failure the owner reported repeatedly.** It was written to stop parallel lanes
+conflicting inside one table, and it silently cancelled a standing instruction: eighteen
+pieces of work, eight of them already merged, existed only in commit messages and PR
+bodies. A conflict in a tracker is resolved by rebasing — it is a Markdown table, and the
+cost of a rebase is nothing beside the cost of work nobody can see. **Do not reintroduce a
+no-tracker-edits rule for any lane.**
 
 ## 8. Design first, and document as you go
 
 Per `AGENTS.md`: read the docs, design, discuss substantial designs, update
-`docs/14-EXECUTION-TRACKER.md`, implement in reviewable increments, test, keep docs and
-ADRs current.
+the tracker, implement in reviewable increments, test, keep docs and ADRs current.
+`AGENTS.md` step 4 still names `docs/14-EXECUTION-TRACKER.md`; **`14` is an archive closed
+to new rows since 2026-10-04 and the tracker to update is `docs/109-BACKLOG.md`** — one
+row, in the same PR as the work, including when the work is a newly discovered issue.
 
 ### Name the known pattern before inventing an approach
 

@@ -1,5 +1,25 @@
 # Execution Tracker
 
+> **Archive, closed to new rows (2026-10-04).** The single working queue is
+> **`109-BACKLOG.md`**. Every one of this document's **48 forward-work rows** is named in
+> `109`'s [Archive coverage](109-BACKLOG.md#archive-coverage--99-and-14) — either against
+> the queue row that carries its work, or as needing re-verification — and
+> `webapp/tests/tracker_single_queue.test.mjs` fails the build if a forward-work row
+> appears here that `109` does not name. This document is not deleted and no row is
+> removed from it: it holds the per-slice execution state, the maintenance rows, the
+> completed-work index and the design references that `109` deliberately does not
+> duplicate.
+>
+> **Do not add a new row here** — add it to `109`, in the PR that discovers it.
+>
+> **Its statuses are stale, and that is tracked rather than asserted away.** Derived
+> 2026-10-04 from the rows below: 435 rows, of which 306 `Done`, 12 in the completed-work
+> index, **67 `In review`** (Phase-1F/1G slices that shipped and were never signed off),
+> 2 closed by their own words, and **48 in a forward-work state**. `99` §6 recorded five
+> rows reading "Not started" for shipped work in 2026-08, and the note below still flags
+> five statuses outside the vocabulary this file itself documents. That is `109`
+> **CQ-011**; do not read a status here as evidence until it closes.
+
 > [!NOTE]
 > ## Proposed restructure (from external review — not yet actioned)
 >

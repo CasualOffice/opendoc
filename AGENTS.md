@@ -19,7 +19,7 @@ The objective is a deterministic, secure, embeddable document engine with seriou
 1. Read the relevant docs before acting.
 2. Design first.
 3. Discuss and finalize substantial designs before implementation.
-4. Update `docs/14-EXECUTION-TRACKER.md` before or alongside work.
+4. Add your row to `docs/109-BACKLOG.md` — the single queue — in the same commit as the work. `docs/14-EXECUTION-TRACKER.md` is an archive, closed to new rows.
 5. Implement in small, reviewable increments.
 6. Add or update tests with behavior changes.
 7. Update docs and ADRs when decisions, APIs, compatibility, or workflows change.
