@@ -1,0 +1,7344 @@
+P	accentBorderCallout1
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 112500
+A	adj4	val -38333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	t
+Z
+L	x1	b
+H			none	
+M	x1	y1
+L	x2	y2
+P	accentBorderCallout2
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 112500
+A	adj6	val -46667
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	t
+Z
+L	x1	b
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+P	accentBorderCallout3
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 100000
+A	adj6	val -16667
+A	adj7	val 112963
+A	adj8	val -8333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+G	y4	*/ h adj7 100000
+G	x4	*/ w adj8 100000
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	t
+Z
+L	x1	b
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+L	x4	y4
+P	accentCallout1
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 112500
+A	adj4	val -38333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	t
+Z
+L	x1	b
+H			none	
+M	x1	y1
+L	x2	y2
+P	accentCallout2
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 112500
+A	adj6	val -46667
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	t
+Z
+L	x1	b
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+P	accentCallout3
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 100000
+A	adj6	val -16667
+A	adj7	val 112963
+A	adj8	val -8333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+G	y4	*/ h adj7 100000
+G	x4	*/ w adj8 100000
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	t
+Z
+L	x1	b
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+L	x4	y4
+P	actionButtonBackPrevious
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g11	vc
+L	g12	g9
+L	g12	g10
+Z
+H			darken	false
+M	g11	vc
+L	g12	g9
+L	g12	g10
+Z
+H			none	
+M	g11	vc
+L	g12	g9
+L	g12	g10
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonBeginning
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+G	g13	*/ ss 3 4
+G	g14	*/ g13 1 8
+G	g15	*/ g13 1 4
+G	g16	+- g11 g14 0
+G	g17	+- g11 g15 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g17	vc
+L	g12	g9
+L	g12	g10
+Z
+M	g16	g9
+L	g11	g9
+L	g11	g10
+L	g16	g10
+Z
+H			darken	false
+M	g17	vc
+L	g12	g9
+L	g12	g10
+Z
+M	g16	g9
+L	g11	g9
+L	g11	g10
+L	g16	g10
+Z
+H			none	
+M	g17	vc
+L	g12	g9
+L	g12	g10
+Z
+M	g16	g9
+L	g16	g10
+L	g11	g10
+L	g11	g9
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonBlank
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonDocument
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	dx1	*/ ss 9 32
+G	g11	+- hc 0 dx1
+G	g12	+- hc dx1 0
+G	g13	*/ ss 3 16
+G	g14	+- g12 0 g13
+G	g15	+- g9 g13 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g11	g9
+L	g14	g9
+L	g12	g15
+L	g12	g10
+L	g11	g10
+Z
+H			darkenLess	false
+M	g11	g9
+L	g14	g9
+L	g14	g15
+L	g12	g15
+L	g12	g10
+L	g11	g10
+Z
+H			darken	false
+M	g14	g9
+L	g14	g15
+L	g12	g15
+Z
+H			none	
+M	g11	g9
+L	g14	g9
+L	g12	g15
+L	g12	g10
+L	g11	g10
+Z
+M	g12	g15
+L	g14	g15
+L	g14	g9
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonEnd
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+G	g13	*/ ss 3 4
+G	g14	*/ g13 3 4
+G	g15	*/ g13 7 8
+G	g16	+- g11 g14 0
+G	g17	+- g11 g15 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g16	vc
+L	g11	g9
+L	g11	g10
+Z
+M	g17	g9
+L	g12	g9
+L	g12	g10
+L	g17	g10
+Z
+H			darken	false
+M	g16	vc
+L	g11	g9
+L	g11	g10
+Z
+M	g17	g9
+L	g12	g9
+L	g12	g10
+L	g17	g10
+Z
+H			none	
+M	g16	vc
+L	g11	g10
+L	g11	g9
+Z
+M	g17	g9
+L	g12	g9
+L	g12	g10
+L	g17	g10
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonForwardNext
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g12	vc
+L	g11	g9
+L	g11	g10
+Z
+H			darken	false
+M	g12	vc
+L	g11	g9
+L	g11	g10
+Z
+H			none	
+M	g12	vc
+L	g11	g10
+L	g11	g9
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonHelp
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g11	+- hc 0 dx2
+G	g13	*/ ss 3 4
+G	g14	*/ g13 1 7
+G	g15	*/ g13 3 14
+G	g16	*/ g13 2 7
+G	g19	*/ g13 3 7
+G	g20	*/ g13 4 7
+G	g21	*/ g13 17 28
+G	g23	*/ g13 21 28
+G	g24	*/ g13 11 14
+G	g27	+- g9 g16 0
+G	g29	+- g9 g21 0
+G	g30	+- g9 g23 0
+G	g31	+- g9 g24 0
+G	g33	+- g11 g15 0
+G	g36	+- g11 g19 0
+G	g37	+- g11 g20 0
+G	g41	*/ g13 1 14
+G	g42	*/ g13 3 28
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g33	g27
+R	g16	g16	cd2	cd2
+R	g14	g15	0	cd4
+R	g41	g42	3cd4	-5400000
+L	g37	g30
+L	g36	g30
+L	g36	g29
+R	g14	g15	cd2	cd4
+R	g41	g42	cd4	-5400000
+R	g14	g14	0	-10800000
+Z
+M	hc	g31
+R	g42	g42	3cd4	21600000
+Z
+H			darken	false
+M	g33	g27
+R	g16	g16	cd2	cd2
+R	g14	g15	0	cd4
+R	g41	g42	3cd4	-5400000
+L	g37	g30
+L	g36	g30
+L	g36	g29
+R	g14	g15	cd2	cd4
+R	g41	g42	cd4	-5400000
+R	g14	g14	0	-10800000
+Z
+M	hc	g31
+R	g42	g42	3cd4	21600000
+Z
+H			none	
+M	g33	g27
+R	g16	g16	cd2	cd2
+R	g14	g15	0	cd4
+R	g41	g42	3cd4	-5400000
+L	g37	g30
+L	g36	g30
+L	g36	g29
+R	g14	g15	cd2	cd4
+R	g41	g42	cd4	-5400000
+R	g14	g14	0	-10800000
+Z
+M	hc	g31
+R	g42	g42	3cd4	21600000
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonHome
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+G	g13	*/ ss 3 4
+G	g14	*/ g13 1 16
+G	g15	*/ g13 1 8
+G	g16	*/ g13 3 16
+G	g17	*/ g13 5 16
+G	g18	*/ g13 7 16
+G	g19	*/ g13 9 16
+G	g20	*/ g13 11 16
+G	g21	*/ g13 3 4
+G	g22	*/ g13 13 16
+G	g23	*/ g13 7 8
+G	g24	+- g9 g14 0
+G	g25	+- g9 g16 0
+G	g26	+- g9 g17 0
+G	g27	+- g9 g21 0
+G	g28	+- g11 g15 0
+G	g29	+- g11 g18 0
+G	g30	+- g11 g19 0
+G	g31	+- g11 g20 0
+G	g32	+- g11 g22 0
+G	g33	+- g11 g23 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	hc	g9
+L	g11	vc
+L	g28	vc
+L	g28	g10
+L	g33	g10
+L	g33	vc
+L	g12	vc
+L	g32	g26
+L	g32	g24
+L	g31	g24
+L	g31	g25
+Z
+H			darkenLess	false
+M	g32	g26
+L	g32	g24
+L	g31	g24
+L	g31	g25
+Z
+M	g28	vc
+L	g28	g10
+L	g29	g10
+L	g29	g27
+L	g30	g27
+L	g30	g10
+L	g33	g10
+L	g33	vc
+Z
+H			darken	false
+M	hc	g9
+L	g11	vc
+L	g12	vc
+Z
+M	g29	g27
+L	g30	g27
+L	g30	g10
+L	g29	g10
+Z
+H			none	
+M	hc	g9
+L	g31	g25
+L	g31	g24
+L	g32	g24
+L	g32	g26
+L	g12	vc
+L	g33	vc
+L	g33	g10
+L	g28	g10
+L	g28	vc
+L	g11	vc
+Z
+M	g31	g25
+L	g32	g26
+M	g33	vc
+L	g28	vc
+M	g29	g10
+L	g29	g27
+L	g30	g27
+L	g30	g10
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonInformation
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g11	+- hc 0 dx2
+G	g13	*/ ss 3 4
+G	g14	*/ g13 1 32
+G	g17	*/ g13 5 16
+G	g18	*/ g13 3 8
+G	g19	*/ g13 13 32
+G	g20	*/ g13 19 32
+G	g22	*/ g13 11 16
+G	g23	*/ g13 13 16
+G	g24	*/ g13 7 8
+G	g25	+- g9 g14 0
+G	g28	+- g9 g17 0
+G	g29	+- g9 g18 0
+G	g30	+- g9 g23 0
+G	g31	+- g9 g24 0
+G	g32	+- g11 g17 0
+G	g34	+- g11 g19 0
+G	g35	+- g11 g20 0
+G	g37	+- g11 g22 0
+G	g38	*/ g13 3 32
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	hc	g9
+R	dx2	dx2	3cd4	21600000
+Z
+H			darken	false
+M	hc	g9
+R	dx2	dx2	3cd4	21600000
+Z
+M	hc	g25
+R	g38	g38	3cd4	21600000
+M	g32	g28
+L	g32	g29
+L	g34	g29
+L	g34	g30
+L	g32	g30
+L	g32	g31
+L	g37	g31
+L	g37	g30
+L	g35	g30
+L	g35	g28
+Z
+H			lighten	false
+M	hc	g25
+R	g38	g38	3cd4	21600000
+M	g32	g28
+L	g35	g28
+L	g35	g30
+L	g37	g30
+L	g37	g31
+L	g32	g31
+L	g32	g30
+L	g34	g30
+L	g34	g29
+L	g32	g29
+Z
+H			none	
+M	hc	g9
+R	dx2	dx2	3cd4	21600000
+Z
+M	hc	g25
+R	g38	g38	3cd4	21600000
+M	g32	g28
+L	g35	g28
+L	g35	g30
+L	g37	g30
+L	g37	g31
+L	g32	g31
+L	g32	g30
+L	g34	g30
+L	g34	g29
+L	g32	g29
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonMovie
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+G	g13	*/ ss 3 4
+G	g14	*/ g13 1455 21600
+G	g15	*/ g13 1905 21600
+G	g16	*/ g13 2325 21600
+G	g17	*/ g13 16155 21600
+G	g18	*/ g13 17010 21600
+G	g19	*/ g13 19335 21600
+G	g20	*/ g13 19725 21600
+G	g21	*/ g13 20595 21600
+G	g22	*/ g13 5280 21600
+G	g23	*/ g13 5730 21600
+G	g24	*/ g13 6630 21600
+G	g25	*/ g13 7492 21600
+G	g26	*/ g13 9067 21600
+G	g27	*/ g13 9555 21600
+G	g28	*/ g13 13342 21600
+G	g29	*/ g13 14580 21600
+G	g30	*/ g13 15592 21600
+G	g31	+- g11 g14 0
+G	g32	+- g11 g15 0
+G	g33	+- g11 g16 0
+G	g34	+- g11 g17 0
+G	g35	+- g11 g18 0
+G	g36	+- g11 g19 0
+G	g37	+- g11 g20 0
+G	g38	+- g11 g21 0
+G	g39	+- g9 g22 0
+G	g40	+- g9 g23 0
+G	g41	+- g9 g24 0
+G	g42	+- g9 g25 0
+G	g43	+- g9 g26 0
+G	g44	+- g9 g27 0
+G	g45	+- g9 g28 0
+G	g46	+- g9 g29 0
+G	g47	+- g9 g30 0
+G	g48	+- g9 g31 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g11	g39
+L	g11	g44
+L	g31	g44
+L	g32	g43
+L	g33	g43
+L	g33	g47
+L	g35	g47
+L	g35	g45
+L	g36	g45
+L	g38	g46
+L	g12	g46
+L	g12	g41
+L	g38	g41
+L	g37	g42
+L	g35	g42
+L	g35	g41
+L	g34	g40
+L	g32	g40
+L	g31	g39
+Z
+H			darken	false
+M	g11	g39
+L	g11	g44
+L	g31	g44
+L	g32	g43
+L	g33	g43
+L	g33	g47
+L	g35	g47
+L	g35	g45
+L	g36	g45
+L	g38	g46
+L	g12	g46
+L	g12	g41
+L	g38	g41
+L	g37	g42
+L	g35	g42
+L	g35	g41
+L	g34	g40
+L	g32	g40
+L	g31	g39
+Z
+H			none	
+M	g11	g39
+L	g31	g39
+L	g32	g40
+L	g34	g40
+L	g35	g41
+L	g35	g42
+L	g37	g42
+L	g38	g41
+L	g12	g41
+L	g12	g46
+L	g38	g46
+L	g36	g45
+L	g35	g45
+L	g35	g47
+L	g33	g47
+L	g33	g43
+L	g32	g43
+L	g31	g44
+L	g11	g44
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonReturn
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+G	g13	*/ ss 3 4
+G	g14	*/ g13 7 8
+G	g15	*/ g13 3 4
+G	g16	*/ g13 5 8
+G	g17	*/ g13 3 8
+G	g18	*/ g13 1 4
+G	g19	+- g9 g15 0
+G	g20	+- g9 g16 0
+G	g21	+- g9 g18 0
+G	g22	+- g11 g14 0
+G	g23	+- g11 g15 0
+G	g24	+- g11 g16 0
+G	g25	+- g11 g17 0
+G	g26	+- g11 g18 0
+G	g27	*/ g13 1 8
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g12	g21
+L	g23	g9
+L	hc	g21
+L	g24	g21
+L	g24	g20
+R	g27	g27	0	cd4
+L	g25	g19
+R	g27	g27	cd4	cd4
+L	g26	g21
+L	g11	g21
+L	g11	g20
+R	g17	g17	cd2	-5400000
+L	hc	g10
+R	g17	g17	cd4	-5400000
+L	g22	g21
+Z
+H			darken	false
+M	g12	g21
+L	g23	g9
+L	hc	g21
+L	g24	g21
+L	g24	g20
+R	g27	g27	0	cd4
+L	g25	g19
+R	g27	g27	cd4	cd4
+L	g26	g21
+L	g11	g21
+L	g11	g20
+R	g17	g17	cd2	-5400000
+L	hc	g10
+R	g17	g17	cd4	-5400000
+L	g22	g21
+Z
+H			none	
+M	g12	g21
+L	g22	g21
+L	g22	g20
+R	g17	g17	0	cd4
+L	g25	g10
+R	g17	g17	cd4	cd4
+L	g11	g21
+L	g26	g21
+L	g26	g20
+R	g27	g27	cd2	-5400000
+L	hc	g19
+R	g27	g27	cd4	-5400000
+L	g24	g21
+L	hc	g21
+L	g23	g9
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	actionButtonSound
+G	dx2	*/ ss 3 8
+G	g9	+- vc 0 dx2
+G	g10	+- vc dx2 0
+G	g11	+- hc 0 dx2
+G	g12	+- hc dx2 0
+G	g13	*/ ss 3 4
+G	g14	*/ g13 1 8
+G	g15	*/ g13 5 16
+G	g16	*/ g13 5 8
+G	g17	*/ g13 11 16
+G	g18	*/ g13 3 4
+G	g19	*/ g13 7 8
+G	g20	+- g9 g14 0
+G	g21	+- g9 g15 0
+G	g22	+- g9 g17 0
+G	g23	+- g9 g19 0
+G	g24	+- g11 g15 0
+G	g25	+- g11 g16 0
+G	g26	+- g11 g18 0
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	g11	g21
+L	g11	g22
+L	g24	g22
+L	g25	g10
+L	g25	g9
+L	g24	g21
+Z
+H			darken	false
+M	g11	g21
+L	g11	g22
+L	g24	g22
+L	g25	g10
+L	g25	g9
+L	g24	g21
+Z
+H			none	
+M	g11	g21
+L	g24	g21
+L	g25	g9
+L	g25	g10
+L	g24	g22
+L	g11	g22
+Z
+M	g26	g21
+L	g12	g20
+M	g26	vc
+L	g12	vc
+M	g26	g22
+L	g12	g23
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	arc
+A	adj1	val 16200000
+A	adj2	val 0
+G	stAng	pin 0 adj1 21599999
+G	enAng	pin 0 adj2 21599999
+G	sw11	+- enAng 0 stAng
+G	sw12	+- sw11 21600000 0
+G	swAng	?: sw11 sw11 sw12
+G	wt1	sin wd2 stAng
+G	ht1	cos hd2 stAng
+G	dx1	cat2 wd2 ht1 wt1
+G	dy1	sat2 hd2 ht1 wt1
+G	wt2	sin wd2 enAng
+G	ht2	cos hd2 enAng
+G	dx2	cat2 wd2 ht2 wt2
+G	dy2	sat2 hd2 ht2 wt2
+G	x1	+- hc dx1 0
+G	y1	+- vc dy1 0
+G	x2	+- hc dx2 0
+G	y2	+- vc dy2 0
+G	sw0	+- 21600000 0 stAng
+G	da1	+- swAng 0 sw0
+G	g1	max x1 x2
+G	ir	?: da1 r g1
+G	sw1	+- cd4 0 stAng
+G	sw2	+- 27000000 0 stAng
+G	sw3	?: sw1 sw1 sw2
+G	da2	+- swAng 0 sw3
+G	g5	max y1 y2
+G	ib	?: da2 b g5
+G	sw4	+- cd2 0 stAng
+G	sw5	+- 32400000 0 stAng
+G	sw6	?: sw4 sw4 sw5
+G	da3	+- swAng 0 sw6
+G	g9	min x1 x2
+G	il	?: da3 l g9
+G	sw7	+- 3cd4 0 stAng
+G	sw8	+- 37800000 0 stAng
+G	sw9	?: sw7 sw7 sw8
+G	da4	+- swAng 0 sw9
+G	g13	min y1 y2
+G	it	?: da4 t g13
+G	cang1	+- stAng 0 cd4
+G	cang2	+- enAng cd4 0
+G	cang3	+/ cang1 cang2 2
+H				false
+M	x1	y1
+R	wd2	hd2	stAng	swAng
+L	hc	vc
+Z
+H			none	
+M	x1	y1
+R	wd2	hd2	stAng	swAng
+P	bentArrow
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 43750
+G	a2	pin 0 adj2 50000
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	a3	pin 0 adj3 50000
+G	th	*/ ss a1 100000
+G	aw2	*/ ss a2 100000
+G	th2	*/ th 1 2
+G	dh2	+- aw2 0 th2
+G	ah	*/ ss a3 100000
+G	bw	+- r 0 ah
+G	bh	+- b 0 dh2
+G	bs	min bw bh
+G	maxAdj4	*/ 100000 bs ss
+G	a4	pin 0 adj4 maxAdj4
+G	bd	*/ ss a4 100000
+G	bd3	+- bd 0 th
+G	bd2	max bd3 0
+G	x3	+- th bd2 0
+G	x4	+- r 0 ah
+G	y3	+- dh2 th 0
+G	y4	+- y3 dh2 0
+G	y5	+- dh2 bd 0
+G	y6	+- y3 bd2 0
+H				
+M	l	b
+L	l	y5
+R	bd	bd	cd2	cd4
+L	x4	dh2
+L	x4	t
+L	r	aw2
+L	x4	y4
+L	x4	y3
+L	x3	y3
+R	bd2	bd2	3cd4	-5400000
+L	th	b
+Z
+P	bentConnector2
+H			none	
+M	l	t
+L	r	t
+L	r	b
+P	bentConnector3
+A	adj1	val 50000
+G	x1	*/ w adj1 100000
+H			none	
+M	l	t
+L	x1	t
+L	x1	b
+L	r	b
+P	bentConnector4
+A	adj1	val 50000
+A	adj2	val 50000
+G	x1	*/ w adj1 100000
+G	x2	+/ x1 r 2
+G	y2	*/ h adj2 100000
+G	y1	+/ t y2 2
+H			none	
+M	l	t
+L	x1	t
+L	x1	y2
+L	r	y2
+L	r	b
+P	bentConnector5
+A	adj1	val 50000
+A	adj2	val 50000
+A	adj3	val 50000
+G	x1	*/ w adj1 100000
+G	x3	*/ w adj3 100000
+G	x2	+/ x1 x3 2
+G	y2	*/ h adj2 100000
+G	y1	+/ t y2 2
+G	y3	+/ b y2 2
+H			none	
+M	l	t
+L	x1	t
+L	x1	y2
+L	x3	y2
+L	x3	b
+L	r	b
+P	bentUpArrow
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+G	a1	pin 0 adj1 50000
+G	a2	pin 0 adj2 50000
+G	a3	pin 0 adj3 50000
+G	y1	*/ ss a3 100000
+G	dx1	*/ ss a2 50000
+G	x1	+- r 0 dx1
+G	dx3	*/ ss a2 100000
+G	x3	+- r 0 dx3
+G	dx2	*/ ss a1 200000
+G	x2	+- x3 0 dx2
+G	x4	+- x3 dx2 0
+G	dy2	*/ ss a1 100000
+G	y2	+- b 0 dy2
+G	x0	*/ x4 1 2
+G	y3	+/ y2 b 2
+G	y15	+/ y1 b 2
+H				
+M	l	y2
+L	x2	y2
+L	x2	y1
+L	x1	y1
+L	x3	t
+L	r	y1
+L	x4	y1
+L	x4	b
+L	l	b
+Z
+P	bevel
+A	adj	val 12500
+G	a	pin 0 adj 50000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	y2	+- b 0 x1
+H				false
+M	x1	x1
+L	x2	x1
+L	x2	y2
+L	x1	y2
+Z
+H			lightenLess	false
+M	l	t
+L	r	t
+L	x2	x1
+L	x1	x1
+Z
+H			darkenLess	false
+M	l	b
+L	x1	y2
+L	x2	y2
+L	r	b
+Z
+H			lighten	false
+M	l	t
+L	x1	x1
+L	x1	y2
+L	l	b
+Z
+H			darken	false
+M	r	t
+L	r	b
+L	x2	y2
+L	x2	x1
+Z
+H			none	
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	x1	x1
+L	x2	x1
+L	x2	y2
+L	x1	y2
+Z
+M	l	t
+L	x1	x1
+M	l	b
+L	x1	y2
+M	r	t
+L	x2	x1
+M	r	b
+L	x2	y2
+P	blockArc
+A	adj1	val 10800000
+A	adj2	val 0
+A	adj3	val 25000
+G	stAng	pin 0 adj1 21599999
+G	istAng	pin 0 adj2 21599999
+G	a3	pin 0 adj3 50000
+G	sw11	+- istAng 0 stAng
+G	sw12	+- sw11 21600000 0
+G	swAng	?: sw11 sw11 sw12
+G	iswAng	+- 0 0 swAng
+G	wt1	sin wd2 stAng
+G	ht1	cos hd2 stAng
+G	wt3	sin wd2 istAng
+G	ht3	cos hd2 istAng
+G	dx1	cat2 wd2 ht1 wt1
+G	dy1	sat2 hd2 ht1 wt1
+G	dx3	cat2 wd2 ht3 wt3
+G	dy3	sat2 hd2 ht3 wt3
+G	x1	+- hc dx1 0
+G	y1	+- vc dy1 0
+G	x3	+- hc dx3 0
+G	y3	+- vc dy3 0
+G	dr	*/ ss a3 100000
+G	iwd2	+- wd2 0 dr
+G	ihd2	+- hd2 0 dr
+G	wt2	sin iwd2 istAng
+G	ht2	cos ihd2 istAng
+G	wt4	sin iwd2 stAng
+G	ht4	cos ihd2 stAng
+G	dx2	cat2 iwd2 ht2 wt2
+G	dy2	sat2 ihd2 ht2 wt2
+G	dx4	cat2 iwd2 ht4 wt4
+G	dy4	sat2 ihd2 ht4 wt4
+G	x2	+- hc dx2 0
+G	y2	+- vc dy2 0
+G	x4	+- hc dx4 0
+G	y4	+- vc dy4 0
+G	sw0	+- 21600000 0 stAng
+G	da1	+- swAng 0 sw0
+G	g1	max x1 x2
+G	g2	max x3 x4
+G	g3	max g1 g2
+G	ir	?: da1 r g3
+G	sw1	+- cd4 0 stAng
+G	sw2	+- 27000000 0 stAng
+G	sw3	?: sw1 sw1 sw2
+G	da2	+- swAng 0 sw3
+G	g5	max y1 y2
+G	g6	max y3 y4
+G	g7	max g5 g6
+G	ib	?: da2 b g7
+G	sw4	+- cd2 0 stAng
+G	sw5	+- 32400000 0 stAng
+G	sw6	?: sw4 sw4 sw5
+G	da3	+- swAng 0 sw6
+G	g9	min x1 x2
+G	g10	min x3 x4
+G	g11	min g9 g10
+G	il	?: da3 l g11
+G	sw7	+- 3cd4 0 stAng
+G	sw8	+- 37800000 0 stAng
+G	sw9	?: sw7 sw7 sw8
+G	da4	+- swAng 0 sw9
+G	g13	min y1 y2
+G	g14	min y3 y4
+G	g15	min g13 g14
+G	it	?: da4 t g15
+G	x5	+/ x1 x4 2
+G	y5	+/ y1 y4 2
+G	x6	+/ x3 x2 2
+G	y6	+/ y3 y2 2
+G	cang1	+- stAng 0 cd4
+G	cang2	+- istAng cd4 0
+G	cang3	+/ cang1 cang2 2
+H				
+M	x1	y1
+R	wd2	hd2	stAng	swAng
+L	x2	y2
+R	iwd2	ihd2	istAng	iswAng
+Z
+P	borderCallout1
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 112500
+A	adj4	val -38333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	y1
+L	x2	y2
+P	borderCallout2
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 112500
+A	adj6	val -46667
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+P	borderCallout3
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 100000
+A	adj6	val -16667
+A	adj7	val 112963
+A	adj8	val -8333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+G	y4	*/ h adj7 100000
+G	x4	*/ w adj8 100000
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+L	x4	y4
+P	bracePair
+A	adj	val 8333
+G	a	pin 0 adj 25000
+G	x1	*/ ss a 100000
+G	x2	*/ ss a 50000
+G	x3	+- r 0 x2
+G	x4	+- r 0 x1
+G	y2	+- vc 0 x1
+G	y3	+- vc x1 0
+G	y4	+- b 0 x1
+G	it	*/ x1 29289 100000
+G	il	+- x1 it 0
+G	ir	+- r 0 il
+G	ib	+- b 0 it
+H				false
+M	x2	b
+R	x1	x1	cd4	cd4
+L	x1	y3
+R	x1	x1	0	-5400000
+R	x1	x1	cd4	-5400000
+L	x1	x1
+R	x1	x1	cd2	cd4
+L	x3	t
+R	x1	x1	3cd4	cd4
+L	x4	y2
+R	x1	x1	cd2	-5400000
+R	x1	x1	3cd4	-5400000
+L	x4	y4
+R	x1	x1	0	cd4
+Z
+H			none	
+M	x2	b
+R	x1	x1	cd4	cd4
+L	x1	y3
+R	x1	x1	0	-5400000
+R	x1	x1	cd4	-5400000
+L	x1	x1
+R	x1	x1	cd2	cd4
+M	x3	t
+R	x1	x1	3cd4	cd4
+L	x4	y2
+R	x1	x1	cd2	-5400000
+R	x1	x1	3cd4	-5400000
+L	x4	y4
+R	x1	x1	0	cd4
+P	bracketPair
+A	adj	val 16667
+G	a	pin 0 adj 50000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	y2	+- b 0 x1
+G	il	*/ x1 29289 100000
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				false
+M	l	x1
+R	x1	x1	cd2	cd4
+L	x2	t
+R	x1	x1	3cd4	cd4
+L	r	y2
+R	x1	x1	0	cd4
+L	x1	b
+R	x1	x1	cd4	cd4
+Z
+H			none	
+M	x1	b
+R	x1	x1	cd4	cd4
+L	l	x1
+R	x1	x1	cd2	cd4
+M	x2	t
+R	x1	x1	3cd4	cd4
+L	r	y2
+R	x1	x1	0	cd4
+P	callout1
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 112500
+A	adj4	val -38333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	y1
+L	x2	y2
+P	callout2
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 112500
+A	adj6	val -46667
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+P	callout3
+A	adj1	val 18750
+A	adj2	val -8333
+A	adj3	val 18750
+A	adj4	val -16667
+A	adj5	val 100000
+A	adj6	val -16667
+A	adj7	val 112963
+A	adj8	val -8333
+G	y1	*/ h adj1 100000
+G	x1	*/ w adj2 100000
+G	y2	*/ h adj3 100000
+G	x2	*/ w adj4 100000
+G	y3	*/ h adj5 100000
+G	x3	*/ w adj6 100000
+G	y4	*/ h adj7 100000
+G	x4	*/ w adj8 100000
+H				false
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+H			none	
+M	x1	y1
+L	x2	y2
+L	x3	y3
+L	x4	y4
+P	can
+A	adj	val 25000
+G	maxAdj	*/ 50000 h ss
+G	a	pin 0 adj maxAdj
+G	y1	*/ ss a 200000
+G	y2	+- y1 y1 0
+G	y3	+- b 0 y1
+H				false
+M	l	y1
+R	wd2	y1	cd2	-10800000
+L	r	y3
+R	wd2	y1	0	cd2
+Z
+H			lighten	false
+M	l	y1
+R	wd2	y1	cd2	cd2
+R	wd2	y1	0	cd2
+Z
+H			none	
+M	r	y1
+R	wd2	y1	0	cd2
+R	wd2	y1	cd2	cd2
+L	r	y3
+R	wd2	y1	0	cd2
+L	l	y1
+P	chartPlus
+H	10	10	none	
+M	5	0
+L	5	10
+M	0	5
+L	10	5
+H	10	10		false
+M	0	0
+L	0	10
+L	10	10
+L	10	0
+Z
+P	chartStar
+H	10	10	none	
+M	0	0
+L	10	10
+M	0	10
+L	10	0
+M	5	0
+L	5	10
+H	10	10		false
+M	0	0
+L	0	10
+L	10	10
+L	10	0
+Z
+P	chartX
+H	10	10	none	
+M	0	0
+L	10	10
+M	0	10
+L	10	0
+H	10	10		false
+M	0	0
+L	0	10
+L	10	10
+L	10	0
+Z
+P	chevron
+A	adj	val 50000
+G	maxAdj	*/ 100000 w ss
+G	a	pin 0 adj maxAdj
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	x3	*/ x2 1 2
+G	dx	+- x2 0 x1
+G	il	?: dx x1 l
+G	ir	?: dx x2 r
+H				
+M	l	t
+L	x2	t
+L	r	vc
+L	x2	b
+L	l	b
+L	x1	vc
+Z
+P	chord
+A	adj1	val 2700000
+A	adj2	val 16200000
+G	stAng	pin 0 adj1 21599999
+G	enAng	pin 0 adj2 21599999
+G	sw1	+- enAng 0 stAng
+G	sw2	+- sw1 21600000 0
+G	swAng	?: sw1 sw1 sw2
+G	wt1	sin wd2 stAng
+G	ht1	cos hd2 stAng
+G	dx1	cat2 wd2 ht1 wt1
+G	dy1	sat2 hd2 ht1 wt1
+G	wt2	sin wd2 enAng
+G	ht2	cos hd2 enAng
+G	dx2	cat2 wd2 ht2 wt2
+G	dy2	sat2 hd2 ht2 wt2
+G	x1	+- hc dx1 0
+G	y1	+- vc dy1 0
+G	x2	+- hc dx2 0
+G	y2	+- vc dy2 0
+G	x3	+/ x1 x2 2
+G	y3	+/ y1 y2 2
+G	midAng0	*/ swAng 1 2
+G	midAng	+- stAng midAng0 cd2
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	x1	y1
+R	wd2	hd2	stAng	swAng
+Z
+P	circularArrow
+A	adj1	val 12500
+A	adj2	val 1142319
+A	adj3	val 20457681
+A	adj4	val 10800000
+A	adj5	val 12500
+G	a5	pin 0 adj5 25000
+G	maxAdj1	*/ a5 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	enAng	pin 1 adj3 21599999
+G	stAng	pin 0 adj4 21599999
+G	th	*/ ss a1 100000
+G	thh	*/ ss a5 100000
+G	th2	*/ th 1 2
+G	rw1	+- wd2 th2 thh
+G	rh1	+- hd2 th2 thh
+G	rw2	+- rw1 0 th
+G	rh2	+- rh1 0 th
+G	rw3	+- rw2 th2 0
+G	rh3	+- rh2 th2 0
+G	wtH	sin rw3 enAng
+G	htH	cos rh3 enAng
+G	dxH	cat2 rw3 htH wtH
+G	dyH	sat2 rh3 htH wtH
+G	xH	+- hc dxH 0
+G	yH	+- vc dyH 0
+G	rI	min rw2 rh2
+G	u1	*/ dxH dxH 1
+G	u2	*/ dyH dyH 1
+G	u3	*/ rI rI 1
+G	u4	+- u1 0 u3
+G	u5	+- u2 0 u3
+G	u6	*/ u4 u5 u1
+G	u7	*/ u6 1 u2
+G	u8	+- 1 0 u7
+G	u9	sqrt u8
+G	u10	*/ u4 1 dxH
+G	u11	*/ u10 1 dyH
+G	u12	+/ 1 u9 u11
+G	u13	at2 1 u12
+G	u14	+- u13 21600000 0
+G	u15	?: u13 u13 u14
+G	u16	+- u15 0 enAng
+G	u17	+- u16 21600000 0
+G	u18	?: u16 u16 u17
+G	u19	+- u18 0 cd2
+G	u20	+- u18 0 21600000
+G	u21	?: u19 u20 u18
+G	maxAng	abs u21
+G	aAng	pin 0 adj2 maxAng
+G	ptAng	+- enAng aAng 0
+G	wtA	sin rw3 ptAng
+G	htA	cos rh3 ptAng
+G	dxA	cat2 rw3 htA wtA
+G	dyA	sat2 rh3 htA wtA
+G	xA	+- hc dxA 0
+G	yA	+- vc dyA 0
+G	wtE	sin rw1 stAng
+G	htE	cos rh1 stAng
+G	dxE	cat2 rw1 htE wtE
+G	dyE	sat2 rh1 htE wtE
+G	xE	+- hc dxE 0
+G	yE	+- vc dyE 0
+G	dxG	cos thh ptAng
+G	dyG	sin thh ptAng
+G	xG	+- xH dxG 0
+G	yG	+- yH dyG 0
+G	dxB	cos thh ptAng
+G	dyB	sin thh ptAng
+G	xB	+- xH 0 dxB 0
+G	yB	+- yH 0 dyB 0
+G	sx1	+- xB 0 hc
+G	sy1	+- yB 0 vc
+G	sx2	+- xG 0 hc
+G	sy2	+- yG 0 vc
+G	rO	min rw1 rh1
+G	x1O	*/ sx1 rO rw1
+G	y1O	*/ sy1 rO rh1
+G	x2O	*/ sx2 rO rw1
+G	y2O	*/ sy2 rO rh1
+G	dxO	+- x2O 0 x1O
+G	dyO	+- y2O 0 y1O
+G	dO	mod dxO dyO 0
+G	q1	*/ x1O y2O 1
+G	q2	*/ x2O y1O 1
+G	DO	+- q1 0 q2
+G	q3	*/ rO rO 1
+G	q4	*/ dO dO 1
+G	q5	*/ q3 q4 1
+G	q6	*/ DO DO 1
+G	q7	+- q5 0 q6
+G	q8	max q7 0
+G	sdelO	sqrt q8
+G	ndyO	*/ dyO -1 1
+G	sdyO	?: ndyO -1 1
+G	q9	*/ sdyO dxO 1
+G	q10	*/ q9 sdelO 1
+G	q11	*/ DO dyO 1
+G	dxF1	+/ q11 q10 q4
+G	q12	+- q11 0 q10
+G	dxF2	*/ q12 1 q4
+G	adyO	abs dyO
+G	q13	*/ adyO sdelO 1
+G	q14	*/ DO dxO -1
+G	dyF1	+/ q14 q13 q4
+G	q15	+- q14 0 q13
+G	dyF2	*/ q15 1 q4
+G	q16	+- x2O 0 dxF1
+G	q17	+- x2O 0 dxF2
+G	q18	+- y2O 0 dyF1
+G	q19	+- y2O 0 dyF2
+G	q20	mod q16 q18 0
+G	q21	mod q17 q19 0
+G	q22	+- q21 0 q20
+G	dxF	?: q22 dxF1 dxF2
+G	dyF	?: q22 dyF1 dyF2
+G	sdxF	*/ dxF rw1 rO
+G	sdyF	*/ dyF rh1 rO
+G	xF	+- hc sdxF 0
+G	yF	+- vc sdyF 0
+G	x1I	*/ sx1 rI rw2
+G	y1I	*/ sy1 rI rh2
+G	x2I	*/ sx2 rI rw2
+G	y2I	*/ sy2 rI rh2
+G	dxI	+- x2I 0 x1I
+G	dyI	+- y2I 0 y1I
+G	dI	mod dxI dyI 0
+G	v1	*/ x1I y2I 1
+G	v2	*/ x2I y1I 1
+G	DI	+- v1 0 v2
+G	v3	*/ rI rI 1
+G	v4	*/ dI dI 1
+G	v5	*/ v3 v4 1
+G	v6	*/ DI DI 1
+G	v7	+- v5 0 v6
+G	v8	max v7 0
+G	sdelI	sqrt v8
+G	v9	*/ sdyO dxI 1
+G	v10	*/ v9 sdelI 1
+G	v11	*/ DI dyI 1
+G	dxC1	+/ v11 v10 v4
+G	v12	+- v11 0 v10
+G	dxC2	*/ v12 1 v4
+G	adyI	abs dyI
+G	v13	*/ adyI sdelI 1
+G	v14	*/ DI dxI -1
+G	dyC1	+/ v14 v13 v4
+G	v15	+- v14 0 v13
+G	dyC2	*/ v15 1 v4
+G	v16	+- x1I 0 dxC1
+G	v17	+- x1I 0 dxC2
+G	v18	+- y1I 0 dyC1
+G	v19	+- y1I 0 dyC2
+G	v20	mod v16 v18 0
+G	v21	mod v17 v19 0
+G	v22	+- v21 0 v20
+G	dxC	?: v22 dxC1 dxC2
+G	dyC	?: v22 dyC1 dyC2
+G	sdxC	*/ dxC rw2 rI
+G	sdyC	*/ dyC rh2 rI
+G	xC	+- hc sdxC 0
+G	yC	+- vc sdyC 0
+G	ist0	at2 sdxC sdyC
+G	ist1	+- ist0 21600000 0
+G	istAng	?: ist0 ist0 ist1
+G	isw1	+- stAng 0 istAng
+G	isw2	+- isw1 0 21600000
+G	iswAng	?: isw1 isw2 isw1
+G	p1	+- xF 0 xC
+G	p2	+- yF 0 yC
+G	p3	mod p1 p2 0
+G	p4	*/ p3 1 2
+G	p5	+- p4 0 thh
+G	xGp	?: p5 xF xG
+G	yGp	?: p5 yF yG
+G	xBp	?: p5 xC xB
+G	yBp	?: p5 yC yB
+G	en0	at2 sdxF sdyF
+G	en1	+- en0 21600000 0
+G	en2	?: en0 en0 en1
+G	sw0	+- en2 0 stAng
+G	sw1	+- sw0 21600000 0
+G	swAng	?: sw0 sw0 sw1
+G	wtI	sin rw3 stAng
+G	htI	cos rh3 stAng
+G	dxI	cat2 rw3 htI wtI
+G	dyI	sat2 rh3 htI wtI
+G	xI	+- hc dxI 0
+G	yI	+- vc dyI 0
+G	aI	+- stAng 0 cd4
+G	aA	+- ptAng cd4 0
+G	aB	+- ptAng cd2 0
+G	idx	cos rw1 2700000
+G	idy	sin rh1 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	xE	yE
+R	rw1	rh1	stAng	swAng
+L	xGp	yGp
+L	xA	yA
+L	xBp	yBp
+L	xC	yC
+R	rw2	rh2	istAng	iswAng
+Z
+P	cloud
+G	il	*/ w 2977 21600
+G	it	*/ h 3262 21600
+G	ir	*/ w 17087 21600
+G	ib	*/ h 17337 21600
+G	g27	*/ w 67 21600
+G	g28	*/ h 21577 21600
+G	g29	*/ w 21582 21600
+G	g30	*/ h 1235 21600
+H	43200	43200		
+M	3900	14370
+R	6753	9190	-11429249	7426832
+R	5333	7267	-8646143	5396714
+R	4365	5945	-8748475	5983381
+R	4857	6595	-7859164	7034504
+R	5333	7273	-4722533	6541615
+R	6775	9220	-2776035	7816140
+R	5785	7867	37501	6842000
+R	6752	9215	1347096	6910353
+R	7720	10543	3974558	4542661
+R	4360	5918	-16496525	8804134
+R	4345	5945	-14809710	9151131
+Z
+H	43200	43200	none	
+M	4693	26177
+R	4345	5945	5204520	1585770
+M	6928	34899
+R	4360	5918	4416628	686848
+M	16478	39090
+R	6752	9215	8257449	844866
+M	28827	34751
+R	6752	9215	387196	959901
+M	34129	22954
+R	5785	7867	-4217541	4255042
+M	41798	15354
+R	5333	7273	1819082	1665090
+M	38324	5426
+R	4857	6595	-824660	891534
+M	29078	3952
+R	4857	6595	-8950887	1091722
+M	22141	4720
+R	4365	5945	-9809656	1061181
+M	14000	5192
+R	6753	9190	-4002417	739161
+M	4127	15789
+R	6753	9190	9459261	711490
+P	cloudCallout
+A	adj1	val -20833
+A	adj2	val 62500
+G	dxPos	*/ w adj1 100000
+G	dyPos	*/ h adj2 100000
+G	xPos	+- hc dxPos 0
+G	yPos	+- vc dyPos 0
+G	ht	cat2 hd2 dxPos dyPos
+G	wt	sat2 wd2 dxPos dyPos
+G	g2	cat2 wd2 ht wt
+G	g3	sat2 hd2 ht wt
+G	g4	+- hc g2 0
+G	g5	+- vc g3 0
+G	g6	+- g4 0 xPos
+G	g7	+- g5 0 yPos
+G	g8	mod g6 g7 0
+G	g9	*/ ss 6600 21600
+G	g10	+- g8 0 g9
+G	g11	*/ g10 1 3
+G	g12	*/ ss 1800 21600
+G	g13	+- g11 g12 0
+G	g14	*/ g13 g6 g8
+G	g15	*/ g13 g7 g8
+G	g16	+- g14 xPos 0
+G	g17	+- g15 yPos 0
+G	g18	*/ ss 4800 21600
+G	g19	*/ g11 2 1
+G	g20	+- g18 g19 0
+G	g21	*/ g20 g6 g8
+G	g22	*/ g20 g7 g8
+G	g23	+- g21 xPos 0
+G	g24	+- g22 yPos 0
+G	g25	*/ ss 1200 21600
+G	g26	*/ ss 600 21600
+G	x23	+- xPos g26 0
+G	x24	+- g16 g25 0
+G	x25	+- g23 g12 0
+G	il	*/ w 2977 21600
+G	it	*/ h 3262 21600
+G	ir	*/ w 17087 21600
+G	ib	*/ h 17337 21600
+G	g27	*/ w 67 21600
+G	g28	*/ h 21577 21600
+G	g29	*/ w 21582 21600
+G	g30	*/ h 1235 21600
+G	pang	at2 dxPos dyPos
+H	43200	43200		
+M	3900	14370
+R	6753	9190	-11429249	7426832
+R	5333	7267	-8646143	5396714
+R	4365	5945	-8748475	5983381
+R	4857	6595	-7859164	7034504
+R	5333	7273	-4722533	6541615
+R	6775	9220	-2776035	7816140
+R	5785	7867	37501	6842000
+R	6752	9215	1347096	6910353
+R	7720	10543	3974558	4542661
+R	4360	5918	-16496525	8804134
+R	4345	5945	-14809710	9151131
+Z
+H				
+M	x23	yPos
+R	g26	g26	0	21600000
+Z
+H				
+M	x24	g17
+R	g25	g25	0	21600000
+Z
+H				
+M	x25	g24
+R	g12	g12	0	21600000
+Z
+H	43200	43200	none	
+M	4693	26177
+R	4345	5945	5204520	1585770
+M	6928	34899
+R	4360	5918	4416628	686848
+M	16478	39090
+R	6752	9215	8257449	844866
+M	28827	34751
+R	6752	9215	387196	959901
+M	34129	22954
+R	5785	7867	-4217541	4255042
+M	41798	15354
+R	5333	7273	1819082	1665090
+M	38324	5426
+R	4857	6595	-824660	891534
+M	29078	3952
+R	4857	6595	-8950887	1091722
+M	22141	4720
+R	4365	5945	-9809656	1061181
+M	14000	5192
+R	6753	9190	-4002417	739161
+M	4127	15789
+R	6753	9190	9459261	711490
+P	corner
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj1	*/ 100000 h ss
+G	maxAdj2	*/ 100000 w ss
+G	a1	pin 0 adj1 maxAdj1
+G	a2	pin 0 adj2 maxAdj2
+G	x1	*/ ss a2 100000
+G	dy1	*/ ss a1 100000
+G	y1	+- b 0 dy1
+G	cx1	*/ x1 1 2
+G	cy1	+/ y1 b 2
+G	d	+- w 0 h
+G	it	?: d y1 t
+G	ir	?: d r x1
+H				
+M	l	t
+L	x1	t
+L	x1	y1
+L	r	y1
+L	r	b
+L	l	b
+Z
+P	cornerTabs
+G	md	mod w h 0
+G	dx	*/ 1 md 20
+G	y1	+- 0 b dx
+G	x1	+- 0 r dx
+H				
+M	l	t
+L	dx	t
+L	l	dx
+Z
+H				
+M	l	y1
+L	dx	b
+L	l	b
+Z
+H				
+M	x1	t
+L	r	t
+L	r	dx
+Z
+H				
+M	r	y1
+L	r	b
+L	x1	b
+Z
+P	cube
+A	adj	val 25000
+G	a	pin 0 adj 100000
+G	y1	*/ ss a 100000
+G	y4	+- b 0 y1
+G	y2	*/ y4 1 2
+G	y3	+/ y1 b 2
+G	x4	+- r 0 y1
+G	x2	*/ x4 1 2
+G	x3	+/ y1 r 2
+H				false
+M	l	y1
+L	x4	y1
+L	x4	b
+L	l	b
+Z
+H			darkenLess	false
+M	x4	y1
+L	r	t
+L	r	y4
+L	x4	b
+Z
+H			lightenLess	false
+M	l	y1
+L	y1	t
+L	r	t
+L	x4	y1
+Z
+H			none	
+M	l	y1
+L	y1	t
+L	r	t
+L	r	y4
+L	x4	b
+L	l	b
+Z
+M	l	y1
+L	x4	y1
+L	r	t
+M	x4	y1
+L	x4	b
+P	curvedConnector2
+H			none	
+M	l	t
+C	wd2	t	r	hd2	r	b
+P	curvedConnector3
+A	adj1	val 50000
+G	x2	*/ w adj1 100000
+G	x1	+/ l x2 2
+G	x3	+/ r x2 2
+G	y3	*/ h 3 4
+H			none	
+M	l	t
+C	x1	t	x2	hd4	x2	vc
+C	x2	y3	x3	b	r	b
+P	curvedConnector4
+A	adj1	val 50000
+A	adj2	val 50000
+G	x2	*/ w adj1 100000
+G	x1	+/ l x2 2
+G	x3	+/ r x2 2
+G	x4	+/ x2 x3 2
+G	x5	+/ x3 r 2
+G	y4	*/ h adj2 100000
+G	y1	+/ t y4 2
+G	y2	+/ t y1 2
+G	y3	+/ y1 y4 2
+G	y5	+/ b y4 2
+H			none	
+M	l	t
+C	x1	t	x2	y2	x2	y1
+C	x2	y3	x4	y4	x3	y4
+C	x5	y4	r	y5	r	b
+P	curvedConnector5
+A	adj1	val 50000
+A	adj2	val 50000
+A	adj3	val 50000
+G	x3	*/ w adj1 100000
+G	x6	*/ w adj3 100000
+G	x1	+/ x3 x6 2
+G	x2	+/ l x3 2
+G	x4	+/ x3 x1 2
+G	x5	+/ x6 x1 2
+G	x7	+/ x6 r 2
+G	y4	*/ h adj2 100000
+G	y1	+/ t y4 2
+G	y2	+/ t y1 2
+G	y3	+/ y1 y4 2
+G	y5	+/ b y4 2
+G	y6	+/ y5 y4 2
+G	y7	+/ y5 b 2
+H			none	
+M	l	t
+C	x2	t	x3	y2	x3	y1
+C	x3	y3	x4	y4	x1	y4
+C	x5	y4	x6	y6	x6	y5
+C	x6	y7	x7	b	r	b
+P	curvedDownArrow
+A	adj1	val 25000
+A	adj2	val 50000
+A	adj3	val 25000
+G	maxAdj2	*/ 50000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	a1	pin 0 adj1 100000
+G	th	*/ ss a1 100000
+G	aw	*/ ss a2 100000
+G	q1	+/ th aw 4
+G	wR	+- wd2 0 q1
+G	q7	*/ wR 2 1
+G	q8	*/ q7 q7 1
+G	q9	*/ th th 1
+G	q10	+- q8 0 q9
+G	q11	sqrt q10
+G	idy	*/ q11 h q7
+G	maxAdj3	*/ 100000 idy ss
+G	a3	pin 0 adj3 maxAdj3
+G	ah	*/ ss adj3 100000
+G	x3	+- wR th 0
+G	q2	*/ h h 1
+G	q3	*/ ah ah 1
+G	q4	+- q2 0 q3
+G	q5	sqrt q4
+G	dx	*/ q5 wR h
+G	x5	+- wR dx 0
+G	x7	+- x3 dx 0
+G	q6	+- aw 0 th
+G	dh	*/ q6 1 2
+G	x4	+- x5 0 dh
+G	x8	+- x7 dh 0
+G	aw2	*/ aw 1 2
+G	x6	+- r 0 aw2
+G	y1	+- b 0 ah
+G	swAng	at2 ah dx
+G	mswAng	+- 0 0 swAng
+G	iy	+- b 0 idy
+G	ix	+/ wR x3 2
+G	q12	*/ th 1 2
+G	dang2	at2 idy q12
+G	stAng	+- 3cd4 swAng 0
+G	stAng2	+- 3cd4 0 dang2
+G	swAng2	+- dang2 0 cd4
+G	swAng3	+- cd4 dang2 0
+H				false
+M	x6	b
+L	x4	y1
+L	x5	y1
+R	wR	h	stAng	mswAng
+L	x3	t
+R	wR	h	3cd4	swAng
+L	x8	y1
+Z
+H			darkenLess	false
+M	ix	iy
+R	wR	h	stAng2	swAng2
+L	l	b
+R	wR	h	cd2	swAng3
+Z
+H			none	
+M	ix	iy
+R	wR	h	stAng2	swAng2
+L	l	b
+R	wR	h	cd2	cd4
+L	x3	t
+R	wR	h	3cd4	swAng
+L	x8	y1
+L	x6	b
+L	x4	y1
+L	x5	y1
+R	wR	h	stAng	mswAng
+P	curvedLeftArrow
+A	adj1	val 25000
+A	adj2	val 50000
+A	adj3	val 25000
+G	maxAdj2	*/ 50000 h ss
+G	a2	pin 0 adj2 maxAdj2
+G	a1	pin 0 adj1 a2
+G	th	*/ ss a1 100000
+G	aw	*/ ss a2 100000
+G	q1	+/ th aw 4
+G	hR	+- hd2 0 q1
+G	q7	*/ hR 2 1
+G	q8	*/ q7 q7 1
+G	q9	*/ th th 1
+G	q10	+- q8 0 q9
+G	q11	sqrt q10
+G	idx	*/ q11 w q7
+G	maxAdj3	*/ 100000 idx ss
+G	a3	pin 0 adj3 maxAdj3
+G	ah	*/ ss a3 100000
+G	y3	+- hR th 0
+G	q2	*/ w w 1
+G	q3	*/ ah ah 1
+G	q4	+- q2 0 q3
+G	q5	sqrt q4
+G	dy	*/ q5 hR w
+G	y5	+- hR dy 0
+G	y7	+- y3 dy 0
+G	q6	+- aw 0 th
+G	dh	*/ q6 1 2
+G	y4	+- y5 0 dh
+G	y8	+- y7 dh 0
+G	aw2	*/ aw 1 2
+G	y6	+- b 0 aw2
+G	x1	+- l ah 0
+G	swAng	at2 ah dy
+G	mswAng	+- 0 0 swAng
+G	ix	+- l idx 0
+G	iy	+/ hR y3 2
+G	q12	*/ th 1 2
+G	dang2	at2 idx q12
+G	swAng2	+- dang2 0 swAng
+G	swAng3	+- swAng dang2 0
+G	stAng3	+- 0 0 dang2
+H				false
+M	l	y6
+L	x1	y4
+L	x1	y5
+R	w	hR	swAng	swAng2
+R	w	hR	stAng3	swAng3
+L	x1	y8
+Z
+H			darkenLess	false
+M	r	y3
+R	w	hR	0	-5400000
+L	l	t
+R	w	hR	3cd4	cd4
+Z
+H			none	
+M	r	y3
+R	w	hR	0	-5400000
+L	l	t
+R	w	hR	3cd4	cd4
+L	r	y3
+R	w	hR	0	swAng
+L	x1	y8
+L	l	y6
+L	x1	y4
+L	x1	y5
+R	w	hR	swAng	swAng2
+P	curvedRightArrow
+A	adj1	val 25000
+A	adj2	val 50000
+A	adj3	val 25000
+G	maxAdj2	*/ 50000 h ss
+G	a2	pin 0 adj2 maxAdj2
+G	a1	pin 0 adj1 a2
+G	th	*/ ss a1 100000
+G	aw	*/ ss a2 100000
+G	q1	+/ th aw 4
+G	hR	+- hd2 0 q1
+G	q7	*/ hR 2 1
+G	q8	*/ q7 q7 1
+G	q9	*/ th th 1
+G	q10	+- q8 0 q9
+G	q11	sqrt q10
+G	idx	*/ q11 w q7
+G	maxAdj3	*/ 100000 idx ss
+G	a3	pin 0 adj3 maxAdj3
+G	ah	*/ ss a3 100000
+G	y3	+- hR th 0
+G	q2	*/ w w 1
+G	q3	*/ ah ah 1
+G	q4	+- q2 0 q3
+G	q5	sqrt q4
+G	dy	*/ q5 hR w
+G	y5	+- hR dy 0
+G	y7	+- y3 dy 0
+G	q6	+- aw 0 th
+G	dh	*/ q6 1 2
+G	y4	+- y5 0 dh
+G	y8	+- y7 dh 0
+G	aw2	*/ aw 1 2
+G	y6	+- b 0 aw2
+G	x1	+- r 0 ah
+G	swAng	at2 ah dy
+G	stAng	+- cd2 0 swAng
+G	mswAng	+- 0 0 swAng
+G	ix	+- r 0 idx
+G	iy	+/ hR y3 2
+G	q12	*/ th 1 2
+G	dang2	at2 idx q12
+G	swAng2	+- dang2 0 cd4
+G	swAng3	+- cd4 dang2 0
+G	stAng3	+- cd2 0 dang2
+H				false
+M	l	hR
+R	w	hR	cd2	mswAng
+L	x1	y4
+L	r	y6
+L	x1	y8
+L	x1	y7
+R	w	hR	stAng	swAng
+Z
+H			darkenLess	false
+M	r	th
+R	w	hR	3cd4	swAng2
+R	w	hR	stAng3	swAng3
+Z
+H			none	
+M	l	hR
+R	w	hR	cd2	mswAng
+L	x1	y4
+L	r	y6
+L	x1	y8
+L	x1	y7
+R	w	hR	stAng	swAng
+L	l	hR
+R	w	hR	cd2	cd4
+L	r	th
+R	w	hR	3cd4	swAng2
+P	curvedUpArrow
+A	adj1	val 25000
+A	adj2	val 50000
+A	adj3	val 25000
+G	maxAdj2	*/ 50000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	a1	pin 0 adj1 100000
+G	th	*/ ss a1 100000
+G	aw	*/ ss a2 100000
+G	q1	+/ th aw 4
+G	wR	+- wd2 0 q1
+G	q7	*/ wR 2 1
+G	q8	*/ q7 q7 1
+G	q9	*/ th th 1
+G	q10	+- q8 0 q9
+G	q11	sqrt q10
+G	idy	*/ q11 h q7
+G	maxAdj3	*/ 100000 idy ss
+G	a3	pin 0 adj3 maxAdj3
+G	ah	*/ ss adj3 100000
+G	x3	+- wR th 0
+G	q2	*/ h h 1
+G	q3	*/ ah ah 1
+G	q4	+- q2 0 q3
+G	q5	sqrt q4
+G	dx	*/ q5 wR h
+G	x5	+- wR dx 0
+G	x7	+- x3 dx 0
+G	q6	+- aw 0 th
+G	dh	*/ q6 1 2
+G	x4	+- x5 0 dh
+G	x8	+- x7 dh 0
+G	aw2	*/ aw 1 2
+G	x6	+- r 0 aw2
+G	y1	+- t ah 0
+G	swAng	at2 ah dx
+G	mswAng	+- 0 0 swAng
+G	iy	+- t idy 0
+G	ix	+/ wR x3 2
+G	q12	*/ th 1 2
+G	dang2	at2 idy q12
+G	swAng2	+- dang2 0 swAng
+G	mswAng2	+- 0 0 swAng2
+G	stAng3	+- cd4 0 swAng
+G	swAng3	+- swAng dang2 0
+G	stAng2	+- cd4 0 dang2
+H				false
+M	x6	t
+L	x8	y1
+L	x7	y1
+R	wR	h	stAng3	swAng3
+R	wR	h	stAng2	swAng2
+L	x4	y1
+Z
+H			darkenLess	false
+M	wR	b
+R	wR	h	cd4	cd4
+L	th	t
+R	wR	h	cd2	-5400000
+Z
+H			none	
+M	ix	iy
+R	wR	h	stAng2	swAng2
+L	x4	y1
+L	x6	t
+L	x8	y1
+L	x7	y1
+R	wR	h	stAng3	swAng
+L	wR	b
+R	wR	h	cd4	cd4
+L	th	t
+R	wR	h	cd2	-5400000
+P	decagon
+A	vf	val 105146
+G	shd2	*/ hd2 vf 100000
+G	dx1	cos wd2 2160000
+G	dx2	cos wd2 4320000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	dy1	sin shd2 4320000
+G	dy2	sin shd2 2160000
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y4	+- vc dy1 0
+H				
+M	l	vc
+L	x1	y2
+L	x2	y1
+L	x3	y1
+L	x4	y2
+L	r	vc
+L	x4	y3
+L	x3	y4
+L	x2	y4
+L	x1	y3
+Z
+P	diagStripe
+A	adj	val 50000
+G	a	pin 0 adj 100000
+G	x2	*/ w a 100000
+G	x1	*/ x2 1 2
+G	x3	+/ x2 r 2
+G	y2	*/ h a 100000
+G	y1	*/ y2 1 2
+G	y3	+/ y2 b 2
+H				
+M	l	y2
+L	x2	t
+L	r	t
+L	l	b
+Z
+P	diamond
+G	ir	*/ w 3 4
+G	ib	*/ h 3 4
+H				
+M	l	vc
+L	hc	t
+L	r	vc
+L	hc	b
+Z
+P	dodecagon
+G	x1	*/ w 2894 21600
+G	x2	*/ w 7906 21600
+G	x3	*/ w 13694 21600
+G	x4	*/ w 18706 21600
+G	y1	*/ h 2894 21600
+G	y2	*/ h 7906 21600
+G	y3	*/ h 13694 21600
+G	y4	*/ h 18706 21600
+H				
+M	l	y2
+L	x1	y1
+L	x2	t
+L	x3	t
+L	x4	y1
+L	r	y2
+L	r	y3
+L	x4	y4
+L	x3	b
+L	x2	b
+L	x1	y4
+L	l	y3
+Z
+P	donut
+A	adj	val 25000
+G	a	pin 0 adj 50000
+G	dr	*/ ss a 100000
+G	iwd2	+- wd2 0 dr
+G	ihd2	+- hd2 0 dr
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+M	dr	vc
+R	iwd2	ihd2	cd2	-5400000
+R	iwd2	ihd2	cd4	-5400000
+R	iwd2	ihd2	0	-5400000
+R	iwd2	ihd2	3cd4	-5400000
+Z
+P	doubleWave
+A	adj1	val 6250
+A	adj2	val 0
+G	a1	pin 0 adj1 12500
+G	a2	pin -10000 adj2 10000
+G	y1	*/ h a1 100000
+G	dy2	*/ y1 10 3
+G	y2	+- y1 0 dy2
+G	y3	+- y1 dy2 0
+G	y4	+- b 0 y1
+G	y5	+- y4 0 dy2
+G	y6	+- y4 dy2 0
+G	dx1	*/ w a2 100000
+G	of2	*/ w a2 50000
+G	x1	abs dx1
+G	dx2	?: of2 0 of2
+G	x2	+- l 0 dx2
+G	dx8	?: of2 of2 0
+G	x8	+- r 0 dx8
+G	dx3	+/ dx2 x8 6
+G	x3	+- x2 dx3 0
+G	dx4	+/ dx2 x8 3
+G	x4	+- x2 dx4 0
+G	x5	+/ x2 x8 2
+G	x6	+- x5 dx3 0
+G	x7	+/ x6 x8 2
+G	x9	+- l dx8 0
+G	x15	+- r dx2 0
+G	x10	+- x9 dx3 0
+G	x11	+- x9 dx4 0
+G	x12	+/ x9 x15 2
+G	x13	+- x12 dx3 0
+G	x14	+/ x13 x15 2
+G	x16	+- r 0 x1
+G	xAdj	+- hc dx1 0
+G	il	max x2 x9
+G	ir	min x8 x15
+G	it	*/ h a1 50000
+G	ib	+- b 0 it
+H				
+M	x2	y1
+C	x3	y2	x4	y3	x5	y1
+C	x6	y2	x7	y3	x8	y1
+L	x15	y4
+C	x14	y6	x13	y5	x12	y4
+C	x11	y6	x10	y5	x9	y4
+Z
+P	downArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 100000 h ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	dy1	*/ ss a2 100000
+G	y1	+- b 0 dy1
+G	dx1	*/ w a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+G	dy2	*/ x1 dy1 wd2
+G	y2	+- y1 dy2 0
+H				
+M	l	y1
+L	x1	y1
+L	x1	t
+L	x2	t
+L	x2	y1
+L	r	y1
+L	hc	b
+Z
+P	downArrowCallout
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 64977
+G	maxAdj2	*/ 50000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	*/ 100000 h ss
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 ss h
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin 0 adj4 maxAdj4
+G	dx1	*/ ss a2 100000
+G	dx2	*/ ss a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	dy3	*/ ss a3 100000
+G	y3	+- b 0 dy3
+G	y2	*/ h a4 100000
+G	y1	*/ y2 1 2
+H				
+M	l	t
+L	r	t
+L	r	y2
+L	x3	y2
+L	x3	y3
+L	x4	y3
+L	hc	b
+L	x1	y3
+L	x2	y3
+L	x2	y2
+L	l	y2
+Z
+P	ellipse
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+P	ellipseRibbon
+A	adj1	val 25000
+A	adj2	val 50000
+A	adj3	val 12500
+G	a1	pin 0 adj1 100000
+G	a2	pin 25000 adj2 75000
+G	q10	+- 100000 0 a1
+G	q11	*/ q10 1 2
+G	q12	+- a1 0 q11
+G	minAdj3	max 0 q12
+G	a3	pin minAdj3 adj3 a1
+G	dx2	*/ w a2 200000
+G	x2	+- hc 0 dx2
+G	x3	+- x2 wd8 0
+G	x4	+- r 0 x3
+G	x5	+- r 0 x2
+G	x6	+- r 0 wd8
+G	dy1	*/ h a3 100000
+G	f1	*/ 4 dy1 w
+G	q1	*/ x3 x3 w
+G	q2	+- x3 0 q1
+G	y1	*/ f1 q2 1
+G	cx1	*/ x3 1 2
+G	cy1	*/ f1 cx1 1
+G	cx2	+- r 0 cx1
+G	q1	*/ h a1 100000
+G	dy3	+- q1 0 dy1
+G	q3	*/ x2 x2 w
+G	q4	+- x2 0 q3
+G	q5	*/ f1 q4 1
+G	y3	+- q5 dy3 0
+G	q6	+- dy1 dy3 y3
+G	q7	+- q6 dy1 0
+G	cy3	+- q7 dy3 0
+G	rh	+- b 0 q1
+G	q8	*/ dy1 14 16
+G	y2	+/ q8 rh 2
+G	y5	+- q5 rh 0
+G	y6	+- y3 rh 0
+G	cx4	*/ x2 1 2
+G	q9	*/ f1 cx4 1
+G	cy4	+- q9 rh 0
+G	cx5	+- r 0 cx4
+G	cy6	+- cy3 rh 0
+G	y7	+- y1 dy3 0
+G	cy7	+- q1 q1 y7
+G	y8	+- b 0 dy1
+H				false
+M	l	t
+Q	cx1	cy1	x3	y1
+L	x2	y3
+Q	hc	cy3	x5	y3
+L	x4	y1
+Q	cx2	cy1	r	t
+L	x6	y2
+L	r	rh
+Q	cx5	cy4	x5	y5
+L	x5	y6
+Q	hc	cy6	x2	y6
+L	x2	y5
+Q	cx4	cy4	l	rh
+L	wd8	y2
+Z
+H			darkenLess	false
+M	x3	y7
+L	x3	y1
+L	x2	y3
+Q	hc	cy3	x5	y3
+L	x4	y1
+L	x4	y7
+Q	hc	cy7	x3	y7
+Z
+H			none	
+M	l	t
+Q	cx1	cy1	x3	y1
+L	x2	y3
+Q	hc	cy3	x5	y3
+L	x4	y1
+Q	cx2	cy1	r	t
+L	x6	y2
+L	r	rh
+Q	cx5	cy4	x5	y5
+L	x5	y6
+Q	hc	cy6	x2	y6
+L	x2	y5
+Q	cx4	cy4	l	rh
+L	wd8	y2
+Z
+M	x2	y5
+L	x2	y3
+M	x5	y3
+L	x5	y5
+M	x3	y1
+L	x3	y7
+M	x4	y7
+L	x4	y1
+P	ellipseRibbon2
+A	adj1	val 25000
+A	adj2	val 50000
+A	adj3	val 12500
+G	a1	pin 0 adj1 100000
+G	a2	pin 25000 adj2 75000
+G	q10	+- 100000 0 a1
+G	q11	*/ q10 1 2
+G	q12	+- a1 0 q11
+G	minAdj3	max 0 q12
+G	a3	pin minAdj3 adj3 a1
+G	dx2	*/ w a2 200000
+G	x2	+- hc 0 dx2
+G	x3	+- x2 wd8 0
+G	x4	+- r 0 x3
+G	x5	+- r 0 x2
+G	x6	+- r 0 wd8
+G	dy1	*/ h a3 100000
+G	f1	*/ 4 dy1 w
+G	q1	*/ x3 x3 w
+G	q2	+- x3 0 q1
+G	u1	*/ f1 q2 1
+G	y1	+- b 0 u1
+G	cx1	*/ x3 1 2
+G	cu1	*/ f1 cx1 1
+G	cy1	+- b 0 cu1
+G	cx2	+- r 0 cx1
+G	q1	*/ h a1 100000
+G	dy3	+- q1 0 dy1
+G	q3	*/ x2 x2 w
+G	q4	+- x2 0 q3
+G	q5	*/ f1 q4 1
+G	u3	+- q5 dy3 0
+G	y3	+- b 0 u3
+G	q6	+- dy1 dy3 u3
+G	q7	+- q6 dy1 0
+G	cu3	+- q7 dy3 0
+G	cy3	+- b 0 cu3
+G	rh	+- b 0 q1
+G	q8	*/ dy1 14 16
+G	u2	+/ q8 rh 2
+G	y2	+- b 0 u2
+G	u5	+- q5 rh 0
+G	y5	+- b 0 u5
+G	u6	+- u3 rh 0
+G	y6	+- b 0 u6
+G	cx4	*/ x2 1 2
+G	q9	*/ f1 cx4 1
+G	cu4	+- q9 rh 0
+G	cy4	+- b 0 cu4
+G	cx5	+- r 0 cx4
+G	cu6	+- cu3 rh 0
+G	cy6	+- b 0 cu6
+G	u7	+- u1 dy3 0
+G	y7	+- b 0 u7
+G	cu7	+- q1 q1 u7
+G	cy7	+- b 0 cu7
+H				false
+M	l	b
+Q	cx1	cy1	x3	y1
+L	x2	y3
+Q	hc	cy3	x5	y3
+L	x4	y1
+Q	cx2	cy1	r	b
+L	x6	y2
+L	r	q1
+Q	cx5	cy4	x5	y5
+L	x5	y6
+Q	hc	cy6	x2	y6
+L	x2	y5
+Q	cx4	cy4	l	q1
+L	wd8	y2
+Z
+H			darkenLess	false
+M	x3	y7
+L	x3	y1
+L	x2	y3
+Q	hc	cy3	x5	y3
+L	x4	y1
+L	x4	y7
+Q	hc	cy7	x3	y7
+Z
+H			none	
+M	l	b
+L	wd8	y2
+L	l	q1
+Q	cx4	cy4	x2	y5
+L	x2	y6
+Q	hc	cy6	x5	y6
+L	x5	y5
+Q	cx5	cy4	r	q1
+L	x6	y2
+L	r	b
+Q	cx2	cy1	x4	y1
+L	x5	y3
+Q	hc	cy3	x2	y3
+L	x3	y1
+Q	cx1	cy1	l	b
+Z
+M	x2	y3
+L	x2	y5
+M	x5	y5
+L	x5	y3
+M	x3	y7
+L	x3	y1
+M	x4	y1
+L	x4	y7
+P	flowChartAlternateProcess
+G	x2	+- r 0 ssd6
+G	y2	+- b 0 ssd6
+G	il	*/ ssd6 29289 100000
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				
+M	l	ssd6
+R	ssd6	ssd6	cd2	cd4
+L	x2	t
+R	ssd6	ssd6	3cd4	cd4
+L	r	y2
+R	ssd6	ssd6	0	cd4
+L	ssd6	b
+R	ssd6	ssd6	cd4	cd4
+Z
+P	flowChartCollate
+G	ir	*/ w 3 4
+G	ib	*/ h 3 4
+H	2	2		
+M	0	0
+L	2	0
+L	1	1
+L	2	2
+L	0	2
+L	1	1
+Z
+P	flowChartConnector
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+P	flowChartDecision
+G	ir	*/ w 3 4
+G	ib	*/ h 3 4
+H	2	2		
+M	0	1
+L	1	0
+L	2	1
+L	1	2
+Z
+P	flowChartDelay
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	l	t
+L	hc	t
+R	wd2	hd2	3cd4	cd2
+L	l	b
+Z
+P	flowChartDisplay
+G	x2	*/ w 5 6
+H	6	6		
+M	0	3
+L	1	0
+L	5	0
+R	1	3	3cd4	cd2
+L	1	6
+Z
+P	flowChartDocument
+G	y1	*/ h 17322 21600
+G	y2	*/ h 20172 21600
+H	21600	21600		
+M	0	0
+L	21600	0
+L	21600	17322
+C	10800	17322	10800	23922	0	20172
+Z
+P	flowChartExtract
+G	x2	*/ w 3 4
+H	2	2		
+M	0	2
+L	1	0
+L	2	2
+Z
+P	flowChartInputOutput
+G	x3	*/ w 2 5
+G	x4	*/ w 3 5
+G	x5	*/ w 4 5
+G	x6	*/ w 9 10
+H	5	5		
+M	0	5
+L	1	0
+L	5	0
+L	4	5
+Z
+P	flowChartInternalStorage
+H	1	1		false
+M	0	0
+L	1	0
+L	1	1
+L	0	1
+Z
+H	8	8	none	
+M	1	0
+L	1	8
+M	0	1
+L	8	1
+H	1	1	none	
+M	0	0
+L	1	0
+L	1	1
+L	0	1
+Z
+P	flowChartMagneticDisk
+G	y3	*/ h 5 6
+H	6	6		false
+M	0	1
+R	3	1	cd2	cd2
+L	6	5
+R	3	1	0	cd2
+Z
+H	6	6	none	
+M	6	1
+R	3	1	0	cd2
+H	6	6	none	
+M	0	1
+R	3	1	cd2	cd2
+L	6	5
+R	3	1	0	cd2
+Z
+P	flowChartMagneticDrum
+G	x2	*/ w 2 3
+H	6	6		false
+M	1	0
+L	5	0
+R	1	3	3cd4	cd2
+L	1	6
+R	1	3	cd4	cd2
+Z
+H	6	6	none	
+M	5	6
+R	1	3	cd4	cd2
+H	6	6	none	
+M	1	0
+L	5	0
+R	1	3	3cd4	cd2
+L	1	6
+R	1	3	cd4	cd2
+Z
+P	flowChartMagneticTape
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+G	ang1	at2 w h
+H				
+M	hc	b
+R	wd2	hd2	cd4	cd4
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	ang1
+L	r	ib
+L	r	b
+Z
+P	flowChartManualInput
+H	5	5		
+M	0	1
+L	5	0
+L	5	5
+L	0	5
+Z
+P	flowChartManualOperation
+G	x3	*/ w 4 5
+G	x4	*/ w 9 10
+H	5	5		
+M	0	0
+L	5	0
+L	4	5
+L	1	5
+Z
+P	flowChartMerge
+G	x2	*/ w 3 4
+H	2	2		
+M	0	0
+L	2	0
+L	1	2
+Z
+P	flowChartMultidocument
+G	y2	*/ h 3675 21600
+G	y8	*/ h 20782 21600
+G	x3	*/ w 9298 21600
+G	x4	*/ w 12286 21600
+G	x5	*/ w 18595 21600
+H	21600	21600		false
+M	0	20782
+C	9298	23542	9298	18022	18595	18022
+L	18595	3675
+L	0	3675
+Z
+M	1532	3675
+L	1532	1815
+L	20000	1815
+L	20000	16252
+C	19298	16252	18595	16352	18595	16352
+L	18595	3675
+Z
+M	2972	1815
+L	2972	0
+L	21600	0
+L	21600	14392
+C	20800	14392	20000	14467	20000	14467
+L	20000	1815
+Z
+H	21600	21600	none	
+M	0	3675
+L	18595	3675
+L	18595	18022
+C	9298	18022	9298	23542	0	20782
+Z
+M	1532	3675
+L	1532	1815
+L	20000	1815
+L	20000	16252
+C	19298	16252	18595	16352	18595	16352
+M	2972	1815
+L	2972	0
+L	21600	0
+L	21600	14392
+C	20800	14392	20000	14467	20000	14467
+H	21600	21600	none	false
+M	0	20782
+C	9298	23542	9298	18022	18595	18022
+L	18595	16352
+C	18595	16352	19298	16252	20000	16252
+L	20000	14467
+C	20000	14467	20800	14392	21600	14392
+L	21600	0
+L	2972	0
+L	2972	1815
+L	1532	1815
+L	1532	3675
+L	0	3675
+Z
+P	flowChartOfflineStorage
+G	x4	*/ w 3 4
+H	2	2		false
+M	0	0
+L	2	0
+L	1	2
+Z
+H	5	5	none	
+M	2	4
+L	3	4
+H	2	2	none	
+M	0	0
+L	2	0
+L	1	2
+Z
+P	flowChartOffpageConnector
+G	y1	*/ h 4 5
+H	10	10		
+M	0	0
+L	10	0
+L	10	8
+L	5	10
+L	0	8
+Z
+P	flowChartOnlineStorage
+G	x2	*/ w 5 6
+H	6	6		
+M	1	0
+L	6	0
+R	1	3	3cd4	-10800000
+L	1	6
+R	1	3	cd4	cd2
+Z
+P	flowChartOr
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				false
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+H			none	
+M	hc	t
+L	hc	b
+M	l	vc
+L	r	vc
+H			none	
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+P	flowChartPredefinedProcess
+G	x2	*/ w 7 8
+H	1	1		false
+M	0	0
+L	1	0
+L	1	1
+L	0	1
+Z
+H	8	8	none	
+M	1	0
+L	1	8
+M	7	0
+L	7	8
+H	1	1	none	
+M	0	0
+L	1	0
+L	1	1
+L	0	1
+Z
+P	flowChartPreparation
+G	x2	*/ w 4 5
+H	10	10		
+M	0	5
+L	2	0
+L	8	0
+L	10	5
+L	8	10
+L	2	10
+Z
+P	flowChartProcess
+H	1	1		
+M	0	0
+L	1	0
+L	1	1
+L	0	1
+Z
+P	flowChartPunchedCard
+H	5	5		
+M	0	1
+L	1	0
+L	5	0
+L	5	5
+L	0	5
+Z
+P	flowChartPunchedTape
+G	y2	*/ h 9 10
+G	ib	*/ h 4 5
+H	20	20		
+M	0	2
+R	5	2	cd2	-10800000
+R	5	2	cd2	cd2
+L	20	18
+R	5	2	0	-10800000
+R	5	2	0	cd2
+Z
+P	flowChartSort
+G	ir	*/ w 3 4
+G	ib	*/ h 3 4
+H	2	2		false
+M	0	1
+L	1	0
+L	2	1
+L	1	2
+Z
+H	2	2	none	
+M	0	1
+L	2	1
+H	2	2	none	
+M	0	1
+L	1	0
+L	2	1
+L	1	2
+Z
+P	flowChartSummingJunction
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				false
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+H			none	
+M	il	it
+L	ir	ib
+M	ir	it
+L	il	ib
+H			none	
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+P	flowChartTerminator
+G	il	*/ w 1018 21600
+G	ir	*/ w 20582 21600
+G	it	*/ h 3163 21600
+G	ib	*/ h 18437 21600
+H	21600	21600		
+M	3475	0
+L	18125	0
+R	3475	10800	3cd4	cd2
+L	3475	21600
+R	3475	10800	cd4	cd2
+Z
+P	foldedCorner
+A	adj	val 16667
+G	a	pin 0 adj 50000
+G	dy2	*/ ss a 100000
+G	dy1	*/ dy2 1 5
+G	x1	+- r 0 dy2
+G	x2	+- x1 dy1 0
+G	y2	+- b 0 dy2
+G	y1	+- y2 dy1 0
+H				false
+M	l	t
+L	r	t
+L	r	y2
+L	x1	b
+L	l	b
+Z
+H			darkenLess	false
+M	x1	b
+L	x2	y1
+L	r	y2
+Z
+H			none	
+M	x1	b
+L	x2	y1
+L	r	y2
+L	x1	b
+L	l	b
+L	l	t
+L	r	t
+L	r	y2
+P	frame
+A	adj1	val 12500
+G	a1	pin 0 adj1 50000
+G	x1	*/ ss a1 100000
+G	x4	+- r 0 x1
+G	y4	+- b 0 x1
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+M	x1	x1
+L	x1	y4
+L	x4	y4
+L	x4	x1
+Z
+P	funnel
+G	d	*/ ss 1 20
+G	rw2	+- wd2 0 d
+G	rh2	+- hd4 0 d
+G	t1	cos wd2 480000
+G	t2	sin hd4 480000
+G	da	at2 t1 t2
+G	2da	*/ da 2 1
+G	stAng1	+- cd2 0 da
+G	swAng1	+- cd2 2da 0
+G	swAng3	+- cd2 0 2da
+G	rw3	*/ wd2 1 4
+G	rh3	*/ hd4 1 4
+G	ct1	cos hd4 stAng1
+G	st1	sin wd2 stAng1
+G	m1	mod ct1 st1 0
+G	n1	*/ wd2 hd4 m1
+G	dx1	cos n1 stAng1
+G	dy1	sin n1 stAng1
+G	x1	+- hc dx1 0
+G	y1	+- hd4 dy1 0
+G	ct3	cos rh3 da
+G	st3	sin rw3 da
+G	m3	mod ct3 st3 0
+G	n3	*/ rw3 rh3 m3
+G	dx3	cos n3 da
+G	dy3	sin n3 da
+G	x3	+- hc dx3 0
+G	vc3	+- b 0 rh3
+G	y2	+- vc3 dy3 0
+G	x2	+- wd2 0 rw2
+G	cd	*/ cd2 2 1
+H				
+M	x1	y1
+R	wd2	hd4	stAng1	swAng1
+L	x3	y2
+R	rw3	rh3	da	swAng3
+Z
+M	x2	hd4
+R	rw2	rh2	cd2	-21600000
+Z
+P	gear6
+A	adj1	val 15000
+A	adj2	val 3526
+G	a1	pin 0 adj1 20000
+G	a2	pin 0 adj2 5358
+G	th	*/ ss a1 100000
+G	lFD	*/ ss a2 100000
+G	th2	*/ th 1 2
+G	l2	*/ lFD 1 2
+G	l3	+- th2 l2 0
+G	rh	+- hd2 0 th
+G	rw	+- wd2 0 th
+G	dr	+- rw 0 rh
+G	maxr	?: dr rh rw
+G	ha	at2 maxr l3
+G	aA1	+- 19800000 0 ha
+G	aD1	+- 19800000 ha 0
+G	ta11	cos rw aA1
+G	ta12	sin rh aA1
+G	bA1	at2 ta11 ta12
+G	cta1	cos rh bA1
+G	sta1	sin rw bA1
+G	ma1	mod cta1 sta1 0
+G	na1	*/ rw rh ma1
+G	dxa1	cos na1 bA1
+G	dya1	sin na1 bA1
+G	xA1	+- hc dxa1 0
+G	yA1	+- vc dya1 0
+G	td11	cos rw aD1
+G	td12	sin rh aD1
+G	bD1	at2 td11 td12
+G	ctd1	cos rh bD1
+G	std1	sin rw bD1
+G	md1	mod ctd1 std1 0
+G	nd1	*/ rw rh md1
+G	dxd1	cos nd1 bD1
+G	dyd1	sin nd1 bD1
+G	xD1	+- hc dxd1 0
+G	yD1	+- vc dyd1 0
+G	xAD1	+- xA1 0 xD1
+G	yAD1	+- yA1 0 yD1
+G	lAD1	mod xAD1 yAD1 0
+G	a1	at2 yAD1 xAD1
+G	dxF1	sin lFD a1
+G	dyF1	cos lFD a1
+G	xF1	+- xD1 dxF1 0
+G	yF1	+- yD1 dyF1 0
+G	xE1	+- xA1 0 dxF1
+G	yE1	+- yA1 0 dyF1
+G	yC1t	sin th a1
+G	xC1t	cos th a1
+G	yC1	+- yF1 yC1t 0
+G	xC1	+- xF1 0 xC1t
+G	yB1	+- yE1 yC1t 0
+G	xB1	+- xE1 0 xC1t
+G	aD6	+- 3cd4 ha 0
+G	td61	cos rw aD6
+G	td62	sin rh aD6
+G	bD6	at2 td61 td62
+G	ctd6	cos rh bD6
+G	std6	sin rw bD6
+G	md6	mod ctd6 std6 0
+G	nd6	*/ rw rh md6
+G	dxd6	cos nd6 bD6
+G	dyd6	sin nd6 bD6
+G	xD6	+- hc dxd6 0
+G	yD6	+- vc dyd6 0
+G	xA6	+- hc 0 dxd6
+G	xF6	+- xD6 0 lFD
+G	xE6	+- xA6 lFD 0
+G	yC6	+- yD6 0 th
+G	swAng1	+- bA1 0 bD6
+G	aA2	+- 1800000 0 ha
+G	aD2	+- 1800000 ha 0
+G	ta21	cos rw aA2
+G	ta22	sin rh aA2
+G	bA2	at2 ta21 ta22
+G	yA2	+- h 0 yD1
+G	td21	cos rw aD2
+G	td22	sin rh aD2
+G	bD2	at2 td21 td22
+G	yD2	+- h 0 yA1
+G	yC2	+- h 0 yB1
+G	yB2	+- h 0 yC1
+G	xB2	val xC1
+G	swAng2	+- bA2 0 bD1
+G	aD3	+- cd4 ha 0
+G	td31	cos rw aD3
+G	td32	sin rh aD3
+G	bD3	at2 td31 td32
+G	yD3	+- h 0 yD6
+G	yB3	+- h 0 yC6
+G	aD4	+- 9000000 ha 0
+G	td41	cos rw aD4
+G	td42	sin rh aD4
+G	bD4	at2 td41 td42
+G	xD4	+- w 0 xD1
+G	xC4	+- w 0 xC1
+G	xB4	+- w 0 xB1
+G	aD5	+- 12600000 ha 0
+G	td51	cos rw aD5
+G	td52	sin rh aD5
+G	bD5	at2 td51 td52
+G	xD5	+- w 0 xA1
+G	xC5	+- w 0 xB1
+G	xB5	+- w 0 xC1
+G	xCxn1	+/ xB1 xC1 2
+G	yCxn1	+/ yB1 yC1 2
+G	yCxn2	+- b 0 yCxn1
+G	xCxn4	+/ r 0 xCxn1
+H				
+M	xA1	yA1
+L	xB1	yB1
+L	xC1	yC1
+L	xD1	yD1
+R	rw	rh	bD1	swAng2
+L	xC1	yB2
+L	xB1	yC2
+L	xA1	yD2
+R	rw	rh	bD2	swAng1
+L	xF6	yB3
+L	xE6	yB3
+L	xA6	yD3
+R	rw	rh	bD3	swAng1
+L	xB4	yC2
+L	xC4	yB2
+L	xD4	yA2
+R	rw	rh	bD4	swAng2
+L	xB5	yC1
+L	xC5	yB1
+L	xD5	yA1
+R	rw	rh	bD5	swAng1
+L	xE6	yC6
+L	xF6	yC6
+L	xD6	yD6
+R	rw	rh	bD6	swAng1
+Z
+P	gear9
+A	adj1	val 10000
+A	adj2	val 1763
+G	a1	pin 0 adj1 20000
+G	a2	pin 0 adj2 2679
+G	th	*/ ss a1 100000
+G	lFD	*/ ss a2 100000
+G	th2	*/ th 1 2
+G	l2	*/ lFD 1 2
+G	l3	+- th2 l2 0
+G	rh	+- hd2 0 th
+G	rw	+- wd2 0 th
+G	dr	+- rw 0 rh
+G	maxr	?: dr rh rw
+G	ha	at2 maxr l3
+G	aA1	+- 18600000 0 ha
+G	aD1	+- 18600000 ha 0
+G	ta11	cos rw aA1
+G	ta12	sin rh aA1
+G	bA1	at2 ta11 ta12
+G	cta1	cos rh bA1
+G	sta1	sin rw bA1
+G	ma1	mod cta1 sta1 0
+G	na1	*/ rw rh ma1
+G	dxa1	cos na1 bA1
+G	dya1	sin na1 bA1
+G	xA1	+- hc dxa1 0
+G	yA1	+- vc dya1 0
+G	td11	cos rw aD1
+G	td12	sin rh aD1
+G	bD1	at2 td11 td12
+G	ctd1	cos rh bD1
+G	std1	sin rw bD1
+G	md1	mod ctd1 std1 0
+G	nd1	*/ rw rh md1
+G	dxd1	cos nd1 bD1
+G	dyd1	sin nd1 bD1
+G	xD1	+- hc dxd1 0
+G	yD1	+- vc dyd1 0
+G	xAD1	+- xA1 0 xD1
+G	yAD1	+- yA1 0 yD1
+G	lAD1	mod xAD1 yAD1 0
+G	a1	at2 yAD1 xAD1
+G	dxF1	sin lFD a1
+G	dyF1	cos lFD a1
+G	xF1	+- xD1 dxF1 0
+G	yF1	+- yD1 dyF1 0
+G	xE1	+- xA1 0 dxF1
+G	yE1	+- yA1 0 dyF1
+G	yC1t	sin th a1
+G	xC1t	cos th a1
+G	yC1	+- yF1 yC1t 0
+G	xC1	+- xF1 0 xC1t
+G	yB1	+- yE1 yC1t 0
+G	xB1	+- xE1 0 xC1t
+G	aA2	+- 21000000 0 ha
+G	aD2	+- 21000000 ha 0
+G	ta21	cos rw aA2
+G	ta22	sin rh aA2
+G	bA2	at2 ta21 ta22
+G	cta2	cos rh bA2
+G	sta2	sin rw bA2
+G	ma2	mod cta2 sta2 0
+G	na2	*/ rw rh ma2
+G	dxa2	cos na2 bA2
+G	dya2	sin na2 bA2
+G	xA2	+- hc dxa2 0
+G	yA2	+- vc dya2 0
+G	td21	cos rw aD2
+G	td22	sin rh aD2
+G	bD2	at2 td21 td22
+G	ctd2	cos rh bD2
+G	std2	sin rw bD2
+G	md2	mod ctd2 std2 0
+G	nd2	*/ rw rh md2
+G	dxd2	cos nd2 bD2
+G	dyd2	sin nd2 bD2
+G	xD2	+- hc dxd2 0
+G	yD2	+- vc dyd2 0
+G	xAD2	+- xA2 0 xD2
+G	yAD2	+- yA2 0 yD2
+G	lAD2	mod xAD2 yAD2 0
+G	a2	at2 yAD2 xAD2
+G	dxF2	sin lFD a2
+G	dyF2	cos lFD a2
+G	xF2	+- xD2 dxF2 0
+G	yF2	+- yD2 dyF2 0
+G	xE2	+- xA2 0 dxF2
+G	yE2	+- yA2 0 dyF2
+G	yC2t	sin th a2
+G	xC2t	cos th a2
+G	yC2	+- yF2 yC2t 0
+G	xC2	+- xF2 0 xC2t
+G	yB2	+- yE2 yC2t 0
+G	xB2	+- xE2 0 xC2t
+G	swAng1	+- bA2 0 bD1
+G	aA3	+- 1800000 0 ha
+G	aD3	+- 1800000 ha 0
+G	ta31	cos rw aA3
+G	ta32	sin rh aA3
+G	bA3	at2 ta31 ta32
+G	cta3	cos rh bA3
+G	sta3	sin rw bA3
+G	ma3	mod cta3 sta3 0
+G	na3	*/ rw rh ma3
+G	dxa3	cos na3 bA3
+G	dya3	sin na3 bA3
+G	xA3	+- hc dxa3 0
+G	yA3	+- vc dya3 0
+G	td31	cos rw aD3
+G	td32	sin rh aD3
+G	bD3	at2 td31 td32
+G	ctd3	cos rh bD3
+G	std3	sin rw bD3
+G	md3	mod ctd3 std3 0
+G	nd3	*/ rw rh md3
+G	dxd3	cos nd3 bD3
+G	dyd3	sin nd3 bD3
+G	xD3	+- hc dxd3 0
+G	yD3	+- vc dyd3 0
+G	xAD3	+- xA3 0 xD3
+G	yAD3	+- yA3 0 yD3
+G	lAD3	mod xAD3 yAD3 0
+G	a3	at2 yAD3 xAD3
+G	dxF3	sin lFD a3
+G	dyF3	cos lFD a3
+G	xF3	+- xD3 dxF3 0
+G	yF3	+- yD3 dyF3 0
+G	xE3	+- xA3 0 dxF3
+G	yE3	+- yA3 0 dyF3
+G	yC3t	sin th a3
+G	xC3t	cos th a3
+G	yC3	+- yF3 yC3t 0
+G	xC3	+- xF3 0 xC3t
+G	yB3	+- yE3 yC3t 0
+G	xB3	+- xE3 0 xC3t
+G	swAng2	+- bA3 0 bD2
+G	aA4	+- 4200000 0 ha
+G	aD4	+- 4200000 ha 0
+G	ta41	cos rw aA4
+G	ta42	sin rh aA4
+G	bA4	at2 ta41 ta42
+G	cta4	cos rh bA4
+G	sta4	sin rw bA4
+G	ma4	mod cta4 sta4 0
+G	na4	*/ rw rh ma4
+G	dxa4	cos na4 bA4
+G	dya4	sin na4 bA4
+G	xA4	+- hc dxa4 0
+G	yA4	+- vc dya4 0
+G	td41	cos rw aD4
+G	td42	sin rh aD4
+G	bD4	at2 td41 td42
+G	ctd4	cos rh bD4
+G	std4	sin rw bD4
+G	md4	mod ctd4 std4 0
+G	nd4	*/ rw rh md4
+G	dxd4	cos nd4 bD4
+G	dyd4	sin nd4 bD4
+G	xD4	+- hc dxd4 0
+G	yD4	+- vc dyd4 0
+G	xAD4	+- xA4 0 xD4
+G	yAD4	+- yA4 0 yD4
+G	lAD4	mod xAD4 yAD4 0
+G	a4	at2 yAD4 xAD4
+G	dxF4	sin lFD a4
+G	dyF4	cos lFD a4
+G	xF4	+- xD4 dxF4 0
+G	yF4	+- yD4 dyF4 0
+G	xE4	+- xA4 0 dxF4
+G	yE4	+- yA4 0 dyF4
+G	yC4t	sin th a4
+G	xC4t	cos th a4
+G	yC4	+- yF4 yC4t 0
+G	xC4	+- xF4 0 xC4t
+G	yB4	+- yE4 yC4t 0
+G	xB4	+- xE4 0 xC4t
+G	swAng3	+- bA4 0 bD3
+G	aA5	+- 6600000 0 ha
+G	aD5	+- 6600000 ha 0
+G	ta51	cos rw aA5
+G	ta52	sin rh aA5
+G	bA5	at2 ta51 ta52
+G	td51	cos rw aD5
+G	td52	sin rh aD5
+G	bD5	at2 td51 td52
+G	xD5	+- w 0 xA4
+G	xC5	+- w 0 xB4
+G	xB5	+- w 0 xC4
+G	swAng4	+- bA5 0 bD4
+G	aD6	+- 9000000 ha 0
+G	td61	cos rw aD6
+G	td62	sin rh aD6
+G	bD6	at2 td61 td62
+G	xD6	+- w 0 xA3
+G	xC6	+- w 0 xB3
+G	xB6	+- w 0 xC3
+G	aD7	+- 11400000 ha 0
+G	td71	cos rw aD7
+G	td72	sin rh aD7
+G	bD7	at2 td71 td72
+G	xD7	+- w 0 xA2
+G	xC7	+- w 0 xB2
+G	xB7	+- w 0 xC2
+G	aD8	+- 13800000 ha 0
+G	td81	cos rw aD8
+G	td82	sin rh aD8
+G	bD8	at2 td81 td82
+G	xA8	+- w 0 xD1
+G	xD8	+- w 0 xA1
+G	xC8	+- w 0 xB1
+G	xB8	+- w 0 xC1
+G	aA9	+- 3cd4 0 ha
+G	aD9	+- 3cd4 ha 0
+G	td91	cos rw aD9
+G	td92	sin rh aD9
+G	bD9	at2 td91 td92
+G	ctd9	cos rh bD9
+G	std9	sin rw bD9
+G	md9	mod ctd9 std9 0
+G	nd9	*/ rw rh md9
+G	dxd9	cos nd9 bD9
+G	dyd9	sin nd9 bD9
+G	xD9	+- hc dxd9 0
+G	yD9	+- vc dyd9 0
+G	ta91	cos rw aA9
+G	ta92	sin rh aA9
+G	bA9	at2 ta91 ta92
+G	xA9	+- hc 0 dxd9
+G	xF9	+- xD9 0 lFD
+G	xE9	+- xA9 lFD 0
+G	yC9	+- yD9 0 th
+G	swAng5	+- bA9 0 bD8
+G	xCxn1	+/ xB1 xC1 2
+G	yCxn1	+/ yB1 yC1 2
+G	xCxn2	+/ xB2 xC2 2
+G	yCxn2	+/ yB2 yC2 2
+G	xCxn3	+/ xB3 xC3 2
+G	yCxn3	+/ yB3 yC3 2
+G	xCxn4	+/ xB4 xC4 2
+G	yCxn4	+/ yB4 yC4 2
+G	xCxn5	+/ r 0 xCxn4
+G	xCxn6	+/ r 0 xCxn3
+G	xCxn7	+/ r 0 xCxn2
+G	xCxn8	+/ r 0 xCxn1
+H				
+M	xA1	yA1
+L	xB1	yB1
+L	xC1	yC1
+L	xD1	yD1
+R	rw	rh	bD1	swAng1
+L	xB2	yB2
+L	xC2	yC2
+L	xD2	yD2
+R	rw	rh	bD2	swAng2
+L	xB3	yB3
+L	xC3	yC3
+L	xD3	yD3
+R	rw	rh	bD3	swAng3
+L	xB4	yB4
+L	xC4	yC4
+L	xD4	yD4
+R	rw	rh	bD4	swAng4
+L	xB5	yC4
+L	xC5	yB4
+L	xD5	yA4
+R	rw	rh	bD5	swAng3
+L	xB6	yC3
+L	xC6	yB3
+L	xD6	yA3
+R	rw	rh	bD6	swAng2
+L	xB7	yC2
+L	xC7	yB2
+L	xD7	yA2
+R	rw	rh	bD7	swAng1
+L	xB8	yC1
+L	xC8	yB1
+L	xD8	yA1
+R	rw	rh	bD8	swAng5
+L	xE9	yC9
+L	xF9	yC9
+L	xD9	yD9
+R	rw	rh	bD9	swAng5
+Z
+P	halfFrame
+A	adj1	val 33333
+A	adj2	val 33333
+G	maxAdj2	*/ 100000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	x1	*/ ss a2 100000
+G	g1	*/ h x1 w
+G	g2	+- h 0 g1
+G	maxAdj1	*/ 100000 g2 ss
+G	a1	pin 0 adj1 maxAdj1
+G	y1	*/ ss a1 100000
+G	dx2	*/ y1 w h
+G	x2	+- r 0 dx2
+G	dy2	*/ x1 h w
+G	y2	+- b 0 dy2
+G	cx1	*/ x1 1 2
+G	cy1	+/ y2 b 2
+G	cx2	+/ x2 r 2
+G	cy2	*/ y1 1 2
+H				
+M	l	t
+L	r	t
+L	x2	y1
+L	x1	y1
+L	x1	y2
+L	l	b
+Z
+P	heart
+G	dx1	*/ w 49 48
+G	dx2	*/ w 10 48
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	y1	+- t 0 hd3
+G	il	*/ w 1 6
+G	ir	*/ w 5 6
+G	ib	*/ h 2 3
+H				
+M	hc	hd4
+C	x3	y1	x4	hd4	hc	b
+C	x1	hd4	x2	y1	hc	hd4
+Z
+P	heptagon
+A	hf	val 102572
+A	vf	val 105210
+G	swd2	*/ wd2 hf 100000
+G	shd2	*/ hd2 vf 100000
+G	svc	*/ vc  vf 100000
+G	dx1	*/ swd2 97493 100000
+G	dx2	*/ swd2 78183 100000
+G	dx3	*/ swd2 43388 100000
+G	dy1	*/ shd2 62349 100000
+G	dy2	*/ shd2 22252 100000
+G	dy3	*/ shd2 90097 100000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc 0 dx3
+G	x4	+- hc dx3 0
+G	x5	+- hc dx2 0
+G	x6	+- hc dx1 0
+G	y1	+- svc 0 dy1
+G	y2	+- svc dy2 0
+G	y3	+- svc dy3 0
+G	ib	+- b 0 y1
+H				
+M	x1	y2
+L	x2	y1
+L	hc	t
+L	x5	y1
+L	x6	y2
+L	x4	y3
+L	x3	y3
+Z
+P	hexagon
+A	adj	val 25000
+A	vf	val 115470
+G	maxAdj	*/ 50000 w ss
+G	a	pin 0 adj maxAdj
+G	shd2	*/ hd2 vf 100000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	dy1	sin shd2 3600000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	q1	*/ maxAdj -1 2
+G	q2	+- a q1 0
+G	q3	?: q2 4 2
+G	q4	?: q2 3 2
+G	q5	?: q2 q1 0
+G	q6	+/ a q5 q1
+G	q7	*/ q6 q4 -1
+G	q8	+- q3 q7 0
+G	il	*/ w q8 24
+G	it	*/ h q8 24
+G	ir	+- r 0 il
+G	ib	+- b 0 it
+H				
+M	l	vc
+L	x1	y1
+L	x2	y1
+L	r	vc
+L	x2	y2
+L	x1	y2
+Z
+P	homePlate
+A	adj	val 50000
+G	maxAdj	*/ 100000 w ss
+G	a	pin 0 adj maxAdj
+G	dx1	*/ ss a 100000
+G	x1	+- r 0 dx1
+G	ir	+/ x1 r 2
+G	x2	*/ x1 1 2
+H				
+M	l	t
+L	x1	t
+L	r	vc
+L	x1	b
+L	l	b
+Z
+P	horizontalScroll
+A	adj	val 12500
+G	a	pin 0 adj 25000
+G	ch	*/ ss a 100000
+G	ch2	*/ ch 1 2
+G	ch4	*/ ch 1 4
+G	y3	+- ch ch2 0
+G	y4	+- ch ch 0
+G	y6	+- b 0 ch
+G	y7	+- b 0 ch2
+G	y5	+- y6 0 ch2
+G	x3	+- r 0 ch
+G	x4	+- r 0 ch2
+H				false
+M	r	ch2
+R	ch2	ch2	0	cd4
+L	x4	ch2
+R	ch4	ch4	0	cd2
+L	x3	ch
+L	ch2	ch
+R	ch2	ch2	3cd4	-5400000
+L	l	y7
+R	ch2	ch2	cd2	-10800000
+L	ch	y6
+L	x4	y6
+R	ch2	ch2	cd4	-5400000
+Z
+M	ch2	y4
+R	ch2	ch2	cd4	-5400000
+R	ch4	ch4	0	-10800000
+Z
+H			darkenLess	false
+M	ch2	y4
+R	ch2	ch2	cd4	-5400000
+R	ch4	ch4	0	-10800000
+Z
+M	x4	ch
+R	ch2	ch2	cd4	-16200000
+R	ch4	ch4	cd2	-10800000
+Z
+H			none	
+M	l	y3
+R	ch2	ch2	cd2	cd4
+L	x3	ch
+L	x3	ch2
+R	ch2	ch2	cd2	cd2
+L	r	y5
+R	ch2	ch2	0	cd4
+L	ch	y6
+L	ch	y7
+R	ch2	ch2	0	cd2
+Z
+M	x3	ch
+L	x4	ch
+R	ch2	ch2	cd4	-5400000
+M	x4	ch
+L	x4	ch2
+R	ch4	ch4	0	cd2
+M	ch2	y4
+L	ch2	y3
+R	ch4	ch4	cd2	cd2
+R	ch2	ch2	0	cd2
+M	ch	y3
+L	ch	y6
+P	irregularSeal1
+G	x5	*/ w 4627 21600
+G	x12	*/ w 8485 21600
+G	x21	*/ w 16702 21600
+G	x24	*/ w 14522 21600
+G	y3	*/ h 6320 21600
+G	y6	*/ h 8615 21600
+G	y9	*/ h 13937 21600
+G	y18	*/ h 13290 21600
+H	21600	21600		
+M	10800	5800
+L	14522	0
+L	14155	5325
+L	18380	4457
+L	16702	7315
+L	21097	8137
+L	17607	10475
+L	21600	13290
+L	16837	12942
+L	18145	18095
+L	14020	14457
+L	13247	19737
+L	10532	14935
+L	8485	21600
+L	7715	15627
+L	4762	17617
+L	5667	13937
+L	135	14587
+L	3722	11775
+L	0	8615
+L	4627	7617
+L	370	2295
+L	7312	6320
+L	8352	2295
+Z
+P	irregularSeal2
+G	x2	*/ w 9722 21600
+G	x5	*/ w 5372 21600
+G	x16	*/ w 11612 21600
+G	x19	*/ w 14640 21600
+G	y2	*/ h 1887 21600
+G	y3	*/ h 6382 21600
+G	y8	*/ h 12877 21600
+G	y14	*/ h 19712 21600
+G	y16	*/ h 18842 21600
+G	y17	*/ h 15935 21600
+G	y24	*/ h 6645 21600
+H	21600	21600		
+M	11462	4342
+L	14790	0
+L	14525	5777
+L	18007	3172
+L	16380	6532
+L	21600	6645
+L	16985	9402
+L	18270	11290
+L	16380	12310
+L	18877	15632
+L	14640	14350
+L	14942	17370
+L	12180	15935
+L	11612	18842
+L	9872	17370
+L	8700	19712
+L	7527	18125
+L	4917	21600
+L	4805	18240
+L	1285	17825
+L	3330	15370
+L	0	12877
+L	3935	11592
+L	1172	8270
+L	5372	7817
+L	4502	3625
+L	8550	6382
+L	9722	1887
+Z
+P	leftArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 100000 w ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	dx2	*/ ss a2 100000
+G	x2	+- l dx2 0
+G	dy1	*/ h a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	dx1	*/ y1 dx2 hd2
+G	x1	+- x2  0 dx1
+H				
+M	l	vc
+L	x2	t
+L	x2	y1
+L	r	y1
+L	r	y2
+L	x2	y2
+L	x2	b
+Z
+P	leftArrowCallout
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 64977
+G	maxAdj2	*/ 50000 h ss
+G	a2	pin 0 adj2 maxAdj2
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	*/ 100000 w ss
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 ss w
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin 0 adj4 maxAdj4
+G	dy1	*/ ss a2 100000
+G	dy2	*/ ss a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y4	+- vc dy1 0
+G	x1	*/ ss a3 100000
+G	dx2	*/ w a4 100000
+G	x2	+- r 0 dx2
+G	x3	+/ x2 r 2
+H				
+M	l	vc
+L	x1	y1
+L	x1	y2
+L	x2	y2
+L	x2	t
+L	r	t
+L	r	b
+L	x2	b
+L	x2	y3
+L	x1	y3
+L	x1	y4
+Z
+P	leftBrace
+A	adj1	val 8333
+A	adj2	val 50000
+G	a2	pin 0 adj2 100000
+G	q1	+- 100000 0 a2
+G	q2	min q1 a2
+G	q3	*/ q2 1 2
+G	maxAdj1	*/ q3 h ss
+G	a1	pin 0 adj1 maxAdj1
+G	y1	*/ ss a1 100000
+G	y3	*/ h a2 100000
+G	y4	+- y3 y1 0
+G	dx1	cos wd2 2700000
+G	dy1	sin y1 2700000
+G	il	+- r 0 dx1
+G	it	+- y1 0 dy1
+G	ib	+- b dy1 y1
+H				false
+M	r	b
+R	wd2	y1	cd4	cd4
+L	hc	y4
+R	wd2	y1	0	-5400000
+R	wd2	y1	cd4	-5400000
+L	hc	y1
+R	wd2	y1	cd2	cd4
+Z
+H			none	
+M	r	b
+R	wd2	y1	cd4	cd4
+L	hc	y4
+R	wd2	y1	0	-5400000
+R	wd2	y1	cd4	-5400000
+L	hc	y1
+R	wd2	y1	cd2	cd4
+P	leftBracket
+A	adj	val 8333
+G	maxAdj	*/ 50000 h ss
+G	a	pin 0 adj maxAdj
+G	y1	*/ ss a 100000
+G	y2	+- b 0 y1
+G	dx1	cos w 2700000
+G	dy1	sin y1 2700000
+G	il	+- r 0 dx1
+G	it	+- y1 0 dy1
+G	ib	+- b dy1 y1
+H				false
+M	r	b
+R	w	y1	cd4	cd4
+L	l	y1
+R	w	y1	cd2	cd4
+Z
+H			none	
+M	r	b
+R	w	y1	cd4	cd4
+L	l	y1
+R	w	y1	cd2	cd4
+P	leftCircularArrow
+A	adj1	val 12500
+A	adj2	val -1142319
+A	adj3	val 1142319
+A	adj4	val 10800000
+A	adj5	val 12500
+G	a5	pin 0 adj5 25000
+G	maxAdj1	*/ a5 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	enAng	pin 1 adj3 21599999
+G	stAng	pin 0 adj4 21599999
+G	th	*/ ss a1 100000
+G	thh	*/ ss a5 100000
+G	th2	*/ th 1 2
+G	rw1	+- wd2 th2 thh
+G	rh1	+- hd2 th2 thh
+G	rw2	+- rw1 0 th
+G	rh2	+- rh1 0 th
+G	rw3	+- rw2 th2 0
+G	rh3	+- rh2 th2 0
+G	wtH	sin rw3 enAng
+G	htH	cos rh3 enAng
+G	dxH	cat2 rw3 htH wtH
+G	dyH	sat2 rh3 htH wtH
+G	xH	+- hc dxH 0
+G	yH	+- vc dyH 0
+G	rI	min rw2 rh2
+G	u1	*/ dxH dxH 1
+G	u2	*/ dyH dyH 1
+G	u3	*/ rI rI 1
+G	u4	+- u1 0 u3
+G	u5	+- u2 0 u3
+G	u6	*/ u4 u5 u1
+G	u7	*/ u6 1 u2
+G	u8	+- 1 0 u7
+G	u9	sqrt u8
+G	u10	*/ u4 1 dxH
+G	u11	*/ u10 1 dyH
+G	u12	+/ 1 u9 u11
+G	u13	at2 1 u12
+G	u14	+- u13 21600000 0
+G	u15	?: u13 u13 u14
+G	u16	+- u15 0 enAng
+G	u17	+- u16 21600000 0
+G	u18	?: u16 u16 u17
+G	u19	+- u18 0 cd2
+G	u20	+- u18 0 21600000
+G	u21	?: u19 u20 u18
+G	u22	abs u21
+G	minAng	*/ u22 -1 1
+G	u23	abs adj2
+G	a2	*/ u23 -1 1
+G	aAng	pin minAng a2 0
+G	ptAng	+- enAng aAng 0
+G	wtA	sin rw3 ptAng
+G	htA	cos rh3 ptAng
+G	dxA	cat2 rw3 htA wtA
+G	dyA	sat2 rh3 htA wtA
+G	xA	+- hc dxA 0
+G	yA	+- vc dyA 0
+G	wtE	sin rw1 stAng
+G	htE	cos rh1 stAng
+G	dxE	cat2 rw1 htE wtE
+G	dyE	sat2 rh1 htE wtE
+G	xE	+- hc dxE 0
+G	yE	+- vc dyE 0
+G	wtD	sin rw2 stAng
+G	htD	cos rh2 stAng
+G	dxD	cat2 rw2 htD wtD
+G	dyD	sat2 rh2 htD wtD
+G	xD	+- hc dxD 0
+G	yD	+- vc dyD 0
+G	dxG	cos thh ptAng
+G	dyG	sin thh ptAng
+G	xG	+- xH dxG 0
+G	yG	+- yH dyG 0
+G	dxB	cos thh ptAng
+G	dyB	sin thh ptAng
+G	xB	+- xH 0 dxB 0
+G	yB	+- yH 0 dyB 0
+G	sx1	+- xB 0 hc
+G	sy1	+- yB 0 vc
+G	sx2	+- xG 0 hc
+G	sy2	+- yG 0 vc
+G	rO	min rw1 rh1
+G	x1O	*/ sx1 rO rw1
+G	y1O	*/ sy1 rO rh1
+G	x2O	*/ sx2 rO rw1
+G	y2O	*/ sy2 rO rh1
+G	dxO	+- x2O 0 x1O
+G	dyO	+- y2O 0 y1O
+G	dO	mod dxO dyO 0
+G	q1	*/ x1O y2O 1
+G	q2	*/ x2O y1O 1
+G	DO	+- q1 0 q2
+G	q3	*/ rO rO 1
+G	q4	*/ dO dO 1
+G	q5	*/ q3 q4 1
+G	q6	*/ DO DO 1
+G	q7	+- q5 0 q6
+G	q8	max q7 0
+G	sdelO	sqrt q8
+G	ndyO	*/ dyO -1 1
+G	sdyO	?: ndyO -1 1
+G	q9	*/ sdyO dxO 1
+G	q10	*/ q9 sdelO 1
+G	q11	*/ DO dyO 1
+G	dxF1	+/ q11 q10 q4
+G	q12	+- q11 0 q10
+G	dxF2	*/ q12 1 q4
+G	adyO	abs dyO
+G	q13	*/ adyO sdelO 1
+G	q14	*/ DO dxO -1
+G	dyF1	+/ q14 q13 q4
+G	q15	+- q14 0 q13
+G	dyF2	*/ q15 1 q4
+G	q16	+- x2O 0 dxF1
+G	q17	+- x2O 0 dxF2
+G	q18	+- y2O 0 dyF1
+G	q19	+- y2O 0 dyF2
+G	q20	mod q16 q18 0
+G	q21	mod q17 q19 0
+G	q22	+- q21 0 q20
+G	dxF	?: q22 dxF1 dxF2
+G	dyF	?: q22 dyF1 dyF2
+G	sdxF	*/ dxF rw1 rO
+G	sdyF	*/ dyF rh1 rO
+G	xF	+- hc sdxF 0
+G	yF	+- vc sdyF 0
+G	x1I	*/ sx1 rI rw2
+G	y1I	*/ sy1 rI rh2
+G	x2I	*/ sx2 rI rw2
+G	y2I	*/ sy2 rI rh2
+G	dxI	+- x2I 0 x1I
+G	dyI	+- y2I 0 y1I
+G	dI	mod dxI dyI 0
+G	v1	*/ x1I y2I 1
+G	v2	*/ x2I y1I 1
+G	DI	+- v1 0 v2
+G	v3	*/ rI rI 1
+G	v4	*/ dI dI 1
+G	v5	*/ v3 v4 1
+G	v6	*/ DI DI 1
+G	v7	+- v5 0 v6
+G	v8	max v7 0
+G	sdelI	sqrt v8
+G	v9	*/ sdyO dxI 1
+G	v10	*/ v9 sdelI 1
+G	v11	*/ DI dyI 1
+G	dxC1	+/ v11 v10 v4
+G	v12	+- v11 0 v10
+G	dxC2	*/ v12 1 v4
+G	adyI	abs dyI
+G	v13	*/ adyI sdelI 1
+G	v14	*/ DI dxI -1
+G	dyC1	+/ v14 v13 v4
+G	v15	+- v14 0 v13
+G	dyC2	*/ v15 1 v4
+G	v16	+- x1I 0 dxC1
+G	v17	+- x1I 0 dxC2
+G	v18	+- y1I 0 dyC1
+G	v19	+- y1I 0 dyC2
+G	v20	mod v16 v18 0
+G	v21	mod v17 v19 0
+G	v22	+- v21 0 v20
+G	dxC	?: v22 dxC1 dxC2
+G	dyC	?: v22 dyC1 dyC2
+G	sdxC	*/ dxC rw2 rI
+G	sdyC	*/ dyC rh2 rI
+G	xC	+- hc sdxC 0
+G	yC	+- vc sdyC 0
+G	ist0	at2 sdxC sdyC
+G	ist1	+- ist0 21600000 0
+G	istAng0	?: ist0 ist0 ist1
+G	isw1	+- stAng 0 istAng0
+G	isw2	+- isw1 21600000 0
+G	iswAng0	?: isw1 isw1 isw2
+G	istAng	+- istAng0 iswAng0 0
+G	iswAng	+- 0 0 iswAng0
+G	p1	+- xF 0 xC
+G	p2	+- yF 0 yC
+G	p3	mod p1 p2 0
+G	p4	*/ p3 1 2
+G	p5	+- p4 0 thh
+G	xGp	?: p5 xF xG
+G	yGp	?: p5 yF yG
+G	xBp	?: p5 xC xB
+G	yBp	?: p5 yC yB
+G	en0	at2 sdxF sdyF
+G	en1	+- en0 21600000 0
+G	en2	?: en0 en0 en1
+G	sw0	+- en2 0 stAng
+G	sw1	+- sw0 0 21600000
+G	swAng	?: sw0 sw1 sw0
+G	stAng0	+- stAng swAng 0
+G	swAng0	+- 0 0 swAng
+G	wtI	sin rw3 stAng
+G	htI	cos rh3 stAng
+G	dxI	cat2 rw3 htI wtI
+G	dyI	sat2 rh3 htI wtI
+G	xI	+- hc dxI 0
+G	yI	+- vc dyI 0
+G	aI	+- stAng cd4 0
+G	aA	+- ptAng 0 cd4
+G	aB	+- ptAng cd2 0
+G	idx	cos rw1 2700000
+G	idy	sin rh1 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	xE	yE
+L	xD	yD
+R	rw2	rh2	istAng	iswAng
+L	xBp	yBp
+L	xA	yA
+L	xGp	yGp
+L	xF	yF
+R	rw1	rh1	stAng0	swAng0
+Z
+P	leftRightArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 50000 w ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	x2	*/ ss a2 100000
+G	x3	+- r 0 x2
+G	dy	*/ h a1 200000
+G	y1	+- vc 0 dy
+G	y2	+- vc dy 0
+G	dx1	*/ y1 x2 hd2
+G	x1	+- x2 0 dx1
+G	x4	+- x3 dx1 0
+H				
+M	l	vc
+L	x2	t
+L	x2	y1
+L	x3	y1
+L	x3	t
+L	r	vc
+L	x3	b
+L	x3	y2
+L	x2	y2
+L	x2	b
+Z
+P	leftRightArrowCallout
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 48123
+G	maxAdj2	*/ 50000 h ss
+G	a2	pin 0 adj2 maxAdj2
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	*/ 50000 w ss
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 ss wd2
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin 0 adj4 maxAdj4
+G	dy1	*/ ss a2 100000
+G	dy2	*/ ss a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y4	+- vc dy1 0
+G	x1	*/ ss a3 100000
+G	x4	+- r 0 x1
+G	dx2	*/ w a4 200000
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+H				
+M	l	vc
+L	x1	y1
+L	x1	y2
+L	x2	y2
+L	x2	t
+L	x3	t
+L	x3	y2
+L	x4	y2
+L	x4	y1
+L	r	vc
+L	x4	y4
+L	x4	y3
+L	x3	y3
+L	x3	b
+L	x2	b
+L	x2	y3
+L	x1	y3
+L	x1	y4
+Z
+P	leftRightCircularArrow
+A	adj1	val 12500
+A	adj2	val 1142319
+A	adj3	val 20457681
+A	adj4	val 11942319
+A	adj5	val 12500
+G	a5	pin 0 adj5 25000
+G	maxAdj1	*/ a5 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	enAng	pin 1 adj3 21599999
+G	stAng	pin 0 adj4 21599999
+G	th	*/ ss a1 100000
+G	thh	*/ ss a5 100000
+G	th2	*/ th 1 2
+G	rw1	+- wd2 th2 thh
+G	rh1	+- hd2 th2 thh
+G	rw2	+- rw1 0 th
+G	rh2	+- rh1 0 th
+G	rw3	+- rw2 th2 0
+G	rh3	+- rh2 th2 0
+G	wtH	sin rw3 enAng
+G	htH	cos rh3 enAng
+G	dxH	cat2 rw3 htH wtH
+G	dyH	sat2 rh3 htH wtH
+G	xH	+- hc dxH 0
+G	yH	+- vc dyH 0
+G	rI	min rw2 rh2
+G	u1	*/ dxH dxH 1
+G	u2	*/ dyH dyH 1
+G	u3	*/ rI rI 1
+G	u4	+- u1 0 u3
+G	u5	+- u2 0 u3
+G	u6	*/ u4 u5 u1
+G	u7	*/ u6 1 u2
+G	u8	+- 1 0 u7
+G	u9	sqrt u8
+G	u10	*/ u4 1 dxH
+G	u11	*/ u10 1 dyH
+G	u12	+/ 1 u9 u11
+G	u13	at2 1 u12
+G	u14	+- u13 21600000 0
+G	u15	?: u13 u13 u14
+G	u16	+- u15 0 enAng
+G	u17	+- u16 21600000 0
+G	u18	?: u16 u16 u17
+G	u19	+- u18 0 cd2
+G	u20	+- u18 0 21600000
+G	u21	?: u19 u20 u18
+G	maxAng	abs u21
+G	aAng	pin 0 adj2 maxAng
+G	ptAng	+- enAng aAng 0
+G	wtA	sin rw3 ptAng
+G	htA	cos rh3 ptAng
+G	dxA	cat2 rw3 htA wtA
+G	dyA	sat2 rh3 htA wtA
+G	xA	+- hc dxA 0
+G	yA	+- vc dyA 0
+G	dxG	cos thh ptAng
+G	dyG	sin thh ptAng
+G	xG	+- xH dxG 0
+G	yG	+- yH dyG 0
+G	dxB	cos thh ptAng
+G	dyB	sin thh ptAng
+G	xB	+- xH 0 dxB 0
+G	yB	+- yH 0 dyB 0
+G	sx1	+- xB 0 hc
+G	sy1	+- yB 0 vc
+G	sx2	+- xG 0 hc
+G	sy2	+- yG 0 vc
+G	rO	min rw1 rh1
+G	x1O	*/ sx1 rO rw1
+G	y1O	*/ sy1 rO rh1
+G	x2O	*/ sx2 rO rw1
+G	y2O	*/ sy2 rO rh1
+G	dxO	+- x2O 0 x1O
+G	dyO	+- y2O 0 y1O
+G	dO	mod dxO dyO 0
+G	q1	*/ x1O y2O 1
+G	q2	*/ x2O y1O 1
+G	DO	+- q1 0 q2
+G	q3	*/ rO rO 1
+G	q4	*/ dO dO 1
+G	q5	*/ q3 q4 1
+G	q6	*/ DO DO 1
+G	q7	+- q5 0 q6
+G	q8	max q7 0
+G	sdelO	sqrt q8
+G	ndyO	*/ dyO -1 1
+G	sdyO	?: ndyO -1 1
+G	q9	*/ sdyO dxO 1
+G	q10	*/ q9 sdelO 1
+G	q11	*/ DO dyO 1
+G	dxF1	+/ q11 q10 q4
+G	q12	+- q11 0 q10
+G	dxF2	*/ q12 1 q4
+G	adyO	abs dyO
+G	q13	*/ adyO sdelO 1
+G	q14	*/ DO dxO -1
+G	dyF1	+/ q14 q13 q4
+G	q15	+- q14 0 q13
+G	dyF2	*/ q15 1 q4
+G	q16	+- x2O 0 dxF1
+G	q17	+- x2O 0 dxF2
+G	q18	+- y2O 0 dyF1
+G	q19	+- y2O 0 dyF2
+G	q20	mod q16 q18 0
+G	q21	mod q17 q19 0
+G	q22	+- q21 0 q20
+G	dxF	?: q22 dxF1 dxF2
+G	dyF	?: q22 dyF1 dyF2
+G	sdxF	*/ dxF rw1 rO
+G	sdyF	*/ dyF rh1 rO
+G	xF	+- hc sdxF 0
+G	yF	+- vc sdyF 0
+G	x1I	*/ sx1 rI rw2
+G	y1I	*/ sy1 rI rh2
+G	x2I	*/ sx2 rI rw2
+G	y2I	*/ sy2 rI rh2
+G	dxI	+- x2I 0 x1I
+G	dyI	+- y2I 0 y1I
+G	dI	mod dxI dyI 0
+G	v1	*/ x1I y2I 1
+G	v2	*/ x2I y1I 1
+G	DI	+- v1 0 v2
+G	v3	*/ rI rI 1
+G	v4	*/ dI dI 1
+G	v5	*/ v3 v4 1
+G	v6	*/ DI DI 1
+G	v7	+- v5 0 v6
+G	v8	max v7 0
+G	sdelI	sqrt v8
+G	v9	*/ sdyO dxI 1
+G	v10	*/ v9 sdelI 1
+G	v11	*/ DI dyI 1
+G	dxC1	+/ v11 v10 v4
+G	v12	+- v11 0 v10
+G	dxC2	*/ v12 1 v4
+G	adyI	abs dyI
+G	v13	*/ adyI sdelI 1
+G	v14	*/ DI dxI -1
+G	dyC1	+/ v14 v13 v4
+G	v15	+- v14 0 v13
+G	dyC2	*/ v15 1 v4
+G	v16	+- x1I 0 dxC1
+G	v17	+- x1I 0 dxC2
+G	v18	+- y1I 0 dyC1
+G	v19	+- y1I 0 dyC2
+G	v20	mod v16 v18 0
+G	v21	mod v17 v19 0
+G	v22	+- v21 0 v20
+G	dxC	?: v22 dxC1 dxC2
+G	dyC	?: v22 dyC1 dyC2
+G	sdxC	*/ dxC rw2 rI
+G	sdyC	*/ dyC rh2 rI
+G	xC	+- hc sdxC 0
+G	yC	+- vc sdyC 0
+G	wtI	sin rw3 stAng
+G	htI	cos rh3 stAng
+G	dxI	cat2 rw3 htI wtI
+G	dyI	sat2 rh3 htI wtI
+G	xI	+- hc dxI 0
+G	yI	+- vc dyI 0
+G	lptAng	+- stAng 0 aAng
+G	wtL	sin rw3 lptAng
+G	htL	cos rh3 lptAng
+G	dxL	cat2 rw3 htL wtL
+G	dyL	sat2 rh3 htL wtL
+G	xL	+- hc dxL 0
+G	yL	+- vc dyL 0
+G	dxK	cos thh lptAng
+G	dyK	sin thh lptAng
+G	xK	+- xI dxK 0
+G	yK	+- yI dyK 0
+G	dxJ	cos thh lptAng
+G	dyJ	sin thh lptAng
+G	xJ	+- xI 0 dxJ 0
+G	yJ	+- yI 0 dyJ 0
+G	p1	+- xF 0 xC
+G	p2	+- yF 0 yC
+G	p3	mod p1 p2 0
+G	p4	*/ p3 1 2
+G	p5	+- p4 0 thh
+G	xGp	?: p5 xF xG
+G	yGp	?: p5 yF yG
+G	xBp	?: p5 xC xB
+G	yBp	?: p5 yC yB
+G	en0	at2 sdxF sdyF
+G	en1	+- en0 21600000 0
+G	en2	?: en0 en0 en1
+G	od0	+- en2 0 enAng
+G	od1	+- od0 21600000 0
+G	od2	?: od0 od0 od1
+G	st0	+- stAng 0 od2
+G	st1	+- st0 21600000 0
+G	st2	?: st0 st0 st1
+G	sw0	+- en2 0 st2
+G	sw1	+- sw0 21600000 0
+G	swAng	?: sw0 sw0 sw1
+G	ist0	at2 sdxC sdyC
+G	ist1	+- ist0 21600000 0
+G	istAng	?: ist0 ist0 ist1
+G	id0	+- istAng 0 enAng
+G	id1	+- id0 0 21600000
+G	id2	?: id0 id1 id0
+G	ien0	+- stAng 0 id2
+G	ien1	+- ien0 0 21600000
+G	ien2	?: ien1 ien1 ien0
+G	isw1	+- ien2 0 istAng
+G	isw2	+- isw1 0 21600000
+G	iswAng	?: isw1 isw2 isw1
+G	wtE	sin rw1 st2
+G	htE	cos rh1 st2
+G	dxE	cat2 rw1 htE wtE
+G	dyE	sat2 rh1 htE wtE
+G	xE	+- hc dxE 0
+G	yE	+- vc dyE 0
+G	wtD	sin rw2 ien2
+G	htD	cos rh2 ien2
+G	dxD	cat2 rw2 htD wtD
+G	dyD	sat2 rh2 htD wtD
+G	xD	+- hc dxD 0
+G	yD	+- vc dyD 0
+G	xKp	?: p5 xE xK
+G	yKp	?: p5 yE yK
+G	xJp	?: p5 xD xJ
+G	yJp	?: p5 yD yJ
+G	aL	+- lptAng 0 cd4
+G	aA	+- ptAng cd4 0
+G	aB	+- ptAng cd2 0
+G	aJ	+- lptAng cd2 0
+G	idx	cos rw1 2700000
+G	idy	sin rh1 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	xL	yL
+L	xKp	yKp
+L	xE	yE
+R	rw1	rh1	st2	swAng
+L	xGp	yGp
+L	xA	yA
+L	xBp	yBp
+L	xC	yC
+R	rw2	rh2	istAng	iswAng
+L	xJp	yJp
+Z
+P	leftRightRibbon
+A	adj1	val 50000
+A	adj2	val 50000
+A	adj3	val 16667
+G	a3	pin 0 adj3 33333
+G	maxAdj1	+- 100000 0 a3
+G	a1	pin 0 adj1 maxAdj1
+G	w1	+- wd2 0 wd32
+G	maxAdj2	*/ 100000 w1 ss
+G	a2	pin 0 adj2 maxAdj2
+G	x1	*/ ss a2 100000
+G	x4	+- r 0 x1
+G	dy1	*/ h a1 200000
+G	dy2	*/ h a3 -200000
+G	ly1	+- vc dy2 dy1
+G	ry4	+- vc dy1 dy2
+G	ly2	+- ly1 dy1 0
+G	ry3	+- b 0 ly2
+G	ly4	*/ ly2 2 1
+G	ry1	+- b 0 ly4
+G	ly3	+- ly4 0 ly1
+G	ry2	+- b 0 ly3
+G	hR	*/ a3 ss 400000
+G	x2	+- hc 0 wd32
+G	x3	+- hc wd32 0
+G	y1	+- ly1 hR 0
+G	y2	+- ry2 0 hR
+H				false
+M	l	ly2
+L	x1	t
+L	x1	ly1
+L	hc	ly1
+R	wd32	hR	3cd4	cd2
+R	wd32	hR	3cd4	-10800000
+L	x4	ry2
+L	x4	ry1
+L	r	ry3
+L	x4	b
+L	x4	ry4
+L	hc	ry4
+R	wd32	hR	cd4	cd4
+L	x2	ly3
+L	x1	ly3
+L	x1	ly4
+Z
+H			darkenLess	false
+M	x3	y1
+R	wd32	hR	0	cd4
+R	wd32	hR	3cd4	-10800000
+L	x3	ry2
+Z
+H			none	
+M	l	ly2
+L	x1	t
+L	x1	ly1
+L	hc	ly1
+R	wd32	hR	3cd4	cd2
+R	wd32	hR	3cd4	-10800000
+L	x4	ry2
+L	x4	ry1
+L	r	ry3
+L	x4	b
+L	x4	ry4
+L	hc	ry4
+R	wd32	hR	cd4	cd4
+L	x2	ly3
+L	x1	ly3
+L	x1	ly4
+Z
+M	x3	y1
+L	x3	ry2
+M	x2	y2
+L	x2	ly3
+P	leftRightUpArrow
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+G	a2	pin 0 adj2 50000
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	q1	+- 100000 0 maxAdj1
+G	maxAdj3	*/ q1 1 2
+G	a3	pin 0 adj3 maxAdj3
+G	x1	*/ ss a3 100000
+G	dx2	*/ ss a2 100000
+G	x2	+- hc 0 dx2
+G	x5	+- hc dx2 0
+G	dx3	*/ ss a1 200000
+G	x3	+- hc 0 dx3
+G	x4	+- hc dx3 0
+G	x6	+- r 0 x1
+G	dy2	*/ ss a2 50000
+G	y2	+- b 0 dy2
+G	y4	+- b 0 dx2
+G	y3	+- y4 0 dx3
+G	y5	+- y4 dx3 0
+G	il	*/ dx3 x1 dx2
+G	ir	+- r 0 il
+H				
+M	l	y4
+L	x1	y2
+L	x1	y3
+L	x3	y3
+L	x3	x1
+L	x2	x1
+L	hc	t
+L	x5	x1
+L	x4	x1
+L	x4	y3
+L	x6	y3
+L	x6	y2
+L	r	y4
+L	x6	b
+L	x6	y5
+L	x1	y5
+L	x1	b
+Z
+P	leftUpArrow
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+G	a2	pin 0 adj2 50000
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	+- 100000 0 maxAdj1
+G	a3	pin 0 adj3 maxAdj3
+G	x1	*/ ss a3 100000
+G	dx2	*/ ss a2 50000
+G	x2	+- r 0 dx2
+G	y2	+- b 0 dx2
+G	dx4	*/ ss a2 100000
+G	x4	+- r 0 dx4
+G	y4	+- b 0 dx4
+G	dx3	*/ ss a1 200000
+G	x3	+- x4 0 dx3
+G	x5	+- x4 dx3 0
+G	y3	+- y4 0 dx3
+G	y5	+- y4 dx3 0
+G	il	*/ dx3 x1 dx4
+G	cx1	+/ x1 x5 2
+G	cy1	+/ x1 y5 2
+H				
+M	l	y4
+L	x1	y2
+L	x1	y3
+L	x3	y3
+L	x3	x1
+L	x2	x1
+L	x4	t
+L	r	x1
+L	x5	x1
+L	x5	y5
+L	x1	y5
+L	x1	b
+Z
+P	lightningBolt
+G	x1	*/ w 5022 21600
+G	x3	*/ w 8472 21600
+G	x4	*/ w 8757 21600
+G	x5	*/ w 10012 21600
+G	x8	*/ w 12860 21600
+G	x9	*/ w 13917 21600
+G	x11	*/ w 16577 21600
+G	y1	*/ h 3890 21600
+G	y2	*/ h 6080 21600
+G	y4	*/ h 7437 21600
+G	y6	*/ h 9705 21600
+G	y7	*/ h 12007 21600
+G	y10	*/ h 14277 21600
+G	y11	*/ h 14915 21600
+H	21600	21600		
+M	8472	0
+L	12860	6080
+L	11050	6797
+L	16577	12007
+L	14767	12877
+L	21600	21600
+L	10012	14915
+L	12222	13987
+L	5022	9705
+L	7602	8382
+L	0	3890
+Z
+P	line
+H				
+M	l	t
+L	r	b
+P	lineInv
+H				
+M	l	b
+L	r	t
+P	mathDivide
+A	adj1	val 23520
+A	adj2	val 5880
+A	adj3	val 11760
+G	a1	pin 1000 adj1 36745
+G	ma1	+- 0 0 a1
+G	ma3h	+/ 73490 ma1 4
+G	ma3w	*/ 36745 w h
+G	maxAdj3	min ma3h ma3w
+G	a3	pin 1000 adj3 maxAdj3
+G	m4a3	*/ -4 a3 1
+G	maxAdj2	+- 73490 m4a3 a1
+G	a2	pin 0 adj2 maxAdj2
+G	dy1	*/ h a1 200000
+G	yg	*/ h a2 100000
+G	rad	*/ h a3 100000
+G	dx1	*/ w 73490 200000
+G	y3	+- vc 0 dy1
+G	y4	+- vc dy1 0
+G	a	+- yg rad 0
+G	y2	+- y3 0 a
+G	y1	+- y2 0 rad
+G	y5	+- b 0 y1
+G	x1	+- hc 0 dx1
+G	x3	+- hc dx1 0
+G	x2	+- hc 0 rad
+H				
+M	hc	y1
+R	rad	rad	3cd4	21600000
+Z
+M	hc	y5
+R	rad	rad	cd4	21600000
+Z
+M	x1	y3
+L	x3	y3
+L	x3	y4
+L	x1	y4
+Z
+P	mathEqual
+A	adj1	val 23520
+A	adj2	val 11760
+G	a1	pin 0 adj1 36745
+G	2a1	*/ a1 2 1
+G	mAdj2	+- 100000 0 2a1
+G	a2	pin 0 adj2 mAdj2
+G	dy1	*/ h a1 100000
+G	dy2	*/ h a2 200000
+G	dx1	*/ w 73490 200000
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y1	+- y2 0 dy1
+G	y4	+- y3 dy1 0
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+G	yC1	+/ y1 y2 2
+G	yC2	+/ y3 y4 2
+H				
+M	x1	y1
+L	x2	y1
+L	x2	y2
+L	x1	y2
+Z
+M	x1	y3
+L	x2	y3
+L	x2	y4
+L	x1	y4
+Z
+P	mathMinus
+A	adj1	val 23520
+G	a1	pin 0 adj1 100000
+G	dy1	*/ h a1 200000
+G	dx1	*/ w 73490 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+H				
+M	x1	y1
+L	x2	y1
+L	x2	y2
+L	x1	y2
+Z
+P	mathMultiply
+A	adj1	val 23520
+G	a1	pin 0 adj1 51965
+G	th	*/ ss a1 100000
+G	a	at2 w h
+G	sa	sin 1 a
+G	ca	cos 1 a
+G	ta	tan 1 a
+G	dl	mod w h 0
+G	rw	*/ dl 51965 100000
+G	lM	+- dl 0 rw
+G	xM	*/ ca lM 2
+G	yM	*/ sa lM 2
+G	dxAM	*/ sa th 2
+G	dyAM	*/ ca th 2
+G	xA	+- xM 0 dxAM
+G	yA	+- yM dyAM 0
+G	xB	+- xM dxAM 0
+G	yB	+- yM 0 dyAM
+G	xBC	+- hc 0 xB
+G	yBC	*/ xBC ta 1
+G	yC	+- yBC yB 0
+G	xD	+- r 0 xB
+G	xE	+- r 0 xA
+G	yFE	+- vc 0 yA
+G	xFE	*/ yFE 1 ta
+G	xF	+- xE 0 xFE
+G	xL	+- xA xFE 0
+G	yG	+- b 0 yA
+G	yH	+- b 0 yB
+G	yI	+- b 0 yC
+G	xC2	+- r 0 xM
+G	yC3	+- b 0 yM
+H				
+M	xA	yA
+L	xB	yB
+L	hc	yC
+L	xD	yB
+L	xE	yA
+L	xF	vc
+L	xE	yG
+L	xD	yH
+L	hc	yI
+L	xB	yH
+L	xA	yG
+L	xL	vc
+Z
+P	mathNotEqual
+A	adj1	val 23520
+A	adj2	val 6600000
+A	adj3	val 11760
+G	a1	pin 0 adj1 50000
+G	crAng	pin 4200000 adj2 6600000
+G	2a1	*/ a1 2 1
+G	maxAdj3	+- 100000 0 2a1
+G	a3	pin 0 adj3 maxAdj3
+G	dy1	*/ h a1 100000
+G	dy2	*/ h a3 200000
+G	dx1	*/ w 73490 200000
+G	x1	+- hc 0 dx1
+G	x8	+- hc dx1 0
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y1	+- y2 0 dy1
+G	y4	+- y3 dy1 0
+G	cadj2	+- crAng 0 cd4
+G	xadj2	tan hd2 cadj2
+G	len	mod xadj2 hd2 0
+G	bhw	*/ len dy1 hd2
+G	bhw2	*/ bhw 1 2
+G	x7	+- hc xadj2 bhw2
+G	dx67	*/ xadj2 y1 hd2
+G	x6	+- x7 0 dx67
+G	dx57	*/ xadj2 y2 hd2
+G	x5	+- x7 0 dx57
+G	dx47	*/ xadj2 y3 hd2
+G	x4	+- x7 0 dx47
+G	dx37	*/ xadj2 y4 hd2
+G	x3	+- x7 0 dx37
+G	dx27	*/ xadj2 2 1
+G	x2	+- x7 0 dx27
+G	rx7	+- x7 bhw 0
+G	rx6	+- x6 bhw 0
+G	rx5	+- x5 bhw 0
+G	rx4	+- x4 bhw 0
+G	rx3	+- x3 bhw 0
+G	rx2	+- x2 bhw 0
+G	dx7	*/ dy1 hd2 len
+G	rxt	+- x7 dx7 0
+G	lxt	+- rx7 0 dx7
+G	rx	?: cadj2 rxt rx7
+G	lx	?: cadj2 x7 lxt
+G	dy3	*/ dy1 xadj2 len
+G	dy4	+- 0 0 dy3
+G	ry	?: cadj2 dy3 t
+G	ly	?: cadj2 t dy4
+G	dlx	+- w 0 rx
+G	drx	+- w 0 lx
+G	dly	+- h 0 ry
+G	dry	+- h 0 ly
+G	xC1	+/ rx lx 2
+G	xC2	+/ drx dlx 2
+G	yC1	+/ ry ly 2
+G	yC2	+/ y1 y2 2
+G	yC3	+/ y3 y4 2
+G	yC4	+/ dry dly 2
+H				
+M	x1	y1
+L	x6	y1
+L	lx	ly
+L	rx	ry
+L	rx6	y1
+L	x8	y1
+L	x8	y2
+L	rx5	y2
+L	rx4	y3
+L	x8	y3
+L	x8	y4
+L	rx3	y4
+L	drx	dry
+L	dlx	dly
+L	x3	y4
+L	x1	y4
+L	x1	y3
+L	x4	y3
+L	x5	y2
+L	x1	y2
+Z
+P	mathPlus
+A	adj1	val 23520
+G	a1	pin 0 adj1 73490
+G	dx1	*/ w 73490 200000
+G	dy1	*/ h 73490 200000
+G	dx2	*/ ss a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dx2
+G	y3	+- vc dx2 0
+G	y4	+- vc dy1 0
+H				
+M	x1	y2
+L	x2	y2
+L	x2	y1
+L	x3	y1
+L	x3	y2
+L	x4	y2
+L	x4	y3
+L	x3	y3
+L	x3	y4
+L	x2	y4
+L	x2	y3
+L	x1	y3
+Z
+P	moon
+A	adj	val 50000
+G	a	pin 0 adj 87500
+G	g0	*/ ss a 100000
+G	g0w	*/ g0 w ss
+G	g1	+- ss 0 g0
+G	g2	*/ g0 g0 g1
+G	g3	*/ ss ss g1
+G	g4	*/ g3 2 1
+G	g5	+- g4 0 g2
+G	g6	+- g5 0 g0
+G	g6w	*/ g6 w ss
+G	g7	*/ g5 1 2
+G	g8	+- g7 0 g0
+G	dy1	*/ g8 hd2 ss
+G	g10h	+- vc 0 dy1
+G	g11h	+- vc dy1 0
+G	g12	*/ g0 9598 32768
+G	g12w	*/ g12 w ss
+G	g13	+- ss 0 g12
+G	q1	*/ ss ss 1
+G	q2	*/ g13 g13 1
+G	q3	+- q1 0 q2
+G	q4	sqrt q3
+G	dy4	*/ q4 hd2 ss
+G	g15h	+- vc 0 dy4
+G	g16h	+- vc dy4 0
+G	g17w	+- g6w 0 g0w
+G	g18w	*/ g17w 1 2
+G	dx2p	+- g0w g18w w
+G	dx2	*/ dx2p -1 1
+G	dy2	*/ hd2 -1 1
+G	stAng1	at2 dx2 dy2
+G	enAngp1	at2 dx2 hd2
+G	enAng1	+- enAngp1 0 21600000
+G	swAng1	+- enAng1 0 stAng1
+H				
+M	r	b
+R	w	hd2	cd4	cd2
+R	g18w	dy1	stAng1	swAng1
+Z
+P	nonIsoscelesTrapezoid
+A	adj1	val 25000
+A	adj2	val 25000
+G	maxAdj	*/ 50000 w ss
+G	a1	pin 0 adj1 maxAdj
+G	a2	pin 0 adj2 maxAdj
+G	x1	*/ ss a1 200000
+G	x2	*/ ss a1 100000
+G	dx3	*/ ss a2 100000
+G	x3	+- r 0 dx3
+G	x4	+/ r x3 2
+G	il	*/ wd3 a1 maxAdj
+G	adjm	max a1 a2
+G	it	*/ hd3 adjm maxAdj
+G	irt	*/ wd3 a2 maxAdj
+G	ir	+- r 0 irt
+H				
+M	l	b
+L	x2	t
+L	x3	t
+L	r	b
+Z
+P	noSmoking
+A	adj	val 18750
+G	a	pin 0 adj 50000
+G	dr	*/ ss a 100000
+G	iwd2	+- wd2 0 dr
+G	ihd2	+- hd2 0 dr
+G	ang	at2 w h
+G	ct	cos ihd2 ang
+G	st	sin iwd2 ang
+G	m	mod ct st 0
+G	n	*/ iwd2 ihd2 m
+G	drd2	*/ dr 1 2
+G	dang	at2 n drd2
+G	dang2	*/ dang 2 1
+G	swAng	+- -10800000 dang2 0
+G	t3	at2 w h
+G	stAng1	+- t3 0 dang
+G	stAng2	+- stAng1 0 cd2
+G	ct1	cos ihd2 stAng1
+G	st1	sin iwd2 stAng1
+G	m1	mod ct1 st1 0
+G	n1	*/ iwd2 ihd2 m1
+G	dx1	cos n1 stAng1
+G	dy1	sin n1 stAng1
+G	x1	+- hc dx1 0
+G	y1	+- vc dy1 0
+G	x2	+- hc 0 dx1
+G	y2	+- vc 0 dy1
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	l	vc
+R	wd2	hd2	cd2	cd4
+R	wd2	hd2	3cd4	cd4
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+M	x1	y1
+R	iwd2	ihd2	stAng1	swAng
+Z
+M	x2	y2
+R	iwd2	ihd2	stAng2	swAng
+Z
+P	notchedRightArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 100000 w ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	dx2	*/ ss a2 100000
+G	x2	+- r 0 dx2
+G	dy1	*/ h a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	x1	*/ dy1 dx2 hd2
+G	x3	+- r 0 x1
+H				
+M	l	y1
+L	x2	y1
+L	x2	t
+L	r	vc
+L	x2	b
+L	x2	y2
+L	l	y2
+L	x1	vc
+Z
+P	octagon
+A	adj	val 29289
+G	a	pin 0 adj 50000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	y2	+- b 0 x1
+G	il	*/ x1 1 2
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				
+M	l	x1
+L	x1	t
+L	x2	t
+L	r	x1
+L	r	y2
+L	x2	b
+L	x1	b
+L	l	y2
+Z
+P	parallelogram
+A	adj	val 25000
+G	maxAdj	*/ 100000 w ss
+G	a	pin 0 adj maxAdj
+G	x1	*/ ss a 200000
+G	x2	*/ ss a 100000
+G	x6	+- r 0 x1
+G	x5	+- r 0 x2
+G	x3	*/ x5 1 2
+G	x4	+- r 0 x3
+G	il	*/ wd2 a maxAdj
+G	q1	*/ 5 a maxAdj
+G	q2	+/ 1 q1 12
+G	il	*/ q2 w 1
+G	it	*/ q2 h 1
+G	ir	+- r 0 il
+G	ib	+- b 0 it
+G	q3	*/ h hc x2
+G	y1	pin 0 q3 h
+G	y2	+- b 0 y1
+H				
+M	l	b
+L	x2	t
+L	r	t
+L	x5	b
+Z
+P	pentagon
+A	hf	val 105146
+A	vf	val 110557
+G	swd2	*/ wd2 hf 100000
+G	shd2	*/ hd2 vf 100000
+G	svc	*/ vc  vf 100000
+G	dx1	cos swd2 1080000
+G	dx2	cos swd2 18360000
+G	dy1	sin shd2 1080000
+G	dy2	sin shd2 18360000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	y1	+- svc 0 dy1
+G	y2	+- svc 0 dy2
+G	it	*/ y1 dx2 dx1
+H				
+M	x1	y1
+L	hc	t
+L	x4	y1
+L	x3	y2
+L	x2	y2
+Z
+P	pie
+A	adj1	val 0
+A	adj2	val 16200000
+G	stAng	pin 0 adj1 21599999
+G	enAng	pin 0 adj2 21599999
+G	sw1	+- enAng 0 stAng
+G	sw2	+- sw1 21600000 0
+G	swAng	?: sw1 sw1 sw2
+G	wt1	sin wd2 stAng
+G	ht1	cos hd2 stAng
+G	dx1	cat2 wd2 ht1 wt1
+G	dy1	sat2 hd2 ht1 wt1
+G	x1	+- hc dx1 0
+G	y1	+- vc dy1 0
+G	wt2	sin wd2 enAng
+G	ht2	cos hd2 enAng
+G	dx2	cat2 wd2 ht2 wt2
+G	dy2	sat2 hd2 ht2 wt2
+G	x2	+- hc dx2 0
+G	y2	+- vc dy2 0
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	x1	y1
+R	wd2	hd2	stAng	swAng
+L	hc	vc
+Z
+P	pieWedge
+G	g1	cos w 13500000
+G	g2	sin h 13500000
+G	x1	+- r g1 0
+G	y1	+- b g2 0
+H				
+M	l	b
+R	w	h	cd2	cd4
+L	r	b
+Z
+P	plaque
+A	adj	val 16667
+G	a	pin 0 adj 50000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	y2	+- b 0 x1
+G	il	*/ x1 70711 100000
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				
+M	l	x1
+R	x1	x1	cd4	-5400000
+L	x2	t
+R	x1	x1	cd2	-5400000
+L	r	y2
+R	x1	x1	3cd4	-5400000
+L	x1	b
+R	x1	x1	0	-5400000
+Z
+P	plaqueTabs
+G	md	mod w h 0
+G	dx	*/ 1 md 20
+G	y1	+- 0 b dx
+G	x1	+- 0 r dx
+H				
+M	l	t
+L	dx	t
+R	dx	dx	0	cd4
+Z
+H				
+M	l	y1
+R	dx	dx	3cd4	cd4
+L	l	b
+Z
+H				
+M	r	t
+L	r	dx
+R	dx	dx	cd4	cd4
+Z
+H				
+M	x1	b
+R	dx	dx	cd2	cd4
+L	r	b
+Z
+P	plus
+A	adj	val 25000
+G	a	pin 0 adj 50000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	y2	+- b 0 x1
+G	d	+- w 0 h
+G	il	?: d l x1
+G	ir	?: d r x2
+G	it	?: d x1 t
+G	ib	?: d y2 b
+H				
+M	l	x1
+L	x1	x1
+L	x1	t
+L	x2	t
+L	x2	x1
+L	r	x1
+L	r	y2
+L	x2	y2
+L	x2	b
+L	x1	b
+L	x1	y2
+L	l	y2
+Z
+P	quadArrow
+A	adj1	val 22500
+A	adj2	val 22500
+A	adj3	val 22500
+G	a2	pin 0 adj2 50000
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	q1	+- 100000 0 maxAdj1
+G	maxAdj3	*/ q1 1 2
+G	a3	pin 0 adj3 maxAdj3
+G	x1	*/ ss a3 100000
+G	dx2	*/ ss a2 100000
+G	x2	+- hc 0 dx2
+G	x5	+- hc dx2 0
+G	dx3	*/ ss a1 200000
+G	x3	+- hc 0 dx3
+G	x4	+- hc dx3 0
+G	x6	+- r 0 x1
+G	y2	+- vc 0 dx2
+G	y5	+- vc dx2 0
+G	y3	+- vc 0 dx3
+G	y4	+- vc dx3 0
+G	y6	+- b 0 x1
+G	il	*/ dx3 x1 dx2
+G	ir	+- r 0 il
+H				
+M	l	vc
+L	x1	y2
+L	x1	y3
+L	x3	y3
+L	x3	x1
+L	x2	x1
+L	hc	t
+L	x5	x1
+L	x4	x1
+L	x4	y3
+L	x6	y3
+L	x6	y2
+L	r	vc
+L	x6	y5
+L	x6	y4
+L	x4	y4
+L	x4	y6
+L	x5	y6
+L	hc	b
+L	x2	y6
+L	x3	y6
+L	x3	y4
+L	x1	y4
+L	x1	y5
+Z
+P	quadArrowCallout
+A	adj1	val 18515
+A	adj2	val 18515
+A	adj3	val 18515
+A	adj4	val 48123
+G	a2	pin 0 adj2 50000
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	+- 50000 0 a2
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 2 1
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin a1 adj4 maxAdj4
+G	dx2	*/ ss a2 100000
+G	dx3	*/ ss a1 200000
+G	ah	*/ ss a3 100000
+G	dx1	*/ w a4 200000
+G	dy1	*/ h a4 200000
+G	x8	+- r 0 ah
+G	x2	+- hc 0 dx1
+G	x7	+- hc dx1 0
+G	x3	+- hc 0 dx2
+G	x6	+- hc dx2 0
+G	x4	+- hc 0 dx3
+G	x5	+- hc dx3 0
+G	y8	+- b 0 ah
+G	y2	+- vc 0 dy1
+G	y7	+- vc dy1 0
+G	y3	+- vc 0 dx2
+G	y6	+- vc dx2 0
+G	y4	+- vc 0 dx3
+G	y5	+- vc dx3 0
+H				
+M	l	vc
+L	ah	y3
+L	ah	y4
+L	x2	y4
+L	x2	y2
+L	x4	y2
+L	x4	ah
+L	x3	ah
+L	hc	t
+L	x6	ah
+L	x5	ah
+L	x5	y2
+L	x7	y2
+L	x7	y4
+L	x8	y4
+L	x8	y3
+L	r	vc
+L	x8	y6
+L	x8	y5
+L	x7	y5
+L	x7	y7
+L	x5	y7
+L	x5	y8
+L	x6	y8
+L	hc	b
+L	x3	y8
+L	x4	y8
+L	x4	y7
+L	x2	y7
+L	x2	y5
+L	ah	y5
+L	ah	y6
+Z
+P	rect
+H				
+M	l	t
+L	r	t
+L	r	b
+L	l	b
+Z
+P	ribbon
+A	adj1	val 16667
+A	adj2	val 50000
+G	a1	pin 0 adj1 33333
+G	a2	pin 25000 adj2 75000
+G	x10	+- r 0 wd8
+G	dx2	*/ w a2 200000
+G	x2	+- hc 0 dx2
+G	x9	+- hc dx2 0
+G	x3	+- x2 wd32 0
+G	x8	+- x9 0 wd32
+G	x5	+- x2 wd8 0
+G	x6	+- x9 0 wd8
+G	x4	+- x5 0 wd32
+G	x7	+- x6 wd32 0
+G	y1	*/ h a1 200000
+G	y2	*/ h a1 100000
+G	y4	+- b 0 y2
+G	y3	*/ y4 1 2
+G	hR	*/ h a1 400000
+G	y5	+- b 0 hR
+G	y6	+- y2 0 hR
+H				false
+M	l	t
+L	x4	t
+R	wd32	hR	3cd4	cd2
+L	x3	y1
+R	wd32	hR	3cd4	-10800000
+L	x8	y2
+R	wd32	hR	cd4	-10800000
+L	x7	y1
+R	wd32	hR	cd4	cd2
+L	r	t
+L	x10	y3
+L	r	y4
+L	x9	y4
+L	x9	y5
+R	wd32	hR	0	cd4
+L	x3	b
+R	wd32	hR	cd4	cd4
+L	x2	y4
+L	l	y4
+L	wd8	y3
+Z
+H			darkenLess	false
+M	x5	hR
+R	wd32	hR	0	cd4
+L	x3	y1
+R	wd32	hR	3cd4	-10800000
+L	x5	y2
+Z
+M	x6	hR
+R	wd32	hR	cd2	-5400000
+L	x8	y1
+R	wd32	hR	3cd4	cd2
+L	x6	y2
+Z
+H			none	
+M	l	t
+L	x4	t
+R	wd32	hR	3cd4	cd2
+L	x3	y1
+R	wd32	hR	3cd4	-10800000
+L	x8	y2
+R	wd32	hR	cd4	-10800000
+L	x7	y1
+R	wd32	hR	cd4	cd2
+L	r	t
+L	x10	y3
+L	r	y4
+L	x9	y4
+L	x9	y5
+R	wd32	hR	0	cd4
+L	x3	b
+R	wd32	hR	cd4	cd4
+L	x2	y4
+L	l	y4
+L	wd8	y3
+Z
+M	x5	hR
+L	x5	y2
+M	x6	y2
+L	x6	hR
+M	x2	y4
+L	x2	y6
+M	x9	y6
+L	x9	y4
+P	ribbon2
+A	adj1	val 16667
+A	adj2	val 50000
+G	a1	pin 0 adj1 33333
+G	a2	pin 25000 adj2 75000
+G	x10	+- r 0 wd8
+G	dx2	*/ w a2 200000
+G	x2	+- hc 0 dx2
+G	x9	+- hc dx2 0
+G	x3	+- x2 wd32 0
+G	x8	+- x9 0 wd32
+G	x5	+- x2 wd8 0
+G	x6	+- x9 0 wd8
+G	x4	+- x5 0 wd32
+G	x7	+- x6 wd32 0
+G	dy1	*/ h a1 200000
+G	y1	+- b 0 dy1
+G	dy2	*/ h a1 100000
+G	y2	+- b 0 dy2
+G	y4	+- t dy2 0
+G	y3	+/ y4 b 2
+G	hR	*/ h a1 400000
+G	y6	+- b 0 hR
+G	y7	+- y1 0 hR
+H				false
+M	l	b
+L	x4	b
+R	wd32	hR	cd4	-10800000
+L	x3	y1
+R	wd32	hR	cd4	cd2
+L	x8	y2
+R	wd32	hR	3cd4	cd2
+L	x7	y1
+R	wd32	hR	3cd4	-10800000
+L	r	b
+L	x10	y3
+L	r	y4
+L	x9	y4
+L	x9	hR
+R	wd32	hR	0	-5400000
+L	x3	t
+R	wd32	hR	3cd4	-5400000
+L	x2	y4
+L	l	y4
+L	wd8	y3
+Z
+H			darkenLess	false
+M	x5	y6
+R	wd32	hR	0	-5400000
+L	x3	y1
+R	wd32	hR	cd4	cd2
+L	x5	y2
+Z
+M	x6	y6
+R	wd32	hR	cd2	cd4
+L	x8	y1
+R	wd32	hR	cd4	-10800000
+L	x6	y2
+Z
+H			none	
+M	l	b
+L	wd8	y3
+L	l	y4
+L	x2	y4
+L	x2	hR
+R	wd32	hR	cd2	cd4
+L	x8	t
+R	wd32	hR	3cd4	cd4
+L	x9	y4
+L	x9	y4
+L	r	y4
+L	x10	y3
+L	r	b
+L	x7	b
+R	wd32	hR	cd4	cd2
+L	x8	y1
+R	wd32	hR	cd4	-10800000
+L	x3	y2
+R	wd32	hR	3cd4	-10800000
+L	x4	y1
+R	wd32	hR	3cd4	cd2
+Z
+M	x5	y2
+L	x5	y6
+M	x6	y6
+L	x6	y2
+M	x2	y7
+L	x2	y4
+M	x9	y4
+L	x9	y7
+P	rightArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 100000 w ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	dx1	*/ ss a2 100000
+G	x1	+- r 0 dx1
+G	dy1	*/ h a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	dx2	*/ y1 dx1 hd2
+G	x2	+- x1 dx2 0
+H				
+M	l	y1
+L	x1	y1
+L	x1	t
+L	r	vc
+L	x1	b
+L	x1	y2
+L	l	y2
+Z
+P	rightArrowCallout
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 64977
+G	maxAdj2	*/ 50000 h ss
+G	a2	pin 0 adj2 maxAdj2
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	*/ 100000 w ss
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 ss w
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin 0 adj4 maxAdj4
+G	dy1	*/ ss a2 100000
+G	dy2	*/ ss a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y4	+- vc dy1 0
+G	dx3	*/ ss a3 100000
+G	x3	+- r 0 dx3
+G	x2	*/ w a4 100000
+G	x1	*/ x2 1 2
+H				
+M	l	t
+L	x2	t
+L	x2	y2
+L	x3	y2
+L	x3	y1
+L	r	vc
+L	x3	y4
+L	x3	y3
+L	x2	y3
+L	x2	b
+L	l	b
+Z
+P	rightBrace
+A	adj1	val 8333
+A	adj2	val 50000
+G	a2	pin 0 adj2 100000
+G	q1	+- 100000 0 a2
+G	q2	min q1 a2
+G	q3	*/ q2 1 2
+G	maxAdj1	*/ q3 h ss
+G	a1	pin 0 adj1 maxAdj1
+G	y1	*/ ss a1 100000
+G	y3	*/ h a2 100000
+G	y2	+- y3 0 y1
+G	y4	+- b 0 y1
+G	dx1	cos wd2 2700000
+G	dy1	sin y1 2700000
+G	ir	+- l dx1 0
+G	it	+- y1 0 dy1
+G	ib	+- b dy1 y1
+H				false
+M	l	t
+R	wd2	y1	3cd4	cd4
+L	hc	y2
+R	wd2	y1	cd2	-5400000
+R	wd2	y1	3cd4	-5400000
+L	hc	y4
+R	wd2	y1	0	cd4
+Z
+H			none	
+M	l	t
+R	wd2	y1	3cd4	cd4
+L	hc	y2
+R	wd2	y1	cd2	-5400000
+R	wd2	y1	3cd4	-5400000
+L	hc	y4
+R	wd2	y1	0	cd4
+P	rightBracket
+A	adj	val 8333
+G	maxAdj	*/ 50000 h ss
+G	a	pin 0 adj maxAdj
+G	y1	*/ ss a 100000
+G	y2	+- b 0 y1
+G	dx1	cos w 2700000
+G	dy1	sin y1 2700000
+G	ir	+- l dx1 0
+G	it	+- y1 0 dy1
+G	ib	+- b dy1 y1
+H				false
+M	l	t
+R	w	y1	3cd4	cd4
+L	r	y2
+R	w	y1	0	cd4
+Z
+H			none	
+M	l	t
+R	w	y1	3cd4	cd4
+L	r	y2
+R	w	y1	0	cd4
+P	round1Rect
+A	adj	val 16667
+G	a	pin 0 adj 50000
+G	dx1	*/ ss a 100000
+G	x1	+- r 0 dx1
+G	idx	*/ dx1 29289 100000
+G	ir	+- r 0 idx
+H				
+M	l	t
+L	x1	t
+R	dx1	dx1	3cd4	cd4
+L	r	b
+L	l	b
+Z
+P	round2DiagRect
+A	adj1	val 16667
+A	adj2	val 0
+G	a1	pin 0 adj1 50000
+G	a2	pin 0 adj2 50000
+G	x1	*/ ss a1 100000
+G	y1	+- b 0 x1
+G	a	*/ ss a2 100000
+G	x2	+- r 0 a
+G	y2	+- b 0 a
+G	dx1	*/ x1 29289 100000
+G	dx2	*/ a 29289 100000
+G	d	+- dx1 0 dx2
+G	dx	?: d dx1 dx2
+G	ir	+- r 0 dx
+G	ib	+- b 0 dx
+H				
+M	x1	t
+L	x2	t
+R	a	a	3cd4	cd4
+L	r	y1
+R	x1	x1	0	cd4
+L	a	b
+R	a	a	cd4	cd4
+L	l	x1
+R	x1	x1	cd2	cd4
+Z
+P	round2SameRect
+A	adj1	val 16667
+A	adj2	val 0
+G	a1	pin 0 adj1 50000
+G	a2	pin 0 adj2 50000
+G	tx1	*/ ss a1 100000
+G	tx2	+- r 0 tx1
+G	bx1	*/ ss a2 100000
+G	bx2	+- r 0 bx1
+G	by1	+- b 0 bx1
+G	d	+- tx1 0 bx1
+G	tdx	*/ tx1 29289 100000
+G	bdx	*/ bx1 29289 100000
+G	il	?: d tdx bdx
+G	ir	+- r 0 il
+G	ib	+- b 0 bdx
+H				
+M	tx1	t
+L	tx2	t
+R	tx1	tx1	3cd4	cd4
+L	r	by1
+R	bx1	bx1	0	cd4
+L	bx1	b
+R	bx1	bx1	cd4	cd4
+L	l	tx1
+R	tx1	tx1	cd2	cd4
+Z
+P	roundRect
+A	adj	val 16667
+G	a	pin 0 adj 50000
+G	x1	*/ ss a 100000
+G	x2	+- r 0 x1
+G	y2	+- b 0 x1
+G	il	*/ x1 29289 100000
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				
+M	l	x1
+R	x1	x1	cd2	cd4
+L	x2	t
+R	x1	x1	3cd4	cd4
+L	r	y2
+R	x1	x1	0	cd4
+L	x1	b
+R	x1	x1	cd4	cd4
+Z
+P	rtTriangle
+G	it	*/ h 7 12
+G	ir	*/ w 7 12
+G	ib	*/ h 11 12
+H				
+M	l	b
+L	l	t
+L	r	b
+Z
+P	smileyFace
+A	adj	val 4653
+G	a	pin -4653 adj 4653
+G	x1	*/ w 4969 21699
+G	x2	*/ w 6215 21600
+G	x3	*/ w 13135 21600
+G	x4	*/ w 16640 21600
+G	y1	*/ h 7570 21600
+G	y3	*/ h 16515 21600
+G	dy2	*/ h a 100000
+G	y2	+- y3 0 dy2
+G	y4	+- y3 dy2 0
+G	dy3	*/ h a 50000
+G	y5	+- y4 dy3 0
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+G	wR	*/ w 1125 21600
+G	hR	*/ h 1125 21600
+H				false
+M	l	vc
+R	wd2	hd2	cd2	21600000
+Z
+H			darkenLess	
+M	x2	y1
+R	wR	hR	cd2	21600000
+M	x3	y1
+R	wR	hR	cd2	21600000
+H			none	
+M	x1	y2
+Q	hc	y5	x4	y2
+H			none	
+M	l	vc
+R	wd2	hd2	cd2	21600000
+Z
+P	snip1Rect
+A	adj	val 16667
+G	a	pin 0 adj 50000
+G	dx1	*/ ss a 100000
+G	x1	+- r 0 dx1
+G	it	*/ dx1 1 2
+G	ir	+/ x1 r 2
+H				
+M	l	t
+L	x1	t
+L	r	dx1
+L	r	b
+L	l	b
+Z
+P	snip2DiagRect
+A	adj1	val 0
+A	adj2	val 16667
+G	a1	pin 0 adj1 50000
+G	a2	pin 0 adj2 50000
+G	lx1	*/ ss a1 100000
+G	lx2	+- r 0 lx1
+G	ly1	+- b 0 lx1
+G	rx1	*/ ss a2 100000
+G	rx2	+- r 0 rx1
+G	ry1	+- b 0 rx1
+G	d	+- lx1 0 rx1
+G	dx	?: d lx1 rx1
+G	il	*/ dx 1 2
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				
+M	lx1	t
+L	rx2	t
+L	r	rx1
+L	r	ly1
+L	lx2	b
+L	rx1	b
+L	l	ry1
+L	l	lx1
+Z
+P	snip2SameRect
+A	adj1	val 16667
+A	adj2	val 0
+G	a1	pin 0 adj1 50000
+G	a2	pin 0 adj2 50000
+G	tx1	*/ ss a1 100000
+G	tx2	+- r 0 tx1
+G	bx1	*/ ss a2 100000
+G	bx2	+- r 0 bx1
+G	by1	+- b 0 bx1
+G	d	+- tx1 0 bx1
+G	dx	?: d tx1 bx1
+G	il	*/ dx 1 2
+G	ir	+- r 0 il
+G	it	*/ tx1 1 2
+G	ib	+/ by1 b 2
+H				
+M	tx1	t
+L	tx2	t
+L	r	tx1
+L	r	by1
+L	bx2	b
+L	bx1	b
+L	l	by1
+L	l	tx1
+Z
+P	snipRoundRect
+A	adj1	val 16667
+A	adj2	val 16667
+G	a1	pin 0 adj1 50000
+G	a2	pin 0 adj2 50000
+G	x1	*/ ss a1 100000
+G	dx2	*/ ss a2 100000
+G	x2	+- r 0 dx2
+G	il	*/ x1 29289 100000
+G	ir	+/ x2 r 2
+H				
+M	x1	t
+L	x2	t
+L	r	dx2
+L	r	b
+L	l	b
+L	l	x1
+R	x1	x1	cd2	cd4
+Z
+P	squareTabs
+G	md	mod w h 0
+G	dx	*/ 1 md 20
+G	y1	+- 0 b dx
+G	x1	+- 0 r dx
+H				
+M	l	t
+L	dx	t
+L	dx	dx
+L	l	dx
+Z
+H				
+M	l	y1
+L	dx	y1
+L	dx	b
+L	l	b
+Z
+H				
+M	x1	t
+L	r	t
+L	r	dx
+L	x1	dx
+Z
+H				
+M	x1	y1
+L	r	y1
+L	r	b
+L	x1	b
+Z
+P	star10
+A	adj	val 42533
+A	hf	val 105146
+G	a	pin 0 adj 50000
+G	swd2	*/ wd2 hf 100000
+G	dx1	*/ swd2 95106 100000
+G	dx2	*/ swd2 58779 100000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	dy1	*/ hd2 80902 100000
+G	dy2	*/ hd2 30902 100000
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+G	y4	+- vc dy1 0
+G	iwd2	*/ swd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx1	*/ iwd2 80902 100000
+G	sdx2	*/ iwd2 30902 100000
+G	sdy1	*/ ihd2 95106 100000
+G	sdy2	*/ ihd2 58779 100000
+G	sx1	+- hc 0 iwd2
+G	sx2	+- hc 0 sdx1
+G	sx3	+- hc 0 sdx2
+G	sx4	+- hc sdx2 0
+G	sx5	+- hc sdx1 0
+G	sx6	+- hc iwd2 0
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc 0 sdy2
+G	sy3	+- vc sdy2 0
+G	sy4	+- vc sdy1 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	x1	y2
+L	sx2	sy2
+L	x2	y1
+L	sx3	sy1
+L	hc	t
+L	sx4	sy1
+L	x3	y1
+L	sx5	sy2
+L	x4	y2
+L	sx6	vc
+L	x4	y3
+L	sx5	sy3
+L	x3	y4
+L	sx4	sy4
+L	hc	b
+L	sx3	sy4
+L	x2	y4
+L	sx2	sy3
+L	x1	y3
+L	sx1	vc
+Z
+P	star12
+A	adj	val 37500
+G	a	pin 0 adj 50000
+G	dx1	cos wd2 1800000
+G	dy1	sin hd2 3600000
+G	x1	+- hc 0 dx1
+G	x3	*/ w 3 4
+G	x4	+- hc dx1 0
+G	y1	+- vc 0 dy1
+G	y3	*/ h 3 4
+G	y4	+- vc dy1 0
+G	iwd2	*/ wd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx1	cos iwd2 900000
+G	sdx2	cos iwd2 2700000
+G	sdx3	cos iwd2 4500000
+G	sdy1	sin ihd2 4500000
+G	sdy2	sin ihd2 2700000
+G	sdy3	sin ihd2 900000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc 0 sdx3
+G	sx4	+- hc sdx3 0
+G	sx5	+- hc sdx2 0
+G	sx6	+- hc sdx1 0
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc 0 sdy2
+G	sy3	+- vc 0 sdy3
+G	sy4	+- vc sdy3 0
+G	sy5	+- vc sdy2 0
+G	sy6	+- vc sdy1 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	l	vc
+L	sx1	sy3
+L	x1	hd4
+L	sx2	sy2
+L	wd4	y1
+L	sx3	sy1
+L	hc	t
+L	sx4	sy1
+L	x3	y1
+L	sx5	sy2
+L	x4	hd4
+L	sx6	sy3
+L	r	vc
+L	sx6	sy4
+L	x4	y3
+L	sx5	sy5
+L	x3	y4
+L	sx4	sy6
+L	hc	b
+L	sx3	sy6
+L	wd4	y4
+L	sx2	sy5
+L	x1	y3
+L	sx1	sy4
+Z
+P	star16
+A	adj	val 37500
+G	a	pin 0 adj 50000
+G	dx1	*/ wd2 92388 100000
+G	dx2	*/ wd2 70711 100000
+G	dx3	*/ wd2 38268 100000
+G	dy1	*/ hd2 92388 100000
+G	dy2	*/ hd2 70711 100000
+G	dy3	*/ hd2 38268 100000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc 0 dx3
+G	x4	+- hc dx3 0
+G	x5	+- hc dx2 0
+G	x6	+- hc dx1 0
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc 0 dy3
+G	y4	+- vc dy3 0
+G	y5	+- vc dy2 0
+G	y6	+- vc dy1 0
+G	iwd2	*/ wd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx1	*/ iwd2 98079 100000
+G	sdx2	*/ iwd2 83147 100000
+G	sdx3	*/ iwd2 55557 100000
+G	sdx4	*/ iwd2 19509 100000
+G	sdy1	*/ ihd2 98079 100000
+G	sdy2	*/ ihd2 83147 100000
+G	sdy3	*/ ihd2 55557 100000
+G	sdy4	*/ ihd2 19509 100000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc 0 sdx3
+G	sx4	+- hc 0 sdx4
+G	sx5	+- hc sdx4 0
+G	sx6	+- hc sdx3 0
+G	sx7	+- hc sdx2 0
+G	sx8	+- hc sdx1 0
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc 0 sdy2
+G	sy3	+- vc 0 sdy3
+G	sy4	+- vc 0 sdy4
+G	sy5	+- vc sdy4 0
+G	sy6	+- vc sdy3 0
+G	sy7	+- vc sdy2 0
+G	sy8	+- vc sdy1 0
+G	idx	cos iwd2 2700000
+G	idy	sin ihd2 2700000
+G	il	+- hc 0 idx
+G	it	+- vc 0 idy
+G	ir	+- hc idx 0
+G	ib	+- vc idy 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	l	vc
+L	sx1	sy4
+L	x1	y3
+L	sx2	sy3
+L	x2	y2
+L	sx3	sy2
+L	x3	y1
+L	sx4	sy1
+L	hc	t
+L	sx5	sy1
+L	x4	y1
+L	sx6	sy2
+L	x5	y2
+L	sx7	sy3
+L	x6	y3
+L	sx8	sy4
+L	r	vc
+L	sx8	sy5
+L	x6	y4
+L	sx7	sy6
+L	x5	y5
+L	sx6	sy7
+L	x4	y6
+L	sx5	sy8
+L	hc	b
+L	sx4	sy8
+L	x3	y6
+L	sx3	sy7
+L	x2	y5
+L	sx2	sy6
+L	x1	y4
+L	sx1	sy5
+Z
+P	star24
+A	adj	val 37500
+G	a	pin 0 adj 50000
+G	dx1	cos wd2 900000
+G	dx2	cos wd2 1800000
+G	dx3	cos wd2 2700000
+G	dx4	val wd4
+G	dx5	cos wd2 4500000
+G	dy1	sin hd2 4500000
+G	dy2	sin hd2 3600000
+G	dy3	sin hd2 2700000
+G	dy4	val hd4
+G	dy5	sin hd2 900000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc 0 dx3
+G	x4	+- hc 0 dx4
+G	x5	+- hc 0 dx5
+G	x6	+- hc dx5 0
+G	x7	+- hc dx4 0
+G	x8	+- hc dx3 0
+G	x9	+- hc dx2 0
+G	x10	+- hc dx1 0
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc 0 dy3
+G	y4	+- vc 0 dy4
+G	y5	+- vc 0 dy5
+G	y6	+- vc dy5 0
+G	y7	+- vc dy4 0
+G	y8	+- vc dy3 0
+G	y9	+- vc dy2 0
+G	y10	+- vc dy1 0
+G	iwd2	*/ wd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx1	*/ iwd2 99144 100000
+G	sdx2	*/ iwd2 92388 100000
+G	sdx3	*/ iwd2 79335 100000
+G	sdx4	*/ iwd2 60876 100000
+G	sdx5	*/ iwd2 38268 100000
+G	sdx6	*/ iwd2 13053 100000
+G	sdy1	*/ ihd2 99144 100000
+G	sdy2	*/ ihd2 92388 100000
+G	sdy3	*/ ihd2 79335 100000
+G	sdy4	*/ ihd2 60876 100000
+G	sdy5	*/ ihd2 38268 100000
+G	sdy6	*/ ihd2 13053 100000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc 0 sdx3
+G	sx4	+- hc 0 sdx4
+G	sx5	+- hc 0 sdx5
+G	sx6	+- hc 0 sdx6
+G	sx7	+- hc sdx6 0
+G	sx8	+- hc sdx5 0
+G	sx9	+- hc sdx4 0
+G	sx10	+- hc sdx3 0
+G	sx11	+- hc sdx2 0
+G	sx12	+- hc sdx1 0
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc 0 sdy2
+G	sy3	+- vc 0 sdy3
+G	sy4	+- vc 0 sdy4
+G	sy5	+- vc 0 sdy5
+G	sy6	+- vc 0 sdy6
+G	sy7	+- vc sdy6 0
+G	sy8	+- vc sdy5 0
+G	sy9	+- vc sdy4 0
+G	sy10	+- vc sdy3 0
+G	sy11	+- vc sdy2 0
+G	sy12	+- vc sdy1 0
+G	idx	cos iwd2 2700000
+G	idy	sin ihd2 2700000
+G	il	+- hc 0 idx
+G	it	+- vc 0 idy
+G	ir	+- hc idx 0
+G	ib	+- vc idy 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	l	vc
+L	sx1	sy6
+L	x1	y5
+L	sx2	sy5
+L	x2	y4
+L	sx3	sy4
+L	x3	y3
+L	sx4	sy3
+L	x4	y2
+L	sx5	sy2
+L	x5	y1
+L	sx6	sy1
+L	hc	t
+L	sx7	sy1
+L	x6	y1
+L	sx8	sy2
+L	x7	y2
+L	sx9	sy3
+L	x8	y3
+L	sx10	sy4
+L	x9	y4
+L	sx11	sy5
+L	x10	y5
+L	sx12	sy6
+L	r	vc
+L	sx12	sy7
+L	x10	y6
+L	sx11	sy8
+L	x9	y7
+L	sx10	sy9
+L	x8	y8
+L	sx9	sy10
+L	x7	y9
+L	sx8	sy11
+L	x6	y10
+L	sx7	sy12
+L	hc	b
+L	sx6	sy12
+L	x5	y10
+L	sx5	sy11
+L	x4	y9
+L	sx4	sy10
+L	x3	y8
+L	sx3	sy9
+L	x2	y7
+L	sx2	sy8
+L	x1	y6
+L	sx1	sy7
+Z
+P	star32
+A	adj	val 37500
+G	a	pin 0 adj 50000
+G	dx1	*/ wd2 98079 100000
+G	dx2	*/ wd2 92388 100000
+G	dx3	*/ wd2 83147 100000
+G	dx4	cos wd2 2700000
+G	dx5	*/ wd2 55557 100000
+G	dx6	*/ wd2 38268 100000
+G	dx7	*/ wd2 19509 100000
+G	dy1	*/ hd2 98079 100000
+G	dy2	*/ hd2 92388 100000
+G	dy3	*/ hd2 83147 100000
+G	dy4	sin hd2 2700000
+G	dy5	*/ hd2 55557 100000
+G	dy6	*/ hd2 38268 100000
+G	dy7	*/ hd2 19509 100000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc 0 dx3
+G	x4	+- hc 0 dx4
+G	x5	+- hc 0 dx5
+G	x6	+- hc 0 dx6
+G	x7	+- hc 0 dx7
+G	x8	+- hc dx7 0
+G	x9	+- hc dx6 0
+G	x10	+- hc dx5 0
+G	x11	+- hc dx4 0
+G	x12	+- hc dx3 0
+G	x13	+- hc dx2 0
+G	x14	+- hc dx1 0
+G	y1	+- vc 0 dy1
+G	y2	+- vc 0 dy2
+G	y3	+- vc 0 dy3
+G	y4	+- vc 0 dy4
+G	y5	+- vc 0 dy5
+G	y6	+- vc 0 dy6
+G	y7	+- vc 0 dy7
+G	y8	+- vc dy7 0
+G	y9	+- vc dy6 0
+G	y10	+- vc dy5 0
+G	y11	+- vc dy4 0
+G	y12	+- vc dy3 0
+G	y13	+- vc dy2 0
+G	y14	+- vc dy1 0
+G	iwd2	*/ wd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx1	*/ iwd2 99518 100000
+G	sdx2	*/ iwd2 95694 100000
+G	sdx3	*/ iwd2 88192 100000
+G	sdx4	*/ iwd2 77301 100000
+G	sdx5	*/ iwd2 63439 100000
+G	sdx6	*/ iwd2 47140 100000
+G	sdx7	*/ iwd2 29028 100000
+G	sdx8	*/ iwd2 9802 100000
+G	sdy1	*/ ihd2 99518 100000
+G	sdy2	*/ ihd2 95694 100000
+G	sdy3	*/ ihd2 88192 100000
+G	sdy4	*/ ihd2 77301 100000
+G	sdy5	*/ ihd2 63439 100000
+G	sdy6	*/ ihd2 47140 100000
+G	sdy7	*/ ihd2 29028 100000
+G	sdy8	*/ ihd2 9802 100000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc 0 sdx3
+G	sx4	+- hc 0 sdx4
+G	sx5	+- hc 0 sdx5
+G	sx6	+- hc 0 sdx6
+G	sx7	+- hc 0 sdx7
+G	sx8	+- hc 0 sdx8
+G	sx9	+- hc sdx8 0
+G	sx10	+- hc sdx7 0
+G	sx11	+- hc sdx6 0
+G	sx12	+- hc sdx5 0
+G	sx13	+- hc sdx4 0
+G	sx14	+- hc sdx3 0
+G	sx15	+- hc sdx2 0
+G	sx16	+- hc sdx1 0
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc 0 sdy2
+G	sy3	+- vc 0 sdy3
+G	sy4	+- vc 0 sdy4
+G	sy5	+- vc 0 sdy5
+G	sy6	+- vc 0 sdy6
+G	sy7	+- vc 0 sdy7
+G	sy8	+- vc 0 sdy8
+G	sy9	+- vc sdy8 0
+G	sy10	+- vc sdy7 0
+G	sy11	+- vc sdy6 0
+G	sy12	+- vc sdy5 0
+G	sy13	+- vc sdy4 0
+G	sy14	+- vc sdy3 0
+G	sy15	+- vc sdy2 0
+G	sy16	+- vc sdy1 0
+G	idx	cos iwd2 2700000
+G	idy	sin ihd2 2700000
+G	il	+- hc 0 idx
+G	it	+- vc 0 idy
+G	ir	+- hc idx 0
+G	ib	+- vc idy 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	l	vc
+L	sx1	sy8
+L	x1	y7
+L	sx2	sy7
+L	x2	y6
+L	sx3	sy6
+L	x3	y5
+L	sx4	sy5
+L	x4	y4
+L	sx5	sy4
+L	x5	y3
+L	sx6	sy3
+L	x6	y2
+L	sx7	sy2
+L	x7	y1
+L	sx8	sy1
+L	hc	t
+L	sx9	sy1
+L	x8	y1
+L	sx10	sy2
+L	x9	y2
+L	sx11	sy3
+L	x10	y3
+L	sx12	sy4
+L	x11	y4
+L	sx13	sy5
+L	x12	y5
+L	sx14	sy6
+L	x13	y6
+L	sx15	sy7
+L	x14	y7
+L	sx16	sy8
+L	r	vc
+L	sx16	sy9
+L	x14	y8
+L	sx15	sy10
+L	x13	y9
+L	sx14	sy11
+L	x12	y10
+L	sx13	sy12
+L	x11	y11
+L	sx12	sy13
+L	x10	y12
+L	sx11	sy14
+L	x9	y13
+L	sx10	sy15
+L	x8	y14
+L	sx9	sy16
+L	hc	b
+L	sx8	sy16
+L	x7	y14
+L	sx7	sy15
+L	x6	y13
+L	sx6	sy14
+L	x5	y12
+L	sx5	sy13
+L	x4	y11
+L	sx4	sy12
+L	x3	y10
+L	sx3	sy11
+L	x2	y9
+L	sx2	sy10
+L	x1	y8
+L	sx1	sy9
+Z
+P	star4
+A	adj	val 12500
+G	a	pin 0 adj 50000
+G	iwd2	*/ wd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx	cos iwd2 2700000
+G	sdy	sin ihd2 2700000
+G	sx1	+- hc 0 sdx
+G	sx2	+- hc sdx 0
+G	sy1	+- vc 0 sdy
+G	sy2	+- vc sdy 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	l	vc
+L	sx1	sy1
+L	hc	t
+L	sx2	sy1
+L	r	vc
+L	sx2	sy2
+L	hc	b
+L	sx1	sy2
+Z
+P	star5
+A	adj	val 19098
+A	hf	val 105146
+A	vf	val 110557
+G	a	pin 0 adj 50000
+G	swd2	*/ wd2 hf 100000
+G	shd2	*/ hd2 vf 100000
+G	svc	*/ vc  vf 100000
+G	dx1	cos swd2 1080000
+G	dx2	cos swd2 18360000
+G	dy1	sin shd2 1080000
+G	dy2	sin shd2 18360000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	y1	+- svc 0 dy1
+G	y2	+- svc 0 dy2
+G	iwd2	*/ swd2 a 50000
+G	ihd2	*/ shd2 a 50000
+G	sdx1	cos iwd2 20520000
+G	sdx2	cos iwd2 3240000
+G	sdy1	sin ihd2 3240000
+G	sdy2	sin ihd2 20520000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc sdx2 0
+G	sx4	+- hc sdx1 0
+G	sy1	+- svc 0 sdy1
+G	sy2	+- svc 0 sdy2
+G	sy3	+- svc ihd2 0
+G	yAdj	+- svc 0 ihd2
+H				
+M	x1	y1
+L	sx2	sy1
+L	hc	t
+L	sx3	sy1
+L	x4	y1
+L	sx4	sy2
+L	x3	y2
+L	hc	sy3
+L	x2	y2
+L	sx1	sy2
+Z
+P	star6
+A	adj	val 28868
+A	hf	val 115470
+G	a	pin 0 adj 50000
+G	swd2	*/ wd2 hf 100000
+G	dx1	cos swd2 1800000
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+G	y2	+- vc hd4 0
+G	iwd2	*/ swd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx2	*/ iwd2 1 2
+G	sx1	+- hc 0 iwd2
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc sdx2 0
+G	sx4	+- hc iwd2 0
+G	sdy1	sin ihd2 3600000
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc sdy1 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	x1	hd4
+L	sx2	sy1
+L	hc	t
+L	sx3	sy1
+L	x2	hd4
+L	sx4	vc
+L	x2	y2
+L	sx3	sy2
+L	hc	b
+L	sx2	sy2
+L	x1	y2
+L	sx1	vc
+Z
+P	star7
+A	adj	val 34601
+A	hf	val 102572
+A	vf	val 105210
+G	a	pin 0 adj 50000
+G	swd2	*/ wd2 hf 100000
+G	shd2	*/ hd2 vf 100000
+G	svc	*/ vc  vf 100000
+G	dx1	*/ swd2 97493 100000
+G	dx2	*/ swd2 78183 100000
+G	dx3	*/ swd2 43388 100000
+G	dy1	*/ shd2 62349 100000
+G	dy2	*/ shd2 22252 100000
+G	dy3	*/ shd2 90097 100000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc 0 dx3
+G	x4	+- hc dx3 0
+G	x5	+- hc dx2 0
+G	x6	+- hc dx1 0
+G	y1	+- svc 0 dy1
+G	y2	+- svc dy2 0
+G	y3	+- svc dy3 0
+G	iwd2	*/ swd2 a 50000
+G	ihd2	*/ shd2 a 50000
+G	sdx1	*/ iwd2 97493 100000
+G	sdx2	*/ iwd2 78183 100000
+G	sdx3	*/ iwd2 43388 100000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc 0 sdx3
+G	sx4	+- hc sdx3 0
+G	sx5	+- hc sdx2 0
+G	sx6	+- hc sdx1 0
+G	sdy1	*/ ihd2 90097 100000
+G	sdy2	*/ ihd2 22252 100000
+G	sdy3	*/ ihd2 62349 100000
+G	sy1	+- svc 0 sdy1
+G	sy2	+- svc 0 sdy2
+G	sy3	+- svc sdy3 0
+G	sy4	+- svc ihd2 0
+G	yAdj	+- svc 0 ihd2
+H				
+M	x1	y2
+L	sx1	sy2
+L	x2	y1
+L	sx3	sy1
+L	hc	t
+L	sx4	sy1
+L	x5	y1
+L	sx6	sy2
+L	x6	y2
+L	sx5	sy3
+L	x4	y3
+L	hc	sy4
+L	x3	y3
+L	sx2	sy3
+Z
+P	star8
+A	adj	val 37500
+G	a	pin 0 adj 50000
+G	dx1	cos wd2 2700000
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+G	dy1	sin hd2 2700000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	iwd2	*/ wd2 a 50000
+G	ihd2	*/ hd2 a 50000
+G	sdx1	*/ iwd2 92388 100000
+G	sdx2	*/ iwd2 38268 100000
+G	sdy1	*/ ihd2 92388 100000
+G	sdy2	*/ ihd2 38268 100000
+G	sx1	+- hc 0 sdx1
+G	sx2	+- hc 0 sdx2
+G	sx3	+- hc sdx2 0
+G	sx4	+- hc sdx1 0
+G	sy1	+- vc 0 sdy1
+G	sy2	+- vc 0 sdy2
+G	sy3	+- vc sdy2 0
+G	sy4	+- vc sdy1 0
+G	yAdj	+- vc 0 ihd2
+H				
+M	l	vc
+L	sx1	sy2
+L	x1	y1
+L	sx2	sy1
+L	hc	t
+L	sx3	sy1
+L	x2	y1
+L	sx4	sy2
+L	r	vc
+L	sx4	sy3
+L	x2	y2
+L	sx3	sy4
+L	hc	b
+L	sx2	sy4
+L	x1	y2
+L	sx1	sy3
+Z
+P	straightConnector1
+H			none	
+M	l	t
+L	r	b
+P	stripedRightArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 84375 w ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	x4	*/ ss 5 32
+G	dx5	*/ ss a2 100000
+G	x5	+- r 0 dx5
+G	dy1	*/ h a1 200000
+G	y1	+- vc 0 dy1
+G	y2	+- vc dy1 0
+G	dx6	*/ dy1 dx5 hd2
+G	x6	+- r 0 dx6
+H				
+M	l	y1
+L	ssd32	y1
+L	ssd32	y2
+L	l	y2
+Z
+M	ssd16	y1
+L	ssd8	y1
+L	ssd8	y2
+L	ssd16	y2
+Z
+M	x4	y1
+L	x5	y1
+L	x5	t
+L	r	vc
+L	x5	b
+L	x5	y2
+L	x4	y2
+Z
+P	sun
+A	adj	val 25000
+G	a	pin 12500 adj 46875
+G	g0	+- 50000 0 a
+G	g1	*/ g0 30274 32768
+G	g2	*/ g0 12540 32768
+G	g3	+- g1 50000 0
+G	g4	+- g2 50000 0
+G	g5	+- 50000 0 g1
+G	g6	+- 50000 0 g2
+G	g7	*/ g0 23170 32768
+G	g8	+- 50000 g7 0
+G	g9	+- 50000 0 g7
+G	g10	*/ g5 3 4
+G	g11	*/ g6 3 4
+G	g12	+- g10 3662 0
+G	g13	+- g11 3662 0
+G	g14	+- g11 12500 0
+G	g15	+- 100000 0 g10
+G	g16	+- 100000 0 g12
+G	g17	+- 100000 0 g13
+G	g18	+- 100000 0 g14
+G	ox1	*/ w 18436 21600
+G	oy1	*/ h 3163 21600
+G	ox2	*/ w 3163 21600
+G	oy2	*/ h 18436 21600
+G	x8	*/ w g8 100000
+G	x9	*/ w g9 100000
+G	x10	*/ w g10 100000
+G	x12	*/ w g12 100000
+G	x13	*/ w g13 100000
+G	x14	*/ w g14 100000
+G	x15	*/ w g15 100000
+G	x16	*/ w g16 100000
+G	x17	*/ w g17 100000
+G	x18	*/ w g18 100000
+G	x19	*/ w a 100000
+G	wR	*/ w g0 100000
+G	hR	*/ h g0 100000
+G	y8	*/ h g8 100000
+G	y9	*/ h g9 100000
+G	y10	*/ h g10 100000
+G	y12	*/ h g12 100000
+G	y13	*/ h g13 100000
+G	y14	*/ h g14 100000
+G	y15	*/ h g15 100000
+G	y16	*/ h g16 100000
+G	y17	*/ h g17 100000
+G	y18	*/ h g18 100000
+H				
+M	r	vc
+L	x15	y18
+L	x15	y14
+Z
+M	ox1	oy1
+L	x16	y13
+L	x17	y12
+Z
+M	hc	t
+L	x18	y10
+L	x14	y10
+Z
+M	ox2	oy1
+L	x13	y12
+L	x12	y13
+Z
+M	l	vc
+L	x10	y14
+L	x10	y18
+Z
+M	ox2	oy2
+L	x12	y17
+L	x13	y16
+Z
+M	hc	b
+L	x14	y15
+L	x18	y15
+Z
+M	ox1	oy2
+L	x17	y16
+L	x16	y17
+Z
+M	x19	vc
+R	wR	hR	cd2	21600000
+Z
+P	swooshArrow
+A	adj1	val 25000
+A	adj2	val 16667
+G	a1	pin 1 adj1 75000
+G	maxAdj2	*/ 70000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	ad1	*/ h a1 100000
+G	ad2	*/ ss a2 100000
+G	xB	+- r 0 ad2
+G	yB	+- t ssd8 0
+G	alfa	*/ cd4 1 14
+G	dx0	tan ssd8 alfa
+G	xC	+- xB 0 dx0
+G	dx1	tan ad1 alfa
+G	yF	+- yB ad1 0
+G	xF	+- xB dx1 0
+G	xE	+- xF dx0 0
+G	yE	+- yF ssd8 0
+G	dy2	+- yE 0 t
+G	dy22	*/ dy2 1 2
+G	dy3	*/ h 1 20
+G	yD	+- t dy22 dy3
+G	dy4	*/ hd6 1 1
+G	yP1	+- hd6 dy4 0
+G	xP1	val wd6
+G	dy5	*/ hd6 1 2
+G	yP2	+- yF dy5 0
+G	xP2	val wd4
+H				
+M	l	b
+Q	xP1	yP1	xB	yB
+L	xC	t
+L	r	yD
+L	xE	yE
+L	xF	yF
+Q	xP2	yP2	l	b
+Z
+P	teardrop
+A	adj	val 100000
+G	a	pin 0 adj 200000
+G	r2	sqrt 2
+G	tw	*/ wd2 r2 1
+G	th	*/ hd2 r2 1
+G	sw	*/ tw a 100000
+G	sh	*/ th a 100000
+G	dx1	cos sw 2700000
+G	dy1	sin sh 2700000
+G	x1	+- hc dx1 0
+G	y1	+- vc 0 dy1
+G	x2	+/ hc x1 2
+G	y2	+/ vc y1 2
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	l	vc
+R	wd2	hd2	cd2	cd4
+Q	x2	t	x1	y1
+Q	r	y2	r	vc
+R	wd2	hd2	0	cd4
+R	wd2	hd2	cd4	cd4
+Z
+P	trapezoid
+A	adj	val 25000
+G	maxAdj	*/ 50000 w ss
+G	a	pin 0 adj maxAdj
+G	x1	*/ ss a 200000
+G	x2	*/ ss a 100000
+G	x3	+- r 0 x2
+G	x4	+- r 0 x1
+G	il	*/ wd3 a maxAdj
+G	it	*/ hd3 a maxAdj
+G	ir	+- r 0 il
+H				
+M	l	b
+L	x2	t
+L	x3	t
+L	r	b
+Z
+P	triangle
+A	adj	val 50000
+G	a	pin 0 adj 100000
+G	x1	*/ w a 200000
+G	x2	*/ w a 100000
+G	x3	+- x1 wd2 0
+H				
+M	l	b
+L	x2	t
+L	r	b
+Z
+P	upArrowCallout
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 64977
+G	maxAdj2	*/ 50000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	*/ 100000 h ss
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 ss h
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin 0 adj4 maxAdj4
+G	dx1	*/ ss a2 100000
+G	dx2	*/ ss a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	y1	*/ ss a3 100000
+G	dy2	*/ h a4 100000
+G	y2	+- b 0 dy2
+G	y3	+/ y2 b 2
+H				
+M	l	y2
+L	x2	y2
+L	x2	y1
+L	x1	y1
+L	hc	t
+L	x4	y1
+L	x3	y1
+L	x3	y2
+L	r	y2
+L	r	b
+L	l	b
+Z
+P	upDownArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 50000 h ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	y2	*/ ss a2 100000
+G	y3	+- b 0 y2
+G	dx1	*/ w a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+G	dy1	*/ x1 y2 wd2
+G	y1	+- y2 0 dy1
+G	y4	+- y3 dy1 0
+H				
+M	l	y2
+L	hc	t
+L	r	y2
+L	x2	y2
+L	x2	y3
+L	r	y3
+L	hc	b
+L	l	y3
+L	x1	y3
+L	x1	y2
+Z
+P	upArrow
+A	adj1	val 50000
+A	adj2	val 50000
+G	maxAdj2	*/ 100000 h ss
+G	a1	pin 0 adj1 100000
+G	a2	pin 0 adj2 maxAdj2
+G	dy2	*/ ss a2 100000
+G	y2	+- t dy2 0
+G	dx1	*/ w a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc dx1 0
+G	dy1	*/ x1 dy2 wd2
+G	y1	+- y2  0 dy1
+H				
+M	l	y2
+L	hc	t
+L	r	y2
+L	x2	y2
+L	x2	b
+L	x1	b
+L	x1	y2
+Z
+P	upDownArrowCallout
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 48123
+G	maxAdj2	*/ 50000 w ss
+G	a2	pin 0 adj2 maxAdj2
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	maxAdj3	*/ 50000 h ss
+G	a3	pin 0 adj3 maxAdj3
+G	q2	*/ a3 ss hd2
+G	maxAdj4	+- 100000 0 q2
+G	a4	pin 0 adj4 maxAdj4
+G	dx1	*/ ss a2 100000
+G	dx2	*/ ss a1 200000
+G	x1	+- hc 0 dx1
+G	x2	+- hc 0 dx2
+G	x3	+- hc dx2 0
+G	x4	+- hc dx1 0
+G	y1	*/ ss a3 100000
+G	y4	+- b 0 y1
+G	dy2	*/ h a4 200000
+G	y2	+- vc 0 dy2
+G	y3	+- vc dy2 0
+H				
+M	l	y2
+L	x2	y2
+L	x2	y1
+L	x1	y1
+L	hc	t
+L	x4	y1
+L	x3	y1
+L	x3	y2
+L	r	y2
+L	r	y3
+L	x3	y3
+L	x3	y4
+L	x4	y4
+L	hc	b
+L	x1	y4
+L	x2	y4
+L	x2	y3
+L	l	y3
+Z
+P	uturnArrow
+A	adj1	val 25000
+A	adj2	val 25000
+A	adj3	val 25000
+A	adj4	val 43750
+A	adj5	val 75000
+G	a2	pin 0 adj2 25000
+G	maxAdj1	*/ a2 2 1
+G	a1	pin 0 adj1 maxAdj1
+G	q2	*/ a1 ss h
+G	q3	+- 100000 0 q2
+G	maxAdj3	*/ q3 h ss
+G	a3	pin 0 adj3 maxAdj3
+G	q1	+- a3 a1 0
+G	minAdj5	*/ q1 ss h
+G	a5	pin minAdj5 adj5 100000
+G	th	*/ ss a1 100000
+G	aw2	*/ ss a2 100000
+G	th2	*/ th 1 2
+G	dh2	+- aw2 0 th2
+G	y5	*/ h a5 100000
+G	ah	*/ ss a3 100000
+G	y4	+- y5 0 ah
+G	x9	+- r 0 dh2
+G	bw	*/ x9 1 2
+G	bs	min bw y4
+G	maxAdj4	*/ bs 100000 ss
+G	a4	pin 0 adj4 maxAdj4
+G	bd	*/ ss a4 100000
+G	bd3	+- bd 0 th
+G	bd2	max bd3 0
+G	x3	+- th bd2 0
+G	x8	+- r 0 aw2
+G	x6	+- x8 0 aw2
+G	x7	+- x6 dh2 0
+G	x4	+- x9 0 bd
+G	x5	+- x7 0 bd2
+G	cx	+/ th x7 2
+H				
+M	l	b
+L	l	bd
+R	bd	bd	cd2	cd4
+L	x4	t
+R	bd	bd	3cd4	cd4
+L	x9	y4
+L	r	y4
+L	x8	y5
+L	x6	y4
+L	x7	y4
+L	x7	x3
+R	bd2	bd2	0	-5400000
+L	x3	th
+R	bd2	bd2	3cd4	-5400000
+L	th	b
+Z
+P	verticalScroll
+A	adj	val 12500
+G	a	pin 0 adj 25000
+G	ch	*/ ss a 100000
+G	ch2	*/ ch 1 2
+G	ch4	*/ ch 1 4
+G	x3	+- ch ch2 0
+G	x4	+- ch ch 0
+G	x6	+- r 0 ch
+G	x7	+- r 0 ch2
+G	x5	+- x6 0 ch2
+G	y3	+- b 0 ch
+G	y4	+- b 0 ch2
+H				false
+M	ch2	b
+R	ch2	ch2	cd4	-5400000
+L	ch2	y4
+R	ch4	ch4	cd4	-10800000
+L	ch	y3
+L	ch	ch2
+R	ch2	ch2	cd2	cd4
+L	x7	t
+R	ch2	ch2	3cd4	cd2
+L	x6	ch
+L	x6	y4
+R	ch2	ch2	0	cd4
+Z
+M	x4	ch2
+R	ch2	ch2	0	cd4
+R	ch4	ch4	cd4	cd2
+Z
+H			darkenLess	false
+M	x4	ch2
+R	ch2	ch2	0	cd4
+R	ch4	ch4	cd4	cd2
+Z
+M	ch	y4
+R	ch2	ch2	0	3cd4
+R	ch4	ch4	3cd4	cd2
+Z
+H			none	
+M	ch	y3
+L	ch	ch2
+R	ch2	ch2	cd2	cd4
+L	x7	t
+R	ch2	ch2	3cd4	cd2
+L	x6	ch
+L	x6	y4
+R	ch2	ch2	0	cd4
+L	ch2	b
+R	ch2	ch2	cd4	cd2
+Z
+M	x3	t
+R	ch2	ch2	3cd4	cd2
+R	ch4	ch4	cd4	cd2
+L	x4	ch2
+M	x6	ch
+L	x3	ch
+M	ch2	y3
+R	ch4	ch4	3cd4	cd2
+L	ch	y4
+M	ch2	b
+R	ch2	ch2	cd4	-5400000
+L	ch	y3
+P	wave
+A	adj1	val 12500
+A	adj2	val 0
+G	a1	pin 0 adj1 20000
+G	a2	pin -10000 adj2 10000
+G	y1	*/ h a1 100000
+G	dy2	*/ y1 10 3
+G	y2	+- y1 0 dy2
+G	y3	+- y1 dy2 0
+G	y4	+- b 0 y1
+G	y5	+- y4 0 dy2
+G	y6	+- y4 dy2 0
+G	dx1	*/ w a2 100000
+G	of2	*/ w a2 50000
+G	x1	abs dx1
+G	dx2	?: of2 0 of2
+G	x2	+- l 0 dx2
+G	dx5	?: of2 of2 0
+G	x5	+- r 0 dx5
+G	dx3	+/ dx2 x5 3
+G	x3	+- x2 dx3 0
+G	x4	+/ x3 x5 2
+G	x6	+- l dx5 0
+G	x10	+- r dx2 0
+G	x7	+- x6 dx3 0
+G	x8	+/ x7 x10 2
+G	x9	+- r 0 x1
+G	xAdj	+- hc dx1 0
+G	xAdj2	+- hc 0 dx1
+G	il	max x2 x6
+G	ir	min x5 x10
+G	it	*/ h a1 50000
+G	ib	+- b 0 it
+H				
+M	x2	y1
+C	x3	y2	x4	y3	x5	y1
+L	x10	y4
+C	x8	y6	x7	y5	x6	y4
+Z
+P	wedgeEllipseCallout
+A	adj1	val -20833
+A	adj2	val 62500
+G	dxPos	*/ w adj1 100000
+G	dyPos	*/ h adj2 100000
+G	xPos	+- hc dxPos 0
+G	yPos	+- vc dyPos 0
+G	sdx	*/ dxPos h 1
+G	sdy	*/ dyPos w 1
+G	pang	at2 sdx sdy
+G	stAng	+- pang 660000 0
+G	enAng	+- pang 0 660000
+G	dx1	cos wd2 stAng
+G	dy1	sin hd2 stAng
+G	x1	+- hc dx1 0
+G	y1	+- vc dy1 0
+G	dx2	cos wd2 enAng
+G	dy2	sin hd2 enAng
+G	x2	+- hc dx2 0
+G	y2	+- vc dy2 0
+G	stAng1	at2 dx1 dy1
+G	enAng1	at2 dx2 dy2
+G	swAng1	+- enAng1 0 stAng1
+G	swAng2	+- swAng1 21600000 0
+G	swAng	?: swAng1 swAng1 swAng2
+G	idx	cos wd2 2700000
+G	idy	sin hd2 2700000
+G	il	+- hc 0 idx
+G	ir	+- hc idx 0
+G	it	+- vc 0 idy
+G	ib	+- vc idy 0
+H				
+M	xPos	yPos
+L	x1	y1
+R	wd2	hd2	stAng1	swAng
+Z
+P	wedgeRectCallout
+A	adj1	val -20833
+A	adj2	val 62500
+G	dxPos	*/ w adj1 100000
+G	dyPos	*/ h adj2 100000
+G	xPos	+- hc dxPos 0
+G	yPos	+- vc dyPos 0
+G	dx	+- xPos 0 hc
+G	dy	+- yPos 0 vc
+G	dq	*/ dxPos h w
+G	ady	abs dyPos
+G	adq	abs dq
+G	dz	+- ady 0 adq
+G	xg1	?: dxPos 7 2
+G	xg2	?: dxPos 10 5
+G	x1	*/ w xg1 12
+G	x2	*/ w xg2 12
+G	yg1	?: dyPos 7 2
+G	yg2	?: dyPos 10 5
+G	y1	*/ h yg1 12
+G	y2	*/ h yg2 12
+G	t1	?: dxPos l xPos
+G	xl	?: dz l t1
+G	t2	?: dyPos x1 xPos
+G	xt	?: dz t2 x1
+G	t3	?: dxPos xPos r
+G	xr	?: dz r t3
+G	t4	?: dyPos xPos x1
+G	xb	?: dz t4 x1
+G	t5	?: dxPos y1 yPos
+G	yl	?: dz y1 t5
+G	t6	?: dyPos t yPos
+G	yt	?: dz t6 t
+G	t7	?: dxPos yPos y1
+G	yr	?: dz y1 t7
+G	t8	?: dyPos yPos b
+G	yb	?: dz t8 b
+H				
+M	l	t
+L	x1	t
+L	xt	yt
+L	x2	t
+L	r	t
+L	r	y1
+L	xr	yr
+L	r	y2
+L	r	b
+L	x2	b
+L	xb	yb
+L	x1	b
+L	l	b
+L	l	y2
+L	xl	yl
+L	l	y1
+Z
+P	wedgeRoundRectCallout
+A	adj1	val -20833
+A	adj2	val 62500
+A	adj3	val 16667
+G	dxPos	*/ w adj1 100000
+G	dyPos	*/ h adj2 100000
+G	xPos	+- hc dxPos 0
+G	yPos	+- vc dyPos 0
+G	dq	*/ dxPos h w
+G	ady	abs dyPos
+G	adq	abs dq
+G	dz	+- ady 0 adq
+G	xg1	?: dxPos 7 2
+G	xg2	?: dxPos 10 5
+G	x1	*/ w xg1 12
+G	x2	*/ w xg2 12
+G	yg1	?: dyPos 7 2
+G	yg2	?: dyPos 10 5
+G	y1	*/ h yg1 12
+G	y2	*/ h yg2 12
+G	t1	?: dxPos l xPos
+G	xl	?: dz l t1
+G	t2	?: dyPos x1 xPos
+G	xt	?: dz t2 x1
+G	t3	?: dxPos xPos r
+G	xr	?: dz r t3
+G	t4	?: dyPos xPos x1
+G	xb	?: dz t4 x1
+G	t5	?: dxPos y1 yPos
+G	yl	?: dz y1 t5
+G	t6	?: dyPos t yPos
+G	yt	?: dz t6 t
+G	t7	?: dxPos yPos y1
+G	yr	?: dz y1 t7
+G	t8	?: dyPos yPos b
+G	yb	?: dz t8 b
+G	u1	*/ ss adj3 100000
+G	u2	+- r 0 u1
+G	v2	+- b 0 u1
+G	il	*/ u1 29289 100000
+G	ir	+- r 0 il
+G	ib	+- b 0 il
+H				
+M	l	u1
+R	u1	u1	cd2	cd4
+L	x1	t
+L	xt	yt
+L	x2	t
+L	u2	t
+R	u1	u1	3cd4	cd4
+L	r	y1
+L	xr	yr
+L	r	y2
+L	r	v2
+R	u1	u1	0	cd4
+L	x2	b
+L	xb	yb
+L	x1	b
+L	u1	b
+R	u1	u1	cd4	cd4
+L	l	y2
+L	xl	yl
+L	l	y1
+Z

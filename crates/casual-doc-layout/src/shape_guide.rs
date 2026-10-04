@@ -34,9 +34,18 @@
 
 use casual_doc_model::v1::ShapeAdjustment;
 
-/// How many guides one shape may define, matching the model's import bound so a
-/// pathological `a:gdLst` cannot make evaluation unbounded.
-const MAX_GUIDES: usize = 32;
+// Why there is no guide cap here.
+//
+// There was one — 32, mirroring the model's `MAX_SHAPE_ADJUSTMENTS` — and it was in
+// the wrong layer twice over. For AUTHORED guides it is redundant: import already
+// refuses a shape with more than that, so nothing unbounded reaches layout. And for
+// the committed preset table it is simply wrong: 28 of the 187 ECMA-376 presets
+// declare more than 32 guides and `gear9` declares 244, so the cap silently refused
+// nine arc-free presets that resolve perfectly well. The guides-per-preset ceiling is
+// asserted against the table in `crate::shape_preset`, where the data is.
+//
+// Both callers are therefore bounded by construction: authored guides at import, the
+// table by being committed.
 
 /// The variable environment a guide formula resolves names against.
 ///
@@ -105,9 +114,55 @@ impl GuideBox {
 
 /// One evaluated guide: its name and its value.
 #[derive(Clone, Copy, Debug)]
-struct Guide<'a> {
+pub struct Guide<'a> {
     name: &'a str,
     value: f64,
+}
+
+/// A shape's guides, evaluated in order, ready to resolve coordinate tokens against.
+///
+/// Exists because a preset's path coordinates are not values but TOKENS — `l`, `r`,
+/// `x1`, `19098` — each either a literal, a built-in, or one of the guides evaluated
+/// here. Resolving them one at a time against a re-evaluated list would be O(g) per
+/// coordinate; evaluating once and resolving against the result is O(1) per coordinate
+/// after an O(g) build.
+#[derive(Debug)]
+pub struct Resolved<'a> {
+    guides: Vec<Guide<'a>>,
+    shape: GuideBox,
+}
+
+impl<'a> Resolved<'a> {
+    /// Evaluates `pairs` — `(name, formula)` in authored order — against `shape`.
+    ///
+    /// Each formula sees the built-ins plus the guides before it, which is the ordering
+    /// ECMA-376's preset definitions depend on. An unreadable formula is skipped, so a
+    /// later guide naming it is unreadable too rather than silently zero.
+    pub fn new(pairs: impl IntoIterator<Item = (&'a str, &'a str)>, shape: GuideBox) -> Self {
+        let mut guides: Vec<Guide<'a>> = Vec::new();
+        for (name, formula) in pairs {
+            if let Some(value) = evaluate(formula, shape, &guides) {
+                guides.push(Guide { name, value });
+            }
+        }
+        Self { guides, shape }
+    }
+
+    /// The value of a named guide, or `None` when absent or unreadable.
+    #[must_use]
+    pub fn value(&self, name: &str) -> Option<f64> {
+        self.guides
+            .iter()
+            .rev()
+            .find(|guide| guide.name == name)
+            .map(|guide| guide.value)
+    }
+
+    /// One coordinate token: a literal, a built-in, or a guide defined here.
+    #[must_use]
+    pub fn token(&self, token: &str) -> Option<f64> {
+        operand(token, self.shape, &self.guides)
+    }
 }
 
 /// Evaluates a shape's guide list in order, each formula seeing the built-ins plus
@@ -118,30 +173,22 @@ struct Guide<'a> {
 /// zero**: zero is a legal value that would silently reshape the geometry, whereas
 /// a missing name leaves the caller's documented default in place.
 ///
-/// Complexity: O(g) with g bounded by `MAX_GUIDES`, so O(1) in document size.
-fn evaluate_all<'a>(guides: &'a [ShapeAdjustment], shape: GuideBox) -> Vec<Guide<'a>> {
-    let mut resolved: Vec<Guide<'a>> = Vec::new();
-    for guide in guides.iter().take(MAX_GUIDES) {
-        if let Some(value) = evaluate(&guide.formula, shape, &resolved) {
-            resolved.push(Guide {
-                name: &guide.name,
-                value,
-            });
-        }
-    }
-    resolved
+/// Complexity: O(g) in the shape's guides, which the caller bounds.
+fn evaluate_all<'a>(guides: &'a [ShapeAdjustment], shape: GuideBox) -> Resolved<'a> {
+    Resolved::new(
+        guides
+            .iter()
+            .map(|guide| (guide.name.as_str(), guide.formula.as_str())),
+        shape,
+    )
 }
 
 /// The value of the guide named `name`, or `None` when it is absent or unreadable.
 ///
-/// Complexity: O(g) over the shape's own guides, bounded by `MAX_GUIDES`.
+/// Complexity: O(g) over the shape's own guides, which import bounds.
 #[must_use]
 pub fn guide_value(guides: &[ShapeAdjustment], name: &str, shape: GuideBox) -> Option<f64> {
-    evaluate_all(guides, shape)
-        .into_iter()
-        .rev()
-        .find(|guide| guide.name == name)
-        .map(|guide| guide.value)
+    evaluate_all(guides, shape).value(name)
 }
 
 /// Resolves one operand: a literal, a built-in, or an earlier guide.
@@ -425,15 +472,17 @@ mod tests {
     }
 
     #[test]
-    fn evaluation_is_bounded_by_the_guide_cap() {
-        let guides: Vec<ShapeAdjustment> = (0..MAX_GUIDES + 10)
-            .map(|i| adj(&format!("g{i}"), "val 1"))
-            .collect();
+    fn a_long_guide_list_is_evaluated_to_its_end() {
+        // There is deliberately no cap here (see the module note). A 32-guide cap used
+        // to live in this function and silently refused nine ECMA-376 presets, `gear9`
+        // declaring 244 guides. Authored input is bounded at import instead.
+        let guides: Vec<ShapeAdjustment> =
+            (0..300).map(|i| adj(&format!("g{i}"), "val 1")).collect();
         assert_eq!(guide_value(&guides, "g0", shape()), Some(1.0));
         assert_eq!(
-            guide_value(&guides, &format!("g{}", MAX_GUIDES + 5), shape()),
-            None,
-            "guides beyond the cap are not evaluated"
+            guide_value(&guides, "g299", shape()),
+            Some(1.0),
+            "the last guide of a long list still evaluates"
         );
     }
 }
