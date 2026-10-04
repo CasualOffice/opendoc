@@ -3308,20 +3308,48 @@ impl BodyParser<'_> {
             // `a:off`/`a:ext`/`a:chOff`/`a:chExt` inside an `a:xfrm`: route to the
             // group transform or the shape geometry per `xfrm_target`. (The
             // extension-list `<a:ext uri=…>` carries no cx/cy and is skipped.)
+            //
+            // With `xfrm_target` `None` there is no builder to route to — a LONE
+            // inline or anchored picture, whose place and size the model takes
+            // from `wp:anchor`/`wp:extent` instead. Both arms used to stop there,
+            // and `is_drawing_scaffolding` silenced the name, so the transform was
+            // discarded with no finding whatever it said. HF-243's attribute gate
+            // named it, and the fix is the one FID-P-03 already applied to
+            // `wp:effectExtent` and the lock elements: **silent in the form that
+            // loses nothing, reported in the form that does.**
             b"off" if self.drawing_depth > 0 => {
-                if let (Some(x), Some(y)) = (attr_i64(element, b"x"), attr_i64(element, b"y")) {
-                    self.set_xfrm_offset(PointEmu { x_emu: x, y_emu: y });
+                if let (Some(x), Some(y)) = (attr_i64(element, b"x"), attr_i64(element, b"y"))
+                    && !self.set_xfrm_offset(PointEmu { x_emu: x, y_emu: y })
+                {
+                    // `<a:off x="0" y="0"/>` is the identity, and it is what Word
+                    // writes on a lone picture; a real translation moves the image
+                    // away from the frame the model places it in, so it is named
+                    // rather than dropped in silence.
+                    if x != 0 || y != 0 {
+                        self.reporter.report(b"off");
+                    }
                 }
             }
-            b"ext" if self.drawing_depth > 0 && self.xfrm_target != XfrmTarget::None => {
+            b"ext" if self.drawing_depth > 0 => {
                 if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy"))
                     && (0..=MAX_EMU).contains(&cx)
                     && (0..=MAX_EMU).contains(&cy)
-                {
-                    self.set_xfrm_extent(Extent {
+                    && !self.set_xfrm_extent(Extent {
                         width_emu: cx,
                         height_emu: cy,
-                    });
+                    })
+                {
+                    // Word writes the same numbers into `wp:extent` and the
+                    // picture's own `a:ext`, so agreement loses nothing — and
+                    // agreement is what every healthy document has. A
+                    // DISAGREEMENT is a frame size this engine will not use,
+                    // because it sizes a lone picture from `wp:extent`.
+                    if self
+                        .pending_extent
+                        .is_some_and(|extent| extent.width_emu != cx || extent.height_emu != cy)
+                    {
+                        self.reporter.report(b"ext");
+                    }
                 }
             }
             b"chOff" if self.drawing_depth > 0 && !self.group_stack.is_empty() => {
@@ -3365,6 +3393,19 @@ impl BodyParser<'_> {
                     shape.preset = retained;
                 }
                 if invalid_unknown_preset {
+                    self.reporter.report(b"prstGeom");
+                }
+            }
+            // `a:prstGeom` with no open shape builder: a LONE picture's frame.
+            // The model has no geometry for a picture — it is placed and sized
+            // from the drawing's anchor and extent — so `rect`, the frame that
+            // placement already describes and the only preset Word writes on a
+            // picture, loses nothing. Any other preset is a shape-cropped picture
+            // (an ellipse, a star, a callout) that this engine draws square, and
+            // `is_drawing_scaffolding` was dropping it in silence until HF-243's
+            // attribute gate named it.
+            b"prstGeom" if self.drawing_depth > 0 => {
+                if attribute_value(element, b"prst").is_some_and(|preset| preset != "rect") {
                     self.reporter.report(b"prstGeom");
                 }
             }
@@ -3608,6 +3649,7 @@ impl BodyParser<'_> {
                 {
                     shape.descr = Some(descr);
                 }
+                self.report_object_name(element, b"cNvPr");
             }
             // The same element on a drawing with no open group child — a
             // top-level picture's `pic:cNvPr` or a lone shape's `wps:cNvPr`.
@@ -3636,6 +3678,7 @@ impl BodyParser<'_> {
                 if !self.drawing_descr_captured() {
                     self.capture_drawing_descr(element);
                 }
+                self.report_object_name(element, b"cNvPr");
             }
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
@@ -5163,35 +5206,53 @@ impl BodyParser<'_> {
     /// also reported.
     /// Routes an `a:off`/`a:ext` (within an `a:xfrm`) to the group transform or the
     /// open shape, per [`Self::xfrm_target`].
-    fn set_xfrm_offset(&mut self, point: PointEmu) {
+    ///
+    /// **Returns whether anything consumed the value.** `false` means the
+    /// transform reached no builder — `pic:spPr` sets the target to `Shape` for a
+    /// lone picture too, and a lone picture has no shape builder — so the caller
+    /// must decide whether that silence is a loss. Returning the fact rather than
+    /// letting the `match` fall through is what stops this being silent again:
+    /// `XfrmTarget::Shape` with no open shape used to look exactly like a
+    /// successful route from the call site (HF-243).
+    fn set_xfrm_offset(&mut self, point: PointEmu) -> bool {
         match self.xfrm_target {
             XfrmTarget::Group => {
                 if let Some(group) = self.group_stack.last_mut() {
                     group.transform.offset = point;
+                    return true;
                 }
+                false
             }
             XfrmTarget::Shape => {
                 if let Some(shape) = self.pending_shape.as_mut() {
                     shape.offset = point;
+                    return true;
                 }
+                false
             }
-            XfrmTarget::None => {}
+            XfrmTarget::None => false,
         }
     }
 
-    fn set_xfrm_extent(&mut self, extent: Extent) {
+    /// The `a:ext` half of [`Self::set_xfrm_offset`], with the same return
+    /// contract.
+    fn set_xfrm_extent(&mut self, extent: Extent) -> bool {
         match self.xfrm_target {
             XfrmTarget::Group => {
                 if let Some(group) = self.group_stack.last_mut() {
                     group.transform.extent = extent;
+                    return true;
                 }
+                false
             }
             XfrmTarget::Shape => {
                 if let Some(shape) = self.pending_shape.as_mut() {
                     shape.extent = extent;
+                    return true;
                 }
+                false
             }
-            XfrmTarget::None => {}
+            XfrmTarget::None => false,
         }
     }
 
@@ -7662,6 +7723,33 @@ impl BodyParser<'_> {
     /// reads as though the two were related.
     fn drawing_doc_pr(&mut self, element: &BytesStart<'_>) {
         self.capture_drawing_descr(element);
+        self.report_object_name(element, b"docPr");
+    }
+
+    /// Reports a drawing object's NAME, which the model does not carry.
+    ///
+    /// `wp:docPr@name` and `pic:cNvPr`/`wps:cNvPr@name` are the object's name in
+    /// Word's Selection Pane — the handle an author renames a shape by, and what a
+    /// screen reader announces beside the alt text. The model holds `descr` and no
+    /// name, so the value is dropped; it was dropped *in silence* until HF-243's
+    /// attribute gate named it, and §12's rule is that unsupported document data is
+    /// preserved where safe or **reported explicitly**.
+    ///
+    /// Reported, not silenced, and the distinction from the no-op class is the
+    /// point: an empty name says nothing and raises nothing, but "Picture 1" is a
+    /// value the model has no field for, which is a loss whether or not the author
+    /// chose the word. `35`'s rule is that presence which is not the model's own
+    /// state is information.
+    ///
+    /// The report aggregates by feature, so a document with forty drawings gets one
+    /// row with a count of forty, not forty rows. Two features rather than one
+    /// because the two elements are different locations, which is how `w14:paraId`
+    /// is already reported on `w:p` and `w:tr` separately. They collapse into one
+    /// the day the model carries a name.
+    fn report_object_name(&mut self, element: &BytesStart<'_>, local: &[u8]) {
+        if attribute_value(element, b"name").is_some_and(|name| !name.is_empty()) {
+            self.reporter.report_attribute(local, b"name");
+        }
     }
 
     /// Whether this drawing's alt text has already been captured, so a
