@@ -14,5 +14,15 @@ casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-pres-model.workspace = true
 
+[dev-dependencies]
+# The seam test only: a deck's bytes through the importer and into this crate.
+# Not a real dependency — slide layout consumes a `Presentation` and does not
+# care where one came from, which is why the import lane is not in `dependencies`.
+casual-doc-package.workspace = true
+casual-pres-import.workspace = true
+# The shared fixture builder assembles a genuine deflate ZIP, so it needs the
+# same writer the importer's own guards build it with.
+zip.workspace = true
+
 [lints]
 workspace = true

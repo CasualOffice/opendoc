@@ -298,7 +298,10 @@ version = "0.0.1"
 dependencies = [
  "casual-doc-layout",
  "casual-doc-model",
+ "casual-doc-package",
+ "casual-pres-import",
  "casual-pres-model",
+ "zip",
 ]
 
 [[package]]
