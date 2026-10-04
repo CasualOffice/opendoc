@@ -3915,13 +3915,7 @@ function syncActiveReviewCommentToCaret(anchor) {
   // contains the caret, so caret-driven expansion works for suggestions too
   // (REVIEW-GAP-019). The smallest containing range wins when several stack.
   if (!anchor?.node) return;
-  const offset = Number(anchor.offset) || 0;
-  let best = null;
-  for (const entry of reviewAnchorIndex) {
-    if (entry.node !== anchor.node) continue;
-    if (offset < entry.start || offset > entry.end) continue;
-    if (!best || entry.end - entry.start < best.end - best.start) best = entry;
-  }
+  const best = smallestContaining(reviewAnchorIndex, anchor.node, Number(anchor.offset) || 0);
   if (!best || best.itemId === activeReviewItemId) return;
   activeReviewItemId = best.itemId;
   reviewSidebarPreference = true;
@@ -11790,6 +11784,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => dropCapDialog.open() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
     { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
+    { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!selection, disabledReason: t("paragraph.caretRequired"), run: () => void insertChartAtCaret({ doc, caret: selection?.focus, blocked: blockMutationInViewing, suggesting: () => reviewMode === "suggesting", status: setStatus, apply: applyEditResult }) },
     { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
     { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: insertCommandEnabled("insert.symbol"), run: () => openSymbolPicker() },
     { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: insertCommandEnabled("insert.emoji"), run: () => openEmojiPicker() },
