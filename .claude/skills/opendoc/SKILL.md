@@ -254,9 +254,27 @@ rule that will break again.
    day — the last time because the coordinator ran `fmt` plus two crates, skipped
    `build.sh`, and broke every open PR at once. The `main.js` line ceiling churned
    **four** times the same way. **Close: if the diff touches `docs/` or any string, run
-   `cd webapp && ./build.sh` — the full build, which runs every generator and its
+   `node webapp/tools/build-glossary.mjs` AND `cd webapp && ./build.sh` — the glossary
+   generator is NOT part of the build (see the correction below), and the build runs the
+   remaining generators and their
    `--check`. A hand-maintained number is a defect; make it a generated artifact that
    refuses to write a worse value.**
+
+   **CORRECTION, measured 2026-10-04: `build.sh` is NOT a superset of every
+   generator's check.** `webapp/tools/build-glossary.mjs` sits outside it —
+   `grep -n glossary webapp/build.sh` returns nothing — so a lane that runs the
+   full build and nothing else STILL ships a stale glossary, and `build.sh`
+   passed green while the committed glossary was stale. That is how this
+   recurred after the rule was written. The instruction is therefore:
+
+   ```sh
+   node webapp/tools/build-glossary.mjs   # then commit the result
+   cd webapp && ./build.sh                # pages, SEO, embed docs, brand, site
+   ```
+
+   both, as separate commands, whenever the diff touches `docs/` or any string.
+   The glossary derives from **every** `docs/*.md`, so a prose sentence in any
+   numbered doc moves it.
 
 5. **Two green PRs can merge into a red main.** #738 added struct literals, #739 added the
    field and swept 33 of them; each was green, the merge did not compile, and the opposite
