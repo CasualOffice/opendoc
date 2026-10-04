@@ -237,6 +237,30 @@ pub(crate) fn step(
     }
 }
 
+/// Whether `block` is visible under `folds`, advancing the suppression state —
+/// [`step`] for a caller outside this crate.
+///
+/// The accessibility mirror is the caller this exists for. It is model-derived,
+/// so an unfiltered mirror would read out what a sighted reader has folded away,
+/// and a fold that is honoured on the canvas and ignored by a screen reader is a
+/// lie to exactly the reader who cannot check it. Filtering there with the SAME
+/// state machine is what makes "folded" mean one thing.
+///
+/// `suppress` starts as `None` and is threaded across the blocks of one sequence,
+/// in document order — the same contract the flow walk honours.
+///
+/// Complexity: `O(1)` per block, and free for an empty `folds`.
+#[must_use]
+pub fn is_visible(
+    suppress: &mut Option<u8>,
+    block: &BlockNode,
+    folds: &FoldSet,
+    definitions: &Definitions,
+    cascade: &StyleCascade<'_>,
+) -> bool {
+    step(suppress, block, folds, definitions, cascade).visibility == BlockVisibility::Visible
+}
+
 /// The outline level of a paragraph with these **direct** properties, 1-based
 /// (1 = top), or `None` if it is not a heading.
 ///
@@ -300,27 +324,26 @@ pub fn heading_level_of(
 }
 
 /// The heading level a style **name** implies: `Title` is 1, `Heading N` is `N`
-/// (clamped to 9), anything else is not a heading.
+/// (1–9), anything else is not a heading.
 ///
-/// Case- and separator-insensitive, because producers write `Heading 1`,
-/// `heading1` and `Heading1` interchangeably.
+/// Case- and whitespace-insensitive, because producers write `Heading 1`,
+/// `heading1` and `Heading1` interchangeably. This is `casual-doc-wasm`'s rule
+/// moved here verbatim rather than reimplemented — it was the facade's, it is now
+/// the engine's, and there is one of it.
 #[must_use]
 pub fn heading_level_from_name(name: Option<&str>) -> Option<u8> {
-    let name = name?.trim();
-    if name.eq_ignore_ascii_case("title") {
+    let compact: String = name?
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if compact == "title" {
         return Some(1);
     }
-    let rest = name
-        .strip_prefix("Heading")
-        .or_else(|| name.strip_prefix("heading"))
-        .or_else(|| {
-            name.get(..7)
-                .filter(|head| head.eq_ignore_ascii_case("heading"))
-                .map(|_| &name[7..])
-        })?;
-    let digits = rest.trim_start_matches([' ', '-', '_']).trim();
-    let level: u8 = digits.parse().ok()?;
-    (1..=9).contains(&level).then_some(level)
+    compact
+        .strip_prefix("heading")
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (1..=9).contains(n))
 }
 
 #[cfg(test)]

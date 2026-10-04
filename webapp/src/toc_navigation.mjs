@@ -170,7 +170,9 @@ function key(text) {
 
 /**
  * An index from heading text to the node that heading lives on, built from the
- * engine's `documentOutline()` rows (`"{level}\t{node}\t{text}"`).
+ * engine's `documentOutline()` rows
+ * (`"{level}\t{node}\t{collapsed}\t{text}"` — the collapsed column arrived with
+ * folding, ADR-049, and the text stayed last).
  *
  * The FIRST heading with a given text wins, and the rows arrive in document
  * order, so a document that repeats a heading sends the reader to the first
@@ -185,9 +187,9 @@ export function buildHeadingIndex(rows) {
   const index = new Map();
   for (const row of rows ?? []) {
     const parts = String(row).split("\t");
-    if (parts.length < 3) continue;
+    if (parts.length < 4) continue;
     const node = parts[1];
-    const k = key(parts.slice(2).join("\t"));
+    const k = key(parts.slice(3).join("\t"));
     if (k !== "" && !index.has(k)) index.set(k, node);
   }
   return index;
@@ -212,8 +214,8 @@ export function buildHeadingLabels(rows) {
   const labels = new Map();
   for (const row of rows ?? []) {
     const parts = String(row).split("\t");
-    if (parts.length < 3) continue;
-    const text = parts.slice(2).join("\t").trim();
+    if (parts.length < 4) continue;
+    const text = parts.slice(3).join("\t").trim();
     if (text !== "" && !labels.has(parts[1])) labels.set(parts[1], text);
   }
   return labels;
