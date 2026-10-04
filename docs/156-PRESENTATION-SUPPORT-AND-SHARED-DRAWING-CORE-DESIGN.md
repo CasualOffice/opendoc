@@ -453,20 +453,60 @@ master editor, command registry plus slide descriptors, locale keys.
 **Tier 3 status.** `slides.html`, the canvas and the sorter have landed, with the
 locale keys in all nineteen catalogues. A deck opens in a browser, renders at the
 device's own pixel ratio, pages with the keyboard, marks hidden slides in the
-sorter, surfaces the fidelity report and saves with retention. Eight browser specs
+sorter, surfaces the fidelity report and saves with retention. Nine browser specs
 drive a real package from bytes to pixels.
 
-Three things in this tier are NOT done, and the first is the one that matters:
+**Slide text now reaches a screen reader**, which was the gap this status
+previously named as the tier's sharpest. A rendered slide is pixels and a
+`<canvas>` exposes no text, so without a projection a reader got a deck they could
+not read at all while the text sat in the model the whole time — the
+"modelled but unreachable" shape §9.4 names. `casual_pres_layout::slide_text_outline`
+projects it, `casual_pres_wasm`'s `slideText` carries it across the boundary as
+JSON, and `webapp/src/slides_mirror.mjs` builds it into an off-screen
+`role="document"` region that is rebuilt on every slide change — the same contract
+`editor.html`'s `#a11yDocument` has for the document editor.
 
-* **slide text reaches no screen reader.** A rendered slide is pixels, so the
-  canvas carries no text for assistive technology and the sorter's list is the
-  only navigable structure. The text IS in the model and is shaped into glyph
-  runs; nothing exposes it as text. That is the "modelled but unreachable"
-  shape §9.4 names, and it is this tier's sharpest gap — stated in the page's own
-  markup beside the element it is true of, not only here.
+Four decisions in it are worth recording, because each is a choice that could have
+gone the other way and three of them are claims about what a reader hears.
+
+* **The projection lives beside the painter, not in the facade.** The rule about
+  which text a reader should hear is the rule about which text PAINTS — a
+  placeholder's `a:txBody` on a layout or a master is prompt text ("Click to edit
+  Master title style") and a *non*-placeholder shape on either tier is a logo
+  caption or a running footer label — and that rule was already written once, in
+  `casual-pres-layout`. So the projection walks the same `cascade_tiers` with the
+  same two filters rather than keeping a second copy that would drift from the
+  canvas by the second edit.
+* **Reading order is not paint order.** Paint order is master, layout, slide,
+  which is right for pixels and wrong for a reader: it announces the deck's footer
+  and slide number before the slide's own title, on every slide. The projection
+  emits the slide's shapes first and the inherited furniture after, each shape
+  carrying its tier so the page can put the furniture in its own labelled region —
+  interleaved, a reader hears the same footer between every pair of slides with no
+  way to tell it from the slide's words.
+* **A title is a heading; depth is nesting; flat text is paragraphs.** `h3` under
+  the stage's own `h2`, which is how a reader skims a deck at all. A shape stating
+  any `a:pPr@lvl` above zero nests one `ul` per depth, because a sub-point
+  announced at the same depth as the point above it is a different claim about the
+  slide. A shape with no depth stays paragraphs: wrapping one sentence in a list
+  makes a reader hear "list, one item" before every caption in the deck. And `ul`
+  rather than `ol` — `a:buAutoNum` is not resolved in this build, so claiming an
+  ordered list would be a claim about the file the page cannot support.
+* **A field contributes its cached text.** A slide number renders from that cache
+  everywhere but PowerPoint, so a reader hearing nothing where the slide plainly
+  says "7" would be the field's own loss read aloud.
+
+Two things in this tier are still NOT done:
+
 * the notes pane, the layout picker and the master editor are untouched.
 * the command registry has no slide descriptors, because there are no slide
   commands: the facade exposes no operation set at all.
+
+And two things inside the mirror are stated limits rather than oversights. A
+**grouped shape's text** cannot reach it, because it cannot reach the model —
+`GroupChild` has nowhere to put an `a:txBody`, which the importer reports as
+`grpSp/txBody`. And the mirror is **read-only**: it is a projection, never an
+editing surface, for the same reason this page cannot edit at all.
 
 **Editing is not in this tier and should not be added to it without an ADR.**
 Every mutation has to route through `casual-doc-transaction` (ADR-005, ADR-043),

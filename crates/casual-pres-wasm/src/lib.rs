@@ -180,6 +180,34 @@ fn open_deck(bytes: &[u8]) -> Result<WasmPresentation, String> {
     })
 }
 
+/// One paragraph of a slide's text, as the host sees it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineParagraphJson<'a> {
+    /// The zero-based outline level, so a mirror can nest a list rather than
+    /// flattening every bullet to one depth.
+    level: u8,
+    text: &'a str,
+}
+
+/// One text-bearing shape of a slide, as the host sees it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineShapeJson<'a> {
+    id: String,
+    tier: &'static str,
+    role: &'static str,
+    name: Option<&'a str>,
+    paragraphs: Vec<OutlineParagraphJson<'a>>,
+}
+
+/// A slide's text, as the host sees it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineJson<'a> {
+    shapes: Vec<OutlineShapeJson<'a>>,
+}
+
 /// One finding, as the host sees it.
 ///
 /// A bridge struct rather than `serde` on the loss types themselves, for the
@@ -338,6 +366,67 @@ impl WasmPresentation {
             .slides()
             .get(index)
             .is_some_and(|slide| slide.hidden)
+    }
+
+    /// One slide's text as STRUCTURE, for an accessibility mirror.
+    ///
+    /// # Why a facade needs this at all
+    ///
+    /// Because [`WasmPresentation::render_slide`] returns PIXELS, and a `<canvas>`
+    /// exposes no text, no headings and no list structure. Without this a screen
+    /// reader presented with a painted deck gets nothing — while the text has been
+    /// in the model and shaped into glyph runs the whole time, which is exactly the
+    /// "modelled but unreachable" failure `SKILL` §9.4 names. The document facade
+    /// answers the same problem the same way, with a projection its page mirrors
+    /// into real elements off-screen.
+    ///
+    /// # What the JSON says
+    ///
+    /// `{"shapes":[{"id","tier","role","name","paragraphs":[{"level","text"}]}]}`,
+    /// in READING order: the slide's own words first, then the painted furniture it
+    /// inherits from its layout and master. The decisions behind that — which text
+    /// is a prompt and must never be read, which is a running footer and must be,
+    /// and why reading order is not paint order — all live in
+    /// [`casual_pres_layout::slide_text_outline`], beside the painter's own copy of
+    /// the same rule, so the mirror and the canvas cannot disagree about what the
+    /// slide says.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the index is out of range, or when the structure cannot be
+    /// serialized — which for an in-memory buffer means a bug here.
+    #[wasm_bindgen(js_name = slideText)]
+    pub fn slide_text(&self, index: usize) -> Result<String, JsValue> {
+        self.slide_text_inner(index).map_err(to_js)
+    }
+
+    /// The fallible half of [`WasmPresentation::slide_text`], free of `JsValue`.
+    fn slide_text_inner(&self, index: usize) -> Result<String, String> {
+        let outline = casual_pres_layout::slide_text_outline(&self.presentation, index)
+            .ok_or_else(|| format!("no slide at index {index}"))?;
+        let shapes = outline
+            .shapes
+            .iter()
+            .map(|shape| OutlineShapeJson {
+                // The drawing's own id, stringified: a `NodeId` is 64-bit and
+                // JSON's number is a double, so a host that read it as a number
+                // would silently round a real file's ids. The document facade
+                // stringifies its node ids for the same reason.
+                id: shape.id.to_string(),
+                tier: shape.tier.token(),
+                role: shape.role.token(),
+                name: shape.name.as_deref(),
+                paragraphs: shape
+                    .paragraphs
+                    .iter()
+                    .map(|paragraph| OutlineParagraphJson {
+                        level: paragraph.level,
+                        text: paragraph.text.as_str(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        serde_json::to_string(&OutlineJson { shapes }).map_err(|error| error.to_string())
     }
 
     /// Renders one slide to an RGBA bitmap at `dpi` device pixels per inch.

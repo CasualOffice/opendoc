@@ -16,13 +16,13 @@ use casual_pres_model::TextStyles;
 use casual_pres_model::{
     LayoutKind, ListStyle, Placeholder, PlaceholderKind, Presentation, ShapeTree, Slide, SlideId,
     SlideLayout, SlideLayoutId, SlideMaster, SlideMasterId, SlideNode, SlideSize, TextAlign,
-    TextAnchor, TextAutoFit, TextBody, TextBodyProperties, TextCharacterProperties, TextLineBreak,
-    TextParagraph, TextParagraphProperties, TextRun, TextRunText, TextSpacing, TextStrike,
-    TextUnderline,
+    TextAnchor, TextAutoFit, TextBody, TextBodyProperties, TextCharacterProperties, TextField,
+    TextLineBreak, TextParagraph, TextParagraphProperties, TextRun, TextRunText, TextSpacing,
+    TextStrike, TextUnderline,
 };
 
 use crate::text::{LAST_RESORT_COLOR, LAST_RESORT_SIZE};
-use crate::{SlideCanvas, UnresolvedProperty, lay_out_slide};
+use crate::{SlideCanvas, UnresolvedProperty, lay_out_slide, slide_text_outline};
 
 fn id(counter: u64) -> NodeId {
     NodeId::from_parts(1, counter).expect("non-zero")
@@ -1789,4 +1789,218 @@ fn a_runs_decoration_spacing_and_baseline_reach_the_shaped_run() {
         120,
         "`baseline=\"30000\"` is 30% of the font size, raised"
     );
+}
+
+/// A slide's text outline: the slide's own words, then the deck's furniture, and
+/// NEITHER tier's placeholder prompt.
+///
+/// Written as one deck asserting the whole projection rather than as five tests,
+/// because every half of this is satisfiable by accident. "The prompt is not read"
+/// passes for a projection that reads no layout text at all; "the footer is read"
+/// passes for one that reads every tier's text including "Click to add text" on
+/// every slide; "the title comes first" passes for a projection that only ever
+/// emits the slide. The exact sequence is the only assertion that can tell those
+/// apart — which is the same reason
+/// `a_layouts_prompt_does_not_paint_but_its_plain_shapes_text_does` is written as a
+/// difference inside one deck.
+#[test]
+fn the_text_outline_reads_the_slides_words_then_the_decks_furniture_and_no_prompt() {
+    let size = SlideSize::DEFAULT_16X9;
+    let title_slot = Placeholder {
+        kind: PlaceholderKind::Title,
+        ..Placeholder::default()
+    };
+    let body_slot = Placeholder {
+        kind: TEXT_SLOT.0,
+        index: TEXT_SLOT.1,
+        ..Placeholder::default()
+    };
+    let footer_slot = Placeholder {
+        kind: PlaceholderKind::Footer,
+        index: 2,
+        ..Placeholder::default()
+    };
+    let body = |paragraphs: Vec<TextParagraph>| TextBody {
+        body_properties: TextBodyProperties::default(),
+        list_style: ListStyle::default(),
+        paragraphs,
+    };
+    let one_line = |text: &str, paragraph_id: NodeId, run_id: NodeId| {
+        body(vec![paragraph(
+            paragraph_id,
+            None,
+            vec![run(run_id, text, None)],
+        )])
+    };
+    let box_at = |node: NodeId, y: i64| shape_at(node, 0, y, TEXT_BOX_WIDTH_EMU, 914_400);
+
+    let master = SlideMaster {
+        id: SlideMasterId::new(id(10)),
+        shapes: tree(
+            id(11),
+            vec![
+                // The master's title PROMPT. PowerPoint shows this in the editor and
+                // never on a slide, so reading it aloud would be worse than silence.
+                SlideNode::new(box_at(id(12), 0))
+                    .in_slot(title_slot)
+                    .with_text(one_line("Click to edit Master title style", id(13), id(14))),
+                // A plain shape on the master: a running footer rule's label. This
+                // DOES paint on every slide, so a reader must hear it.
+                SlideNode::new(box_at(id(15), 914_400)).with_text(one_line(
+                    "Confidential",
+                    id(16),
+                    id(17),
+                )),
+            ],
+            size,
+        ),
+        name: None,
+        background: None,
+        text_styles: TextStyles::default(),
+    };
+    let layout = SlideLayout {
+        id: SlideLayoutId::new(id(20)),
+        master: master.id,
+        kind: LayoutKind::Object,
+        shapes: tree(
+            id(21),
+            vec![
+                SlideNode::new(box_at(id(22), 1_828_800))
+                    .in_slot(body_slot)
+                    .with_text(one_line("Click to add text", id(23), id(24))),
+                SlideNode::new(box_at(id(25), 2_743_200)).with_text(one_line(
+                    "opendoc",
+                    id(26),
+                    id(27),
+                )),
+            ],
+            size,
+        ),
+        name: None,
+        background: None,
+    };
+    let slide = Slide {
+        id: SlideId::new(id(30)),
+        layout: layout.id,
+        shapes: tree(
+            id(31),
+            vec![
+                SlideNode::new(box_at(id(32), 0))
+                    .in_slot(title_slot)
+                    .with_text(one_line("Quarterly review", id(33), id(34))),
+                SlideNode::new(box_at(id(35), 914_400))
+                    .in_slot(body_slot)
+                    .with_text(body(vec![
+                        paragraph(id(36), None, vec![run(id(37), "Revenue", None)]),
+                        paragraph(
+                            id(38),
+                            Some(TextParagraphProperties {
+                                level: Some(1),
+                                ..TextParagraphProperties::default()
+                            }),
+                            vec![run(id(39), "By region", None)],
+                        ),
+                        // A blank line and a whitespace-only one. Both are real —
+                        // PowerPoint writes an empty `a:p` for a blank line — and
+                        // both are noise to a reader, so neither is announced.
+                        paragraph(id(40), None, Vec::new()),
+                        paragraph(id(41), None, vec![run(id(42), "   ", None)]),
+                    ])),
+                // Hidden. Not read, for the same reason it is not painted: the
+                // author hid it. It still round-trips.
+                SlideNode {
+                    hidden: true,
+                    ..SlideNode::new(box_at(id(43), 1_828_800)).with_text(one_line(
+                        "Draft note",
+                        id(44),
+                        id(45),
+                    ))
+                },
+                SlideNode {
+                    name: Some("Slide number".to_owned()),
+                    ..SlideNode::new(box_at(id(46), 2_743_200))
+                        .in_slot(footer_slot)
+                        .with_text(body(vec![paragraph(
+                            id(47),
+                            None,
+                            vec![
+                                // A field contributes its CACHED text: a slide
+                                // number renders from that cache, so dropping it
+                                // would read the field's loss aloud.
+                                TextRun::Field(TextField {
+                                    id: id(48),
+                                    field_id: "{B7F1C5A2-0000-0000-0000-000000000001}".to_owned(),
+                                    kind: "slidenum".to_owned(),
+                                    properties: None,
+                                    text: "7".to_owned(),
+                                }),
+                                // A soft break inside a paragraph is a space, not a
+                                // newline: the mirror gives each PARAGRAPH its own
+                                // element.
+                                TextRun::LineBreak(TextLineBreak {
+                                    id: id(49),
+                                    properties: None,
+                                }),
+                                run(id(50), "of 12", None),
+                            ],
+                        )]))
+                },
+            ],
+            size,
+        ),
+        name: None,
+        hidden: false,
+        background: None,
+    };
+    let presentation = Presentation::new(
+        id(1),
+        size,
+        vec![master],
+        vec![layout],
+        vec![slide],
+        Definitions::default(),
+    )
+    .expect("a three-tier deck with prompts, furniture and a hidden shape");
+
+    /// One projected shape, flattened for one assertion: its tier, its role, its
+    /// name, and its paragraphs as `(level, text)`.
+    type Read<'a> = (&'a str, &'a str, Option<&'a str>, Vec<(u8, &'a str)>);
+
+    let outline = slide_text_outline(&presentation, 0).expect("slide 0");
+    let read: Vec<Read<'_>> = outline
+        .shapes
+        .iter()
+        .map(|shape| {
+            (
+                shape.tier.token(),
+                shape.role.token(),
+                shape.name.as_deref(),
+                shape
+                    .paragraphs
+                    .iter()
+                    .map(|paragraph| (paragraph.level, paragraph.text.as_str()))
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        vec![
+            ("slide", "title", None, vec![(0, "Quarterly review")]),
+            (
+                "slide",
+                "body",
+                None,
+                vec![(0, "Revenue"), (1, "By region")],
+            ),
+            ("slide", "other", Some("Slide number"), vec![(0, "7 of 12")],),
+            ("layout", "shape", None, vec![(0, "opendoc")]),
+            ("master", "shape", None, vec![(0, "Confidential")]),
+        ],
+        "the slide's own words first, then the layout's and the master's painted \
+         furniture, and no prompt, no hidden shape and no blank line anywhere"
+    );
+    // The ids are carried so a host can tie a mirrored element back to its drawing.
+    let ids: Vec<NodeId> = outline.shapes.iter().map(|shape| shape.id).collect();
+    assert_eq!(ids, vec![id(32), id(35), id(46), id(25), id(15)]);
 }

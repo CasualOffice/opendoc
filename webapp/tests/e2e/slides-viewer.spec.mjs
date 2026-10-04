@@ -189,3 +189,62 @@ for (const dpr of [1, 2]) {
     }
   });
 }
+
+test("a screen reader can read the slide, which the canvas itself says nothing to", async ({
+  page,
+}) => {
+  await gotoSlides(page);
+  await openDeck(page);
+
+  // The canvas is PIXELS. Asserted first, because it is the reason the rest of
+  // this test exists: there is no text in it to find, so everything a reader
+  // hears has to come from the mirror beside it.
+  await expect(page.locator("#slideCanvas")).toHaveText("");
+
+  // The mirror is off screen — a sighted reader must not see the deck's words
+  // twice — and still in the accessibility tree, which is the whole point.
+  // `visually-hidden` is the repository's own utility for exactly that, and the
+  // measurement is the one that distinguishes it from `display: none`: a box of
+  // one pixel rather than no box at all.
+  const box = await page.locator("#slideText").boundingBox();
+  expect(box, "the mirror must be in the layout, not display:none").not.toBeNull();
+  expect(box.width).toBeLessThan(3);
+
+  // The slide's TITLE is a heading. This is the single most useful thing the
+  // mirror says: it is how a reader skims a deck, and `aria-current` on a
+  // thumbnail tells them which slide is showing but never what it is about.
+  await expect(page.locator("#slideTextOwn h3")).toHaveText("One");
+  // And the body text reaches it, as ONE paragraph: the fixture's subtitle holds
+  // an `a:br` between "order" and "second", which is a soft break inside a
+  // paragraph and not a paragraph boundary.
+  await expect(page.locator("#slideTextOwn")).toContainText(
+    "First in presentation order second line",
+  );
+  // The master's PROMPT must never be read. The fixture carries "Click to edit
+  // Master title style" — a placeholder's text on a master is what PowerPoint
+  // shows in the editor and never on a slide, so a reader hearing it would be
+  // hearing the deck's scaffolding instead of its content.
+  await expect(page.locator("#slideText")).not.toContainText("Click to edit");
+
+  // The mirror MOVES with the slide. A reader paging through a deck whose mirror
+  // was built once hears slide 1 forever, and every other assertion in this file
+  // passes either way — which is why this is asserted and not left to the
+  // ordering inside `paint`.
+  await page.locator("#slideStage").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#slideTextOwn h3")).toHaveText("Two");
+  // The second slide states `lvl="1"` and `lvl="2"`, so its body is NESTED three
+  // deep: an indented sub-point announced at the same depth as the point above it
+  // is a different claim about the slide. Asserted on the DEEPEST item, whose own
+  // text is its own — an outer `li` contains the list nested inside it, so its
+  // `textContent` is every descendant's and a `toHaveText` there passes for a flat
+  // projection too.
+  const deepest = page.locator("#slideTextOwn ul ul ul > li");
+  await expect(deepest).toHaveCount(1);
+  // The trailing "2" is the `a:fld type="slidenum"` cache. A slide that visibly
+  // says 2 must not be read as if it said nothing.
+  await expect(deepest).toHaveText("Third level, unbulleted2");
+  // And nothing nests deeper than the file states, which is what a stack that
+  // never unwound would produce.
+  await expect(page.locator("#slideTextOwn ul ul ul ul")).toHaveCount(0);
+});

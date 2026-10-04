@@ -288,3 +288,110 @@ fn a_bitmaps_pixels_are_moved_out_not_copied() {
     let expected = bitmap.width_px() as usize * bitmap.height_px() as usize * 4;
     assert_eq!(takes_by_value(bitmap), expected);
 }
+
+/// A slide's text crosses the boundary as STRUCTURE, so a screen reader can read a
+/// deck whose canvas paints only pixels.
+///
+/// Driven through the REAL fixture rather than a hand-built model, because the two
+/// claims that matter here are claims about a real file: that a producer's master
+/// prompt ("Click to edit Master title style", which this fixture carries) never
+/// reaches a reader, and that a soft break inside a paragraph does not split it
+/// into two.
+#[test]
+fn a_slides_text_crosses_the_boundary_as_structure() {
+    let facade = open_deck(&deck::deck()).expect("the fixture opens");
+
+    let parsed: serde_json::Value = serde_json::from_str(
+        &facade
+            .slide_text(0)
+            .expect("slide 0's text crosses the boundary"),
+    )
+    .expect("the projection is valid JSON");
+    /// One projected shape, flattened for one assertion: its tier, its role, its
+    /// name, and its paragraphs as `(level, text)`.
+    type Read<'a> = (&'a str, &'a str, &'a str, Vec<(u64, &'a str)>);
+
+    let shapes = parsed["shapes"].as_array().expect("a shapes array");
+    let read: Vec<Read<'_>> = shapes
+        .iter()
+        .map(|shape| {
+            (
+                shape["tier"].as_str().expect("a tier"),
+                shape["role"].as_str().expect("a role"),
+                shape["name"].as_str().expect("a name"),
+                shape["paragraphs"]
+                    .as_array()
+                    .expect("a paragraphs array")
+                    .iter()
+                    .map(|paragraph| {
+                        (
+                            paragraph["level"].as_u64().expect("a level"),
+                            paragraph["text"].as_str().expect("text"),
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        vec![
+            ("slide", "title", "Title 1", vec![(0, "One")]),
+            (
+                "slide",
+                "body",
+                "Subtitle 2",
+                // ONE paragraph, not two. The `a:br` between "order" and "second"
+                // becomes a space: the mirror gives each PARAGRAPH its own element,
+                // so a newline inside one is whitespace the accessibility tree
+                // collapses anyway.
+                vec![(0, "First in presentation order second line")],
+            ),
+        ],
+        "the slide's own title and subtitle, and NOT the master's \
+         \"Click to edit Master title style\" prompt this fixture carries"
+    );
+
+    // The outline levels a mirror nests a list by. The fixture's second slide
+    // states `lvl=\"1\"` and `lvl=\"2\"` explicitly and omits the attribute on the
+    // first paragraph, so a projection that defaulted every level to zero — or
+    // that read the attribute one-based — gives a different answer here.
+    let detail: serde_json::Value =
+        serde_json::from_str(&facade.slide_text(1).expect("slide 1's text")).expect("valid JSON");
+    let levels: Vec<u64> = detail["shapes"][1]["paragraphs"]
+        .as_array()
+        .expect("the body's paragraphs")
+        .iter()
+        .map(|paragraph| paragraph["level"].as_u64().expect("a level"))
+        .collect();
+    assert_eq!(
+        levels,
+        vec![0, 1, 2],
+        "a:pPr@lvl, zero-based, as the file states"
+    );
+
+    // A field contributes its CACHED text. The third paragraph ends with an
+    // `a:fld type=\"slidenum\"` whose cache is "2", and a slide that visibly says
+    // "2" must not be read as if it said nothing.
+    assert_eq!(
+        detail["shapes"][1]["paragraphs"][2]["text"]
+            .as_str()
+            .expect("the third paragraph"),
+        "Third level, unbulleted2",
+    );
+
+    // Past the end is an error rather than an empty outline: a host asking for a
+    // slide that does not exist has a bug, and an empty answer would hide it.
+    //
+    // Through the inner half, as `rendering_a_slide_that_does_not_exist_is_an_error`
+    // does: `to_js` builds a `JsValue`, which has no implementation off the wasm
+    // target and aborts the test process rather than returning an `Err` a native
+    // guard could read.
+    let Err(error) = facade.slide_text_inner(99) else {
+        panic!("there is no slide 99, so this must be an error rather than an outline");
+    };
+    assert!(
+        error.contains("99"),
+        "the error names the index the host asked for: {error}"
+    );
+}

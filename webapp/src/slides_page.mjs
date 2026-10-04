@@ -13,6 +13,7 @@ import { EN_STRINGS } from "./en_strings.mjs";
 // `select` and nothing else, which is exactly the shape of a viewer.
 import { startSiteLocalisation } from "./site_locale.mjs";
 import { createViewer } from "./slides.mjs";
+import { renderSlideMirror } from "./slides_mirror.mjs";
 
 /// The elements the page is built from, resolved once.
 ///
@@ -33,6 +34,8 @@ function resolveElements() {
     "slidesFidelityDetails",
     "slidesFidelityList",
     "slidesError",
+    "slideTextOwn",
+    "slideTextInherited",
   ];
   const found = {};
   const missing = [];
@@ -150,6 +153,15 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     const painted = viewer.paint(elements.slideCanvas, availableWidth());
     elements.slidesEmpty.hidden = painted;
     elements.slideCanvas.hidden = !painted;
+    // The off-screen structural mirror, rebuilt with the pixels and not after
+    // them. A canvas exposes no text, so this is the ONLY thing a screen reader
+    // can read on this page besides the sorter — and it has to move with the
+    // slide, or a reader paging through the deck hears slide 1 forever.
+    renderSlideMirror({
+      own: elements.slideTextOwn,
+      inherited: elements.slideTextInherited,
+      outline: viewer.slideText(),
+    });
     renderPosition();
     for (const button of elements.slidesSorter.querySelectorAll(".slides-thumb")) {
       button.removeAttribute("aria-current");

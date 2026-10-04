@@ -47,8 +47,13 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{Definitions, GroupChild};
 use casual_pres_model::{PlaceholderKind, Presentation, ShapeTree, Slide, SlideNode};
 
+pub mod outline;
 pub mod text;
 
+pub use outline::{
+    OutlineParagraph, OutlineShape, SlideTextOutline, SlideTextRole, SlideTextTier,
+    slide_text_outline,
+};
 pub use text::{LAST_RESORT_COLOR, LAST_RESORT_SIZE, UnresolvedProperty, UnresolvedTextProperty};
 
 /// One slide, resolved to a surface size and a paint-ordered display list.

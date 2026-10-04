@@ -176,6 +176,23 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     return true;
   }
 
+  /// The current slide's text, as structure, or `null` when nothing is open.
+  ///
+  /// Parsed here rather than in the mirror, for the reason `findings` is: the
+  /// facade's boundary is JSON and exactly one place should know that. A
+  /// malformed projection yields `null` rather than losing the deck — the slides
+  /// still render, and a mirror with nothing in it is a worse outcome than a
+  /// mirror that is briefly empty.
+  function slideText() {
+    if (!state.deck) return null;
+    try {
+      const parsed = JSON.parse(state.deck.slideText(state.index));
+      return Array.isArray(parsed?.shapes) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
   /// The fidelity report's findings, parsed.
   ///
   /// Surfaced rather than hidden: it is what makes direct OOXML an advantage over
@@ -237,6 +254,7 @@ export function createViewer({ facade, elements, devicePixelRatio = 1 }) {
     dpiFor,
     paint,
     paintThumbnail,
+    slideText,
     findings,
     save,
     indexForKey,

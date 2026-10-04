@@ -77,14 +77,41 @@
         <h2 id="slidesCanvasHeading" class="visually-hidden" data-i18n="slides.canvas">The current slide</h2>
         <!-- `tabindex="0"` so the stage itself takes the arrow keys: paging a
              deck is the primary interaction and it must not require tabbing
-             into a thumbnail first. The canvas carries no text for assistive
-             technology — a rendered slide is pixels — so the sorter's list is
-             the navigable structure and this is the view. That gap is real and
-             named rather than papered over: slide text does not yet reach an
-             accessibility mirror the way the document editor's does. -->
+             into a thumbnail first. The canvas paints PIXELS and carries no
+             text, so the structure a screen reader reads is the mirror below
+             rather than this element. -->
         <div id="slideStage" class="slide-stage" tabindex="0">
           <canvas id="slideCanvas" class="slide-canvas"></canvas>
           <p id="slidesEmpty" class="slides-empty" data-i18n="slides.empty">Open a .pptx to see it rendered by this engine</p>
+        </div>
+
+        <!-- The slide's text, off screen, as STRUCTURE.
+             A rendered slide is pixels, so without this a screen reader gets a
+             deck it cannot read at all while the text sits in the model the
+             whole time — the "modelled but unreachable" shape `SKILL` §9.4
+             names. `editor.html` carries the document's equivalent
+             (`#a11yDocument`) and this is the same contract: visually hidden,
+             `role="document"`, never an editing surface, rebuilt from the
+             engine's own projection on every slide change.
+
+             Two regions, because a slide's own words and the furniture it
+             inherits from its layout and master are different kinds of thing:
+             the second repeats on every slide in the deck, and interleaved a
+             reader would hear the same footer between every pair of slides. The
+             inherited region is `hidden` until there is something in it, since
+             an empty labelled region announces itself as one. -->
+        <div
+          id="slideText"
+          class="visually-hidden"
+          role="document"
+          data-i18n-label="slides.textMirror"
+          aria-label="The current slide's text (read-only for assistive technology)"
+        >
+          <div id="slideTextOwn"></div>
+          <!-- The label is written by the script, which puts the item count in
+               it; this one is the floor for a reader who reaches the region
+               before the first slide is painted. -->
+          <div id="slideTextInherited" role="region" aria-label="Repeated on every slide" hidden></div>
         </div>
 
         <!-- The fidelity report. Open by default when there is something to

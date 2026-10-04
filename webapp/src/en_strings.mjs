@@ -1290,6 +1290,16 @@ export const EN_STRINGS = Object.freeze({
   // correctly rather than opening it wrong, and the message carries the engine's
   // own reason instead of replacing it with a generic apology.
   "slides.openFailed": "That file could not be opened as a presentation: {reason}",
+  // The off-screen mirror's second region: the text a slide INHERITS, which comes
+  // from the layout and the master and repeats on every slide in the deck — a
+  // footer, a logo's caption, a slide number. Kept apart from the slide's own
+  // words because interleaved a reader hears the same footer between every pair of
+  // slides with no way to tell it from the slide's content. A plural family for the
+  // reason the fidelity count is one, and the count is here rather than in the
+  // markup because it is the part a translation cannot carry: a reader deciding
+  // whether to walk into the region wants to know how much is in it.
+  "slides.inheritedText.one": "Repeated on every slide: {count} item",
+  "slides.inheritedText.other": "Repeated on every slide: {count} items",
   // Save carries every part the engine does not model through byte-for-byte, so
   // the label promises a copy rather than an edit — and the help text says what
   // survives, because that is the claim worth making and the one a converter
