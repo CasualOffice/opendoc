@@ -195,6 +195,13 @@ impl Parts {
         Ok(())
     }
 
+    /// Whether a part has already been written, which is how a regenerated part
+    /// wins over a retained one without the retention pass needing to know which
+    /// names this writer produces.
+    pub(crate) fn contains(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+
     /// Replaces a part's bytes, for the one part whose content is only known once
     /// every other part has been written.
     ///

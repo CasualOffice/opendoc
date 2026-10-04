@@ -34,13 +34,37 @@ use casual_pres_model::{Placeholder, ShapeTree, Slide, SlideNode};
 use crate::opc::{Relationships, rel};
 use crate::{ExportError, text};
 
+/// Everything a shape writer needs that is not the shape itself.
+///
+/// One value rather than four parameters, and it is what the earlier draft of this
+/// crate lacked: a nested picture had no relationship context, so it was written
+/// without its `a:blip` and the gap was documented instead of closed. Threading the
+/// context is the fix — a shape five groups deep resolves its media exactly as a
+/// top-level one does.
+pub(crate) struct ShapeContext<'a> {
+    /// The deck's definition tables, which is where a `MediaId` becomes a part name.
+    pub(crate) definitions: &'a Definitions,
+    /// Part name to bytes, for the media the caller supplied.
+    pub(crate) media: &'a BTreeMap<String, Vec<u8>>,
+    /// The part being written, so a relationship target can be made relative to it.
+    pub(crate) part_name: &'a str,
+}
+
+impl ShapeContext<'_> {
+    /// The relationship id for a picture's image, minting one if the picture
+    /// resolves to media the caller supplied.
+    fn image_id(&self, picture: &GroupPicture, rels: &mut Relationships) -> Option<String> {
+        let part = media_part_of(picture, self.definitions, self.media)?;
+        let target = crate::relative_target(folder_of(self.part_name), part);
+        Some(rels.add(rel::IMAGE, &target))
+    }
+}
+
 /// One `ppt/slides/slideN.xml`.
 pub(crate) fn slide_part(
     slide: &Slide,
-    definitions: &Definitions,
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> Result<Vec<u8>, ExportError> {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#,
@@ -57,11 +81,9 @@ pub(crate) fn slide_part(
         slide.name.as_deref(),
         slide.background.as_ref(),
         &slide.shapes,
-        media,
+        context,
         rels,
-        part_name,
     )?);
-    let _ = definitions;
     xml.push_str("</p:sld>");
     Ok(xml.into_bytes())
 }
@@ -71,9 +93,8 @@ pub(crate) fn common_slide_data(
     name: Option<&str>,
     background: Option<&Fill>,
     tree: &ShapeTree,
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> Result<String, ExportError> {
     let mut xml = String::from("<p:cSld");
     if let Some(name) = name {
@@ -89,7 +110,7 @@ pub(crate) fn common_slide_data(
             fill_xml(background)
         ));
     }
-    xml.push_str(&shape_tree_xml(tree, media, rels, part_name)?);
+    xml.push_str(&shape_tree_xml(tree, context, rels)?);
     xml.push_str("</p:cSld>");
     Ok(xml)
 }
@@ -97,9 +118,8 @@ pub(crate) fn common_slide_data(
 /// `p:spTree`.
 fn shape_tree_xml(
     tree: &ShapeTree,
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> Result<String, ExportError> {
     let mut xml = String::from("<p:spTree>");
     // The non-visual group properties of the tree itself are required and carry
@@ -110,7 +130,7 @@ fn shape_tree_xml(
         group_transform_xml(&tree.transform)
     ));
     for (position, node) in tree.children.iter().enumerate() {
-        xml.push_str(&node_xml(node, position, media, rels, part_name)?);
+        xml.push_str(&node_xml(node, position, context, rels)?);
     }
     xml.push_str("</p:spTree>");
     Ok(xml)
@@ -120,9 +140,8 @@ fn shape_tree_xml(
 fn node_xml(
     node: &SlideNode,
     position: usize,
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> Result<String, ExportError> {
     // Shape ids restart at 2 per tree, because 1 is the tree's own
     // `p:nvGrpSpPr`. They are producer-scoped tokens: nothing in the package joins
@@ -131,9 +150,7 @@ fn node_xml(
     let shape_id = position + 2;
     match &node.content {
         GroupChild::Shape(shape) => Ok(shape_xml(node, shape, shape_id)),
-        GroupChild::Picture(picture) => {
-            Ok(picture_xml(node, picture, shape_id, media, rels, part_name))
-        }
+        GroupChild::Picture(picture) => Ok(picture_xml(node, picture, shape_id, context, rels)),
         GroupChild::Group(group) => {
             let mut xml = format!(
                 "<p:grpSp><p:nvGrpSpPr>{}<p:cNvGrpSpPr/>{}</p:nvGrpSpPr><p:grpSpPr>{}</p:grpSpPr>",
@@ -147,7 +164,7 @@ fn node_xml(
                 // why the presentation model refuses a text-bearing shape inside a
                 // group, and why that refusal is visible here as a missing arm
                 // rather than a dropped one.
-                xml.push_str(&nested_child_xml(child, child_position + 2));
+                xml.push_str(&nested_child_xml(child, child_position + 2, context, rels));
             }
             xml.push_str("</p:grpSp>");
             Ok(xml)
@@ -164,7 +181,16 @@ fn node_xml(
 
 /// A `GroupChild` nested inside a `p:grpSp`, which carries no slide-level
 /// placeholder or text.
-fn nested_child_xml(child: &GroupChild, shape_id: usize) -> String {
+///
+/// Recursive, and it resolves media exactly as the top level does — the earlier
+/// draft could not, because it had no relationship context and so wrote a nested
+/// picture with no `a:blip`. A picture five groups deep is still a picture.
+fn nested_child_xml(
+    child: &GroupChild,
+    shape_id: usize,
+    context: &ShapeContext<'_>,
+    rels: &mut Relationships,
+) -> String {
     match child {
         GroupChild::Shape(shape) => {
             let mut xml = format!(
@@ -185,24 +211,75 @@ fn nested_child_xml(child: &GroupChild, shape_id: usize) -> String {
                 group_transform_xml(&group.transform)
             );
             for (position, nested) in group.children.iter().enumerate() {
-                xml.push_str(&nested_child_xml(nested, position + 2));
+                xml.push_str(&nested_child_xml(nested, position + 2, context, rels));
             }
             xml.push_str("</p:grpSp>");
             xml
         }
-        // A nested picture needs a relationship id and this function has no
-        // relationship context, so it is written without its blip rather than with
-        // a dangling one — the same policy the module documentation states for a
-        // picture whose bytes are missing. Narrow and named: a picture inside a
-        // group on a slide.
         GroupChild::Picture(picture) => format!(
-            "<p:pic><p:nvPicPr>{}<p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:stretch><a:fillRect/></a:stretch></p:blipFill>{}</p:pic>",
-            non_visual_properties(shape_id, None, "Picture", false),
+            "<p:pic><p:nvPicPr>{}<p:cNvPicPr/><p:nvPr/></p:nvPicPr>{}{}</p:pic>",
+            non_visual_properties(shape_id, picture.descr.as_deref(), "Picture", false),
+            blip_fill_xml(picture, context, rels),
             picture_shape_properties(picture)
         ),
-        // Same refusal as the top level, for the same reason.
+        // A text box cannot occur in a presentation: the model refuses it
+        // (`PresentationError::TextBoxShapeOnSlide`), so this is unreachable rather
+        // than unimplemented. It writes nothing because a nested walk has no error
+        // channel; the top-level arm refuses with `ExportError` and is the one a
+        // hand-built model would hit first.
         GroupChild::TextBox(_) => String::new(),
     }
+}
+
+/// A picture's `p:blipFill`: the blip, its source crop, and the stretch.
+///
+/// Shared by the top-level and nested picture writers, because a picture's fill is
+/// the same construct wherever it sits — and because the two diverging is how the
+/// nested one lost its image in the first place.
+pub(crate) fn blip_fill_xml(
+    picture: &GroupPicture,
+    context: &ShapeContext<'_>,
+    rels: &mut Relationships,
+) -> String {
+    let mut xml = String::from("<p:blipFill>");
+    if let Some(id) = context.image_id(picture, rels) {
+        // `a:alphaModFix` carries the picture's opacity, in thousandths of a
+        // percent. Dropped, a half-transparent watermark comes back opaque and
+        // covers the slide it was sitting behind.
+        match picture
+            .opacity
+            .filter(|amount| *amount < casual_doc_model::v1::OPACITY_FULL)
+        {
+            Some(amount) => xml.push_str(&format!(
+                r#"<a:blip r:embed="{id}"><a:alphaModFix amt="{amount}"/></a:blip>"#
+            )),
+            None => xml.push_str(&format!(r#"<a:blip r:embed="{id}"/>"#)),
+        }
+    }
+    // `a:srcRect` is the SOURCE crop, in thousandths of a percent per edge. An
+    // omitted crop and a zero crop are the same thing, so each edge is written only
+    // when non-zero — and dropping it entirely makes a cropped picture come back
+    // showing the part its author cut off.
+    if let Some(crop) = picture
+        .crop
+        .filter(|crop| crop.left != 0 || crop.top != 0 || crop.right != 0 || crop.bottom != 0)
+    {
+        let mut rect = String::from("<a:srcRect");
+        for (attribute, value) in [
+            ("l", crop.left),
+            ("t", crop.top),
+            ("r", crop.right),
+            ("b", crop.bottom),
+        ] {
+            if value != 0 {
+                rect.push_str(&format!(r#" {attribute}="{value}""#));
+            }
+        }
+        rect.push_str("/>");
+        xml.push_str(&rect);
+    }
+    xml.push_str("<a:stretch><a:fillRect/></a:stretch></p:blipFill>");
+    xml
 }
 
 /// The minimal valid `p:txBody` for a shape that carries no text.
@@ -230,9 +307,8 @@ fn picture_xml(
     node: &SlideNode,
     picture: &GroupPicture,
     shape_id: usize,
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> String {
     let mut xml = format!(
         "<p:pic><p:nvPicPr>{}<p:cNvPicPr/><p:nvPr>{}</p:nvPr></p:nvPicPr>",
@@ -244,36 +320,28 @@ fn picture_xml(
         ),
         placeholder_body(node.placeholder.as_ref())
     );
-    xml.push_str("<p:blipFill>");
-    // The blip is written only when the caller supplied the bytes AND the media
-    // table names the part. Both halves matter: an id with no part is a package a
-    // reader refuses, and a part with no id is unreachable.
-    if let Some(reference) = media_part_of(picture, media) {
-        let target = crate::relative_target(folder_of(part_name), &reference);
-        let id = rels.add(rel::IMAGE, &target);
-        xml.push_str(&format!(r#"<a:blip r:embed="{id}"/>"#));
-    }
-    xml.push_str("<a:stretch><a:fillRect/></a:stretch></p:blipFill>");
+    xml.push_str(&blip_fill_xml(picture, context, rels));
     xml.push_str(&picture_shape_properties(picture));
     xml.push_str("</p:pic>");
     xml
 }
 
-/// The media part name for a picture, when the caller supplied its bytes.
+/// The media part name for a picture, resolved through the model's own table.
 ///
-/// Keyed on the part NAME rather than the `MediaId`, because the caller holds
-/// bytes read off a package and has no reason to know this engine's node ids.
-fn media_part_of(picture: &GroupPicture, media: &BTreeMap<String, Vec<u8>>) -> Option<String> {
-    let _ = picture;
-    // The model's `Definitions::media` is what maps a `MediaId` to a part name,
-    // and this function is not given the definitions — so a single-media deck
-    // resolves and a multi-media one would need the table threaded through. Stated
-    // rather than guessed: see the crate documentation's media section.
-    if media.len() == 1 {
-        media.keys().next().cloned()
-    } else {
-        None
-    }
+/// Both halves must agree: `Definitions::media` maps the picture's `MediaId` to a
+/// part name, and `media` must carry that part's bytes. A reference with no bytes
+/// writes no `a:blip` at all — a relationship pointing at a part the package does
+/// not contain is a package a reader refuses, while a missing picture is one it
+/// opens (`109` FID-R-06).
+fn media_part_of<'a>(
+    picture: &GroupPicture,
+    definitions: &'a Definitions,
+    media: &BTreeMap<String, Vec<u8>>,
+) -> Option<&'a str> {
+    let reference = definitions.media.get(&picture.media)?;
+    media
+        .contains_key(&reference.part_name)
+        .then_some(reference.part_name.as_str())
 }
 
 /// The folder a part lives in, for resolving a relative relationship target.
@@ -374,12 +442,16 @@ fn shape_properties_xml(shape: &GroupShape) -> String {
 /// `p:spPr` for a picture, which is rectangular and carries only a border.
 fn picture_shape_properties(picture: &GroupPicture) -> String {
     let mut xml = String::from("<p:spPr>");
+    // The picture's full orientation. An earlier draft passed `None` for the
+    // rotation and `false` for the vertical flip, which silently un-rotated and
+    // un-flipped every picture that had either — a loss no report could see,
+    // because the model held the values and the writer dropped them.
     xml.push_str(&xfrm_xml(
         picture.offset,
         picture.extent,
-        None,
+        picture.rotation,
         picture.flip_h,
-        false,
+        picture.flip_v,
     ));
     xml.push_str(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#);
     if let Some(border) = picture.border.as_ref() {

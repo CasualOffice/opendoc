@@ -69,6 +69,7 @@ mod text;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::io::{Cursor, Read as _};
 
 use casual_pres_model::{Presentation, SlideLayout, SlideMaster};
 
@@ -114,12 +115,76 @@ impl fmt::Display for ExportError {
 
 impl Error for ExportError {}
 
+/// The original package's parts, carried through a save unchanged.
+///
+/// # Why this is the structural piece, not a convenience
+///
+/// `casual-doc-loss::SourceRetention::Snapshot` licenses a `preserved` claim from a
+/// **verbatim byte floor**: the bytes the import came from, still available at
+/// write time. Without one, every finding in a deck's report reads `Regenerated`
+/// and a construct the model does not carry is destroyed by the first save —
+/// a deck's theme, its transitions, its animation, its notes masters, all gone.
+///
+/// That is the difference between direct OOXML and a converter, and it is only an
+/// advantage if the bytes actually survive. So a caller that still holds the
+/// package it imported hands it here, and every part this writer does NOT
+/// regenerate is written back exactly as it arrived.
+///
+/// # The rule, and why it is this way round
+///
+/// A regenerated part WINS. The model is the authority on anything it carries, so
+/// a slide the user edited must be written from the model even though a retained
+/// copy of the original exists. Retention fills the gaps; it never overrides.
+/// Getting this backwards would make every edit invisible, which is a worse failure
+/// than the one retention fixes.
+#[derive(Clone, Debug, Default)]
+pub struct RetainedParts {
+    /// Package-relative part name to its original bytes.
+    pub parts: BTreeMap<String, Vec<u8>>,
+}
+
+impl RetainedParts {
+    /// Reads every part of an original `.pptx` so it can be carried through a save.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError::Package`] when `bytes` is not a readable ZIP container. No
+    /// bound is applied here: the caller is handing back a package it already
+    /// admitted through `casual-doc-package`'s bounded reader, and re-deriving a
+    /// limit would be a second, weaker gate in front of the same bytes.
+    pub fn from_package(bytes: &[u8]) -> Result<Self, ExportError> {
+        let mut archive =
+            zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| ExportError::Package)?;
+        let mut parts = BTreeMap::new();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|_| ExportError::Package)?;
+            // A directory entry has no content and must not become a zero-byte
+            // part: OPC has no directories, and writing one produces a package
+            // some readers reject.
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().to_owned();
+            let mut body = Vec::new();
+            entry
+                .read_to_end(&mut body)
+                .map_err(|_| ExportError::Package)?;
+            parts.insert(name, body);
+        }
+        Ok(Self { parts })
+    }
+}
+
 /// Writes `presentation` as a `.pptx` package.
 ///
 /// `media` maps a media part name — the same `MediaReference::part_name` the
 /// importer recorded — to its bytes. A picture whose bytes are absent is written
 /// without its `a:blip`; see the module documentation for why that beats a
 /// dangling relationship.
+///
+/// Nothing is retained. Use [`export_pptx_retaining`] where the original package
+/// is still to hand — that is the call that keeps a deck's theme, transitions and
+/// animation through a save, and it is the one an application should make.
 ///
 /// # Complexity
 ///
@@ -133,6 +198,37 @@ impl Error for ExportError {}
 pub fn export_pptx(
     presentation: &Presentation,
     media: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, ExportError> {
+    export_pptx_retaining(presentation, media, &RetainedParts::default())
+}
+
+/// Writes `presentation`, carrying through every part of the original package this
+/// writer does not regenerate.
+///
+/// This is the call that makes a deck survive a round trip rather than merely
+/// reopen: the theme part, `p:transition`, `p:timing`, notes and handout masters
+/// and `p:graphicFrame`'s own parts are all constructs the model does not carry,
+/// and all of them are written back byte-for-byte.
+///
+/// A regenerated part wins over a retained one — see [`RetainedParts`] for why that
+/// direction is the only safe one.
+///
+/// # What it does NOT make true
+///
+/// A retained part is not a *validated* retention record. Nothing here checks that
+/// the carried part is still consistent with the model beside it — a retained
+/// `p:sldLayoutIdLst` in a theme override could in principle name a layout the
+/// model no longer has. Carrying the bytes is strictly better than destroying them,
+/// and the ledger that would license a `preserved` CLAIM needs that consistency
+/// check; it is named here rather than assumed.
+///
+/// # Errors
+///
+/// As [`export_pptx`].
+pub fn export_pptx_retaining(
+    presentation: &Presentation,
+    media: &BTreeMap<String, Vec<u8>>,
+    retained: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
     let mut parts = Parts::default();
     let mut types = ContentTypes::default();
@@ -167,8 +263,16 @@ pub fn export_pptx(
 
     parts.add(
         "[Content_Types].xml",
-        // Placeholder: the real content types part is written last, once every
-        // override is known. Added here only to reserve the name.
+        // Placeholder: the real content-types part is written last, once every
+        // override is known, and reserving the name here keeps the retention pass
+        // from carrying the original's copy.
+        //
+        // What actually GUARANTEES the rebuild is the `replace` at the end of this
+        // function, which runs after retention and overwrites whatever is at this
+        // name. Measured rather than assumed: removing this reservation leaves the
+        // content-types guard green. So the reservation is for clarity and for one
+        // skip, not for correctness, and this comment says so instead of claiming
+        // a load it does not carry.
         Vec::new(),
     )?;
     parts.add("_rels/.rels", root_relationships())?;
@@ -196,7 +300,12 @@ pub fn export_pptx(
                 ));
             }
         }
-        let body = master_part(master, &layout_ids, media, &mut rels, name)?;
+        let context = shapes::ShapeContext {
+            definitions: presentation.definitions(),
+            media,
+            part_name: name,
+        };
+        let body = master_part(master, &layout_ids, &context, &mut rels)?;
         parts.add(name, body)?;
         types.override_for(name, content_type::SLIDE_MASTER);
         if !rels.is_empty() {
@@ -219,7 +328,12 @@ pub fn export_pptx(
             rel::SLIDE_MASTER,
             &relative_target("ppt/slideLayouts", &master_names[master_position]),
         );
-        let body = layout_part(layout, media, &mut rels, name)?;
+        let context = shapes::ShapeContext {
+            definitions: presentation.definitions(),
+            media,
+            part_name: name,
+        };
+        let body = layout_part(layout, &context, &mut rels)?;
         parts.add(name, body)?;
         types.override_for(name, content_type::SLIDE_LAYOUT);
         parts.add(&rels_name(name), rels.to_xml())?;
@@ -237,7 +351,12 @@ pub fn export_pptx(
             rel::SLIDE_LAYOUT,
             &relative_target("ppt/slides", &layout_names[layout_position]),
         );
-        let body = shapes::slide_part(slide, presentation.definitions(), media, &mut rels, name)?;
+        let context = shapes::ShapeContext {
+            definitions: presentation.definitions(),
+            media,
+            part_name: name,
+        };
+        let body = shapes::slide_part(slide, &context, &mut rels)?;
         parts.add(name, body)?;
         types.override_for(name, content_type::SLIDE);
         parts.add(&rels_name(name), rels.to_xml())?;
@@ -251,6 +370,41 @@ pub fn export_pptx(
         }
         if let Some(extension) = part_name.rsplit_once('.').map(|(_, extension)| extension) {
             types.default_for(extension, image_content_type(extension));
+        }
+    }
+
+    // Retention: every original part this writer did not produce, carried through
+    // unchanged. `Parts::add` refuses a duplicate, so a regenerated part wins
+    // simply by having been written first — which is the direction `RetainedParts`
+    // documents and the only one under which an edit stays visible.
+    //
+    // One test, not two: a part this writer produced is already in `parts`, and
+    // that includes `[Content_Types].xml`, whose name is reserved at the top of
+    // this function. A retained copy of it would declare the original's part names
+    // rather than the written ones, and a reader resolves a slide's type through
+    // it — though the `replace` after this loop is what makes the rebuild
+    // certain.
+    //
+    // The same test covers relationship parts: one this writer regenerated is
+    // skipped, because carrying the original's would reinstate ids that now point
+    // nowhere; one belonging to a part this writer does NOT produce is retained,
+    // which is what keeps a notes slide's own references intact.
+    for (name, bytes) in &retained.parts {
+        if parts.contains(name) {
+            continue;
+        }
+        parts.add(name, bytes.clone())?;
+        if let Some(extension) = name.rsplit_once('.').map(|(_, extension)| extension) {
+            // The original's own content type, which is the only source of truth
+            // for a part this writer knows nothing about. An extension default is
+            // used rather than an override because the retained
+            // `[Content_Types].xml` is not consulted — stated as a limit rather
+            // than a feature: a retained part whose type came from an OVERRIDE
+            // keyed to its exact name will be declared by extension instead, which
+            // is correct for the `.xml`, `.png` and `.thmx` families a deck
+            // actually carries and would be wrong for a part that shares an
+            // extension with a differently-typed sibling.
+            types.default_for(extension, retained_content_type(extension));
         }
     }
 
@@ -289,6 +443,22 @@ fn relative_target(source_folder: &str, target: &str) -> String {
     }
     out.push_str(&full[shared..].join("/"));
     out
+}
+
+/// The content type for a retained part's extension.
+///
+/// Images resolve through [`image_content_type`]; everything else is `application/xml`,
+/// because every remaining part a PresentationML package carries — the theme, the
+/// presentation properties, the view properties, the table styles — is XML. An
+/// extension this build has never seen falls through to the image table's
+/// `application/octet-stream`, which a reader refuses VISIBLY rather than
+/// mis-decoding.
+fn retained_content_type(extension: &str) -> &'static str {
+    match extension.to_ascii_lowercase().as_str() {
+        "xml" => "application/xml",
+        "rels" => content_type::RELATIONSHIPS,
+        other => image_content_type(other),
+    }
 }
 
 /// The content type for an image extension.
@@ -368,9 +538,8 @@ fn presentation_part(
 fn master_part(
     master: &SlideMaster,
     layout_ids: &[String],
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &shapes::ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> Result<Vec<u8>, ExportError> {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">"#,
@@ -379,9 +548,8 @@ fn master_part(
         master.name.as_deref(),
         master.background.as_ref(),
         &master.shapes,
-        media,
+        context,
         rels,
-        part_name,
     )?);
     // `p:clrMap` is REQUIRED on a master by `CT_SlideMaster`, and the model does
     // not carry one — the importer reports it as a loss for exactly that reason.
@@ -409,9 +577,8 @@ fn master_part(
 /// One `ppt/slideLayouts/slideLayoutN.xml`.
 fn layout_part(
     layout: &SlideLayout,
-    media: &BTreeMap<String, Vec<u8>>,
+    context: &shapes::ShapeContext<'_>,
     rels: &mut Relationships,
-    part_name: &str,
 ) -> Result<Vec<u8>, ExportError> {
     let mut xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="{}">"#,
@@ -421,9 +588,8 @@ fn layout_part(
         layout.name.as_deref(),
         layout.background.as_ref(),
         &layout.shapes,
-        media,
+        context,
         rels,
-        part_name,
     )?);
     xml.push_str("</p:sldLayout>");
     Ok(xml.into_bytes())

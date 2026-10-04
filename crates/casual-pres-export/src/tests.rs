@@ -314,3 +314,460 @@ fn a_written_package_carries_the_parts_and_references_a_reader_requires() {
         );
     }
 }
+
+/// Retention: the theme part a save used to destroy now survives byte-for-byte.
+///
+/// The fixture carries `ppt/theme/theme1.xml`, which nothing reads — it is in the
+/// import report as a whole unconsumed part. Before retention, writing the deck
+/// dropped it, so a save turned a themed deck into an unthemed one and the loss
+/// report could not say `preserved` about anything. This is that gap closed, and
+/// the assertion is on the BYTES rather than on a reopen, because a reopen cannot
+/// see a part no reader of ours consults.
+#[test]
+fn a_retained_part_survives_a_save_byte_for_byte() {
+    use std::io::Read as _;
+
+    let original = deck::deck();
+    let imported = import_pptx(&original, PackageLimits::default(), ImportLimits::default())
+        .expect("the fixture imports");
+    let retained = crate::RetainedParts::from_package(&original).expect("the original reads");
+
+    let theme_before = retained
+        .parts
+        .get("ppt/theme/theme1.xml")
+        .expect("the fixture carries a theme part")
+        .clone();
+    assert!(
+        !theme_before.is_empty(),
+        "and it is not empty, or this guard is vacuous"
+    );
+
+    // Without retention the part is gone. That is the control: it is what makes the
+    // retained case a difference rather than a coincidence.
+    let bare = export_pptx(&imported.presentation, &BTreeMap::new()).expect("writes");
+    let mut bare_archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bare)).expect("the output is a ZIP");
+    assert!(
+        bare_archive.by_name("ppt/theme/theme1.xml").is_err(),
+        "export_pptx retains nothing, so the theme must be absent — otherwise the \
+         retained case below proves nothing"
+    );
+
+    let written = crate::export_pptx_retaining(&imported.presentation, &BTreeMap::new(), &retained)
+        .expect("the retaining write succeeds");
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(written)).expect("the output is a ZIP");
+    let mut theme_after = Vec::new();
+    archive
+        .by_name("ppt/theme/theme1.xml")
+        .expect("the theme part is carried through")
+        .read_to_end(&mut theme_after)
+        .expect("it reads back");
+    assert_eq!(
+        theme_after, theme_before,
+        "a retained part must survive BYTE-for-byte; a re-serialized one is not a \
+         verbatim floor and could not license a preserved claim"
+    );
+}
+
+/// A regenerated part WINS over a retained one, so an edit stays visible.
+///
+/// This is the direction that matters and the one that is easy to get backwards:
+/// if retention overrode regeneration, every change a user made would be silently
+/// replaced by the original bytes — a worse failure than the loss retention fixes,
+/// and one that looks like the editor doing nothing.
+#[test]
+fn a_regenerated_part_beats_a_retained_one() {
+    use std::io::Read as _;
+
+    let original = deck::deck();
+    let imported = import_pptx(&original, PackageLimits::default(), ImportLimits::default())
+        .expect("the fixture imports");
+    let retained = crate::RetainedParts::from_package(&original).expect("the original reads");
+    assert!(
+        retained.parts.contains_key("ppt/slides/slide1.xml"),
+        "the original carries the slide this writer also regenerates"
+    );
+
+    let written = crate::export_pptx_retaining(&imported.presentation, &BTreeMap::new(), &retained)
+        .expect("writes");
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(written)).expect("the output is a ZIP");
+    let mut slide = String::new();
+    archive
+        .by_name("ppt/slides/slide1.xml")
+        .expect("slide 1 is written")
+        .read_to_string(&mut slide)
+        .expect("it reads back");
+
+    // The regenerated form is distinguishable from the original: this writer emits
+    // `p:cNvPr` ids from tree POSITION and the fixture's are authored, and it
+    // writes `a:bodyPr`'s insets unconditionally where the fixture writes
+    // `<a:bodyPr/>`. Either marker alone would be fragile; both together say the
+    // bytes came from the model.
+    assert!(
+        slide.contains("lIns="),
+        "the slide must be the REGENERATED one, which always states its insets: \
+         {slide}"
+    );
+    let original_slide = String::from_utf8(retained.parts["ppt/slides/slide1.xml"].clone())
+        .expect("the original slide is UTF-8");
+    assert_ne!(
+        slide, original_slide,
+        "and it must not be the retained copy"
+    );
+}
+
+/// `[Content_Types].xml` is rebuilt, never retained.
+///
+/// A retained copy declares the ORIGINAL's parts. This writer renames parts by
+/// position, so a retained content-types part can leave a written slide with no
+/// declared type — and a slide with no type opens as nothing. Worth its own guard
+/// because the retention loop's skip for it is one line and reads like an
+/// optimisation.
+#[test]
+fn the_content_types_part_is_rebuilt_rather_than_retained() {
+    use std::io::Read as _;
+
+    let original = deck::deck();
+    let imported = import_pptx(&original, PackageLimits::default(), ImportLimits::default())
+        .expect("the fixture imports");
+    let retained = crate::RetainedParts::from_package(&original).expect("the original reads");
+    let written = crate::export_pptx_retaining(&imported.presentation, &BTreeMap::new(), &retained)
+        .expect("writes");
+
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(written)).expect("the output is a ZIP");
+    let mut types = String::new();
+    archive
+        .by_name("[Content_Types].xml")
+        .expect("the content types part is written")
+        .read_to_string(&mut types)
+        .expect("it reads back");
+
+    // The fixture names its slides 1, 2 and 10; this writer names them 1, 2 and 3.
+    // So a retained content-types part would declare `/ppt/slides/slide10.xml` and
+    // say nothing about `slide3.xml` — the exact failure.
+    assert!(
+        types.contains(r#"PartName="/ppt/slides/slide3.xml""#),
+        "every WRITTEN slide must be declared: {types}"
+    );
+    assert!(
+        !types.contains(r#"PartName="/ppt/slides/slide10.xml""#),
+        "and no part the writer did not produce: {types}"
+    );
+}
+
+/// A retained deck reopens, so retention does not produce a package a reader
+/// rejects.
+#[test]
+fn a_retained_deck_still_reopens() {
+    let original = deck::deck();
+    let imported = import_pptx(&original, PackageLimits::default(), ImportLimits::default())
+        .expect("the fixture imports");
+    let retained = crate::RetainedParts::from_package(&original).expect("the original reads");
+    let written = crate::export_pptx_retaining(&imported.presentation, &BTreeMap::new(), &retained)
+        .expect("writes");
+
+    let reopened = import_pptx(&written, PackageLimits::default(), ImportLimits::default())
+        .expect("a retained deck must still be a readable deck");
+    assert_eq!(
+        reopened.presentation.slides().len(),
+        imported.presentation.slides().len(),
+        "with the same slides"
+    );
+    assert_eq!(
+        reopened.presentation.slide_size(),
+        imported.presentation.slide_size(),
+        "and the same surface"
+    );
+}
+
+/// A picture keeps its orientation, its crop, its opacity — and keeps its image
+/// when it is inside a group.
+///
+/// # Why the fixture has to be perturbed
+///
+/// The plain fixture's picture is unrotated, unflipped, uncropped and opaque, and
+/// there is no picture inside its group. So an earlier draft of this writer passed
+/// `None` for a picture's rotation and `false` for its vertical flip, and wrote a
+/// nested picture with NO `a:blip` at all — and every round-trip guard stayed
+/// green, because the fixture could not tell. Each of those is a silent loss: a
+/// rotated logo comes back upright, a cropped one comes back showing what its
+/// author cut off, a watermark at 30% comes back opaque and covers the slide, and
+/// a picture in a group comes back as an empty box.
+///
+/// So this authors all four and asserts each one separately.
+#[test]
+fn a_picture_keeps_its_orientation_crop_opacity_and_its_image_in_a_group() {
+    use casual_doc_model::v1::GroupChild;
+
+    let slide_two = String::from_utf8(
+        deck::deck_parts()
+            .into_iter()
+            .find(|(name, _)| name == "ppt/slides/slide2.xml")
+            .expect("the fixture carries slide2.xml")
+            .1,
+    )
+    .expect("the slide part is UTF-8");
+
+    // A rotated, doubly-flipped, cropped, 30%-opaque picture.
+    let plain_pic = r#"<p:blipFill><a:blip r:embed="rIdImage"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>
+<p:spPr><a:xfrm><a:off x="9144000" y="457200"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>"#;
+    let rich_pic = r#"<p:blipFill><a:blip r:embed="rIdImage"><a:alphaModFix amt="30000"/></a:blip><a:srcRect l="5000" t="6000" r="7000" b="8000"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>
+<p:spPr><a:xfrm rot="1800000" flipH="1" flipV="1"><a:off x="9144000" y="457200"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>"#;
+    assert!(slide_two.contains(plain_pic), "the fixture's picture moved");
+    let slide_two = slide_two.replace(plain_pic, rich_pic);
+
+    // And a second picture INSIDE the group, which is the arm that had no
+    // relationship context.
+    let group_end = "</p:sp>\n</p:grpSp>";
+    let nested = r#"</p:sp>
+<p:pic>
+<p:nvPicPr><p:cNvPr id="8" name="Nested Mark"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+<p:blipFill><a:blip r:embed="rIdImage"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>
+<p:spPr><a:xfrm><a:off x="100000" y="100000"/><a:ext cx="200000" cy="200000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+</p:pic>
+</p:grpSp>"#;
+    assert_eq!(
+        slide_two.matches(group_end).count(),
+        1,
+        "one group close to anchor on"
+    );
+    let slide_two = slide_two.replace(group_end, nested);
+
+    let mut parts = deck::deck_parts();
+    parts
+        .iter_mut()
+        .find(|(name, _)| name == "ppt/slides/slide2.xml")
+        .expect("the part exists")
+        .1 = slide_two.into_bytes();
+    let original = deck::build_pptx(&parts);
+
+    let imported = import_pptx(&original, PackageLimits::default(), ImportLimits::default())
+        .expect("the perturbed deck imports");
+
+    // The media bytes the writer needs, taken from the original rather than
+    // invented — the writer refuses to emit a blip for media it was not given.
+    let retained = crate::RetainedParts::from_package(&original).expect("the original reads");
+    let media: BTreeMap<String, Vec<u8>> = retained
+        .parts
+        .iter()
+        .filter(|(name, _)| name.starts_with("ppt/media/"))
+        .map(|(name, bytes)| (name.clone(), bytes.clone()))
+        .collect();
+    assert_eq!(media.len(), 1, "the fixture carries one image");
+
+    let written = export_pptx(&imported.presentation, &media).expect("the deck writes");
+    let reopened = import_pptx(&written, PackageLimits::default(), ImportLimits::default())
+        .expect("the written deck reopens");
+
+    let pictures_of = |deck: &casual_pres_import::ImportedPresentation| {
+        let mut found = Vec::new();
+        let slide = &deck.presentation.slides()[1];
+        for node in &slide.shapes.children {
+            match &node.content {
+                GroupChild::Picture(picture) => found.push(picture.clone()),
+                GroupChild::Group(group) => {
+                    for child in &group.children {
+                        if let GroupChild::Picture(picture) = child {
+                            found.push(picture.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        found
+    };
+
+    let before = pictures_of(&imported);
+    let after = pictures_of(&reopened);
+    assert_eq!(before.len(), 2, "a top-level picture and a nested one");
+    assert_eq!(after.len(), 2, "and both must be written");
+
+    // The top-level picture, property by property, because a single struct
+    // comparison would not say WHICH of five values was dropped.
+    let (first_before, first_after) = (&before[0], &after[0]);
+    assert_eq!(
+        first_before.rotation,
+        Some(1_800_000),
+        "the fixture states a 30-degree rotation, or this row is vacuous"
+    );
+    assert_eq!(first_after.rotation, first_before.rotation, "a:xfrm@rot");
+    assert!(first_before.flip_h && first_before.flip_v, "and both flips");
+    assert_eq!(first_after.flip_h, first_before.flip_h, "@flipH");
+    assert_eq!(first_after.flip_v, first_before.flip_v, "@flipV");
+    // `a:srcRect` and `a:alphaModFix` are NOT read by the presentation importer —
+    // both are named in its "does not read" list. So the round trip cannot carry
+    // them, and pinning that is more useful than asserting nothing: the day the
+    // importer learns either, this row fails and says so, and the writer already
+    // handles both. Asserting `is_some()` here instead would have the writer
+    // appear verified by a path that cannot reach it.
+    assert_eq!(
+        first_before.crop, None,
+        "a:srcRect is unread on the presentation path; when the importer gains it, \
+         turn this into a round-trip assertion — the writer emits it already"
+    );
+    assert_eq!(first_before.opacity, None, "same for a:alphaModFix");
+    assert_eq!(first_after.crop, first_before.crop);
+    assert_eq!(first_after.opacity, first_before.opacity);
+
+    // The nested picture kept its image. `media` resolves through the model's own
+    // table, so this can only hold if the nested writer had the relationship
+    // context — which is the whole fix.
+    assert_eq!(
+        after[1].media, before[1].media,
+        "a picture inside a group must keep its a:blip, not come back as an empty \
+         box"
+    );
+    assert!(
+        reopened
+            .presentation
+            .definitions()
+            .media
+            .get(&after[1].media)
+            .is_some(),
+        "and that media must resolve in the written deck's own definitions"
+    );
+}
+
+/// The crop and opacity the round trip cannot reach are exercised directly.
+///
+/// `a:srcRect` and `a:alphaModFix` are unread by the presentation importer, so the
+/// guard above can only pin that gap — which would leave this writer's two
+/// branches shipped and never run, the "modelled but unverified" shape `SKILL` §9.4
+/// is about. A `GroupPicture` is a plain public struct, so the writer is called
+/// with one built here instead, and the gap stays the importer's rather than
+/// becoming a hole in the writer.
+#[test]
+fn a_cropped_translucent_picture_writes_its_source_rect_and_alpha() {
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        CropRect, Definitions, Extent, GroupPicture, MediaId, MediaReference, PointEmu,
+    };
+
+    use crate::opc::Relationships;
+    use crate::shapes::{ShapeContext, blip_fill_xml};
+
+    let media_id = MediaId::new(NodeId::from_parts(1, 900).expect("non-zero"));
+    let mut definitions = Definitions::default();
+    definitions.media.insert(
+        media_id,
+        MediaReference {
+            relationship_id: "rId9".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "ppt/media/image1.png".to_owned(),
+        },
+    );
+    let bytes: BTreeMap<String, Vec<u8>> = [("ppt/media/image1.png".to_owned(), b"PNG".to_vec())]
+        .into_iter()
+        .collect();
+
+    let picture = GroupPicture {
+        id: NodeId::from_parts(1, 7).expect("non-zero"),
+        media: media_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        descr: None,
+        crop: Some(CropRect {
+            left: 5_000,
+            top: 0,
+            right: 7_000,
+            bottom: 8_000,
+        }),
+        opacity: Some(30_000),
+        hyperlink: None,
+        border: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    };
+
+    let context = ShapeContext {
+        definitions: &definitions,
+        media: &bytes,
+        part_name: "ppt/slides/slide1.xml",
+    };
+    let mut rels = Relationships::default();
+    let xml = blip_fill_xml(&picture, &context, &mut rels);
+
+    assert!(
+        xml.contains(r#"<a:alphaModFix amt="30000"/>"#),
+        "a 30% picture must carry its alpha, or a watermark comes back opaque and \
+         covers the slide: {xml}"
+    );
+    // Each stated edge, and NOT the zero one: an omitted edge and a zero edge are
+    // the same thing, so writing `t="0"` would be a diff in every package.
+    assert!(
+        xml.contains(r#"<a:srcRect l="5000" r="7000" b="8000"/>"#),
+        "the crop's stated edges, with the zero edge omitted: {xml}"
+    );
+    // The blip resolved through the model's own table rather than by guessing,
+    // which is what makes a multi-picture deck work.
+    assert!(
+        xml.contains(r#"<a:blip r:embed="rId1""#),
+        "the blip takes the id this writer minted: {xml}"
+    );
+
+    // And a picture whose bytes the caller did NOT supply gets no blip at all,
+    // rather than a relationship pointing at a part the package lacks.
+    let empty = BTreeMap::new();
+    let no_bytes = ShapeContext {
+        definitions: &definitions,
+        media: &empty,
+        part_name: "ppt/slides/slide1.xml",
+    };
+    let mut rels = Relationships::default();
+    let xml = blip_fill_xml(&picture, &no_bytes, &mut rels);
+    assert!(
+        !xml.contains("a:blip"),
+        "no bytes means no blip — a dangling relationship is a package a reader \
+         refuses: {xml}"
+    );
+    assert!(
+        rels.is_empty(),
+        "and no relationship is minted for an image that was not written"
+    );
+}
+
+/// A ZIP directory entry is not carried through as a zero-byte part.
+///
+/// Real `.pptx` files from some producers contain directory entries; OPC has no
+/// directories, and a zero-byte part at `ppt/` is a package some readers reject.
+/// The fixture builder writes no directory entries, so the skip in
+/// `RetainedParts::from_package` is unexercised by every other guard here — which
+/// is why this one crafts a container that has one.
+#[test]
+fn a_zip_directory_entry_is_not_retained_as_a_part() {
+    use std::io::Write as _;
+
+    use zip::write::SimpleFileOptions;
+
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    writer
+        .add_directory("ppt/", options)
+        .expect("a directory entry is added");
+    writer
+        .start_file("ppt/theme/theme1.xml", options)
+        .expect("a real part is added");
+    writer.write_all(b"<a:theme/>").expect("its bytes");
+    let container = writer.finish().expect("the container closes").into_inner();
+
+    let retained = crate::RetainedParts::from_package(&container).expect("it reads");
+    assert!(
+        retained.parts.contains_key("ppt/theme/theme1.xml"),
+        "the real part is retained: {:?}",
+        retained.parts.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !retained.parts.contains_key("ppt/"),
+        "and the directory entry is NOT, because OPC has no directories and a \
+         zero-byte part at that name is a package some readers reject: {:?}",
+        retained.parts.keys().collect::<Vec<_>>()
+    );
+}
