@@ -26,7 +26,7 @@
 // `sub_filter` in the nginx config.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -201,42 +201,82 @@ function port(mapping) {
 // ===========================================================================
 
 test("every repository-root file build.sh reads is in the editor image's context", () => {
-  // THE BUG THIS EXISTS FOR, because it is the expensive kind. The embedding
-  // guide's generator gained `docker-compose.yml` as a source, and
-  // `Dockerfile.editor` copies an ENUMERATED list of inputs rather than `COPY . .`
-  // — so the editor build ran apt, Node, wasm-pack and an 18m50s wasm compile and
-  // then died on
+  // THE BUG THIS EXISTS FOR, because it is the expensive kind, and it happened
+  // TWICE before this guard was wide enough.
   //
-  //   Error: ENOENT: no such file or directory, open '/src/docker-compose.yml'
+  // `Dockerfile.editor` copies an ENUMERATED list of inputs rather than
+  // `COPY . .` — correctly, because this repository's build context holds the
+  // owner's untracked personal documents and `.dockerignore` is an ALLOWLIST for
+  // the same reason. The cost of that choice is that a generator reaching for a
+  // new file at the repository root is excluded twice over, and nothing says so
+  // until the build fails:
   //
-  // nineteen minutes in. Worse, `.dockerignore` is an ALLOWLIST, so the file was
-  // excluded from the build context twice over and neither file said so.
+  //   build 1, 19 minutes in, after an 18m50s wasm compile:
+  //     Error: ENOENT: no such file or directory, open '/src/docker-compose.yml'
+  //       at composeServices (webapp/tools/build-embed-docs.mjs:556)
+  //   build 2, 7 minutes in, one generator later:
+  //     Error: ENOENT: no such file or directory, open '/src/CONTRIBUTING.md'
+  //       at describe (webapp/tools/build-doc-pages.mjs:760)
   //
-  // `webapp/build.sh` runs the generator, so every source the generator reads is
-  // an input to the image. Those under `webapp/` arrive with `COPY webapp`; the
-  // ones at the repository root have to be named, and this is what names them.
-  const generator = readFileSync(
-    join(WEBAPP, "tools", "build-embed-docs.mjs"),
-    "utf8",
-  );
-  const sources = [...generator.matchAll(/join\(REPO,\s*((?:"[^"]+"\s*,?\s*)+)\)/g)].map(
-    (match) =>
-      [...match[1].matchAll(/"([^"]+)"/g)]
-        .map((part) => part[1])
-        .join("/"),
-  );
-  // Only the root-level ones: a nested path arrives with the directory that
-  // contains it, and `COPY docs`/`COPY packages` already cover those.
-  const roots = [...new Set(sources.map((path) => path.split("/")[0]))].sort();
+  // The first version of this guard read ONE generator's sources and would have
+  // caught only the first. So it now reads EVERY generator `build.sh` runs, in
+  // both the shapes they use to name a repository-root file:
+  //
+  //   * `join(REPO, "x", …)` — a path built from the repository root;
+  //   * `source: "x"` — `build-doc-pages.mjs`'s published-document list, which is
+  //     how `CONTRIBUTING.md` and `SECURITY.md` become reference pages.
+  //
+  // Derived, so the next generator to reach for a root file is covered on
+  // arrival rather than after a wasm compile.
+  //
+  // WHICH generators is itself read out of `build.sh`, not globbed from
+  // `tools/`. The first version globbed, and flagged `en-US-supplement.txt` —
+  // a real root file, read by `build-dictionary.mjs`, which `build.sh` does not
+  // run. A guard that reports a file the build does not need is a guard somebody
+  // will switch off, so the question it asks is narrowed to exactly the scripts
+  // the image executes.
+  const buildScript = readFileSync(join(WEBAPP, "build.sh"), "utf8");
+  const invoked = [...buildScript.matchAll(/tools\/([\w-]+\.mjs)/g)].map((match) => match[1]);
   assert.ok(
-    roots.includes("docker-compose.yml"),
-    "the generator no longer reads docker-compose.yml, so this guard is reading the wrong " +
-      `thing — it found: ${roots.join(", ")}`,
+    invoked.length >= 4,
+    `read only ${invoked.length} generator(s) out of build.sh — the scan is reading the ` +
+      "wrong thing",
   );
+  const present = new Set(readdirSync(join(WEBAPP, "tools")));
+  for (const name of invoked) {
+    assert.ok(present.has(name), `build.sh runs tools/${name}, which does not exist`);
+  }
+  const generators = [...new Set(invoked)]
+    .map((name) => readFileSync(join(WEBAPP, "tools", name), "utf8"))
+    .join("\n");
+
+  const fromJoin = [...generators.matchAll(/join\(REPO,\s*((?:"[^"]+"\s*,?\s*)+)\)/g)].map(
+    (match) => [...match[1].matchAll(/"([^"]+)"/g)].map((part) => part[1]).join("/"),
+  );
+  const fromPublished = [...generators.matchAll(/source:\s*"([^"]+)"/g)].map((m) => m[1]);
+  // `build.sh` itself stages three files by name, with the same `$repo` prefix.
+  const fromScript = [...buildScript.matchAll(/\$repo\/([\w./-]+)/g)].map((m) => m[1]);
+
+  const roots = [
+    ...new Set([...fromJoin, ...fromPublished, ...fromScript].map((p) => p.split("/")[0])),
+  ]
+    .filter((root) => root && root !== "webapp" && root !== "target")
+    .sort();
+
+  // The guard's own guard: if the scan stops finding the two files that caused
+  // the failures, it has stopped reading the generators and is asserting nothing.
+  for (const expected of ["docker-compose.yml", "CONTRIBUTING.md", "docs", "packages"]) {
+    assert.ok(
+      roots.includes(expected),
+      `the scan no longer finds ${expected} among build.sh's repository-root inputs, so it ` +
+        `is reading the wrong thing — it found: ${roots.join(", ")}`,
+    );
+  }
 
   const ignore = read(".dockerignore");
-  const copied = [...EDITOR_DOCKERFILE.matchAll(/^COPY\s+(?!--from)([^\n]+)$/gm)]
-    .flatMap((match) => match[1].trim().split(/\s+/).slice(0, -1));
+  const copied = [...EDITOR_DOCKERFILE.matchAll(/^COPY\s+(?!--from)([^\n]+)$/gm)].flatMap(
+    (match) => match[1].trim().split(/\s+/).slice(0, -1),
+  );
 
   const missing = [];
   for (const root of roots) {
@@ -250,7 +290,7 @@ test("every repository-root file build.sh reads is in the editor image's context
     missing,
     [],
     "webapp/build.sh reads these from the repository root, so the editor image cannot be " +
-      "built without them — and the failure arrives after the wasm compile, not before it",
+      "built without them — and the build discovers it AFTER the wasm compile, not before",
   );
 });
 

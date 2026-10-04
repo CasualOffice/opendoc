@@ -45,6 +45,16 @@
 !deploy/
 !docker-compose.yml
 
+# `build-doc-pages.mjs` publishes two repository-root documents as reference
+# pages — `CONTRIBUTING.md` becomes `reference/contributing.html` and
+# `SECURITY.md` becomes `reference/security.html` — so they are inputs to
+# `webapp/build.sh` as surely as `docs/` is. Found the hard way, twice: the editor
+# build failed on `docker-compose.yml` after the wasm compile, and then on
+# `CONTRIBUTING.md` after it. The guard named above now derives the whole list
+# from the generators instead of trusting this comment.
+!CONTRIBUTING.md
+!SECURITY.md
+
 # Re-excluded inside the allowed trees: build output, dependencies and test
 # artefacts. All of it is produced by the builder stages, and copying a host
 # `target/` in would both bloat the context and invalidate every cache layer.
