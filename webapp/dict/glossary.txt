@@ -120,6 +120,7 @@ MVP
 MediaReference
 MiB
 Microsoft
+Myers
 NUL
 NUMPAGES
 Namespace
@@ -152,6 +153,7 @@ PDFs
 PNG
 PNGs
 POS
+PRD
 PRs
 PTS
 PUA
@@ -160,6 +162,7 @@ Pageless
 Plass
 PowerPoint
 Pre
+Prev
 ProseMirror
 README
 RFC
@@ -187,6 +190,7 @@ SVG
 SaaS
 Sdt
 ShareDB
+SharePoint
 SharedArrayBuffer
 Skia
 SmartArt
@@ -200,6 +204,7 @@ Tesseract
 TrueType
 Twip
 UAX
+UNSOURCED
 URI
 URL
 URLs
@@ -302,6 +307,7 @@ codepoint
 col
 com
 combobox
+commenter
 compat
 composable
 config
@@ -327,6 +333,7 @@ diff
 diffable
 diffed
 differentiator
+diffing
 diffs
 discoverability
 discoverable
@@ -438,6 +445,7 @@ namespace
 namespaces
 natively
 nav
+newline
 newtype
 nginx
 nonmodal
@@ -470,6 +478,7 @@ pointercancel
 pointerdown
 pointermove
 polyline
+postMessage
 pre
 preedit
 premultiplied
@@ -500,6 +509,7 @@ recurse
 recurses
 recursing
 redistributable
+redline
 reflow
 reflowed
 reflows
@@ -551,6 +561,7 @@ subcommand
 submenu
 subpath
 subpaths
+subsequence
 subsetter
 subsetting
 substitutable
@@ -611,9 +622,11 @@ vMerge
 val
 validator
 var
+vendored
 vertAlign
 viewport
 virtualised
+virtualize
 virtualized
 vml
 wasm
