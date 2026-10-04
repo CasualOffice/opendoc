@@ -4305,6 +4305,11 @@ const gestureIo = {
 };
 const objectResize = createObjectResizeDrag({
   ...gestureIo,
+  // A GETTER, not the module: `measurement` is constructed further down this
+  // file, so naming it in this object literal would read it in its temporal
+  // dead zone. The drag only asks during a pointer move, by which time it
+  // exists.
+  measure: () => measurement,
   snapContextFor: (page) => snapContextFor(page),
   paintSnapGuides: (drag, guides) => paintSnapGuides(drag, guides),
   clearSnapGuides: (drag) => clearSnapGuides(drag),
@@ -4312,7 +4317,8 @@ const objectResize = createObjectResizeDrag({
   resetPointerGesture: () => resetPointerGesture(),
 });
 const objectRotate = createObjectRotateDrag(gestureIo);
-const sizeLabel = (widthTwip, heightTwip) => resizeSizeLabel(t, widthTwip, heightTwip);
+const sizeLabel = (widthTwip, heightTwip) =>
+  resizeSizeLabel(t, widthTwip, heightTwip, measurement);
 
 /** Reflects the object-selection state onto `#pages` as data attributes so the
  *  host (and tests) can observe the grammar state machine without reading into
@@ -10502,6 +10508,10 @@ const measurement = createMeasurementUnits({
   },
   select: document.getElementById("measurementUnitSelect"),
   locale: () => activeLocale(),
+  // The browser's tag, because it carries a REGION: the first-run default is
+  // inches only for the US and Canada, and the UI locale is a language choice
+  // that is usually just "en".
+  region: () => navigator.language || activeLocale(),
   onChanged: () => pageSetup.reflectUnits(),
   setStatus,
   openChooser: () => {
