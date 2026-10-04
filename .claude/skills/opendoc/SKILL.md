@@ -223,6 +223,55 @@ The three shapes, all real:
 - Do not take a subagent's report at face value. Re-verify its load-bearing claim yourself.
   Agents in this repo have been right when I was wrong, and wrong when confident.
 
+## 6a. The six mistakes this session made repeatedly, and what closes each
+
+These are written down because the owner had to name each of them **more than once in a
+single session** — in one case fifteen times. They are not advice. Each one has a
+mechanical close, and the close is the point: a rule the coordinator has to remember is a
+rule that will break again.
+
+1. **A lane's hand-back is not the end of its programme.** The coordinator kept relaying a
+   report, raising the PR, and stopping — so "carry on" had to come from the owner every
+   time. Co-editing stopped **four** times this way. **Close: raise the PR and relaunch the
+   lane in the same message.** Every lane brief now ends with "report and I will raise it,
+   and relaunch you in the same breath". If a lane's domain is contested, say which lane it
+   queues behind — do not silently drop it.
+
+2. **A verified gap is a work item, not a deliverable.** Analysis is visible immediately
+   and shipping is not, so a finding kept getting delivered *as if it were the fix*.
+   ADR-061 named the one function Compare needed and it sat unbuilt for hours while its
+   analysis was reported twice. **Close: a lane that produces a finding also produces the
+   change, or names the lane that will, in the same report.**
+
+3. **"Fixed" must mean merged, not "the fix is in a PR".** The owner carried that
+   difference. And a CI verdict was twice called from a run still in flight — once
+   reporting one failure where there were **eight** across three shards. **Close: no verdict
+   until every check has reported; say "the fix is in #N" when that is what is true.**
+
+4. **A scoped test run must still cover the derived artifacts the change FEEDS.** Scoping
+   tests to the change is right (§6) and is not the same as scoping past a generated file.
+   The glossary derives from **every** `docs/*.md` and reddened `main` five times in one
+   day — the last time because the coordinator ran `fmt` plus two crates, skipped
+   `build.sh`, and broke every open PR at once. The `main.js` line ceiling churned
+   **four** times the same way. **Close: if the diff touches `docs/` or any string, run
+   `cd webapp && ./build.sh` — the full build, which runs every generator and its
+   `--check`. A hand-maintained number is a defect; make it a generated artifact that
+   refuses to write a worse value.**
+
+5. **Two green PRs can merge into a red main.** #738 added struct literals, #739 added the
+   field and swept 33 of them; each was green, the merge did not compile, and the opposite
+   order breaks identically. Same shape as #645/#646. **Close: a widely-constructed model
+   struct gets `#[non_exhaustive]` plus a builder with defaults, so a literal added on a
+   sibling branch cannot be wrong.** Until then, run `cargo check --workspace
+   --all-targets` **first** when adding a field, and expect the collision.
+
+6. **The machine is a constraint to plan around, not an interruption.** The disk filled
+   **seven** times, killed lanes repeatedly, and cost unrecoverable work three times —
+   because eight Rust lanes were started on one volume. **Close: check free space before
+   fanning out, keep concurrency to what the disk supports, and tell the owner which lane
+   is paused and why rather than discovering it as an ENOSPC.** One lane's work was only
+   recovered by diffing a dead worktree against its own commit.
+
 ## 7. Parallelise with agents — by default, not on request
 
 The owner expects parallel work and should not have to ask. When there is more than one
