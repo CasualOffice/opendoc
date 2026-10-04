@@ -187,6 +187,7 @@ SaaS
 Sdt
 ShareDB
 SharedArrayBuffer
+Skia
 SmartArt
 TBL
 TOC
@@ -536,6 +537,7 @@ struct
 structs
 stylesheet
 submenu
+subpath
 subpaths
 subsetter
 subsetting
