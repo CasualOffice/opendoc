@@ -88,6 +88,35 @@ pub enum PresentationError {
     DuplicateTitlePlaceholder(NodeId),
     /// A DrawingML group nested deeper than the supported bound.
     GroupNestingTooDeep(NodeId),
+    /// A slide carried a `GroupChild::TextBox`, the document model's text-box
+    /// shape, instead of putting its text in `SlideNode::text`.
+    ///
+    /// Refused deliberately rather than tolerated. `GroupTextBox` holds
+    /// `Vec<BlockNode>` — WordprocessingML paragraphs — and slide text is `a:txBody`,
+    /// whose paragraphs carry an outline level, an inline bullet and a nine-level
+    /// list style that `w:p` cannot express. It was the interim carrier while
+    /// [`crate::TextBody`] did not exist; refusing it now is what makes the interim
+    /// state unreachable instead of merely discouraged.
+    TextBoxShapeOnSlide(NodeId),
+    /// An `a:txBody` carried no `a:p`. PowerPoint writes an empty paragraph for
+    /// empty text rather than omitting it, so zero paragraphs is malformed.
+    EmptyTextBody,
+    /// A text run's `a:t` was empty.
+    EmptyTextRun(NodeId),
+    /// An `a:lstStyle` declared more than the nine levels DrawingML defines.
+    TooManyTextLevels(usize),
+    /// An `a:pPr@lvl` was above the eight the schema permits (it is zero-based).
+    TextLevelOutOfRange(u8),
+    /// An `a:pPr` margin or indent fell outside `ST_TextMargin`/`ST_TextIndent`.
+    TextMarginOutOfDomain(i64),
+    /// An `a:rPr@sz` fell outside `ST_TextFontSize` (1pt to 4000pt, in hundredths).
+    ///
+    /// Worth a named failure rather than a clamp: `w:sz` is in HALF-points and
+    /// `a:rPr@sz` in HUNDREDTHS, so a value carried across without conversion is
+    /// wrong by fifty and this is the check that catches it.
+    FontSizeOutOfDomain(u32),
+    /// An `a:rPr@spc` fell outside `ST_TextPoint`.
+    TextSpacingOutOfDomain(i32),
     /// A failure in a reused document-model type.
     Model(ModelError),
 }
@@ -150,6 +179,31 @@ impl fmt::Display for PresentationError {
                     "group {id} nests deeper than the supported bound"
                 )
             }
+            Self::TextBoxShapeOnSlide(id) => write!(
+                formatter,
+                "shape {id} is a document text box; slide text belongs in SlideNode::text"
+            ),
+            Self::EmptyTextBody => {
+                formatter.write_str("a text body must carry at least one paragraph")
+            }
+            Self::EmptyTextRun(id) => write!(formatter, "text run {id} is empty"),
+            Self::TooManyTextLevels(count) => {
+                write!(formatter, "list style declares {count} levels, above nine")
+            }
+            Self::TextLevelOutOfRange(level) => {
+                write!(formatter, "outline level {level} is above eight")
+            }
+            Self::TextMarginOutOfDomain(value) => {
+                write!(formatter, "text margin {value} EMU is out of domain")
+            }
+            Self::FontSizeOutOfDomain(size) => write!(
+                formatter,
+                "font size {size} hundredths of a point is out of domain"
+            ),
+            Self::TextSpacingOutOfDomain(value) => write!(
+                formatter,
+                "letter spacing {value} hundredths of a point is out of domain"
+            ),
             Self::Model(error) => write!(formatter, "{error}"),
         }
     }

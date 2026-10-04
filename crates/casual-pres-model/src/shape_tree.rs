@@ -30,7 +30,7 @@ use casual_doc_model::v1::{
 use casual_doc_model::{ModelError, NodeId};
 use serde::{Deserialize, Serialize};
 
-use crate::{Placeholder, PlaceholderKind, PresentationError};
+use crate::{Placeholder, PlaceholderKind, PresentationError, TextBody};
 
 /// One shape on a slide, layout or master: a DrawingML child plus the slide-only
 /// identity it carries.
@@ -53,6 +53,16 @@ pub struct SlideNode {
     pub hidden: bool,
     /// The drawing itself, in the tree's child coordinate space.
     pub content: GroupChild,
+    /// The shape's text (`p:txBody`), when it holds any.
+    ///
+    /// On the NODE rather than inside the drawing, because that is where PPTX puts
+    /// it: a `p:sp` is `p:spPr` plus `p:txBody`, so text is a property of a shape
+    /// rather than a distinct kind of child. Modeling it as a child would have meant
+    /// reusing `GroupChild::TextBox`, whose `Vec<BlockNode>` cannot express an
+    /// outline level, an inline bullet or an `a:lstStyle` — see
+    /// [`crate::PresentationError::TextBoxShapeOnSlide`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextBody>,
 }
 
 impl SlideNode {
@@ -64,7 +74,15 @@ impl SlideNode {
             name: None,
             hidden: false,
             content,
+            text: None,
         }
+    }
+
+    /// Attaches a text body.
+    #[must_use]
+    pub fn with_text(mut self, text: TextBody) -> Self {
+        self.text = Some(text);
+        self
     }
 
     /// Attaches a placeholder slot.
@@ -149,6 +167,19 @@ impl ShapeTree {
         visit(self.id)?;
         for child in &self.children {
             visit_group_child_node_ids(&child.content, visit)?;
+            // The text's own ids are in the same space, so a paragraph id colliding
+            // with a shape id must be caught too.
+            if let Some(text) = child.text.as_ref() {
+                let mut failure = None;
+                text.visit_node_ids(&mut |id| {
+                    if failure.is_none() {
+                        failure = visit(id).err();
+                    }
+                });
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -212,6 +243,12 @@ impl ShapeTree {
         }
         self.validate_placeholders()?;
         for child in &self.children {
+            if matches!(child.content, GroupChild::TextBox(_)) {
+                return Err(PresentationError::TextBoxShapeOnSlide(child.id()));
+            }
+            if let Some(text) = child.text.as_ref() {
+                text.validate()?;
+            }
             validate_child(&child.content, definitions, 0)?;
         }
         Ok(())
