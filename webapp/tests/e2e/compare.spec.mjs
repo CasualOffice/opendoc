@@ -177,58 +177,136 @@ test("comparing a document with itself reports no differences", async ({ page, c
   expect(consoleErrors).toEqual([]);
 });
 
-test("Show changes is live on a stored version and refused on the head, with the reason", async ({
+test("Show changes on a version compares it with its PREDECESSOR, and writes nothing", async ({
   page,
   consoleErrors,
 }) => {
-  // Google Docs' route into a comparison, and the row whose disabled reason used
-  // to say the structural diff "is not built yet" — which was wrong about which
-  // half was missing: the diff was built and the PANEL was not.
+  // THIS TEST REPLACES ONE THAT COULD NOT FAIL, and the replacement is the point.
+  //
+  // The assertion that stood here was
+  //
+  //     await expect(page.locator("#compareBody"))
+  //       .toContainText(/Compared with|No differences/i);
+  //
+  // which passes whether the comparison found every difference or none —
+  // `docs/164` §8 row 12 and `SKILL` §4: a guard that cannot fail is worse than
+  // no guard, because it gets cited as evidence. It was cited as evidence, and
+  // the feature under it had never worked from the route a reader takes.
+  //
+  // IT ALSO TOOK THE WRONG ROUTE. It opened the ⋮ without ever clicking the row,
+  // and `entry` and `actionCell` are SIBLINGS in `version_panel.mjs`
+  // (`item.append(entry, actionCell)`), so a press on the ⋮ does not reach the
+  // row's own click handler and no preview opens. Every reader opens the preview
+  // first — clicking a row is how you look at a version — and that click runs
+  // `void openPreview(row.versionId)`, after which `main.js` does `doc =
+  // previewDoc`. The panel's own right-hand side is `comparableBytes(doc, …)`,
+  // a freshly parsed preview has `revision == 0`, and `ExportMode::ExactIfUnchanged`
+  // then returns the retained ORIGINAL BYTES VERBATIM. So "mine" was byte-identical
+  // to the checkpoint handed in as "theirs" and the comparison could not find
+  // anything. The old spec's route is the one route in which the bug is invisible.
+  //
+  // So this test clicks the row, which is what makes it able to fail.
   await gotoEditor(page);
-  // TWO rows are needed, and they have to be two real versions: the import
-  // baseline plus a save of a document that actually changed. A Save over an
-  // unmodified document reports `history.unchanged` and writes nothing (the
-  // owner's rule, `docs/139` §18 q3 as revised), so typing first is not padding —
-  // without it `rows.last()` is `rows.first()` and this test would assert the
-  // head's refusal twice and call it a pass.
+  // THREE rows, because the rule under test is about a PREDECESSOR and a rule
+  // stated over two rows cannot distinguish "its predecessor" from "the oldest
+  // one". The import baseline, then two saves that each really changed the
+  // document — a Save over an unmodified document reports `history.unchanged`
+  // and writes nothing (#782's content identity), so the typing is not padding.
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+Home`);
-  await page.keyboard.type("Compared. ");
+  await page.keyboard.type("Alpha only in the middle version. ");
+  await saveDocument(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.type("Beta only in the newest version. ");
   await saveDocument(page);
   await runAppMenuCommand(page, "file", "file.versionHistory");
   await expect(page.locator("#versionPanel")).toBeVisible();
 
   const rows = page.locator("#versionPanelBody .version-item");
-  await expect(rows, "two versions, or the head's refusal is asserted twice").toHaveCount(2, {
+  await expect(rows, "three versions, or the predecessor rule is untestable").toHaveCount(3, {
     timeout: 45_000,
   });
   const changes = page.locator('#versionRowMenu [data-command-id="version.changes"]');
 
-  // The HEAD row refuses, because the head IS the document on screen: comparing
-  // it with itself would report nothing. Disabled WITH a reason — and
-  // specifically not the old sentence, which is the line that fails if the stale
-  // claim comes back.
-  await rows.first().locator(".version-item-menu").click();
-  await expect(page.locator("#versionRowMenu")).toBeVisible();
-  await expect(changes).toBeDisabled();
-  await expect(changes).toHaveAttribute("title", /comparing it with itself/i);
-  await expect(changes).not.toHaveAttribute("title", /not built yet/i);
-  await page.keyboard.press("Escape");
+  // THE REAL ROUTE, step one: CLICK THE ROW. This is the gesture the old spec
+  // skipped and the one that made the feature report "No differences" forever.
+  //
+  // It is the MIDDLE row and not the head, and that is measured rather than
+  // chosen: `openPreview` returns early on the head — "the head IS the document
+  // on screen. Previewing it would swap the live session for a byte-identical
+  // copy and throw away the caret for nothing" — so a click on the head opens no
+  // preview and cannot create the condition. Every other row does. (This test
+  // failed on exactly that line first, against the head, which is how the
+  // narrowing was done.)
+  await rows.nth(1).locator(".version-item-entry").click();
+  await expect(
+    page.locator("#versionPreviewBanner"),
+    "no preview, so the live document was never replaced and this run cannot see the defect",
+  ).toBeVisible({ timeout: 45_000 });
 
-  // Any OTHER row is live. The oldest, which is the one the version-history spec
-  // drives too — and the row this whole lane exists to stop lying about.
-  await rows.last().locator(".version-item-menu").click();
+  await rows.nth(1).locator(".version-item-menu").click();
   await expect(page.locator("#versionRowMenu")).toBeVisible();
   await expect(changes).toBeEnabled();
   await changes.click();
 
-  // THE EFFECT: it opens the comparison surface and finishes a real comparison
-  // against that checkpoint — the same panel Review ▸ Compare opens, named by
-  // WHEN the version was rather than by a file name every version shares.
   await expect(page.locator("#comparePanel")).toBeVisible();
-  await expect(page.locator("#compareBody")).toContainText(/Compared with|No differences/i, {
-    timeout: 45_000,
-  });
+  const total = page.locator("#compareBody [data-compare-total]");
+  await expect(
+    total,
+    'the comparison produced no count at all — "No differences", which is the defect',
+  ).toBeVisible({ timeout: 45_000 });
+  const found = Number(await total.getAttribute("data-compare-total"));
+  // NON-ZERO, on a pair that is KNOWN to differ by one typed sentence. This is
+  // the assertion the old one refused to make.
+  expect(
+    found,
+    'the middle version contains "Alpha only in the middle version. " and its ' +
+      "predecessor — the import baseline — does not, so a comparison of the two " +
+      "cannot find nothing",
+  ).toBeGreaterThan(0);
+
+  // AND IT FOUND THE RIGHT DIFFERENCE, not merely some difference. A comparison
+  // run against the wrong side, or with the sides swapped, would also report a
+  // non-zero count — so the text is named.
+  await expect(page.locator("#compareBody")).toContainText("Alpha only in the middle version.");
+  await expect(
+    page.locator("#compareBody"),
+    "Beta is in NEITHER of the two versions being compared, so naming it means " +
+      "the comparison is against the wrong side — the live document, which is the defect",
+  ).not.toContainText("Beta only in the newest version.");
+
+  // READ-ONLY, which is the second half of the fix (`docs/139` §9.4, restored for
+  // this route by ADR-062). `[data-compare-marked]` is rendered if and only if
+  // the sidecar was applied to the live document through `applyDiffAsRevisions`
+  // — `compare-on-canvas.spec.mjs` asserts it VISIBLE for Review ▸ Compare, which
+  // keeps ADR-061. Version history must not write into the reader's document:
+  // no competitor does, and the reader asked a question about the past.
+  await expect(
+    page.locator("#compareBody [data-compare-marked]"),
+    "version history wrote tracked changes into the live document",
+  ).toHaveCount(0);
+  await expect(page.locator("#reviewShowChangesBtn")).toHaveAttribute("aria-pressed", "false");
+
+  // THE EARLIEST ROW HAS NO PREDECESSOR, so it is disabled WITH ITS REASON
+  // rather than enabled and silently useless — `SKILL` §10, never a dead control.
+  await page.keyboard.press("Escape");
+  await rows.last().locator(".version-item-menu").click();
+  await expect(page.locator("#versionRowMenu")).toBeVisible();
+  await expect(changes).toBeDisabled();
+  await expect(changes).toHaveAttribute("title", /earliest version/i);
+  await expect(changes).not.toHaveAttribute("title", /not built yet/i);
+  await page.keyboard.press("Escape");
+
+  // AND THE HEAD ROW IS NOW LIVE, which is the other half of the behaviour
+  // change. It used to refuse with "comparing it with itself" — true only of a
+  // comparison against the document on screen. Against its predecessor the head
+  // is the most useful row in the panel: it answers "what changed in the latest
+  // save?", which is the question Google's history answers first.
+  await rows.first().locator(".version-item-menu").click();
+  await expect(page.locator("#versionRowMenu")).toBeVisible();
+  await expect(changes).toBeEnabled();
+  await expect(changes).not.toHaveAttribute("title", /comparing it with itself/i);
   expect(consoleErrors).toEqual([]);
 });
 

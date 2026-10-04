@@ -58,6 +58,10 @@ use casual_doc_diff::{DiffJob, DiffSides, MediaDigests, Progress};
 use casual_doc_diff::identity::content_digest_hex;
 use casual_doc_diff::projection::{block_at_path, block_text};
 use casual_doc_diff::record::{DIFF_SCHEMA, DiffChange, DiffFamily, DiffKind, Story, VersionDiff};
+// The path type, as its own `use` line rather than folded into the sorted block
+// above: the parallel-lane import rule (`SKILL` §7) keeps a new import off a
+// shared line so two lanes cannot conflict inside one brace list.
+use casual_doc_diff::record::PathSegment;
 use casual_doc_edit::ParagraphIndex;
 use casual_doc_edit::Pos;
 use casual_doc_edit::refused;
@@ -236,6 +240,50 @@ impl WasmVersionDiff {
     pub fn blocks_total(&self) -> f64 {
         f64::from(self.total_blocks)
     }
+
+    /// The projected text of one block on one SIDE of this comparison — the
+    /// **context** a unified diff puts around a change.
+    ///
+    /// `side` is `"left"` (the older state) or `"right"` (the newer), matching
+    /// [`begin_version_diff`]'s orientation. `story` and `path` are the JSON of a
+    /// change record's `DiffAnchor.story` and `DiffAnchor.path`, which is what a
+    /// JS host already holds — so a caller walks a path's last index ±1, ±2 to
+    /// ask for the neighbours, and the `None` at the end of a sibling list is
+    /// what tells it where the document stops.
+    ///
+    /// # Why this and not a wider sidecar
+    ///
+    /// A change record names only what CHANGED. GitHub's unified diff is
+    /// recognisable because of the lines around each change, and those lines are
+    /// unchanged blocks: there is nothing in the sidecar to render them from, and
+    /// putting them there would mean emitting K neighbours per change for a
+    /// reader who expands none of them. This is the pull half of the same data,
+    /// and the engine is where it is cheap: the two parsed sides are already
+    /// resident.
+    ///
+    /// `None` when the side is not `"left"`/`"right"`, when either argument is
+    /// not readable as its type, when the path names a row or a cell rather than
+    /// a block, when it leaves the document's shape — which is exactly how a
+    /// caller discovers it has reached the first or last sibling — and when the
+    /// block it names is not a paragraph. Every one of those is a legitimate
+    /// answer to "is there a block here", so none of them throws.
+    ///
+    /// Complexity: **O(depth + the block's inlines)** per call. Deliberately not
+    /// O(document) and deliberately not cached: a reader expanding context is an
+    /// interaction, and `docs/107` §4 holds per-interaction work to O(1) in
+    /// document size.
+    #[wasm_bindgen(js_name = blockTextAt)]
+    #[must_use]
+    pub fn block_text_at(&self, side: &str, story: &str, path: &str) -> Option<String> {
+        let parsed = match side {
+            "left" => self.left.as_ref(),
+            "right" => self.right.as_ref(),
+            _ => None,
+        }?;
+        let story: Story = serde_json::from_str(story).ok()?;
+        let path: Vec<PathSegment> = serde_json::from_str(path).ok()?;
+        block_text(block_at_path(&parsed.document, &story, &path)?)
+    }
 }
 
 impl WasmVersionDiff {
@@ -295,10 +343,24 @@ impl WasmVersionDiff {
                     diff.to_json()
                         .map_err(|error| format!("serialize diff: {error}"))?,
                 );
-                // The two parsed documents are the largest thing held and the
-                // sidecar does not reference them.
-                self.left = None;
-                self.right = None;
+                // THE TWO PARSED DOCUMENTS ARE KEPT, and this used to drop them
+                // here with the note that "the sidecar does not reference them".
+                // That was true of the sidecar and not of the reader: a unified
+                // diff needs the **unchanged** blocks around each change, and
+                // those exist in neither side's sidecar — a change record names
+                // only what changed. `block_text_at` reads them from the side
+                // they belong to, lazily, O(depth) per request, which is what
+                // makes "expand further" O(1) in document size rather than a
+                // re-parse of a multi-megabyte checkpoint per click.
+                //
+                // The memory is not new and the duration is. The peak is
+                // unchanged — both sides were resident for the whole comparison
+                // already — and the release point is the handle: `free()` drops
+                // them, and `cancel()` still clears the byte arrays. A caller
+                // that wants nothing but the sidecar frees the handle the moment
+                // `result()` returns and pays exactly what it paid before, which
+                // is what `runComparison` in `compare_documents.mjs` does unless
+                // it was asked to retain.
                 Ok(PHASE_COMPLETE.to_owned())
             }
         }
@@ -698,6 +760,51 @@ impl WasmDocument {
     #[must_use]
     pub fn content_digest(&self) -> String {
         content_digest_hex(&self.document)
+    }
+
+    /// The **NodeId in THIS document** that a change record's story + path names
+    /// — the one coordinate a comparison carries that survives into a live
+    /// editing session.
+    ///
+    /// # Why a host cannot do this itself, and why it must not try
+    ///
+    /// `DiffAnchor` has a `node`, and it is a trap: both sides of a comparison
+    /// are parsed by the diff facade and ids are minted per import, so that id
+    /// addresses a throwaway parse whose counter restarted at 1. The editor's
+    /// own `navigateToReviewAnchor` takes `{node, start, end}` — a byte-for-byte
+    /// match for `DiffAnchor` — so handing it one scrolls silently to an
+    /// unrelated paragraph that happens to hold the same ordinal id. Wrong
+    /// destination, no error, and nothing to tell the reader from.
+    ///
+    /// `DiffAnchor::path` is the coordinate that survives, and resolving it is
+    /// not a walk a host should write: the projection's block sequence is not the
+    /// model's block list (a table contributes rows and cells, which are not
+    /// `BlockNode`s; a block-level content control contributes itself *and* is
+    /// descended into). `casual_doc_diff::projection::block_at_path` reuses the
+    /// walk that PRODUCED the path, so producer and resolver cannot disagree —
+    /// and `apply_diff_as_revisions` already goes through it. This is that
+    /// resolver, exposed, which is all that was ever missing.
+    ///
+    /// `story` and `path` are the JSON of the anchor's own two fields.
+    ///
+    /// `None` — never a guess — when either argument is unreadable, when the path
+    /// names a row or a cell rather than a block, when it leaves this document's
+    /// shape (a stale path against a document edited since the comparison), when
+    /// the story is one this document does not have, and when the block it names
+    /// is not a paragraph. A caller that gets `None` must decline to navigate;
+    /// that is the whole reason this returns an option rather than a best guess.
+    ///
+    /// Complexity: **O(depth)**. One call per click, so navigation is O(1) in
+    /// document size (`docs/107` §4).
+    #[wasm_bindgen(js_name = nodeAtStoryPath)]
+    #[must_use]
+    pub fn node_at_story_path(&self, story: &str, path: &str) -> Option<String> {
+        let story: Story = serde_json::from_str(story).ok()?;
+        let path: Vec<PathSegment> = serde_json::from_str(path).ok()?;
+        let BlockNode::Paragraph(paragraph) = block_at_path(&self.document, &story, &path)? else {
+            return None;
+        };
+        Some(paragraph.id.to_string())
     }
 
     /// Applies a comparison sidecar to this document as tracked changes
