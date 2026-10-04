@@ -1036,3 +1036,62 @@ test("the embedding guide's deployment commands are derived from the binary too"
     );
   }
 });
+
+// Every third-party action is pinned to a commit, not to a tag.
+//
+// A tag is mutable: whoever owns the action can move `v4` to different code
+// after review, and `peter-evans/create-pull-request` in `oracle-geometry.yml`
+// can open pull requests against this repository. A commit SHA cannot be moved.
+//
+// This guard exists because the repository was already 40-of-47 pinned and
+// nobody could see the remaining seven. Five of them were in `pages.yml` and
+// one in `oracle-geometry.yml`, left behind when the rest were pinned, and the
+// only thing pointing at them was a stack of dependabot pull requests proposing
+// tag-to-tag bumps — which is a different change, and one that cannot fix a
+// mutable reference. Counting is how it stays visible: an inconsistency spread
+// spread over two of the four workflow files is invisible to review and obvious
+// only to a grep that nobody runs.
+//
+// Deliberately NOT asserted: that the pinned version is the newest available.
+// That is dependabot's job, needs the network, and would make this guard go red
+// on its own one day with no change to this repository.
+test("every workflow action is pinned to a commit SHA, never to a tag", () => {
+  const dir = join(REPO, ".github", "workflows");
+  const files = readdirSync(dir).filter((name) => name.endsWith(".yml"));
+  assert.ok(
+    files.length >= 4,
+    `expected to read this repository's workflows, found ${files.length} — a guard ` +
+      "that reads no files passes for the wrong reason",
+  );
+
+  const unpinned = [];
+  let total = 0;
+  for (const name of files) {
+    readFileSync(join(dir, name), "utf8")
+      .split("\n")
+      .forEach((line, index) => {
+        const used = line.match(/^\s*(?:-\s*)?uses:\s*(\S+)/);
+        if (!used) return;
+        const reference = used[1];
+        // A local action (`./.github/actions/x`) has no version to pin.
+        if (reference.startsWith("./")) return;
+        total += 1;
+        const [, after] = reference.split("@");
+        if (!/^[0-9a-f]{40}$/.test(after ?? "")) {
+          unpinned.push(`${name}:${index + 1}: ${reference}`);
+        }
+      });
+  }
+
+  assert.ok(
+    total >= 40,
+    `expected to find this repository's action uses, found ${total} — the \`uses:\` ` +
+      "shape changed and this guard is reading nothing",
+  );
+  assert.deepEqual(
+    unpinned,
+    [],
+    "these workflow actions are pinned to a mutable tag; pin each to a 40-character " +
+      "commit SHA with the version in a trailing comment",
+  );
+});
