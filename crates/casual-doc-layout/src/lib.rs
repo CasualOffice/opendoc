@@ -64,3 +64,5 @@ pub mod text_region;
 pub mod units;
 mod watermark;
 pub mod windowed;
+// Own line (anti-conflict): the single wrap-side/exclusion-width rule.
+mod wrap_side;

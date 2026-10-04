@@ -71,6 +71,8 @@ use crate::page::{AnchorContent, AnchorZ, PaginatedLayout, PlacedAnchor};
 use crate::paginate::PageConfig;
 use crate::text::LineShaper;
 use crate::units::{Point, Rect, Size, Twip};
+// Own line (anti-conflict): the single wrap-side rule.
+use crate::wrap_side::WrapSides;
 
 /// 635 EMU per twip (914 400 EMU per inch ÷ 1 440 twips per inch).
 const EMU_PER_TWIP: i64 = 635;
@@ -267,6 +269,9 @@ pub(crate) fn wrap_rects(
             source: table.id,
             rect: table.rect,
             distances: table.distances,
+            // `w:tblpPr` has no `wrapText` attribute, so a positioned table
+            // takes the same default an anchor with the attribute absent takes.
+            sides: WrapSides::default(),
         })
         .collect()
 }

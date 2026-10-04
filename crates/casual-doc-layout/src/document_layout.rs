@@ -81,8 +81,9 @@ use crate::paginate::{
     PageConfig, page_number_labels, resolve_anchored_fields_labeled, resolve_fields_labeled,
 };
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
-use crate::text::InlineFloatSide;
 use crate::units::{Point, Rect, Size, Twip, emu_to_twip_extent};
+// Own line (anti-conflict): the single wrap-side rule.
+use crate::wrap_side::band_exclusion;
 use casual_doc_model::v1::SectionId;
 
 /// US-Letter page size in twips (8.5in × 11in), the fallback for a document that
@@ -1956,25 +1957,26 @@ fn paragraph_float_exclusions(
             // above its top edge. That over-excludes; running text through a
             // float does not, and the conservative envelope below already
             // treats over-exclusion as the safe direction.
-            if *page_index != wrap.page_index
-                || top >= rect.bottom()
-                || bottom <= rect.origin.y
-                || right <= rect.origin.x
-                || left >= rect.right()
-            {
+            //
+            // Only the VERTICAL half of the intersection is tested here; the
+            // horizontal half belongs to the one shared rule below, so a single
+            // place decides whether a band overlaps a measure.
+            if *page_index != wrap.page_index || top >= rect.bottom() || bottom <= rect.origin.y {
                 continue;
             }
-            let paragraph_mid = rect.origin.x.raw() + rect.size.width.raw() / 2;
-            let float_mid = left.raw() + (right.raw() - left.raw()) / 2;
-            let (side, raw_width) = if float_mid <= paragraph_mid {
-                (InlineFloatSide::Left, right.raw() - rect.origin.x.raw())
-            } else {
-                (InlineFloatSide::Right, rect.right().raw() - left.raw())
+            // The side and width are the authored `w:wrap@wrapText` rule, shared
+            // with the paragraph-local and carry paths in `crate::flow` so one
+            // float cannot wrap two different ways depending on which pass saw
+            // it (`crate::wrap_side`). A band that does not overlap this
+            // paragraph's measure at all narrows nothing.
+            let Some(resolved) =
+                band_exclusion(left, right, rect.origin.x, rect.right(), wrap.sides)
+            else {
+                continue;
             };
-            let max_width = (rect.size.width.raw() - 1).max(1);
             let exclusion = ParagraphFloatExclusion {
-                side,
-                width: Twip(raw_width.clamp(1, max_width)),
+                side: resolved.side,
+                width: resolved.width,
                 height: Twip((bottom.raw() - rect.origin.y.raw()).max(1)),
             };
             let values = exclusions.entry(*paragraph).or_default();

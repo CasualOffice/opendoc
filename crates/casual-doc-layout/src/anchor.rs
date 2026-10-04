@@ -52,6 +52,8 @@ use crate::units::{
     Point, Rect, Size, Twip, emu_to_twip_extent, emu_to_twip_offset, emu_to_twip_rounded,
     twip_rounded,
 };
+// Own line (anti-conflict): the single wrap-side rule.
+use crate::wrap_side::{WrapSides, wrap_sides};
 use casual_doc_model::v1::{Definitions, StyleColor};
 
 /// Places every floating object in the document (body and header/footer bands)
@@ -109,6 +111,10 @@ pub(crate) struct BodyWrapRect {
     pub(crate) source: NodeId,
     pub(crate) rect: Rect,
     pub(crate) distances: WrapDistances,
+    /// The authored `w:wrap@wrapText` of the float this rect came from, carried
+    /// here because the exclusion side is an authored property and not a
+    /// geometric guess (see [`crate::wrap_side`]).
+    pub(crate) sides: WrapSides,
 }
 
 /// Resolves the page-local wrap rectangles of eligible top-level body floats
@@ -333,6 +339,7 @@ fn push_body_wrap_rect(
         source: paragraph,
         rect,
         distances: anchor.wrap_distances,
+        sides: wrap_sides(&anchor),
     });
 }
 
