@@ -171,6 +171,16 @@ test("a copy opens here, as a new document with a timeline of its own", async ({
   await page.goto("/editor.html");
   await openTimeline(page);
   await twoVersions(page, "VHCOPY ");
+  // UNSAVED WORK ON SCREEN, which is the condition the pre-copy capture exists
+  // for and which this test did not previously create. It used to copy straight
+  // after a Save, so the document was identical to its own head and the row it
+  // asserted on — a `manual` version of bytes already in the timeline — was
+  // exactly the noise the owner reported. `MANUAL` is suppressed when nothing
+  // changed now, so the invariant has to be tested where it bites: there is
+  // something in the editor that is in no version yet.
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.type("VHCOPY UNSAVED ");
   const before = await storedVersions(page);
   const originalLineage = before[0].lineageId;
 
@@ -213,14 +223,49 @@ test("a copy opens here, as a new document with a timeline of its own", async ({
   expect(copyRows[0].checkpointId).toBe(before[1].checkpointId);
 
   // And the original's work was kept before the tab moved: its timeline grew by
-  // the pre-copy capture rather than being abandoned mid-edit.
+  // the pre-copy capture rather than being abandoned mid-edit. The row is new
+  // CONTENT and not merely a new row — `before` held two versions of the saved
+  // state, and this one holds the unsaved paragraph the editor was showing.
   const originalRows = after.filter((row) => row.lineageId === originalLineage);
-  expect(originalRows.length).toBeGreaterThan(before.length - 1);
+  expect(originalRows).toHaveLength(before.length + 1);
   expect(originalRows[0].kind).toBe("manual");
+  expect(before.map((row) => row.checkpointId)).not.toContain(originalRows[0].checkpointId);
 
   // The timeline on screen is the COPY's, not the one it came from.
   await openTimeline(page);
   await expect(page.locator(rows)).toHaveCount(1);
+});
+
+test("copying with nothing unsaved keeps the original's timeline as it was", async ({ page }) => {
+  // THE SAME CLASS, ON THIS SURFACE. The pre-copy capture is `MANUAL`, and
+  // `MANUAL` used to be on the keep-even-if-unchanged side — so copying a
+  // document that was already saved left a `manual` row holding bytes the
+  // timeline already had. The argument for keeping it is about somebody asking
+  // for a version by name, and nobody asks for this one: they pressed Make a
+  // copy. The test above proves unsaved work is still protected; this one proves
+  // the price is no longer a row per copy.
+  await page.goto("/editor.html");
+  await openTimeline(page);
+  await twoVersions(page, "VHCOPYCLEAN ");
+  const before = await storedVersions(page);
+  const originalLineage = before[0].lineageId;
+
+  await runRowCommand(page, 1, "version.copy");
+  await expect(page.locator("#confirmDialog")).toBeVisible();
+  await page.locator("#confirmAccept").click();
+  await expect(page.locator("#docTitle")).toHaveValue(/^Copy of /);
+
+  // The copy's own timeline arrives, which is what says the copy really happened
+  // rather than the assertion below passing because nothing did.
+  await expect
+    .poll(async () => new Set((await storedVersions(page)).map((row) => row.lineageId)).size)
+    .toBe(2);
+  const after = await storedVersions(page);
+  const originalRows = after.filter((row) => row.lineageId === originalLineage);
+  expect(
+    originalRows.map((row) => row.versionId).sort(),
+    "copying an unmodified document added a version of nothing to the original",
+  ).toEqual(before.map((row) => row.versionId).sort());
 });
 
 test("both ways out are reachable by keyboard, and say so when the host withholds them", async ({
