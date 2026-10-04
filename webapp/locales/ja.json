@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "このブラウザー内で完全に動作する Apache-2.0 ライセンスの文書エディターです。",
   "aboutDialog.close.title": "閉じる",
   "aboutDialog.closeAbout.label": "バージョン情報を閉じる",
+  "aboutDialog.closeButton": "閉じる",
   "aboutDialog.engineVersion": "エンジンのバージョン",
   "aboutDialog.licence": "ライセンス",
   "aboutDialog.licence2": "ライセンス",

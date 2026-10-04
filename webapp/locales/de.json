@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "Ein Apache-2.0-Dokumenteditor, der vollständig in diesem Browser läuft.",
   "aboutDialog.close.title": "Schließen",
   "aboutDialog.closeAbout.label": "Info schließen",
+  "aboutDialog.closeButton": "Schließen",
   "aboutDialog.engineVersion": "Engine-Version",
   "aboutDialog.licence": "Lizenz",
   "aboutDialog.licence2": "Lizenz",

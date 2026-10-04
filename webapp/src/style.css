@@ -1781,10 +1781,23 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 .shortcuts-body {
   /* Column COUNT derives from the width available, rather than being fixed at
-     two and overridden at one breakpoint: three fit at 1280, one at 390, and
-     nothing in between has to be enumerated. */
+     two and overridden at one breakpoint: four fit on the 960px card, two at a
+     620px window, one at 390, and nothing in between has to be enumerated.
+   *
+     The track was `clamp(15rem, 22vw, 17rem)`, and the `22vw` term is why the
+     clamp never did what it looks like it does: at 1280 it resolves to 281.6px
+     and is pulled back to the 17rem ceiling, so the floor was unreachable and
+     the track was a constant 272px at every desktop width. Three such tracks
+     put 643px of keymap in a 560px body on a 1280x720 laptop (measured), which
+     is the overflow `dialog-fit.spec.mjs` now covers for this dialog.
+   *
+     A flat 13rem instead. The label column is `minmax(0, max-content)`, so a
+     label that does not fit a track WRAPS inside it and cannot paint across the
+     next column — which is what makes a narrower track safe here, and it is
+     already the reason that spelling was chosen. Measured after: 11 groups
+     balance into four columns of 211px, 404px of content in a 560px box. */
   columns: auto;
-  column-width: clamp(15rem, 22vw, 17rem);
+  column-width: 13rem;
   column-gap: var(--space-6);
 }
 
@@ -1814,7 +1827,14 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   align-items: baseline;
   column-gap: clamp(8px, 1vw, 16px);
   row-gap: 6px;
-  margin: 0 0 var(--space-5);
+  /* One step down from `--space-5`. Eleven groups paid that margin eleven
+     times — 220px of the body's height, which is most of the 83px this dialog
+     was over its own box by after the track was corrected (HF-233 D3). At
+     `--space-4` the uppercase group heading still separates the groups (it is
+     the only thing that ever did) and the measured content comes down to 490px
+     in a 560px box, which leaves the margin the Linux runner's substituted
+     faces need. */
+  margin: 0 0 var(--space-4);
 }
 
 .shortcuts-group .shortcuts-row {

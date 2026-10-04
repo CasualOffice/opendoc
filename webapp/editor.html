@@ -1203,7 +1203,7 @@
               <p data-i18n="aboutDialog.apache20Document" id="aboutDescription">An Apache-2.0 document editor that runs entirely in this browser.</p>
             </div>
           </div>
-          <button data-i18n-title="aboutDialog.close.title" data-i18n-label="aboutDialog.closeAbout.label" id="aboutClose" type="button" class="dialog-close" title="Close" aria-label="Close about">
+          <button data-about-dismiss data-i18n-title="aboutDialog.close.title" data-i18n-label="aboutDialog.closeAbout.label" id="aboutClose" type="button" class="dialog-close" title="Close" aria-label="Close about">
             <span class="ms" aria-hidden="true">close</span>
           </button>
         </header>
@@ -1222,6 +1222,14 @@
             <a data-i18n="aboutDialog.reportIssue" href="https://github.com/CasualOffice/opendoc/issues" rel="noreferrer noopener" target="_blank">Report an issue</a>
           </p>
         </div>
+        <!-- An action row, for the reason Keyboard shortcuts gained one
+             (HF-233 D3): a card with a body and no footer ends in content, and
+             whether today's content happens to fit is not the property. -->
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-about-dismiss data-i18n="aboutDialog.closeButton" id="aboutDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
       </section>
     </div>
 

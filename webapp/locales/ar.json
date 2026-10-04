@@ -7,6 +7,7 @@
   "aboutDialog.apache20Document": "محرّر مستندات بترخيص Apache-2.0 يعمل بالكامل داخل هذا المستعرض.",
   "aboutDialog.close.title": "إغلاق",
   "aboutDialog.closeAbout.label": "إغلاق \"حول\"",
+  "aboutDialog.closeButton": "إغلاق",
   "aboutDialog.engineVersion": "إصدار المحرك",
   "aboutDialog.licence": "الترخيص",
   "aboutDialog.licence2": "الترخيص",

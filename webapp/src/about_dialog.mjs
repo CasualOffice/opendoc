@@ -162,7 +162,12 @@ export function createAboutDialog(engineVersion, fallbackFocus) {
     modal.open();
   };
 
-  close?.addEventListener("click", () => toggle(false));
+  // Both dismissals, not just the X: About has a body and now has an action row
+  // under it too (HF-233 D3), and `[data-about-dismiss]` is how one handler
+  // serves both so neither can be the one that is wired and neither forgotten.
+  for (const button of dialog?.querySelectorAll("[data-about-dismiss]") ?? []) {
+    button.addEventListener("click", () => toggle(false));
+  }
   // The stamp comes back too: the File page's About PANE shows this same
   // element without opening the dialog, and an About that says "not loaded
   // yet" forever would be worse than no pane.
