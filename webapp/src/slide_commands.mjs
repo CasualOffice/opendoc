@@ -26,6 +26,34 @@
 // panel. Google Slides and ONLYOFFICE agree on that roster almost exactly; where
 // they differ, the row is absent rather than present-and-dead (`docs/63`).
 
+import { keyboardPlatform } from "./keyboard.mjs";
+import { shortcutForCommand } from "./keymap.mjs";
+
+/** The viewer's keyboard map, in `keymap.mjs`'s own row shape.
+ *
+ *  Chords are DECLARED in Apple glyphs — "⌘S" — because that is what the
+ *  registry stores and what `shortcut_labels.mjs` renders for the keyboard in
+ *  front of the reader; a map written in Control would read wrongly on a Mac and
+ *  there would be no single place to fix it.
+ *
+ *  Arrow keys are NOT here. `keymap.mjs` describes chords — a modifier plus a
+ *  key — and paging a deck with an unmodified Arrow, Page or Space key is not a
+ *  chord: it is the primary interaction of the surface that has focus, the same
+ *  way Arrow moves a caret in the editor rather than running a command. Putting
+ *  them here would make every Arrow press in the deck a global accelerator.
+ */
+export const SLIDE_KEYMAP = [
+  // The EDITOR'S spellings, not new ones. `keymap.mjs` already binds `⌘=` and
+  // `⌘-` to `view.zoomIn`/`view.zoomOut` for the document, and an unshifted `+`
+  // is a key no keyboard produces — a first draft of this table wrote `⌘+` and
+  // the chord simply never fired. Same chord, same command id, both surfaces.
+  { chord: "⌘S", command: "file.save" },
+  { chord: "⌘O", command: "file.open" },
+  { chord: "⌘=", command: "view.zoomIn" },
+  { chord: "⌘-", command: "view.zoomOut" },
+  { chord: "⌘0", command: "view.fitSlide" },
+];
+
 /** The Material Symbols ligature each command shows, where a surface wants one. */
 const ICONS = {
   "file.open": "folder_open",
@@ -187,6 +215,20 @@ export function createSlideCommands({ viewer, actions, t }) {
         checked: actions.panelShown("slides"),
         run: () => actions.togglePanel("slides"),
       },
+      // The theme, through `appearance.mjs` and `prefs.mjs` — the modules that
+      // already own "what `data-theme` means" and "where a preference lives".
+      // Three rows rather than a toggle, because `system` is a real third state
+      // and a two-way switch cannot say "follow the OS".
+      ...["system", "light", "dark"].map((theme) => ({
+        id: `view.theme.${theme}`,
+        label: t(`slides.theme.${theme}`),
+        group: t("slides.menuView"),
+        kw: `theme appearance ${theme} dark light colour color scheme`,
+        noDoc: true,
+        enabled: true,
+        checked: actions.theme() === theme,
+        run: () => actions.setTheme(theme),
+      })),
       {
         id: "view.fidelity",
         label: t("slides.fidelityPanel"),
@@ -198,7 +240,17 @@ export function createSlideCommands({ viewer, actions, t }) {
         run: () => actions.togglePanel("fidelity"),
       },
     ];
-    return commands.map((command) => ({ icon: ICONS[command.id], ...command }));
+    // Each command carries the chord its own keymap row declares, so a tooltip
+    // and a menu row advertise exactly what the dispatcher binds. `109`
+    // UX-006/UX-007 is what happens when those are two tables: the editor
+    // advertised chords it had never bound and bound one it advertised nowhere.
+    // `shortcutForCommand` is `keymap.mjs`'s, reading OUR rows.
+    const platform = keyboardPlatform();
+    return commands.map((command) => ({
+      icon: ICONS[command.id],
+      shortcut: shortcutForCommand(command.id, platform, SLIDE_KEYMAP),
+      ...command,
+    }));
   };
 }
 
@@ -276,5 +328,9 @@ export const SLIDE_MENU_SECTIONS = {
     { group: "slides.menuGroupZoom", ids: ["view.zoomOut", "view.zoomIn"] },
     { group: "slides.menuGroupFit", ids: ["view.fitSlide", "view.fitWidth"] },
     { group: "slides.menuGroupPanels", ids: ["view.slides", "view.fidelity"] },
+    {
+      group: "slides.menuGroupTheme",
+      ids: ["view.theme.system", "view.theme.light", "view.theme.dark"],
+    },
   ],
 };

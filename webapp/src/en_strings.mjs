@@ -1351,6 +1351,17 @@ export const EN_STRINGS = Object.freeze({
   "slides.toolbarGroupSlide": "Slide",
   "slides.toolbarGroupZoom": "Zoom",
   "slides.toolbarGroupPanels": "Panels",
+  // The theme rows. `system` is a real third state — follow the operating
+  // system — which is why this is three rows and not a switch, and why
+  // `appearance.mjs` REMOVES `data-theme` for it rather than setting a value.
+  // The stem a saved copy gets when the deck has no name of its own. Routed
+  // because it is text a reader finds in their downloads folder; the extension
+  // is NOT routed, because `.pptx` is what the bytes are.
+  "slides.defaultName": "Presentation",
+  "slides.theme.system": "Match system",
+  "slides.theme.light": "Light",
+  "slides.theme.dark": "Dark",
+  "slides.menuGroupTheme": "Appearance",
   "slides.menuGroupMove": "Move",
   "slides.menuGroupEnds": "Jump",
   "slides.menuGroupZoom": "Zoom",

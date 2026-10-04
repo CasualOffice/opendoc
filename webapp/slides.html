@@ -208,13 +208,17 @@
       </span>
     </footer>
 
-    <!-- A refusal, announced. The engine refuses a package it cannot read
-         correctly rather than opening it wrong; the visible half of that is the
-         status bar above, and this is the half assistive technology hears. The
-         editor keeps its live regions at body level for the same reason `109`
-         UX-017 records: a container that becomes `display: none` at a narrow
-         width takes its live region out of the accessibility tree with it. -->
-    <p id="slidesError" class="sr-only" role="alert"></p>
+    <!-- The feedback channel's three surfaces, in the editor's own arrangement
+         and at BODY level for the reason `109` UX-017 records: a container that
+         becomes `display: none` at a narrow width takes its live region out of
+         the accessibility tree with it, so the editor went silent and inaudible
+         at the same width. The toast is `aria-hidden` and holds nothing
+         focusable — the live region is the single thing that speaks, so a
+         refusal is announced once rather than twice. `status_channel.mjs`
+         decides which of the three a given message reaches. -->
+    <span id="statusLiveRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
+    <span id="slidesError" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></span>
+    <div id="statusToast" class="toast" aria-hidden="true" hidden></div>
 
     <!-- The slide's text, off screen, as STRUCTURE.
          A rendered slide is pixels, so without this a screen reader gets a deck

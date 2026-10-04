@@ -33,6 +33,20 @@ import { pagesPanelRange, reflectPagesPanelSelection } from "./pages_panel.mjs";
 // feature and without the provisioning, which is not a fidelity gap in the
 // engine so much as the engine being handed nothing to draw with.
 import { NAMED_WEB_FONT_FACES, fetchFontBytes, packFontBytes } from "./web_fonts.mjs";
+// The remaining shell behaviours, each already a module and none of them this
+// page's to invent: the feedback channel that decides whether a message reaches
+// the status line, a toast or a live region; the phone rung; the persisted
+// preference store; the theme applier; and the shortcut localiser that stops a
+// PC tooltip claiming a ⌘ key that keyboard does not have.
+import { createStatusChannel } from "./status_channel.mjs";
+import { statusClassName } from "./status_policy.mjs";
+import { downloadNameForFormat } from "./format_io.mjs";
+import { createPhoneChrome } from "./phone_chrome.mjs";
+import { loadPrefObject, savePrefObject } from "./prefs.mjs";
+import { applyAppearance } from "./appearance.mjs";
+import { localizeShortcutText } from "./shortcut_labels.mjs";
+import { keyboardPlatform, matchesShortcut } from "./keyboard.mjs";
+import { SLIDE_KEYMAP } from "./slide_commands.mjs";
 
 /// The media type a `.pptx` is served and saved as.
 const PPTX_MEDIA_TYPE =
@@ -70,6 +84,8 @@ function resolveElements() {
     "appMenuPopover",
     "compactToolbar",
     "slidesZoom",
+    "statusLiveRegion",
+    "statusToast",
   ];
   const found = {};
   const missing = [];
@@ -97,14 +113,35 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   /// document side: the visible status strip sheds indicators as the window
   /// narrows, and a `display: none` subtree is not in the accessibility tree — so
   /// a live region inside it goes silent at exactly the width where it matters.
-  function showError(message) {
-    const text = t("slides.openFailed", { reason: message });
+  /// Publishes a message through the editor's feedback channel.
+  ///
+  /// The same shape `main.js`'s `setStatus` has: write the visible line, take its
+  /// class from `status_policy.mjs`, then hand the text to the channel, which
+  /// decides whether it also needs a toast and which live region speaks it. An
+  /// earlier revision of this page assigned the message into two elements
+  /// directly, which answers the question of what speaks it twice — and so
+  /// announced it twice.
+  ///
+  /// (Phrased without naming the DOM property it used to assign, because
+  /// `tools/string_sites.mjs` scans comments as well as code and read the
+  /// property name followed by quoted prose as an unrouted string literal.
+  /// `i18n_params.test.mjs` has the same blind spot; worth knowing before
+  /// writing the next comment near a sink.)
+  function setStatus(text, kind = "") {
     elements.status.textContent = text;
-    elements.slidesError.textContent = text;
+    elements.status.className = statusClassName(kind);
+    status.publish(text, kind);
+  }
+
+  /// A refusal. `kind` is what routes it to the assertive region and the toast —
+  /// the engine refuses a package it cannot read correctly rather than opening it
+  /// wrong, and that refusal must be impossible to miss.
+  function showError(message) {
+    setStatus(t("slides.openFailed", { reason: message }), "error");
   }
 
   function clearError() {
-    elements.slidesError.textContent = "";
+    setStatus("");
   }
 
   /// The width a slide may occupy, from the stage's own box.
@@ -286,7 +323,7 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
       return false;
     }
     elements.slidesSave.disabled = false;
-    elements.status.textContent = "";
+    clearError();
     renderSorter();
     paint();
     renderFidelity();
@@ -308,6 +345,33 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   // One registry, two renderers, both the editor's own. A command's label, its
   // enablement and its pressed state come from here whichever surface shows it,
   // which is the whole reason `105` UX-004/UX-005 are not repeated on this page.
+  // The persisted preferences this surface owns. `loadPrefObject`/`savePrefObject`
+  // are `prefs.mjs`'s, which already answers the question this page would
+  // otherwise answer badly: `localStorage` is HOST POLICY and may throw or be
+  // absent, so every read falls back and every write is allowed to fail.
+  const PREF_KEY = "opendoc.slides";
+  const prefs = loadPrefObject(PREF_KEY, { theme: "system" });
+
+  /// Applies the theme through the module that owns what a theme IS.
+  ///
+  /// `appearance.mjs` was extracted from the editor's `applySettings` by the
+  /// white-label work: it knows that `system` means REMOVING `data-theme` rather
+  /// than setting it to anything, and that a host-pinned accent must not be
+  /// overwritten. Both are rules this page would have got wrong.
+  function setTheme(theme) {
+    prefs.theme = theme;
+    savePrefObject(PREF_KEY, prefs);
+    applyAppearance({
+      root: document.documentElement,
+      theme,
+      accent: "",
+      // Nothing on this page sets an accent, so the accent is left exactly as
+      // the stylesheet and any white-label brand left it.
+      pin: { pinned: true },
+    });
+    refreshCommandSurfaces();
+  }
+
   const editorCommands = createSlideCommands({
     viewer,
     t,
@@ -315,6 +379,8 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
       openPicker: () => elements.slidesFile.click(),
       save: () => saveDeck(),
       repaint: () => paint(),
+      theme: () => prefs.theme,
+      setTheme,
       panelShown: (name) =>
         name === "slides"
           ? !elements.slidesSorterPanel.hidden
@@ -339,6 +405,28 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
   // statement of that is here rather than a `needsDocument: false` at each site.
   configurePopovers({ documentReady: () => true });
 
+  // The feedback channel, rather than this page assigning the message itself.
+  // It decides whether a message
+  // belongs on the status line, in a toast, or only in a live region, and it
+  // asks whether the status line is actually PAINTED rather than guessing from a
+  // breakpoint — so a narrow window gets the toast without this page knowing the
+  // media query exists.
+  const status = createStatusChannel({
+    live: elements.statusLiveRegion,
+    alert: elements.slidesError,
+    toast: elements.statusToast,
+    statusLine: elements.status,
+  });
+
+  // The phone rung, from the module that owns it. `createCompactToolbar`
+  // resolves this at RENDER time, so crossing 620px switches the roster rather
+  // than leaving a desktop bar on a phone for the rest of the session.
+  const phone = createPhoneChrome({
+    view: globalThis,
+    body: document.body,
+    root: document.documentElement,
+  });
+
   // THE SHELL IS VISIBLE FROM THE START, which is a deliberate departure from
   // the editor. `style.css` gates the rail, the toolbar and the status bar on
   // `body.doc-loaded`, because a document editor with nothing open genuinely has
@@ -361,6 +449,12 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     runControls: [],
     paraControls: [],
     formatToggleCache: new Map(),
+    // The registry stores chords in Apple glyphs and every other surface renders
+    // them for the keyboard in front of the reader (`109` HF-025 / UX-009).
+    // Without this a PC tooltip reads "Save a copy (⌘S)" — a key that keyboard
+    // does not have.
+    localizeShortcut: (text) => localizeShortcutText(text, keyboardPlatform()),
+    isPhone: () => phone.isPhone(),
     table: SLIDE_TOOLBAR,
     // One roster. The editor passes a second for phones because its desktop bar
     // is thirteen groups over a fold; this one is four, which a phone fits.
@@ -447,7 +541,15 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     const url = URL.createObjectURL(new Blob([bytes], { type: PPTX_MEDIA_TYPE }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = elements.deckTitle.value || "presentation.pptx";
+    // `downloadNameForFormat` is `format_io.mjs`'s — the module that already owns
+    // "what a file of this format is called on disk". It replaces the extension
+    // rather than appending one, so saving "deck.potx" gives "deck.pptx" and not
+    // "deck.potx.pptx". The stem is routed, because a default file name is text a
+    // reader sees in their downloads folder.
+    link.download = downloadNameForFormat(
+      elements.deckTitle.value || t("slides.defaultName"),
+      "pptx",
+    );
     link.click();
     // Revoked on the next frame rather than immediately: a synchronous revoke
     // races the browser's own fetch of the object URL and the download arrives
@@ -457,6 +559,9 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
 
   elements.slidesSave.addEventListener("click", () => saveDeck());
 
+  // The persisted theme, before the first paint, so the page does not flash the
+  // system theme on its way to the reader's choice.
+  setTheme(prefs.theme);
   labelFromRegistry();
   // Rendered once at boot so the bar and the status strip exist before a deck
   // does, with every command disabled and saying why.
@@ -470,6 +575,24 @@ export function bootViewer({ facade, elements, devicePixelRatio = 1 }) {
     event.preventDefault();
     viewer.goTo(next);
     paint();
+  });
+
+  // The CHORDS, through `keyboard.mjs`'s matcher rather than a hand-rolled
+  // `event.metaKey && event.key === "s"`. It knows that ⌘ and ⌃ are different
+  // physical keys on an Apple keyboard and the same one everywhere else, which
+  // is the distinction a hand-rolled check gets wrong in one direction or the
+  // other. Bound at document level because a chord is an accelerator: it runs
+  // whether or not the stage has focus.
+  document.addEventListener("keydown", (event) => {
+    const platform = keyboardPlatform();
+    for (const binding of SLIDE_KEYMAP) {
+      if (!matchesShortcut(binding.chord, event, platform)) continue;
+      const command = editorCommands().find((entry) => entry.id === binding.command);
+      if (!command || command.enabled === false) return;
+      event.preventDefault();
+      command.run();
+      return;
+    }
   });
 
   return { openBytes, paint, renderSorter, renderFidelity, toggleFidelity, viewer };
