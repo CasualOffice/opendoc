@@ -3469,6 +3469,14 @@ impl BodyParser<'_> {
                 match local {
                     b"fillRef" => reference.fill_idx = idx,
                     b"lnRef" => reference.line_idx = idx,
+                    // `a:effectRef`'s INDEX is captured although nothing in this
+                    // build paints a DrawingML effect, because resolving the entry
+                    // is what tells a false loss from a real one: in the default
+                    // Office theme the first two `a:effectStyle` entries are empty
+                    // and only the third carries a shadow. Its colour is still
+                    // suppressed (`style_ref_dest` stays `None` above) — there is
+                    // no effect for a `a:phClr` argument to parameterise.
+                    b"effectRef" => reference.effect_idx = idx,
                     _ => {}
                 }
             }
@@ -8475,7 +8483,10 @@ fn parse_percent(value: &str) -> Option<f32> {
 
 /// Parses a DrawingML percentage into its exact per-100000 representation.
 /// OOXML accepts either an integer (`92000`) or a percentage string (`92.000%`).
-fn parse_drawing_percentage(value: &str) -> Option<u32> {
+///
+/// `pub(crate)` so the theme parser reads `a:gs@pos` and a style entry's colour
+/// transforms through the same conversion the body uses, rather than a second one.
+pub(crate) fn parse_drawing_percentage(value: &str) -> Option<u32> {
     let value = value.trim();
     if let Some(percent) = value.strip_suffix('%') {
         let percent = percent.trim().parse::<f64>().ok()?;
@@ -8490,48 +8501,27 @@ fn parse_drawing_percentage(value: &str) -> Option<u32> {
 }
 
 /// Folds a [`PendingColor`]'s luminance/tint/shade/alpha modifiers over its base
-/// into a concrete [`Rgba`]. `lumMod` scales and `lumOff` offsets luminance
-/// (applied channel-wise, exact for the grayscale bases these decorations use);
-/// `tint` lightens toward white and `shade` darkens toward black; `alpha` sets
-/// opacity.
+/// into a concrete [`Rgba`].
+///
+/// The arithmetic itself lives in the model as `fold_color_modifiers`, because the
+/// theme format scheme folds the SAME modifiers over a base that only a shape's
+/// style reference supplies (`ColorTransform::apply`). Two implementations of one
+/// rule diverge, and a divergence here would show as a themed shape painting a
+/// slightly different colour from an explicitly-filled one.
 fn fold_color(color: &PendingColor) -> Rgba {
-    let mut rgb = [
-        f32::from(color.base[0]),
-        f32::from(color.base[1]),
-        f32::from(color.base[2]),
-    ];
-    if let Some(m) = color.lum_mod {
-        for c in &mut rgb {
-            *c *= m;
-        }
-    }
-    if let Some(o) = color.lum_off {
-        for c in &mut rgb {
-            *c += o * 255.0;
-        }
-    }
-    if let Some(t) = color.tint {
-        let t = t.clamp(0.0, 1.0);
-        for c in &mut rgb {
-            *c = *c * t + 255.0 * (1.0 - t);
-        }
-    }
-    if let Some(s) = color.shade {
-        let s = s.clamp(0.0, 1.0);
-        for c in &mut rgb {
-            *c *= s;
-        }
-    }
-    let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
-    let a = color
-        .alpha
-        .map_or(color.base[3], |a| clamp(a.clamp(0.0, 1.0) * 255.0));
-    Rgba {
-        r: clamp(rgb[0]),
-        g: clamp(rgb[1]),
-        b: clamp(rgb[2]),
-        a,
-    }
+    casual_doc_model::v1::fold_color_modifiers(
+        Rgba {
+            r: color.base[0],
+            g: color.base[1],
+            b: color.base[2],
+            a: color.base[3],
+        },
+        color.lum_mod,
+        color.lum_off,
+        color.tint,
+        color.shade,
+        color.alpha,
+    )
 }
 
 /// Whether a local element name is DrawingML scaffolding the drawing arms consume
