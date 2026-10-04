@@ -1169,6 +1169,187 @@ mod tests {
         );
     }
 
+    /// A change record's path RESOLVES, against a live document, to the paragraph
+    /// the change is actually about — and to that paragraph's own model id, which
+    /// is what makes the answer usable by `navigateToReviewAnchor`.
+    ///
+    /// This is the whole reason `node_at_story_path` exists: `DiffAnchor::node`
+    /// addresses the throwaway parse the comparison ran on, and the editor's
+    /// `navigateToReviewAnchor` takes `{node, start, end}` — a byte-for-byte
+    /// match for `DiffAnchor` — so handing it one scrolls silently to whatever
+    /// paragraph holds that ordinal. The trap itself is already guarded twice
+    /// (`plain_text_checkpoints_share_no_node_ids_at_all` below, and
+    /// `casual-doc-diff`'s own DOCX id guard); what was missing and is guarded
+    /// HERE is the correct answer.
+    ///
+    /// MEASURED WHILE WRITING THIS, and worth recording because it narrowed the
+    /// claim: for plain text the id namespace is a hash of the whole text
+    /// (`casual_doc_io::text`), so re-parsing the *same* bytes hands out the
+    /// *same* ids — this fixture's `right.node` happens to equal the resolved id.
+    /// That is a property of one format and one fixture, not a guarantee, which
+    /// is exactly why the resolver and not the record's id is the supported route.
+    ///
+    /// The assertions are about the TEXT at the resolved position and about the
+    /// id matching the model's own, so an off-by-one or a wrong story in the walk
+    /// turns this red.
+    #[test]
+    fn a_change_path_resolves_to_the_paragraph_the_change_is_about() {
+        let older = text(&["alpha", "beta", "gamma"]);
+        let newer = text(&["alpha", "beta edited", "gamma"]);
+        let sidecar = diff_versions_inner(&older, &newer).expect("the comparison runs");
+        let diff: VersionDiff = serde_json::from_str(&sidecar).expect("valid sidecar");
+        let change = diff
+            .changes
+            .iter()
+            .find(|change| change.family == DiffFamily::Text)
+            .expect("the edited paragraph is reported");
+        let right = change.right.as_ref().expect("a text change has a right side");
+
+        // `newer` is the document the host holds, which is the comparison's right
+        // side — the only side a path is claimed to resolve against.
+        let live = open_document(&newer).expect("the newer state opens");
+        let story = serde_json::to_string(&right.story).expect("a story serializes");
+        let path = serde_json::to_string(&right.path).expect("a path serializes");
+        let resolved = live
+            .node_at_story_path(&story, &path)
+            .expect("the path resolves against the document it was produced from");
+
+        // THE PARAGRAPH AT THAT ID, found by id in the live model rather than by
+        // walking the path again — so this asserts the resolver's answer and not
+        // the walk restated.
+        let named = live
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph),
+                _ => None,
+            })
+            .find(|paragraph| paragraph.id.to_string() == resolved)
+            .expect("the id names a paragraph of this document");
+        assert_eq!(
+            block_text(&BlockNode::Paragraph(named.clone())).as_deref(),
+            Some("beta edited"),
+            "the resolved id is the paragraph the change is about, not a neighbour with the \
+             same ordinal"
+        );
+        assert_eq!(
+            live.node_at_story_path(
+                &story,
+                &serde_json::to_string(&vec![PathSegment::Block { index: 0 }])
+                    .expect("serializes"),
+            )
+            .is_some_and(|other| other != resolved),
+            true,
+            "and a different path resolves to a different paragraph, so the answer tracks the \
+             path rather than being the first block every time"
+        );
+    }
+
+    /// Every way a path can fail to name a paragraph returns `None` rather than a
+    /// guess, because a caller that gets a guess navigates somewhere wrong and is
+    /// told nothing.
+    #[test]
+    fn an_unresolvable_path_is_none_and_never_a_guess() {
+        let live = open_document(&text(&["alpha", "beta"])).expect("opens");
+        let body = serde_json::to_string(&Story::Body).expect("serializes");
+        let at = |index: u32| {
+            serde_json::to_string(&vec![PathSegment::Block { index }]).expect("serializes")
+        };
+
+        assert!(
+            live.node_at_story_path(&body, &at(0)).is_some(),
+            "the control: a real block resolves, so the Nones below mean something"
+        );
+        assert_eq!(
+            live.node_at_story_path(&body, &at(99)),
+            None,
+            "past the end of the sibling list"
+        );
+        assert_eq!(
+            live.node_at_story_path(&body, "[]"),
+            None,
+            "an empty path names no block"
+        );
+        assert_eq!(
+            live.node_at_story_path(
+                &body,
+                &serde_json::to_string(&vec![PathSegment::Row { index: 0 }]).expect("serializes"),
+            ),
+            None,
+            "a path that ends at a row names no block — `block_at_path` refuses it and so does this"
+        );
+        assert_eq!(
+            live.node_at_story_path(
+                &serde_json::to_string(&Story::Footnote { index: 7 }).expect("serializes"),
+                &at(0),
+            ),
+            None,
+            "a story this document does not have"
+        );
+        assert_eq!(
+            live.node_at_story_path("not json", &at(0)),
+            None,
+            "an unreadable story argument is an answer, not a throw"
+        );
+        assert_eq!(
+            live.node_at_story_path(&body, "not json"),
+            None,
+            "an unreadable path argument likewise"
+        );
+    }
+
+    /// The unified diff's CONTEXT: the unchanged blocks around a change, read from
+    /// the side they belong to, after the comparison has completed.
+    ///
+    /// Two things are asserted and the second is the one that used to be false:
+    /// the sides SURVIVE completion, so a reader can expand context without a
+    /// re-parse. `step_inner` used to null both out on `Progress::Complete`.
+    #[test]
+    fn context_blocks_are_readable_from_both_sides_after_the_diff_completes() {
+        let older = text(&["alpha", "beta", "gamma"]);
+        let newer = text(&["alpha", "beta edited", "gamma"]);
+        let mut job = begin_version_diff(older, newer);
+        for _ in 0..10_000 {
+            if job.step_inner(4_000).expect("no step fails") == PHASE_COMPLETE {
+                break;
+            }
+        }
+        assert!(job.result().is_some(), "the comparison completed");
+
+        let body = serde_json::to_string(&Story::Body).expect("serializes");
+        let at = |index: u32| {
+            serde_json::to_string(&vec![PathSegment::Block { index }]).expect("serializes")
+        };
+        // The context GitHub would show above and below the change, which is what
+        // a reader expands into.
+        assert_eq!(
+            job.block_text_at("right", &body, &at(0)).as_deref(),
+            Some("alpha"),
+            "the block above the change, on the newer side"
+        );
+        assert_eq!(
+            job.block_text_at("right", &body, &at(1)).as_deref(),
+            Some("beta edited"),
+            "the changed block itself, on the newer side"
+        );
+        assert_eq!(
+            job.block_text_at("left", &body, &at(1)).as_deref(),
+            Some("beta"),
+            "and the older side still reads as it was — two sides, not one"
+        );
+        assert_eq!(
+            job.block_text_at("right", &body, &at(3)),
+            None,
+            "past the last sibling, which is how an expand control learns the document stops"
+        );
+        assert_eq!(
+            job.block_text_at("middle", &body, &at(0)),
+            None,
+            "a side that is not left or right"
+        );
+    }
+
     /// The facade produces the same sidecar whether it is driven in slices or run
     /// in one call. If it did not, the budgeted path would be a second
     /// implementation of the diff with its own bugs.
