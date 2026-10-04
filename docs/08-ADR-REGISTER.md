@@ -3493,10 +3493,13 @@ stays where `compare_documents.mjs` already records it: blocked on COOP/COEP hea
 Pages cannot send.
 ## ADR-062 — A control's surface follows what the control is: command, preference, or selection property
 
-- **Status:** **Proposed**, 2026-10-04. The rule and its three corollaries are stated here; the
-  four defect classes it predicts are inventoried in `159`. **Nothing is implemented yet** — both
-  fixes it prescribes are behaviour changes to shipped controls and wait on this ADR being
-  accepted. Corollary C1's fix is the smallest and is expected first.
+- **Status:** **Proposed**, 2026-10-04, with **corollary C1 implemented** in the same branch —
+  `webapp/src/surface_reveal.mjs`, the measurement-unit reveal, and one `showSettings()`. C1 was
+  taken first because its fix is fully determined by the rule, is the smallest, and repairs a
+  reachable defect the owner reported. **C2 and C3 are not implemented**: collapsing two ribbon
+  toggles into a command plus labelled switches, and five contextual bars into one, are behaviour
+  changes to shipped controls and wait on this ADR being accepted. The four defect classes are
+  inventoried in `159`.
 - **Date:** 2026-10-04.
 - **Closes:** nothing yet. **Occasioned by** two owner defect reports: the Measurement-unit row
   opening Settings with no measurement parameter visible, and spell check and grammar check
@@ -3578,8 +3581,13 @@ through the same seam. A second implementation of one rule is evidence the abstr
 ### What this rule predicts
 
 - The measurement row stays where it is — a preference, correctly homed in Settings, with a
-  ribbon pointer — and the pointer is fixed to actually reveal (C1). This needs no `main.js`
-  edit: `showSettingsPane` is already exported from `file_pane.mjs:242`.
+  pointer to it — and the pointer is fixed to actually reveal (C1). **Done in this branch.**
+  The reveal became its own module because inlining it broke `main.js`'s line ratchet, which
+  is the ratchet buying a seam rather than just a smaller file: with the frame scheduler
+  injected, the ordering guarantee is checkable in node. Predicting the fix was not enough on
+  its own, though — the rule also predicted a pane-guard defect that **turned out not to be
+  reachable**, and only running the guard found that out (`159` §3.2). A rule that predicts
+  well still does not excuse a guard from being driven.
 - Spell check and grammar check stop being icon-only ribbon toggles. The labelled switches
   already in Settings are their home; a checkmarked menu row is the fast path; and the
   `spellcheck` icon goes to the one thing that is genuinely a command — running a proofing pass.
@@ -3612,10 +3620,15 @@ through the same seam. A second implementation of one rule is evidence the abstr
 
 Three guards, each to be driven red before it is trusted (`SKILL` §4):
 
-1. **A reveal reveals** — after invoking a deferring control, the named control is visible in its
-   scroll container and is `document.activeElement`. Asserted in both states, File page closed
-   and open, because those are two different bugs and one state would miss the other. This
-   asserts the guarantee, not the rAF or the pane branch.
+1. **A reveal reveals** — **built and driven red.** After invoking a deferring control, the named
+   control is visible and is `document.activeElement`. Two layers: the ordering property in node
+   with the frame scheduler injected (`surface_reveal.test.mjs`, which creates the condition by
+   queueing a microtask that steals focus), and the guarantee in a browser over both reader
+   routes (`e2e/file-page-panes.spec.mjs`). Mutations: a synchronous callback fails the first
+   with `+ "the surface's own initial focus"`; restoring `…?.focus()` fails the second with
+   `Expected: focused / Received: inactive` — the reported defect, reproduced. It asserts the
+   guarantee, not the frame or the pane branch, which is why it survived §3.2's withdrawal
+   intact.
 2. **No ligature serves two commands** — built on the runtime registry rather than a regex over
    `editor.html`, because a regex sees 38 of 165 icon buttons. Written to permit one ligature on
    many surfaces for one command. It lands with the fixes, since it must report the three known

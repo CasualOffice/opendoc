@@ -15,17 +15,24 @@ resting on unsourced recollection is **fenced and labelled as such** (§7.3).
 **Occasioned by:** two defect reports from the owner — the Measurement-unit row opening
 Settings with no measurement parameter in sight, and spell check and grammar check sharing
 one icon.
-**Implements nothing.** This document changes no behaviour. It records what the surfaces
-are, what decides which one a control belongs on, and the four classes where that decision
-was made by available space rather than by the kind of control. The fixes follow the rule,
-not this audit.
+**What the branch implements:** only §3's reveal — the smallest of the four classes, and
+the one whose fix the rule fully determines. `webapp/src/surface_reveal.mjs` plus a
+`showSettings()` consolidation, guarded by `tests/surface_reveal.test.mjs` (the ordering
+property, in node) and two cases in `tests/e2e/file-page-panes.spec.mjs` (the guarantee,
+in a browser). Classes B, C and D are **inventoried and not acted on**: each is a
+behaviour change to shipped controls and waits on ADR-062 being accepted.
+**One claim in this document was withdrawn after being tested** — §3.2 — and the
+correction is kept in place rather than deleted.
 
 > **What this concludes, before the evidence.**
 >
 > 1. **Both reported defects are real, and neither is the defect it looks like.** The
 >    measurement control exists and is correctly placed; what is broken is the *reveal* —
->    two independent bugs, a lost focus race and a missing pane guard, and the dead
->    `.focus()` call proves nobody ever saw it work. §3. The spell/grammar pair does not
+>    a focus the dialog overwrites one microtask later, so the `.focus()` call is **dead
+>    code that never had an observable effect**. Fixed, with the defect reproduced in a
+>    browser before and after. §3. (A second, pane-guard bug was claimed here and is
+>    **withdrawn**: running the guard disproved it. §3.2 keeps the correction in place.)
+>    The spell/grammar pair does not
 >    need a second icon: both are **as-you-type preferences wearing a command's clothes**,
 >    and the labelled switches they duplicate are already in Settings. §4.
 > 2. **The two proofing buttons are not merely similar — they are identical on screen.**
@@ -154,7 +161,30 @@ winning the race would not bring the section into view. **The `.focus()` call in
 `openChooser` is dead code** — it has never had an observable effect, which is the
 strongest evidence available that this path was never watched working.
 
-### 3.2 From the File page it would raise a half-dialog out of a pane
+### 3.2 A second, *latent* gap — corrected after the guard was driven
+
+> **This section originally claimed a second live bug. It is wrong, and the
+> correction is kept in place rather than quietly deleted.** The claim was that
+> `openChooser`, lacking the gear's pane guard, would raise a half-dialog out of the File
+> page. Writing the guard in §8.1 and running it disproved it: **every File row calls
+> `closeFilePage()` before `command.run()`** (`webapp/src/main.js:12255-12267` — "Every
+> File row returns to the document first… One rule, no exception list"), and so does the
+> palette (`:13053-13056`, whose comment records this very hazard being found and fixed
+> there). `view.measurementUnits` is offered only by `FILE_SURFACE`
+> (`command_taxonomy.mjs:121`) and the palette, so **no live route reaches `openChooser`
+> with the File page open**, and the half-dialog cannot occur on this command.
+>
+> What remains is real but latent: the hazard below is genuine, the gear does need its
+> guard, and a future route that runs these commands without closing the page would hit
+> it. So the consolidation in §3.3 is a **latent-case defence and a de-duplication, not
+> the fix for a reachable defect**. §3.1 was the reachable defect, and it was the whole of
+> it.
+>
+> It is recorded this way because `docs/99` §9 is about not publishing claims that
+> outrun their evidence, and because reasoning about a guard is not running one: this
+> section was plausible, cited real code, and was still wrong until the browser answered.
+
+The hazard the gear guards against, which is what made the claim plausible:
 
 `file_pane.mjs` **moves** `#settingsPanel` into the File page: `PANEL_PANES` maps
 `view.settings` to the `settingsPanel` element, and the module saves and restores its home
@@ -173,23 +203,33 @@ if (showSettingsPane()) {
 toggleSettings();
 ```
 
-`openChooser` has no such guard — and the File menu, where the measurement row lives, is
-exactly where the reader is when they click it. One path documents the hazard; the other
-ignores it.
+`openChooser` has no such guard. It turns out it does not need one today, for the reason
+in the correction above — but it is the only route to Settings expressing the rule by
+omission rather than by stating it, and three routes with three mechanisms is what C3 is
+about.
 
-### 3.3 What the rule prescribes
+### 3.3 What the rule prescribes, and what shipped
 
-Corollary C1, and it needs no `main.js` edit: `showSettingsPane` is already exported
-(`webapp/src/file_pane.mjs:242`), so the measurement module can own its own reveal —
+Corollary C1. The reveal is now `webapp/src/surface_reveal.mjs`, called from `openChooser`:
 
-- if `showSettingsPane()`, select the File-page pane and reveal there; otherwise open the
-  dialog;
-- focus in a **`requestAnimationFrame`**, not synchronously. Microtasks always drain
-  before the next animation frame, so one rAF is *guaranteed* to land after
-  `modal.mjs`'s queued `focusFirst`. This is an ordering guarantee, not a race won by
-  being later;
-- `scrollIntoView` the enclosing `.settings-section`, because `preventScroll: true` means
-  focus alone reveals nothing.
+- **focus on a `requestAnimationFrame`, not synchronously.** Microtasks always drain
+  before the next animation frame, so the frame callback is *guaranteed* to land after
+  `modal.mjs`'s queued `focusFirst` — an ordering guarantee, not a race won by being
+  later, and it holds for any number of queued microtasks;
+- **`scrollIntoView` the enclosing `.settings-section`**, because `preventScroll: true`
+  means focus alone reveals nothing — a control can be focused and still below the fold
+  in a scrolling `.settings-body`. The section rather than the control, so the reader sees
+  the **label** too;
+- and **one `showSettings()`** for the routes that want Settings *open* rather than
+  toggled, so the pane check is stated once instead of being absent in two places. The
+  gear keeps its own body because it toggles, which is a real difference rather than a
+  second copy. As §3.2 records, this changes no reachable behaviour today.
+
+The extraction was not a matter of taste: putting the reveal inline took `main.js` over
+its line ratchet (16,206 against a 16,189 ceiling), and `module_seams.test.mjs` refused
+it. That is the ratchet working as designed — it bought a seam rather than just a smaller
+file, and the seam is testable in node because the frame scheduler is injected, which is
+how the ordering guarantee gets checked at all.
 
 **The class, not the case** (`SKILL`, *Fix the family*): every control that defers to a
 control on another surface has this shape. The reveal belongs in one helper, used by all
@@ -453,12 +493,25 @@ rather than a mechanism (`SKILL`, *Guards assert the guarantee*).
 
 ### 8.1 A reveal reveals
 
-For every control that defers to another surface — the measurement row first — assert the
-**guarantee**: after invoking it, the named control is visible within its scroll container
-and is `document.activeElement`. Run it twice, once with the File page closed and once
-open, because §3.2 is a different bug from §3.1 and a single-state test would miss it.
-Mutation proof: remove the rAF, and the focus assertion must fail; remove the
-`showSettingsPane` branch, and the File-page case must fail.
+**Built.** Two layers, because the two halves are answerable in different places.
+
+`webapp/tests/surface_reveal.test.mjs` holds the **ordering** property in node, with the
+frame scheduler injected: it queues a microtask that steals focus — the condition
+`modal.mjs` creates — and requires the reveal to win anyway. *Mutation: make the reveal
+run its callback synchronously, i.e. reintroduce the original bug, and it fails with
+`+ "the surface's own initial focus" / - 'the control that was asked for'`. Separately,
+remove the `scrollIntoView` and both scroll assertions fail.* Three of its four tests are
+proven failable; the fourth is a null-tolerance check.
+
+`webapp/tests/e2e/file-page-panes.spec.mjs` holds the **guarantee** in a browser, over
+both routes a reader has (the File page row and the palette): the chooser is visible, is
+focused, and is in the viewport. *Mutation: restore `…?.focus()` in place of the reveal and
+both cases fail with `Expected: focused / Received: inactive`* — which is the owner's
+report, reproduced, and independent confirmation that the original call never took effect.
+
+Running it is also what **withdrew §3.2**: the spec was written asserting a pane and the
+assertion failed, because every File row and the palette close the page before running a
+command. The guard corrected the audit rather than the other way round.
 
 ### 8.2 No ligature serves two commands
 
