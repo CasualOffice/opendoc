@@ -771,3 +771,206 @@ fn a_zip_directory_entry_is_not_retained_as_a_part() {
         retained.parts.keys().collect::<Vec<_>>()
     );
 }
+
+/// A table survives a save: the frame, the grid, the row heights, the cells'
+/// properties and BOTH merge encodings.
+///
+/// The failure this is really about is the element NAME. A table's frame is a
+/// `GroupChild::Shape` in the model, so a writer that followed the enum would
+/// write a `p:sp` — the deck would still open, every geometry guard would still
+/// pass, and every table in it would be gone. So the first assertion is that the
+/// reopened deck has a table at all, and the rest is that it is the same one.
+#[test]
+fn a_written_deck_keeps_its_table_its_merges_and_its_style_guid() {
+    let (first, second) = round_trip();
+
+    let table_of = |imported: &casual_pres_import::ImportedPresentation| {
+        imported
+            .presentation
+            .slides()
+            .get(2)
+            .and_then(|slide| {
+                slide
+                    .shapes
+                    .children
+                    .iter()
+                    .find_map(|node| node.table.clone())
+            })
+            .expect("slide 10 carries a table")
+    };
+    let before = table_of(&first);
+    let after = table_of(&second);
+
+    // One comparison, not twenty: the model is `Eq`, so the whole table —
+    // properties, grid, every row height, every cell's merge roles, margins,
+    // anchor, fill, borders and text — is one assertion that cannot be satisfied
+    // by a writer that got any field wrong.
+    assert_eq!(
+        before.properties, after.properties,
+        "a:tblPr's six flags, @rtl and the braced style GUID all survive"
+    );
+    assert_eq!(
+        before.grid, after.grid,
+        "every a:gridCol@w survives, in order"
+    );
+    assert_eq!(
+        before.rows.len(),
+        after.rows.len(),
+        "every a:tr is written back"
+    );
+    for (index, (before_row, after_row)) in before.rows.iter().zip(&after.rows).enumerate() {
+        assert_eq!(
+            before_row.height_emu, after_row.height_emu,
+            "row {index} keeps its a:tr@h"
+        );
+        let before_roles: Vec<_> = before_row
+            .cells
+            .iter()
+            .map(|cell| (cell.horizontal, cell.vertical))
+            .collect();
+        let after_roles: Vec<_> = after_row
+            .cells
+            .iter()
+            .map(|cell| (cell.horizontal, cell.vertical))
+            .collect();
+        assert_eq!(
+            before_roles, after_roles,
+            "row {index}: an origin writes its @gridSpan/@rowSpan and a covered \
+             cell writes its @hMerge/@vMerge — the covered cell must still be \
+             WRITTEN, or the row is a column short and the next cell shifts"
+        );
+        let before_text: Vec<String> = before_row
+            .cells
+            .iter()
+            .map(|cell| {
+                cell.text
+                    .as_ref()
+                    .map(casual_pres_model::TextBody::plain_text)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let after_text: Vec<String> = after_row
+            .cells
+            .iter()
+            .map(|cell| {
+                cell.text
+                    .as_ref()
+                    .map(casual_pres_model::TextBody::plain_text)
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(
+            before_text, after_text,
+            "row {index}: each cell's a:txBody comes back on the cell it was on"
+        );
+    }
+
+    // The origin cell's `a:tcPr`, field by field, because this is where an edge
+    // written under the wrong tag name would land.
+    let before_cell = &before.rows[0].cells[0].properties;
+    let after_cell = &after.rows[0].cells[0].properties;
+    assert_eq!(
+        (
+            before_cell.margin_left_emu,
+            before_cell.margin_right_emu,
+            before_cell.margin_top_emu,
+            before_cell.margin_bottom_emu,
+            before_cell.anchor,
+        ),
+        (
+            after_cell.margin_left_emu,
+            after_cell.margin_right_emu,
+            after_cell.margin_top_emu,
+            after_cell.margin_bottom_emu,
+            after_cell.anchor,
+        ),
+        "the four EMU margins and the anchor survive"
+    );
+    assert_eq!(
+        before_cell.fill, after_cell.fill,
+        "the cell's a:solidFill survives"
+    );
+    assert_eq!(
+        (
+            &before_cell.border_left,
+            &before_cell.border_right,
+            &before_cell.border_top,
+            &before_cell.border_bottom,
+        ),
+        (
+            &after_cell.border_left,
+            &after_cell.border_right,
+            &after_cell.border_top,
+            &after_cell.border_bottom,
+        ),
+        "a:lnL and a:lnB come back on the SAME edges, and a:lnR/a:lnT stay \
+         absent: the fixture's two edges have different widths and different \
+         colours, so a tag written in the wrong slot cannot pass"
+    );
+}
+
+/// `ppt/tableStyles.xml` is written, declared and related, so the GUID a table
+/// states still joins after a save.
+///
+/// Three things have to agree for that: the part exists, `[Content_Types].xml`
+/// declares its type, and the presentation part's relationships carry a
+/// `tableStyles` entry — the part is reached by TYPE, so a part written without
+/// the relationship is a part no reader finds.
+#[test]
+fn a_written_deck_relates_and_declares_its_table_styles_part() {
+    let (first, second) = round_trip();
+
+    let before = first.presentation.table_styles();
+    let after = second.presentation.table_styles();
+    assert_eq!(
+        before.default_style_id, after.default_style_id,
+        "a:tblStyleLst@def survives, braces included"
+    );
+    let ids: Vec<&str> = after.styles.iter().map(|style| style.id.as_str()).collect();
+    let expected: Vec<&str> = before
+        .styles
+        .iter()
+        .map(|style| style.id.as_str())
+        .collect();
+    assert_eq!(
+        ids, expected,
+        "every a:tblStyle entry comes back, in order — a self-closing entry must \
+         not swallow the next one on the way back in either"
+    );
+    assert!(
+        !after.styles.is_empty(),
+        "the fixture carries two entries, so an empty list here would mean the \
+         part was written but not read back"
+    );
+
+    // And the table still resolves to the entry the file names, which is the
+    // whole point of writing the part at all.
+    let table = second
+        .presentation
+        .slides()
+        .get(2)
+        .and_then(|slide| {
+            slide
+                .shapes
+                .children
+                .iter()
+                .find_map(|node| node.table.clone())
+        })
+        .expect("the reopened deck carries the table");
+    let guid = table
+        .properties
+        .style_id
+        .as_deref()
+        .expect("the table states a style GUID");
+    assert_eq!(
+        after.style(guid).and_then(|style| style.name.as_deref()),
+        Some("Medium Style 2 - Accent 1"),
+        "the GUID still joins to the entry the FILE names after a round trip, and \
+         not to the part's @def — which names a different style on purpose"
+    );
+    assert_ne!(
+        Some(guid),
+        after.default_style_id.as_deref(),
+        "the fixture keeps the two disagreeing, so resolving through @def cannot pass"
+    );
+}

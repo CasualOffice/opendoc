@@ -103,6 +103,7 @@ mod media;
 mod opc;
 mod parts;
 mod shapes;
+mod table;
 mod text;
 mod theme;
 mod xml;

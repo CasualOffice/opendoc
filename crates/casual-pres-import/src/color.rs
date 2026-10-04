@@ -351,13 +351,29 @@ pub(crate) fn read_line(
     cursor: &mut Cursor<'_>,
     reporter: &mut Reporter,
     element: &BytesStart<'_>,
+    empty: bool,
     resolver: Resolver,
 ) -> Result<Option<ShapeStroke>, ImportError> {
     let part = cursor.part().to_owned();
     // `a:ln@w` is in EMU, like every other DrawingML measure here. It is NOT in
     // points or eighths of a point, which is the conversion a reader coming from
     // VML gets wrong.
+    //
+    // Read BEFORE the `empty` check, and that ordering is the whole point:
+    // `<a:ln w="12700"/>` and `<a:lnB w="12700"/>` are both legal and both state
+    // their entire meaning in `@w`. The caller used to answer `None` for a
+    // self-closing outline and the width was discarded — the same shape of bug
+    // `xml::enter` exists for, in the one reader a table's four borders also use.
     let width_emu = integer_attribute(element, b"w", &part)?.unwrap_or(0);
+    if empty {
+        // No colour child, so there is nothing to stroke with. A stated width
+        // with no resolvable colour is the `degraded` case the tail of this
+        // function already reports, reached through the same path.
+        if width_emu != 0 {
+            reporter.degraded(&part, b"ln");
+        }
+        return Ok(None);
+    }
     let mut color: Option<Rgba> = None;
     let mut dash: Option<DashStyle> = None;
     let mut head_end: Option<LineEnd> = None;

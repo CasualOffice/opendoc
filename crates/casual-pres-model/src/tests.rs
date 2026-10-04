@@ -1915,3 +1915,349 @@ fn a_deck_resolves_its_palette_under_the_slide_effective_map() {
     assert_eq!(parsed, deck);
     assert_eq!(parsed.color_mapping().slides.len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+/// A grid of `widths`, in EMU.
+fn grid(widths: &[i64]) -> Vec<crate::TableGridColumn> {
+    widths
+        .iter()
+        .map(|width_emu| crate::TableGridColumn {
+            width_emu: *width_emu,
+        })
+        .collect()
+}
+
+/// A row whose cells carry the merge roles in `roles`, with ids from `first`.
+///
+/// Written out rather than defaulted: the whole point of these fixtures is the
+/// roles, so a helper that filled them in would be testing the helper.
+fn row(
+    node: NodeId,
+    first: u64,
+    roles: &[(crate::CellMerge, crate::CellMerge)],
+) -> crate::TableRow {
+    crate::TableRow {
+        id: node,
+        height_emu: 370_840,
+        cells: roles
+            .iter()
+            .enumerate()
+            .map(|(index, (horizontal, vertical))| crate::TableCell {
+                id: id(first + index as u64),
+                horizontal: *horizontal,
+                vertical: *vertical,
+                properties: crate::TableCellProperties::default(),
+                text: None,
+            })
+            .collect(),
+    }
+}
+
+/// A two-by-two table with no merges at all, as the baseline every merge fixture
+/// perturbs by exactly one cell.
+fn plain_table() -> crate::SlideTable {
+    use crate::CellMerge::None as Un;
+    crate::SlideTable {
+        id: id(100),
+        properties: crate::TableProperties::default(),
+        grid: grid(&[1_828_800, 2_743_200]),
+        rows: vec![
+            row(id(101), 110, &[(Un, Un), (Un, Un)]),
+            row(id(102), 120, &[(Un, Un), (Un, Un)]),
+        ],
+    }
+}
+
+#[test]
+fn an_unmerged_table_validates_and_derives_its_width_from_its_grid() {
+    let table = plain_table();
+    table.validate().expect("a plain two-by-two table is valid");
+    assert_eq!(
+        table.width_emu(),
+        4_572_000,
+        "an a:tbl states no width; the grid's sum IS the width"
+    );
+}
+
+/// `@gridSpan`/`@rowSpan` and `@hMerge`/`@vMerge` are one enum per axis, so a cell
+/// cannot hold both — and a well-formed merge tiles its line exactly.
+#[test]
+fn a_well_formed_merge_on_either_axis_validates() {
+    use crate::CellMerge::{Continuation, None as Un, Origin};
+    let mut table = plain_table();
+    // Row 0 is one merged cell across both columns; row 1 is untouched.
+    table.rows[0] = row(id(101), 110, &[(Origin(2), Un), (Continuation, Un)]);
+    table
+        .validate()
+        .expect("an origin plus its one continuation tiles a two-column row");
+
+    let mut table = plain_table();
+    // Column 0 is one merged cell down both rows.
+    table.rows[0] = row(id(101), 110, &[(Un, Origin(2)), (Un, Un)]);
+    table.rows[1] = row(id(102), 120, &[(Un, Continuation), (Un, Un)]);
+    table
+        .validate()
+        .expect("a rowSpan plus its one vMerge tiles a two-row column");
+}
+
+/// A continuation with nothing covering it is refused, on the axis it is on.
+///
+/// Mutation that drove this red: deleting the `if owed == 0` arm from
+/// `validate_merge_run`, which makes an orphan `@hMerge` validate — and an orphan
+/// continuation renders as a cell that paints nothing with nothing beside it.
+#[test]
+fn a_continuation_with_no_origin_is_refused_on_its_own_axis() {
+    use crate::CellMerge::{Continuation, None as Un};
+    let mut table = plain_table();
+    table.rows[0] = row(id(101), 110, &[(Continuation, Un), (Un, Un)]);
+    assert_eq!(
+        table.validate().expect_err("an orphan hMerge"),
+        PresentationError::UnanchoredCellMerge {
+            cell: id(110),
+            axis: crate::TableAxis::Column,
+        },
+        "the COLUMN axis, because @hMerge is horizontal; naming the row axis here \
+         would send a reader to the wrong half of the file"
+    );
+
+    let mut table = plain_table();
+    table.rows[1] = row(id(102), 120, &[(Un, Continuation), (Un, Un)]);
+    assert_eq!(
+        table.validate().expect_err("an orphan vMerge"),
+        PresentationError::UnanchoredCellMerge {
+            cell: id(120),
+            axis: crate::TableAxis::Row,
+        },
+        "and the ROW axis for @vMerge"
+    );
+}
+
+/// An origin claiming more than its line holds is refused.
+///
+/// Mutation that drove this red: deleting the trailing `if owed != 0` check in
+/// `validate_merge_run`. A `@gridSpan="2"` in the last column then validates, and
+/// the merged cell's box runs past the table's own right edge.
+#[test]
+fn an_origin_claiming_past_the_edge_of_its_line_is_refused() {
+    use crate::CellMerge::{None as Un, Origin};
+    let mut table = plain_table();
+    table.rows[0] = row(id(101), 110, &[(Un, Un), (Origin(2), Un)]);
+    assert_eq!(
+        table.validate().expect_err("a span past the last column"),
+        PresentationError::OverlappingCellMerge {
+            cell: id(111),
+            axis: crate::TableAxis::Column,
+        }
+    );
+}
+
+/// A vertical merge is checked COLUMN-major, which a row-major walk cannot do.
+///
+/// This is the guard that proves the second pass exists. A `@rowSpan="2"` on row 0
+/// is answered by a `@vMerge` on row 1 in the SAME column index, so a validator
+/// that only ever walked rows left-to-right would accept a `rowSpan` with nothing
+/// under it — and that renders as a cell whose box covers the row below while that
+/// row's own cell is still painted inside it.
+///
+/// Mutation that drove this red: deleting the `for column in 0..self.grid.len()`
+/// loop from `SlideTable::validate`, which leaves only the row-major pass.
+#[test]
+fn a_row_span_with_no_continuation_under_it_is_refused() {
+    use crate::CellMerge::{None as Un, Origin};
+    let mut table = plain_table();
+    // Row 0 column 0 claims two rows; row 1 column 0 is a PLAIN cell, which is the
+    // overlap. Every row is individually well formed horizontally, so a row-major
+    // validator sees nothing wrong.
+    table.rows[0] = row(id(101), 110, &[(Un, Origin(2)), (Un, Un)]);
+    // Every row here is individually well formed on the HORIZONTAL axis — each
+    // holds two plain cells — so the row-major pass finds nothing. Only the
+    // column-major pass can see that column 0 has an origin claiming two rows
+    // with a plain cell in the second.
+    assert_eq!(
+        table
+            .validate()
+            .expect_err("a rowSpan with a plain cell under it"),
+        PresentationError::OverlappingCellMerge {
+            cell: id(120),
+            axis: crate::TableAxis::Row,
+        },
+        "the cell the overlap was detected AT, which is the one in the row below"
+    );
+}
+
+/// A span of one is not a merge.
+///
+/// Mutation that drove this red: relaxing the `span < 2` check to `span < 1`.
+/// `@gridSpan="1"` is the schema default, so admitting it would give one fact two
+/// models — and `CellMerge::Origin(1)` would then compete with `CellMerge::None`
+/// everywhere either is matched.
+#[test]
+fn a_merge_origin_spanning_one_cell_is_refused() {
+    use crate::CellMerge::{None as Un, Origin};
+    let mut table = plain_table();
+    table.rows[0] = row(id(101), 110, &[(Origin(1), Un), (Un, Un)]);
+    assert_eq!(
+        table.validate().expect_err("a one-cell span"),
+        PresentationError::CellSpanOutOfDomain {
+            cell: id(110),
+            span: 1,
+        }
+    );
+}
+
+/// A row must hold one cell per grid column, continuations included.
+///
+/// Mutation that drove this red: changing the check to `>` so a SHORT row passes.
+/// A short row shifts every cell after the gap into the wrong grid column, which
+/// is a table that renders with its content in the wrong places rather than one
+/// that renders broken.
+#[test]
+fn a_row_whose_cell_count_does_not_match_the_grid_is_refused() {
+    use crate::CellMerge::None as Un;
+    let mut table = plain_table();
+    table.rows[1] = row(id(102), 120, &[(Un, Un)]);
+    assert_eq!(
+        table.validate().expect_err("a row one cell short"),
+        PresentationError::TableRowWidthMismatch {
+            table: id(100),
+            row: id(102),
+            cells: 1,
+            columns: 2,
+        }
+    );
+}
+
+#[test]
+fn a_table_with_no_grid_columns_is_refused() {
+    let mut table = plain_table();
+    table.grid.clear();
+    assert_eq!(
+        table.validate().expect_err("no grid"),
+        PresentationError::EmptyTableGrid(id(100)),
+        "an a:tbl with no a:gridCol has no geometry at all"
+    );
+}
+
+#[test]
+fn a_negative_table_measure_is_refused() {
+    let mut table = plain_table();
+    table.grid[1].width_emu = -1;
+    assert_eq!(
+        table.validate().expect_err("a negative a:gridCol@w"),
+        PresentationError::TableMeasureOutOfDomain(-1)
+    );
+    let mut table = plain_table();
+    table.rows[0].height_emu = -2;
+    assert_eq!(
+        table.validate().expect_err("a negative a:tr@h"),
+        PresentationError::TableMeasureOutOfDomain(-2)
+    );
+}
+
+/// A cell id colliding with a shape id is caught by the deck's ONE uniqueness
+/// walk.
+///
+/// Mutation that drove this red: deleting the `child.table` arm from
+/// `ShapeTree::visit_node_ids`. The collision then goes undetected, and two
+/// different things answer to one id — which is what makes a hit test resolve to
+/// the wrong object.
+#[test]
+fn a_table_cell_id_colliding_with_a_shape_id_is_refused() {
+    let mut presentation = deck();
+    let mut table = plain_table();
+    // `id(32)` is the slide's own shape in `deck()`, so this cell answers to a
+    // name something else already has.
+    table.rows[0].cells[0].id = id(32);
+    presentation.slides_mut()[0]
+        .shapes
+        .children
+        .push(SlideNode::new(shape(id(40))).with_table(table));
+    assert_eq!(
+        presentation.validate().expect_err("a colliding cell id"),
+        PresentationError::DuplicateNodeId(id(32))
+    );
+}
+
+/// Two `a:tblStyle` entries with one GUID are refused.
+///
+/// Mutation that drove this red: deleting the `TableStyles::validate` call from
+/// `Presentation::validate`. A duplicate is a wrong ANSWER rather than a missing
+/// one — `TableStyles::style` takes the first match, so the second entry silently
+/// never applies and a table wears the wrong design with nothing reporting it.
+#[test]
+fn two_table_styles_with_the_same_guid_are_refused() {
+    const GUID: &str = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
+    let styles = crate::TableStyles {
+        default_style_id: Some(GUID.to_owned()),
+        styles: vec![
+            crate::TableStyle {
+                id: GUID.to_owned(),
+                name: Some("First".to_owned()),
+            },
+            crate::TableStyle {
+                id: GUID.to_owned(),
+                name: Some("Second".to_owned()),
+            },
+        ],
+    };
+    assert_eq!(
+        deck()
+            .with_table_styles(styles)
+            .expect_err("two entries with one id"),
+        PresentationError::DuplicateTableStyleId(GUID.to_owned())
+    );
+}
+
+/// A style GUID is matched EXACTLY — braces and case included.
+///
+/// `{5C22544A-…}` is one token. A reader that trimmed the braces, or compared
+/// case-insensitively, would join a table to a style the file does not name — and
+/// a `tableStyles.xml` holding two entries whose GUIDs differ only in case is
+/// legal.
+#[test]
+fn a_table_style_guid_is_matched_exactly() {
+    const BRACED: &str = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
+    let styles = crate::TableStyles {
+        default_style_id: None,
+        styles: vec![crate::TableStyle {
+            id: BRACED.to_owned(),
+            name: Some("Medium Style 2 - Accent 1".to_owned()),
+        }],
+    };
+    assert_eq!(
+        styles.style(BRACED).and_then(|style| style.name.as_deref()),
+        Some("Medium Style 2 - Accent 1")
+    );
+    assert!(
+        styles
+            .style("5C22544A-7EE6-4342-B048-85BDC9FD1C3A")
+            .is_none(),
+        "the unbraced spelling is a DIFFERENT token"
+    );
+    assert!(
+        styles
+            .style("{5c22544a-7ee6-4342-b048-85bdc9fd1c3a}")
+            .is_none(),
+        "and so is the lowercase one"
+    );
+}
+
+/// `CellMerge::units` answers what each role occupies, which is what the layout
+/// arithmetic sums.
+#[test]
+fn a_cell_merge_role_knows_how_many_grid_units_it_owns() {
+    use crate::CellMerge;
+    assert_eq!(
+        (
+            CellMerge::None.units(),
+            CellMerge::Origin(3).units(),
+            CellMerge::Continuation.units(),
+        ),
+        (1, 3, 0),
+        "a continuation owns NOTHING, which is the fact that keeps a covered \
+         cell's width out of the sum"
+    );
+}

@@ -301,7 +301,18 @@ pub(crate) fn character_properties_xml(tag: &str, properties: &TextCharacterProp
 
 /// A shape's `a:txBody`.
 pub(crate) fn text_body_xml(body: &TextBody) -> String {
-    let mut xml = String::from("<p:txBody>");
+    text_body_xml_named(body, "p:txBody")
+}
+
+/// The same `CT_TextBody` under a different tag name.
+///
+/// A shape's text body is `p:txBody` and a table cell's is `a:txBody` — the same
+/// element type, in a different namespace, because one is PresentationML's child
+/// and the other DrawingML's. One writer for both rather than two: the body
+/// properties, the nine-level list style and every paragraph are identical, and a
+/// second copy would diverge at the first property either side gained.
+pub(crate) fn text_body_xml_named(body: &TextBody, tag: &str) -> String {
+    let mut xml = format!("<{tag}>");
     xml.push_str(&body_properties_xml(body));
     // `a:lstStyle` is required by `CT_TextBody` and is written empty when the
     // shape states no level, which is what every real file does.
@@ -314,7 +325,7 @@ pub(crate) fn text_body_xml(body: &TextBody) -> String {
     for paragraph in &body.paragraphs {
         xml.push_str(&paragraph_xml(paragraph));
     }
-    xml.push_str("</p:txBody>");
+    xml.push_str(&format!("</{tag}>"));
     xml
 }
 

@@ -36,6 +36,18 @@ pub struct ImportLimits {
     pub max_runs_per_paragraph: usize,
     /// Maximum UTF-8 bytes admitted from one `a:t`.
     pub max_run_bytes: usize,
+    /// Maximum `a:tr` rows admitted from one `a:tbl`.
+    ///
+    /// Separate from [`Self::max_shapes_per_tree`] because a table is not a
+    /// shape tree: one `p:graphicFrame` counts as one shape there while
+    /// carrying rows x columns cells, each with its own `a:txBody`. So the
+    /// shape bound does not bound a table at all, and a 2 KB part can declare a
+    /// grid with a hundred million cells.
+    pub max_table_rows: usize,
+    /// Maximum `a:gridCol` columns admitted from one `a:tblGrid`.
+    pub max_table_columns: usize,
+    /// Maximum `a:tblStyle` entries admitted from `tableStyles.xml`.
+    pub max_table_styles: usize,
 }
 
 impl ImportLimits {
@@ -57,6 +69,14 @@ impl ImportLimits {
     pub const HARD_MAX_RUNS_PER_PARAGRAPH: usize = 20_000;
     /// Hard maximum bytes per text run.
     pub const HARD_MAX_RUN_BYTES: usize = 1_000_000;
+    /// Hard maximum rows per table — `casual_pres_model::MAX_TABLE_ROWS`, so the
+    /// importer cannot admit a table the model would then refuse.
+    pub const HARD_MAX_TABLE_ROWS: usize = casual_pres_model::MAX_TABLE_ROWS;
+    /// Hard maximum grid columns per table —
+    /// `casual_pres_model::MAX_TABLE_GRID_COLUMNS`, for the same reason.
+    pub const HARD_MAX_TABLE_COLUMNS: usize = casual_pres_model::MAX_TABLE_GRID_COLUMNS;
+    /// Hard maximum `a:tblStyle` entries.
+    pub const HARD_MAX_TABLE_STYLES: usize = 10_000;
 
     /// Clamps every field to its hard ceiling.
     ///
@@ -91,6 +111,9 @@ impl ImportLimits {
                 Self::HARD_MAX_RUNS_PER_PARAGRAPH,
             ),
             max_run_bytes: min_usize(self.max_run_bytes, Self::HARD_MAX_RUN_BYTES),
+            max_table_rows: min_usize(self.max_table_rows, Self::HARD_MAX_TABLE_ROWS),
+            max_table_columns: min_usize(self.max_table_columns, Self::HARD_MAX_TABLE_COLUMNS),
+            max_table_styles: min_usize(self.max_table_styles, Self::HARD_MAX_TABLE_STYLES),
         }
     }
 }
@@ -107,6 +130,12 @@ impl Default for ImportLimits {
             max_paragraphs_per_body: 5_000,
             max_runs_per_paragraph: 5_000,
             max_run_bytes: 100_000,
+            // PowerPoint's own UI stops at 75 columns and has no row ceiling; a
+            // thousand rows is far past anything a slide shows and still refuses
+            // a part built to exhaust memory.
+            max_table_rows: 1_000,
+            max_table_columns: 256,
+            max_table_styles: 1_000,
         }
     }
 }

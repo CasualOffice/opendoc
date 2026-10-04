@@ -68,6 +68,7 @@ const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="
 <Override PartName="/ppt/slides/slide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
 <Override PartName="/ppt/slides/slide10.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
 <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+<Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>
 </Types>"#;
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -107,6 +108,7 @@ const PRESENTATION_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalo
 <Relationship Id="rIdSlideTwo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>
 <Relationship Id="rIdMaster" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>
 <Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
+<Relationship Id="rIdTableStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>
 </Relationships>"#;
 
 /// `ppt/slideMasters/slideMaster1.xml`.
@@ -340,9 +342,39 @@ const SLIDE_TWO_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone=
 /// shape, and an unknown preset.
 ///
 /// This is the slide whose purpose is the loss report: a `a:gradFill`, a
-/// `a:custGeom`, a preset (`wedgeRoundRectCallout`) no typed primitive covers,
-/// and a `p:graphicFrame` holding a table. Each must be *reported*, and the
-/// slide must still import.
+/// `a:custGeom` and a preset (`wedgeRoundRectCallout`) no typed primitive
+/// covers. Each must be *reported*, and the slide must still import.
+///
+/// It also carries the deck's two `p:graphicFrame`s, and they are a deliberate
+/// PAIR because one of them must be read and the other must not:
+///
+/// * a 3x3 TABLE whose every measurable value is distinct, so a transposition is
+///   visible rather than lucky. Three grid widths, three row heights and four
+///   cell margins are all different numbers; `a:lnL` and `a:lnB` are present with
+///   different widths AND different colours while `a:lnR`/`a:lnT` are absent, so
+///   a reader that filed the leading edge as the trailing one is caught; the six
+///   `a:tblPr` flags are `1 0 0 1 1 0`, so no pair of them can be swapped
+///   undetected; and `a:tableStyleId` names the SECOND `tableStyles.xml` entry
+///   rather than the part's `@def` or its first entry, so a reader that reached
+///   for either resolves the wrong style. The merges are stated in BOTH
+///   encodings, which is the whole point: `gridSpan="2"` on the origin with a
+///   self-closing `<a:tc hMerge="1"/>` after it, and `rowSpan="2"` on the origin
+///   with a `<a:tc vMerge="1">` under it that **carries its own text**. Every
+///   cell's text is a distinct string, so conflating a span with a continuation
+///   shows up as a repeated string.
+///
+///   That covered cell's text is deliberate, and it is the one value in this
+///   fixture a real PowerPoint file would not carry — PowerPoint writes an empty
+///   `<a:p/>` there. It says "Covered" instead because an EMPTY body makes the
+///   layout rule untestable: "a covered cell paints nothing" and "a covered cell
+///   had nothing to paint" produce the same display list, and the guard written
+///   against the empty form survived every mutation of the rule. With content in
+///   it the model must RETAIN the string, because a round trip writes it back,
+///   while layout must NOT paint it — two different assertions about one cell.
+/// * a CHART, which must still be reported — `docs/156` §8 leaves `c:chart` and
+///   SmartArt to `docs/155`/ADR-050. Its frame arrives (a positioned, unpainted
+///   box) and its payload does not, which is why the report must name `chart`
+///   and must NOT name `graphicFrame`.
 ///
 /// It also carries the deepest colour map in the deck: its own
 /// `a:overrideClrMapping` rebinds `accent2` to `a:accent5`, over the layout
@@ -392,10 +424,31 @@ const SLIDE_TEN: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <p:nvGraphicFramePr><p:cNvPr id="5" name="Table 4"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>
 <p:xfrm><a:off x="7315200" y="2286000"/><a:ext cx="3657600" cy="1371600"/></p:xfrm>
 <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
-<a:tbl><a:tblPr/><a:tblGrid><a:gridCol w="1828800"/><a:gridCol w="1828800"/></a:tblGrid>
-<a:tr h="370840"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Cell</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p/></a:txBody></a:tc></a:tr>
+<a:tbl>
+<a:tblPr firstRow="1" lastRow="0" firstCol="0" lastCol="1" bandRow="1" bandCol="0" rtl="0"><a:tableStyleId>{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}</a:tableStyleId></a:tblPr>
+<a:tblGrid><a:gridCol w="1828800"/><a:gridCol w="2743200"/><a:gridCol w="914400"/></a:tblGrid>
+<a:tr h="370840">
+<a:tc gridSpan="2"><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Spans two</a:t></a:r></a:p></a:txBody><a:tcPr marL="137160" marR="228600" marT="45720" marB="91440" anchor="ctr"><a:lnL w="12700"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:lnL><a:lnB w="38100"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:lnB><a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill></a:tcPr></a:tc>
+<a:tc hMerge="1"/>
+<a:tc rowSpan="2"><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Tall right</a:t></a:r></a:p></a:txBody></a:tc>
+</a:tr>
+<a:tr h="457200">
+<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Middle left</a:t></a:r></a:p></a:txBody></a:tc>
+<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Middle mid</a:t></a:r></a:p></a:txBody><a:tcPr marL="320040" anchor="b"/></a:tc>
+<a:tc vMerge="1"><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Covered</a:t></a:r></a:p></a:txBody></a:tc>
+</a:tr>
+<a:tr h="533400">
+<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom left</a:t></a:r></a:p></a:txBody></a:tc>
+<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom mid</a:t></a:r></a:p></a:txBody></a:tc>
+<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Bottom right</a:t></a:r></a:p></a:txBody><a:tcPr><a:lnTlToBr w="12700"><a:solidFill><a:srgbClr val="7F7F7F"/></a:solidFill></a:lnTlToBr></a:tcPr></a:tc>
+</a:tr>
 </a:tbl>
 </a:graphicData></a:graphic>
+</p:graphicFrame>
+<p:graphicFrame>
+<p:nvGraphicFramePr><p:cNvPr id="6" name="Chart 5"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+<p:xfrm><a:off x="914400" y="4572000"/><a:ext cx="2286000" cy="1143000"/></p:xfrm>
+<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdChart"/></a:graphicData></a:graphic>
 </p:graphicFrame>
 </p:spTree>
 </p:cSld>
@@ -407,6 +460,35 @@ const SLIDE_TEN_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone=
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rIdLayout" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout2.xml"/>
 </Relationships>"#;
+
+/// `ppt/tableStyles.xml`.
+///
+/// Three things here are adversarial on purpose, and each of them is a wrong
+/// answer a reader could give that the part makes visible:
+///
+/// * **`@def` names a DIFFERENT style from the one the table uses.** The default
+///   is "No Style, No Grid" and the table states Medium Style 2 - Accent 1, so a
+///   reader that resolved every table through `@def` would paint the wrong one
+///   and a reader that ignored `@def` would lose the deck's default.
+/// * **The entry the table names is SECOND.** A reader taking `styles[0]`, or the
+///   first entry whose GUID merely looks plausible, gets the other one.
+/// * **The first entry is SELF-CLOSING, and it has a following sibling.** So a
+///   reader that calls `children()` on it consumes the second entry's events as
+///   its own and the deck ends up with ONE style — which is the exact failure
+///   `xml::enter` exists to prevent, placed where it can actually happen.
+///
+/// The second entry's `a:wholeTbl` and `a:band1H` are populated and its
+/// `a:firstCol` is self-closed, so the report must name the first two and must
+/// not name the third: a part style that states nothing loses nothing.
+const TABLE_STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{2D5ABB26-0587-4C30-8999-92F81FD0307C}">
+<a:tblStyle styleId="{2D5ABB26-0587-4C30-8999-92F81FD0307C}" styleName="No Style, No Grid"/>
+<a:tblStyle styleId="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}" styleName="Medium Style 2 - Accent 1">
+<a:wholeTbl><a:tcTxStyle b="on"><a:fontRef idx="minor"><a:scrgbClr r="0" g="0" b="0"/></a:fontRef><a:schemeClr val="lt1"/></a:tcTxStyle><a:tcStyle><a:tcBdr/><a:fill><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
+<a:band1H><a:tcStyle><a:tcBdr/><a:fill><a:solidFill><a:schemeClr val="accent1"><a:alpha val="20000"/></a:schemeClr></a:solidFill></a:fill></a:tcStyle></a:band1H>
+<a:firstCol/>
+</a:tblStyle>
+</a:tblStyleLst>"#;
 
 /// `ppt/theme/theme1.xml`.
 ///
@@ -488,6 +570,7 @@ pub fn deck_parts() -> Vec<(String, Vec<u8>)> {
         text("ppt/slides/slide10.xml", SLIDE_TEN),
         text("ppt/slides/_rels/slide10.xml.rels", SLIDE_TEN_RELS),
         text("ppt/theme/theme1.xml", THEME),
+        text("ppt/tableStyles.xml", TABLE_STYLES),
         ("ppt/media/image1.png".to_owned(), IMAGE.to_vec()),
     ]
 }

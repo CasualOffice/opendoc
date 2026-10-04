@@ -274,6 +274,26 @@ pub(crate) fn prepare<'a>(
 ) -> Option<PreparedText<'a>> {
     let text: &TextBody = node.text.as_ref()?;
     let cascade = presentation.text_cascade(slide, node);
+    Some(prepare_body(presentation, &cascade, node.id(), text))
+}
+
+/// Folds ONE `a:txBody` through an already-built cascade.
+///
+/// Split out of [`prepare`] for the table-cell caller, which has a text body and
+/// a cascade but no `SlideNode` of its own: a cell is not a shape, so
+/// `Presentation::text_cascade` has nothing to take. Splitting rather than
+/// copying is the point — a cell's runs are folded, segmented at every `a:br`
+/// and shaped by the identical code a shape's are, so the two cannot drift.
+///
+/// # Complexity
+///
+/// O(runs in this body).
+pub(crate) fn prepare_body<'a>(
+    presentation: &'a Presentation,
+    cascade: &casual_pres_model::TextCascade<'a>,
+    owner: NodeId,
+    text: &'a TextBody,
+) -> PreparedText<'a> {
     let mut paragraphs = Vec::with_capacity(text.paragraphs.len());
     for paragraph in &text.paragraphs {
         // `a:pPr@lvl` selects the tier level, so it is resolved BEFORE the
@@ -335,12 +355,12 @@ pub(crate) fn prepare<'a>(
             segments,
         });
     }
-    Some(PreparedText {
+    PreparedText {
         presentation,
-        shape: node.id(),
+        shape: owner,
         body: &text.body_properties,
         paragraphs,
-    })
+    }
 }
 
 /// Shapes one prepared body into the shape's rectangle.
@@ -366,31 +386,8 @@ pub(crate) fn flow(
     let top = emu_to_twip_extent(body.inset_top_emu);
     let bottom = emu_to_twip_extent(body.inset_bottom_emu);
     let inner_width = Twip((rect.size.width.raw() - left.raw() - right.raw()).max(1));
-    let scale = font_scale(body.auto_fit);
 
-    let mut blocks = Vec::with_capacity(prepared.paragraphs.len());
-    let mut glyphs = 0_usize;
-    for paragraph in &prepared.paragraphs {
-        let fragment = flow_paragraph(
-            prepared.presentation,
-            prepared.shape,
-            paragraph,
-            body.wrap,
-            inner_width,
-            scale,
-            shaper,
-            report,
-        );
-        if let BlockFragment::Paragraph { lines, .. } = &fragment {
-            glyphs += lines
-                .lines
-                .iter()
-                .flat_map(|line| line.runs.iter())
-                .map(|run| run.glyphs.len())
-                .sum::<usize>();
-        }
-        blocks.push(fragment);
-    }
+    let (blocks, glyphs) = flow_blocks(prepared, inner_width, shaper, report);
     if glyphs == 0 {
         return None;
     }
@@ -446,6 +443,51 @@ pub(crate) fn flow(
         backdrop: None,
         text_transform: None,
     })
+}
+
+/// Shapes every paragraph of a prepared body at `inner_width`, returning the
+/// fragments and the total glyph count.
+///
+/// The glyph count is what distinguishes "this body laid out to nothing" from
+/// "this body laid out", and both callers need the distinction: a shape with no
+/// glyphs emits no anchor, and a table cell with no glyphs still owns its box but
+/// contributes no content height.
+///
+/// # Complexity
+///
+/// O(runs) plus the shaper's cost per paragraph.
+pub(crate) fn flow_blocks(
+    prepared: &PreparedText<'_>,
+    inner_width: Twip,
+    shaper: &dyn LineShaper,
+    report: &mut Vec<UnresolvedTextProperty>,
+) -> (Vec<BlockFragment>, usize) {
+    let body = prepared.body;
+    let scale = font_scale(body.auto_fit);
+    let mut blocks = Vec::with_capacity(prepared.paragraphs.len());
+    let mut glyphs = 0_usize;
+    for paragraph in &prepared.paragraphs {
+        let fragment = flow_paragraph(
+            prepared.presentation,
+            prepared.shape,
+            paragraph,
+            body.wrap,
+            inner_width,
+            scale,
+            shaper,
+            report,
+        );
+        if let BlockFragment::Paragraph { lines, .. } = &fragment {
+            glyphs += lines
+                .lines
+                .iter()
+                .flat_map(|line| line.runs.iter())
+                .map(|run| run.glyphs.len())
+                .sum::<usize>();
+        }
+        blocks.push(fragment);
+    }
+    (blocks, glyphs)
 }
 
 /// Shapes one paragraph into a [`BlockFragment::Paragraph`].
