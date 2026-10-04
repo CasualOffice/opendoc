@@ -11474,6 +11474,7 @@ mod tests {
             table_row: None,
             table_cell: None,
             conditional: Vec::new(),
+            custom_style: false,
         };
         let mut definitions = Definitions::default();
         definitions.styles.insert(sid, heading);
@@ -14386,6 +14387,7 @@ mod tests {
                     ..TableCellProperties::default()
                 }),
             }],
+            custom_style: false,
         };
         let mut definitions = Definitions::default();
         definitions.styles.insert(sid, table_style);
@@ -14571,6 +14573,7 @@ mod tests {
                     ..TableCellProperties::default()
                 }),
             }],
+            custom_style: false,
         };
         let mut definitions = Definitions::default();
         definitions.styles.insert(sid, table_style);
@@ -14686,6 +14689,7 @@ mod tests {
             table_row: None,
             table_cell: None,
             conditional: Vec::new(),
+            custom_style: false,
         };
         let nested = Table {
             id: node(420),
