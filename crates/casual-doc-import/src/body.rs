@@ -47,6 +47,13 @@ use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand}
 use casual_doc_model::v1::ShapeStyleRef;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
+// Own line (anti-conflict): the shape fill/line side table's value and the types
+// it is built from (`docs/156` §6 row 0.3).
+use casual_doc_model::v1::{
+    CompoundLine, DashStop, GradientDetail, GradientPath, LineCap, LineJoin, MAX_CUSTOM_DASH_STOPS,
+    MAX_PATTERN_PRESET_LEN, PatternFill, PenAlignment, PictureFill, PictureFillMode, RectAlignment,
+    RelativeRect, ShapeFillDetail, StrokeDetail, TileFlip,
+};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -371,6 +378,47 @@ struct ShapeBuilder {
     flip_h: bool,
     flip_v: bool,
     rotation: Option<i32>,
+    /// The fill/line detail `Fill` and `ShapeStroke` cannot hold, accumulated as
+    /// the shape's `spPr` is parsed and moved into
+    /// `Definitions::shape_fill_detail` at `commit_shape` when it is non-empty.
+    fill_detail: ShapeFillDetail,
+}
+
+/// A shape's `a:blipFill` being accumulated: its blip relationship id and the
+/// stretch/tile decision, which only resolve once the element closes.
+///
+/// Separate from the picture-frame accumulators (`pending_embed`,
+/// `pending_srcrect`, `pending_opacity`) deliberately. Those are keyed on
+/// `blipfill_depth > 0`, which a SHAPE's `a:blipFill` also satisfies, so before
+/// this type a picture-filled shape wrote its blip into `pending_embed` and the
+/// next lone picture in the same `w:drawing` consumed it — the shape's fill
+/// leaking onto an unrelated picture.
+#[derive(Default)]
+struct PendingShapeBlip {
+    /// `a:blip@r:embed`.
+    embed: Option<String>,
+    /// `a:stretch`/`a:tile`; `None` until one of them is seen, at which point an
+    /// absent child means the DrawingML stretch default.
+    mode: Option<PictureFillMode>,
+    /// `a:srcRect`.
+    crop: Option<CropRect>,
+    /// `a:blip/a:alphaModFix@amt`, when less than fully opaque.
+    opacity: Option<u32>,
+    /// `@rotWithShape`.
+    rotate_with_shape: Option<bool>,
+}
+
+/// A shape's `a:pattFill` being accumulated: its preset token and the two colours,
+/// which arrive as `a:fgClr`/`a:bgClr` children and fold like any other
+/// DrawingML colour.
+#[derive(Default)]
+struct PendingPatternFill {
+    /// `@prst`, as the file spells it.
+    preset: String,
+    /// `a:fgClr`, folded.
+    foreground: Option<Rgba>,
+    /// `a:bgClr`, folded.
+    background: Option<Rgba>,
 }
 
 /// Maps an `a:prstGeom@prst` token onto the typed [`ShapeGeometry`] layout can
@@ -479,6 +527,10 @@ enum ColorDest {
     StyleRefFill,
     /// The color an `a:lnRef` names, substituted the same way for the outline.
     StyleRefLine,
+    /// An `a:pattFill/a:fgClr` — the pattern's ink.
+    PatternForeground,
+    /// An `a:pattFill/a:bgClr` — the pattern's ground.
+    PatternBackground,
 }
 
 /// A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`) being accumulated,
@@ -1163,6 +1215,31 @@ struct BodyParser<'a> {
     grad_stop_position: Option<i32>,
     /// The gradient geometry (`a:lin`/`a:path`) captured inside the open gradient.
     grad_kind: Option<GradientKind>,
+    /// The `a:gradFill` geometry `GradientKind` cannot hold (`a:path@path`,
+    /// `a:fillToRect`, `a:lin@scaled`, `@flip`, `@rotWithShape`), captured inside
+    /// the open gradient and moved onto the shape's fill detail at its close.
+    grad_detail: GradientDetail,
+    /// The `a:ln` geometry `ShapeStroke` cannot hold (cap, compound, pen
+    /// alignment, corner join, `a:custDash`), captured inside the open outline.
+    ln_detail: StrokeDetail,
+    /// Whether an `a:custDash` is open, so an `a:ds` inside it is a dash stop.
+    in_cust_dash: bool,
+    /// Whether the open `a:custDash` must be refused whole: it authored more
+    /// than [`MAX_CUSTOM_DASH_STOPS`] stops, or a stop carried a length outside
+    /// `ST_PositivePercentage`. Either way the pattern is dropped and reported
+    /// rather than truncated or clamped into a *different* pattern, which would
+    /// be a silent change of appearance.
+    cust_dash_refused: bool,
+    /// The `blipfill_depth` at which the open SHAPE's own `a:blipFill` started,
+    /// or `0` when the open `a:blipFill` (if any) is a picture frame's.
+    shape_blip_depth: u32,
+    /// The shape `a:blipFill` being accumulated.
+    shape_blip: PendingShapeBlip,
+    /// The shape `a:pattFill` being accumulated.
+    pending_patt: Option<PendingPatternFill>,
+    /// Which half of the open `a:pattFill` a colour inside it belongs to, so a
+    /// `a:srgbClr` under `a:fgClr` does not land on the shape's flat fill.
+    patt_color_dest: Option<ColorDest>,
     /// Whether an `a:ln` open on a LONE picture (no shape builder) is being captured
     /// as that picture's frame border.
     capturing_picture_border: bool,
@@ -1458,6 +1535,14 @@ impl<'a> BodyParser<'a> {
             style_ref_depth: 0,
             style_ref_dest: None,
             pending_style_ref: None,
+            grad_detail: GradientDetail::default(),
+            ln_detail: StrokeDetail::default(),
+            in_cust_dash: false,
+            cust_dash_refused: false,
+            shape_blip_depth: 0,
+            shape_blip: PendingShapeBlip::default(),
+            pending_patt: None,
+            patt_color_dest: None,
             relative_size_pct: None,
             pending_color: None,
             palette,
@@ -1544,6 +1629,10 @@ pub(crate) struct ParsedDefinitions {
     /// the reason `Definitions::shape_styles` records: `GroupShape` has 23 literal
     /// sites across six crates and a new field on it breaks every one.
     pub shape_styles: DefinitionMap<NodeId, ShapeStyleRef>,
+    /// Shape fill/line detail by shape node id — the picture and pattern fills,
+    /// the gradient geometry and the line geometry the node model cannot hold. A
+    /// side table for the reason `Definitions::shape_fill_detail` records.
+    pub shape_fill_detail: DefinitionMap<NodeId, ShapeFillDetail>,
 }
 
 impl ParsedDefinitions {
@@ -1553,6 +1642,7 @@ impl ParsedDefinitions {
             bookmarks: DefinitionMap::default(),
             field_ranges: DefinitionMap::default(),
             shape_styles: DefinitionMap::default(),
+            shape_fill_detail: DefinitionMap::default(),
         }
     }
 }
@@ -2905,6 +2995,14 @@ impl BodyParser<'_> {
                     self.pending_style_ref = None;
                     self.relative_size_pct = None;
                     self.pending_color = None;
+                    self.grad_detail = GradientDetail::default();
+                    self.ln_detail = StrokeDetail::default();
+                    self.in_cust_dash = false;
+                    self.cust_dash_refused = false;
+                    self.shape_blip_depth = 0;
+                    self.shape_blip = PendingShapeBlip::default();
+                    self.pending_patt = None;
+                    self.patt_color_dest = None;
                 }
             }
             // The `a:graphicData@uri` distinguishes a chart / diagram / picture /
@@ -2942,7 +3040,63 @@ impl BodyParser<'_> {
             b"pctWidth" | b"pctHeight" if self.drawing_depth > 0 => {
                 self.relative_size_pct = Some(String::new());
             }
-            b"blipFill" if self.drawing_depth > 0 => self.blipfill_depth += 1,
+            b"blipFill" if self.drawing_depth > 0 => {
+                self.blipfill_depth += 1;
+                // A SHAPE's own `a:blipFill` (a picture-filled `wps:wsp`) is not a
+                // picture frame's `pic:blipFill`, and the two used to be
+                // indistinguishable: both only satisfied `blipfill_depth > 0`, so a
+                // picture-filled shape wrote its blip, crop and alpha into the
+                // frame accumulators and the next lone picture in the same
+                // `w:drawing` picked them up. Marking the depth separates them.
+                if self.shape_blip_depth == 0
+                    && self.ln_depth == 0
+                    && self
+                        .pending_shape
+                        .as_ref()
+                        .is_some_and(|shape| !shape.is_picture)
+                {
+                    self.shape_blip_depth = self.blipfill_depth;
+                    self.shape_blip = PendingShapeBlip {
+                        rotate_with_shape: attr_bool(element, b"rotWithShape"),
+                        ..PendingShapeBlip::default()
+                    };
+                }
+            }
+            b"blip" if self.shape_blip_depth > 0 => {
+                if self.shape_blip.embed.is_none() {
+                    self.shape_blip.embed = attribute_value(element, b"embed");
+                }
+            }
+            // `a:stretch`/`a:tile` inside a shape's own `a:blipFill`: the one part
+            // of a picture fill that changes what a reader sees.
+            b"stretch" if self.shape_blip_depth > 0 => {
+                self.shape_blip.mode = Some(PictureFillMode::Stretch { fill_rect: None });
+            }
+            b"fillRect" if self.shape_blip_depth > 0 => {
+                let rect = relative_rect(element);
+                if !rect.is_identity()
+                    && let Some(PictureFillMode::Stretch { fill_rect }) =
+                        self.shape_blip.mode.as_mut()
+                {
+                    *fill_rect = Some(rect);
+                }
+            }
+            b"tile" if self.shape_blip_depth > 0 => {
+                self.shape_blip.mode = Some(PictureFillMode::Tile {
+                    offset_x_emu: attr_i64(element, b"tx").unwrap_or(0),
+                    offset_y_emu: attr_i64(element, b"ty").unwrap_or(0),
+                    scale_x: attr_percentage(element, b"sx"),
+                    scale_y: attr_percentage(element, b"sy"),
+                    flip: attribute_value(element, b"flip")
+                        .as_deref()
+                        .and_then(parse_tile_flip)
+                        .unwrap_or_default(),
+                    alignment: attribute_value(element, b"algn")
+                        .as_deref()
+                        .and_then(parse_rect_alignment)
+                        .unwrap_or_default(),
+                });
+            }
             b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"embed");
             }
@@ -2951,6 +3105,23 @@ impl BodyParser<'_> {
             // for a lone/inline/anchored picture, to `pending_srcrect`. A missing
             // edge is 0 (no crop on that side); an all-zero rect is dropped as the
             // identity crop.
+            b"srcRect" if self.shape_blip_depth > 0 => {
+                let edge = |name: &[u8]| {
+                    attribute_value(element, name)
+                        .and_then(|value| value.trim().parse::<i32>().ok())
+                        .unwrap_or(0)
+                };
+                let crop = CropRect {
+                    left: edge(b"l"),
+                    top: edge(b"t"),
+                    right: edge(b"r"),
+                    bottom: edge(b"b"),
+                }
+                .clamped();
+                if !crop.is_identity() {
+                    self.shape_blip.crop = Some(crop);
+                }
+            }
             b"srcRect" if self.blipfill_depth > 0 => {
                 let edge = |name: &[u8]| {
                     attribute_value(element, name)
@@ -2982,6 +3153,15 @@ impl BodyParser<'_> {
             // producer that writes the no-op explicitly does not become a document
             // carrying a field that changes nothing — the same rule the identity
             // `a:srcRect` follows.
+            b"alphaModFix" if self.shape_blip_depth > 0 => {
+                let amount = attribute_value(element, b"amt")
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+                    .unwrap_or(OPACITY_FULL)
+                    .min(OPACITY_FULL);
+                if amount < OPACITY_FULL {
+                    self.shape_blip.opacity = Some(amount);
+                }
+            }
             b"alphaModFix" if self.blipfill_depth > 0 => {
                 let amount = attribute_value(element, b"amt")
                     .and_then(|value| value.trim().parse::<u32>().ok())
@@ -3232,6 +3412,7 @@ impl BodyParser<'_> {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
+                    fill_detail: ShapeFillDetail::default(),
                 });
             }
             // A picture INSIDE a group (`pic:pic`): open a picture shape builder so
@@ -3261,6 +3442,7 @@ impl BodyParser<'_> {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
+                    fill_detail: ShapeFillDetail::default(),
                 });
             }
             // A shape/picture transform container (`wps:spPr` / `pic:spPr`): its
@@ -3420,9 +3602,80 @@ impl BodyParser<'_> {
                     self.ln_dash = None;
                     self.ln_head_end = None;
                     self.ln_tail_end = None;
+                    self.ln_detail = StrokeDetail::default();
+                    // `@cap`, `@cmpd` and `@algn`: each modeled when the token is
+                    // in its `ST_*` domain and reported as an unreadable attribute
+                    // when it is not, rather than silently falling back to the
+                    // DrawingML default — a wrong default here draws a different
+                    // outline.
+                    for (attribute, present) in [
+                        (
+                            &b"cap"[..],
+                            attribute_value(element, b"cap").map(|token| {
+                                self.ln_detail.cap = parse_line_cap(&token);
+                                self.ln_detail.cap.is_some()
+                            }),
+                        ),
+                        (
+                            &b"cmpd"[..],
+                            attribute_value(element, b"cmpd").map(|token| {
+                                self.ln_detail.compound = parse_compound_line(&token);
+                                self.ln_detail.compound.is_some()
+                            }),
+                        ),
+                        (
+                            &b"algn"[..],
+                            attribute_value(element, b"algn").map(|token| {
+                                self.ln_detail.align = parse_pen_alignment(&token);
+                                self.ln_detail.align.is_some()
+                            }),
+                        ),
+                    ] {
+                        if present == Some(false) {
+                            self.reporter.report_attribute(b"ln", attribute);
+                        }
+                    }
                 }
                 self.ln_depth += 1;
                 self.ln_width_emu = attr_i64(element, b"w").filter(|w| *w >= 0).unwrap_or(0);
+            }
+            // The corner join (`a:round`/`a:bevel`/`a:miter`) inside the open
+            // outline. `a:miter@lim` is `ST_PositivePercentage`; an out-of-domain
+            // value leaves the limit unstated rather than inventing one.
+            b"round" | b"bevel" | b"miter" if self.ln_depth > 0 => {
+                self.ln_detail.join = Some(match local {
+                    b"round" => LineJoin::Round,
+                    b"bevel" => LineJoin::Bevel,
+                    _ => LineJoin::Miter {
+                        limit: attr_positive_percentage(element, b"lim"),
+                    },
+                });
+            }
+            // An authored dash pattern (`a:custDash`), as opposed to the preset
+            // `a:prstDash` already modeled.
+            b"custDash" if self.ln_depth > 0 => {
+                self.in_cust_dash = true;
+                self.cust_dash_refused = false;
+                self.ln_detail.custom_dash.clear();
+            }
+            b"ds" if self.in_cust_dash => {
+                if self.ln_detail.custom_dash.len() >= MAX_CUSTOM_DASH_STOPS {
+                    self.cust_dash_refused = true;
+                } else {
+                    match (
+                        attr_positive_percentage(element, b"d"),
+                        attr_positive_percentage(element, b"sp"),
+                    ) {
+                        (Some(dash), Some(space)) => {
+                            self.ln_detail.custom_dash.push(DashStop { dash, space });
+                        }
+                        // A stop whose dash or gap is missing or outside
+                        // `ST_PositivePercentage` makes the WHOLE pattern
+                        // unreproducible: keeping the others would draw a pattern
+                        // the document never stated.
+                        _ => self.cust_dash_refused = true,
+                    }
+                }
             }
             // A preset dash pattern (`a:prstDash@val`) inside the open outline: buffer
             // it until the `a:ln` closes and applies it to the shape's stroke.
@@ -3455,6 +3708,39 @@ impl BodyParser<'_> {
                 self.grad_stops.clear();
                 self.grad_stop_position = None;
                 self.grad_kind = None;
+                self.grad_detail = GradientDetail {
+                    flip: attribute_value(element, b"flip")
+                        .as_deref()
+                        .and_then(parse_tile_flip),
+                    rotate_with_shape: attr_bool(element, b"rotWithShape"),
+                    ..GradientDetail::default()
+                };
+            }
+            // A two-colour preset pattern fill. Modeled, re-emitted and reported
+            // but NOT painted — the same answer `FillStyle::Pattern` gives for the
+            // theme's pattern entry one level up, because substituting a solid
+            // colour for a hatch looks deliberate.
+            b"pattFill" if self.pending_shape.is_some() && self.ln_depth == 0 => {
+                let preset = attribute_value(element, b"prst").unwrap_or_default();
+                let preset = if preset.len() > MAX_PATTERN_PRESET_LEN {
+                    self.reporter.report_attribute(b"pattFill", b"prst");
+                    String::new()
+                } else {
+                    preset
+                };
+                self.pending_patt = Some(PendingPatternFill {
+                    preset,
+                    foreground: None,
+                    background: None,
+                });
+            }
+            // The pattern's two colours. Opening a destination is what keeps the
+            // `a:srgbClr` inside from landing on the shape's flat fill.
+            b"fgClr" if self.pending_patt.is_some() => {
+                self.patt_color_dest = Some(ColorDest::PatternForeground);
+            }
+            b"bgClr" if self.pending_patt.is_some() => {
+                self.patt_color_dest = Some(ColorDest::PatternBackground);
             }
             // A gradient stop (`a:gs@pos`): remember its position; the folded color
             // that closes inside it attaches to this position (`ST_PositiveFixed­
@@ -3469,9 +3755,27 @@ impl BodyParser<'_> {
                 self.grad_kind = Some(GradientKind::Linear {
                     angle: attr_i64(element, b"ang").unwrap_or(0) as i32,
                 });
+                self.grad_detail.scaled = attr_bool(element, b"scaled");
             }
             b"path" if self.in_grad_fill => {
                 self.grad_kind = Some(GradientKind::Radial);
+                // `GradientKind::Radial` cannot tell `shape` from `circle` from
+                // `rect`, and export wrote `circle` back for all three — so a
+                // shape-following gradient silently became a concentric one on
+                // save. The authored token is kept here; an unreadable one is
+                // reported rather than guessed at.
+                if let Some(token) = attribute_value(element, b"path") {
+                    match parse_gradient_path(&token) {
+                        Some(path) => self.grad_detail.path = Some(path),
+                        None => self.reporter.report_attribute(b"path", b"path"),
+                    }
+                }
+            }
+            b"fillToRect" if self.in_grad_fill => {
+                let rect = relative_rect(element);
+                if !rect.is_identity() {
+                    self.grad_detail.fill_to_rect = Some(rect);
+                }
             }
             // An explicit `a:noFill`: clears the shape fill or (inside `a:ln`) the
             // stroke, so a later default is not assumed.
@@ -3570,6 +3874,10 @@ impl BodyParser<'_> {
                 if let Some(base) = base {
                     let dest = if self.capturing_picture_border {
                         ColorDest::PictureBorder
+                    } else if let Some(pattern) = self.patt_color_dest {
+                        // Inside an `a:pattFill/a:fgClr` or `a:bgClr`: the colour
+                        // belongs to the pattern, not to the shape's flat fill.
+                        pattern
                     } else if self.ln_depth > 0 {
                         ColorDest::Stroke
                     } else {
@@ -4931,7 +5239,13 @@ impl BodyParser<'_> {
             // The form field's `w:ffData` block closes; its builder stays on the
             // open field and is finalized when the field commits.
             b"ffData" if self.in_ffdata => self.in_ffdata = false,
-            b"blipFill" => self.blipfill_depth = self.blipfill_depth.saturating_sub(1),
+            b"blipFill" => {
+                if self.shape_blip_depth > 0 && self.blipfill_depth == self.shape_blip_depth {
+                    self.finish_shape_blip_fill();
+                    self.shape_blip_depth = 0;
+                }
+                self.blipfill_depth = self.blipfill_depth.saturating_sub(1);
+            }
             // A `wp:posOffset`/`wp:align` closes: parse the captured value into the
             // current axis's position.
             b"posOffset" | b"align" if self.capturing_anchor_axis() => self.finish_anchor_value(),
@@ -4968,6 +5282,7 @@ impl BodyParser<'_> {
                     self.ln_dash = None;
                     self.ln_head_end = None;
                     self.ln_tail_end = None;
+                    self.finish_line_detail();
                     // A lone picture's frame outline: finalize the captured width +
                     // color into the pending border.
                     if self.capturing_picture_border {
@@ -4987,6 +5302,22 @@ impl BodyParser<'_> {
             // A gradient fill closes: build the typed [`Fill::Gradient`] from the
             // accumulated stops + geometry and assign it to the open shape. An empty
             // gradient (no stops) leaves the fill unset.
+            // An `a:pattFill/a:fgClr` or `a:bgClr` closes: the colour inside it
+            // has already folded onto the pattern, so stop routing.
+            b"fgClr" | b"bgClr" if self.patt_color_dest.is_some() => {
+                self.patt_color_dest = None;
+            }
+            b"pattFill" if self.pending_patt.is_some() => self.finish_pattern_fill(),
+            // An `a:custDash` closes: a refused pattern is dropped whole and
+            // reported, never truncated.
+            b"custDash" if self.in_cust_dash => {
+                self.in_cust_dash = false;
+                if self.cust_dash_refused {
+                    self.cust_dash_refused = false;
+                    self.ln_detail.custom_dash.clear();
+                    self.reporter.report_invalid(b"custDash");
+                }
+            }
             b"gradFill" if self.in_grad_fill => {
                 self.in_grad_fill = false;
                 self.grad_stop_position = None;
@@ -4996,11 +5327,23 @@ impl BodyParser<'_> {
                         .grad_kind
                         .take()
                         .unwrap_or(GradientKind::Linear { angle: 0 });
+                    let detail = std::mem::take(&mut self.grad_detail);
+                    let retained = !detail.is_empty();
                     if let Some(shape) = self.pending_shape.as_mut() {
                         shape.fill = Some(Fill::Gradient { stops, kind });
+                        if retained {
+                            shape.fill_detail.gradient = Some(detail);
+                        }
+                    }
+                    if retained {
+                        self.reporter.report_shape_appearance_unpainted(
+                            "gradFill",
+                            "gradient-geometry-not-painted",
+                        );
                     }
                 } else {
                     self.grad_kind = None;
+                    self.grad_detail = GradientDetail::default();
                 }
             }
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
@@ -5348,6 +5691,19 @@ impl BodyParser<'_> {
             }
             // A gradient stop color: attach it to the open stop position rather than
             // the flat fill. Access the gradient buffers before borrowing the shape.
+            // One half of an `a:pattFill`. Through the same fold as every other
+            // shape colour, so `lumMod`/`tint`/`alpha` on a pattern colour are
+            // honoured rather than needing a second code path.
+            ColorDest::PatternForeground | ColorDest::PatternBackground => {
+                let foreground = matches!(color.dest, ColorDest::PatternForeground);
+                if let Some(pattern) = self.pending_patt.as_mut() {
+                    if foreground {
+                        pattern.foreground = Some(rgba);
+                    } else {
+                        pattern.background = Some(rgba);
+                    }
+                }
+            }
             ColorDest::Fill if self.in_grad_fill => {
                 if let Some(position) = self.grad_stop_position.take() {
                     self.grad_stops.push(GradientStop {
@@ -5523,6 +5879,112 @@ impl BodyParser<'_> {
         }
     }
 
+    /// Moves the shape `a:blipFill` accumulated in [`PendingShapeBlip`] onto the
+    /// open shape's fill detail, resolving `a:blip@r:embed` through the same media
+    /// index a `pic:pic` resolves through — so one media table serves a picture
+    /// frame and a picture-filled shape alike.
+    ///
+    /// A fill whose blip names nothing this package contains (a linked `r:link`,
+    /// or a dangling `r:embed`) is `Invalid` rather than merely omitted: there is
+    /// no media entry to join it to, so there is nothing to model and nothing to
+    /// re-emit.
+    ///
+    /// Complexity: O(1) — one map lookup and a move.
+    fn finish_shape_blip_fill(&mut self) {
+        let pending = std::mem::take(&mut self.shape_blip);
+        let media = pending
+            .embed
+            .as_deref()
+            .and_then(|embed| self.media_index.get(embed))
+            .copied();
+        let Some(media) = media else {
+            self.reporter.report_invalid(b"blipFill");
+            return;
+        };
+        if let Some(shape) = self.pending_shape.as_mut() {
+            shape.fill_detail.picture = Some(PictureFill {
+                media,
+                // An `a:blipFill` with neither child is stretch, which is the
+                // DrawingML default; recording it explicitly keeps export from
+                // having to re-derive it.
+                mode: pending
+                    .mode
+                    .unwrap_or(PictureFillMode::Stretch { fill_rect: None }),
+                crop: pending.crop,
+                opacity: pending.opacity,
+                rotate_with_shape: pending.rotate_with_shape,
+            });
+        }
+        self.reporter
+            .report_shape_appearance_unpainted("blipFill", "picture-fill-not-painted");
+    }
+
+    /// Finalizes the open `a:pattFill` onto the shape's fill detail.
+    ///
+    /// Both colours are required by `CT_PatternFillProperties`, and a pattern
+    /// missing one is refused rather than completed with an invented black or
+    /// white: a two-colour hatch with a guessed half is a different hatch.
+    ///
+    /// Complexity: O(1).
+    fn finish_pattern_fill(&mut self) {
+        let Some(pending) = self.pending_patt.take() else {
+            return;
+        };
+        self.patt_color_dest = None;
+        let (Some(foreground), Some(background)) = (pending.foreground, pending.background) else {
+            self.reporter.report_invalid(b"pattFill");
+            return;
+        };
+        if let Some(shape) = self.pending_shape.as_mut() {
+            shape.fill_detail.pattern = Some(PatternFill {
+                preset: pending.preset,
+                foreground,
+                background,
+            });
+        }
+        self.reporter
+            .report_shape_appearance_unpainted("pattFill", "pattern-fill-not-painted");
+    }
+
+    /// Moves the line geometry accumulated inside the closing `a:ln` onto the open
+    /// shape's fill detail, and raises ONE finding naming which parts of it this
+    /// build does not paint.
+    ///
+    /// One finding per outline rather than one per attribute, for the reason
+    /// `Reporter::report_rsid` records: a shape carrying a cap, a compound form
+    /// and a join would otherwise add three entries describing one visual
+    /// difference, and a report that inflates is a report callers filter out. The
+    /// reason string names the parts, so the entry stays actionable.
+    ///
+    /// Complexity: O(1) — the reason is built from at most five static tokens.
+    fn finish_line_detail(&mut self) {
+        let detail = std::mem::take(&mut self.ln_detail);
+        if detail.is_empty() {
+            return;
+        }
+        let mut parts: Vec<&str> = Vec::with_capacity(5);
+        if detail.cap.is_some() {
+            parts.push("cap");
+        }
+        if detail.compound.is_some() {
+            parts.push("cmpd");
+        }
+        if detail.align.is_some() {
+            parts.push("algn");
+        }
+        if detail.join.is_some() {
+            parts.push("join");
+        }
+        if !detail.custom_dash.is_empty() {
+            parts.push("custDash");
+        }
+        if let Some(shape) = self.pending_shape.as_mut() {
+            shape.fill_detail.stroke = Some(detail);
+        }
+        self.reporter
+            .report_shape_appearance_unpainted("ln", &parts.join("+"));
+    }
+
     fn commit_shape(&mut self) -> Result<(), ImportError> {
         let Some(mut shape) = self.pending_shape.take() else {
             return Ok(());
@@ -5534,6 +5996,13 @@ impl BodyParser<'_> {
             && reference != ShapeStyleRef::default()
         {
             self.parsed_defs.shape_styles.insert(shape.id, reference);
+        }
+        // The fill/line detail goes to its own side table, keyed the same way and
+        // under the same rule: only when it carries something, so a plain shape
+        // and a picture-filled one stay distinguishable.
+        if !shape.fill_detail.is_empty() {
+            let detail = std::mem::take(&mut shape.fill_detail);
+            self.parsed_defs.shape_fill_detail.insert(shape.id, detail);
         }
         self.style_ref_dest = None;
         if shape.is_picture {
@@ -8588,6 +9057,129 @@ fn fold_color(color: &PendingColor) -> Rgba {
         color.shade,
         color.alpha,
     )
+}
+
+/// Maps an `a:ln@cap` token (`ST_LineCap`) to a [`LineCap`]; an unrecognised
+/// token yields `None` so the caller can report the attribute rather than
+/// silently assume the DrawingML default.
+fn parse_line_cap(token: &str) -> Option<LineCap> {
+    Some(match token.trim() {
+        "flat" => LineCap::Flat,
+        "rnd" => LineCap::Round,
+        "sq" => LineCap::Square,
+        _ => return None,
+    })
+}
+
+/// Maps an `a:ln@cmpd` token (`ST_CompoundLine`) to a [`CompoundLine`].
+fn parse_compound_line(token: &str) -> Option<CompoundLine> {
+    Some(match token.trim() {
+        "sng" => CompoundLine::Single,
+        "dbl" => CompoundLine::Double,
+        "thickThin" => CompoundLine::ThickThin,
+        "thinThick" => CompoundLine::ThinThick,
+        "tri" => CompoundLine::Triple,
+        _ => return None,
+    })
+}
+
+/// Maps an `a:ln@algn` token (`ST_PenAlignment`) to a [`PenAlignment`].
+fn parse_pen_alignment(token: &str) -> Option<PenAlignment> {
+    Some(match token.trim() {
+        "ctr" => PenAlignment::Center,
+        "in" => PenAlignment::Inset,
+        _ => return None,
+    })
+}
+
+/// Maps an `a:path@path` token (`ST_PathShadeType`) to a [`GradientPath`].
+fn parse_gradient_path(token: &str) -> Option<GradientPath> {
+    Some(match token.trim() {
+        "shape" => GradientPath::Shape,
+        "circle" => GradientPath::Circle,
+        "rect" => GradientPath::Rect,
+        _ => return None,
+    })
+}
+
+/// Maps a `@flip` token (`ST_TileFlipMode`) to a [`TileFlip`].
+fn parse_tile_flip(token: &str) -> Option<TileFlip> {
+    Some(match token.trim() {
+        "none" => TileFlip::None,
+        "x" => TileFlip::X,
+        "y" => TileFlip::Y,
+        "xy" => TileFlip::Xy,
+        _ => return None,
+    })
+}
+
+/// Maps an `a:tile@algn` token (`ST_RectAlignment`) to a [`RectAlignment`].
+fn parse_rect_alignment(token: &str) -> Option<RectAlignment> {
+    Some(match token.trim() {
+        "tl" => RectAlignment::TopLeft,
+        "t" => RectAlignment::Top,
+        "tr" => RectAlignment::TopRight,
+        "l" => RectAlignment::Left,
+        "ctr" => RectAlignment::Center,
+        "r" => RectAlignment::Right,
+        "bl" => RectAlignment::BottomLeft,
+        "b" => RectAlignment::Bottom,
+        "br" => RectAlignment::BottomRight,
+        _ => return None,
+    })
+}
+
+/// Reads a `ST_Boolean` attribute (`1`/`0`, `true`/`false`, `on`/`off`).
+///
+/// `None` for an absent attribute **and** for an unreadable one, so a caller that
+/// cares can tell neither apart from the default — which is right here, because
+/// every use is a field whose `None` already means "the file states nothing".
+fn attr_bool(element: &BytesStart<'_>, name: &[u8]) -> Option<bool> {
+    match attribute_value(element, name)?.trim() {
+        "1" | "true" | "on" => Some(true),
+        "0" | "false" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Reads a signed `ST_Percentage` attribute in 1/1000 of a percent, accepting both
+/// the integer spelling (`50000`) and the `"50%"` spelling the type also admits.
+///
+/// Signed, unlike [`parse_drawing_percentage`]: `a:fillRect`'s edges and
+/// `a:tile`'s scales are legitimately negative, and reusing the positive reader
+/// would have silently dropped every outset fill rect.
+fn attr_percentage(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
+    let value = attribute_value(element, name)?;
+    let value = value.trim();
+    if let Some(percent) = value.strip_suffix('%') {
+        let percent = percent.trim().parse::<f64>().ok()?;
+        if !percent.is_finite() {
+            return None;
+        }
+        let scaled = (percent * 1_000.0).round();
+        (scaled >= f64::from(i32::MIN) && scaled <= f64::from(i32::MAX)).then_some(scaled as i32)
+    } else {
+        value.parse::<i32>().ok()
+    }
+}
+
+/// Reads a `ST_PositivePercentage` attribute in 1/1000 of a percent. A negative
+/// value is outside the type's domain and is refused rather than clamped to zero,
+/// which would turn an invalid dash into a valid-looking different one.
+fn attr_positive_percentage(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
+    attr_percentage(element, name).filter(|value| *value >= 0)
+}
+
+/// Reads a `CT_RelativeRect`'s four `ST_Percentage` edges (`@l`/`@t`/`@r`/`@b`),
+/// treating an absent or unreadable edge as zero — which is what the schema's
+/// default says and what an empty `<a:fillRect/>` means.
+fn relative_rect(element: &BytesStart<'_>) -> RelativeRect {
+    RelativeRect {
+        left: attr_percentage(element, b"l").unwrap_or(0),
+        top: attr_percentage(element, b"t").unwrap_or(0),
+        right: attr_percentage(element, b"r").unwrap_or(0),
+        bottom: attr_percentage(element, b"b").unwrap_or(0),
+    }
 }
 
 /// Whether a local element name is DrawingML scaffolding the drawing arms consume

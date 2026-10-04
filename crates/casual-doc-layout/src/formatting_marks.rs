@@ -433,6 +433,11 @@ impl MarkLayer {
                 // hairline is 1px at every zoom, which is what a rule wants.
                 width: 1.0,
                 dash: DashStyle::Dash,
+                // A non-printing mark is this build's own chrome, not an `a:ln`, so
+                // it states no cap, join or authored dash.
+                cap: None,
+                join: None,
+                custom_dash: Vec::new(),
             }),
             head_end: None,
             tail_end: None,

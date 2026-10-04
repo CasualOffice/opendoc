@@ -5037,8 +5037,29 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
     );
 }
 
+/// A `wps:wsp` carrying BOTH an `a:blipFill` and a `wps:txbx` is a
+/// picture-filled text box, and the picture is the box's FILL.
+///
+/// This test used to be `image_beside_a_text_box_in_the_same_drawing_is_not_dropped`
+/// and asserted that the blip ALSO arrived as a sibling `InlineNode::Drawing`.
+/// That was never the document's meaning; it was the leak described on the
+/// `a:blipFill` arm in `body.rs`, where a shape's own blip landed in
+/// `pending_embed` and the enclosing drawing committed it as an inline picture of
+/// its own. The old assertion is worth naming rather than quietly deleting,
+/// because the trade it hid runs the other way from how it reads:
+///
+/// - **It kept pixels on the page**, in the wrong place — beside the box instead
+///   of behind its text — and reported nothing about either fact.
+/// - **And a save rewrote the document.** The sibling picture was written back as
+///   a separate `<w:drawing><pic:pic>`, so one picture-filled text box became an
+///   inline picture plus an unfilled text box. That is a structural change to the
+///   file, which is worse than an appearance this build cannot yet draw.
+///
+/// So the picture now goes to the box's own fill detail, round-trips there, and
+/// the import report says it is not painted. Painting it is layout's work and has
+/// not landed, which is why `docs/156` §6 row 0.3 stays open.
 #[test]
-fn image_beside_a_text_box_in_the_same_drawing_is_not_dropped() {
+fn a_picture_filled_text_box_keeps_the_picture_as_its_fill_not_as_a_sibling() {
     let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:pic="urn:pic"><w:body>
         <w:p><w:r><w:drawing><wp:inline><wp:extent cx="100" cy="100"/><a:graphic><a:graphicData><wps:wsp>
             <a:blipFill><a:blip r:embed="rId7"/></a:blipFill>
@@ -5049,14 +5070,38 @@ fn image_beside_a_text_box_in_the_same_drawing_is_not_dropped() {
     let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
     let import = import_bytes(&build_package(document, rels, &media));
     let para = paragraph(&import, 0);
-    assert!(
-        para.inlines
-            .iter()
-            .any(|i| matches!(i, InlineNode::Drawing(_))),
-        "enclosing drawing image must survive"
-    );
     let text_box = find_textbox(&para.inlines).expect("text box modeled");
     assert_eq!(tb_block_text(&text_box.blocks), "Caption");
+    let picture = import
+        .document
+        .definitions()
+        .shape_fill_detail
+        .get(&text_box.id)
+        .and_then(|detail| detail.picture)
+        .expect("the blip is the text box's own fill");
+    let reference = import
+        .document
+        .definitions()
+        .media
+        .get(&picture.media)
+        .expect("the fill's media reference resolves");
+    assert_eq!(reference.part_name, "word/media/image1.png");
+    assert!(
+        !para
+            .inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::Drawing(_))),
+        "the shape's FILL must not also appear as a sibling inline picture"
+    );
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "shape/blipFill"),
+        "and the fill not being painted is reported: {:?}",
+        import.report.entries
+    );
 }
 
 /// The real `wps` (2010 WordprocessingShape) namespace URI — a text box choice

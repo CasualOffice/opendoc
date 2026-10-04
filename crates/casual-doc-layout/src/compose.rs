@@ -321,6 +321,11 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
             color: rgba(stroke.color),
             width: stroke_px(stroke.width),
             dash: DashStyle::Solid,
+            // A chart primitive is drawn by the chart layer, not from an `a:ln`, so
+            // there is no authored cap, join or custom dash to carry.
+            cap: None,
+            join: None,
+            custom_dash: Vec::new(),
         })
     };
     let solid = |fill: Option<[u8; 4]>| fill.map(|fill| Fill::Solid(rgba(fill)));
@@ -437,6 +442,12 @@ fn shape_outline(stroke: &AnchorStroke) -> ShapeOutline {
         color: rgba(stroke.color),
         width: stroke_px(stroke.width),
         dash: stroke.dash,
+        // Carried rather than dropped: these were defaulted away at the raster
+        // backend, so a round-capped dotted border drew as square dots and a
+        // bevelled corner drew mitred — wrong in a way that looks deliberate.
+        cap: stroke.cap,
+        join: stroke.join,
+        custom_dash: stroke.custom_dash.clone(),
     }
 }
 
@@ -2688,6 +2699,12 @@ mod tests {
                     color: [10, 20, 30, 255],
                     width: Twip(20),
                     dash: DashStyle::Solid,
+                    // Not what this fixture is about: it asserts the border's colour and
+                    // width, so the outline geometry is deliberately unstated rather than
+                    // defaulted to make the compiler quiet.
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
                 }),
             },
             rect,
@@ -2734,6 +2751,11 @@ mod tests {
                         color: [10, 20, 30, 255],
                         width: Twip(20),
                         dash,
+                        // This fixture parameterises the PRESET dash; the authored
+                        // geometry is a separate guard, so it is unstated here.
+                        cap: None,
+                        join: None,
+                        custom_dash: Vec::new(),
                     }),
                 },
                 rect,
@@ -2939,6 +2961,12 @@ mod tests {
                     color: [0, 0, 0, 255],
                     width: Twip(30),
                     dash: DashStyle::DashDot,
+                    // Not what this fixture is about: it asserts the border's colour and
+                    // width, so the outline geometry is deliberately unstated rather than
+                    // defaulted to make the compiler quiet.
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
                 }),
             },
             rect,

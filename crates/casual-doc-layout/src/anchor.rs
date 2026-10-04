@@ -37,7 +37,7 @@ use casual_doc_model::v1::DashStyle;
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
 // Own `use` line, for the same anti-conflict reason as the two above: the
 // shared `GroupChild` walk needs the text-box type and the nesting bound.
-use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH};
+use casual_doc_model::v1::{GroupTextBox, MAX_GROUP_DEPTH, StrokeDetail};
 
 use crate::block::BlockFragment;
 // Separate `use` line to minimize import-block merge conflicts.
@@ -763,7 +763,7 @@ fn collect_inlines(
                         content: AnchorContent::Image {
                             media,
                             crop: drawing.crop,
-                            border: shape_stroke(drawing.border),
+                            border: shape_stroke(drawing.border, None),
                             opacity: drawing.opacity,
                         },
                         rect,
@@ -1004,7 +1004,7 @@ pub fn place_group_child_tree(
                     AnchorContent::Image {
                         media,
                         crop: picture.crop,
-                        border: shape_stroke(picture.border),
+                        border: shape_stroke(picture.border, None),
                         opacity: picture.opacity,
                     },
                     rect,
@@ -1033,8 +1033,13 @@ pub fn place_group_child_tree(
                 // (docs/119 §6). Getting this order wrong is what made a slide paint
                 // a freeform's bounding preset instead of its outline.
                 let (fill, stroke) = themed_appearance(shape, host.definitions());
+                // The authored cap, join and `a:custDash` live in a side table keyed
+                // by the shape's own id, because `ShapeStroke` is a small `Copy`
+                // value with literals across six crates and a `Vec` cannot live in
+                // one. Resolved here, once, for both painters.
+                let detail = stroke_detail(host.definitions(), shape.id);
                 let content = if let Some(path) = shape.path.as_ref() {
-                    custom_path_content(path, rect, fill, stroke)
+                    custom_path_content(path, rect, fill, stroke, detail)
                 } else {
                     preset_geometry_content(
                         shape.geometry,
@@ -1043,6 +1048,7 @@ pub fn place_group_child_tree(
                         rect,
                         fill.as_ref(),
                         stroke,
+                        detail,
                     )
                 };
                 host.emit(
@@ -1276,6 +1282,7 @@ fn preset_geometry_content(
     rect: Rect,
     fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
 ) -> AnchorContent {
     match geometry {
         ShapeGeometry::Line => {
@@ -1284,10 +1291,13 @@ fn preset_geometry_content(
                 to: Point::new(rect.right(), rect.bottom()),
                 // A line without an explicit stroke still draws a hairline in its
                 // fill color (Word's connector default).
-                stroke: shape_stroke(stroke).unwrap_or(AnchorStroke {
+                stroke: shape_stroke(stroke, detail).unwrap_or(AnchorStroke {
                     color: fill.map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
                     width: Twip::ZERO,
                     dash: DashStyle::Solid,
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
                 }),
                 head_end: stroke.and_then(|s| s.head_end),
                 tail_end: stroke.and_then(|s| s.tail_end),
@@ -1296,20 +1306,20 @@ fn preset_geometry_content(
         ShapeGeometry::Ellipse => {
             return AnchorContent::Ellipse {
                 fill: fill.cloned(),
-                stroke: shape_stroke(stroke),
+                stroke: shape_stroke(stroke, detail),
             };
         }
         ShapeGeometry::RoundRectangle => {
             return AnchorContent::RoundedRectangle {
                 radius: rounded_rectangle_radius(adjustments, rect),
                 fill: fill.cloned(),
-                stroke: shape_stroke(stroke),
+                stroke: shape_stroke(stroke, detail),
             };
         }
         ShapeGeometry::Rectangle => {
             return AnchorContent::Rectangle {
                 fill: fill.cloned(),
-                stroke: shape_stroke(stroke),
+                stroke: shape_stroke(stroke, detail),
             };
         }
         _ => {}
@@ -1326,7 +1336,7 @@ fn preset_geometry_content(
                     commands,
                     closed: shape_preset::preset_is_closed(token),
                     fill: fill.cloned(),
-                    stroke: shape_stroke(stroke),
+                    stroke: shape_stroke(stroke, detail),
                 }
             })
         })
@@ -1338,7 +1348,7 @@ fn preset_geometry_content(
         // "Rejected".
         .unwrap_or_else(|| AnchorContent::Rectangle {
             fill: fill.cloned(),
-            stroke: shape_stroke(stroke),
+            stroke: shape_stroke(stroke, detail),
         })
 }
 
@@ -1360,8 +1370,9 @@ pub fn shape_geometry_content(
     rect: Rect,
     fill: Option<&Fill>,
     stroke: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
 ) -> AnchorContent {
-    preset_geometry_content(geometry, preset, adjustments, rect, fill, stroke)
+    preset_geometry_content(geometry, preset, adjustments, rect, fill, stroke, detail)
 }
 
 /// A shape's fill and outline with its theme style reference resolved.
@@ -1410,7 +1421,9 @@ fn text_box_backdrop(
             commands,
             closed: shape_preset::preset_is_closed(token),
             fill: text_box.fill.clone(),
-            stroke: shape_stroke(text_box.border),
+            // A `GroupTextBox` has no row in the shape-keyed side table, so there
+            // is no cap/join/custDash to resolve for its backdrop.
+            stroke: shape_stroke(text_box.border, None),
         }));
     }
     Some(Box::new(preset_geometry_content(
@@ -1420,6 +1433,7 @@ fn text_box_backdrop(
         rect,
         text_box.fill.as_ref(),
         text_box.border,
+        None,
     )))
 }
 
@@ -1934,6 +1948,7 @@ fn custom_path_content(
     rect: Rect,
     fill: Option<Fill>,
     stroke: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
 ) -> AnchorContent {
     use casual_doc_model::v1::ShapePathCommand;
 
@@ -1998,7 +2013,7 @@ fn custom_path_content(
         commands,
         closed,
         fill,
-        stroke: shape_stroke(stroke),
+        stroke: shape_stroke(stroke, detail),
     }
 }
 
@@ -2044,13 +2059,36 @@ pub fn shape_transform(
 /// Published alongside the other anchor seams so a slide's outline is converted by
 /// the same code a document's is — the `None` dash defaulting to solid is a
 /// decision, not an incidental, and two copies of it would drift.
+///
+/// `detail` is the shape's [`StrokeDetail`] from `Definitions::shape_fill_detail`,
+/// which carries the cap, join and authored dash `ShapeStroke` has nowhere to put.
+/// It is a separate argument rather than a lookup inside because this function is
+/// also the seam a slide converts through, and the two document classes reach their
+/// definition tables differently.
 #[must_use]
-pub fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
+pub fn shape_stroke(
+    stroke: Option<ShapeStroke>,
+    detail: Option<&StrokeDetail>,
+) -> Option<AnchorStroke> {
     stroke.map(|s| AnchorStroke {
         color: rgba(s.color),
         width: emu_to_twip_extent(s.width_emu),
         dash: s.dash.unwrap_or(DashStyle::Solid),
+        cap: detail.and_then(|detail| detail.cap),
+        join: detail.and_then(|detail| detail.join),
+        custom_dash: detail
+            .map(|detail| detail.custom_dash.clone())
+            .unwrap_or_default(),
     })
+}
+
+/// The stroke detail a shape's own id resolves to, if the file stated any.
+#[must_use]
+fn stroke_detail(definitions: &Definitions, shape: NodeId) -> Option<&StrokeDetail> {
+    definitions
+        .shape_fill_detail
+        .get(&shape)
+        .and_then(|detail| detail.stroke.as_ref())
 }
 
 fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {

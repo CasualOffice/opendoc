@@ -8,6 +8,9 @@
 //! pixels (the device scale has already been applied when the list was built).
 
 use casual_doc_model::v1::{CropRect, DashStyle, LineEnd};
+// Own `use` line (anti-conflict), matching the convention in `anchor.rs`: the
+// outline geometry `a:ln` carries beyond colour, width and a preset dash.
+use casual_doc_model::v1::{DashStop, LineCap, LineJoin};
 use serde::{Deserialize, Serialize};
 
 use crate::text::GlyphRun;
@@ -98,8 +101,19 @@ pub enum GradientKind {
 }
 
 /// The outline of a floating DrawingML shape: a resolved color, a device-pixel
-/// width, and a preset dash pattern (`a:ln > a:prstDash`).
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+/// width, a dash pattern, and the end/corner geometry `a:ln` carries.
+///
+/// # Why cap, join and the authored dash are here and not defaulted
+///
+/// They were defaulted away: the raster backend built its stroke as
+/// `Stroke { width, dash, ..default() }`, so every outline drew with a butt cap and a
+/// miter join whatever the file said. A round-capped dotted border drew as square
+/// dots — close enough to look intentional, which is what made it survive.
+///
+/// `custom_dash` outranks `dash` when non-empty, for the same reason a custom
+/// geometry outranks a preset: `a:custDash` IS the pattern the author stated, and
+/// `a:prstDash` is only present when they picked from the gallery.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ShapeOutline {
     /// The outline color.
     pub color: Color,
@@ -107,6 +121,16 @@ pub struct ShapeOutline {
     pub width: f32,
     /// The preset dash pattern (`DashStyle::Solid` = an unbroken line).
     pub dash: DashStyle,
+    /// `a:ln@cap` — how a dash and an open end terminate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap: Option<LineCap>,
+    /// `a:ln`'s join child — how two segments meet at a corner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<LineJoin>,
+    /// `a:custDash` as dash/space pairs in 1/1000 of a percent of the line width,
+    /// which is the unit `ST_PositivePercentage` uses. Empty means none authored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_dash: Vec<DashStop>,
 }
 
 /// One command of a resolved shape path, in the same device-scaled twips as the

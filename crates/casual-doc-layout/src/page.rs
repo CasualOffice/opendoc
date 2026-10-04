@@ -11,6 +11,9 @@ use casual_doc_model::v1::SectionId;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/line-end
 // model types the anchor paint content carries.
 use casual_doc_model::v1::{DashStyle, Fill, LineEnd};
+// Own `use` line (anti-conflict): the outline geometry `a:ln` carries beyond
+// colour, width and a preset dash.
+use casual_doc_model::v1::{DashStop, LineCap, LineJoin};
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
@@ -89,7 +92,14 @@ pub struct AnchorZ {
 
 /// A stroke (outline) painted for a floating shape or connector: a resolved color,
 /// a width in twips, and a preset dash pattern (`a:ln > a:prstDash`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+/// # Why this is no longer `Copy`
+///
+/// `a:custDash` is a list the author stated, so its natural representation is a
+/// `Vec` — and a `Vec` cannot be `Copy`. The alternative was a fixed `[DashStop; 16]`
+/// plus a length, which keeps `Copy` by making every outline in every document carry
+/// 128 bytes for a feature almost none of them use. For a display-layer value with
+/// six literal sites that is the wrong trade; the compiler found all of them.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct AnchorStroke {
     /// The stroke color (RGBA).
     pub color: [u8; 4],
@@ -98,6 +108,18 @@ pub struct AnchorStroke {
     /// The preset dash pattern (`DashStyle::Solid` = an unbroken line).
     #[serde(default = "solid_dash", skip_serializing_if = "is_solid_dash")]
     pub dash: DashStyle,
+    /// `a:ln@cap` — how a dash and an open end terminate. `None` leaves the
+    /// backend's default, which is what every outline used to get regardless of what
+    /// the file said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap: Option<LineCap>,
+    /// `a:ln`'s join child — how two segments meet at a corner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<LineJoin>,
+    /// `a:custDash` as dash/space pairs. Non-empty OUTRANKS `dash`: it is the
+    /// pattern the author stated, where `a:prstDash` is one picked from a gallery.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_dash: Vec<DashStop>,
 }
 
 /// The default dash for a serialized [`AnchorStroke`] that predates the field.

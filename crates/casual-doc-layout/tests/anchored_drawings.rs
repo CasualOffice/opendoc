@@ -3850,4 +3850,109 @@ fn an_authored_wrap_text_decides_the_side_the_text_keeps() {
              trailing edge: starts at {start:?}, float ends at {band_end:?}"
         );
     }
+/// The authored outline geometry must TRAVEL, not merely be renderable.
+///
+/// `casual-doc-render`'s own guards build a `ShapeOutline` directly, so they prove the
+/// rasterizer applies a cap, a join and an authored `a:custDash` — and prove nothing
+/// about whether those values ever reach it. Two mutations showed exactly that hole:
+/// making `compose` drop the three fields, and making the shared `GroupChild` walk
+/// never look the side table up, both left the render suite GREEN while every
+/// outline in every document silently lost its geometry.
+///
+/// So this drives the real path: a `Definitions::shape_fill_detail` row, through the
+/// placement walk, through `compose_page`, to the display list the backend consumes.
+#[test]
+fn an_authored_cap_join_and_custom_dash_reach_the_display_list() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    use casual_doc_model::v1::{
+        DashStop, LineCap, LineJoin, Rgba, ShapeFillDetail, ShapeStroke, StrokeDetail,
+    };
+
+    let shape_id = node(91);
+    let child = GroupChild::Shape(GroupShape {
+        id: shape_id,
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry: ShapeGeometry::Rectangle,
+        preset: None,
+        adjustments: Vec::new(),
+        path: None,
+        fill: None,
+        stroke: Some(ShapeStroke {
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 28_575,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        }),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+        hyperlink: None,
+    });
+
+    // The same document the other float guards use, plus the side-table row that
+    // carries what `ShapeStroke` has nowhere to put.
+    let mut document = single_child_group_document(child);
+    document.definitions_mut().shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: None,
+            pattern: None,
+            gradient: None,
+            stroke: Some(StrokeDetail {
+                cap: Some(LineCap::Round),
+                compound: None,
+                align: None,
+                join: Some(LineJoin::Bevel),
+                custom_dash: vec![DashStop {
+                    dash: 400_000,
+                    space: 200_000,
+                }],
+            }),
+        },
+    );
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+    let list = compose_page(&layout.pages[0]);
+
+    let outline = list
+        .items
+        .iter()
+        .find_map(|item| match item {
+            PaintItem::Shape {
+                stroke: Some(stroke),
+                ..
+            } => Some(stroke.clone()),
+            _ => None,
+        })
+        .expect("the shape's outline reached the display list");
+
+    assert_eq!(
+        outline.cap,
+        Some(LineCap::Round),
+        "the authored cap must survive the walk and compose"
+    );
+    assert_eq!(outline.join, Some(LineJoin::Bevel), "and so must the join");
+    assert_eq!(
+        outline.custom_dash,
+        vec![DashStop {
+            dash: 400_000,
+            space: 200_000
+        }],
+        "and so must the authored dash pattern"
+    );
 }

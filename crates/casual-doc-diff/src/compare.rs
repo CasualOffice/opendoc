@@ -75,6 +75,7 @@ pub const DEFINITION_FIELDS: &[&str] = &[
     "formatSchemeXml",
     "formatScheme",
     "shapeStyles",
+    "shapeFillDetail",
     "settings",
     "people",
 ];
@@ -93,6 +94,11 @@ pub const OPAQUE_CONSTRUCTS: &[&str] = &[
     // files' tables cannot be paired — the same reason `numbering` and `fieldRanges`
     // are here. A difference is therefore located, not characterised.
     "shapeStyles",
+    // Shape fill/line detail, keyed by the same minted `NodeId` and here for the
+    // same reason. Characterising it would also over-report: this table carries a
+    // shape's picture, pattern, gradient and line geometry, and a shape that moved
+    // between two drafts changes its node id without changing its appearance.
+    "shapeFillDetail",
     // A chart projection, for both of the reasons this list exists at once. It is
     // keyed by a `ChartId` the parse minted, so two files' projections cannot be
     // paired — the same reason `numbering` and `fieldRanges` are here. And it is a
@@ -450,6 +456,16 @@ pub fn compare_definitions(
         "shapeStyles",
         &left_definitions.shape_styles,
         &right_definitions.shape_styles,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // Shape fill/line detail: located, not characterised, per `OPAQUE_CONSTRUCTS`
+    // above.
+    compare_field(
+        "shapeFillDetail",
+        &left_definitions.shape_fill_detail,
+        &right_definitions.shape_fill_detail,
         DiffFamily::Definition,
         &mut changes,
         findings,

@@ -835,6 +835,450 @@ pub enum LineEndSize {
     Large,
 }
 
+/// How many `a:custDash/a:ds` stops one outline may author before the pattern is
+/// refused.
+///
+/// `CT_LineProperties` puts no ceiling on `a:custDash`, so an authored pattern is
+/// unbounded input reaching a `Vec`. Sixteen dash/space pairs already describes
+/// every pattern Word's own dash gallery can produce (its longest preset,
+/// `sysDashDotDot`, is three), and a file that authors more is refused and
+/// reported rather than silently truncated — truncating would paint a *different*
+/// pattern while claiming the construct survived.
+pub const MAX_CUSTOM_DASH_STOPS: usize = 16;
+
+/// The longest `a:pattFill@prst` token retained. `ST_PresetPatternVal`'s longest
+/// member is `wdUpDiag` at eight characters; the bound is generous so an
+/// unrecognised token still round-trips, and exists only so the string is not
+/// unbounded input.
+pub const MAX_PATTERN_PRESET_LEN: usize = 64;
+
+/// A `CT_RelativeRect`: four edge insets as `ST_Percentage` (1/1000 of a
+/// percent), used by `a:fillRect` (how a stretched picture fill maps onto the
+/// shape) and `a:fillToRect` (where a path gradient's innermost stop sits).
+///
+/// Distinct from [`CropRect`], which is the same markup shape with a different
+/// domain: a crop edge is a *positive* fraction of the source that is hidden and
+/// is clamped into `0..=100000`, while a fill-rect edge is legitimately
+/// **negative** — `a:fillRect l="-20000"` pushes the picture outward past the
+/// shape's left edge. Clamping these to zero would quietly centre every outset
+/// fill, which is why this is a second type rather than a reuse.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RelativeRect {
+    /// `@l` in 1/1000 of a percent; negative insets outward.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub left: i32,
+    /// `@t` in 1/1000 of a percent.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub top: i32,
+    /// `@r` in 1/1000 of a percent.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub right: i32,
+    /// `@b` in 1/1000 of a percent.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub bottom: i32,
+}
+
+impl RelativeRect {
+    /// Whether every edge is zero — the identity rect, which is what an absent or
+    /// empty `a:fillRect` means, so it is not modeled.
+    #[must_use]
+    pub const fn is_identity(&self) -> bool {
+        self.left == 0 && self.top == 0 && self.right == 0 && self.bottom == 0
+    }
+}
+
+/// `ST_TileFlipMode`: whether alternate tiles of a tiled fill, or the two halves
+/// of a gradient, are mirrored.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TileFlip {
+    /// `none` — every tile drawn the same way up.
+    #[default]
+    None,
+    /// `x` — alternate columns mirrored horizontally.
+    X,
+    /// `y` — alternate rows mirrored vertically.
+    Y,
+    /// `xy` — mirrored on both axes.
+    Xy,
+}
+
+/// `ST_RectAlignment`: which corner or edge of the shape a tiled fill's first
+/// tile is anchored to.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RectAlignment {
+    /// `tl`.
+    #[default]
+    TopLeft,
+    /// `t`.
+    Top,
+    /// `tr`.
+    TopRight,
+    /// `l`.
+    Left,
+    /// `ctr`.
+    Center,
+    /// `r`.
+    Right,
+    /// `bl`.
+    BottomLeft,
+    /// `b`.
+    Bottom,
+    /// `br`.
+    BottomRight,
+}
+
+/// How a picture fill covers the shape: `a:stretch` (one copy mapped onto the
+/// shape) or `a:tile` (repeated at its natural size).
+///
+/// This is the half of `a:blipFill` that changes what a reader sees, which is why
+/// it is a required field rather than an option: a file that writes neither child
+/// is stretch by DrawingML default, and recording that explicitly keeps export
+/// from having to guess.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+pub enum PictureFillMode {
+    /// `a:stretch`, with its `a:fillRect` when the file maps the picture onto
+    /// something other than the whole shape.
+    Stretch {
+        /// `a:stretch/a:fillRect`; `None` for the absent or identity rect.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill_rect: Option<RelativeRect>,
+    },
+    /// `a:tile`: the picture repeated from `(tx, ty)` at `(sx, sy)` scale.
+    Tile {
+        /// `@tx`, the first tile's horizontal offset in EMU (signed).
+        #[serde(default, skip_serializing_if = "is_zero_i64")]
+        offset_x_emu: i64,
+        /// `@ty`, the first tile's vertical offset in EMU (signed).
+        #[serde(default, skip_serializing_if = "is_zero_i64")]
+        offset_y_emu: i64,
+        /// `@sx`, the horizontal scale as `ST_Percentage` (1/1000 of a percent;
+        /// `100000` is natural size). `None` when the file states none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_x: Option<i32>,
+        /// `@sy`, the vertical scale as `ST_Percentage`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_y: Option<i32>,
+        /// `@flip`.
+        #[serde(default, skip_serializing_if = "is_no_tile_flip")]
+        flip: TileFlip,
+        /// `@algn`.
+        #[serde(default, skip_serializing_if = "is_top_left_alignment")]
+        alignment: RectAlignment,
+    },
+}
+
+/// A picture fill on a *shape* (`a:blipFill` inside `wps:spPr`), as opposed to
+/// the picture frame `pic:blipFill` that [`Drawing`] already models.
+///
+/// Word writes these whenever a shape is filled from a photo or a texture, and
+/// before this type the whole fill was dropped: the shape imported with no fill
+/// and exported with none, so a save destroyed it. The media reference resolves
+/// in `Definitions::media` exactly as [`GroupPicture::media`] does, so one media
+/// table serves both.
+///
+/// **Nothing paints this.** The display list has no picture-fill primitive and
+/// building one lives in `casual-doc-layout`; a shape wearing a picture fill is
+/// drawn unfilled and the import report says so. Modeling it buys the round trip
+/// and a finding that names the construct, which is the same trade
+/// `FillStyle::Pattern` records one level up in the theme.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PictureFill {
+    /// The referenced media entry (`a:blip@r:embed`; resolves in
+    /// `Definitions::media`).
+    pub media: MediaId,
+    /// Stretch or tile.
+    pub mode: PictureFillMode,
+    /// `a:srcRect`, the source crop, when it hides anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<CropRect>,
+    /// `a:blip/a:alphaModFix@amt` in 1/1000 of a percent, when the fill is drawn
+    /// less than fully opaque. `None` is opaque, and so is an explicit `100000` —
+    /// the rule [`GroupPicture::opacity`] already follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
+    /// `a:blipFill@rotWithShape`, when the file states it. `None` leaves the
+    /// DrawingML default (the fill rotates with the shape).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate_with_shape: Option<bool>,
+}
+
+/// A two-colour preset pattern fill on a shape (`a:pattFill`).
+///
+/// The same construct `PatternStyle` models one level up, in the theme's
+/// fill-style matrix, and **deliberately the same policy**: the preset token is
+/// retained as the file spells it, the two colours are resolved to concrete
+/// channels like every other shape colour, and *nothing paints it*. There is no
+/// pattern primitive in the display list, so the shape draws unfilled and the
+/// import report names the pattern. Substituting the foreground colour as a solid
+/// would look deliberate, which is worse than an obviously unfilled shape
+/// (`FillStyle::Pattern`, and `themed_fill` in `casual-doc-layout`).
+///
+/// Inventing a second policy for the shape-level element was the alternative and
+/// it is exactly the thing to avoid: one construct, two levels, one answer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PatternFill {
+    /// `@prst` (`ST_PresetPatternVal`, e.g. `pct25`, `ltHorz`), as the file
+    /// spells it, bounded by [`MAX_PATTERN_PRESET_LEN`]. Retained as a token
+    /// rather than enumerated because the fifty-four presets differ only in the
+    /// hatch nothing here draws.
+    pub preset: String,
+    /// `a:fgClr`, resolved.
+    pub foreground: Rgba,
+    /// `a:bgClr`, resolved.
+    pub background: Rgba,
+}
+
+/// The geometry of a path (radial) gradient: `a:path@path`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GradientPath {
+    /// `shape` — the stops follow the shape's own outline.
+    Shape,
+    /// `circle` — concentric circles.
+    Circle,
+    /// `rect` — concentric rectangles.
+    Rect,
+}
+
+/// The parts of an `a:gradFill` that [`Fill::Gradient`] cannot hold.
+///
+/// [`GradientKind::Radial`] collapses `shape`, `circle` and `rect` into one
+/// value, and semantic export wrote `path="circle"` back for all three — so a
+/// shape-following gradient became a concentric one on save, with nothing saying
+/// so. That is the "radial gradients collapsed to concentric" loss in `docs/156`
+/// §6 row 0.3, and it is a **silent change of appearance**, which is the kind
+/// this engine's whole retention argument exists to prevent.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GradientDetail {
+    /// `a:path@path` as authored, when the gradient is a path gradient.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<GradientPath>,
+    /// `a:path/a:fillToRect` — where the first stop sits inside the shape — when
+    /// it is not the identity rect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_to_rect: Option<RelativeRect>,
+    /// `a:lin@scaled`: whether the sweep angle is scaled into the shape's
+    /// bounding box rather than measured against it. `None` when unstated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scaled: Option<bool>,
+    /// `a:gradFill@flip`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip: Option<TileFlip>,
+    /// `a:gradFill@rotWithShape`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate_with_shape: Option<bool>,
+}
+
+impl GradientDetail {
+    /// Whether this carries nothing — in which case the file stated no geometry
+    /// beyond what [`GradientKind`] already holds and there is nothing to retain.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.path.is_none()
+            && self.fill_to_rect.is_none()
+            && self.scaled.is_none()
+            && self.flip.is_none()
+            && self.rotate_with_shape.is_none()
+    }
+}
+
+/// `a:ln@cap` (`ST_LineCap`): how the two ends of a stroke are finished.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineCap {
+    /// `flat` — the stroke stops at the endpoint.
+    Flat,
+    /// `rnd` — a semicircle past the endpoint.
+    Round,
+    /// `sq` — a half-square past the endpoint.
+    Square,
+}
+
+/// `a:ln@cmpd` (`ST_CompoundLine`): how many parallel lines the outline is drawn
+/// as, and in what weights.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompoundLine {
+    /// `sng` — one line (the DrawingML default).
+    Single,
+    /// `dbl` — two lines of equal weight.
+    Double,
+    /// `thickThin` — a thick line then a thin one.
+    ThickThin,
+    /// `thinThick` — a thin line then a thick one.
+    ThinThick,
+    /// `tri` — thin, thick, thin.
+    Triple,
+}
+
+/// `a:ln@algn` (`ST_PenAlignment`): whether the stroke straddles the outline or
+/// sits wholly inside it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PenAlignment {
+    /// `ctr` — centred on the path (the DrawingML default).
+    Center,
+    /// `in` — entirely inside the path.
+    Inset,
+}
+
+/// The join an outline uses at a corner: `a:round`, `a:bevel` or `a:miter`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "join", rename_all = "camelCase")]
+pub enum LineJoin {
+    /// `a:round`.
+    Round,
+    /// `a:bevel`.
+    Bevel,
+    /// `a:miter`, with its `@lim` (the miter length ceiling as
+    /// `ST_PositivePercentage`, 1/1000 of a percent of the line width) when the
+    /// file states one.
+    Miter {
+        /// `a:miter@lim`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<i32>,
+    },
+}
+
+/// One `a:custDash/a:ds`: a dash and the gap after it, each as
+/// `ST_PositivePercentage` of the line width (1/1000 of a percent).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DashStop {
+    /// `@d`, the dash length.
+    pub dash: i32,
+    /// `@sp`, the gap after it.
+    pub space: i32,
+}
+
+/// The parts of an `a:ln` that [`ShapeStroke`] cannot hold: the cap, the corner
+/// join, the compound (multi-line) form, the pen alignment, and an **authored**
+/// dash pattern as opposed to the preset [`DashStyle`] already modeled.
+///
+/// A side-table payload rather than fields on [`ShapeStroke`], and the reason is
+/// mechanical: `ShapeStroke` is `Copy` and has literal construction sites in
+/// eight crates including `casual-doc-wasm`, so a dash `Vec` would take `Copy`
+/// away from every one of them and a new field would break each literal — a
+/// change with nothing for a merge to conflict on (`SKILL` §5a shape 1).
+///
+/// **Nothing paints any of this**; the stroke still draws as a plain centred,
+/// single, round-capped line of its modeled width and preset dash. Each part is
+/// reported at import, and export re-emits it, so the round trip is honest even
+/// though the render is not.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StrokeDetail {
+    /// `a:ln@cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap: Option<LineCap>,
+    /// `a:ln@cmpd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compound: Option<CompoundLine>,
+    /// `a:ln@algn`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<PenAlignment>,
+    /// `a:round`/`a:bevel`/`a:miter`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<LineJoin>,
+    /// `a:custDash/a:ds` in order, at most [`MAX_CUSTOM_DASH_STOPS`]. Empty when
+    /// the outline authors no custom pattern; a pattern longer than the ceiling
+    /// is refused whole and reported, never truncated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_dash: Vec<DashStop>,
+}
+
+impl StrokeDetail {
+    /// Whether this carries nothing, in which case the outline is exactly what
+    /// [`ShapeStroke`] already says it is and there is nothing to retain.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cap.is_none()
+            && self.compound.is_none()
+            && self.align.is_none()
+            && self.join.is_none()
+            && self.custom_dash.is_empty()
+    }
+}
+
+/// The fill-and-line detail of one shape that [`Fill`] and [`ShapeStroke`] cannot
+/// hold, kept in `Definitions::shape_fill_detail` keyed by the shape's node id.
+///
+/// # Why a side table
+///
+/// Every alternative is a breaking change to code outside this model file. A new
+/// [`Fill`] variant breaks the exhaustive `match` in `casual-doc-layout`'s
+/// display-list compose step and in the ODF writer; a new [`ShapeStroke`] field
+/// breaks ten literals in `casual-doc-wasm` and takes `Copy` away besides; a new
+/// [`GroupShape`] field breaks twenty-three literals across six crates. All three
+/// are the `E0063` merge shape `SKILL` §5a describes, and
+/// `Definitions::shape_styles` and `Definitions::charts` already took this exact
+/// route for the same reason.
+///
+/// # What it does NOT buy
+///
+/// Reachability. Nothing in layout, render, PDF or the editor reads this table —
+/// a shape with a picture or pattern fill still paints unfilled, a custom dash
+/// still draws solid, a `cmpd="dbl"` outline still draws single, and a
+/// `path="shape"` gradient still paints concentric. What the table buys is that
+/// **a save no longer destroys any of it** and that the import report names each
+/// one. `docs/156` §6 row 0.3 is **not** closed by this: painting is a separate,
+/// unlanded piece of work in `casual-doc-layout`, and calling the row done here
+/// would be the "modeled but not consumed" claim `SKILL` §9.4 calls the most
+/// expensive recurring mistake in this repository.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShapeFillDetail {
+    /// `a:blipFill` on the shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<PictureFill>,
+    /// `a:pattFill` on the shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<PatternFill>,
+    /// The `a:gradFill` geometry [`Fill::Gradient`] discards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<GradientDetail>,
+    /// The `a:ln` geometry [`ShapeStroke`] discards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<StrokeDetail>,
+}
+
+impl ShapeFillDetail {
+    /// Whether this entry carries nothing. An empty entry is never inserted: a
+    /// table with a row for every shape would make an unstyled shape
+    /// indistinguishable from a styled one, which is the mistake `commit_shape`
+    /// already avoids for `shape_styles`.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.picture.is_none()
+            && self.pattern.is_none()
+            && self.gradient.is_none()
+            && self.stroke.is_none()
+    }
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
+}
+
+fn is_zero_i64(value: &i64) -> bool {
+    *value == 0
+}
+
+fn is_no_tile_flip(value: &TileFlip) -> bool {
+    matches!(value, TileFlip::None)
+}
+
+fn is_top_left_alignment(value: &RectAlignment) -> bool {
+    matches!(value, RectAlignment::TopLeft)
+}
+
 /// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the
 /// bounded primitive subset implemented by layout/render is distinguished;
 /// every other preset is [`ShapeGeometry::Other`] (drawn as its bounding

@@ -39,6 +39,9 @@ use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
 use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
+// Own `use` line (anti-conflict): the outline geometry `a:ln` carries beyond a
+// preset dash. Aliased because tiny-skia has its own `LineCap`/`LineJoin`.
+use casual_doc_model::v1::{DashStop, LineCap as ModelLineCap, LineJoin as ModelLineJoin};
 use skrifa::bitmap::BitmapData;
 use skrifa::color::{Brush, ColorPainter, PaintCachedColorGlyph, PaintError};
 use skrifa::instance::{LocationRef, Size};
@@ -47,8 +50,9 @@ use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{
     BlendMode, Color, FillRule, FilterQuality, GradientStop as SkGradientStop, IntRect, IntSize,
-    LinearGradient, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Point as SkPoint,
-    RadialGradient, Rect as SkRect, Shader, SpreadMode, Stroke, StrokeDash, Transform,
+    LineCap, LineJoin, LinearGradient, Mask, Paint, PathBuilder, Pixmap, PixmapPaint,
+    Point as SkPoint, RadialGradient, Rect as SkRect, Shader, SpreadMode, Stroke, StrokeDash,
+    Transform,
 };
 
 /// Secure per-image decode defaults from `docs/21-PARSER-LIMITS.md`.
@@ -1730,7 +1734,12 @@ fn render_shape(
         let width = stroke.width.max(1.0);
         let sk_stroke = Stroke {
             width,
-            dash: dash_pattern(stroke.dash, width),
+            // The authored `a:custDash` outranks the preset: it IS the pattern the
+            // author stated, where `a:prstDash` is one picked from a gallery.
+            dash: custom_dash_pattern(&stroke.custom_dash, width)
+                .or_else(|| dash_pattern(stroke.dash, width)),
+            line_cap: line_cap(stroke.cap),
+            line_join: line_join(stroke.join),
             ..Stroke::default()
         };
         surface
@@ -1854,6 +1863,56 @@ fn gradient_shader(gradient: &Gradient, bounds: SkRect) -> Option<Shader<'static
 /// The dash on/off array (device pixels) for a preset dash style at `width`, or
 /// `None` for a solid line. Ratios follow the OOXML preset dash conventions,
 /// scaled by the line width (with a floor so a hairline still dashes).
+/// `a:ln@cap` as the rasterizer's line cap.
+///
+/// `None` means the file stated none, and DrawingML's default is a flat (butt) cap —
+/// which is also tiny-skia's default, so an unstated cap and a stated `flat` paint
+/// identically and neither needs a special case.
+fn line_cap(cap: Option<ModelLineCap>) -> LineCap {
+    match cap {
+        Some(ModelLineCap::Round) => LineCap::Round,
+        Some(ModelLineCap::Square) => LineCap::Square,
+        Some(ModelLineCap::Flat) | None => LineCap::Butt,
+    }
+}
+
+/// `a:ln`'s join child as the rasterizer's line join.
+///
+/// A miter limit is carried by the model but not applied: tiny-skia's `Stroke` takes
+/// a `miter_limit` and DrawingML's `a:miter@lim` is a percentage of the line width,
+/// so the two are expressible in each other — this converts the KIND only, and a
+/// non-default limit is still unapplied. Stated rather than silently approximated.
+fn line_join(join: Option<ModelLineJoin>) -> LineJoin {
+    match join {
+        Some(ModelLineJoin::Round) => LineJoin::Round,
+        Some(ModelLineJoin::Bevel) => LineJoin::Bevel,
+        Some(ModelLineJoin::Miter { .. }) | None => LineJoin::Miter,
+    }
+}
+
+/// An authored `a:custDash` as a dash pattern.
+///
+/// Each `a:ds` carries a dash and a space length in 1/1000 of a percent of the line
+/// width (`ST_PositivePercentage`), which is why the width multiplies in here rather
+/// than the lengths being device pixels already. `None` when nothing was authored, so
+/// the caller falls back to the preset pattern.
+fn custom_dash_pattern(stops: &[DashStop], width: f32) -> Option<StrokeDash> {
+    if stops.is_empty() {
+        return None;
+    }
+    let unit = width.max(1.0) / 100_000.0;
+    let array: Vec<f32> = stops
+        .iter()
+        .flat_map(|stop| {
+            [
+                (stop.dash as f32 * unit).max(0.1),
+                (stop.space as f32 * unit).max(0.1),
+            ]
+        })
+        .collect();
+    StrokeDash::new(array, 0.0)
+}
+
 fn dash_pattern(dash: DashStyle, width: f32) -> Option<StrokeDash> {
     let unit = width.max(1.0);
     let ratios: &[f32] = match dash {
@@ -3439,6 +3498,117 @@ mod tests {
 
     #[test]
     #[cfg_attr(target_os = "windows", ignore)]
+    fn an_authored_custom_dash_paints_a_different_pattern_than_the_preset() {
+        // `a:custDash` reaches the rasterizer, which it did not: the backend built
+        // its stroke as `Stroke { width, dash, ..default() }`, so an authored pattern
+        // had nowhere to arrive and a custom-dashed outline drew with whatever
+        // `a:prstDash` happened to say — or solid.
+        //
+        // The two patterns below differ in where the FIRST gap begins, which is what
+        // makes this a pixel assertion rather than "something changed".
+        let line = |custom: Vec<DashStop>| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Line {
+                    from: Point::new(Twip(0), Twip(10)),
+                    to: Point::new(Twip(100), Twip(10)),
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 2.0,
+                    // Solid, so any gap below can only come from the custom pattern.
+                    dash: DashStyle::Solid,
+                    cap: None,
+                    join: None,
+                    custom_dash: custom,
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            shape_surface(&list, 100, 20)
+        };
+        // Lengths are 1/1000 of a percent of the line width, so at width 2 a
+        // `400_000` dash is 8px and a `400_000` space is 8px.
+        let custom = line(vec![DashStop {
+            dash: 400_000,
+            space: 400_000,
+        }]);
+        let solid = line(Vec::new());
+
+        assert!(
+            pixel_at(&custom, 100, 2, 10)[0] < 100,
+            "the first authored dash is painted"
+        );
+        assert!(
+            pixel_at(&custom, 100, 12, 10)[0] > 200,
+            "the first authored gap is blank — the pattern reached the rasterizer"
+        );
+        assert!(
+            pixel_at(&solid, 100, 12, 10)[0] < 100,
+            "with no authored pattern the same span is solid, so the gap above is \
+             the custom dash and not the preset"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_round_cap_paints_past_the_endpoint_and_a_flat_one_does_not() {
+        // `a:ln@cap` reaches the rasterizer. It did not: the cap was defaulted, so a
+        // round-capped line drew with a butt cap — a difference of half a line width
+        // at each end, which looks like a rounding error rather than a lost
+        // attribute, and is why it survived.
+        //
+        // A thick short line makes the cap the dominant feature: a round cap bulges
+        // half the width PAST the endpoint, a flat cap stops exactly on it.
+        let line = |cap: Option<ModelLineCap>| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Line {
+                    from: Point::new(Twip(20), Twip(10)),
+                    to: Point::new(Twip(60), Twip(10)),
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 10.0,
+                    dash: DashStyle::Solid,
+                    cap,
+                    join: None,
+                    custom_dash: Vec::new(),
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            shape_surface(&list, 100, 20)
+        };
+        let round = line(Some(ModelLineCap::Round));
+        let flat = line(Some(ModelLineCap::Flat));
+        let unstated = line(None);
+
+        // Three pixels past the right endpoint: inside a round cap's bulge, outside a
+        // flat one.
+        assert!(
+            pixel_at(&round, 100, 63, 10)[0] < 150,
+            "a round cap paints past the endpoint"
+        );
+        assert!(
+            pixel_at(&flat, 100, 63, 10)[0] > 200,
+            "a flat cap stops on the endpoint"
+        );
+        // An unstated cap must paint as `flat`, because that is DrawingML's default —
+        // not as round, and not differently from a stated `flat`.
+        assert_eq!(
+            pixel_at(&unstated, 100, 63, 10),
+            pixel_at(&flat, 100, 63, 10),
+            "an unstated cap must paint exactly as a stated flat one"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
     fn dashed_outline_leaves_gaps_a_solid_one_does_not() {
         // A horizontal line stroked with a `dash` pattern: it is painted where a dash
         // lands and blank in a gap, unlike a solid stroke.
@@ -3454,6 +3624,11 @@ mod tests {
                     color: ShapeColor::BLACK,
                     width: 2.0,
                     dash,
+                    // This fixture parameterises the PRESET dash; cap, join and the
+                    // authored pattern have their own guards.
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
                 }),
                 head_end: None,
                 tail_end: None,
@@ -3510,6 +3685,9 @@ mod tests {
                 color: ShapeColor::BLACK,
                 width: 3.0,
                 dash: DashStyle::Solid,
+                cap: None,
+                join: None,
+                custom_dash: Vec::new(),
             }),
             head_end: None,
             tail_end: None,
@@ -3552,6 +3730,9 @@ mod tests {
                 color: ShapeColor::BLACK,
                 width: 3.0,
                 dash: DashStyle::Solid,
+                cap: None,
+                join: None,
+                custom_dash: Vec::new(),
             }),
             head_end: None,
             tail_end: None,
@@ -3607,6 +3788,9 @@ mod tests {
                     color: ShapeColor::BLACK,
                     width: 2.0,
                     dash: DashStyle::Solid,
+                    cap: None,
+                    join: None,
+                    custom_dash: Vec::new(),
                 }),
                 head_end: None,
                 tail_end: None,
@@ -3678,6 +3862,9 @@ mod tests {
                 color: ShapeColor::BLACK,
                 width: 2.0,
                 dash: DashStyle::Solid,
+                cap: None,
+                join: None,
+                custom_dash: Vec::new(),
             }),
             head_end: None,
             tail_end: None,
@@ -3707,6 +3894,9 @@ mod tests {
                 color: ShapeColor::BLACK,
                 width: 2.0,
                 dash: DashStyle::Solid,
+                cap: None,
+                join: None,
+                custom_dash: Vec::new(),
             }),
             head_end: None,
             tail_end: Some(LineEnd {

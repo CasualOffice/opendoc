@@ -6141,3 +6141,92 @@ fn a_chart_projection_resolves_inside_a_nested_container() {
     Document::new(tid(99), vec![nested], definitions)
         .expect("a chart inside a table cell projects");
 }
+
+/// The shape fill/line side table is **additive**: a document that carries none
+/// serializes exactly as it did before the field existed, and a populated one
+/// round-trips through JSON unchanged.
+///
+/// The first half is the part worth a guard. `Definitions::shape_fill_detail`'s
+/// doc comment makes the claim "omitted when empty so existing snapshots
+/// serialize byte-identically", and this repository has published claims that
+/// were only true when written (`SKILL` §9.1): drop the
+/// `skip_serializing_if` and every committed snapshot in the suite gains a
+/// `"shapeFillDetail":{}` key, with nothing but this noticing.
+#[test]
+fn the_shape_fill_detail_table_is_additive_and_round_trips() {
+    let mut definitions = Definitions::default();
+    let body = vec![paragraph_block(tid(10))];
+    let blank = Document::new(tid(1), body.clone(), definitions.clone()).unwrap();
+    let json = String::from_utf8(blank.to_json().unwrap()).unwrap();
+    assert!(
+        !json.contains("shapeFillDetail"),
+        "an empty table must not appear in the snapshot at all: {json}"
+    );
+
+    let shape_id = tid(2);
+    definitions.shape_fill_detail.insert(
+        shape_id,
+        ShapeFillDetail {
+            picture: Some(PictureFill {
+                media: MediaId::new(tid(3)),
+                mode: PictureFillMode::Tile {
+                    offset_x_emu: -91_440,
+                    offset_y_emu: 45_720,
+                    scale_x: Some(50_000),
+                    scale_y: None,
+                    flip: TileFlip::Y,
+                    alignment: RectAlignment::BottomRight,
+                },
+                crop: None,
+                opacity: Some(20_000),
+                rotate_with_shape: Some(false),
+            }),
+            pattern: Some(PatternFill {
+                preset: "pct25".to_owned(),
+                foreground: Rgba {
+                    r: 1,
+                    g: 2,
+                    b: 3,
+                    a: 255,
+                },
+                background: Rgba {
+                    r: 4,
+                    g: 5,
+                    b: 6,
+                    a: 255,
+                },
+            }),
+            gradient: Some(GradientDetail {
+                path: Some(GradientPath::Rect),
+                fill_to_rect: Some(RelativeRect {
+                    left: -1_000,
+                    top: 0,
+                    right: 2_000,
+                    bottom: 0,
+                }),
+                scaled: Some(true),
+                flip: Some(TileFlip::Xy),
+                rotate_with_shape: None,
+            }),
+            stroke: Some(StrokeDetail {
+                cap: Some(LineCap::Square),
+                compound: Some(CompoundLine::Triple),
+                align: Some(PenAlignment::Inset),
+                join: Some(LineJoin::Miter { limit: Some(0) }),
+                custom_dash: vec![DashStop {
+                    dash: 300_000,
+                    space: 100_000,
+                }],
+            }),
+        },
+    );
+    let populated = Document::new(tid(1), body, definitions).unwrap();
+    let bytes = populated.to_json().unwrap();
+    let reopened = Document::from_json(&bytes, SnapshotLimits::default()).unwrap();
+    assert_eq!(
+        reopened.definitions().shape_fill_detail,
+        populated.definitions().shape_fill_detail,
+        "every field survives the snapshot, including the ones whose value is the \
+         type's own default (a `0` miter limit, a `None` vertical tile scale)"
+    );
+}
