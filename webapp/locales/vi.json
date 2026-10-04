@@ -1325,6 +1325,7 @@
   "shapes.triangle": "Tam giác cân",
   "shapes.upArrow": "Mũi tên lên",
   "shortcutsDialog.close.title": "Đóng",
+  "shortcutsDialog.closeButton": "Đóng",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Đóng phím tắt",
   "shortcutsDialog.everyCommandHasOne": "Mọi lệnh có phím tắt, cùng thao tác di chuyển con trỏ — viết theo bàn phím bạn đang dùng.",
   "shortcutsDialog.keyboardShortcuts": "Phím tắt",

@@ -1328,6 +1328,7 @@
   "shapes.triangle": "Isosceles triangle",
   "shapes.upArrow": "Up arrow",
   "shortcutsDialog.close.title": "Close",
+  "shortcutsDialog.closeButton": "Close",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Close keyboard shortcuts",
   "shortcutsDialog.everyCommandHasOne": "Every command that has one, plus caret movement — spelled for the keyboard you are using.",
   "shortcutsDialog.keyboardShortcuts": "Keyboard shortcuts",

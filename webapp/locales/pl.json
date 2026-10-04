@@ -1328,6 +1328,7 @@
   "shapes.triangle": "Trójkąt równoramienny",
   "shapes.upArrow": "Strzałka w górę",
   "shortcutsDialog.close.title": "Zamknij",
+  "shortcutsDialog.closeButton": "Zamknij",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Zamknij skróty klawiaturowe",
   "shortcutsDialog.everyCommandHasOne": "Każde polecenie, które je ma, oraz ruch kursora — zapisane dla klawiatury, której używasz.",
   "shortcutsDialog.keyboardShortcuts": "Skróty klawiaturowe",

@@ -1325,6 +1325,7 @@
   "shapes.triangle": "等腰三角形",
   "shapes.upArrow": "向上箭號",
   "shortcutsDialog.close.title": "關閉",
+  "shortcutsDialog.closeButton": "關閉",
   "shortcutsDialog.closeKeyboardShortcuts.label": "關閉鍵盤快速鍵",
   "shortcutsDialog.everyCommandHasOne": "所有具有快速鍵的命令，以及游標移動——依您使用的鍵盤標示。",
   "shortcutsDialog.keyboardShortcuts": "鍵盤快速鍵",

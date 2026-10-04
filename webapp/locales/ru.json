@@ -1328,6 +1328,7 @@
   "shapes.triangle": "Равнобедренный треугольник",
   "shapes.upArrow": "Стрелка вверх",
   "shortcutsDialog.close.title": "Закрыть",
+  "shortcutsDialog.closeButton": "Закрыть",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Закрыть сочетания клавиш",
   "shortcutsDialog.everyCommandHasOne": "Все команды, у которых они есть, и перемещение курсора — в обозначениях вашей клавиатуры.",
   "shortcutsDialog.keyboardShortcuts": "Сочетания клавиш",

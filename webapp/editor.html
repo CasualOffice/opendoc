@@ -1169,11 +1169,23 @@
               <p data-i18n="shortcutsDialog.everyCommandHasOne" id="shortcutsDescription">Every command that has one, plus caret movement — spelled for the keyboard you are using.</p>
             </div>
           </div>
-          <button data-i18n-title="shortcutsDialog.close.title" data-i18n-label="shortcutsDialog.closeKeyboardShortcuts.label" id="shortcutsClose" type="button" class="dialog-close" title="Close" aria-label="Close keyboard shortcuts">
+          <button data-shortcuts-dismiss data-i18n-title="shortcutsDialog.close.title" data-i18n-label="shortcutsDialog.closeKeyboardShortcuts.label" id="shortcutsClose" type="button" class="dialog-close" title="Close" aria-label="Close keyboard shortcuts">
             <span class="ms" aria-hidden="true">close</span>
           </button>
         </header>
         <div id="shortcutsBody" class="dialog-body shortcuts-body"></div>
+        <!-- A FOOTER, because this dialog had none (HF-233 D3): its body
+             scrolled 872px of keymap through a 612px box on a 1280x720
+             laptop and the content simply ran off the bottom edge of the
+             card with nothing under it to say the card ended. Every other
+             dialog in the product closes from its own action row as well as
+             from the X, and a reference you read to the bottom is the one
+             that most needs a dismissal where your eye already is. -->
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-shortcuts-dismiss data-i18n="shortcutsDialog.closeButton" id="shortcutsDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
       </section>
     </div>
 
@@ -2900,7 +2912,6 @@
       <aside id="paragraphPropertiesPanel" class="side-panel properties-panel paragraph-properties-panel" hidden aria-labelledby="paragraphPropertiesTitle" aria-describedby="paragraphPropertiesDescription">
         <header class="panel-head properties-panel-head">
           <div class="properties-panel-heading">
-            <span class="ms properties-panel-icon" aria-hidden="true">format_paragraph</span>
             <span>
               <strong data-i18n="paragraphPropertiesPanel.paragraphProperties" id="paragraphPropertiesTitle" class="panel-title">Paragraph properties</strong>
               <small id="paragraphPropertiesContext"></small>
@@ -3001,7 +3012,6 @@
       <aside id="tablePropertiesPanel" class="side-panel table-properties-panel" hidden aria-labelledby="tablePropertiesTitle" aria-describedby="tablePropertiesDescription">
         <header class="panel-head table-properties-head">
           <div class="table-panel-heading">
-            <span class="ms table-panel-icon" aria-hidden="true">table_chart</span>
             <span>
               <strong data-i18n="tablePropertiesPanel.tableProperties" id="tablePropertiesTitle" class="panel-title">Table properties</strong>
               <small id="tablePropertiesContext"></small>

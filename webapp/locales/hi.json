@@ -1326,6 +1326,7 @@
   "shapes.triangle": "समद्विबाहु त्रिभुज",
   "shapes.upArrow": "ऊपर तीर",
   "shortcutsDialog.close.title": "बंद करें",
+  "shortcutsDialog.closeButton": "बंद करें",
   "shortcutsDialog.closeKeyboardShortcuts.label": "कीबोर्ड शॉर्टकट बंद करें",
   "shortcutsDialog.everyCommandHasOne": "हर वह कमांड जिसका शॉर्टकट है, साथ ही कर्सर संचालन — आपके कीबोर्ड के अनुसार लिखा गया।",
   "shortcutsDialog.keyboardShortcuts": "कीबोर्ड शॉर्टकट",

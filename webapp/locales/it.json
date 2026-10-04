@@ -1327,6 +1327,7 @@
   "shapes.triangle": "Triangolo isoscele",
   "shapes.upArrow": "Freccia in alto",
   "shortcutsDialog.close.title": "Chiudi",
+  "shortcutsDialog.closeButton": "Chiudi",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Chiudi scelte rapide da tastiera",
   "shortcutsDialog.everyCommandHasOne": "Ogni comando che ne ha una, più il movimento del cursore, scritti per la tastiera che stai usando.",
   "shortcutsDialog.keyboardShortcuts": "Scelte rapide da tastiera",

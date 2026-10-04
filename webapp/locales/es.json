@@ -1327,6 +1327,7 @@
   "shapes.triangle": "Triángulo isósceles",
   "shapes.upArrow": "Flecha arriba",
   "shortcutsDialog.close.title": "Cerrar",
+  "shortcutsDialog.closeButton": "Cerrar",
   "shortcutsDialog.closeKeyboardShortcuts.label": "Cerrar métodos abreviados de teclado",
   "shortcutsDialog.everyCommandHasOne": "Todos los comandos que tienen uno, además del movimiento del cursor, expresados para el teclado que usa.",
   "shortcutsDialog.keyboardShortcuts": "Atajos de teclado",
