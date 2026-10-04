@@ -4108,6 +4108,8 @@ fn an_authored_wrap_text_decides_the_side_the_text_keeps() {
              trailing edge: starts at {start:?}, float ends at {band_end:?}"
         );
     }
+}
+
 /// The authored outline geometry must TRAVEL, not merely be renderable.
 ///
 /// `casual-doc-render`'s own guards build a `ShapeOutline` directly, so they prove the

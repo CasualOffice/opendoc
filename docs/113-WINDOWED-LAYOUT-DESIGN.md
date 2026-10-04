@@ -419,7 +419,7 @@ summary:
 | **Re-materialised** | `renderPage` (moves the window), `pageSize` (from the outline), print, thumbnails | every page of the document, in any order |
 | **Answered from the measure tier** | `pageCount`, `documentStats().pages`, `NUMPAGES` | the document's real count, not the window's |
 | **Unaffected — model-derived** | export (`exportDocx`, `exportAs`), find (`findText`), the accessibility mirror, word and paragraph counts | the model stays whole; these never read the layout |
-| **Refused loudly** | every edit (one line at `apply_group`, the atomic choke point, so all 59 operations), the show-changes preview | a sentence naming the size, the limit and what to do |
+| **Refused loudly** | every edit (one line at `apply_group`, the atomic choke point, so all 60 operations), the show-changes preview | a sentence naming the size, the limit and what to do |
 | **Re-measured** | font registration → `repaginate` | one more shaping pass at the bounded peak |
 | **Window-local by definition** | caret and selection rectangles, hit-testing, table and checklist chrome, object boxes, running bands | they convert between *painted pixels* and the model; they look pages up by `Page::number`, so they can never answer about the wrong page |
 

@@ -32,7 +32,7 @@ uses neither OT nor a CRDT, but a server-ordered change log plus pessimistic obj
 Matching that is cheaper. The owner chose OT anyway, and the reasons hold up:
 
 1. **The hard prerequisite is already paid.** OT needs a closed set of operations that can
-   be transformed. `casual-doc-edit` is exactly that: 59 operations, closed by invariant I2,
+   be transformed. `casual-doc-edit` is exactly that: 60 operations, closed by invariant I2,
    each returning its own **inverse** so undo is inverse-application. A design that already
    has invertible granular ops is most of the way to one that has transformable ops.
 2. **Position mapping already exists and is already affinity-correct.**
@@ -136,7 +136,7 @@ crash recovery (`HF-011`) regardless of collaboration.
 
 ---
 
-## 3. Making OT tractable over 59 operations
+## 3. Making OT tractable over 60 operations
 
 Naive OT needs a transform for every ordered pair of concurrent operations — 47 × 47 is not
 a design, it is a wish. The tractability argument is that **most of the op set does not need

@@ -11350,6 +11350,9 @@ fn an_empty_picture_level_alt_text_reports_nothing() {
         !features(&import).contains(&"drawing"),
         "nothing was lost, so nothing should be reported: {:?}",
         features(&import),
+    );
+}
+
 /// `wps:bodyPr@vert` and `@rot` are READ, which they were not.
 ///
 /// `105` FID-L-08: the attributes were never parsed, so a Word text box with vertical
